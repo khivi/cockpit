@@ -110,7 +110,7 @@ Reads cockpit's cache only — never blocks on `gh`. Falls back to `<branch> · 
 ## Requirements
 
 - macOS or Linux
-- `cmux` (workspace primitives: `new-workspace`, `list-workspaces`, `tree --all --json`, `select-workspace`)
+- `cmux`
 - Claude Code with plugin support
 - `gh` CLI, authenticated (`gh auth status` must pass)
 - Python 3.11+
