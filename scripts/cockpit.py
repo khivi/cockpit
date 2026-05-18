@@ -517,6 +517,29 @@ def cycle_repo(
     _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, self_user, dry=dry)
 
 
+def _close_gone_cwd_workspaces(dry: bool) -> None:
+    """Close cmux workspaces whose cwd no longer exists on disk.
+
+    A worktree can be removed externally (manual `git worktree remove`, an
+    autoclose pass that crashed before closing the workspace, sync tools,
+    etc.) without taking its cmux workspace with it. The workspace becomes
+    unusable — its processes have no cwd. Close it.
+    """
+    names, cwds = workspace_state()
+    for ref, cwd in cwds.items():
+        if cwd.exists():
+            continue
+        ws_name = names.get(ref, ref)
+        action = "[dry] autoclose" if dry else "autoclose:"
+        print(
+            f"  {magenta(action)} closing orphan workspace {ws_name} ({ref}) "
+            f"— cwd missing: {cwd}",
+            flush=True,
+        )
+        if not dry:
+            cmux_close_workspace_best_effort(ref)
+
+
 def cycle_all(
     cfg: dict,
     self_user: str,
@@ -537,6 +560,8 @@ def cycle_all(
             flush=True,
         )
         return
+    if cfg.get("auto_cleanup_on_merge", True):
+        _close_gone_cwd_workspaces(dry)
     for repo_entry in repos:
         try:
             cycle_repo(
