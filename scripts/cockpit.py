@@ -265,8 +265,9 @@ def cycle_repo(
         f"tracked: {len(tracked)}  wip: {wip_count}",
         flush=True,
     )
-    for pr in prs:
-        write_pr_cache(name, pr)
+    if not dry:
+        for pr in prs:
+            write_pr_cache(name, pr)
 
     by_name: dict[str, list[str]] = {}
     for ref, ws_name in names.items():
@@ -329,7 +330,7 @@ def cycle_repo(
                 flush=True,
             )
             printed_refresh = True
-        if changed:
+        if changed and not dry:
             pill_state[ref] = desired
         if pr.display_issue in ACTIONABLE_ISSUES:
             if pr.display_issue == "comments":
@@ -389,7 +390,7 @@ def cycle_repo(
                     f"  {dim('refreshed')} {cyan(ws_name)} → {ref}  [{yellow(tag)}]",
                     flush=True,
                 )
-            if changed:
+            if changed and not dry:
                 pill_state[ref] = orphan_snap
             maybe_nudge(
                 ref,
