@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.22"
+          go-version: "1.24"
 
       - name: Seed .relint.yml (gitignored locally; CI uses the example as a stub)
         run: |
