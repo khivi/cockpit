@@ -277,59 +277,19 @@ class WorkspaceMatch:
     worktree: Worktree | None
 
 
-def _match_by_pr_num(
-    query: str,
-    names: dict[str, str],
-    wt_by_branch: dict[str, Worktree],
-    ref_for_worktree_fn,
-) -> WorkspaceMatch | None:
+def _pr_num_to_branch(pr_num: str) -> str:
     from .cache import find_pr_payload_by_number
     from .config import discover_repo
 
-    pr_match = re.fullmatch(r"#?(\d+)", query)
-    if not pr_match:
-        return None
-    pr_num = pr_match.group(1)
     repo_cfg = discover_repo()
     repo_name = repo_cfg.get("name") if repo_cfg else None
     payload = find_pr_payload_by_number(pr_num, repo_name=repo_name)
     if payload is None:
         raise LookupError(f"PR #{pr_num} not in cockpit cache")
     branch = payload.get("branch")
-    wt = wt_by_branch.get(branch) if branch else None
-    if wt is None:
-        raise LookupError(f"PR #{pr_num} (branch {branch!r}) has no worktree")
-    ref = ref_for_worktree_fn(wt)
-    return WorkspaceMatch(ref, names.get(ref, ""), wt)
-
-
-def _match_by_branch(
-    query: str,
-    names: dict[str, str],
-    wt_by_branch: dict[str, Worktree],
-    ref_for_worktree_fn,
-) -> WorkspaceMatch | None:
-    if query not in wt_by_branch:
-        return None
-    wt = wt_by_branch[query]
-    ref = ref_for_worktree_fn(wt)
-    return WorkspaceMatch(ref, names.get(ref, ""), wt)
-
-
-def _match_by_slug(
-    query: str,
-    names: dict[str, str],
-    wt_for_ref: dict[str, Worktree | None],
-) -> WorkspaceMatch | None:
-    slug_refs = [r for r, n in names.items() if n == query]
-    if len(slug_refs) > 1:
-        raise LookupError(
-            f"slug {query!r} matches multiple workspaces: {sorted(slug_refs)}"
-        )
-    if not slug_refs:
-        return None
-    ref = slug_refs[0]
-    return WorkspaceMatch(ref, query, wt_for_ref.get(ref))
+    if not branch:
+        raise LookupError(f"PR #{pr_num} has no branch in cockpit cache")
+    return branch
 
 
 def resolve_workspace(query: str, repo_dir: Path) -> WorkspaceMatch:
@@ -344,9 +304,10 @@ def resolve_workspace(query: str, repo_dir: Path) -> WorkspaceMatch:
     wt_by_path = {wt.path.resolve(): wt for wt in wts}
     wt_by_branch = {wt.branch: wt for wt in wts}
 
-    wt_for_ref: dict[str, Worktree | None] = {}
-    for ref in set(names) | set(cwds):
-        wt_for_ref[ref] = wt_by_path.get(cwds[ref].resolve()) if ref in cwds else None
+    wt_for_ref: dict[str, Worktree | None] = {
+        ref: (wt_by_path.get(cwds[ref].resolve()) if ref in cwds else None)
+        for ref in set(names) | set(cwds)
+    }
 
     def _ref_for_worktree(wt: Worktree) -> str:
         candidates = [r for r, w in wt_for_ref.items() if w is wt]
@@ -358,15 +319,29 @@ def resolve_workspace(query: str, repo_dir: Path) -> WorkspaceMatch:
             )
         return candidates[0]
 
-    matchers = (
-        lambda: _match_by_pr_num(query, names, wt_by_branch, _ref_for_worktree),
-        lambda: _match_by_branch(query, names, wt_by_branch, _ref_for_worktree),
-        lambda: _match_by_slug(query, names, wt_for_ref),
-    )
-    for matcher in matchers:
-        match = matcher()
-        if match is not None:
-            return match
+    pr_match = re.fullmatch(r"#?(\d+)", query)
+    if pr_match:
+        pr_num = pr_match.group(1)
+        branch = _pr_num_to_branch(pr_num)
+        wt = wt_by_branch.get(branch)
+        if wt is None:
+            raise LookupError(f"PR #{pr_num} (branch {branch!r}) has no worktree")
+        ref = _ref_for_worktree(wt)
+        return WorkspaceMatch(ref, names.get(ref, ""), wt)
+
+    if query in wt_by_branch:
+        wt = wt_by_branch[query]
+        ref = _ref_for_worktree(wt)
+        return WorkspaceMatch(ref, names.get(ref, ""), wt)
+
+    slug_refs = [r for r, n in names.items() if n == query]
+    if len(slug_refs) > 1:
+        raise LookupError(
+            f"slug {query!r} matches multiple workspaces: {sorted(slug_refs)}"
+        )
+    if slug_refs:
+        ref = slug_refs[0]
+        return WorkspaceMatch(ref, query, wt_for_ref.get(ref))
 
     raise LookupError(f"no workspace matched {query!r}")
 

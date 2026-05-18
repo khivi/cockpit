@@ -220,11 +220,8 @@ def main() -> int:
             prompt = _plan_only_prompt(pr_num, branch, wt)
 
     ws_name = short
-    existing_ws = set(workspace_names().values())
-    if ws_name in existing_ws:
-        attached_ws = True
-    else:
-        attached_ws = False
+    attached_ws = ws_name in set(workspace_names().values())
+    if not attached_ws:
         cmux(
             "new-workspace",
             "--name",
@@ -237,10 +234,12 @@ def main() -> int:
             "false",
         )
 
-    verb = "attached existing workspace" if attached_wt and attached_ws else "workspace"
-    suffix = f"spawned at {wt}" if verb == "workspace" else f"at {wt}"
-    on_branch = f" on {branch_display}" if branch_display else " (no worktree)"
-    print(f"{verb} {ws_name} {suffix}{on_branch}")
+    if attached_wt and attached_ws:
+        prefix = f"attached existing workspace {ws_name} at {wt}"
+    else:
+        prefix = f"workspace {ws_name} spawned at {wt}"
+    suffix = f" on {branch_display}" if branch_display else " (no worktree)"
+    print(f"{prefix}{suffix}")
     return 0
 
 

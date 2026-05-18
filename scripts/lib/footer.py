@@ -105,30 +105,33 @@ def _git_branch_and_dirty() -> tuple[str, int]:
     return branch, count_dirty(here)
 
 
+def _ci_glyph(ci_raw: str) -> str:
+    if ci_raw == "passed":
+        return "✓"
+    if ci_raw.startswith("failed"):
+        return "✗"
+    if ci_raw in ("pending", ""):
+        return "•"
+    return ci_raw
+
+
+def _pr_label(match: dict) -> str:
+    state = str(match.get("state") or "")
+    if state != "OPEN":
+        return state.lower()
+    if match.get("isDraft"):
+        return "draft"
+    return str(match.get("review") or "").lower().replace("_", "-")
+
+
 def _pr_segment(branch: str) -> str:
     """Cockpit-tracked tier's PR-info segment (no prefix, no dirty/badge)."""
     match = find_pr_payload(branch)
     if not match:
         return f"{branch} · no PR"
-    ci_raw = str(match.get("ci") or "")
-    ci = (
-        "✓"
-        if ci_raw == "passed"
-        else (
-            "✗"
-            if ci_raw.startswith("failed")
-            else "•" if ci_raw in ("pending", "") else ci_raw
-        )
-    )
-    state = str(match.get("state") or "")
-    if state == "OPEN" and match.get("isDraft"):
-        label = "draft"
-    elif state == "OPEN":
-        label = str(match.get("review") or "").lower().replace("_", "-")
-    else:
-        label = state.lower()
+    ci = _ci_glyph(str(match.get("ci") or ""))
     head = f"#{match.get('number')} {branch}"
-    return f"{head} · {ci} · {label}"
+    return f"{head} · {ci} · {_pr_label(match)}"
 
 
 def render_footer() -> int:

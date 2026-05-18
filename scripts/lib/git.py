@@ -12,6 +12,13 @@ from pathlib import Path
 from . import run
 
 
+def _git(repo: str | os.PathLike, *args: str) -> subprocess.CompletedProcess:
+    """`git -C <repo> <args>` capturing stdout/stderr as text; never raises."""
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True
+    )
+
+
 @dataclass
 class Worktree:
     path: Path
@@ -35,11 +42,7 @@ def count_dirty(wt_path: Path) -> int:
 
     Returns 0 on git failure so a transient error doesn't promote clean → WIP.
     """
-    res = subprocess.run(
-        ["git", "-C", str(wt_path), "status", "--porcelain"],
-        capture_output=True,
-        text=True,
-    )
+    res = _git(wt_path, "status", "--porcelain")
     if res.returncode != 0:
         return 0
     return sum(1 for line in res.stdout.splitlines() if line.strip())
@@ -52,18 +55,9 @@ def _count_unpushed(wt_path: Path) -> int:
     Returns -1 if git rev-list fails outright so callers can distinguish
     "verified clean" from "could not check".
     """
-    up = subprocess.run(
-        ["git", "-C", str(wt_path), "rev-parse", "--abbrev-ref", "@{upstream}"],
-        capture_output=True,
-        text=True,
-    )
-    if up.returncode != 0:
+    if _git(wt_path, "rev-parse", "--abbrev-ref", "@{upstream}").returncode != 0:
         return 0
-    res = subprocess.run(
-        ["git", "-C", str(wt_path), "rev-list", "--count", "@{upstream}..HEAD"],
-        capture_output=True,
-        text=True,
-    )
+    res = _git(wt_path, "rev-list", "--count", "@{upstream}..HEAD")
     if res.returncode != 0:
         return -1
     out = res.stdout.strip()
@@ -136,11 +130,7 @@ def has_unique_commits(wt_path: Path, base: str) -> bool:
     Used to filter empty scaffolds (fresh worktrees at base HEAD) when computing
     drift. Uncommitted dirt does not count as work for this check.
     """
-    res = subprocess.run(
-        ["git", "-C", str(wt_path), "rev-list", "--count", f"{base}..HEAD"],
-        capture_output=True,
-        text=True,
-    )
+    res = _git(wt_path, "rev-list", "--count", f"{base}..HEAD")
     if res.returncode != 0:
         return False
     out = res.stdout.strip()
@@ -148,11 +138,7 @@ def has_unique_commits(wt_path: Path, base: str) -> bool:
 
 
 def current_branch(cwd: str | os.PathLike) -> str:
-    res = subprocess.run(
-        ["git", "-C", str(cwd), "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True,
-        text=True,
-    )
+    res = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
     return res.stdout.strip() if res.returncode == 0 else ""
 
 
@@ -175,12 +161,7 @@ def collision_free(path: Path) -> Path:
 
 def main_worktree_path(cwd: str | os.PathLike | None = None) -> Path | None:
     """Return the main (first) worktree path, or None if not in a git repo."""
-    cmd = (
-        ["git", "-C", str(cwd), "worktree", "list", "--porcelain"]
-        if cwd
-        else ["git", "worktree", "list", "--porcelain"]
-    )
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = _git(cwd if cwd is not None else ".", "worktree", "list", "--porcelain")
     if res.returncode != 0:
         return None
     for line in res.stdout.splitlines():
@@ -198,18 +179,7 @@ def worktree_for_branch(repo_dir: Path, branch: str) -> Path | None:
 
 def _has_local_branch(repo: Path, branch: str) -> bool:
     return (
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "show-ref",
-                "--verify",
-                "--quiet",
-                f"refs/heads/{branch}",
-            ],
-            capture_output=True,
-        ).returncode
+        _git(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}").returncode
         == 0
     )
 
@@ -217,19 +187,7 @@ def _has_local_branch(repo: Path, branch: str) -> bool:
 def _fetch_remote_branch(repo: Path, branch: str) -> bool:
     """Return True and fetch branch locally if it exists on origin."""
     exists = (
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "ls-remote",
-                "--exit-code",
-                "--heads",
-                "origin",
-                branch,
-            ],
-            capture_output=True,
-        ).returncode
+        _git(repo, "ls-remote", "--exit-code", "--heads", "origin", branch).returncode
         == 0
     )
     if exists:
@@ -268,9 +226,7 @@ def create_worktree(
         run(["git", "-C", str(repo), "worktree", "add", str(wt_path), branch])
         return branch
 
-    subprocess.run(
-        ["git", "-C", str(repo), "fetch", "origin", base], capture_output=True
-    )
+    _git(repo, "fetch", "origin", base)
 
     if _has_local_branch(repo, branch) or _fetch_remote_branch(repo, branch):
         run(["git", "-C", str(repo), "worktree", "add", str(wt_path), branch])
@@ -299,21 +255,17 @@ def remove_worktree(
     repo: Path, wt_path: Path, *, force: bool = False
 ) -> tuple[bool, str]:
     """Run `git worktree remove`. Returns (ok, stderr) — non-raising."""
-    cmd = ["git", "-C", str(repo), "worktree", "remove"]
+    args = ["worktree", "remove"]
     if force:
-        cmd.append("--force")
-    cmd.append(str(wt_path))
-    res = subprocess.run(cmd, capture_output=True, text=True)
+        args.append("--force")
+    args.append(str(wt_path))
+    res = _git(repo, *args)
     return res.returncode == 0, res.stderr.strip()
 
 
 def origin_head_branch(repo: Path) -> str | None:
     """Return the branch `origin/HEAD` points at (e.g. 'main'), or None."""
-    r = subprocess.run(
-        ["git", "-C", str(repo), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-        capture_output=True,
-        text=True,
-    )
+    r = _git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
     if r.returncode != 0:
         return None
     return r.stdout.strip().removeprefix("origin/") or None
@@ -335,27 +287,9 @@ def ff_default_branch_worktrees(
     for wt in wts:
         if wt.branch != default or wt.dirty_count > 0:
             continue
-        if (
-            subprocess.run(
-                ["git", "-C", str(wt.path), "fetch", "origin", wt.branch],
-                capture_output=True,
-                text=True,
-            ).returncode
-            != 0
-        ):
+        if _git(wt.path, "fetch", "origin", wt.branch).returncode != 0:
             continue
-        rev = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(wt.path),
-                "rev-list",
-                "--count",
-                f"HEAD..origin/{wt.branch}",
-            ],
-            capture_output=True,
-            text=True,
-        )
+        rev = _git(wt.path, "rev-list", "--count", f"HEAD..origin/{wt.branch}")
         try:
             behind = int(rev.stdout.strip())
         except ValueError:
@@ -365,9 +299,5 @@ def ff_default_branch_worktrees(
         advanced.append((wt, behind))
         if dry:
             continue
-        subprocess.run(
-            ["git", "-C", str(wt.path), "merge", "--ff-only", f"origin/{wt.branch}"],
-            capture_output=True,
-            text=True,
-        )
+        _git(wt.path, "merge", "--ff-only", f"origin/{wt.branch}")
     return advanced

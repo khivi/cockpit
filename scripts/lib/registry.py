@@ -10,9 +10,8 @@ import json
 import sys
 from pathlib import Path
 
-from . import run
 from .config import CONFIG_PATH, ensure_state_dirs
-from .gh import default_branch
+from .gh import default_branch, gh_self_user
 from .git import main_worktree_path
 
 
@@ -44,7 +43,10 @@ def register_cwd() -> dict:
     """Append cwd's repo to config.json if not already present. Returns the entry."""
     ensure_state_dirs()
     repo = repo_root().resolve()
-    gh_user = run(["gh", "api", "user", "--jq", ".login"], check=False).strip()
+    try:
+        gh_user = gh_self_user()
+    except RuntimeError:
+        gh_user = ""
     base = default_branch(repo)
     name = repo.name
 
