@@ -34,7 +34,7 @@ cmux() {
   # "non-blocking status code" error on every prompt. Detach via subshell +
   # background + stdio redirection so the hook returns in <1ms regardless of
   # daemon health. Pill update is best-effort by design.
-  ( cmux "$@" --workspace "$CMUX_WORKSPACE_ID" </dev/null >/dev/null 2>&1 & )
+  ( command cmux "$@" --workspace "$CMUX_WORKSPACE_ID" </dev/null >/dev/null 2>&1 & )
 }
 
 loop_active_in_transcript() {
