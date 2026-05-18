@@ -14,6 +14,31 @@ def gh_json(args: list[str]) -> dict | list:
     return json.loads(run(["gh", *args]))
 
 
+def default_branch(repo: Path) -> str:
+    """GitHub default branch for `repo`, with git symbolic-ref fallback when offline."""
+    res = subprocess.run(
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "defaultBranchRef",
+            "--jq",
+            ".defaultBranchRef.name",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=repo,
+    )
+    if res.returncode == 0 and res.stdout.strip():
+        return res.stdout.strip()
+    out = run(
+        ["git", "-C", str(repo), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        check=False,
+    ).strip()
+    return out.removeprefix("origin/") if out else "main"
+
+
 def gh_self_user() -> str:
     """Resolve the current authenticated GitHub user via `gh api user`.
 
@@ -49,29 +74,40 @@ def fetch_merged_branches(repo_path: Path, limit: int = 100) -> set[str]:
         return set()
 
 
-def resolve_pr_branch(pr_num: str) -> str:
-    """Resolve a PR number to its head branch name via gh CLI (current cwd)."""
-    nwo = run(
-        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        check=False,
-    ).strip()
+def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:
+    """Fetch {number, title, author, url, headRefName} for a PR."""
+    fields = "number,title,author,url,headRefName"
+    if repo_dir:
+        result = subprocess.run(
+            ["gh", "pr", "view", pr_num, "--json", fields],
+            capture_output=True,
+            text=True,
+            cwd=str(repo_dir),
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"gh pr view failed: {result.stderr.strip()}")
+        return json.loads(result.stdout)
+    return gh_json(["pr", "view", pr_num, "--json", fields])
+
+
+def resolve_pr_branch(pr_num: str, repo_dir: Path | None = None) -> str:
+    """Resolve a PR number to its head branch name via gh CLI.
+
+    When `repo_dir` is given, both gh calls run with that as cwd so --repo
+    invocations target the right remote even from outside its tree.
+    """
+    cwd = str(repo_dir) if repo_dir else None
+
+    def _gh(args: list[str]) -> str:
+        res = subprocess.run(["gh", *args], capture_output=True, text=True, cwd=cwd)
+        return res.stdout.strip()
+
+    nwo = _gh(["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"])
     if not nwo:
         raise RuntimeError(f"could not resolve repo for PR #{pr_num}")
-    out = run(
-        [
-            "gh",
-            "-R",
-            nwo,
-            "pr",
-            "view",
-            pr_num,
-            "--json",
-            "headRefName",
-            "-q",
-            ".headRefName",
-        ],
-        check=False,
-    ).strip()
+    out = _gh(
+        ["-R", nwo, "pr", "view", pr_num, "--json", "headRefName", "-q", ".headRefName"]
+    )
     if not out:
         raise RuntimeError(f"could not resolve PR #{pr_num} to a branch via gh")
     return out
@@ -239,26 +275,49 @@ def _pr_from_node(n: dict) -> PR | None:
 
 def _relevant_pr_query(
     owner: str, name: str, self_user: str, coworker_branches: list[str], fields: str
-) -> str:
-    aliases = []
+) -> tuple[str, dict[str, str]]:
+    """Build the GraphQL query and the variable map for `gh api graphql -f`.
+
+    All string-typed user-influenced inputs (owner, name, self_user, every
+    coworker branch) flow through GraphQL variables so a crafted branch name
+    can't escape its string context and inject fragments.
+    """
+    var_decls = ["$owner: String!", "$name: String!", "$search: String!"]
+    variables: dict[str, str] = {
+        "owner": owner,
+        "name": name,
+        "search": f"repo:{owner}/{name} is:pr is:open author:{self_user}",
+    }
+    aliases: list[str] = []
     for i, branch in enumerate(coworker_branches):
-        b = branch.replace('"', '\\"')
+        key = f"cw{i}"
+        var_decls.append(f"${key}: String!")
+        variables[key] = branch
         aliases.append(
-            f'cw{i}: pullRequests(headRefName: "{b}", states: OPEN, first: 1) '
+            f"{key}: pullRequests(headRefName: ${key}, states: OPEN, first: 1) "
             f"{{ nodes {{ {fields} }} }}"
         )
     repo_block = (
-        f'repo: repository(owner: "{owner}", name: "{name}") {{ {" ".join(aliases)} }}'
+        f"repo: repository(owner: $owner, name: $name) {{ {' '.join(aliases)} }}"
         if aliases
         else ""
     )
-    return f"""query {{
-      mine: search(query: "repo:{owner}/{name} is:pr is:open author:{self_user}",
-                   first: 30, type: ISSUE) {{
-        nodes {{ ... on PullRequest {{ {fields} }} }}
-      }}
-      {repo_block}
-    }}"""
+    query = (
+        f"query ({', '.join(var_decls)}) {{\n"
+        f"  mine: search(query: $search, first: 30, type: ISSUE) {{\n"
+        f"    nodes {{ ... on PullRequest {{ {fields} }} }}\n"
+        f"  }}\n"
+        f"  {repo_block}\n"
+        f"}}"
+    )
+    return query, variables
+
+
+def _graphql(query: str, variables: dict[str, str]) -> dict | list:
+    args = ["api", "graphql", "-f", f"query={query}"]
+    for k, v in variables.items():
+        args.extend(["-f", f"{k}={v}"])
+    return gh_json(args)
 
 
 def _collect_nodes(data: dict, n_coworker: int) -> list[dict]:
@@ -267,6 +326,58 @@ def _collect_nodes(data: dict, n_coworker: int) -> list[dict]:
     for i in range(n_coworker):
         nodes.extend(repo.get(f"cw{i}", {}).get("nodes", []))
     return nodes
+
+
+def _fetch_light_phase(
+    owner: str, name: str, self_user: str, coworker_branches: list[str]
+) -> dict[int, str]:
+    query, variables = _relevant_pr_query(
+        owner, name, self_user, coworker_branches, _PR_LIGHT_FIELDS
+    )
+    light_data = _graphql(query, variables)
+    light_nodes = _collect_nodes(light_data, len(coworker_branches))
+    light_by_number: dict[int, str] = {}
+    for ln in light_nodes:
+        if ln.get("number") is not None:
+            light_by_number.setdefault(ln["number"], ln.get("updatedAt") or "")
+    return light_by_number
+
+
+def _identify_stale(
+    light_by_number: dict[int, str], cache: dict[int, tuple[PR, str]]
+) -> list[int]:
+    stale: list[int] = []
+    for num, updated in light_by_number.items():
+        prev = cache.get(num)
+        if prev is None or prev[1] != updated or prev[0].ci == "pending":
+            stale.append(num)
+    return stale
+
+
+def _hydrate_stale(
+    owner: str,
+    name: str,
+    stale: list[int],
+    light_by_number: dict[int, str],
+    cache: dict[int, tuple[PR, str]],
+) -> None:
+    # PR numbers are ints from prior GraphQL responses; safe to interpolate.
+    alias_lines = [
+        f"pr{i}: pullRequest(number: {n}) {{ {_PR_FIELDS} }}"
+        for i, n in enumerate(stale)
+    ]
+    heavy_q = (
+        "query ($owner: String!, $name: String!) "
+        f"{{ repository(owner: $owner, name: $name) "
+        f"{{ {' '.join(alias_lines)} }} }}"
+    )
+    heavy_data = _graphql(heavy_q, {"owner": owner, "name": name})
+    repo = heavy_data["data"]["repository"]
+    for i, num in enumerate(stale):
+        node = repo.get(f"pr{i}")
+        pr = _pr_from_node(node) if node else None
+        if pr:
+            cache[num] = (pr, light_by_number.get(num, ""))
 
 
 def list_relevant_prs(
@@ -284,43 +395,13 @@ def list_relevant_prs(
     cycles where nothing moved cost one cheap GraphQL call instead of the
     heavy one.
     """
-    light_q = _relevant_pr_query(
-        owner, name, self_user, coworker_branches, _PR_LIGHT_FIELDS
-    )
-    light_data = gh_json(["api", "graphql", "-f", f"query={light_q}"])
-    light_nodes = _collect_nodes(light_data, len(coworker_branches))
-    light_by_number: dict[int, str] = {}
-    for ln in light_nodes:
-        if ln.get("number") is not None:
-            light_by_number.setdefault(ln["number"], ln.get("updatedAt") or "")
-
+    light_by_number = _fetch_light_phase(owner, name, self_user, coworker_branches)
     if cache is None:
         cache = {}
-    stale: list[int] = []
-    for num, updated in light_by_number.items():
-        prev = cache.get(num)
-        if prev is None or prev[1] != updated or prev[0].ci == "pending":
-            stale.append(num)
-
+    stale = _identify_stale(light_by_number, cache)
     if stale:
-        alias_lines = [
-            f"pr{i}: pullRequest(number: {n}) {{ {_PR_FIELDS} }}"
-            for i, n in enumerate(stale)
-        ]
-        heavy_q = (
-            f'query {{ repository(owner: "{owner}", name: "{name}") '
-            f'{{ {" ".join(alias_lines)} }} }}'
-        )
-        heavy_data = gh_json(["api", "graphql", "-f", f"query={heavy_q}"])
-        repo = heavy_data["data"]["repository"]
-        for i, num in enumerate(stale):
-            node = repo.get(f"pr{i}")
-            pr = _pr_from_node(node) if node else None
-            if pr:
-                cache[num] = (pr, light_by_number.get(num, ""))
-
+        _hydrate_stale(owner, name, stale, light_by_number, cache)
     for num in list(cache):
         if num not in light_by_number:
             del cache[num]
-
     return [cache[num][0] for num in light_by_number if num in cache]

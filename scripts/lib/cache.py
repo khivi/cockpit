@@ -9,6 +9,7 @@ Consumers:
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING
 
 from .config import CACHE_DIR, ensure_state_dirs
@@ -35,8 +36,22 @@ def write_pr_cache(repo_name: str, pr: "PR") -> dict:
         "unaddressed": pr.unaddressed,
         "mergeable": pr.mergeable,
     }
-    path.write_text(json.dumps(payload, indent=2))
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(path)
     return payload
+
+
+def _iter_cache(pattern: str):
+    """Yield (path, payload) for each readable JSON cache file matching pattern."""
+    if not CACHE_DIR.is_dir():
+        return
+    for path in CACHE_DIR.glob(pattern):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        yield path, payload
 
 
 def find_pr_payload(branch: str, repo_name: str | None = None) -> dict | None:
@@ -45,28 +60,29 @@ def find_pr_payload(branch: str, repo_name: str | None = None) -> dict | None:
     If `repo_name` is given, restrict the search to that repo's cache files
     (prefix-glob). Otherwise scan every cache file.
     """
-    if not CACHE_DIR.is_dir():
-        return None
     pattern = f"{repo_name.replace('/', '_')}__pr-*.json" if repo_name else "*.json"
-    for path in CACHE_DIR.glob(pattern):
-        try:
-            payload = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
+    for _, payload in _iter_cache(pattern):
         if payload.get("branch") == branch:
+            return payload
+    return None
+
+
+def find_pr_payload_by_number(pr_num: str, repo_name: str | None = None) -> dict | None:
+    """Return the cached PR snapshot whose `number` matches `pr_num`, or None."""
+    pattern = (
+        f"{repo_name.replace('/', '_')}__pr-{pr_num}.json"
+        if repo_name
+        else f"*__pr-{pr_num}.json"
+    )
+    for _, payload in _iter_cache(pattern):
+        if str(payload.get("number")) == str(pr_num):
             return payload
     return None
 
 
 def delete_pr_caches_for_branch(repo_name: str, branch: str) -> None:
     """Remove cached PR snapshots for `repo_name` whose payload `branch` matches."""
-    if not CACHE_DIR.is_dir():
-        return
     prefix = repo_name.replace("/", "_")
-    for f in CACHE_DIR.glob(f"{prefix}__pr-*.json"):
-        try:
-            data = json.loads(f.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
+    for path, data in _iter_cache(f"{prefix}__pr-*.json"):
         if data.get("branch") == branch:
-            f.unlink(missing_ok=True)
+            path.unlink(missing_ok=True)

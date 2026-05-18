@@ -7,12 +7,12 @@ it reads PR state from `lib/cache`, never touches the network.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .cache import find_pr_payload
+from .git import count_dirty, current_branch, repo_state
 
 
 def _size_label(size: int) -> str:
@@ -98,15 +98,30 @@ def _session_pills(blob: str) -> list[str]:
 
 def _git_branch_and_dirty() -> tuple[str, int]:
     """`(branch, dirty_count)` for cwd. Branch is "" if not in a git repo."""
-    branch = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True
-    ).stdout.strip()
+    here = Path(".")
+    branch = current_branch(here)
     if not branch:
         return "", 0
-    porcelain = subprocess.run(
-        ["git", "status", "--porcelain"], capture_output=True, text=True
-    ).stdout
-    return branch, sum(1 for row in porcelain.splitlines() if row)
+    return branch, count_dirty(here)
+
+
+def _ci_glyph(ci_raw: str) -> str:
+    if ci_raw == "passed":
+        return "✓"
+    if ci_raw.startswith("failed"):
+        return "✗"
+    if ci_raw in ("pending", ""):
+        return "•"
+    return ci_raw
+
+
+def _pr_label(match: dict) -> str:
+    state = str(match.get("state") or "")
+    if state != "OPEN":
+        return state.lower()
+    if match.get("isDraft"):
+        return "draft"
+    return str(match.get("review") or "").lower().replace("_", "-")
 
 
 def _pr_segment(branch: str) -> str:
@@ -114,25 +129,9 @@ def _pr_segment(branch: str) -> str:
     match = find_pr_payload(branch)
     if not match:
         return f"{branch} · no PR"
-    ci_raw = str(match.get("ci") or "")
-    ci = (
-        "✓"
-        if ci_raw == "passed"
-        else (
-            "✗"
-            if ci_raw.startswith("failed")
-            else "•" if ci_raw in ("pending", "") else ci_raw
-        )
-    )
-    state = str(match.get("state") or "")
-    if state == "OPEN" and match.get("isDraft"):
-        label = "draft"
-    elif state == "OPEN":
-        label = str(match.get("review") or "").lower().replace("_", "-")
-    else:
-        label = state.lower()
+    ci = _ci_glyph(str(match.get("ci") or ""))
     head = f"#{match.get('number')} {branch}"
-    return f"{head} · {ci} · {label}"
+    return f"{head} · {ci} · {_pr_label(match)}"
 
 
 def render_footer() -> int:
@@ -157,9 +156,11 @@ def render_footer() -> int:
     dirty_pill = f"✏️ {dirty}" if dirty else ""
 
     head = _pr_segment(branch) if branch else ""
+    state = repo_state(Path(".")) if branch else ""
+    state_pill = {"rebase": "🔄 rebasing", "merge": "🔀 merging"}.get(state, "")
 
     pills_line = " · ".join(_session_pills(blob))
-    head_line = " · ".join(p for p in [head, dirty_pill] if p)
+    head_line = " · ".join(p for p in [head, state_pill, dirty_pill] if p)
     out = "\n".join(line for line in (pills_line, head_line) if line)
     if out:
         print(out)

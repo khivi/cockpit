@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import run
+from .colors import bold, issue_color, magenta
 from .gh import PR
-from .git import Worktree
+from .git import Worktree, worktrees
+from .prompts import build_orphan_prompt, build_pr_prompt, claude_command
 
 GREEN = "#2dd36f"
 RED = "#eb445a"
@@ -266,6 +270,82 @@ def apply_pills(
     return frozenset(desired)
 
 
+@dataclass
+class WorkspaceMatch:
+    ref: str
+    name: str
+    worktree: Worktree | None
+
+
+def _pr_num_to_branch(pr_num: str) -> str:
+    from .cache import find_pr_payload_by_number
+    from .config import discover_repo
+
+    repo_cfg = discover_repo()
+    repo_name = repo_cfg.get("name") if repo_cfg else None
+    payload = find_pr_payload_by_number(pr_num, repo_name=repo_name)
+    if payload is None:
+        raise LookupError(f"PR #{pr_num} not in cockpit cache")
+    branch = payload.get("branch")
+    if not branch:
+        raise LookupError(f"PR #{pr_num} has no branch in cockpit cache")
+    return branch
+
+
+def resolve_workspace(query: str, repo_dir: Path) -> WorkspaceMatch:
+    """Resolve `<pr|branch|slug>` against live cmux + git state.
+
+    Match order: PR number (#N or N) via cache → worktree branch → workspace name.
+    Raises LookupError on no match or ambiguity.
+    """
+    names = workspace_names()
+    cwds = workspace_cwds()
+    wts = worktrees(repo_dir)
+    wt_by_path = {wt.path.resolve(): wt for wt in wts}
+    wt_by_branch = {wt.branch: wt for wt in wts}
+
+    wt_for_ref: dict[str, Worktree | None] = {
+        ref: (wt_by_path.get(cwds[ref].resolve()) if ref in cwds else None)
+        for ref in set(names) | set(cwds)
+    }
+
+    def _ref_for_worktree(wt: Worktree) -> str:
+        candidates = [r for r, w in wt_for_ref.items() if w is wt]
+        if not candidates:
+            raise LookupError(f"worktree {wt.path} has no cmux workspace")
+        if len(candidates) > 1:
+            raise LookupError(
+                f"worktree {wt.path} matches multiple workspaces: {sorted(candidates)}"
+            )
+        return candidates[0]
+
+    pr_match = re.fullmatch(r"#?(\d+)", query)
+    if pr_match:
+        pr_num = pr_match.group(1)
+        branch = _pr_num_to_branch(pr_num)
+        wt = wt_by_branch.get(branch)
+        if wt is None:
+            raise LookupError(f"PR #{pr_num} (branch {branch!r}) has no worktree")
+        ref = _ref_for_worktree(wt)
+        return WorkspaceMatch(ref, names.get(ref, ""), wt)
+
+    if query in wt_by_branch:
+        wt = wt_by_branch[query]
+        ref = _ref_for_worktree(wt)
+        return WorkspaceMatch(ref, names.get(ref, ""), wt)
+
+    slug_refs = [r for r, n in names.items() if n == query]
+    if len(slug_refs) > 1:
+        raise LookupError(
+            f"slug {query!r} matches multiple workspaces: {sorted(slug_refs)}"
+        )
+    if slug_refs:
+        ref = slug_refs[0]
+        return WorkspaceMatch(ref, query, wt_for_ref.get(ref))
+
+    raise LookupError(f"no workspace matched {query!r}")
+
+
 def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:
     """Close the workspace identified by name or ref.
 
@@ -274,3 +354,105 @@ def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:
     cmux("close-workspace", "--workspace", short_or_ref, check=False)
     after = cmux("list-workspaces", check=False)
     return short_or_ref not in after
+
+
+def spawn_workspace(name: str, cwd: Path, command: str) -> str | None:
+    """Spawn a new cmux workspace and return its ref, or None on failure.
+
+    Works around `cmux new-workspace` not returning the ref on stdout: snapshots
+    existing refs, spawns, then polls `list-workspaces` for a new one.
+    """
+    before = set(list_workspaces())
+    cmux(
+        "new-workspace",
+        "--name",
+        name,
+        "--cwd",
+        str(cwd),
+        "--command",
+        command,
+        "--focus",
+        "false",
+    )
+    return wait_for_new_workspace_ref(before)
+
+
+def spawn_pr_workspace(pr: PR, wt: Worktree, *, dry: bool = False) -> str | None:
+    """Spawn the tracked cmux workspace for a PR; apply pills, log to stdout."""
+    if dry:
+        print(f"  [dry] spawn {wt.short}  #{pr.number}  cwd={wt.path}", flush=True)
+        for key, value, _ in status_pills(pr, wt):
+            print(f"  [dry]   pill {key}={value}", flush=True)
+        return None
+    ref = spawn_workspace(wt.short, wt.path, claude_command(build_pr_prompt(pr)))
+    if ref is None:
+        print(
+            f"  warn: could not resolve new workspace ref for {wt.short}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+    apply_pills(ref, pr, wt)
+    print(
+        f"  {magenta('spawned')} {bold(wt.short)} ({ref})  #{pr.number}"
+        f"  [{issue_color(pr.display_issue)(pr.display_issue)}]",
+        flush=True,
+    )
+    return ref
+
+
+def spawn_orphan_workspace(wt: Worktree, *, dry: bool = False) -> str | None:
+    """Spawn an orphan-worktree workspace (no PR); apply orphan + WIP pills."""
+    if dry:
+        print(f"  [dry] orphan spawn {wt.short}  cwd={wt.path}", flush=True)
+        return None
+    ref = spawn_workspace(wt.short, wt.path, claude_command(build_orphan_prompt(wt)))
+    if ref is None:
+        print(
+            f"  warn: could not resolve orphan workspace ref for {wt.short}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+    cmux(
+        "set-status",
+        ORPHAN_KEY,
+        ORPHAN_ICON,
+        "--workspace",
+        ref,
+        "--color",
+        ORANGE,
+        check=False,
+    )
+    apply_wip_pill(ref, wt.dirty_count)
+    print(
+        f"  {magenta('ORPHAN:')} spawned {bold(wt.short)} ({ref})  branch={wt.branch}",
+        flush=True,
+    )
+    return ref
+
+
+def close_gone_cwd_workspaces(*, dry: bool = False) -> list[str]:
+    """Close cmux workspaces whose cwd no longer exists on disk; returns refs closed.
+
+    A worktree can be removed externally (manual `git worktree remove`, an
+    autoclose pass that crashed before closing the workspace, sync tools)
+    without taking its cmux workspace with it. The workspace becomes unusable
+    because its processes have no cwd. Close it.
+    """
+    closed: list[str] = []
+    names, cwds = workspace_state()
+    for ref, cwd in cwds.items():
+        if cwd.exists():
+            continue
+        ws_name = names.get(ref, ref)
+        action = "[dry] autoclose" if dry else "autoclose:"
+        print(
+            f"  {magenta(action)} closing workspace {ws_name} ({ref}) "
+            f"— cwd missing: {cwd}",
+            flush=True,
+        )
+        if not dry:
+            cmux_close_workspace_best_effort(ref)
+            closed.append(ref)
+    return closed

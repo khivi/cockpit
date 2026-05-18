@@ -1,5 +1,7 @@
 ---
 description: "Show all cockpit-managed worktrees with their PR status."
+argument-hint: ""
+model: haiku
 allowed-tools: Bash
 ---
 
@@ -11,9 +13,9 @@ Read `git worktree list` for every managed repo, cross-reference `cmux list-work
 
 ```text
 REPO          BRANCH              PR     CI       REVIEW              UPDATED
-myrepo        feature/foo         #123   pass     approved            2m ago
-myrepo        fix/bar             #124   fail     changes-req 💬3     1h ago
-otherrepo     experiment/baz      —      —        —                   3d ago  (no PR)
+myrepo        feature/foo         #123   pass     approved            2025-05-17T14:23:01
+myrepo        fix/bar             #124   fail     changes-req 💬3     2025-05-17T13:10:44
+otherrepo     experiment/baz      —      —        —                   2025-05-14T09:05:22  (no PR)
 ```
 
 Drift markers appended where they apply:
