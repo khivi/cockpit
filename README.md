@@ -19,7 +19,7 @@ State is **derived**, not stored separately: `git worktree list` + `cmux tree --
 Inside Claude Code:
 
 ```text
-/plugin marketplace add khivi/cockpit
+/plugin marketplace add https://github.com/khivi/cockpit
 /plugin install cockpit@khivi
 ```
 
