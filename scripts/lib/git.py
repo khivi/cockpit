@@ -49,15 +49,27 @@ def count_dirty(wt_path: Path) -> int:
 
 
 def _count_unpushed(wt_path: Path) -> int:
-    """Commits on HEAD not present on the upstream tracking branch.
+    """Commits on HEAD not reachable from any remote-tracking ref.
 
-    Returns 0 if there is no upstream (nothing to push against; treat as safe).
-    Returns -1 if git rev-list fails outright so callers can distinguish
-    "verified clean" from "could not check".
+    A commit is "safe" if it's reachable from at least one `refs/remotes/*`
+    ref — its own pushed branch, origin/main, or any other remote. This
+    handles squash-merged PRs (HEAD still equals origin/<branch> even though
+    origin/main has a different SHA) and misconfigured upstreams (e.g.
+    @{upstream} pointing at origin/main instead of the branch's own remote).
+
+    Returns 0 if there are no remote refs at all (nothing to push against;
+    treat as safe). Returns -1 if git fails outright so callers can
+    distinguish "verified clean" from "could not check".
     """
-    if _git(wt_path, "rev-parse", "--abbrev-ref", "@{upstream}").returncode != 0:
+    refs_res = _git(wt_path, "for-each-ref", "--format=%(refname)", "refs/remotes/")
+    if refs_res.returncode != 0:
+        return -1
+    remote_refs = [
+        r for r in refs_res.stdout.splitlines() if r and not r.endswith("/HEAD")
+    ]
+    if not remote_refs:
         return 0
-    res = _git(wt_path, "rev-list", "--count", "@{upstream}..HEAD")
+    res = _git(wt_path, "rev-list", "--count", "HEAD", "--not", *remote_refs)
     if res.returncode != 0:
         return -1
     out = res.stdout.strip()
