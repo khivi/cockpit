@@ -5,8 +5,8 @@ on:
     paths:
       - 'scripts/**'
       - '.claude-plugin/**'
+      - '**/*.md'
       - '!.github/**'
-      - '!*.md'
 
 jobs:
   check:
