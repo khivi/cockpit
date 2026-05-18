@@ -339,13 +339,6 @@ def cycle_repo(
         f"tracked: {len(tracked)}  wip: {wip_count}",
         flush=True,
     )
-    if tracked:
-        labels = sorted(names.get(ref, ref) for ref in tracked)
-        print(
-            f"  {dim('tracked:')} {', '.join(cyan(lbl) for lbl in labels)}",
-            flush=True,
-        )
-
     for pr in prs:
         write_pr_cache(name, pr)
 
@@ -392,6 +385,7 @@ def cycle_repo(
             if not dry:
                 cmux_close_workspace_best_effort(extra)
 
+    printed_refresh = False
     for ref, (pr, wt) in tracked.items():
         if ref not in keep_refs:
             continue
@@ -408,6 +402,7 @@ def cycle_repo(
                 f"[{issue_color(pr.display_issue)(tag)}]",
                 flush=True,
             )
+            printed_refresh = True
         if changed:
             pill_state[ref] = desired
         if pr.display_issue in ACTIONABLE_ISSUES:
@@ -418,6 +413,14 @@ def cycle_repo(
             else:
                 desc = "merge conflicts vs base — rebase and force-push"
             maybe_nudge(ref, f"PR #{pr.number}: {desc}.", nudge_state, dry, label)
+
+    if tracked and not printed_refresh:
+        labels = sorted(names.get(ref, ref) for ref in tracked if ref in keep_refs)
+        if labels:
+            print(
+                f"  {dim('tracked:')} {', '.join(cyan(lbl) for lbl in labels)}",
+                flush=True,
+            )
 
     wt_by_name = {wt.short: wt for wt in wts}
     pr_branches = {pr.branch for pr in prs}
