@@ -102,6 +102,17 @@ Output per render (current branch, current cwd):
 
 Reads cockpit's cache only — never blocks on `gh`. Falls back to `<branch> · no PR` when there's no cache hit, and to an empty line outside a git repo. The Linear ticket ID (e.g. `PE-4081`) is regex-extracted from the branch name — no API call. The `🤖` (model), `🧠` (context window), `⌛` (5h usage), and `⏱` (elapsed wall-clock since the first transcript entry) parts all come from the JSON Claude Code pipes on stdin.
 
+## Nudge wiring (idle pill)
+
+`hooks/cmux-idle-pill.sh` is wired automatically via the plugin's `hooks.json` and is what makes the cockpit's nudge logic actually fire. It writes a cmux pill `idle=☕ rest` on Claude Code's `Stop` event and clears it on `UserPromptSubmit`. Inside `--watch`, the reconciler reads this pill in `nudge_if_idle` to decide whether to ping a workspace about an actionable PR signal (CI failed, unresolved threads, merge conflict). Without it, the cockpit is a passive dashboard.
+
+Two non-obvious behaviors worth knowing:
+
+- **`/loop` suppression.** On `Stop`, the hook scans the transcript's most recent assistant turn. If it called `ScheduleWakeup` or `CronCreate`, the pill is left cleared — a session waiting for its own next wakeup is not at rest, even though it isn't running a turn right now.
+- **Fire-and-forget detach.** Every `cmux` call is backgrounded so the hook returns in <1 ms regardless of daemon state. The cmux socket occasionally stalls under contention (cockpit watcher + every session's hooks), and without the detach Claude Code's hook timeout surfaces a "non-blocking status code" banner on every prompt. Pill updates are best-effort by design.
+
+Outside cmux, the hook no-ops (early-exits on missing `CMUX_WORKSPACE_ID`).
+
 ## Current defaults & how to change them
 
 | Knob | Default | Where to change |
