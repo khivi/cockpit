@@ -16,11 +16,18 @@ State is **derived**, not stored separately: `git worktree list` + `cmux tree --
 
 ## Install
 
+Inside Claude Code:
+
+```text
+/plugin marketplace add khivi/cockpit
+/plugin install cockpit@khivi
+```
+
+Then start the cockpit in the foreground so you can see what it's doing.
+First run auto-creates `~/.config/cockpit/`, seeds `config.json`, and prompts
+once to wire Claude Code's statusLine to the cockpit footer:
+
 ```bash
-claude /plugin install khivi/cockpit
-# start the cockpit in the foreground so you can see what it's doing
-# (first run auto-creates ~/.config/cockpit/, seeds config.json,
-#  and prompts once to wire Claude Code's statusLine to the cockpit footer):
 ${CLAUDE_PLUGIN_ROOT}/scripts/cockpit.py --watch
 # or run one cycle and exit:
 ${CLAUDE_PLUGIN_ROOT}/scripts/cockpit.py --once
@@ -105,7 +112,6 @@ Reads cockpit's cache only — never blocks on `gh`. Falls back to `<branch> · 
 | Auto-cleanup on merge | **on** | `config.json` → `auto_cleanup_on_merge: false`. When on, the cockpit removes the worktree **and** closes the cmux workspace on any cycle where the PR is MERGED, the worktree is clean, and there are no unpushed commits. cmux has no single-workspace destroy verb — workspace teardown closes every surface and logs a warning if the workspace persists. |
 | Branch prefix | `<gh user>/` | `config.json` → per-repo `branch_prefix` |
 | Default base branch | repo's `defaultBranchRef` | `config.json` → per-repo `default_base` |
-| Tabs per workspace | 1 (`claude`) | edit `scripts/spawn.py` (single `cmux new-workspace --command`) |
 
 ## Requirements
 
