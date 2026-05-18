@@ -83,13 +83,13 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 
 ## Claude Code statusline
 
-`cockpit.py --footer` doubles as a Claude Code statusline command. The first run of `cockpit.py` offers to wire it for you; to do it by hand, add to `~/.claude/settings.json`:
+`scripts/footer.py` doubles as a Claude Code statusline command. The first run of `cockpit.py` offers to wire it for you; to do it by hand, add to `~/.claude/settings.json`:
 
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "${CLAUDE_PLUGIN_ROOT}/scripts/cockpit.py --footer"
+    "command": "${CLAUDE_PLUGIN_ROOT}/scripts/footer.py"
   }
 }
 ```
