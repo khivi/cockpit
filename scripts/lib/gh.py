@@ -280,26 +280,49 @@ def _pr_from_node(n: dict) -> PR | None:
 
 def _relevant_pr_query(
     owner: str, name: str, self_user: str, coworker_branches: list[str], fields: str
-) -> str:
-    aliases = []
+) -> tuple[str, dict[str, str]]:
+    """Build the GraphQL query and the variable map for `gh api graphql -f`.
+
+    All string-typed user-influenced inputs (owner, name, self_user, every
+    coworker branch) flow through GraphQL variables so a crafted branch name
+    can't escape its string context and inject fragments.
+    """
+    var_decls = ["$owner: String!", "$name: String!", "$search: String!"]
+    variables: dict[str, str] = {
+        "owner": owner,
+        "name": name,
+        "search": f"repo:{owner}/{name} is:pr is:open author:{self_user}",
+    }
+    aliases: list[str] = []
     for i, branch in enumerate(coworker_branches):
-        b = branch.replace('"', '\\"')
+        key = f"cw{i}"
+        var_decls.append(f"${key}: String!")
+        variables[key] = branch
         aliases.append(
-            f'cw{i}: pullRequests(headRefName: "{b}", states: OPEN, first: 1) '
+            f"{key}: pullRequests(headRefName: ${key}, states: OPEN, first: 1) "
             f"{{ nodes {{ {fields} }} }}"
         )
     repo_block = (
-        f'repo: repository(owner: "{owner}", name: "{name}") {{ {" ".join(aliases)} }}'
+        f"repo: repository(owner: $owner, name: $name) {{ {' '.join(aliases)} }}"
         if aliases
         else ""
     )
-    return f"""query {{
-      mine: search(query: "repo:{owner}/{name} is:pr is:open author:{self_user}",
-                   first: 30, type: ISSUE) {{
-        nodes {{ ... on PullRequest {{ {fields} }} }}
-      }}
-      {repo_block}
-    }}"""
+    query = (
+        f"query ({', '.join(var_decls)}) {{\n"
+        f"  mine: search(query: $search, first: 30, type: ISSUE) {{\n"
+        f"    nodes {{ ... on PullRequest {{ {fields} }} }}\n"
+        f"  }}\n"
+        f"  {repo_block}\n"
+        f"}}"
+    )
+    return query, variables
+
+
+def _graphql(query: str, variables: dict[str, str]) -> dict | list:
+    args = ["api", "graphql", "-f", f"query={query}"]
+    for k, v in variables.items():
+        args.extend(["-f", f"{k}={v}"])
+    return gh_json(args)
 
 
 def _collect_nodes(data: dict, n_coworker: int) -> list[dict]:
@@ -313,10 +336,10 @@ def _collect_nodes(data: dict, n_coworker: int) -> list[dict]:
 def _fetch_light_phase(
     owner: str, name: str, self_user: str, coworker_branches: list[str]
 ) -> dict[int, str]:
-    light_q = _relevant_pr_query(
+    query, variables = _relevant_pr_query(
         owner, name, self_user, coworker_branches, _PR_LIGHT_FIELDS
     )
-    light_data = gh_json(["api", "graphql", "-f", f"query={light_q}"])
+    light_data = _graphql(query, variables)
     light_nodes = _collect_nodes(light_data, len(coworker_branches))
     light_by_number: dict[int, str] = {}
     for ln in light_nodes:
@@ -343,15 +366,17 @@ def _hydrate_stale(
     light_by_number: dict[int, str],
     cache: dict[int, tuple[PR, str]],
 ) -> None:
+    # PR numbers are ints from prior GraphQL responses; safe to interpolate.
     alias_lines = [
         f"pr{i}: pullRequest(number: {n}) {{ {_PR_FIELDS} }}"
         for i, n in enumerate(stale)
     ]
     heavy_q = (
-        f'query {{ repository(owner: "{owner}", name: "{name}") '
-        f'{{ {" ".join(alias_lines)} }} }}'
+        "query ($owner: String!, $name: String!) "
+        f"{{ repository(owner: $owner, name: $name) "
+        f"{{ {' '.join(alias_lines)} }} }}"
     )
-    heavy_data = gh_json(["api", "graphql", "-f", f"query={heavy_q}"])
+    heavy_data = _graphql(heavy_q, {"owner": owner, "name": name})
     repo = heavy_data["data"]["repository"]
     for i, num in enumerate(stale):
         node = repo.get(f"pr{i}")
