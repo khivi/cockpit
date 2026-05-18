@@ -2,14 +2,24 @@
 """Create worktree (sibling of main repo) + spawn cmux workspace with claude pre-running.
 
 Usage:
-  spawn.py --branch <branch> --path <path> --name <name>             # branch mode
-  spawn.py --branch <branch> --path <path> --name <name> --pr <num>  # PR mode (fetch pull/N/head)
-  spawn.py --cwd <path> --name <name>                                # skill mode (no worktree)
+  spawn.py <branch|PR|github-url>                         # positional (auto-detected)
+  spawn.py --branch <branch> --name <name>                # branch mode (explicit)
+  spawn.py --branch <branch> --name <name> --pr <num>     # PR mode (fetch pull/N/head)
+  spawn.py --cwd <path> --name <name>                     # skill mode (no worktree)
 
 Optional:
-  --prompt-stdin          Read a prompt from stdin and pass it as claude's first message
-                          (`claude <quoted-prompt>` instead of bare `claude`).
-  --claude-prompt <str>   Pass a prompt string directly (alternative to --prompt-stdin).
+  --claude-prompt <str>   Prompt for claude's first message.
+                          Defaults to a plan-only prompt when input is a PR.
+                          Defaults to none (bare `claude`) for branch/cwd input.
+
+Positional detection (5 steps):
+  1. GitHub PR URL (https://github.com/.../pull/N) → PR mode
+  2. Bare PR number (#N or N)                       → PR mode
+  3. Local branch (refs/heads/<branch> exists)      }
+  4. Remote branch (refs/remotes/origin/<branch>)   } → branch mode (git resolves)
+  5. New branch (neither local nor remote)          }
+  # TODO: Linear ID (PE-1234) → resolve via Linear API
+  # TODO: Slack URL           → resolve via Slack API
 
 Behaviour:
   - Repo discovery walks up from cwd; matches against ~/.config/cockpit/config.json.
@@ -20,6 +30,7 @@ Behaviour:
   - --cwd mode skips repo discovery and worktree creation entirely; the workspace
     is spawned directly in <path>.
   - Idempotent: existing worktree+workspace for the branch -> attach, don't error.
+  - Explicit --branch/--pr take priority over positional.
 
 Exit codes:
   0 = ok (created or attached)
@@ -30,13 +41,14 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import re
 import shlex
 import sys
 from pathlib import Path
 
 from lib.cmux import cmux, workspace_names
 from lib.config import discover_repo, find_repo_by_name
-from lib.gh import resolve_pr_branch
+from lib.gh import fetch_pr_info, resolve_pr_branch
 from lib.git import collision_free, create_worktree, slugify, worktree_for_branch
 from lib.registry import register_cwd
 
@@ -45,20 +57,33 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    p.add_argument("positional", nargs="?", metavar="branch|PR|url")
     p.add_argument("--branch")
-    p.add_argument("--path")
     p.add_argument("--cwd")
     p.add_argument("--name")
     p.add_argument("--pr")
-    p.add_argument("--base")
     p.add_argument(
         "--repo", help="target a configured repo by name (skips cwd-based discovery)"
     )
-    p.add_argument("--prompt-stdin", action="store_true")
-    p.add_argument(
-        "--claude-prompt", help="prompt string to pass as claude's first message"
-    )
+    p.add_argument("--claude-prompt", help="prompt for claude's first message")
     return p.parse_args()
+
+
+def detect_source(value: str) -> tuple[str, str]:
+    """Classify positional into (mode, resolved_value).
+
+    Steps 1-2 resolved here; steps 3-5 (local/remote/new branch) resolved by
+    create_worktree at worktree-creation time.
+    """
+    # Step 1: GitHub PR URL
+    m = re.match(r"https?://github\.com/[^/]+/[^/]+/pull/(\d+)", value)
+    if m:
+        return "pr", m.group(1)
+    # Step 2: bare PR number
+    if re.fullmatch(r"#?\d+", value):
+        return "pr", value.lstrip("#")
+    # Steps 3-5: branch (local / remote / new — git resolves at worktree time)
+    return "branch", value
 
 
 def select_repo(repo_name: str | None) -> dict:
@@ -81,33 +106,58 @@ def select_repo(repo_name: str | None) -> dict:
 def resolve_worktree(
     branch: str | None,
     pr_num: str | None,
-    wt_path: str | None,
-    base: str,
     repo_name: str | None,
 ) -> tuple[Path, str, bool]:
     repo_cfg = select_repo(repo_name)
-
     repo = Path(repo_cfg["path"]).expanduser().resolve()
     branch_prefix = repo_cfg.get("branch_prefix", "")
+    base = repo_cfg.get("default_base", "main")
 
     if pr_num and not branch:
         branch = resolve_pr_branch(pr_num)
     if not branch:
         raise ValueError("need <branch> or --pr <num>")
 
-    if not wt_path:
-        short_default = slugify(branch.rsplit("/", 1)[-1])
-        wt_path = str(repo.parent / short_default)
-
     existing = worktree_for_branch(repo, branch)
     if existing is not None:
         return existing, branch, True
 
-    wt = collision_free(Path(wt_path))
+    wt = collision_free(repo.parent / slugify(branch.rsplit("/", 1)[-1]))
     branch = create_worktree(
         repo, branch, wt, base=base, pr_num=pr_num, branch_prefix=branch_prefix
     )
     return wt, branch, False
+
+
+def _plan_only_prompt(pr_num: str, branch: str, wt: Path) -> str | None:
+    try:
+        info = fetch_pr_info(pr_num, wt)
+    except Exception:
+        return None
+    author = (info.get("author") or {}).get("login", "unknown")
+    title = info.get("title", f"PR #{pr_num}")
+    url = info.get("url", "")
+    return "\n".join(
+        [
+            "/session-coordination",
+            "",
+            f"You are starting a fresh task in a new worktree on branch `{branch}`.",
+            "",
+            f"**Source**: PR #{pr_num} by @{author}",
+            f"**Task**: {title}",
+            "",
+            f"**Context**: {url}",
+            "",
+            "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
+            "- DO NOT edit files, write code, run tests, or commit anything.",
+            "- You MAY use Read, Grep, Glob, and re-fetch the linked ticket/thread for context.",
+            "- Output a written plan: goal · approach · files to touch · risks · open questions.",
+            "- Ask clarifying questions if the spec is ambiguous.",
+            "- Wait for the user to approve or refine before implementing.",
+            "",
+            "Begin by writing the plan.",
+        ]
+    )
 
 
 def claude_command(prompt: str | None) -> str:
@@ -118,36 +168,23 @@ def claude_command(prompt: str | None) -> str:
 
 def main() -> int:
     args = parse_args()
-    branch, wt_path, cwd, short, pr_num, base = (
-        args.branch,
-        args.path,
-        args.cwd,
-        args.name,
-        args.pr,
-        args.base,
-    )
+    branch, cwd, short, pr_num = args.branch, args.cwd, args.name, args.pr
 
-    if cwd and (branch or pr_num or wt_path or args.repo):
+    if args.positional and not (branch or pr_num):
+        mode, value = detect_source(args.positional)
+        if mode == "pr":
+            pr_num = value
+        else:
+            branch = value
+
+    if cwd and (branch or pr_num or args.repo):
         print(
-            "ERROR: --cwd is mutually exclusive with --branch/--pr/--path/--repo args",
+            "ERROR: --cwd is mutually exclusive with --branch/--pr/--repo args",
             file=sys.stderr,
         )
         return 1
 
-    prompt: str | None = None
-    if args.prompt_stdin and args.claude_prompt:
-        print(
-            "ERROR: --prompt-stdin and --claude-prompt are mutually exclusive",
-            file=sys.stderr,
-        )
-        return 1
-    if args.prompt_stdin:
-        prompt = sys.stdin.read()
-        if not prompt.strip():
-            print("ERROR: --prompt-stdin set but stdin is empty", file=sys.stderr)
-            return 1
-    elif args.claude_prompt:
-        prompt = args.claude_prompt
+    prompt: str | None = args.claude_prompt
 
     if cwd:
         wt = Path(cwd).expanduser().resolve()
@@ -160,17 +197,14 @@ def main() -> int:
         branch_display = None
     else:
         if not branch and not pr_num:
-            print("ERROR: --branch or --pr is required", file=sys.stderr)
+            print(
+                "ERROR: positional <branch|PR|url> or --branch/--pr is required",
+                file=sys.stderr,
+            )
             return 1
 
-        if not base:
-            repo_cfg = find_repo_by_name(args.repo) if args.repo else discover_repo()
-            base = (repo_cfg or {}).get("default_base", "main")
-
         try:
-            wt, branch, attached_wt = resolve_worktree(
-                branch, pr_num, wt_path, base, args.repo
-            )
+            wt, branch, attached_wt = resolve_worktree(branch, pr_num, args.repo)
         except RuntimeError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
@@ -181,6 +215,9 @@ def main() -> int:
         if not short:
             short = slugify(branch.rsplit("/", 1)[-1])
         branch_display = branch
+
+        if prompt is None and pr_num:
+            prompt = _plan_only_prompt(pr_num, branch, wt)
 
     ws_name = short
     existing_ws = set(workspace_names().values())

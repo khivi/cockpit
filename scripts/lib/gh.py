@@ -49,6 +49,22 @@ def fetch_merged_branches(repo_path: Path, limit: int = 100) -> set[str]:
         return set()
 
 
+def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:
+    """Fetch {number, title, author, url, headRefName} for a PR."""
+    fields = "number,title,author,url,headRefName"
+    if repo_dir:
+        result = subprocess.run(
+            ["gh", "pr", "view", pr_num, "--json", fields],
+            capture_output=True,
+            text=True,
+            cwd=str(repo_dir),
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"gh pr view failed: {result.stderr.strip()}")
+        return json.loads(result.stdout)
+    return gh_json(["pr", "view", pr_num, "--json", fields])
+
+
 def resolve_pr_branch(pr_num: str) -> str:
     """Resolve a PR number to its head branch name via gh CLI (current cwd)."""
     nwo = run(
