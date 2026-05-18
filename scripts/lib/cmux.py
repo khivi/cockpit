@@ -247,18 +247,10 @@ def apply_pills(
 
 
 def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:
-    """Close every surface in the workspace identified by name or ref.
+    """Close the workspace identified by name or ref.
 
-    cmux has no single-workspace destroy verb. Returns True if the workspace
-    no longer appears in `cmux list-workspaces`.
+    Returns True if the workspace no longer appears in `cmux list-workspaces`.
     """
-    surfaces = cmux("list-pane-surfaces", "--workspace", short_or_ref, check=False)
-    refs = [
-        line.strip().split()[0]
-        for line in surfaces.splitlines()
-        if line.strip().startswith("surface:")
-    ]
-    for ref in refs:
-        cmux("close-surface", "--surface", ref, check=False)
+    cmux("close-workspace", "--workspace", short_or_ref, check=False)
     after = cmux("list-workspaces", check=False)
     return short_or_ref not in after
