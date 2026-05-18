@@ -14,6 +14,8 @@ Optional:
 Behaviour:
   - Repo discovery walks up from cwd; matches against ~/.config/cockpit/config.json.
     If unmatched, calls lib.registry.register_cwd() to add cwd's repo.
+  - --repo <name> overrides cwd-based discovery and targets a specific configured
+    repo by `name`. Useful when invoking from outside the repo's tree.
   - Worktree path: dirname(repo)/<short>, with -2/-3/... on collision.
   - --cwd mode skips repo discovery and worktree creation entirely; the workspace
     is spawned directly in <path>.
@@ -34,7 +36,7 @@ import sys
 from pathlib import Path
 
 from lib.cmux import cmux, workspace_names
-from lib.config import discover_repo
+from lib.config import discover_repo, find_repo_by_name
 from lib.gh import resolve_pr_branch
 from lib.git import collision_free, create_worktree, slugify, worktree_for_branch
 from lib.registry import register_cwd
@@ -50,17 +52,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--short")
     p.add_argument("--pr")
     p.add_argument("--base")
+    p.add_argument(
+        "--repo", help="target a configured repo by name (skips cwd-based discovery)"
+    )
     p.add_argument("--prompt-stdin", action="store_true")
     p.add_argument("positional", nargs="?")
     return p.parse_args()
 
 
-def resolve_worktree(
-    branch: str | None,
-    pr_num: str | None,
-    wt_path: str | None,
-    base: str,
-) -> tuple[Path, str, bool]:
+def select_repo(repo_name: str | None) -> dict:
+    if repo_name:
+        repo_cfg = find_repo_by_name(repo_name)
+        if repo_cfg is None:
+            raise ValueError(f"--repo {repo_name!r}: no configured repo with that name")
+        return repo_cfg
     repo_cfg = discover_repo()
     if repo_cfg is None:
         print(
@@ -69,6 +74,17 @@ def resolve_worktree(
         )
         repo_cfg = register_cwd()
         repo_cfg = discover_repo() or repo_cfg
+    return repo_cfg
+
+
+def resolve_worktree(
+    branch: str | None,
+    pr_num: str | None,
+    wt_path: str | None,
+    base: str,
+    repo_name: str | None,
+) -> tuple[Path, str, bool]:
+    repo_cfg = select_repo(repo_name)
 
     repo = Path(repo_cfg["path"]).expanduser().resolve()
     branch_prefix = repo_cfg.get("branch_prefix", "")
@@ -110,9 +126,9 @@ def main() -> int:
         args.base,
     )
 
-    if cwd and (branch or pr_num or wt_path or args.positional):
+    if cwd and (branch or pr_num or wt_path or args.positional or args.repo):
         print(
-            "ERROR: --cwd is mutually exclusive with branch/PR/positional args",
+            "ERROR: --cwd is mutually exclusive with branch/PR/positional/--repo args",
             file=sys.stderr,
         )
         return 1
@@ -141,11 +157,13 @@ def main() -> int:
                 branch = args.positional
 
         if not base:
-            repo_cfg = discover_repo()
+            repo_cfg = find_repo_by_name(args.repo) if args.repo else discover_repo()
             base = (repo_cfg or {}).get("default_base", "main")
 
         try:
-            wt, branch, attached_wt = resolve_worktree(branch, pr_num, wt_path, base)
+            wt, branch, attached_wt = resolve_worktree(
+                branch, pr_num, wt_path, base, args.repo
+            )
         except RuntimeError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2

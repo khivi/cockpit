@@ -70,6 +70,14 @@ def discover_repo() -> dict | None:
     return None
 
 
+def find_repo_by_name(name: str) -> dict | None:
+    """Return the config entry whose `name` matches, else None."""
+    for r in load_config().get("repos", []):
+        if r.get("name") == name:
+            return r
+    return None
+
+
 def prompt_statusline_setup(footer_command: str) -> None:
     """First-time prompt to wire Claude Code's statusLine to `scripts/footer.py`.
 
