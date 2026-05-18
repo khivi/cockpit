@@ -49,15 +49,16 @@ def count_dirty(wt_path: Path) -> int:
 
 
 def _count_unpushed(wt_path: Path) -> int:
-    """Commits on HEAD not present on the upstream tracking branch.
+    """Commits on HEAD not reachable from the repo's default branch on origin.
 
-    Returns 0 if there is no upstream (nothing to push against; treat as safe).
-    Returns -1 if git rev-list fails outright so callers can distinguish
-    "verified clean" from "could not check".
+    The default branch is whatever `origin/HEAD` points at. Returns 0 if it
+    cannot be resolved (treat as safe). Returns -1 if git fails outright so
+    callers can distinguish "verified clean" from "could not check".
     """
-    if _git(wt_path, "rev-parse", "--abbrev-ref", "@{upstream}").returncode != 0:
+    default = origin_head_branch(wt_path)
+    if default is None:
         return 0
-    res = _git(wt_path, "rev-list", "--count", "@{upstream}..HEAD")
+    res = _git(wt_path, "rev-list", "--count", f"origin/{default}..HEAD")
     if res.returncode != 0:
         return -1
     out = res.stdout.strip()
