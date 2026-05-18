@@ -18,7 +18,7 @@ from .git import worktrees
 def render_list() -> int:
     cfg = load_config()
     cmux_set = set(workspace_names().values())
-    print(f"{'REPO':<14}{'BRANCH':<32}{'PR':<8}{'CI':<10}{'REVIEW':<18}UPDATED")
+    print(f"{'REPO':<14}{'BRANCH':<32}{'PR':<8}{'CI':<10}{'REVIEW':<22}UPDATED")
     for r in cfg.get("repos", []):
         path = Path(os.path.expanduser(r["path"]))
         name = r.get("name") or path.name
@@ -34,12 +34,20 @@ def render_list() -> int:
             pr_payload = find_pr_payload(branch, repo_name=name)
             drift = "" if wt.short in cmux_set else " (no workspace)"
             if pr_payload:
+                review = str(pr_payload["review"]).lower()
+                unaddressed = pr_payload.get("unaddressed") or 0
+                if unaddressed:
+                    review = (
+                        f"{review} 💬{unaddressed}"
+                        if review and review != "none"
+                        else f"💬{unaddressed}"
+                    )
                 print(
                     f"{name:<14}{branch:<32}#{pr_payload['number']:<7}"
                     f"{pr_payload['ci']:<10}"
-                    f"{str(pr_payload['review']).lower():<18}"
+                    f"{review:<22}"
                     f"{pr_payload.get('updatedAt', '')}{drift}"
                 )
             else:
-                print(f"{name:<14}{branch:<32}{'—':<8}{'—':<10}{'—':<18}—{drift}")
+                print(f"{name:<14}{branch:<32}{'—':<8}{'—':<10}{'—':<22}—{drift}")
     return 0

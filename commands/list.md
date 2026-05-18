@@ -10,10 +10,10 @@ Read `git worktree list` for every managed repo, cross-reference `cmux list-work
 ## Output
 
 ```text
-REPO          BRANCH              PR     CI       REVIEW          UPDATED
-myrepo        feature/foo         #123   pass     approved        2m ago
-myrepo        fix/bar             #124   fail     changes-req     1h ago
-otherrepo     experiment/baz      —      —        —               3d ago  (no PR)
+REPO          BRANCH              PR     CI       REVIEW              UPDATED
+myrepo        feature/foo         #123   pass     approved            2m ago
+myrepo        fix/bar             #124   fail     changes-req 💬3     1h ago
+otherrepo     experiment/baz      —      —        —                   3d ago  (no PR)
 ```
 
 Drift markers appended where they apply:
