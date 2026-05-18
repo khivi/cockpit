@@ -1,5 +1,3 @@
-# cockpit
-
 [github.com/khivi/cockpit](https://github.com/khivi/cockpit)
 
 cmux workspaces backed by git worktrees, aligned to GitHub PRs. One PR ↔ one worktree (sibling of your main repo) ↔ one cmux workspace, with status surfaced in a footer file and (optionally) cmux pills.
