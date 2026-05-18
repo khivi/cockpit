@@ -294,19 +294,16 @@ def _maybe_autoclose(
     *,
     dry: bool,
 ) -> None:
-    """Remove worktrees + workspaces for MY merged branches that are clean.
+    """Remove worktrees + workspaces for merged branches that are clean.
 
-    Coworker branches are never autoclosed — even if their PR is merged,
-    the worktree may exist for ongoing local review or backports. Same for
-    branches that don't carry my prefix (someone else's work in my checkout).
+    Removes any merged branch (mine or coworker's) if the worktree is clean
+    and has no unpushed commits. Coworker worktrees are safe to clean since
+    they can be re-created from the merged PR if needed.
     """
     if not cfg.get("auto_cleanup_on_merge", True):
         return
-    my_prefix = f"{self_user}/"
     for wt in wts:
         if wt.branch in MAIN_BRANCHES:
-            continue
-        if not wt.branch.startswith(my_prefix):
             continue
         if wt.branch not in merged_branches:
             continue
