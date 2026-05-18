@@ -9,6 +9,7 @@ Consumers:
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING
 
 from .config import CACHE_DIR, ensure_state_dirs
@@ -35,7 +36,9 @@ def write_pr_cache(repo_name: str, pr: "PR") -> dict:
         "unaddressed": pr.unaddressed,
         "mergeable": pr.mergeable,
     }
-    path.write_text(json.dumps(payload, indent=2))
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(path)
     return payload
 
 

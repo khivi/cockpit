@@ -138,8 +138,31 @@ def has_unique_commits(wt_path: Path, base: str) -> bool:
 
 
 def current_branch(cwd: str | os.PathLike) -> str:
+    """Branch name, or "" if not in a git repo or fully detached.
+
+    Recovers the original branch when detached mid-rebase by reading
+    rebase-{merge,apply}/head-name from the worktree's gitdir.
+    """
     res = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
-    return res.stdout.strip() if res.returncode == 0 else ""
+    if res.returncode != 0:
+        return ""
+    branch = res.stdout.strip()
+    if branch and branch != "HEAD":
+        return branch
+    gitdir = _gitdir(Path(cwd))
+    return _rebase_head_name(gitdir) or "" if gitdir else ""
+
+
+def repo_state(cwd: str | os.PathLike) -> str:
+    """`'rebase'`, `'merge'`, or `''` for the working tree at `cwd`."""
+    gitdir = _gitdir(Path(cwd))
+    if gitdir is None:
+        return ""
+    if (gitdir / "rebase-merge").exists() or (gitdir / "rebase-apply").exists():
+        return "rebase"
+    if (gitdir / "MERGE_HEAD").exists():
+        return "merge"
+    return ""
 
 
 def slugify(s: str, max_len: int = 30) -> str:

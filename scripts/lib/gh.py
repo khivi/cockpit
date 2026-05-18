@@ -90,29 +90,24 @@ def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:
     return gh_json(["pr", "view", pr_num, "--json", fields])
 
 
-def resolve_pr_branch(pr_num: str) -> str:
-    """Resolve a PR number to its head branch name via gh CLI (current cwd)."""
-    nwo = run(
-        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        check=False,
-    ).strip()
+def resolve_pr_branch(pr_num: str, repo_dir: Path | None = None) -> str:
+    """Resolve a PR number to its head branch name via gh CLI.
+
+    When `repo_dir` is given, both gh calls run with that as cwd so --repo
+    invocations target the right remote even from outside its tree.
+    """
+    cwd = str(repo_dir) if repo_dir else None
+
+    def _gh(args: list[str]) -> str:
+        res = subprocess.run(["gh", *args], capture_output=True, text=True, cwd=cwd)
+        return res.stdout.strip()
+
+    nwo = _gh(["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"])
     if not nwo:
         raise RuntimeError(f"could not resolve repo for PR #{pr_num}")
-    out = run(
-        [
-            "gh",
-            "-R",
-            nwo,
-            "pr",
-            "view",
-            pr_num,
-            "--json",
-            "headRefName",
-            "-q",
-            ".headRefName",
-        ],
-        check=False,
-    ).strip()
+    out = _gh(
+        ["-R", nwo, "pr", "view", pr_num, "--json", "headRefName", "-q", ".headRefName"]
+    )
     if not out:
         raise RuntimeError(f"could not resolve PR #{pr_num} to a branch via gh")
     return out

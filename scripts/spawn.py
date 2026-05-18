@@ -114,7 +114,7 @@ def resolve_worktree(
     base = repo_cfg.get("default_base", "main")
 
     if pr_num and not branch:
-        branch = resolve_pr_branch(pr_num)
+        branch = resolve_pr_branch(pr_num, repo_dir=repo)
     if not branch:
         raise ValueError("need <branch> or --pr <num>")
 

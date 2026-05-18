@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .cache import find_pr_payload
-from .git import count_dirty, current_branch
+from .git import count_dirty, current_branch, repo_state
 
 
 def _size_label(size: int) -> str:
@@ -156,9 +156,11 @@ def render_footer() -> int:
     dirty_pill = f"✏️ {dirty}" if dirty else ""
 
     head = _pr_segment(branch) if branch else ""
+    state = repo_state(Path(".")) if branch else ""
+    state_pill = f"⚙ {state}" if state else ""
 
     pills_line = " · ".join(_session_pills(blob))
-    head_line = " · ".join(p for p in [head, dirty_pill] if p)
+    head_line = " · ".join(p for p in [head, state_pill, dirty_pill] if p)
     out = "\n".join(line for line in (pills_line, head_line) if line)
     if out:
         print(out)
