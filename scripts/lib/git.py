@@ -180,6 +180,47 @@ def worktree_for_branch(repo_dir: Path, branch: str) -> Path | None:
     return None
 
 
+def _has_local_branch(repo: Path, branch: str) -> bool:
+    return (
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "show-ref",
+                "--verify",
+                "--quiet",
+                f"refs/heads/{branch}",
+            ],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def _fetch_remote_branch(repo: Path, branch: str) -> bool:
+    """Return True and fetch branch locally if it exists on origin."""
+    exists = (
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "ls-remote",
+                "--exit-code",
+                "--heads",
+                "origin",
+                branch,
+            ],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+    if exists:
+        run(["git", "-C", str(repo), "fetch", "origin", f"{branch}:{branch}"])
+    return exists
+
+
 def create_worktree(
     repo: Path,
     branch: str,
@@ -191,12 +232,11 @@ def create_worktree(
 ) -> str:
     """Create a worktree at `wt_path` for `branch`. Returns the final branch name.
 
-    Four branches of behaviour:
-      - `pr_num` given: fetch `pull/{N}/head` into a local ref, then worktree add.
-      - branch exists locally: plain `worktree add wt_path branch`.
-      - branch exists on remote: fetch it into a local ref, then worktree add.
-      - otherwise: create `<branch_prefix?><branch>` from `origin/{base}`; prefix
-        is only prepended when the input has no '/' (short name).
+    Resolution order:
+      1. PR num  → fetch pull/{N}/head into local ref
+      2. local   → branch already exists locally
+      3. remote  → fetch from origin into local ref
+      4. new     → create from origin/{base} (prefix applied to short names)
     """
     if pr_num:
         run(
@@ -215,42 +255,8 @@ def create_worktree(
     subprocess.run(
         ["git", "-C", str(repo), "fetch", "origin", base], capture_output=True
     )
-    has_local = (
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "show-ref",
-                "--verify",
-                "--quiet",
-                f"refs/heads/{branch}",
-            ]
-        ).returncode
-        == 0
-    )
-    if has_local:
-        run(["git", "-C", str(repo), "worktree", "add", str(wt_path), branch])
-        return branch
 
-    has_remote = (
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "ls-remote",
-                "--exit-code",
-                "--heads",
-                "origin",
-                branch,
-            ],
-            capture_output=True,
-        ).returncode
-        == 0
-    )
-    if has_remote:
-        run(["git", "-C", str(repo), "fetch", "origin", f"{branch}:{branch}"])
+    if _has_local_branch(repo, branch) or _fetch_remote_branch(repo, branch):
         run(["git", "-C", str(repo), "worktree", "add", str(wt_path), branch])
         return branch
 
