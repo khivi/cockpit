@@ -1,5 +1,7 @@
 # cockpit
 
+[github.com/khivi/cockpit](https://github.com/khivi/cockpit)
+
 cmux workspaces backed by git worktrees, aligned to GitHub PRs. One PR ↔ one worktree (sibling of your main repo) ↔ one cmux workspace, with status surfaced in a footer file and (optionally) cmux pills.
 
 ## What it does
@@ -107,7 +109,7 @@ Reads cockpit's cache only — never blocks on `gh`. Falls back to `<branch> · 
 
 ## Requirements
 
-- macOS or Linux (cockpit is portable; no LaunchAgent or systemd unit is installed)
+- macOS or Linux
 - `cmux` (workspace primitives: `new-workspace`, `list-workspaces`, `tree --all --json`, `select-workspace`)
 - Claude Code with plugin support
 - `gh` CLI, authenticated (`gh auth status` must pass)
