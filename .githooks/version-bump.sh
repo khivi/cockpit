@@ -38,9 +38,8 @@ case "$bump" in
 esac
 new_version="$maj.$min.$pat"
 
-tmp=$(mktemp)
-jq --arg v "$new_version" '.version = $v' "$plugin_file" > "$tmp"
-mv "$tmp" "$plugin_file"
+sed -i.bak -E "s/(\"version\"[[:space:]]*:[[:space:]]*\")[^\"]+(\")/\1${new_version}\2/" "$plugin_file"
+rm "$plugin_file.bak"
 
 git add "$plugin_file"
 git commit -m "chore: bump version to $new_version"
