@@ -210,6 +210,56 @@ def match_worktrees(
     return matched, skipped_self
 
 
+def _maybe_ff_main(repo_path: Path, wts: list[Worktree], *, dry: bool) -> None:
+    """Fast-forward each worktree on a MAIN_BRANCHES branch to its upstream.
+
+    Skips dirty worktrees and ones with no upstream. Never destructive: uses
+    --ff-only so merges/rebases that aren't pure fast-forwards just no-op.
+    """
+    for wt in wts:
+        if wt.branch not in MAIN_BRANCHES:
+            continue
+        if wt.dirty_count > 0:
+            continue
+        fetch = subprocess.run(
+            ["git", "-C", str(wt.path), "fetch", "origin", wt.branch],
+            capture_output=True,
+            text=True,
+        )
+        if fetch.returncode != 0:
+            continue
+        rev = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(wt.path),
+                "rev-list",
+                "--count",
+                f"HEAD..origin/{wt.branch}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        try:
+            behind = int(rev.stdout.strip())
+        except ValueError:
+            continue
+        if behind == 0:
+            continue
+        action = "[dry] ff-main" if dry else "ff-main:"
+        print(
+            f"  {magenta(action)} {wt.short} → origin/{wt.branch}  ({behind} commit{'s' if behind != 1 else ''})",
+            flush=True,
+        )
+        if dry:
+            continue
+        subprocess.run(
+            ["git", "-C", str(wt.path), "merge", "--ff-only", f"origin/{wt.branch}"],
+            capture_output=True,
+            text=True,
+        )
+
+
 def _maybe_autoclose(
     cfg: dict,
     repo_path: Path,
@@ -515,6 +565,7 @@ def cycle_repo(
             open_orphan_workspace(wt, dry)
 
     _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, self_user, dry=dry)
+    _maybe_ff_main(repo_path, wts, dry=dry)
 
 
 def _close_gone_cwd_workspaces(dry: bool) -> None:
