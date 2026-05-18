@@ -210,14 +210,38 @@ def match_worktrees(
     return matched, skipped_self
 
 
-def _maybe_ff_main(repo_path: Path, wts: list[Worktree], *, dry: bool) -> None:
-    """Fast-forward each worktree on a MAIN_BRANCHES branch to its upstream.
+def _repo_default_branch(repo_path: Path) -> str | None:
+    """Return the remote default branch (e.g. 'main') from origin/HEAD, or None."""
+    r = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_path),
+            "symbolic-ref",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    ref = r.stdout.strip()
+    return ref.removeprefix("origin/") or None
 
-    Skips dirty worktrees and ones with no upstream. Never destructive: uses
-    --ff-only so merges/rebases that aren't pure fast-forwards just no-op.
+
+def _maybe_ff_main(repo_path: Path, wts: list[Worktree], *, dry: bool) -> None:
+    """Fast-forward the worktree on the repo's default branch to its upstream.
+
+    Skips dirty worktrees. Targets ONLY the GitHub default branch (resolved via
+    origin/HEAD), never any branch that happens to be named main/master. Uses
+    --ff-only so non-fast-forward histories just no-op.
     """
+    default = _repo_default_branch(repo_path)
+    if default is None:
+        return
     for wt in wts:
-        if wt.branch not in MAIN_BRANCHES:
+        if wt.branch != default:
             continue
         if wt.dirty_count > 0:
             continue
