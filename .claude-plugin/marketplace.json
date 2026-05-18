@@ -13,7 +13,10 @@
         "name": "Khivi"
       },
       "category": "developer-tools",
-      "source": ".",
+      "source": {
+        "source": "github",
+        "repo": "khivi/cockpit"
+      },
       "homepage": "https://github.com/khivi/cockpit",
       "keywords": [
         "cmux",
