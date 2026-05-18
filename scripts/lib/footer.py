@@ -25,27 +25,23 @@ def _size_label(size: int) -> str:
 
 
 def _context_pill(data: dict) -> str:
-    """`🧠 4%/1M` from `context_window` block. Empty if absent."""
+    """`🧠 4%/1M` from `context_window` block. Defaults pct=0, size=200000."""
     ctx = data.get("context_window") or {}
-    pct = ctx.get("used_percentage")
-    size = ctx.get("context_window_size")
-    if pct is None or not size:
-        return ""
+    pct = ctx.get("used_percentage") or 0
+    size = ctx.get("context_window_size") or 200000
     return f"🧠 {round(float(pct))}%/{_size_label(int(size))}"
 
 
 def _elapsed_pill(data: dict) -> str:
-    """`⏱ 1h 23m` from now - first transcript timestamp.
-
-    Empty when: no `transcript_path`, file missing, unreadable, no parsable
-    top-level `timestamp` on any entry, unparsable ISO string, or elapsed < 10s.
-    """
+    """`⏱ 1h 23m` from now - first transcript timestamp. Falls back to `⏱ 0s`
+    when no transcript or unparsable, so the pill is always present."""
+    fallback = "⏱ 0s"
     transcript = data.get("transcript_path")
     if not transcript:
-        return ""
+        return fallback
     path = Path(transcript)
     if not path.is_file():
-        return ""
+        return fallback
     first_ts = ""
     try:
         with path.open(encoding="utf-8", errors="replace") as fh:
@@ -60,18 +56,16 @@ def _elapsed_pill(data: dict) -> str:
                         first_ts = ts
                         break
     except OSError:
-        return ""
+        return fallback
     if not first_ts:
-        return ""
+        return fallback
     try:
         start = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
     except ValueError:
-        return ""
+        return fallback
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
-    total = int((datetime.now(timezone.utc) - start).total_seconds())
-    if total < 10:
-        return ""
+    total = max(0, int((datetime.now(timezone.utc) - start).total_seconds()))
     h, rem = divmod(total, 3600)
     m, s = divmod(rem, 60)
     if h:
@@ -94,13 +88,12 @@ def _session_pills(blob: str) -> list[str]:
     model = model.split(" (")[0].strip()
     if model:
         pills.append(f"🤖 {model}")
-    if ctx := _context_pill(data):
-        pills.append(ctx)
-    rate = (data.get("rate_limits") or {}).get("five_hour", {}).get("used_percentage")
-    if rate is not None:
-        pills.append(f"⌛ 5h {round(float(rate))}%")
-    if elapsed := _elapsed_pill(data):
-        pills.append(elapsed)
+    pills.append(_context_pill(data))
+    rate = (data.get("rate_limits") or {}).get("five_hour", {}).get(
+        "used_percentage"
+    ) or 0
+    pills.append(f"⌛ 5h {round(float(rate))}%")
+    pills.append(_elapsed_pill(data))
     return pills
 
 
