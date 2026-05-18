@@ -49,20 +49,24 @@ def count_dirty(wt_path: Path) -> int:
 
 
 def _count_unpushed(wt_path: Path) -> int:
-    """Commits on HEAD not reachable from the repo's default branch on origin.
+    """Commits on HEAD whose patch content is not yet on origin's default branch.
 
-    The default branch is whatever `origin/HEAD` points at. Returns 0 if it
-    cannot be resolved (treat as safe). Returns -1 if git fails outright so
-    callers can distinguish "verified clean" from "could not check".
+    Uses `git cherry` so squash-merged commits (same content, different SHA on
+    the default branch) are recognized as already-landed. Each output line is
+    `+ <sha>` for an unmerged commit, `- <sha>` for one whose patch is already
+    upstream — we count only `+` lines.
+
+    Returns 0 if the default branch (whatever `origin/HEAD` points at) cannot
+    be resolved. Returns -1 if git fails outright so callers can distinguish
+    "verified clean" from "could not check".
     """
     default = origin_head_branch(wt_path)
     if default is None:
         return 0
-    res = _git(wt_path, "rev-list", "--count", f"origin/{default}..HEAD")
+    res = _git(wt_path, "cherry", f"origin/{default}", "HEAD")
     if res.returncode != 0:
         return -1
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else -1
+    return sum(1 for line in res.stdout.splitlines() if line.startswith("+ "))
 
 
 def _gitdir(wt_path: Path) -> Path | None:
