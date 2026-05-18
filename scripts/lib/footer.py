@@ -7,7 +7,6 @@ it reads PR state from `lib/cache`, never touches the network.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -153,12 +152,6 @@ def render_footer() -> int:
             blob = sys.stdin.read()
         except OSError:
             blob = ""
-
-    if os.getenv("COCKPIT_FOOTER_DEBUG"):
-        try:
-            Path("/tmp/cockpit_footer_stdin.json").write_text(blob)
-        except Exception:
-            pass
 
     branch, dirty = _git_branch_and_dirty()
     dirty_pill = f"✏️ {dirty}" if dirty else ""
