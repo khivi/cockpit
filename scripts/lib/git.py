@@ -30,7 +30,7 @@ class Worktree:
         return self.dirty_count > 0
 
 
-def _count_dirty(wt_path: Path) -> int:
+def count_dirty(wt_path: Path) -> int:
     """Count uncommitted entries (modified/added/deleted/untracked).
 
     Returns 0 on git failure so a transient error doesn't promote clean → WIP.
@@ -122,7 +122,7 @@ def worktrees(repo_dir: Path) -> list[Worktree]:
                 Worktree(path=path, branch=branch, rebasing=rebasing, merging=merging)
             )
     with ThreadPoolExecutor(max_workers=max(1, len(wts))) as ex:
-        dirty = list(ex.map(lambda w: _count_dirty(w.path), wts))
+        dirty = list(ex.map(lambda w: count_dirty(w.path), wts))
         unpushed = list(ex.map(lambda w: _count_unpushed(w.path), wts))
     for wt, d, u in zip(wts, dirty, unpushed):
         wt.dirty_count = d
@@ -171,6 +171,22 @@ def collision_free(path: Path) -> Path:
         if not cand.exists():
             return cand
         i += 1
+
+
+def main_worktree_path(cwd: str | os.PathLike | None = None) -> Path | None:
+    """Return the main (first) worktree path, or None if not in a git repo."""
+    cmd = (
+        ["git", "-C", str(cwd), "worktree", "list", "--porcelain"]
+        if cwd
+        else ["git", "worktree", "list", "--porcelain"]
+    )
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        return None
+    for line in res.stdout.splitlines():
+        if line.startswith("worktree "):
+            return Path(line.split(" ", 1)[1]).resolve()
+    return None
 
 
 def worktree_for_branch(repo_dir: Path, branch: str) -> Path | None:

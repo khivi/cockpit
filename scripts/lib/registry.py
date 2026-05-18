@@ -13,14 +13,14 @@ from pathlib import Path
 
 from . import run
 from .config import CONFIG_PATH, ensure_state_dirs
+from .git import main_worktree_path
 
 
 def repo_root() -> Path:
-    out = run(["git", "worktree", "list", "--porcelain"], check=False)
-    for line in out.splitlines():
-        if line.startswith("worktree "):
-            return Path(line.split(" ", 1)[1])
-    raise RuntimeError("not in a git repo — cd into the main repo first")
+    path = main_worktree_path()
+    if path is None:
+        raise RuntimeError("not in a git repo — cd into the main repo first")
+    return path
 
 
 def default_branch(repo: Path) -> str:

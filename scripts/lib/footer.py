@@ -7,12 +7,12 @@ it reads PR state from `lib/cache`, never touches the network.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .cache import find_pr_payload
+from .git import count_dirty, current_branch
 
 
 def _size_label(size: int) -> str:
@@ -98,15 +98,11 @@ def _session_pills(blob: str) -> list[str]:
 
 def _git_branch_and_dirty() -> tuple[str, int]:
     """`(branch, dirty_count)` for cwd. Branch is "" if not in a git repo."""
-    branch = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True
-    ).stdout.strip()
+    here = Path(".")
+    branch = current_branch(here)
     if not branch:
         return "", 0
-    porcelain = subprocess.run(
-        ["git", "status", "--porcelain"], capture_output=True, text=True
-    ).stdout
-    return branch, sum(1 for row in porcelain.splitlines() if row)
+    return branch, count_dirty(here)
 
 
 def _pr_segment(branch: str) -> str:

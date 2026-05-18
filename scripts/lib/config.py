@@ -13,12 +13,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import run
+from .git import main_worktree_path
 
 COCKPIT_HOME = Path(os.environ.get("COCKPIT_HOME", Path.home() / ".config" / "cockpit"))
 CONFIG_PATH = COCKPIT_HOME / "config.json"
@@ -47,20 +46,7 @@ def ensure_state_dirs() -> None:
 
 def discover_repo() -> dict | None:
     """Return the config entry whose `path` matches the main repo of cwd, else None."""
-    res = subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True
-    )
-    if res.returncode != 0:
-        return None
-    out = run(["git", "worktree", "list", "--porcelain"], check=False)
-    main = next(
-        (
-            Path(line.split(" ", 1)[1]).resolve()
-            for line in out.splitlines()
-            if line.startswith("worktree ")
-        ),
-        None,
-    )
+    main = main_worktree_path()
     if main is None:
         return None
     cfg = load_config()
