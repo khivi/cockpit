@@ -144,12 +144,27 @@ def _log_ff_main(repo_path: Path, wts: list[Worktree], *, dry: bool) -> None:
         )
 
 
+def _workspace_ref_for_path(wt_path: Path, cwds: dict[str, Path]) -> str | None:
+    """Find the cmux workspace ref whose cwd matches `wt_path`.
+
+    The workspace name can diverge from the worktree dir name (e.g. a
+    ticket-named workspace rooted in a feature worktree), so name-based
+    closing misses or hits the wrong workspace. Resolve by path instead.
+    """
+    target = wt_path.resolve()
+    for ref, cwd in cwds.items():
+        if cwd.resolve() == target:
+            return ref
+    return None
+
+
 def _maybe_autoclose(
     cfg: dict,
     repo_path: Path,
     repo_name: str,
     wts: list[Worktree],
     merged_branches: set[str],
+    cwds: dict[str, Path],
     *,
     dry: bool,
 ) -> None:
@@ -200,7 +215,8 @@ def _maybe_autoclose(
                 flush=True,
             )
             continue
-        cmux_close_workspace_best_effort(wt.short)
+        ref = _workspace_ref_for_path(wt.path, cwds) or wt.short
+        cmux_close_workspace_best_effort(ref)
         delete_pr_caches_for_branch(repo_name, wt.branch)
 
 
@@ -441,7 +457,7 @@ def cycle_repo(
                 continue
             spawn_orphan_workspace(wt, dry=dry)
 
-    _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, dry=dry)
+    _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, cwds, dry=dry)
     _log_ff_main(repo_path, wts, dry=dry)
 
 
