@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from . import run
@@ -46,6 +47,23 @@ def default_branch(repo: Path) -> str:
     return out.removeprefix("origin/") if out else "main"
 
 
+def _prompt_branch_prefix(default: str) -> str:
+    if not sys.stdin.isatty():
+        return default
+    hint = f"[{default}]" if default else "[]"
+    try:
+        resp = input(
+            f"branch prefix {hint} (enter to accept, '-' for no prefix): "
+        ).strip()
+    except EOFError:
+        return default
+    if resp == "":
+        return default
+    if resp == "-":
+        return ""
+    return resp
+
+
 def register_cwd() -> dict:
     """Append cwd's repo to config.json if not already present. Returns the entry."""
     ensure_state_dirs()
@@ -71,10 +89,13 @@ def register_cwd() -> dict:
             print(f"already managed: {repo}")
             return r
 
+    default_prefix = f"{gh_user}/" if gh_user else ""
+    branch_prefix = _prompt_branch_prefix(default_prefix)
+
     entry = {
         "name": name,
         "path": str(repo),
-        "branch_prefix": f"{gh_user}/" if gh_user else "",
+        "branch_prefix": branch_prefix,
         "default_base": base,
     }
     repos.append(entry)
