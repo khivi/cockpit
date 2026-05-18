@@ -90,7 +90,7 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 Output per render (current branch, current cwd):
 
 ```text
-#27933 khivi/PE-4081-fix-login "Fix login regression after token refresh" · PE-4081 · ✓ · review-required · ✏️ 3 · 🤖 Opus 4.7 · 🧠 7%/1M · ⌛ 5h 42% · ⏱ 1h 23m
+#27933 khivi/PE-4081-fix-login “Fix login regression after token refresh” · PE-4081 · ✓ · review-required · ✏️ 3 · 🤖 Opus 4.7 · 🧠 7%/1M · ⌛ 5h 42% · ⏱ 1h 23m
 ```
 
 Reads cockpit's cache only — never blocks on `gh`. Falls back to `<branch> · no PR` when there's no cache hit, and to an empty line outside a git repo. The Linear ticket ID (e.g. `PE-4081`) is regex-extracted from the branch name — no API call. The `🤖` (model), `🧠` (context window), `⌛` (5h usage), and `⏱` (elapsed wall-clock since the first transcript entry) parts all come from the JSON Claude Code pipes on stdin.
