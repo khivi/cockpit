@@ -339,6 +339,12 @@ def cycle_repo(
         f"tracked: {len(tracked)}  wip: {wip_count}",
         flush=True,
     )
+    if tracked:
+        labels = sorted(names.get(ref, ref) for ref in tracked)
+        print(
+            f"  {dim('tracked:')} {', '.join(cyan(lbl) for lbl in labels)}",
+            flush=True,
+        )
 
     for pr in prs:
         write_pr_cache(name, pr)
