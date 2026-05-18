@@ -2,21 +2,21 @@
 """Create worktree (sibling of main repo) + spawn cmux workspace with claude pre-running.
 
 Usage:
-  spawn.py --branch <branch> --path <path> --short <short>             # branch mode
-  spawn.py --branch <branch> --path <path> --short <short> --pr <num>  # PR mode (fetch pull/N/head)
-  spawn.py --cwd <path> --short <short>                                # skill mode (no worktree)
-  spawn.py <pr-or-branch> [--base <branch>]                            # convenience entrypoint
+  spawn.py --branch <branch> --path <path> --name <name>             # branch mode
+  spawn.py --branch <branch> --path <path> --name <name> --pr <num>  # PR mode (fetch pull/N/head)
+  spawn.py --cwd <path> --name <name>                                # skill mode (no worktree)
 
 Optional:
-  --prompt-stdin   Read a prompt from stdin and pass it as claude's first message
-                   (`claude <quoted-prompt>` instead of bare `claude`).
+  --prompt-stdin          Read a prompt from stdin and pass it as claude's first message
+                          (`claude <quoted-prompt>` instead of bare `claude`).
+  --claude-prompt <str>   Pass a prompt string directly (alternative to --prompt-stdin).
 
 Behaviour:
   - Repo discovery walks up from cwd; matches against ~/.config/cockpit/config.json.
     If unmatched, calls lib.registry.register_cwd() to add cwd's repo.
   - --repo <name> overrides cwd-based discovery and targets a specific configured
     repo by `name`. Useful when invoking from outside the repo's tree.
-  - Worktree path: dirname(repo)/<short>, with -2/-3/... on collision.
+  - Worktree path: dirname(repo)/<name>, with -2/-3/... on collision.
   - --cwd mode skips repo discovery and worktree creation entirely; the workspace
     is spawned directly in <path>.
   - Idempotent: existing worktree+workspace for the branch -> attach, don't error.
@@ -30,7 +30,6 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import re
 import shlex
 import sys
 from pathlib import Path
@@ -49,14 +48,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--branch")
     p.add_argument("--path")
     p.add_argument("--cwd")
-    p.add_argument("--short")
+    p.add_argument("--name")
     p.add_argument("--pr")
     p.add_argument("--base")
     p.add_argument(
         "--repo", help="target a configured repo by name (skips cwd-based discovery)"
     )
     p.add_argument("--prompt-stdin", action="store_true")
-    p.add_argument("positional", nargs="?")
+    p.add_argument(
+        "--claude-prompt", help="prompt string to pass as claude's first message"
+    )
     return p.parse_args()
 
 
@@ -121,24 +122,32 @@ def main() -> int:
         args.branch,
         args.path,
         args.cwd,
-        args.short,
+        args.name,
         args.pr,
         args.base,
     )
 
-    if cwd and (branch or pr_num or wt_path or args.positional or args.repo):
+    if cwd and (branch or pr_num or wt_path or args.repo):
         print(
-            "ERROR: --cwd is mutually exclusive with branch/PR/positional/--repo args",
+            "ERROR: --cwd is mutually exclusive with --branch/--pr/--path/--repo args",
             file=sys.stderr,
         )
         return 1
 
     prompt: str | None = None
+    if args.prompt_stdin and args.claude_prompt:
+        print(
+            "ERROR: --prompt-stdin and --claude-prompt are mutually exclusive",
+            file=sys.stderr,
+        )
+        return 1
     if args.prompt_stdin:
         prompt = sys.stdin.read()
         if not prompt.strip():
             print("ERROR: --prompt-stdin set but stdin is empty", file=sys.stderr)
             return 1
+    elif args.claude_prompt:
+        prompt = args.claude_prompt
 
     if cwd:
         wt = Path(cwd).expanduser().resolve()
@@ -150,11 +159,9 @@ def main() -> int:
         attached_wt = True
         branch_display = None
     else:
-        if args.positional and not branch and not pr_num:
-            if re.fullmatch(r"#?\d+", args.positional):
-                pr_num = args.positional.lstrip("#")
-            else:
-                branch = args.positional
+        if not branch and not pr_num:
+            print("ERROR: --branch or --pr is required", file=sys.stderr)
+            return 1
 
         if not base:
             repo_cfg = find_repo_by_name(args.repo) if args.repo else discover_repo()
