@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .cache import find_pr_payload
-from .config import discover_repo
 
 TITLE_MAX = 60
 
