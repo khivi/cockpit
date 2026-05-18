@@ -1,0 +1,668 @@
+#!/usr/bin/env python3
+"""cockpit: the reconcile-loop daemon for PRs ↔ cmux workspaces.
+
+Per cycle, for every repo registered in $COCKPIT_HOME/config.json:
+  1. fetch relevant PRs (mine + coworker-PRs with local worktrees)
+  2. refresh status pills on existing tracked workspaces
+  3. spawn workspaces for PRs that have a worktree but no workspace
+  4. close duplicate workspaces (same name, or same worktree under different name)
+  5. close workspaces whose branch's PR is no longer open
+  6. mark orphan worktrees (mine, no PR) with an orphan pill
+  7. write a PR cache snapshot under $COCKPIT_HOME/cache
+  8. autoclean merged worktrees + workspaces (clean + no unpushed only)
+
+Modes:
+  --watch [SECS]  long-running daemon; SIGUSR1 kicks an immediate cycle
+  --once          run exactly one cycle and exit
+
+Sibling entry points (each script does one job):
+  scripts/footer.py   one-line statusLine output (hook + statusLine caller)
+  scripts/list.py     `/cockpit:list` table
+  scripts/sync.py     USR1-kick the daemon, else fall back to `cockpit.py --once`
+  scripts/spawn.py    `/cockpit:new` — create worktree + workspace
+
+Failure policy: each cycle MUST exit 0 even on GitHub API errors. Errors go to
+stderr (visible in the --watch terminal); the next cycle retries.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from lib.cmux import (  # noqa: E402
+    BLUE,
+    LOOP_ICON,
+    LOOP_KEY,
+    ORANGE,
+    ORPHAN_ICON,
+    ORPHAN_KEY,
+    apply_pills,
+    apply_wip_pill,
+    cmux,
+    cmux_close_workspace_best_effort,
+    find_cockpit_workspaces,
+    list_workspaces,
+    nudge_if_idle,
+    status_pills,
+    wait_for_new_workspace_ref,
+    workspace_state,
+)
+from lib.colors import (  # noqa: E402
+    bold,
+    blue,
+    cyan,
+    dim,
+    green,
+    issue_color,
+    magenta,
+    red,
+    yellow,
+)
+from lib.config import (  # noqa: E402
+    ensure_state_dirs,
+    load_config,
+    prompt_statusline_setup,
+)
+from lib.daemon import run_watcher  # noqa: E402
+from lib.cache import delete_pr_caches_for_branch, write_pr_cache  # noqa: E402
+from lib.gh import (  # noqa: E402
+    PR,
+    fetch_merged_branches,
+    gh_self_user,
+    list_relevant_prs,
+    repo_nwo,
+)
+from lib.git import Worktree, worktrees  # noqa: E402
+from lib.prompts import (
+    build_orphan_prompt,
+    build_pr_prompt,
+    claude_command,
+)  # noqa: E402
+
+# ── constants ───────────────────────────────────────────────────────────────
+MAIN_BRANCHES = {"master", "main"}
+
+NUDGE_INTERVAL_SECS = 300
+ACTIONABLE_ISSUES = {"ci", "comments", "conflicts"}
+
+DEFAULT_POLL_SECS = 300
+MIN_POLL_SECS = 5
+
+
+# ── helpers ─────────────────────────────────────────────────────────────────
+def maybe_nudge(ref: str, message: str, nudge_state: dict, dry: bool, tag: str) -> None:
+    if nudge_if_idle(
+        ref,
+        message,
+        nudge_state=nudge_state,
+        interval_secs=NUDGE_INTERVAL_SECS,
+        dry=dry,
+        tag=tag,
+    ):
+        print(f"  {yellow('nudged')} {tag} → {ref}", flush=True)
+
+
+def open_workspace(pr: PR, wt: Worktree, dry: bool) -> None:
+    prompt = build_pr_prompt(pr)
+    if dry:
+        print(f"  [dry] spawn {wt.short}  #{pr.number}  cwd={wt.path}", flush=True)
+        for key, value, _ in status_pills(pr, wt):
+            print(f"  [dry]   pill {key}={value}", flush=True)
+        return
+    before = set(list_workspaces())
+    cmux(
+        "new-workspace",
+        "--name",
+        wt.short,
+        "--cwd",
+        str(wt.path),
+        "--command",
+        claude_command(prompt),
+        "--focus",
+        "false",
+    )
+    ref = wait_for_new_workspace_ref(before)
+    if not ref:
+        print(
+            f"  warn: could not resolve new workspace ref for {wt.short}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    apply_pills(ref, pr, wt)
+    print(
+        f"  {magenta('spawned')} {bold(wt.short)} ({ref})  {blue(f'#{pr.number}')}"
+        f"  [{issue_color(pr.display_issue)(pr.display_issue)}]",
+        flush=True,
+    )
+
+
+def open_orphan_workspace(wt: Worktree, dry: bool) -> None:
+    prompt = build_orphan_prompt(wt)
+    if dry:
+        print(f"  [dry] orphan spawn {wt.short}  cwd={wt.path}", flush=True)
+        return
+    before = set(list_workspaces())
+    cmux(
+        "new-workspace",
+        "--name",
+        wt.short,
+        "--cwd",
+        str(wt.path),
+        "--command",
+        claude_command(prompt),
+        "--focus",
+        "false",
+    )
+    ref = wait_for_new_workspace_ref(before)
+    if ref is None:
+        print(
+            f"  warn: could not resolve orphan workspace ref for {wt.short}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    cmux(
+        "set-status",
+        ORPHAN_KEY,
+        ORPHAN_ICON,
+        "--workspace",
+        ref,
+        "--color",
+        ORANGE,
+        check=False,
+    )
+    apply_wip_pill(ref, wt.dirty_count)
+    print(
+        f"  {magenta('ORPHAN:')} spawned {bold(wt.short)} ({ref})  branch={wt.branch}",
+        flush=True,
+    )
+
+
+def match_worktrees(
+    prs: list[PR], wts: list[Worktree], self_user: str
+) -> tuple[list[tuple[PR, Worktree]], list[PR]]:
+    pr_by_branch = {pr.branch: pr for pr in prs}
+    wt_by_branch = {w.branch: w for w in wts}
+    matched: list[tuple[PR, Worktree]] = []
+    skipped_self: list[PR] = []
+    for pr in prs:
+        if pr.author != self_user:
+            continue
+        wt = wt_by_branch.get(pr.branch)
+        if wt is None:
+            skipped_self.append(pr)
+        else:
+            matched.append((pr, wt))
+    for wt in wts:
+        pr = pr_by_branch.get(wt.branch)
+        if pr is None or pr.author == self_user:
+            continue
+        matched.append((pr, wt))
+    return matched, skipped_self
+
+
+def _maybe_autoclose(
+    cfg: dict,
+    repo_path: Path,
+    repo_name: str,
+    wts: list[Worktree],
+    merged_branches: set[str],
+    self_user: str,
+    *,
+    dry: bool,
+) -> None:
+    """Remove worktrees + workspaces for MY merged branches that are clean.
+
+    Coworker branches are never autoclosed — even if their PR is merged,
+    the worktree may exist for ongoing local review or backports. Same for
+    branches that don't carry my prefix (someone else's work in my checkout).
+    """
+    if not cfg.get("auto_cleanup_on_merge", True):
+        return
+    my_prefix = f"{self_user}/"
+    for wt in wts:
+        if wt.branch in MAIN_BRANCHES:
+            continue
+        if not wt.branch.startswith(my_prefix):
+            continue
+        if wt.branch not in merged_branches:
+            continue
+        if wt.dirty_count > 0:
+            print(
+                f"  {dim('autoclose skipped (uncommitted)')} {wt.short} "
+                f"({wt.dirty_count} dirty)",
+                flush=True,
+            )
+            continue
+        if wt.unpushed < 0:
+            print(
+                f"  {dim('autoclose skipped (unpushed-check failed)')} {wt.short}",
+                flush=True,
+            )
+            continue
+        if wt.unpushed > 0:
+            print(
+                f"  {dim(f'autoclose skipped ({wt.unpushed} unpushed)')} {wt.short}",
+                flush=True,
+            )
+            continue
+        action = "[dry] autoclose" if dry else "autoclose:"
+        print(
+            f"  {magenta(action)} removing merged worktree {wt.short} and cmux workspace",
+            flush=True,
+        )
+        if dry:
+            continue
+        rm = subprocess.run(
+            ["git", "-C", str(repo_path), "worktree", "remove", str(wt.path)],
+            capture_output=True,
+            text=True,
+        )
+        if rm.returncode != 0:
+            print(
+                f"  warn: git worktree remove failed for {wt.path}: {rm.stderr.strip()}",
+                file=sys.stderr,
+                flush=True,
+            )
+            continue
+        cmux_close_workspace_best_effort(wt.short)
+        delete_pr_caches_for_branch(repo_name, wt.branch)
+
+
+def cycle_repo(
+    repo_entry: dict,
+    self_user: str,
+    *,
+    keep_stale: bool,
+    no_spawn: bool,
+    dry: bool,
+    pr_cache: dict,
+    nudge_state: dict,
+    pill_state: dict,
+    verbose: bool,
+    cfg: dict,
+) -> None:
+    repo_path = Path(os.path.expanduser(repo_entry["path"]))
+    if not repo_path.is_dir():
+        print(
+            f"  {yellow('skip')} {repo_entry.get('name', repo_path.name)}: "
+            f"path does not exist ({repo_path})",
+            flush=True,
+        )
+        return
+    try:
+        owner, name = repo_nwo(repo_path)
+    except RuntimeError as e:
+        print(f"  {yellow('skip')} {repo_path}: {e}", flush=True)
+        return
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        wts_fut = ex.submit(worktrees, repo_path)
+        state_fut = ex.submit(workspace_state)
+        merged_fut = ex.submit(fetch_merged_branches, repo_path)
+        wts = wts_fut.result()
+        names, cwds = state_fut.result()
+        merged_branches = merged_fut.result()
+
+    coworker_branches = sorted(
+        {w.branch for w in wts if not w.branch.startswith(f"{self_user}/")}
+    )
+    try:
+        prs = list_relevant_prs(
+            owner, name, self_user, coworker_branches, cache=pr_cache
+        )
+    except RuntimeError as e:
+        print(
+            f"  {yellow('skip')} {owner}/{name}: list_relevant_prs failed: {e}",
+            flush=True,
+        )
+        return
+
+    tracked = find_cockpit_workspaces(prs, wts, names=names, cwds=cwds)
+    mine = sum(1 for pr in prs if pr.author == self_user)
+    coworker_relevant = len(prs) - mine
+    feature_wts = [w for w in wts if w.branch not in MAIN_BRANCHES]
+    wip_count = sum(1 for w in feature_wts if w.dirty)
+    ts = datetime.now().isoformat(timespec="seconds")
+    print(
+        f"{green(f'[{ts}]')} {bold(f'{owner}/{name}')}  mine: {mine}  "
+        f"coworker-with-wt: {coworker_relevant}  worktrees: {len(feature_wts)}  "
+        f"tracked: {len(tracked)}  wip: {wip_count}",
+        flush=True,
+    )
+
+    for pr in prs:
+        write_pr_cache(name, pr)
+
+    by_name: dict[str, list[str]] = {}
+    for ref, ws_name in names.items():
+        by_name.setdefault(ws_name, []).append(ref)
+    keep_refs: set[str] = set()
+    for ws_name, refs in by_name.items():
+        refs_sorted = sorted(refs, key=lambda r: int(r.split(":")[1]))
+        keep_refs.add(refs_sorted[0])
+        for extra in refs_sorted[1:]:
+            print(
+                f"  {red('closing duplicate')} {ws_name} → {extra}  "
+                f"(keeping {refs_sorted[0]})",
+                flush=True,
+            )
+            if not dry:
+                cmux_close_workspace_best_effort(extra)
+
+    feature_wt_paths = {
+        wt.path.resolve() for wt in wts if wt.branch not in MAIN_BRANCHES
+    }
+    by_wt_path: dict[Path, list[str]] = {}
+    for ref in keep_refs:
+        cwd = cwds.get(ref)
+        if cwd is None:
+            continue
+        resolved = cwd.resolve()
+        if resolved in feature_wt_paths:
+            by_wt_path.setdefault(resolved, []).append(ref)
+    for _wt_path, refs in by_wt_path.items():
+        if len(refs) <= 1:
+            continue
+        refs_sorted = sorted(refs, key=lambda r: int(r.split(":")[1]))
+        for extra in refs_sorted[1:]:
+            keep_refs.discard(extra)
+            extra_name = names.get(extra, extra)
+            keep_name = names.get(refs_sorted[0], refs_sorted[0])
+            print(
+                f"  {red('closing duplicate')} {extra_name} → {extra}  "
+                f"(same worktree as {keep_name})",
+                flush=True,
+            )
+            if not dry:
+                cmux_close_workspace_best_effort(extra)
+
+    for ref, (pr, wt) in tracked.items():
+        if ref not in keep_refs:
+            continue
+        label = names.get(ref, ref)
+        desired = frozenset(status_pills(pr, wt))
+        changed = pill_state.get(ref) != desired
+        if changed and not dry:
+            apply_pills(ref, pr, wt)
+        if changed or verbose:
+            op = " rebasing" if wt.rebasing else (" merging" if wt.merging else "")
+            tag = pr.display_issue + op
+            print(
+                f"  {dim('refreshed')} {blue(f'#{pr.number}')} → {cyan(label)}  "
+                f"[{issue_color(pr.display_issue)(tag)}]",
+                flush=True,
+            )
+        if changed:
+            pill_state[ref] = desired
+        if pr.display_issue in ACTIONABLE_ISSUES:
+            if pr.display_issue == "comments":
+                desc = f"{pr.unaddressed} unresolved review thread(s) — reply or push fixes"
+            elif pr.display_issue == "ci":
+                desc = f"CI is failing ({pr.ci}) — run `gh pr checks {pr.number}` and address it"
+            else:
+                desc = "merge conflicts vs base — rebase and force-push"
+            maybe_nudge(ref, f"PR #{pr.number}: {desc}.", nudge_state, dry, label)
+
+    wt_by_name = {wt.short: wt for wt in wts}
+    pr_branches = {pr.branch for pr in prs}
+    my_prefix = f"{self_user}/"
+    for ref in keep_refs:
+        ws_name = names.get(ref, "")
+        wt = wt_by_name.get(ws_name)
+        if wt is None or wt.branch in pr_branches or wt.branch in MAIN_BRANCHES:
+            continue
+        is_mine = wt.branch.startswith(my_prefix)
+        if is_mine:
+            if wt.branch in merged_branches:
+                print(
+                    f"  {dim(f'merged orphan {ws_name} ({wt.branch}) — autoclose may handle')}",
+                    flush=True,
+                )
+                continue
+            if not dry:
+                cmux(
+                    "set-status",
+                    ORPHAN_KEY,
+                    ORPHAN_ICON,
+                    "--workspace",
+                    ref,
+                    "--color",
+                    ORANGE,
+                    check=False,
+                )
+                apply_wip_pill(ref, wt.dirty_count)
+            tag = f"orphan{' wip' if wt.dirty else ''}"
+            orphan_snap = frozenset(
+                [
+                    ("orphan", ORPHAN_ICON),
+                    ("wip", str(wt.dirty_count) if wt.dirty else ""),
+                ]
+            )
+            changed = pill_state.get(ref) != orphan_snap
+            if changed or verbose:
+                print(
+                    f"  {dim('refreshed')} {cyan(ws_name)} → {ref}  [{yellow(tag)}]",
+                    flush=True,
+                )
+            if changed:
+                pill_state[ref] = orphan_snap
+            maybe_nudge(
+                ref,
+                f"Worktree {wt.short} on {wt.branch} still has no open PR. "
+                f"Push commits and open a PR, or close the worktree if abandoned.",
+                nudge_state,
+                dry,
+                ws_name,
+            )
+            continue
+        if keep_stale:
+            print(
+                f"  {dim(f'stale {ws_name} → {ref}  (kept; branch {wt.branch} has no open PR)')}",
+                flush=True,
+            )
+            continue
+        print(
+            f"  {red('closing')} {ws_name} → {ref}  (branch {wt.branch} has no open PR)",
+            flush=True,
+        )
+        if not dry:
+            cmux_close_workspace_best_effort(ref)
+
+    if not no_spawn:
+        matched, skipped_self = match_worktrees(prs, wts, self_user)
+        for pr in skipped_self:
+            print(
+                f"  {bold(red('WARN:'))} my PR #{pr.number} has no worktree for "
+                f"branch {pr.branch} — create one with /cockpit:new",
+                file=sys.stderr,
+                flush=True,
+            )
+        tracked_pr_numbers = {pr.number for pr, _ in tracked.values()}
+        for pr, wt in matched:
+            if pr.number not in tracked_pr_numbers:
+                open_workspace(pr, wt, dry=dry)
+        covered_paths = {p.resolve() for p in cwds.values()}
+        for wt in wts:
+            if not wt.branch.startswith(my_prefix) or wt.branch in pr_branches:
+                continue
+            if wt.path.resolve() in covered_paths:
+                continue
+            if wt.branch in merged_branches:
+                print(
+                    f"  {dim(f'skip orphan-spawn {wt.short} — branch {wt.branch} has merged PR')}",
+                    flush=True,
+                )
+                continue
+            open_orphan_workspace(wt, dry)
+
+    _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, self_user, dry=dry)
+
+
+def cycle_all(
+    cfg: dict,
+    self_user: str,
+    *,
+    keep_stale: bool,
+    no_spawn: bool,
+    dry: bool,
+    pr_cache: dict,
+    nudge_state: dict,
+    pill_state: dict,
+    verbose: bool,
+) -> None:
+    ensure_state_dirs()
+    repos = cfg.get("repos", [])
+    if not repos:
+        print(
+            f"  {yellow('no managed repos')} — register one via /cockpit:new in a git repo",
+            flush=True,
+        )
+        return
+    for repo_entry in repos:
+        try:
+            cycle_repo(
+                repo_entry,
+                self_user,
+                keep_stale=keep_stale,
+                no_spawn=no_spawn,
+                dry=dry,
+                pr_cache=pr_cache,
+                nudge_state=nudge_state,
+                pill_state=pill_state,
+                verbose=verbose,
+                cfg=cfg,
+            )
+        except Exception as e:
+            ts = datetime.now().isoformat(timespec="seconds")
+            print(
+                f"[{ts}] cycle error for {repo_entry.get('name')}: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+
+def _build_state(args) -> dict:
+    return {
+        "self_user": None,
+        "keep_stale": getattr(args, "keep_stale", False) if args else False,
+        "no_spawn": getattr(args, "no_spawn", False) if args else False,
+        "dry": getattr(args, "dry_run", False) if args else False,
+        "verbose": getattr(args, "verbose", False) if args else False,
+        "pr_cache": {},
+        "nudge_state": {},
+        "pill_state": {},
+    }
+
+
+def _once_with(state: dict) -> None:
+    cfg = load_config()
+    self_user = state.get("self_user") or gh_self_user()
+    state["self_user"] = self_user
+    cycle_all(
+        cfg,
+        self_user,
+        keep_stale=state["keep_stale"],
+        no_spawn=state["no_spawn"],
+        dry=state["dry"],
+        pr_cache=state["pr_cache"],
+        nudge_state=state["nudge_state"],
+        pill_state=state["pill_state"],
+        verbose=state["verbose"],
+    )
+
+
+def _once_cli() -> int:
+    state = _build_state(None)
+    _once_with(state)
+    return 0
+
+
+def _watch(state: dict, watch_secs: int) -> None:
+    self_ws = os.environ.get("CMUX_WORKSPACE_ID")
+    show_loop_pill = bool(self_ws) and not state["dry"]
+
+    def on_start() -> None:
+        if show_loop_pill:
+            cmux(
+                "set-status",
+                LOOP_KEY,
+                LOOP_ICON,
+                "--workspace",
+                self_ws,
+                "--color",
+                BLUE,
+                check=False,
+            )
+
+    def on_stop() -> None:
+        if show_loop_pill:
+            cmux("clear-status", LOOP_KEY, "--workspace", self_ws, check=False)
+
+    def on_wake() -> None:
+        state["nudge_state"].clear()
+        print(f"{green('kick:')} SIGUSR1 — running cycle now", flush=True)
+
+    run_watcher(
+        lambda: _once_with(state),
+        watch_secs,
+        on_start=on_start,
+        on_stop=on_stop,
+        on_wake=on_wake,
+    )
+
+
+def _footer_command() -> str:
+    return f"{sys.executable} {Path(__file__).resolve().parent / 'footer.py'}"
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument(
+        "--watch",
+        nargs="?",
+        const=-1,
+        type=int,
+        metavar="SECS",
+        help="Run as a daemon. With no arg, use config.poll_interval_seconds.",
+    )
+    g.add_argument("--once", action="store_true")
+    p.add_argument("--keep-stale", action="store_true")
+    p.add_argument("--no-spawn", action="store_true")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--verbose", "-v", action="store_true")
+    args = p.parse_args(argv)
+
+    ensure_state_dirs()
+    prompt_statusline_setup(_footer_command())
+
+    if args.watch is not None:
+        cfg = load_config()
+        secs = (
+            args.watch
+            if args.watch and args.watch > 0
+            else cfg.get("poll_interval_seconds", DEFAULT_POLL_SECS)
+        )
+        if secs < MIN_POLL_SECS:
+            print(f"--watch SECS must be >= {MIN_POLL_SECS}", file=sys.stderr)
+            return 2
+        state = _build_state(args)
+        _watch(state, secs)
+        return 0
+    state = _build_state(args)
+    _once_with(state)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
