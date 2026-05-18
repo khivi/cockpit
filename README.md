@@ -60,6 +60,14 @@ otherrepo     experiment/baz      —      —        —               3d ago  
 
 Kicks the cockpit immediately (SIGUSR1) if `--watch` is running, otherwise forks `cockpit.py --once`. Refreshes the PR cache and footer.
 
+### `/cockpit:focus <pr|branch|slug>`
+
+Switches cmux focus to the matching workspace. Resolves via `lib.cmux.resolve_workspace` (PR → branch → slug). Read-only on git/disk.
+
+### `/cockpit:close <pr|branch|slug> [--force]`
+
+Removes worktree + workspace + PR cache. Refuses on uncommitted changes, unpushed commits, or an open PR unless `--force`. Shares its resolver with `/cockpit:focus`.
+
 ## State directory
 
 ```text

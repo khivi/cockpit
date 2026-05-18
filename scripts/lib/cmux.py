@@ -6,11 +6,12 @@ import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import run
 from .gh import PR
-from .git import Worktree
+from .git import Worktree, worktrees
 
 GREEN = "#2dd36f"
 RED = "#eb445a"
@@ -264,6 +265,74 @@ def apply_pills(
         )
 
     return frozenset(desired)
+
+
+@dataclass
+class WorkspaceMatch:
+    ref: str
+    name: str
+    worktree: Worktree | None
+
+
+def resolve_workspace(query: str, repo_dir: Path) -> WorkspaceMatch:
+    """Resolve `<pr|branch|slug>` against live cmux + git state.
+
+    Match order: PR number (#N or N) via cache → worktree branch → workspace name.
+    Raises LookupError on no match or ambiguity.
+    """
+    from .cache import find_pr_payload_by_number
+    from .config import discover_repo
+
+    names = workspace_names()
+    cwds = workspace_cwds()
+    wts = worktrees(repo_dir)
+    wt_by_path = {wt.path.resolve(): wt for wt in wts}
+    wt_by_branch = {wt.branch: wt for wt in wts}
+
+    wt_for_ref: dict[str, Worktree | None] = {}
+    for ref in set(names) | set(cwds):
+        wt_for_ref[ref] = wt_by_path.get(cwds[ref].resolve()) if ref in cwds else None
+
+    def _ref_for_worktree(wt: Worktree) -> str:
+        candidates = [r for r, w in wt_for_ref.items() if w is wt]
+        if not candidates:
+            raise LookupError(f"worktree {wt.path} has no cmux workspace")
+        if len(candidates) > 1:
+            raise LookupError(
+                f"worktree {wt.path} matches multiple workspaces: {sorted(candidates)}"
+            )
+        return candidates[0]
+
+    pr_match = re.fullmatch(r"#?(\d+)", query)
+    if pr_match:
+        pr_num = pr_match.group(1)
+        repo_cfg = discover_repo()
+        repo_name = repo_cfg.get("name") if repo_cfg else None
+        payload = find_pr_payload_by_number(pr_num, repo_name=repo_name)
+        if payload is None:
+            raise LookupError(f"PR #{pr_num} not in cockpit cache")
+        branch = payload.get("branch")
+        wt = wt_by_branch.get(branch) if branch else None
+        if wt is None:
+            raise LookupError(f"PR #{pr_num} (branch {branch!r}) has no worktree")
+        ref = _ref_for_worktree(wt)
+        return WorkspaceMatch(ref, names.get(ref, ""), wt)
+
+    if query in wt_by_branch:
+        wt = wt_by_branch[query]
+        ref = _ref_for_worktree(wt)
+        return WorkspaceMatch(ref, names.get(ref, ""), wt)
+
+    slug_refs = [r for r, n in names.items() if n == query]
+    if len(slug_refs) > 1:
+        raise LookupError(
+            f"slug {query!r} matches multiple workspaces: {sorted(slug_refs)}"
+        )
+    if len(slug_refs) == 1:
+        ref = slug_refs[0]
+        return WorkspaceMatch(ref, query, wt_for_ref.get(ref))
+
+    raise LookupError(f"no workspace matched {query!r}")
 
 
 def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:
