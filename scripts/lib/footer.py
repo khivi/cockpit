@@ -12,16 +12,15 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from .cache import find_pr_payload
 from .config import CACHE_DIR, discover_repo
 
 TITLE_MAX = 60
-LINEAR_ID_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
+LINEAR_ID_RE = re.compile(r"(?:^|/)([A-Z]{2,5}-\d+)(?:$|/|-(?!\d))")
 
 
-def _ceiling(size: int) -> str:
+def _size_label(size: int) -> str:
     if size >= 1_000_000:
         return "1M"
     if size >= 1_000:
@@ -36,29 +35,15 @@ def _context_pill(data: dict) -> str:
     size = ctx.get("context_window_size")
     if pct is None or not size:
         return ""
-    return f"🧠 {round(float(pct))}%/{_ceiling(int(size))}"
-
-
-def _find_first_timestamp(node: Any) -> str:
-    """Walk a JSON-ish structure and return the first string-typed `.timestamp` value."""
-    if isinstance(node, dict):
-        ts = node.get("timestamp")
-        if isinstance(ts, str):
-            return ts
-        for v in node.values():
-            r = _find_first_timestamp(v)
-            if r:
-                return r
-    elif isinstance(node, list):
-        for v in node:
-            r = _find_first_timestamp(v)
-            if r:
-                return r
-    return ""
+    return f"🧠 {round(float(pct))}%/{_size_label(int(size))}"
 
 
 def _elapsed_pill(data: dict) -> str:
-    """`⏱ 1h 23m` from now - first transcript timestamp. Empty for <10s or missing transcript."""
+    """`⏱ 1h 23m` from now - first transcript timestamp.
+
+    Empty when: no `transcript_path`, file missing, unreadable, no parsable
+    top-level `timestamp` on any entry, unparsable ISO string, or elapsed < 10s.
+    """
     transcript = data.get("transcript_path")
     if not transcript:
         return ""
@@ -67,15 +52,17 @@ def _elapsed_pill(data: dict) -> str:
         return ""
     first_ts = ""
     try:
-        with path.open() as fh:
+        with path.open(encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 try:
                     obj = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
+                except json.JSONDecodeError:
                     continue
-                first_ts = _find_first_timestamp(obj)
-                if first_ts:
-                    break
+                if isinstance(obj, dict):
+                    ts = obj.get("timestamp")
+                    if isinstance(ts, str):
+                        first_ts = ts
+                        break
     except OSError:
         return ""
     if not first_ts:
@@ -104,7 +91,7 @@ def _session_pills(blob: str) -> list[str]:
         return []
     try:
         data = json.loads(blob)
-    except (json.JSONDecodeError, ValueError, TypeError):
+    except (json.JSONDecodeError, TypeError):
         return []
     pills: list[str] = []
     model = (data.get("model") or {}).get("display_name") or ""
@@ -141,11 +128,12 @@ def _truncate_title(title: str) -> str:
     return title
 
 
-def _pr_segment(branch: str) -> str:
+def _pr_segment(branch: str, linear_pill: str = "") -> str:
     """Cockpit-tracked tier's PR-info segment (no prefix, no dirty/badge)."""
     match = find_pr_payload(branch)
     if not match:
-        return f"{branch} · {'no PR' if CACHE_DIR.is_dir() else 'no cache (run /cockpit:sync)'}"
+        head = f"{branch} · {linear_pill}" if linear_pill else branch
+        return f"{head} · {'no PR' if CACHE_DIR.is_dir() else 'no cache (run /cockpit:sync)'}"
     ci_raw = str(match.get("ci") or "")
     ci = (
         "✓"
@@ -165,7 +153,9 @@ def _pr_segment(branch: str) -> str:
         label = state.lower()
     head = f"#{match.get('number')} {branch}"
     if title := _truncate_title(str(match.get("title") or "")):
-        head = f'{head} "{title}"'
+        head = f"{head} “{title}”"
+    if linear_pill:
+        head = f"{head} · {linear_pill}"
     return f"{head} · {ci} · {label}"
 
 
@@ -177,8 +167,10 @@ def render_footer() -> int:
 
     Segment order across all three tiers; lower tiers just omit segments:
       head · dirty · <session pills>
-      where `head` is `#N <branch> "<title>" · ci · review` when Cockpit-tracked,
-      `<branch>` in any other git repo, and empty outside a git repo.
+      where `head` is `#N <branch> “<title>” · <LINEAR-ID> · ci · review` when
+      Cockpit-tracked, `<branch> · <LINEAR-ID>` in any other git repo, and empty
+      outside a git repo. The `· <LINEAR-ID>` part is omitted when the branch
+      has no Linear-style ticket prefix.
     """
     blob = ""
     if not sys.stdin.isatty():
@@ -191,16 +183,16 @@ def render_footer() -> int:
     dirty_pill = f"✏️ {dirty}" if dirty else ""
     linear_pill = ""
     if branch and (m := LINEAR_ID_RE.search(branch)):
-        linear_pill = m.group(0)
+        linear_pill = m.group(1)
 
     if not branch:
         head = ""
     elif discover_repo() is None:
-        head = branch
+        head = f"{branch} · {linear_pill}" if linear_pill else branch
     else:
-        head = _pr_segment(branch)
+        head = _pr_segment(branch, linear_pill)
 
-    parts = [head, linear_pill, dirty_pill, *_session_pills(blob)]
+    parts = [head, dirty_pill, *_session_pills(blob)]
     line = " · ".join(p for p in parts if p)
     if line:
         print(line)
