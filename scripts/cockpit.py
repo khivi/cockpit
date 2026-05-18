@@ -210,6 +210,80 @@ def match_worktrees(
     return matched, skipped_self
 
 
+def _repo_default_branch(repo_path: Path) -> str | None:
+    """Return the remote default branch (e.g. 'main') from origin/HEAD, or None."""
+    r = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_path),
+            "symbolic-ref",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    ref = r.stdout.strip()
+    return ref.removeprefix("origin/") or None
+
+
+def _maybe_ff_main(repo_path: Path, wts: list[Worktree], *, dry: bool) -> None:
+    """Fast-forward the worktree on the repo's default branch to its upstream.
+
+    Skips dirty worktrees. Targets ONLY the GitHub default branch (resolved via
+    origin/HEAD), never any branch that happens to be named main/master. Uses
+    --ff-only so non-fast-forward histories just no-op.
+    """
+    default = _repo_default_branch(repo_path)
+    if default is None:
+        return
+    for wt in wts:
+        if wt.branch != default:
+            continue
+        if wt.dirty_count > 0:
+            continue
+        fetch = subprocess.run(
+            ["git", "-C", str(wt.path), "fetch", "origin", wt.branch],
+            capture_output=True,
+            text=True,
+        )
+        if fetch.returncode != 0:
+            continue
+        rev = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(wt.path),
+                "rev-list",
+                "--count",
+                f"HEAD..origin/{wt.branch}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        try:
+            behind = int(rev.stdout.strip())
+        except ValueError:
+            continue
+        if behind == 0:
+            continue
+        action = "[dry] ff-main" if dry else "ff-main:"
+        print(
+            f"  {magenta(action)} {wt.short} → origin/{wt.branch}  ({behind} commit{'s' if behind != 1 else ''})",
+            flush=True,
+        )
+        if dry:
+            continue
+        subprocess.run(
+            ["git", "-C", str(wt.path), "merge", "--ff-only", f"origin/{wt.branch}"],
+            capture_output=True,
+            text=True,
+        )
+
+
 def _maybe_autoclose(
     cfg: dict,
     repo_path: Path,
@@ -515,6 +589,7 @@ def cycle_repo(
             open_orphan_workspace(wt, dry)
 
     _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, self_user, dry=dry)
+    _maybe_ff_main(repo_path, wts, dry=dry)
 
 
 def _close_gone_cwd_workspaces(dry: bool) -> None:
