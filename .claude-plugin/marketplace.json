@@ -1,0 +1,29 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "khivi-cockpit",
+  "description": "Single-plugin marketplace for cockpit — cmux workspaces backed by git worktrees, aligned to GitHub PRs.",
+  "owner": {
+    "name": "khivi"
+  },
+  "plugins": [
+    {
+      "name": "cockpit",
+      "description": "cmux workspaces backed by git worktrees, aligned to GitHub PRs with live status surfaced in cmux pills and a Claude session footer.",
+      "author": {
+        "name": "Khivi"
+      },
+      "category": "developer-tools",
+      "source": ".",
+      "homepage": "https://github.com/khivi/cockpit",
+      "keywords": [
+        "cmux",
+        "claude-code",
+        "git-worktree",
+        "github",
+        "pull-request",
+        "workspace"
+      ],
+      "license": "MIT"
+    }
+  ]
+}
