@@ -15,9 +15,9 @@ Optional:
 Positional detection (5 steps):
   1. GitHub PR URL (https://github.com/.../pull/N) → PR mode
   2. Bare PR number (#N or N)                       → PR mode
-  3. Local branch (refs/heads/<branch> exists)      }
-  4. Remote branch (refs/remotes/origin/<branch>)   } → branch mode (git resolves)
-  5. New branch (neither local nor remote)          }
+  3. Local branch (refs/heads/<branch> exists)           → checkout
+  4. Remote branch (ls-remote origin <branch> matches)   → fetch + checkout
+  5. New branch (neither local nor remote)               → create from default_base
   # TODO: Linear ID (PE-1234) → resolve via Linear API
   # TODO: Slack URL           → resolve via Slack API
 
@@ -170,13 +170,19 @@ def main() -> int:
     args = parse_args()
     branch, cwd, short, pr_num = args.branch, args.cwd, args.name, args.pr
 
-    if args.positional and not (branch or pr_num):
+    if args.positional and (branch or pr_num or short):
+        print(
+            "ERROR: positional is mutually exclusive with --branch/--pr/--name",
+            file=sys.stderr,
+        )
+        return 1
+    elif args.positional:
         mode, value = detect_source(args.positional)
         if mode == "pr":
             pr_num = value
         else:
             branch = value
-    elif short and not (branch or pr_num or args.positional or cwd):
+    elif short and not (branch or pr_num or cwd):
         branch = short
 
     if cwd and (branch or pr_num or args.repo):

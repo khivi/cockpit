@@ -191,13 +191,12 @@ def create_worktree(
 ) -> str:
     """Create a worktree at `wt_path` for `branch`. Returns the final branch name.
 
-    Three branches of behaviour:
-      - `pr_num` given: fetch `pull/{N}/head` into a local ref named `branch`,
-        then `worktree add`.
-      - `branch` already exists locally: plain `worktree add wt_path branch`.
-      - Otherwise: create `<branch_prefix?><branch>` from `origin/{base}`; the
-        prefix is only prepended when the input branch has no '/' (treated as a
-        short name). The (possibly prefixed) name is returned to the caller.
+    Four branches of behaviour:
+      - `pr_num` given: fetch `pull/{N}/head` into a local ref, then worktree add.
+      - branch exists locally: plain `worktree add wt_path branch`.
+      - branch exists on remote: fetch it into a local ref, then worktree add.
+      - otherwise: create `<branch_prefix?><branch>` from `origin/{base}`; prefix
+        is only prepended when the input has no '/' (short name).
     """
     if pr_num:
         run(
@@ -216,7 +215,7 @@ def create_worktree(
     subprocess.run(
         ["git", "-C", str(repo), "fetch", "origin", base], capture_output=True
     )
-    has_branch = (
+    has_local = (
         subprocess.run(
             [
                 "git",
@@ -230,7 +229,28 @@ def create_worktree(
         ).returncode
         == 0
     )
-    if has_branch:
+    if has_local:
+        run(["git", "-C", str(repo), "worktree", "add", str(wt_path), branch])
+        return branch
+
+    has_remote = (
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "ls-remote",
+                "--exit-code",
+                "--heads",
+                "origin",
+                branch,
+            ],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+    if has_remote:
+        run(["git", "-C", str(repo), "fetch", "origin", f"{branch}:{branch}"])
         run(["git", "-C", str(repo), "worktree", "add", str(wt_path), branch])
         return branch
 
