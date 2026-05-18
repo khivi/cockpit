@@ -1,0 +1,5 @@
+[codespell]
+# Skip generated/binary content + the gitignored personal denylist.
+skip = .git,__pycache__,*.pyc,.relint.yml,.secrets.baseline,.gitleaks.toml
+# Add `ignore-words-list = word1,word2` here as false positives arise.
+ignore-words-list = nwo

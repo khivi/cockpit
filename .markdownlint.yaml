@@ -1,0 +1,22 @@
+# markdownlint config — opinionated relaxations for this repo.
+# Rule reference: https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+default: true
+
+# MD013 line-length — we use long natural-language paragraphs and prose-style
+# bullet lists. Hard-wrapping these belongs in $EDITOR, not in CI.
+MD013: false
+
+# MD033 inline HTML — we use a few <details>/<summary> blocks.
+MD033: false
+
+# MD041 first-line-h1 — the SKILL.md frontmatter precedes the H1.
+MD041: false
+
+# MD046 code-block-style — both fenced and indented are fine.
+MD046: false
+
+# MD024 multiple-headings-same-content — slash-command sections repeat headings
+# under different parents (e.g. "## Implementation" under multiple commands).
+MD024:
+  siblings_only: true

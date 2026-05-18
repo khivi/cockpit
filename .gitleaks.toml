@@ -1,0 +1,41 @@
+# gitleaks config — extends the default secret-detection ruleset with custom
+# personal-data denylist rules. See https://github.com/gitleaks/gitleaks for
+# the full ruleset schema.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "macos-home-path"
+description = "Hardcoded macOS home path — use $HOME or ~"
+regex = '''/Users/[A-Za-z0-9_.-]+/'''
+tags = ["personal-data"]
+
+[[rules]]
+id = "linux-home-path"
+description = "Hardcoded Linux home path — use $HOME or ~"
+regex = '''/home/[A-Za-z0-9_.-]+/'''
+tags = ["personal-data"]
+
+[[rules]]
+id = "slack-id"
+description = "Slack user/channel/workspace ID"
+regex = '''\b[UCWG][A-Z0-9]{8,10}\b'''
+tags = ["personal-data"]
+# Real Slack IDs always contain at least one digit (e.g. UNZK6NH0A).
+# Exclude all-uppercase-letter matches (CONFLICTING, REVIEW_REQUIRED, etc.).
+# Go's RE2 has no lookahead, so this is expressed as an allowlist regex.
+[rules.allowlist]
+regexes = ['''^[UCWG][A-Z]+$''']
+
+[[rules]]
+id = "bare-uuid"
+description = "Bare UUID (often Linear/Slack/internal ID) — mock or remove"
+regex = '''\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'''
+tags = ["personal-data"]
+
+[allowlist]
+description = "Global allowlist"
+paths = [
+  '''\.gitleaks\.toml''',
+]

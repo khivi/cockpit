@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Bump pinned hook versions in .pre-commit-config.yaml
+  # (ruff, black, shellcheck, shfmt, gitleaks, pre-commit-hooks, relint).
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "pre-commit"]
+    # The repo has no requirements.txt — this ecosystem entry is here only so
+    # dependabot's pre-commit detection (it reads .pre-commit-config.yaml under
+    # the pip ecosystem) is enabled. Native pre-commit support landed in 2023.
+
+  # Bump action versions in .github/workflows/*.yml
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "github-actions"]
