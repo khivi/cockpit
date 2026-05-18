@@ -3,10 +3,8 @@ name: Version Check
 on:
   pull_request:
     paths:
-      - 'cmd/**'
-      - 'internal/**'
-      - 'pkg/**'
-      - 'cockpit.py'
+      - 'scripts/**'
+      - '.claude-plugin/**'
       - '!.github/**'
       - '!*.md'
 
