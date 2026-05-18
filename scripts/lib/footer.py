@@ -7,14 +7,13 @@ it reads PR state from `lib/cache`, never touches the network.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .cache import find_pr_payload
-
-TITLE_MAX = 60
 
 
 def _size_label(size: int) -> str:
@@ -118,13 +117,6 @@ def _git_branch_and_dirty() -> tuple[str, int]:
     return branch, sum(1 for row in porcelain.splitlines() if row)
 
 
-def _truncate_title(title: str) -> str:
-    title = title.strip()
-    if len(title) > TITLE_MAX:
-        return title[: TITLE_MAX - 1].rstrip() + "…"
-    return title
-
-
 def _pr_segment(branch: str) -> str:
     """Cockpit-tracked tier's PR-info segment (no prefix, no dirty/badge)."""
     match = find_pr_payload(branch)
@@ -148,8 +140,6 @@ def _pr_segment(branch: str) -> str:
     else:
         label = state.lower()
     head = f"#{match.get('number')} {branch}"
-    if title := _truncate_title(str(match.get("title") or "")):
-        head = f"{head} “{title}”"
     return f"{head} · {ci} · {label}"
 
 
@@ -158,7 +148,7 @@ def render_footer() -> int:
 
     Line 1: session pills — `🤖 model · 🧠 ctx · ⌛ 5h % · ⏱ elapsed` — from the
     JSON Claude Code pipes on stdin. Omitted entirely when no JSON.
-    Line 2: head + dirty — `#N <branch> "title" · ci · review` when cockpit-tracked,
+    Line 2: head + dirty — `#N <branch> · ci · review` when cockpit-tracked,
     `<branch> · no PR` in any other git repo, and empty outside a git repo.
     `· ✏️ N` is appended when the worktree is dirty.
 
@@ -170,6 +160,12 @@ def render_footer() -> int:
             blob = sys.stdin.read()
         except OSError:
             blob = ""
+
+    if os.getenv("COCKPIT_FOOTER_DEBUG"):
+        try:
+            Path("/tmp/cockpit_footer_stdin.json").write_text(blob)
+        except Exception:
+            pass
 
     branch, dirty = _git_branch_and_dirty()
     dirty_pill = f"✏️ {dirty}" if dirty else ""
