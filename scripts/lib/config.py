@@ -71,7 +71,7 @@ def discover_repo() -> dict | None:
 
 
 def prompt_statusline_setup(footer_command: str) -> None:
-    """First-time prompt to wire Claude Code's statusLine to `cockpit.py --footer`.
+    """First-time prompt to wire Claude Code's statusLine to `scripts/footer.py`.
 
     No-ops when stdin isn't a TTY (e.g. invoked from a hook) or when the user
     has already been asked. Persists `~/.config/cockpit/.statusline-asked` to

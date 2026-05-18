@@ -1,0 +1,30 @@
+name: Version Check
+
+on:
+  pull_request:
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'cockpit.py'
+      - '!.github/**'
+      - '!*.md'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version bump
+        run: |
+          old=$(git show origin/${{ github.base_ref }}:./.claude-plugin/plugin.json | jq -r .version)
+          new=$(jq -r .version ./.claude-plugin/plugin.json)
+          if [ "$old" = "$new" ]; then
+            echo "Version unchanged: $old → $new"
+            echo "Please bump the version in .claude-plugin/plugin.json"
+            exit 1
+          fi
+          echo "✓ Version bumped: $old → $new"
