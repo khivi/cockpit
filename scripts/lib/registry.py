@@ -1,18 +1,18 @@
 """Register the cwd's main repo in cockpit's config.json.
 
-Auto-detects repo root (resolves worktrees to main), gh user (branch prefix),
-and default branch. Idempotent.
+Auto-detects repo root (via git.main_worktree_path), gh user (branch prefix),
+and default branch (via gh.default_branch). Idempotent.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 from . import run
 from .config import CONFIG_PATH, ensure_state_dirs
+from .gh import default_branch
 from .git import main_worktree_path
 
 
@@ -21,30 +21,6 @@ def repo_root() -> Path:
     if path is None:
         raise RuntimeError("not in a git repo — cd into the main repo first")
     return path
-
-
-def default_branch(repo: Path) -> str:
-    res = subprocess.run(
-        [
-            "gh",
-            "repo",
-            "view",
-            "--json",
-            "defaultBranchRef",
-            "--jq",
-            ".defaultBranchRef.name",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=repo,
-    )
-    if res.returncode == 0 and res.stdout.strip():
-        return res.stdout.strip()
-    out = run(
-        ["git", "-C", str(repo), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-        check=False,
-    ).strip()
-    return out.removeprefix("origin/") if out else "main"
 
 
 def _prompt_branch_prefix(default: str) -> str:

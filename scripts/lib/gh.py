@@ -14,6 +14,31 @@ def gh_json(args: list[str]) -> dict | list:
     return json.loads(run(["gh", *args]))
 
 
+def default_branch(repo: Path) -> str:
+    """GitHub default branch for `repo`, with git symbolic-ref fallback when offline."""
+    res = subprocess.run(
+        [
+            "gh",
+            "repo",
+            "view",
+            "--json",
+            "defaultBranchRef",
+            "--jq",
+            ".defaultBranchRef.name",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=repo,
+    )
+    if res.returncode == 0 and res.stdout.strip():
+        return res.stdout.strip()
+    out = run(
+        ["git", "-C", str(repo), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        check=False,
+    ).strip()
+    return out.removeprefix("origin/") if out else "main"
+
+
 def gh_self_user() -> str:
     """Resolve the current authenticated GitHub user via `gh api user`.
 
