@@ -1,9 +1,9 @@
 ---
 name: cockpit
 model: haiku
-effort: low
 description: "Manage cmux workspaces backed by git worktrees aligned to GitHub PRs. TRIGGER when the user says: start a new feature branch / new PR worktree, what is the status of my PRs, list my open PRs, refresh PR status. DO NOT TRIGGER for: general git questions, building unrelated features, or anything that does not involve worktree↔workspace↔PR alignment."
 allowed-tools: Bash
+effort: low
 context: fork
 ---
 
