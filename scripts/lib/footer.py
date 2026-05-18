@@ -7,17 +7,15 @@ it reads PR state from `lib/cache`, never touches the network.
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .cache import find_pr_payload
-from .config import CACHE_DIR, discover_repo
+from .config import discover_repo
 
 TITLE_MAX = 60
-LINEAR_ID_RE = re.compile(r"(?:^|/)([A-Z]{2,5}-\d+)(?:$|/|-(?!\d))")
 
 
 def _size_label(size: int) -> str:
@@ -128,12 +126,11 @@ def _truncate_title(title: str) -> str:
     return title
 
 
-def _pr_segment(branch: str, linear_pill: str = "") -> str:
+def _pr_segment(branch: str) -> str:
     """Cockpit-tracked tier's PR-info segment (no prefix, no dirty/badge)."""
     match = find_pr_payload(branch)
     if not match:
-        head = f"{branch} · {linear_pill}" if linear_pill else branch
-        return f"{head} · {'no PR' if CACHE_DIR.is_dir() else 'no cache (run /cockpit:sync)'}"
+        return f"{branch} · no PR"
     ci_raw = str(match.get("ci") or "")
     ci = (
         "✓"
@@ -154,23 +151,19 @@ def _pr_segment(branch: str, linear_pill: str = "") -> str:
     head = f"#{match.get('number')} {branch}"
     if title := _truncate_title(str(match.get("title") or "")):
         head = f"{head} “{title}”"
-    if linear_pill:
-        head = f"{head} · {linear_pill}"
     return f"{head} · {ci} · {label}"
 
 
 def render_footer() -> int:
-    """One-line PR status for Claude Code's statusLine.
+    """Two-line PR status for Claude Code's statusLine.
 
-    Reads optional session JSON on stdin and enriches with model + context +
-    rate-limit + elapsed. Uses cockpit's cache only — never blocks on the network.
+    Line 1: session pills — `🤖 model · 🧠 ctx · ⌛ 5h % · ⏱ elapsed` — from the
+    JSON Claude Code pipes on stdin. Omitted entirely when no JSON.
+    Line 2: head + dirty — `#N <branch> "title" · ci · review` when cockpit-tracked,
+    `<branch> · no PR` in any other git repo, and empty outside a git repo.
+    `· ✏️ N` is appended when the worktree is dirty.
 
-    Segment order across all three tiers; lower tiers just omit segments:
-      head · dirty · <session pills>
-      where `head` is `#N <branch> “<title>” · <LINEAR-ID> · ci · review` when
-      Cockpit-tracked, `<branch> · <LINEAR-ID>` in any other git repo, and empty
-      outside a git repo. The `· <LINEAR-ID>` part is omitted when the branch
-      has no Linear-style ticket prefix.
+    Uses cockpit's cache only — never blocks on the network.
     """
     blob = ""
     if not sys.stdin.isatty():
@@ -181,19 +174,12 @@ def render_footer() -> int:
 
     branch, dirty = _git_branch_and_dirty()
     dirty_pill = f"✏️ {dirty}" if dirty else ""
-    linear_pill = ""
-    if branch and (m := LINEAR_ID_RE.search(branch)):
-        linear_pill = m.group(1)
 
-    if not branch:
-        head = ""
-    elif discover_repo() is None:
-        head = f"{branch} · {linear_pill}" if linear_pill else branch
-    else:
-        head = _pr_segment(branch, linear_pill)
+    head = _pr_segment(branch) if branch else ""
 
-    parts = [head, dirty_pill, *_session_pills(blob)]
-    line = " · ".join(p for p in parts if p)
-    if line:
-        print(line)
+    pills_line = " · ".join(_session_pills(blob))
+    head_line = " · ".join(p for p in [head, dirty_pill] if p)
+    out = "\n".join(line for line in (pills_line, head_line) if line)
+    if out:
+        print(out)
     return 0
