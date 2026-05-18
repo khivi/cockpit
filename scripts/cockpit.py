@@ -150,7 +150,6 @@ def _maybe_autoclose(
     repo_name: str,
     wts: list[Worktree],
     merged_branches: set[str],
-    self_user: str,
     *,
     dry: bool,
 ) -> None:
@@ -441,7 +440,7 @@ def cycle_repo(
                 continue
             spawn_orphan_workspace(wt, dry=dry)
 
-    _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, self_user, dry=dry)
+    _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, dry=dry)
     _log_ff_main(repo_path, wts, dry=dry)
 
 
