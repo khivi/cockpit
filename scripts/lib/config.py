@@ -64,33 +64,20 @@ def find_repo_by_name(name: str) -> dict | None:
     return None
 
 
-def prompt_statusline_setup(footer_command: str) -> None:
-    """First-time prompt to wire Claude Code's statusLine to `scripts/footer.py`.
+def _read_current_statusline(settings_path: Path) -> str | None:
+    if not settings_path.exists():
+        return ""
+    try:
+        return (
+            json.loads(settings_path.read_text())
+            .get("statusLine", {})
+            .get("command", "")
+        )
+    except (OSError, json.JSONDecodeError):
+        return None
 
-    No-ops when stdin isn't a TTY (e.g. invoked from a hook) or when the user
-    has already been asked. Persists `~/.config/cockpit/.statusline-asked` to
-    avoid re-prompting.
-    """
-    if not sys.stdin.isatty():
-        return
-    asked_flag = COCKPIT_HOME / ".statusline-asked"
-    if asked_flag.exists():
-        return
-    settings_path = Path.home() / ".claude" / "settings.json"
-    current = ""
-    if settings_path.exists():
-        try:
-            current = (
-                json.loads(settings_path.read_text())
-                .get("statusLine", {})
-                .get("command", "")
-            )
-        except (OSError, json.JSONDecodeError):
-            return
-    if current == footer_command:
-        asked_flag.touch()
-        return
 
+def _ask_and_write(settings_path: Path, footer_command: str, current: str) -> None:
     if current:
         print(f"Claude statusLine is currently: {current}")
         prompt = "replace with cockpit footer? [y/N] "
@@ -100,7 +87,7 @@ def prompt_statusline_setup(footer_command: str) -> None:
         reply = input(prompt).strip().lower()
     except (EOFError, KeyboardInterrupt):
         return
-    asked_flag.touch()
+    (COCKPIT_HOME / ".statusline-asked").touch()
     if reply != "y":
         print(
             f"skipped; set .statusLine.command to '{footer_command}' in {settings_path}"
@@ -121,3 +108,25 @@ def prompt_statusline_setup(footer_command: str) -> None:
     data["statusLine"] = {"type": "command", "command": footer_command}
     settings_path.write_text(json.dumps(data, indent=2) + "\n")
     print(f"wrote Claude statusLine -> {footer_command}")
+
+
+def prompt_statusline_setup(footer_command: str) -> None:
+    """First-time prompt to wire Claude Code's statusLine to `scripts/footer.py`.
+
+    No-ops when stdin isn't a TTY (e.g. invoked from a hook) or when the user
+    has already been asked. Persists `~/.config/cockpit/.statusline-asked` to
+    avoid re-prompting.
+    """
+    if not sys.stdin.isatty():
+        return
+    asked_flag = COCKPIT_HOME / ".statusline-asked"
+    if asked_flag.exists():
+        return
+    settings_path = Path.home() / ".claude" / "settings.json"
+    current = _read_current_statusline(settings_path)
+    if current is None:
+        return
+    if current == footer_command:
+        asked_flag.touch()
+        return
+    _ask_and_write(settings_path, footer_command, current)

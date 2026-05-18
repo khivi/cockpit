@@ -310,6 +310,56 @@ def _collect_nodes(data: dict, n_coworker: int) -> list[dict]:
     return nodes
 
 
+def _fetch_light_phase(
+    owner: str, name: str, self_user: str, coworker_branches: list[str]
+) -> dict[int, str]:
+    light_q = _relevant_pr_query(
+        owner, name, self_user, coworker_branches, _PR_LIGHT_FIELDS
+    )
+    light_data = gh_json(["api", "graphql", "-f", f"query={light_q}"])
+    light_nodes = _collect_nodes(light_data, len(coworker_branches))
+    light_by_number: dict[int, str] = {}
+    for ln in light_nodes:
+        if ln.get("number") is not None:
+            light_by_number.setdefault(ln["number"], ln.get("updatedAt") or "")
+    return light_by_number
+
+
+def _identify_stale(
+    light_by_number: dict[int, str], cache: dict[int, tuple[PR, str]]
+) -> list[int]:
+    stale: list[int] = []
+    for num, updated in light_by_number.items():
+        prev = cache.get(num)
+        if prev is None or prev[1] != updated or prev[0].ci == "pending":
+            stale.append(num)
+    return stale
+
+
+def _hydrate_stale(
+    owner: str,
+    name: str,
+    stale: list[int],
+    light_by_number: dict[int, str],
+    cache: dict[int, tuple[PR, str]],
+) -> None:
+    alias_lines = [
+        f"pr{i}: pullRequest(number: {n}) {{ {_PR_FIELDS} }}"
+        for i, n in enumerate(stale)
+    ]
+    heavy_q = (
+        f'query {{ repository(owner: "{owner}", name: "{name}") '
+        f'{{ {" ".join(alias_lines)} }} }}'
+    )
+    heavy_data = gh_json(["api", "graphql", "-f", f"query={heavy_q}"])
+    repo = heavy_data["data"]["repository"]
+    for i, num in enumerate(stale):
+        node = repo.get(f"pr{i}")
+        pr = _pr_from_node(node) if node else None
+        if pr:
+            cache[num] = (pr, light_by_number.get(num, ""))
+
+
 def list_relevant_prs(
     owner: str,
     name: str,
@@ -325,43 +375,13 @@ def list_relevant_prs(
     cycles where nothing moved cost one cheap GraphQL call instead of the
     heavy one.
     """
-    light_q = _relevant_pr_query(
-        owner, name, self_user, coworker_branches, _PR_LIGHT_FIELDS
-    )
-    light_data = gh_json(["api", "graphql", "-f", f"query={light_q}"])
-    light_nodes = _collect_nodes(light_data, len(coworker_branches))
-    light_by_number: dict[int, str] = {}
-    for ln in light_nodes:
-        if ln.get("number") is not None:
-            light_by_number.setdefault(ln["number"], ln.get("updatedAt") or "")
-
+    light_by_number = _fetch_light_phase(owner, name, self_user, coworker_branches)
     if cache is None:
         cache = {}
-    stale: list[int] = []
-    for num, updated in light_by_number.items():
-        prev = cache.get(num)
-        if prev is None or prev[1] != updated or prev[0].ci == "pending":
-            stale.append(num)
-
+    stale = _identify_stale(light_by_number, cache)
     if stale:
-        alias_lines = [
-            f"pr{i}: pullRequest(number: {n}) {{ {_PR_FIELDS} }}"
-            for i, n in enumerate(stale)
-        ]
-        heavy_q = (
-            f'query {{ repository(owner: "{owner}", name: "{name}") '
-            f'{{ {" ".join(alias_lines)} }} }}'
-        )
-        heavy_data = gh_json(["api", "graphql", "-f", f"query={heavy_q}"])
-        repo = heavy_data["data"]["repository"]
-        for i, num in enumerate(stale):
-            node = repo.get(f"pr{i}")
-            pr = _pr_from_node(node) if node else None
-            if pr:
-                cache[num] = (pr, light_by_number.get(num, ""))
-
+        _hydrate_stale(owner, name, stale, light_by_number, cache)
     for num in list(cache):
         if num not in light_by_number:
             del cache[num]
-
     return [cache[num][0] for num in light_by_number if num in cache]
