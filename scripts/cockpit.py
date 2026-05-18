@@ -607,7 +607,7 @@ def _close_gone_cwd_workspaces(dry: bool) -> None:
         ws_name = names.get(ref, ref)
         action = "[dry] autoclose" if dry else "autoclose:"
         print(
-            f"  {magenta(action)} closing orphan workspace {ws_name} ({ref}) "
+            f"  {magenta(action)} closing workspace {ws_name} ({ref}) "
             f"— cwd missing: {cwd}",
             flush=True,
         )
