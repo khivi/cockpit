@@ -4,14 +4,20 @@
 Usage:
   spawn.py --branch <branch> --path <path> --short <short>             # branch mode
   spawn.py --branch <branch> --path <path> --short <short> --pr <num>  # PR mode (fetch pull/N/head)
+  spawn.py --cwd <path> --short <short>                                # skill mode (no worktree)
   spawn.py <pr-or-branch> [--base <branch>]                            # convenience entrypoint
+
+Optional:
+  --prompt-stdin   Read a prompt from stdin and pass it as claude's first message
+                   (`claude <quoted-prompt>` instead of bare `claude`).
 
 Behaviour:
   - Repo discovery walks up from cwd; matches against ~/.config/cockpit/config.json.
     If unmatched, calls lib.registry.register_cwd() to add cwd's repo.
   - Worktree path: dirname(repo)/<short>, with -2/-3/... on collision.
+  - --cwd mode skips repo discovery and worktree creation entirely; the workspace
+    is spawned directly in <path>.
   - Idempotent: existing worktree+workspace for the branch -> attach, don't error.
-  - cmux workspace: `cmux new-workspace --name <short> --cwd <wt> --command 'claude' --focus false`
 
 Exit codes:
   0 = ok (created or attached)
@@ -23,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -39,84 +46,116 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--branch")
     p.add_argument("--path")
+    p.add_argument("--cwd")
     p.add_argument("--short")
     p.add_argument("--pr")
     p.add_argument("--base")
+    p.add_argument("--prompt-stdin", action="store_true")
     p.add_argument("positional", nargs="?")
     return p.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    branch, wt_path, short, pr_num, base = (
-        args.branch,
-        args.path,
-        args.short,
-        args.pr,
-        args.base,
-    )
-
+def resolve_worktree(
+    branch: str | None,
+    pr_num: str | None,
+    wt_path: str | None,
+    base: str,
+) -> tuple[Path, str, bool]:
     repo_cfg = discover_repo()
     if repo_cfg is None:
         print(
             "no managed repo for cwd; auto-adding via register_cwd",
             file=sys.stderr,
         )
-        try:
-            repo_cfg = register_cwd()
-        except RuntimeError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return 2
-        repo_cfg = discover_repo()
-        if repo_cfg is None:
-            print("ERROR: still no managed repo after auto-add", file=sys.stderr)
-            return 2
+        repo_cfg = register_cwd()
+        repo_cfg = discover_repo() or repo_cfg
 
     repo = Path(repo_cfg["path"]).expanduser().resolve()
     branch_prefix = repo_cfg.get("branch_prefix", "")
-    default_base = repo_cfg.get("default_base", "main")
-    if not base:
-        base = default_base
-
-    if args.positional and not branch and not pr_num:
-        if re.fullmatch(r"#?\d+", args.positional):
-            pr_num = args.positional.lstrip("#")
-        else:
-            branch = args.positional
 
     if pr_num and not branch:
-        try:
-            branch = resolve_pr_branch(pr_num)
-        except RuntimeError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return 1
-
+        branch = resolve_pr_branch(pr_num)
     if not branch:
-        print("ERROR: need <branch> or --pr <num>", file=sys.stderr)
-        return 1
-
-    if not short:
-        short = slugify(branch.rsplit("/", 1)[-1])
+        raise ValueError("need <branch> or --pr <num>")
 
     if not wt_path:
-        wt_path = str(repo.parent / short)
-    wt = Path(wt_path)
+        short_default = slugify(branch.rsplit("/", 1)[-1])
+        wt_path = str(repo.parent / short_default)
 
     existing = worktree_for_branch(repo, branch)
     if existing is not None:
-        wt = existing
-        attached_wt = True
-    else:
-        attached_wt = False
-        wt = collision_free(wt)
-        branch = create_worktree(
-            repo,
-            branch,
-            wt,
-            base=base,
-            pr_num=pr_num,
-            branch_prefix=branch_prefix,
+        return existing, branch, True
+
+    wt = collision_free(Path(wt_path))
+    branch = create_worktree(
+        repo, branch, wt, base=base, pr_num=pr_num, branch_prefix=branch_prefix
+    )
+    return wt, branch, False
+
+
+def claude_command(prompt: str | None) -> str:
+    if prompt is None:
+        return "claude"
+    return f"claude {shlex.quote(prompt)}"
+
+
+def main() -> int:
+    args = parse_args()
+    branch, wt_path, cwd, short, pr_num, base = (
+        args.branch,
+        args.path,
+        args.cwd,
+        args.short,
+        args.pr,
+        args.base,
+    )
+
+    if cwd and (branch or pr_num or wt_path or args.positional):
+        print(
+            "ERROR: --cwd is mutually exclusive with branch/PR/positional args",
+            file=sys.stderr,
         )
+        return 1
+
+    prompt: str | None = None
+    if args.prompt_stdin:
+        prompt = sys.stdin.read()
+        if not prompt.strip():
+            print("ERROR: --prompt-stdin set but stdin is empty", file=sys.stderr)
+            return 1
+
+    if cwd:
+        wt = Path(cwd).expanduser().resolve()
+        if not wt.is_dir():
+            print(f"ERROR: --cwd path does not exist: {wt}", file=sys.stderr)
+            return 1
+        if not short:
+            short = slugify(wt.name)
+        attached_wt = True
+        branch_display = None
+    else:
+        if args.positional and not branch and not pr_num:
+            if re.fullmatch(r"#?\d+", args.positional):
+                pr_num = args.positional.lstrip("#")
+            else:
+                branch = args.positional
+
+        if not base:
+            repo_cfg = discover_repo()
+            base = (repo_cfg or {}).get("default_base", "main")
+
+        try:
+            wt, branch, attached_wt = resolve_worktree(branch, pr_num, wt_path, base)
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 2
+        except ValueError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
+
+        if not short:
+            short = slugify(branch.rsplit("/", 1)[-1])
+        branch_display = branch
 
     ws_name = short
     existing_ws = set(workspace_names().values())
@@ -131,15 +170,15 @@ def main() -> int:
             "--cwd",
             str(wt),
             "--command",
-            "claude",
+            claude_command(prompt),
             "--focus",
             "false",
         )
 
-    if attached_wt and attached_ws:
-        print(f"attached existing workspace {ws_name} at {wt} on {branch}")
-    else:
-        print(f"workspace {ws_name} spawned at {wt} on {branch}")
+    verb = "attached existing workspace" if attached_wt and attached_ws else "workspace"
+    suffix = f"spawned at {wt}" if verb == "workspace" else f"at {wt}"
+    on_branch = f" on {branch_display}" if branch_display else " (no worktree)"
+    print(f"{verb} {ws_name} {suffix}{on_branch}")
     return 0
 
 
