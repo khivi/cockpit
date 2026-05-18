@@ -7,16 +7,18 @@ Refuses on uncommitted changes, unpushed commits, or open PR unless `--force`.
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from lib.cache import delete_pr_caches_for_branch  # noqa: E402
+from lib.cache import (  # noqa: E402
+    delete_pr_caches_for_branch,
+    find_pr_payload,
+)
 from lib.cmux import cmux_close_workspace_best_effort, resolve_workspace  # noqa: E402
 from lib.config import discover_repo  # noqa: E402
-from lib.git import _count_dirty, _count_unpushed  # noqa: E402
+from lib.git import remove_worktree  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,13 +28,6 @@ def parse_args() -> argparse.Namespace:
         "--force", action="store_true", help="bypass dirty/unpushed/open-PR refusal"
     )
     return p.parse_args()
-
-
-def _is_pr_open(payload: dict | None) -> bool:
-    if not payload:
-        return False
-    state = str(payload.get("state", "")).upper()
-    return state == "OPEN"
 
 
 def main() -> int:
@@ -50,21 +45,17 @@ def main() -> int:
     wt = match.worktree
     blockers: list[str] = []
     if wt is not None:
-        dirty = _count_dirty(wt.path)
-        unpushed = _count_unpushed(wt.path)
-        if dirty > 0:
-            blockers.append(f"{dirty} uncommitted file(s)")
-        if unpushed > 0:
-            blockers.append(f"{unpushed} unpushed commit(s)")
-        if unpushed == -1:
+        if wt.dirty_count > 0:
+            blockers.append(f"{wt.dirty_count} uncommitted file(s)")
+        if wt.unpushed > 0:
+            blockers.append(f"{wt.unpushed} unpushed commit(s)")
+        elif wt.unpushed == -1:
             blockers.append("could not verify push state")
 
     payload = None
     if wt is not None and repo_name is not None:
-        from lib.cache import find_pr_payload
-
         payload = find_pr_payload(wt.branch, repo_name=repo_name)
-    if _is_pr_open(payload):
+    if payload and str(payload.get("state", "")).upper() == "OPEN":
         blockers.append(f"PR #{payload['number']} is OPEN")
 
     if blockers and not args.force:
@@ -79,25 +70,9 @@ def main() -> int:
     cmux_close_workspace_best_effort(match.ref)
 
     if wt is not None:
-        force_flag = ["--force"] if args.force else []
-        res = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo_dir),
-                "worktree",
-                "remove",
-                *force_flag,
-                str(wt.path),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if res.returncode != 0:
-            print(
-                f"WARN: git worktree remove failed: {res.stderr.strip()}",
-                file=sys.stderr,
-            )
+        ok, err = remove_worktree(repo_dir, wt.path, force=args.force)
+        if not ok:
+            print(f"WARN: git worktree remove failed: {err}", file=sys.stderr)
         if repo_name is not None:
             delete_pr_caches_for_branch(repo_name, wt.branch)
 

@@ -13,7 +13,9 @@ def shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def claude_command(prompt: str) -> str:
+def claude_command(prompt: str | None) -> str:
+    if prompt is None:
+        return "claude"
     return f"claude {shell_quote(prompt)}"
 
 

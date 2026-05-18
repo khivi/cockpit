@@ -277,3 +277,15 @@ def create_worktree(
         ]
     )
     return full_branch
+
+
+def remove_worktree(
+    repo: Path, wt_path: Path, *, force: bool = False
+) -> tuple[bool, str]:
+    """Run `git worktree remove`. Returns (ok, stderr) — non-raising."""
+    cmd = ["git", "-C", str(repo), "worktree", "remove"]
+    if force:
+        cmd.append("--force")
+    cmd.append(str(wt_path))
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    return res.returncode == 0, res.stderr.strip()

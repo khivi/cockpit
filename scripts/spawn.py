@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import shlex
 import sys
 from pathlib import Path
 
@@ -50,6 +49,7 @@ from lib.cmux import cmux, workspace_names
 from lib.config import discover_repo, find_repo_by_name
 from lib.gh import fetch_pr_info, resolve_pr_branch
 from lib.git import collision_free, create_worktree, slugify, worktree_for_branch
+from lib.prompts import claude_command
 from lib.registry import register_cwd
 
 
@@ -158,12 +158,6 @@ def _plan_only_prompt(pr_num: str, branch: str, wt: Path) -> str | None:
             "Begin by writing the plan.",
         ]
     )
-
-
-def claude_command(prompt: str | None) -> str:
-    if prompt is None:
-        return "claude"
-    return f"claude {shlex.quote(prompt)}"
 
 
 def main() -> int:
