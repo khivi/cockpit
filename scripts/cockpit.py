@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -46,13 +45,14 @@ from lib.cmux import (  # noqa: E402
     ORPHAN_KEY,
     apply_pills,
     apply_wip_pill,
+    close_gone_cwd_workspaces,
     cmux,
     cmux_close_workspace_best_effort,
     find_cockpit_workspaces,
-    list_workspaces,
     nudge_if_idle,
+    spawn_orphan_workspace,
+    spawn_pr_workspace,
     status_pills,
-    wait_for_new_workspace_ref,
     workspace_state,
 )
 from lib.colors import (  # noqa: E402
@@ -80,12 +80,12 @@ from lib.gh import (  # noqa: E402
     list_relevant_prs,
     repo_nwo,
 )
-from lib.git import Worktree, worktrees  # noqa: E402
-from lib.prompts import (
-    build_orphan_prompt,
-    build_pr_prompt,
-    claude_command,
-)  # noqa: E402
+from lib.git import (  # noqa: E402
+    Worktree,
+    ff_default_branch_worktrees,
+    remove_worktree,
+    worktrees,
+)
 
 # ── constants ───────────────────────────────────────────────────────────────
 MAIN_BRANCHES = {"master", "main"}
@@ -108,83 +108,6 @@ def maybe_nudge(ref: str, message: str, nudge_state: dict, dry: bool, tag: str) 
         tag=tag,
     ):
         print(f"  {yellow('nudged')} {tag} → {ref}", flush=True)
-
-
-def open_workspace(pr: PR, wt: Worktree, dry: bool) -> None:
-    prompt = build_pr_prompt(pr)
-    if dry:
-        print(f"  [dry] spawn {wt.short}  #{pr.number}  cwd={wt.path}", flush=True)
-        for key, value, _ in status_pills(pr, wt):
-            print(f"  [dry]   pill {key}={value}", flush=True)
-        return
-    before = set(list_workspaces())
-    cmux(
-        "new-workspace",
-        "--name",
-        wt.short,
-        "--cwd",
-        str(wt.path),
-        "--command",
-        claude_command(prompt),
-        "--focus",
-        "false",
-    )
-    ref = wait_for_new_workspace_ref(before)
-    if not ref:
-        print(
-            f"  warn: could not resolve new workspace ref for {wt.short}",
-            file=sys.stderr,
-            flush=True,
-        )
-        return
-    apply_pills(ref, pr, wt)
-    print(
-        f"  {magenta('spawned')} {bold(wt.short)} ({ref})  {blue(f'#{pr.number}')}"
-        f"  [{issue_color(pr.display_issue)(pr.display_issue)}]",
-        flush=True,
-    )
-
-
-def open_orphan_workspace(wt: Worktree, dry: bool) -> None:
-    prompt = build_orphan_prompt(wt)
-    if dry:
-        print(f"  [dry] orphan spawn {wt.short}  cwd={wt.path}", flush=True)
-        return
-    before = set(list_workspaces())
-    cmux(
-        "new-workspace",
-        "--name",
-        wt.short,
-        "--cwd",
-        str(wt.path),
-        "--command",
-        claude_command(prompt),
-        "--focus",
-        "false",
-    )
-    ref = wait_for_new_workspace_ref(before)
-    if ref is None:
-        print(
-            f"  warn: could not resolve orphan workspace ref for {wt.short}",
-            file=sys.stderr,
-            flush=True,
-        )
-        return
-    cmux(
-        "set-status",
-        ORPHAN_KEY,
-        ORPHAN_ICON,
-        "--workspace",
-        ref,
-        "--color",
-        ORANGE,
-        check=False,
-    )
-    apply_wip_pill(ref, wt.dirty_count)
-    print(
-        f"  {magenta('ORPHAN:')} spawned {bold(wt.short)} ({ref})  branch={wt.branch}",
-        flush=True,
-    )
 
 
 def match_worktrees(
@@ -210,77 +133,14 @@ def match_worktrees(
     return matched, skipped_self
 
 
-def _repo_default_branch(repo_path: Path) -> str | None:
-    """Return the remote default branch (e.g. 'main') from origin/HEAD, or None."""
-    r = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo_path),
-            "symbolic-ref",
-            "--short",
-            "refs/remotes/origin/HEAD",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if r.returncode != 0:
-        return None
-    ref = r.stdout.strip()
-    return ref.removeprefix("origin/") or None
-
-
-def _maybe_ff_main(repo_path: Path, wts: list[Worktree], *, dry: bool) -> None:
-    """Fast-forward the worktree on the repo's default branch to its upstream.
-
-    Skips dirty worktrees. Targets ONLY the GitHub default branch (resolved via
-    origin/HEAD), never any branch that happens to be named main/master. Uses
-    --ff-only so non-fast-forward histories just no-op.
-    """
-    default = _repo_default_branch(repo_path)
-    if default is None:
-        return
-    for wt in wts:
-        if wt.branch != default:
-            continue
-        if wt.dirty_count > 0:
-            continue
-        fetch = subprocess.run(
-            ["git", "-C", str(wt.path), "fetch", "origin", wt.branch],
-            capture_output=True,
-            text=True,
-        )
-        if fetch.returncode != 0:
-            continue
-        rev = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(wt.path),
-                "rev-list",
-                "--count",
-                f"HEAD..origin/{wt.branch}",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        try:
-            behind = int(rev.stdout.strip())
-        except ValueError:
-            continue
-        if behind == 0:
-            continue
+def _log_ff_main(repo_path: Path, wts: list[Worktree], *, dry: bool) -> None:
+    """Fast-forward default-branch worktrees via lib.git, log each advance."""
+    for wt, behind in ff_default_branch_worktrees(repo_path, wts, dry=dry):
         action = "[dry] ff-main" if dry else "ff-main:"
         print(
-            f"  {magenta(action)} {wt.short} → origin/{wt.branch}  ({behind} commit{'s' if behind != 1 else ''})",
+            f"  {magenta(action)} {wt.short} → origin/{wt.branch}"
+            f"  ({behind} commit{'s' if behind != 1 else ''})",
             flush=True,
-        )
-        if dry:
-            continue
-        subprocess.run(
-            ["git", "-C", str(wt.path), "merge", "--ff-only", f"origin/{wt.branch}"],
-            capture_output=True,
-            text=True,
         )
 
 
@@ -333,14 +193,10 @@ def _maybe_autoclose(
         )
         if dry:
             continue
-        rm = subprocess.run(
-            ["git", "-C", str(repo_path), "worktree", "remove", str(wt.path)],
-            capture_output=True,
-            text=True,
-        )
-        if rm.returncode != 0:
+        ok, err = remove_worktree(repo_path, wt.path)
+        if not ok:
             print(
-                f"  warn: git worktree remove failed for {wt.path}: {rm.stderr.strip()}",
+                f"  warn: git worktree remove failed for {wt.path}: {err}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -570,7 +426,7 @@ def cycle_repo(
         tracked_pr_numbers = {pr.number for pr, _ in tracked.values()}
         for pr, wt in matched:
             if pr.number not in tracked_pr_numbers:
-                open_workspace(pr, wt, dry=dry)
+                spawn_pr_workspace(pr, wt, dry=dry)
         covered_paths = {p.resolve() for p in cwds.values()}
         for wt in wts:
             if not wt.branch.startswith(my_prefix) or wt.branch in pr_branches:
@@ -583,33 +439,10 @@ def cycle_repo(
                     flush=True,
                 )
                 continue
-            open_orphan_workspace(wt, dry)
+            spawn_orphan_workspace(wt, dry=dry)
 
     _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, self_user, dry=dry)
-    _maybe_ff_main(repo_path, wts, dry=dry)
-
-
-def _close_gone_cwd_workspaces(dry: bool) -> None:
-    """Close cmux workspaces whose cwd no longer exists on disk.
-
-    A worktree can be removed externally (manual `git worktree remove`, an
-    autoclose pass that crashed before closing the workspace, sync tools,
-    etc.) without taking its cmux workspace with it. The workspace becomes
-    unusable — its processes have no cwd. Close it.
-    """
-    names, cwds = workspace_state()
-    for ref, cwd in cwds.items():
-        if cwd.exists():
-            continue
-        ws_name = names.get(ref, ref)
-        action = "[dry] autoclose" if dry else "autoclose:"
-        print(
-            f"  {magenta(action)} closing workspace {ws_name} ({ref}) "
-            f"— cwd missing: {cwd}",
-            flush=True,
-        )
-        if not dry:
-            cmux_close_workspace_best_effort(ref)
+    _log_ff_main(repo_path, wts, dry=dry)
 
 
 def cycle_all(
@@ -633,7 +466,7 @@ def cycle_all(
         )
         return
     if cfg.get("auto_cleanup_on_merge", True):
-        _close_gone_cwd_workspaces(dry)
+        close_gone_cwd_workspaces(dry=dry)
     for repo_entry in repos:
         try:
             cycle_repo(

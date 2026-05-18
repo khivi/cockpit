@@ -305,3 +305,69 @@ def remove_worktree(
     cmd.append(str(wt_path))
     res = subprocess.run(cmd, capture_output=True, text=True)
     return res.returncode == 0, res.stderr.strip()
+
+
+def origin_head_branch(repo: Path) -> str | None:
+    """Return the branch `origin/HEAD` points at (e.g. 'main'), or None."""
+    r = subprocess.run(
+        ["git", "-C", str(repo), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip().removeprefix("origin/") or None
+
+
+def ff_default_branch_worktrees(
+    repo: Path, wts: list[Worktree], *, dry: bool = False
+) -> list[tuple[Worktree, int]]:
+    """Fast-forward each clean worktree on the repo's `origin/HEAD` branch.
+
+    Returns the (worktree, behind_count) entries that were fast-forwarded — or
+    would be, when `dry=True`. Skips dirty worktrees and non-default branches.
+    Uses `--ff-only` so non-fast-forward histories no-op silently.
+    """
+    default = origin_head_branch(repo)
+    if default is None:
+        return []
+    advanced: list[tuple[Worktree, int]] = []
+    for wt in wts:
+        if wt.branch != default or wt.dirty_count > 0:
+            continue
+        if (
+            subprocess.run(
+                ["git", "-C", str(wt.path), "fetch", "origin", wt.branch],
+                capture_output=True,
+                text=True,
+            ).returncode
+            != 0
+        ):
+            continue
+        rev = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(wt.path),
+                "rev-list",
+                "--count",
+                f"HEAD..origin/{wt.branch}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        try:
+            behind = int(rev.stdout.strip())
+        except ValueError:
+            continue
+        if behind == 0:
+            continue
+        advanced.append((wt, behind))
+        if dry:
+            continue
+        subprocess.run(
+            ["git", "-C", str(wt.path), "merge", "--ff-only", f"origin/{wt.branch}"],
+            capture_output=True,
+            text=True,
+        )
+    return advanced
