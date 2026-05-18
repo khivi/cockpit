@@ -16,6 +16,7 @@ Spawn a fresh worktree (sibling of the main repo) plus a cmux workspace with `cl
   - Anything else → branch (local, remote, or new — git resolves)
 - `--pr <num>` — explicit PR mode; overrides positional detection.
 - `--branch <name>` — explicit branch; overrides positional detection.
+- `--name <short>` — override the workspace/worktree dir name. When given with no positional/`--branch`/`--pr`, treated as a new branch name (bypasses PR detection).
 - `--repo <name>` — target a configured repo by `name` from `~/.config/cockpit/config.json`. Skips cwd-based discovery; useful when invoking from outside the repo's tree.
 - `--claude-prompt <str>` — first-turn prompt for claude. Defaults to a plan-only prompt for PR input; defaults to none (bare `claude`) for branch input.
 

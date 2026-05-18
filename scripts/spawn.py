@@ -5,7 +5,7 @@ Usage:
   spawn.py <branch|PR|github-url>                         # positional (auto-detected)
   spawn.py --branch <branch> --name <name>                # branch mode (explicit)
   spawn.py --branch <branch> --name <name> --pr <num>     # PR mode (fetch pull/N/head)
-  spawn.py --cwd <path> --name <name>                     # skill mode (no worktree)
+  spawn.py --cwd <path> --name <name>                     # arbitrary dir (no repo)
 
 Optional:
   --claude-prompt <str>   Prompt for claude's first message.
@@ -28,7 +28,7 @@ Behaviour:
     repo by `name`. Useful when invoking from outside the repo's tree.
   - Worktree path: dirname(repo)/<name>, with -2/-3/... on collision.
   - --cwd mode skips repo discovery and worktree creation entirely; the workspace
-    is spawned directly in <path>.
+    is spawned in <path>, which is created if it does not exist.
   - Idempotent: existing worktree+workspace for the branch -> attach, don't error.
   - Explicit --branch/--pr take priority over positional.
 
@@ -176,6 +176,8 @@ def main() -> int:
             pr_num = value
         else:
             branch = value
+    elif short and not (branch or pr_num or args.positional or cwd):
+        branch = short
 
     if cwd and (branch or pr_num or args.repo):
         print(
@@ -188,9 +190,7 @@ def main() -> int:
 
     if cwd:
         wt = Path(cwd).expanduser().resolve()
-        if not wt.is_dir():
-            print(f"ERROR: --cwd path does not exist: {wt}", file=sys.stderr)
-            return 1
+        wt.mkdir(parents=True, exist_ok=True)
         if not short:
             short = slugify(wt.name)
         attached_wt = True
