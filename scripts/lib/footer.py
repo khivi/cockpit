@@ -157,7 +157,7 @@ def render_footer() -> int:
 
     head = _pr_segment(branch) if branch else ""
     state = repo_state(Path(".")) if branch else ""
-    state_pill = f"⚙ {state}" if state else ""
+    state_pill = {"rebase": "🔄 rebasing", "merge": "🔀 merging"}.get(state, "")
 
     pills_line = " · ".join(_session_pills(blob))
     head_line = " · ".join(p for p in [head, state_pill, dirty_pill] if p)
