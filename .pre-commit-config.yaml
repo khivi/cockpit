@@ -50,3 +50,13 @@ repos:
     hooks:
       - id: codespell
         args: ['--config', '.codespellrc']
+
+  - repo: local
+    hooks:
+      - id: version-bump-pre-push
+        name: Bump version on pre-push
+        entry: .githooks/version-bump.sh
+        language: script
+        stages: [pre-push]
+        always_run: true
+        pass_filenames: false
