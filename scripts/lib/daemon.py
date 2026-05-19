@@ -30,14 +30,19 @@ def _on_usr1(_signum, _frame):
     _wake = True
 
 
-def kick_running() -> bool:
-    """SIGUSR1 a running watcher. True if signalled, False if no live pidfile."""
+def kick_running(*, quiet: bool = False) -> bool:
+    """SIGUSR1 a running watcher. True if signalled, False if no live pidfile.
+
+    `quiet=True` suppresses the success print so callers (e.g. spawn.py) can
+    keep their own stdout clean.
+    """
     if not PID_FILE.exists():
         return False
     try:
         pid = int(PID_FILE.read_text().strip())
         os.kill(pid, signal.SIGUSR1)
-        print(f"kicked cockpit pid={pid}")
+        if not quiet:
+            print(f"kicked cockpit pid={pid}")
         return True
     except (ProcessLookupError, ValueError, OSError):
         return False
