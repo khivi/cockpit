@@ -56,6 +56,11 @@ def fetch_merged_branches(repo_path: Path, limit: int = 100) -> dict[str, str]:
     from "branch advanced after merge", which `git cherry` cannot do for
     squash-merged PRs (the squash collapses N commits into 1 with a combined
     patch-id that matches none of the originals).
+
+    When a branch has been reused across multiple merged PRs (e.g. a branch was
+    deleted post-merge then re-created for follow-up work), keep the highest PR
+    number — that is the most recent merge, and its headRefOid is the only one
+    that should gate autoclose.
     """
     r = subprocess.run(
         [
@@ -67,7 +72,7 @@ def fetch_merged_branches(repo_path: Path, limit: int = 100) -> dict[str, str]:
             "--limit",
             str(limit),
             "--json",
-            "headRefName,headRefOid",
+            "number,headRefName,headRefOid",
         ],
         capture_output=True,
         text=True,
@@ -76,9 +81,19 @@ def fetch_merged_branches(repo_path: Path, limit: int = 100) -> dict[str, str]:
     if r.returncode != 0:
         return {}
     try:
-        return {row["headRefName"]: row["headRefOid"] for row in json.loads(r.stdout)}
-    except (json.JSONDecodeError, KeyError):
+        rows = json.loads(r.stdout)
+    except json.JSONDecodeError:
         return {}
+    latest: dict[str, tuple[int, str]] = {}
+    try:
+        for row in rows:
+            branch = row["headRefName"]
+            num = row["number"]
+            if branch not in latest or num > latest[branch][0]:
+                latest[branch] = (num, row["headRefOid"])
+    except KeyError:
+        return {}
+    return {branch: oid for branch, (_, oid) in latest.items()}
 
 
 def pr_for_branch(branch: str, repo_dir: Path) -> dict | None:
