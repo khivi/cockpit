@@ -234,14 +234,41 @@ def _has_local_branch(repo: Path, branch: str) -> bool:
 
 
 def _fetch_remote_branch(repo: Path, branch: str) -> bool:
-    """Return True and fetch branch locally if it exists on origin."""
+    """Return True and fetch branch locally if it exists on origin.
+
+    Uses the full `refs/heads/{branch}` ref so ls-remote's suffix matching
+    cannot falsely claim a remote exists (e.g. `cship` would otherwise match
+    `refs/heads/*/cship` and trip a follow-up `fetch origin cship:cship`).
+    """
     exists = (
-        _git(repo, "ls-remote", "--exit-code", "--heads", "origin", branch).returncode
+        _git(
+            repo,
+            "ls-remote",
+            "--exit-code",
+            "--heads",
+            "origin",
+            f"refs/heads/{branch}",
+        ).returncode
         == 0
     )
     if exists:
         run(["git", "-C", str(repo), "fetch", "origin", f"{branch}:{branch}"])
     return exists
+
+
+def _has_remote_branch(repo: Path, branch: str) -> bool:
+    """True if `refs/heads/{branch}` exists on origin (exact match)."""
+    return (
+        _git(
+            repo,
+            "ls-remote",
+            "--exit-code",
+            "--heads",
+            "origin",
+            f"refs/heads/{branch}",
+        ).returncode
+        == 0
+    )
 
 
 def create_worktree(
@@ -298,6 +325,37 @@ def create_worktree(
         ]
     )
     return full_branch
+
+
+def branch_exists(repo: Path, branch: str) -> bool:
+    """True if `branch` exists locally or on origin (exact ref match)."""
+    return _has_local_branch(repo, branch) or _has_remote_branch(repo, branch)
+
+
+def create_new_branch_worktree(
+    repo: Path, branch: str, wt_path: Path, *, base: str
+) -> str:
+    """Create a worktree at `wt_path` on a *new* branch `branch` cut from `origin/{base}`.
+
+    Caller has already ensured `branch` does not exist locally, remotely, or
+    as a worktree. Skips the local/remote-attach resolution that
+    `create_worktree` performs. Returns the branch name (unchanged).
+    """
+    _git(repo, "fetch", "origin", base)
+    run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "worktree",
+            "add",
+            "-b",
+            branch,
+            str(wt_path),
+            f"origin/{base}",
+        ]
+    )
+    return branch
 
 
 def remove_worktree(

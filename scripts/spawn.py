@@ -61,7 +61,14 @@ from lib.cmux import cmux, workspace_names
 from lib.config import discover_repo, find_repo_by_name, find_repo_by_nwo
 from lib.daemon import kick_running
 from lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch
-from lib.git import collision_free, create_worktree, slugify, worktree_for_branch
+from lib.git import (
+    branch_exists,
+    collision_free,
+    create_new_branch_worktree,
+    create_worktree,
+    slugify,
+    worktree_for_branch,
+)
 from lib.prompts import claude_command
 from lib.repos import repo_names
 
@@ -144,10 +151,25 @@ def select_repo(repo_name: str | None) -> dict:
     return repo_cfg
 
 
+def _bump_until_free(repo: Path, branch: str) -> str:
+    """Append -2/-3/... to `branch` until it does not exist locally, remotely,
+    or as a worktree. Used by `--name` to guarantee a fresh branch."""
+    if not (branch_exists(repo, branch) or worktree_for_branch(repo, branch)):
+        return branch
+    i = 2
+    while True:
+        cand = f"{branch}-{i}"
+        if not (branch_exists(repo, cand) or worktree_for_branch(repo, cand)):
+            return cand
+        i += 1
+
+
 def resolve_worktree(
     branch: str | None,
     pr_num: str | None,
     repo_name: str | None,
+    *,
+    from_name: bool = False,
 ) -> tuple[Path, str, bool]:
     repo_cfg = select_repo(repo_name)
     repo = Path(repo_cfg["path"]).expanduser().resolve()
@@ -158,6 +180,20 @@ def resolve_worktree(
         branch = resolve_pr_branch(pr_num, repo_dir=repo)
     if not branch:
         raise ValueError("need <branch> or --pr <num>")
+
+    if from_name:
+        if branch_prefix and "/" not in branch:
+            branch = f"{branch_prefix}{branch}"
+        prefixed = branch
+        branch = _bump_until_free(repo, branch)
+        if branch != prefixed:
+            print(
+                f"note: branch bumped to {branch} (requested name collided)",
+                file=sys.stderr,
+            )
+        wt = collision_free(repo.parent / slugify(branch.rsplit("/", 1)[-1]))
+        branch = create_new_branch_worktree(repo, branch, wt, base=base)
+        return wt, branch, False
 
     existing = worktree_for_branch(repo, branch)
     if existing is None and branch_prefix and "/" not in branch:
@@ -253,6 +289,7 @@ def main() -> int:
         args.pr,
         args.skill,
     )
+    from_name = False
 
     if args.positional and (branch or pr_num or short or skill):
         print(
@@ -278,6 +315,7 @@ def main() -> int:
                 )
     elif short and not (branch or pr_num or cwd or skill):
         branch = short
+        from_name = True
 
     if cwd and (branch or pr_num or skill):
         print(
@@ -325,7 +363,9 @@ def main() -> int:
             return 1
 
         try:
-            wt, branch, attached_wt = resolve_worktree(branch, pr_num, args.repo)
+            wt, branch, attached_wt = resolve_worktree(
+                branch, pr_num, args.repo, from_name=from_name
+            )
         except RuntimeError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
