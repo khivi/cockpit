@@ -384,11 +384,13 @@ def cycle_repo(
         is_mine = wt.branch.startswith(my_prefix)
         if is_mine:
             if wt.branch in merged_branches:
-                print(
-                    f"  {dim(f'merged orphan {ws_name} ({wt.branch}) — autoclose may handle')}",
-                    flush=True,
-                )
-                continue
+                ahead = count_commits_since(wt.path, merged_branches[wt.branch])
+                if ahead == 0:
+                    print(
+                        f"  {dim(f'merged orphan {ws_name} ({wt.branch}) — autoclose may handle')}",
+                        flush=True,
+                    )
+                    continue
             if not dry:
                 cmux(
                     "set-status",
@@ -458,11 +460,13 @@ def cycle_repo(
             if wt.path.resolve() in covered_paths:
                 continue
             if wt.branch in merged_branches:
-                print(
-                    f"  {dim(f'skip orphan-spawn {wt.short} — branch {wt.branch} has merged PR')}",
-                    flush=True,
-                )
-                continue
+                ahead = count_commits_since(wt.path, merged_branches[wt.branch])
+                if ahead == 0:
+                    print(
+                        f"  {dim(f'skip orphan-spawn {wt.short} — branch {wt.branch} has merged PR')}",
+                        flush=True,
+                    )
+                    continue
             spawn_orphan_workspace(wt, dry=dry)
 
     _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, cwds, dry=dry)
