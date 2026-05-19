@@ -58,7 +58,7 @@ import sys
 from pathlib import Path
 
 from lib.cmux import cmux, workspace_names
-from lib.config import discover_repo, find_repo_by_name
+from lib.config import discover_repo, find_repo_by_name, find_repo_by_nwo
 from lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch
 from lib.git import collision_free, create_worktree, slugify, worktree_for_branch
 from lib.prompts import claude_command
@@ -84,23 +84,24 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def detect_source(value: str) -> tuple[str, str]:
-    """Classify positional into (mode, resolved_value).
+def detect_source(value: str) -> tuple[str, str, str | None]:
+    """Classify positional into (mode, resolved_value, nwo_hint).
+
+    `nwo_hint` is `<owner>/<repo>` when a full GitHub PR URL was parsed,
+    else None. The caller uses it to route the spawn to the right
+    configured repo when invoked from outside its tree.
 
     PR mode requires a `#` prefix (`#123`) or a full GitHub PR URL. A bare
     integer is treated as a branch name — use `#123` or `--pr 123` for PRs.
     Steps 3-5 (local/remote/new branch) resolved by create_worktree at
     worktree-creation time.
     """
-    # Step 1: GitHub PR URL
-    m = re.match(r"https?://github\.com/[^/]+/[^/]+/pull/(\d+)", value)
+    m = re.match(r"https?://github\.com/([^/]+/[^/]+)/pull/(\d+)", value)
     if m:
-        return "pr", m.group(1)
-    # Step 2: #-prefixed PR number
+        return "pr", m.group(2), m.group(1)
     if re.fullmatch(r"#\d+", value):
-        return "pr", value.lstrip("#")
-    # Steps 3-5: branch (local / remote / new — git resolves at worktree time)
-    return "branch", value
+        return "pr", value.lstrip("#"), None
+    return "branch", value, None
 
 
 def select_repo(repo_name: str | None) -> dict:
@@ -230,11 +231,21 @@ def main() -> int:
         )
         return 1
     elif args.positional:
-        mode, value = detect_source(args.positional)
+        mode, value, nwo_hint = detect_source(args.positional)
         if mode == "pr":
             pr_num = value
         else:
             branch = value
+        if nwo_hint and not args.repo:
+            match = find_repo_by_nwo(nwo_hint)
+            if match is not None:
+                args.repo = match["name"]
+            else:
+                print(
+                    f"note: URL points to {nwo_hint} but no configured repo matches; "
+                    f"falling back to cwd-based discovery",
+                    file=sys.stderr,
+                )
     elif short and not (branch or pr_num or cwd or skill):
         branch = short
 

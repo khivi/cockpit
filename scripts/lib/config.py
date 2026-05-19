@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -60,6 +62,32 @@ def find_repo_by_name(name: str) -> dict | None:
     """Return the config entry whose `name` matches, else None."""
     for r in load_config().get("repos", []):
         if r.get("name") == name:
+            return r
+    return None
+
+
+def find_repo_by_nwo(nwo: str) -> dict | None:
+    """Return the config entry whose `origin` remote matches `nwo` (owner/name).
+
+    Reads `remote.origin.url` for each configured repo and parses the
+    GitHub `owner/name` out of it. Accepts both SSH (`git@github.com:o/n.git`)
+    and HTTPS (`https://github.com/o/n[.git]`) forms.
+    """
+    target = nwo.lower().removesuffix(".git")
+    pat = re.compile(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$")
+    for r in load_config().get("repos", []):
+        path = Path(r["path"]).expanduser()
+        if not path.exists():
+            continue
+        res = subprocess.run(
+            ["git", "-C", str(path), "config", "--get", "remote.origin.url"],
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            continue
+        m = pat.search(res.stdout.strip())
+        if m and m.group(1).lower() == target:
             return r
     return None
 
