@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .config import prompt_prefix
+
 if TYPE_CHECKING:
     from .gh import PR
     from .git import Worktree
@@ -14,6 +16,14 @@ def shell_quote(s: str) -> str:
 
 
 def claude_command(prompt: str | None) -> str:
+    """Build the `claude [prompt]` shell command, applying any configured
+    `prompt_prefix` (e.g. a personal session-setup slash command) as the first line.
+    """
+    prefix = prompt_prefix()
+    if prefix and prompt:
+        prompt = f"{prefix}\n\n{prompt}"
+    elif prefix:
+        prompt = prefix
     if prompt is None:
         return "claude"
     return f"claude {shell_quote(prompt)}"

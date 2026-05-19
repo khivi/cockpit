@@ -64,6 +64,15 @@ def find_repo_by_name(name: str) -> dict | None:
     return None
 
 
+def prompt_prefix() -> str:
+    """Optional first line prepended to every claude prompt spawned by cockpit.
+
+    Configured via `prompt_prefix` in config.json (default: ""). Useful for
+    invoking a personal session-start skill on every new workspace's first turn.
+    """
+    return str(load_config().get("prompt_prefix", "")).strip()
+
+
 def _read_current_statusline(settings_path: Path) -> str | None:
     if not settings_path.exists():
         return ""

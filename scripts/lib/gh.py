@@ -81,6 +81,35 @@ def fetch_merged_branches(repo_path: Path, limit: int = 100) -> dict[str, str]:
         return {}
 
 
+def pr_for_branch(branch: str, repo_dir: Path) -> dict | None:
+    """Return {number,title,author,url} for an open PR on `branch`, else None."""
+    res = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--limit",
+            "1",
+            "--json",
+            "number,title,author,url",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_dir),
+    )
+    if res.returncode != 0:
+        return None
+    try:
+        rows = json.loads(res.stdout)
+    except json.JSONDecodeError:
+        return None
+    return rows[0] if rows else None
+
+
 def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:
     """Fetch {number, title, author, url, headRefName} for a PR."""
     fields = "number,title,author,url,headRefName"
