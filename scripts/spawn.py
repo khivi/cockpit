@@ -148,27 +148,22 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
     """Locate a skill and return (workspace_cwd, claude_prompt).
 
     Lookup order:
-      1. If --repo is given: only that repo's .claude/skills/<name>/skill.md.
-      2. Else: current repo (via discover_repo), then ~/.claude/skills/<name>/skill.md.
+      1. Preferred repo (--repo if given, else current repo via discover_repo):
+         <repo>/.claude/skills/<name>/skill.md. If found, cwd is the repo path.
+      2. ~/.claude/skills/<name>/skill.md. If found, cwd is $HOME.
     """
     rel = Path(".claude") / "skills" / name / "skill.md"
-
-    def _in(repo_path: Path) -> Path | None:
-        return repo_path if (repo_path / rel).exists() else None
 
     if repo_name:
         repo_cfg = find_repo_by_name(repo_name)
         if repo_cfg is None:
             raise ValueError(f"--repo {repo_name!r}: no configured repo with that name")
-        repo_path = Path(repo_cfg["path"]).expanduser().resolve()
-        if _in(repo_path) is None:
-            raise ValueError(f"--skill {name!r}: not found at {repo_path / rel}")
-        return repo_path, f"/{name}"
+    else:
+        repo_cfg = discover_repo()
 
-    repo_cfg = discover_repo()
     if repo_cfg is not None:
         repo_path = Path(repo_cfg["path"]).expanduser().resolve()
-        if _in(repo_path) is not None:
+        if (repo_path / rel).exists():
             return repo_path, f"/{name}"
 
     home = Path.home()
@@ -176,7 +171,7 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
         return home, f"/{name}"
 
     raise ValueError(
-        f"--skill {name!r}: not found in current repo or ~/.claude/skills/"
+        f"--skill {name!r}: not found in preferred repo or ~/.claude/skills/"
     )
 
 

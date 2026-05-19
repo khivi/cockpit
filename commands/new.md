@@ -29,7 +29,7 @@ Exactly one *positional or input-flag* source is required. Mixing the positional
 
 **Modifiers** (always combinable with any input source above):
 
-- `--repo <name>` — universal override on repo discovery; targets a configured repo by `name` from `~/.config/cockpit/config.json`. Combinable with any input source. No-op under `--cwd` (no repo lookup occurs). With `--skill`, restricts lookup to that repo only. **If neither `--repo` nor cwd-based discovery resolves a repo, `/cockpit:new` errors out** — auto-registration via `register_cwd` has been removed
+- `--repo <name>` — universal override on repo discovery; targets a configured repo by `name` from `~/.config/cockpit/config.json`. Combinable with any input source. No-op under `--cwd` (no repo lookup occurs). With `--skill`, makes that repo the preferred lookup location; still falls back to `~/.claude/skills/<name>/skill.md` if the repo doesn't define the skill. **For non-skill inputs, if neither `--repo` nor cwd-based discovery resolves a repo, `/cockpit:new` errors out** — auto-registration via `register_cwd` has been removed
 - `--claude-prompt <str>` — first-turn prompt for claude; overrides the default. Defaults: PR-context plan-only prompt for PR input (positional PR or `--pr`); branch plan-only prompt for branch input (positional branch, `--branch`, `--name` alone) — if an open PR exists on that branch, the PR-context variant is used instead; `/<name>` for `--skill`; bare `claude` for `--cwd`
 
 ## Behaviour
