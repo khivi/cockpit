@@ -18,7 +18,7 @@ Inside Claude Code:
 
 ```text
 /plugin marketplace add https://github.com/khivi/cockpit
-/plugin install cockpit@khivi
+/plugin install cockpit@khivi-cockpit
 ```
 
 Then start the cockpit in the foreground so you can see what it's doing.
