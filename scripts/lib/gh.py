@@ -48,8 +48,15 @@ def gh_self_user() -> str:
     return run(["gh", "api", "user", "--jq", ".login"]).strip()
 
 
-def fetch_merged_branches(repo_path: Path, limit: int = 100) -> set[str]:
-    """Head branches of recently merged PRs in `repo_path`. Empty set on gh failure."""
+def fetch_merged_branches(repo_path: Path, limit: int = 100) -> dict[str, str]:
+    """Map branch → head SHA at merge for recently merged PRs in `repo_path`.
+
+    Empty dict on gh failure. `headRefOid` is the commit the PR pointed at when
+    it merged; callers use it to distinguish "branch unchanged since merge"
+    from "branch advanced after merge", which `git cherry` cannot do for
+    squash-merged PRs (the squash collapses N commits into 1 with a combined
+    patch-id that matches none of the originals).
+    """
     r = subprocess.run(
         [
             "gh",
@@ -60,18 +67,18 @@ def fetch_merged_branches(repo_path: Path, limit: int = 100) -> set[str]:
             "--limit",
             str(limit),
             "--json",
-            "headRefName",
+            "headRefName,headRefOid",
         ],
         capture_output=True,
         text=True,
         cwd=str(repo_path),
     )
     if r.returncode != 0:
-        return set()
+        return {}
     try:
-        return {row["headRefName"] for row in json.loads(r.stdout)}
+        return {row["headRefName"]: row["headRefOid"] for row in json.loads(r.stdout)}
     except (json.JSONDecodeError, KeyError):
-        return set()
+        return {}
 
 
 def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:

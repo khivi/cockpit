@@ -82,6 +82,7 @@ from lib.gh import (  # noqa: E402
 )
 from lib.git import (  # noqa: E402
     Worktree,
+    count_commits_since,
     ff_default_branch_worktrees,
     remove_worktree,
     worktrees,
@@ -163,23 +164,29 @@ def _maybe_autoclose(
     repo_path: Path,
     repo_name: str,
     wts: list[Worktree],
-    merged_branches: set[str],
+    merged_branches: dict[str, str],
     cwds: dict[str, Path],
     *,
     dry: bool,
 ) -> None:
     """Remove worktrees + workspaces for merged branches that are clean.
 
-    Removes any merged branch (mine or coworker's) if the worktree is clean
-    and has no unpushed commits. Coworker worktrees are safe to clean since
-    they can be re-created from the merged PR if needed.
+    Removes any merged branch (mine or coworker's) when the worktree is clean
+    and has not advanced past the head SHA recorded when its PR was merged.
+    Coworker worktrees are safe to clean since they can be re-created from the
+    merged PR if needed.
+
+    The post-merge check uses `count_commits_since(wt, merged_head)` rather
+    than `wt.unpushed` because `git cherry` (which powers `wt.unpushed`) cannot
+    recognize GitHub squash-merges — see `_count_unpushed` docstring.
     """
     if not cfg.get("auto_cleanup_on_merge", True):
         return
     for wt in wts:
         if wt.branch in MAIN_BRANCHES:
             continue
-        if wt.branch not in merged_branches:
+        merged_head = merged_branches.get(wt.branch)
+        if merged_head is None:
             continue
         if wt.dirty_count > 0:
             print(
@@ -188,15 +195,16 @@ def _maybe_autoclose(
                 flush=True,
             )
             continue
-        if wt.unpushed < 0:
+        ahead = count_commits_since(wt.path, merged_head)
+        if ahead < 0:
             print(
-                f"  {dim('autoclose skipped (unpushed-check failed)')} {wt.short}",
+                f"  {dim('autoclose skipped (merge-head check failed)')} {wt.short}",
                 flush=True,
             )
             continue
-        if wt.unpushed > 0:
+        if ahead > 0:
             print(
-                f"  {dim(f'autoclose skipped ({wt.unpushed} unpushed)')} {wt.short}",
+                f"  {dim(f'autoclose skipped ({ahead} commits after merge)')} {wt.short}",
                 flush=True,
             )
             continue

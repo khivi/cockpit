@@ -51,10 +51,17 @@ def count_dirty(wt_path: Path) -> int:
 def _count_unpushed(wt_path: Path) -> int:
     """Commits on HEAD whose patch content is not yet on origin's default branch.
 
-    Uses `git cherry` so squash-merged commits (same content, different SHA on
-    the default branch) are recognized as already-landed. Each output line is
-    `+ <sha>` for an unmerged commit, `- <sha>` for one whose patch is already
-    upstream — we count only `+` lines.
+    Uses `git cherry` so individually cherry-picked commits (same content,
+    different SHA upstream) are recognized as already-landed. Each output line
+    is `+ <sha>` for an unmerged commit, `- <sha>` for one whose patch is
+    already upstream — we count only `+` lines.
+
+    GitHub squash-merges are NOT recognized by `git cherry`: N commits are
+    collapsed into a single upstream commit with a combined patch-id that
+    matches none of the originals. Autoclose handles that case separately via
+    `count_commits_since(wt, headRefOid)` from `fetch_merged_branches`; this
+    function intentionally over-counts there so `/cockpit:list` and
+    `/cockpit:close` still surface "this branch hasn't been pushed" honestly.
 
     Returns 0 if the default branch (whatever `origin/HEAD` points at) cannot
     be resolved. Returns -1 if git fails outright so callers can distinguish
@@ -127,6 +134,20 @@ def worktrees(repo_dir: Path) -> list[Worktree]:
         wt.dirty_count = d
         wt.unpushed = u
     return wts
+
+
+def count_commits_since(wt_path: Path, sha: str) -> int:
+    """Commits on HEAD after `sha`. Returns -1 if git fails or `sha` is unknown.
+
+    Used by autoclose to decide whether a worktree has advanced past the head
+    SHA recorded when its PR was merged. 0 means "branch tip == merge head"
+    (safe to remove); >0 means new local work after merge.
+    """
+    res = _git(wt_path, "rev-list", "--count", f"{sha}..HEAD")
+    if res.returncode != 0:
+        return -1
+    out = res.stdout.strip()
+    return int(out) if out.isdigit() else -1
 
 
 def has_unique_commits(wt_path: Path, base: str) -> bool:
