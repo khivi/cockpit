@@ -134,6 +134,11 @@ def resolve_worktree(
         raise ValueError("need <branch> or --pr <num>")
 
     existing = worktree_for_branch(repo, branch)
+    if existing is None and branch_prefix and "/" not in branch:
+        prefixed = f"{branch_prefix}{branch}"
+        existing = worktree_for_branch(repo, prefixed)
+        if existing is not None:
+            branch = prefixed
     if existing is not None:
         return existing, branch, True
 
@@ -147,17 +152,16 @@ def resolve_worktree(
 def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
     """Locate a skill and return (workspace_cwd, claude_prompt).
 
-    Lookup order (global takes precedence — mirrors the user's
-    "global skills always win" rule):
-      1. ~/.claude/skills/<name>/skill.md. If found, cwd is $HOME.
-      2. Preferred repo (--repo if given, else current repo via discover_repo):
-         <repo>/.claude/skills/<name>/skill.md. If found, cwd is the repo path.
+    Skill-file lookup order (global always wins):
+      1. ~/.claude/skills/<name>/skill.md
+      2. <repo>/.claude/skills/<name>/skill.md (repo from --repo, or discover_repo())
+
+    Workspace cwd precedence (independent of where the skill file was found):
+      - Explicit --repo  → configured repo's path (even when the global skill wins)
+      - Global skill, no --repo  → $HOME
+      - Repo-local skill  → repo path
     """
     rel = Path(".claude") / "skills" / name / "skill.md"
-
-    home = Path.home()
-    if (home / rel).exists():
-        return home, f"/{name}"
 
     if repo_name:
         repo_cfg = find_repo_by_name(repo_name)
@@ -166,10 +170,15 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
     else:
         repo_cfg = discover_repo()
 
-    if repo_cfg is not None:
-        repo_path = Path(repo_cfg["path"]).expanduser().resolve()
-        if (repo_path / rel).exists():
-            return repo_path, f"/{name}"
+    repo_path = Path(repo_cfg["path"]).expanduser().resolve() if repo_cfg else None
+
+    home = Path.home()
+    if (home / rel).exists():
+        cwd = repo_path if repo_name and repo_path else home
+        return cwd, f"/{name}"
+
+    if repo_path and (repo_path / rel).exists():
+        return repo_path, f"/{name}"
 
     raise ValueError(
         f"--skill {name!r}: not found in ~/.claude/skills/ or preferred repo"
