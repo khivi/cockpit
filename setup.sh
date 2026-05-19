@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One-shot dev setup: wire pre-commit + pre-push version bumper into .git/hooks.
+# One-shot dev setup: wire pre-commit hooks for both commit + push stages.
+# pre-push runs version-bump and pytest via pre-commit (see .pre-commit-config.yaml).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -9,10 +10,6 @@ if ! command -v pre-commit >/dev/null; then
 fi
 
 pre-commit install
+pre-commit install --hook-type pre-push --overwrite
 
-hooks_dir="$(git rev-parse --git-common-dir)/hooks"
-src="$(pwd)/.githooks/version-bump.sh"
-chmod +x "$src"
-ln -sf "$src" "$hooks_dir/pre-push"
-
-echo "Installed: pre-commit + pre-push version bumper in $hooks_dir"
+echo "Installed: pre-commit hooks (commit + push stages)"
