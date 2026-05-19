@@ -8,6 +8,5 @@
     }
   ],
   "poll_interval_seconds": 300,
-  "auto_cleanup_on_merge": true,
-  "rate_limit_backoff_seconds": [30, 60, 120, 300]
+  "auto_cleanup_on_merge": true
 }
