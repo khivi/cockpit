@@ -21,6 +21,10 @@ Before committing, scan for:
 - `linear.app`, `atlassian.net`, internal company domains
 - `@firstname` references that aren't GitHub handles
 
+## Release versioning
+
+Before opening a PR, bump `.claude-plugin/plugin.json`'s `version` field (semver patch for fixes, minor for features). Stage and commit the bump with the rest of the change — do not ship a PR that leaves the version untouched.
+
 ## Enforcement
 
 The `gitleaks` pre-commit hook (`.gitleaks.toml`) blocks the regex-catchable cases at commit time: hardcoded home paths, Slack IDs, bare UUIDs, plus gitleaks' default credential ruleset. This document covers the judgment calls the regex can't reliably catch.
