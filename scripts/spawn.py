@@ -58,7 +58,7 @@ import sys
 from pathlib import Path
 
 from lib.cmux import cmux, workspace_names
-from lib.config import discover_repo, find_repo_by_name
+from lib.config import discover_repo, find_repo_by_name, find_repo_by_nwo
 from lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch
 from lib.git import collision_free, create_worktree, slugify, worktree_for_branch
 from lib.prompts import claude_command
@@ -84,23 +84,24 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def detect_source(value: str) -> tuple[str, str]:
-    """Classify positional into (mode, resolved_value).
+def detect_source(value: str) -> tuple[str, str, str | None]:
+    """Classify positional into (mode, resolved_value, nwo_hint).
+
+    `nwo_hint` is `<owner>/<repo>` when a full GitHub PR URL was parsed,
+    else None. The caller uses it to route the spawn to the right
+    configured repo when invoked from outside its tree.
 
     PR mode requires a `#` prefix (`#123`) or a full GitHub PR URL. A bare
     integer is treated as a branch name — use `#123` or `--pr 123` for PRs.
     Steps 3-5 (local/remote/new branch) resolved by create_worktree at
     worktree-creation time.
     """
-    # Step 1: GitHub PR URL
-    m = re.match(r"https?://github\.com/[^/]+/[^/]+/pull/(\d+)", value)
+    m = re.match(r"https?://github\.com/([^/]+/[^/]+)/pull/(\d+)", value)
     if m:
-        return "pr", m.group(1)
-    # Step 2: #-prefixed PR number
+        return "pr", m.group(2), m.group(1)
     if re.fullmatch(r"#\d+", value):
-        return "pr", value.lstrip("#")
-    # Steps 3-5: branch (local / remote / new — git resolves at worktree time)
-    return "branch", value
+        return "pr", value.lstrip("#"), None
+    return "branch", value, None
 
 
 def select_repo(repo_name: str | None) -> dict:
@@ -134,6 +135,11 @@ def resolve_worktree(
         raise ValueError("need <branch> or --pr <num>")
 
     existing = worktree_for_branch(repo, branch)
+    if existing is None and branch_prefix and "/" not in branch:
+        prefixed = f"{branch_prefix}{branch}"
+        existing = worktree_for_branch(repo, prefixed)
+        if existing is not None:
+            branch = prefixed
     if existing is not None:
         return existing, branch, True
 
@@ -147,17 +153,16 @@ def resolve_worktree(
 def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
     """Locate a skill and return (workspace_cwd, claude_prompt).
 
-    Lookup order (global takes precedence — mirrors the user's
-    "global skills always win" rule):
-      1. ~/.claude/skills/<name>/skill.md. If found, cwd is $HOME.
-      2. Preferred repo (--repo if given, else current repo via discover_repo):
-         <repo>/.claude/skills/<name>/skill.md. If found, cwd is the repo path.
+    Skill-file lookup order (global always wins):
+      1. ~/.claude/skills/<name>/skill.md
+      2. <repo>/.claude/skills/<name>/skill.md (repo from --repo, or discover_repo())
+
+    Workspace cwd precedence (independent of where the skill file was found):
+      - Explicit --repo  → configured repo's path (even when the global skill wins)
+      - Global skill, no --repo  → $HOME
+      - Repo-local skill  → repo path
     """
     rel = Path(".claude") / "skills" / name / "skill.md"
-
-    home = Path.home()
-    if (home / rel).exists():
-        return home, f"/{name}"
 
     if repo_name:
         repo_cfg = find_repo_by_name(repo_name)
@@ -166,10 +171,15 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
     else:
         repo_cfg = discover_repo()
 
-    if repo_cfg is not None:
-        repo_path = Path(repo_cfg["path"]).expanduser().resolve()
-        if (repo_path / rel).exists():
-            return repo_path, f"/{name}"
+    repo_path = Path(repo_cfg["path"]).expanduser().resolve() if repo_cfg else None
+
+    home = Path.home()
+    if (home / rel).exists():
+        cwd = repo_path if repo_name and repo_path else home
+        return cwd, f"/{name}"
+
+    if repo_path and (repo_path / rel).exists():
+        return repo_path, f"/{name}"
 
     raise ValueError(
         f"--skill {name!r}: not found in ~/.claude/skills/ or preferred repo"
@@ -221,11 +231,21 @@ def main() -> int:
         )
         return 1
     elif args.positional:
-        mode, value = detect_source(args.positional)
+        mode, value, nwo_hint = detect_source(args.positional)
         if mode == "pr":
             pr_num = value
         else:
             branch = value
+        if nwo_hint and not args.repo:
+            match = find_repo_by_nwo(nwo_hint)
+            if match is not None:
+                args.repo = match["name"]
+            else:
+                print(
+                    f"note: URL points to {nwo_hint} but no configured repo matches; "
+                    f"falling back to cwd-based discovery",
+                    file=sys.stderr,
+                )
     elif short and not (branch or pr_num or cwd or skill):
         branch = short
 
