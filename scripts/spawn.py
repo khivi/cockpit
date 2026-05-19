@@ -3,9 +3,12 @@
 
 Usage:
   spawn.py <branch|PR|github-url>                         # positional (auto-detected)
-  spawn.py --branch <branch> --name <name>                # branch mode (explicit)
-  spawn.py --branch <branch> --name <name> --pr <num>     # PR mode (fetch pull/N/head)
-  spawn.py --cwd <path> --name <name>                     # arbitrary dir (no repo)
+  spawn.py --branch <branch> [--name <name>]              # branch mode (explicit)
+  spawn.py --pr <num> [--branch <name>] [--name <short>]  # PR mode (fetch pull/N/head)
+  spawn.py --name <short>                                 # new branch + workspace named <short>
+  spawn.py --cwd <path> [--name <short>]                  # arbitrary dir (no repo)
+
+  --name is the workspace short name. Alone, it also seeds the new branch name.
 
 Optional:
   --claude-prompt <str>   Prompt for claude's first message.
@@ -185,6 +188,8 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    # --cwd + --name is intentionally allowed: --name sets the workspace short
+    # name in the arbitrary-dir mode (no branch is created).
 
     prompt: str | None = args.claude_prompt
 

@@ -1,6 +1,6 @@
 ---
 description: "Create a git worktree + cmux workspace for a new branch or existing PR."
-argument-hint: "<branch|PR|url> | --branch <n> | --pr <n> | --name <n> | --cwd <path>"
+argument-hint: "<branch|PR|url> | --branch <n> | --pr <n> | --name <n> | --cwd <path> [--repo <n>] [--claude-prompt <s>]"
 model: haiku
 allowed-tools: Bash
 ---
@@ -11,28 +11,28 @@ Spawn a fresh worktree (sibling of the main repo) plus a cmux workspace with `cl
 
 ## Arguments
 
-Exactly one input source is required. Mixing positional with `--branch`/`--pr`/`--name` is an error.
+Exactly one *positional or input-flag* source is required. Mixing the positional with `--branch`/`--pr`/`--name` is an error.
 
-**Positional** (auto-detected, mutually exclusive with `--branch`/`--pr`/`--name`):
+**Positional** (auto-detected; mutually exclusive with `--branch`/`--pr`/`--name`):
 
 - GitHub PR URL (`https://github.com/.../pull/N`) → PR mode
-- Bare number (`123` or `#123`) → PR mode
-- Anything else → branch (local, remote, or new — git resolves)
+- Bare number (`123` or `#123`) → PR mode. To use a branch literally named `123`, pass `--branch 123`
+- Anything else → branch (local, remote, or new — git resolves at worktree time)
 
-**Explicit flags** (mutually exclusive with positional):
+**Input flags** (mutually exclusive with the positional; `--branch`/`--pr` may combine with each other and with `--name`):
 
-- `--branch <name>` — explicit branch name
-- `--pr <num>` — explicit PR; fetches `pull/<num>/head` into a local branch
-- `--name <short>` — new branch (bypasses PR detection); also sets workspace name
+- `--branch <name>` — explicit branch name. Combined with `--pr`, fetches the PR under this local name instead of the PR's head ref
+- `--pr <num>` — fetches `pull/<num>/head`; local branch defaults to the PR's head ref unless `--branch` overrides
+- `--name <short>` — workspace short name. Alone, it also seeds the new branch name. When omitted, the short name is slugified from the branch tail
 
 **Modifiers** (combinable with any input source above):
 
 - `--repo <name>` — target a configured repo by `name` from `~/.config/cockpit/config.json` instead of cwd discovery
-- `--claude-prompt <str>` — first-turn prompt for claude. Auto-generated plan-only prompt for PR input; bare `claude` for branch input
+- `--claude-prompt <str>` — first-turn prompt for claude. Defaults to an auto-generated plan-only prompt for PR input; bare `claude` for branch/cwd input
 
-**Alternative mode** (mutually exclusive with `--branch`/`--pr`/`--repo`):
+**Alternative mode** (mutually exclusive with `--branch`/`--pr`/`--repo`; combinable with `--name` to set the workspace short name):
 
-- `--cwd <path>` — spawn workspace in an arbitrary directory (created if missing), no worktree or repo required
+- `--cwd <path>` — spawn workspace in an arbitrary directory (created if missing); no worktree or repo required
 
 ## Behaviour
 
