@@ -182,11 +182,7 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
 
 def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
     """Plan-only first-turn prompt. PR context block is included when `pr_info` is set."""
-    lines = [
-        "/session-coordination",
-        "",
-        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
-    ]
+    lines = [f"You are starting a fresh task in a new worktree on branch `{branch}`."]
     if pr_info:
         author = (pr_info.get("author") or {}).get("login", "unknown")
         number = pr_info["number"]

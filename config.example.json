@@ -8,5 +8,6 @@
     }
   ],
   "poll_interval_seconds": 300,
-  "auto_cleanup_on_merge": true
+  "auto_cleanup_on_merge": true,
+  "prompt_prefix": ""
 }
