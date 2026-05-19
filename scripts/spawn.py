@@ -21,10 +21,15 @@ Optional:
 
 Positional detection (5 steps):
   1. GitHub PR URL (https://github.com/.../pull/N) → PR mode
-  2. Bare PR number (#N or N)                       → PR mode
+  2. #-prefixed PR number (#N)                       → PR mode
+                                                       (bare N is a branch — see below)
   3. Local branch (refs/heads/<branch> exists)           → checkout
   4. Remote branch (ls-remote origin <branch> matches)   → fetch + checkout
   5. New branch (neither local nor remote)               → create from default_base
+
+  After branch resolution (steps 3-5), gh is queried for an open PR on
+  the head ref; if found, the PR info is printed and the plan-only prompt
+  is auto-generated (unless --claude-prompt overrides).
   # TODO: Linear ID (PE-1234) → resolve via Linear API
   # TODO: Slack URL           → resolve via Slack API
 
@@ -54,10 +59,9 @@ from pathlib import Path
 
 from lib.cmux import cmux, workspace_names
 from lib.config import discover_repo, find_repo_by_name
-from lib.gh import fetch_pr_info, resolve_pr_branch
+from lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch
 from lib.git import collision_free, create_worktree, slugify, worktree_for_branch
 from lib.prompts import claude_command
-from lib.registry import register_cwd
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,15 +87,17 @@ def parse_args() -> argparse.Namespace:
 def detect_source(value: str) -> tuple[str, str]:
     """Classify positional into (mode, resolved_value).
 
-    Steps 1-2 resolved here; steps 3-5 (local/remote/new branch) resolved by
-    create_worktree at worktree-creation time.
+    PR mode requires a `#` prefix (`#123`) or a full GitHub PR URL. A bare
+    integer is treated as a branch name — use `#123` or `--pr 123` for PRs.
+    Steps 3-5 (local/remote/new branch) resolved by create_worktree at
+    worktree-creation time.
     """
     # Step 1: GitHub PR URL
     m = re.match(r"https?://github\.com/[^/]+/[^/]+/pull/(\d+)", value)
     if m:
         return "pr", m.group(1)
-    # Step 2: bare PR number
-    if re.fullmatch(r"#?\d+", value):
+    # Step 2: #-prefixed PR number
+    if re.fullmatch(r"#\d+", value):
         return "pr", value.lstrip("#")
     # Steps 3-5: branch (local / remote / new — git resolves at worktree time)
     return "branch", value
@@ -105,12 +111,10 @@ def select_repo(repo_name: str | None) -> dict:
         return repo_cfg
     repo_cfg = discover_repo()
     if repo_cfg is None:
-        print(
-            "no managed repo for cwd; auto-adding via register_cwd",
-            file=sys.stderr,
+        raise ValueError(
+            "cannot determine repo from cwd; pass --repo <name> or run from "
+            "inside a managed repo (register first with `cockpit add`)"
         )
-        repo_cfg = register_cwd()
-        repo_cfg = discover_repo() or repo_cfg
     return repo_cfg
 
 
@@ -176,35 +180,36 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
     )
 
 
-def _plan_only_prompt(pr_num: str, branch: str, wt: Path) -> str | None:
-    try:
-        info = fetch_pr_info(pr_num, wt)
-    except Exception:
-        return None
-    author = (info.get("author") or {}).get("login", "unknown")
-    title = info.get("title", f"PR #{pr_num}")
-    url = info.get("url", "")
-    return "\n".join(
-        [
-            "/session-coordination",
+def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
+    """Plan-only first-turn prompt. PR context block is included when `pr_info` is set."""
+    lines = [
+        "/session-coordination",
+        "",
+        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
+    ]
+    if pr_info:
+        author = (pr_info.get("author") or {}).get("login", "unknown")
+        number = pr_info["number"]
+        title = pr_info.get("title") or f"PR #{number}"
+        lines += [
             "",
-            f"You are starting a fresh task in a new worktree on branch `{branch}`.",
-            "",
-            f"**Source**: PR #{pr_num} by @{author}",
+            f"**Source**: PR #{number} by @{author}",
             f"**Task**: {title}",
             "",
-            f"**Context**: {url}",
-            "",
-            "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
-            "- DO NOT edit files, write code, run tests, or commit anything.",
-            "- You MAY use Read, Grep, Glob, and re-fetch the linked ticket/thread for context.",
-            "- Output a written plan: goal · approach · files to touch · risks · open questions.",
-            "- Ask clarifying questions if the spec is ambiguous.",
-            "- Wait for the user to approve or refine before implementing.",
-            "",
-            "Begin by writing the plan.",
+            f"**Context**: {pr_info.get('url', '')}",
         ]
-    )
+    lines += [
+        "",
+        "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
+        "- DO NOT edit files, write code, run tests, or commit anything.",
+        "- You MAY use Read, Grep, Glob for context (re-fetch the linked ticket/thread where relevant).",
+        "- Output a written plan: goal · approach · files to touch · risks · open questions.",
+        "- Ask clarifying questions if the task is ambiguous.",
+        "- Wait for the user to approve or refine before implementing.",
+        "",
+        "Begin by writing the plan.",
+    ]
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -232,9 +237,9 @@ def main() -> int:
     elif short and not (branch or pr_num or cwd or skill):
         branch = short
 
-    if cwd and (branch or pr_num or args.repo or skill):
+    if cwd and (branch or pr_num or skill):
         print(
-            "ERROR: --cwd is mutually exclusive with --branch/--pr/--repo/--skill args",
+            "ERROR: --cwd is mutually exclusive with --branch/--pr/--skill args",
             file=sys.stderr,
         )
         return 1
@@ -244,9 +249,9 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    # --cwd + --name is intentionally allowed: --name sets the workspace short
-    # name in the arbitrary-dir mode (no branch is created).
-    # --skill + --name/--repo are intentionally allowed.
+    # --repo is a universal override on repo discovery — combinable with any
+    # input source. In --cwd mode it has no effect (no repo lookup happens).
+    # --cwd + --name is allowed: --name sets the workspace short name.
 
     prompt: str | None = args.claude_prompt
 
@@ -290,8 +295,25 @@ def main() -> int:
             short = slugify(branch.rsplit("/", 1)[-1])
         branch_display = branch
 
-        if prompt is None and pr_num:
-            prompt = _plan_only_prompt(pr_num, branch, wt)
+        pr_info: dict | None = None
+        if pr_num:
+            try:
+                pr_info = fetch_pr_info(pr_num, wt)
+            except Exception:
+                pr_info = None
+        else:
+            pr_info = pr_for_branch(branch, wt)
+            if pr_info is not None:
+                pr_num = str(pr_info["number"])
+                author = (pr_info.get("author") or {}).get("login", "unknown")
+                print(
+                    f"note: open PR #{pr_num} exists for branch {branch!r}: "
+                    f"{pr_info.get('title', '')} by @{author} ({pr_info.get('url', '')})",
+                    file=sys.stderr,
+                )
+
+        if prompt is None:
+            prompt = _plan_only_prompt(branch, pr_info)
 
     ws_name = short
     attached_ws = ws_name in set(workspace_names().values())

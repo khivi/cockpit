@@ -16,21 +16,21 @@ Exactly one *positional or input-flag* source is required. Mixing the positional
 **Positional** (auto-detected; mutually exclusive with `--branch`/`--pr`/`--name`/`--skill`):
 
 - GitHub PR URL (`https://github.com/.../pull/N`) → PR mode
-- Bare number (`123` or `#123`) → PR mode. To use a branch literally named `123`, pass `--branch 123`
-- Anything else → branch (local, remote, or new — git resolves at worktree time)
+- `#`-prefixed PR number (`#123`) → PR mode. A bare integer (`123`) is treated as a branch — use `#123` or `--pr 123` for PRs
+- Anything else → branch (local, remote, or new — git resolves at worktree time). If an **open PR exists** for the resolved branch on GitHub, its number/title/url is printed to stderr and the plan-only prompt is used (override with `--claude-prompt`)
 
 **Input flags** (mutually exclusive with the positional; `--branch`/`--pr` may combine with each other and with `--name`):
 
 - `--branch <name>` — explicit branch name. Combined with `--pr`, fetches the PR under this local name instead of the PR's head ref
 - `--pr <num>` — fetches `pull/<num>/head`; local branch defaults to the PR's head ref unless `--branch` overrides
 - `--name <short>` — workspace short name. Alone, it also seeds the new branch name. When omitted, the short name is slugified from the branch tail
-- `--cwd <path>` — spawn workspace in an arbitrary directory (created if missing); no worktree or repo required. Mutex with `--branch`/`--pr`/`--repo`/`--skill`
+- `--cwd <path>` — spawn workspace in an arbitrary directory (created if missing); no worktree or repo required. Mutex with `--branch`/`--pr`/`--skill`
 - `--skill <name>` — spawn a workspace running a skill. Resolves against `<repo>/.claude/skills/<name>/skill.md` first, then `~/.claude/skills/<name>/skill.md`. Workspace cwd is the repo path (repo skill) or `$HOME` (global). No worktree, no branch. Mutex with `--branch`/`--pr`/`--cwd`
 
 **Modifiers** (always combinable with any input source above):
 
-- `--repo <name>` — target a configured repo by `name` from `~/.config/cockpit/config.json` instead of cwd discovery. With `--skill`, restricts lookup to that repo only
-- `--claude-prompt <str>` — first-turn prompt for claude; overrides the default. Defaults: plan-only auto-generated prompt for PR input (positional PR or `--pr`); `/<name>` for `--skill`; bare `claude` for everything else (positional branch, `--branch`, `--name` alone, `--cwd`)
+- `--repo <name>` — universal override on repo discovery; targets a configured repo by `name` from `~/.config/cockpit/config.json`. Combinable with any input source. No-op under `--cwd` (no repo lookup occurs). With `--skill`, restricts lookup to that repo only. **If neither `--repo` nor cwd-based discovery resolves a repo, `/cockpit:new` errors out** — auto-registration via `register_cwd` has been removed
+- `--claude-prompt <str>` — first-turn prompt for claude; overrides the default. Defaults: PR-context plan-only prompt for PR input (positional PR or `--pr`); branch plan-only prompt for branch input (positional branch, `--branch`, `--name` alone) — if an open PR exists on that branch, the PR-context variant is used instead; `/<name>` for `--skill`; bare `claude` for `--cwd`
 
 ## Behaviour
 
@@ -57,6 +57,6 @@ exec python3 ${CLAUDE_PLUGIN_ROOT}/scripts/spawn.py "$@"
 /cockpit:new --name fix-login                        # new branch, workspace named fix-login
 /cockpit:new --repo myapp fix-login                  # target a specific configured repo
 /cockpit:new --cwd ~/scratch/spike                   # arbitrary dir, no repo
-/cockpit:new --skill morning-pr                      # global skill workspace at $HOME
-/cockpit:new --skill list --repo cockpit-new         # repo skill from a specific repo
+/cockpit:new --skill <skill-name>                    # global skill workspace at $HOME
+/cockpit:new --skill <skill-name> --repo myrepo      # repo skill from a specific repo
 ```
