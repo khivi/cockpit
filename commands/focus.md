@@ -7,9 +7,13 @@ allowed-tools: Bash
 
 # /cockpit:focus
 
-Resolve the workspace via `lib.cmux.resolve_workspace` and switch cmux focus to it. Read-only on git/disk.
+YOU MUST immediately invoke the Bash tool with the exact command below. Do not paraphrase or skip. After Bash returns, paste its stdout verbatim.
 
-## Arguments
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/focus.py "$@"
+```
+
+## Arguments (reference only)
 
 - Positional `<query>` — one of:
   - PR number (`#123` or `123`) — looked up in `~/.config/cockpit/cache/`
@@ -23,9 +27,3 @@ Resolve the workspace via `lib.cmux.resolve_workspace` and switch cmux focus to 
 3. `cmux focus --workspace <ref>` switches focus.
 
 Errors on no match or ambiguous match — never closes or modifies state.
-
-## Implementation
-
-```bash
-exec python3 ${CLAUDE_PLUGIN_ROOT}/scripts/focus.py "$@"
-```

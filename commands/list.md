@@ -7,7 +7,11 @@ allowed-tools: Bash
 
 # /cockpit:list
 
-Read `git worktree list` for every managed repo, cross-reference `cmux list-workspaces`, and overlay PR status from `~/.config/cockpit/cache/<repo>__pr-*.json`.
+YOU MUST immediately invoke the Bash tool with the exact command below. Do not paraphrase or skip. After Bash returns, paste its stdout verbatim.
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/list.py
+```
 
 ## Output
 
@@ -21,12 +25,6 @@ otherrepo     experiment/baz      —      —        —                   2025
 Drift markers appended where they apply:
 
 - `(no workspace)` — worktree exists, no matching cmux workspace
-
-## Implementation
-
-```bash
-exec ${CLAUDE_PLUGIN_ROOT}/scripts/list.py
-```
 
 `list.py` is read-only: it renders the current cache + git + cmux state
 without polling GitHub.

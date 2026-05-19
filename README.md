@@ -60,6 +60,10 @@ otherrepo     experiment/baz      —      —        —               3d ago  
 
 Kicks the cockpit immediately (SIGUSR1) if `--watch` is running, otherwise forks `cockpit.py --once`. Refreshes the PR cache and footer.
 
+### `/cockpit:repos`
+
+Lists configured repos (name, path, branch prefix, default base) from `~/.config/cockpit/config.json`. Referenced by `/cockpit:new`'s error when `--repo <name>` doesn't match any configured repo.
+
 ### `/cockpit:focus <pr|branch|slug>`
 
 Switches cmux focus to the matching workspace. Resolves via `lib.cmux.resolve_workspace` (PR → branch → slug). Read-only on git/disk.

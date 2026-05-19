@@ -63,6 +63,23 @@ from lib.daemon import kick_running
 from lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch
 from lib.git import collision_free, create_worktree, slugify, worktree_for_branch
 from lib.prompts import claude_command
+from lib.repos import repo_names
+
+
+def _unknown_repo_msg(name: str) -> str:
+    names = repo_names()
+    if names:
+        listed = ", ".join(names[:10])
+        more = f" (+{len(names) - 10} more)" if len(names) > 10 else ""
+        return (
+            f"--repo {name!r}: no configured repo with that name. "
+            f"Configured: {listed}{more}. Run /cockpit:repos for details."
+        )
+    return (
+        f"--repo {name!r}: no configured repo with that name, and no repos "
+        f"are configured. Run /cockpit:repos or /cockpit:new from inside a "
+        f"git repo to auto-register."
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -109,13 +126,20 @@ def select_repo(repo_name: str | None) -> dict:
     if repo_name:
         repo_cfg = find_repo_by_name(repo_name)
         if repo_cfg is None:
-            raise ValueError(f"--repo {repo_name!r}: no configured repo with that name")
+            raise ValueError(_unknown_repo_msg(repo_name))
         return repo_cfg
     repo_cfg = discover_repo()
     if repo_cfg is None:
+        names = repo_names()
+        hint = (
+            f" Configured repos: {', '.join(names[:10])}"
+            f"{' (+more)' if len(names) > 10 else ''}. Run /cockpit:repos."
+            if names
+            else ""
+        )
         raise ValueError(
             "cannot determine repo from cwd; pass --repo <name> or run from "
-            "inside a managed repo (register first with `cockpit add`)"
+            "inside a managed repo (register first with `cockpit add`)." + hint
         )
     return repo_cfg
 
@@ -168,7 +192,7 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
     if repo_name:
         repo_cfg = find_repo_by_name(repo_name)
         if repo_cfg is None:
-            raise ValueError(f"--repo {repo_name!r}: no configured repo with that name")
+            raise ValueError(_unknown_repo_msg(repo_name))
     else:
         repo_cfg = discover_repo()
 
@@ -217,6 +241,11 @@ def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
 
 def main() -> int:
     args = parse_args()
+
+    if args.repo is not None and find_repo_by_name(args.repo) is None:
+        print(f"ERROR: {_unknown_repo_msg(args.repo)}", file=sys.stderr)
+        return 1
+
     branch, cwd, short, pr_num, skill = (
         args.branch,
         args.cwd,
