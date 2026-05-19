@@ -1,6 +1,6 @@
 ---
 description: "Create a git worktree + cmux workspace for a new branch or existing PR."
-argument-hint: "<branch|PR|url> | --branch <name> | --pr <num> | --name <short> | --cwd <path> | --skill <name> [--repo <name>] [--claude-prompt <str>]"
+argument-hint: "<branch|PR|url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--claude-prompt S]"
 model: haiku
 allowed-tools: Bash
 ---
