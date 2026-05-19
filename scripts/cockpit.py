@@ -215,6 +215,8 @@ def _maybe_autoclose(
         )
         if dry:
             continue
+        ref = _workspace_ref_for_path(wt.path, cwds) or wt.short
+        cmux_close_workspace_best_effort(ref)
         ok, err = remove_worktree(repo_path, wt.path)
         if not ok:
             print(
@@ -223,8 +225,6 @@ def _maybe_autoclose(
                 flush=True,
             )
             continue
-        ref = _workspace_ref_for_path(wt.path, cwds) or wt.short
-        cmux_close_workspace_best_effort(ref)
         delete_pr_caches_for_branch(repo_name, wt.branch)
 
 
