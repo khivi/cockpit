@@ -147,12 +147,17 @@ def resolve_worktree(
 def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
     """Locate a skill and return (workspace_cwd, claude_prompt).
 
-    Lookup order:
-      1. Preferred repo (--repo if given, else current repo via discover_repo):
+    Lookup order (global takes precedence — mirrors the user's
+    "global skills always win" rule):
+      1. ~/.claude/skills/<name>/skill.md. If found, cwd is $HOME.
+      2. Preferred repo (--repo if given, else current repo via discover_repo):
          <repo>/.claude/skills/<name>/skill.md. If found, cwd is the repo path.
-      2. ~/.claude/skills/<name>/skill.md. If found, cwd is $HOME.
     """
     rel = Path(".claude") / "skills" / name / "skill.md"
+
+    home = Path.home()
+    if (home / rel).exists():
+        return home, f"/{name}"
 
     if repo_name:
         repo_cfg = find_repo_by_name(repo_name)
@@ -166,12 +171,8 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
         if (repo_path / rel).exists():
             return repo_path, f"/{name}"
 
-    home = Path.home()
-    if (home / rel).exists():
-        return home, f"/{name}"
-
     raise ValueError(
-        f"--skill {name!r}: not found in preferred repo or ~/.claude/skills/"
+        f"--skill {name!r}: not found in ~/.claude/skills/ or preferred repo"
     )
 
 
