@@ -38,3 +38,6 @@ jobs:
         env:
           # gitleaks wants a full history to walk; checkout above sets it up.
           SKIP: ""
+
+      - name: Run pre-push stage hooks (pytest)
+        run: pre-commit run --all-files --hook-stage pre-push
