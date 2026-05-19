@@ -7,8 +7,12 @@ Usage:
   spawn.py --pr <num> [--branch <name>] [--name <short>]  # PR mode (fetch pull/N/head)
   spawn.py --name <short>                                 # new branch + workspace named <short>
   spawn.py --cwd <path> [--name <short>]                  # arbitrary dir (no repo)
+  spawn.py --skill <name> [--name <short>] [--repo <n>]   # spawn workspace running a skill
 
   --name is the workspace short name. Alone, it also seeds the new branch name.
+  --skill resolves a repo skill (<repo>/.claude/skills/<n>/skill.md) or a
+  global skill (~/.claude/skills/<n>/skill.md); workspace cwd is the repo path
+  or $HOME respectively, with `/<n>` as the first-turn claude prompt.
 
 Optional:
   --claude-prompt <str>   Prompt for claude's first message.
@@ -67,6 +71,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pr")
     p.add_argument(
         "--repo", help="target a configured repo by name (skips cwd-based discovery)"
+    )
+    p.add_argument(
+        "--skill",
+        help="spawn workspace running a global or repo skill (no worktree, no branch)",
     )
     p.add_argument("--claude-prompt", help="prompt for claude's first message")
     return p.parse_args()
@@ -132,6 +140,42 @@ def resolve_worktree(
     return wt, branch, False
 
 
+def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
+    """Locate a skill and return (workspace_cwd, claude_prompt).
+
+    Lookup order:
+      1. If --repo is given: only that repo's .claude/skills/<name>/skill.md.
+      2. Else: current repo (via discover_repo), then ~/.claude/skills/<name>/skill.md.
+    """
+    rel = Path(".claude") / "skills" / name / "skill.md"
+
+    def _in(repo_path: Path) -> Path | None:
+        return repo_path if (repo_path / rel).exists() else None
+
+    if repo_name:
+        repo_cfg = find_repo_by_name(repo_name)
+        if repo_cfg is None:
+            raise ValueError(f"--repo {repo_name!r}: no configured repo with that name")
+        repo_path = Path(repo_cfg["path"]).expanduser().resolve()
+        if _in(repo_path) is None:
+            raise ValueError(f"--skill {name!r}: not found at {repo_path / rel}")
+        return repo_path, f"/{name}"
+
+    repo_cfg = discover_repo()
+    if repo_cfg is not None:
+        repo_path = Path(repo_cfg["path"]).expanduser().resolve()
+        if _in(repo_path) is not None:
+            return repo_path, f"/{name}"
+
+    home = Path.home()
+    if (home / rel).exists():
+        return home, f"/{name}"
+
+    raise ValueError(
+        f"--skill {name!r}: not found in current repo or ~/.claude/skills/"
+    )
+
+
 def _plan_only_prompt(pr_num: str, branch: str, wt: Path) -> str | None:
     try:
         info = fetch_pr_info(pr_num, wt)
@@ -165,11 +209,17 @@ def _plan_only_prompt(pr_num: str, branch: str, wt: Path) -> str | None:
 
 def main() -> int:
     args = parse_args()
-    branch, cwd, short, pr_num = args.branch, args.cwd, args.name, args.pr
+    branch, cwd, short, pr_num, skill = (
+        args.branch,
+        args.cwd,
+        args.name,
+        args.pr,
+        args.skill,
+    )
 
-    if args.positional and (branch or pr_num or short):
+    if args.positional and (branch or pr_num or short or skill):
         print(
-            "ERROR: positional is mutually exclusive with --branch/--pr/--name",
+            "ERROR: positional is mutually exclusive with --branch/--pr/--name/--skill",
             file=sys.stderr,
         )
         return 1
@@ -179,17 +229,24 @@ def main() -> int:
             pr_num = value
         else:
             branch = value
-    elif short and not (branch or pr_num or cwd):
+    elif short and not (branch or pr_num or cwd or skill):
         branch = short
 
-    if cwd and (branch or pr_num or args.repo):
+    if cwd and (branch or pr_num or args.repo or skill):
         print(
-            "ERROR: --cwd is mutually exclusive with --branch/--pr/--repo args",
+            "ERROR: --cwd is mutually exclusive with --branch/--pr/--repo/--skill args",
+            file=sys.stderr,
+        )
+        return 1
+    if skill and (branch or pr_num or cwd):
+        print(
+            "ERROR: --skill is mutually exclusive with --branch/--pr/--cwd args",
             file=sys.stderr,
         )
         return 1
     # --cwd + --name is intentionally allowed: --name sets the workspace short
     # name in the arbitrary-dir mode (no branch is created).
+    # --skill + --name/--repo are intentionally allowed.
 
     prompt: str | None = args.claude_prompt
 
@@ -198,6 +255,18 @@ def main() -> int:
         wt.mkdir(parents=True, exist_ok=True)
         if not short:
             short = slugify(wt.name)
+        attached_wt = True
+        branch_display = None
+    elif skill:
+        try:
+            wt, skill_prompt = resolve_skill(skill, args.repo)
+        except ValueError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
+        if not short:
+            short = slugify(skill)
+        if prompt is None:
+            prompt = skill_prompt
         attached_wt = True
         branch_display = None
     else:
