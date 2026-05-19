@@ -59,6 +59,7 @@ from pathlib import Path
 
 from lib.cmux import cmux, workspace_names
 from lib.config import discover_repo, find_repo_by_name, find_repo_by_nwo
+from lib.daemon import kick_running
 from lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch
 from lib.git import collision_free, create_worktree, slugify, worktree_for_branch
 from lib.prompts import claude_command
@@ -348,6 +349,7 @@ def main() -> int:
         prefix = f"workspace {ws_name} spawned at {wt}"
     suffix = f" on {branch_display}" if branch_display else " (no worktree)"
     print(f"{prefix}{suffix}")
+    kick_running(quiet=True)
     return 0
 
 
