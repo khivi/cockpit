@@ -60,3 +60,12 @@ repos:
         stages: [pre-push]
         always_run: true
         pass_filenames: false
+
+      - id: pytest
+        name: pytest
+        entry: pytest
+        language: python
+        additional_dependencies: [pytest==9.0.3]
+        types: [python]
+        pass_filenames: false
+        stages: [pre-commit]
