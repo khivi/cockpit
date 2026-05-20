@@ -86,7 +86,9 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 
 ## Claude Code statusline
 
-`scripts/footer.py` doubles as a Claude Code statusline command. It's opt-in via the `install_statusline: true` flag in `~/.config/cockpit/config.json` — when set, the daemon writes `~/.claude/settings.json` for you on next start (backing up any existing file). When unset (the default), cockpit never touches Claude Code's settings.
+Cockpit delegates the Claude Code statusline to [`cship`](https://github.com/khivi/cship). `scripts/footer.py` is a thin shim that pipes Claude Code's stdin JSON through to `cship` and forwards its output — keeping it in the path lets cockpit shape input or fail soft when cship isn't installed.
+
+Opt in by setting `use_cship: true` in `~/.config/cockpit/config.json`. On next daemon start, cockpit verifies `cship` is on `PATH` and writes `~/.claude/settings.json` so Claude Code invokes the shim each render (any existing file is backed up). If `use_cship: true` but `cship` is missing, cockpit hard-errors on startup — install cship first, or leave the flag off. When unset (the default), cockpit never touches Claude Code's settings.
 
 To wire by hand:
 
@@ -98,19 +100,6 @@ To wire by hand:
   }
 }
 ```
-
-Output per render (current branch, current cwd) — two lines:
-
-```text
-🕐 14:32 · 🤖 Opus 4.7 · 🧠 7%/1M · ⌛ 5h 42% · ⏱ 1h 23m
-📁 cockpit · #27933 khivi/PE-4081-fix-login · ✏️ 3 · ✗ lint · approved
-```
-
-Line 1 is the session pills, derived from the JSON Claude Code pipes on stdin: `🕐` (wall clock), `🤖` (model), `🧠` (context window), `⌛` (5h usage; amber ≥60%, red ≥80%), `⏱` (elapsed wall-clock since the first transcript entry). Omitted when stdin has no JSON.
-
-Line 2 is the head: `📁` cwd pill, `#N <branch>`, then one pill per kind from the cache's `pills` array — colored per kind (green approved, red blockers, amber warn, magenta draft/closed). Untracked git repos fall back to `<branch> · no PR` with a live `✏️ N` dirty count. Outside a git repo, line 2 is empty.
-
-Reads cockpit's cache only — never blocks on `gh`.
 
 ## Nudge wiring (idle pill)
 

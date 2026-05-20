@@ -3,7 +3,7 @@
 Cockpit writes one `{repo}__pr-{N}.json` file per relevant PR each cycle.
 Consumers:
   - reconcile loop reads + writes via this module
-  - statusLine footer (`lib/footer.render_footer`) reads via `find_pr_payload`
+  - `lib/list.py` and `scripts/close.py` read via `find_pr_payload`
 """
 
 from __future__ import annotations

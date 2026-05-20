@@ -16,7 +16,7 @@ Modes:
   --once          run exactly one cycle and exit
 
 Sibling entry points (each script does one job):
-  scripts/footer.py   one-line statusLine output (hook + statusLine caller)
+  scripts/footer.py   statusLine shim — pipes Claude Code's stdin to cship
   scripts/list.py     `/cockpit:list` table
   scripts/sync.py     USR1-kick the daemon, else fall back to `cockpit.py --once`
   scripts/spawn.py    `/cockpit:new` — create worktree + workspace
@@ -69,7 +69,7 @@ from lib.colors import (  # noqa: E402
 from lib.config import (  # noqa: E402
     ensure_state_dirs,
     load_config,
-    install_statusline_if_configured,
+    install_cship_statusline_if_configured,
 )
 from lib.daemon import run_watcher  # noqa: E402
 from lib.cache import delete_pr_caches_for_branch, write_pr_cache  # noqa: E402
@@ -612,7 +612,7 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     ensure_state_dirs()
-    install_statusline_if_configured(_footer_command())
+    install_cship_statusline_if_configured(_footer_command())
 
     if args.watch is not None:
         cfg = load_config()
