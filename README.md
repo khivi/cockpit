@@ -86,7 +86,9 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 
 ## Claude Code statusline
 
-`scripts/footer.py` doubles as a Claude Code statusline command. The first run of `cockpit.py` offers to wire it for you; to do it by hand, add to `~/.claude/settings.json`:
+`scripts/footer.py` doubles as a Claude Code statusline command. It's opt-in via the `install_statusline: true` flag in `~/.config/cockpit/config.json` — when set, the daemon writes `~/.claude/settings.json` for you on next start (backing up any existing file). When unset (the default), cockpit never touches Claude Code's settings.
+
+To wire by hand:
 
 ```json
 {
@@ -100,13 +102,13 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 Output per render (current branch, current cwd) — two lines:
 
 ```text
-🤖 Opus 4.7 · 🧠 7%/1M · ⌛ 5h 42% · ⏱ 1h 23m
-#27933 khivi/PE-4081-fix-login “Fix login regression after token refresh” · ✓ · review-required · ✏️ 3
+🕐 14:32 · 🤖 Opus 4.7 · 🧠 7%/1M · ⌛ 5h 42% · ⏱ 1h 23m
+📁 cockpit · #27933 khivi/PE-4081-fix-login · ✏️ 3 · ✗ lint · approved
 ```
 
-Line 1 is the session pills, derived from the JSON Claude Code pipes on stdin: `🤖` (model), `🧠` (context window), `⌛` (5h usage), `⏱` (elapsed wall-clock since the first transcript entry). Omitted when stdin has no JSON.
+Line 1 is the session pills, derived from the JSON Claude Code pipes on stdin: `🕐` (wall clock), `🤖` (model), `🧠` (context window), `⌛` (5h usage; amber ≥60%, red ≥80%), `⏱` (elapsed wall-clock since the first transcript entry). Omitted when stdin has no JSON.
 
-Line 2 is the head: cockpit-tracked PRs render `#N <branch> "title" · ci · review`; any other git repo falls back to `<branch> · no PR`; outside a git repo it's empty. `· ✏️ N` is appended when the worktree is dirty.
+Line 2 is the head: `📁` cwd pill, `#N <branch>`, then one pill per kind from the cache's `pills` array — colored per kind (green approved, red blockers, amber warn, magenta draft/closed). Untracked git repos fall back to `<branch> · no PR` with a live `✏️ N` dirty count. Outside a git repo, line 2 is empty.
 
 Reads cockpit's cache only — never blocks on `gh`.
 

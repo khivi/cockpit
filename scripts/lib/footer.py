@@ -16,8 +16,34 @@ from .git import count_dirty, current_branch, repo_state
 
 
 _ANSI_RED = "\033[31m"
+_ANSI_GREEN = "\033[32m"
 _ANSI_AMBER = "\033[33m"
+_ANSI_BLUE = "\033[34m"
+_ANSI_MAGENTA = "\033[35m"
+_ANSI_CYAN = "\033[36m"
+_ANSI_DIM = "\033[2m"
 _ANSI_RESET = "\033[0m"
+
+# Per-pill kind → ANSI color. Mirrors cship's prior styling: emerald for
+# approved/passed signals, red for blockers, amber for warn/in-progress,
+# magenta for draft/closed terminal states.
+_PILL_ANSI = {
+    "rebase": _ANSI_AMBER,
+    "merge": _ANSI_AMBER,
+    "wip": _ANSI_AMBER,
+    "ci_failed": _ANSI_RED,
+    "ci_pending": _ANSI_AMBER,
+    "unaddressed": _ANSI_RED,
+    "changes_requested": _ANSI_RED,
+    "conflict": _ANSI_AMBER,
+    "draft": _ANSI_MAGENTA,
+    "approved": _ANSI_GREEN,
+    "state": _ANSI_MAGENTA,
+}
+
+
+def _styled(ansi: str, text: str) -> str:
+    return f"{ansi}{text}{_ANSI_RESET}" if ansi else text
 
 
 def _size_label(size: int) -> str:
@@ -129,6 +155,15 @@ def _git_branch_and_dirty() -> tuple[str, int]:
     return branch, count_dirty(here)
 
 
+def _cwd_pill() -> str:
+    """`📁 <leaf>` in cyan. Leaf is the cwd's basename so worktree dirs that
+    diverge from branch names (e.g. `khivi/PE-4081-fix` lives at `cockpit-pe`)
+    show their actual location at a glance.
+    """
+    name = Path.cwd().name or "/"
+    return _styled(_ANSI_CYAN, f"📁 {name}")
+
+
 _FOOTER_RENDERERS = {
     "rebase": lambda _p: "🔄 rebasing",
     "merge": lambda _p: "🔀 merging",
@@ -173,13 +208,14 @@ def _pr_segment(branch: str) -> str:
     """Cockpit-tracked tier's PR-info segment (no prefix, no dirty/badge).
 
     Reads the `pills` array written by the daemon. Each pill kind maps to a
-    text token via `_FOOTER_RENDERERS`; unknown kinds are skipped so future
-    daemon-side additions don't crash an older footer.
+    text token via `_FOOTER_RENDERERS` and is wrapped with `_PILL_ANSI` color.
+    Unknown kinds are skipped so future daemon-side additions don't crash an
+    older footer.
     """
     match = find_pr_payload(branch)
     if not match:
         return f"{branch} · no PR"
-    head = f"#{match.get('number')} {branch}"
+    head = f"{_styled(_ANSI_BLUE, '#' + str(match.get('number')))} {branch}"
     if "pills" not in match:
         return _legacy_pr_segment(branch, match)
     parts: list[str] = [head]
@@ -190,7 +226,7 @@ def _pr_segment(branch: str) -> str:
             continue
         text = renderer(p)
         if text:
-            parts.append(text)
+            parts.append(_styled(_PILL_ANSI.get(kind, ""), text))
     return " · ".join(parts)
 
 
@@ -216,16 +252,23 @@ def render_footer() -> int:
 
     branch, dirty = _git_branch_and_dirty()
     match = find_pr_payload(branch) if branch else None
+    cwd = _cwd_pill() if branch else ""
     head = _pr_segment(branch) if branch else ""
     state = repo_state(Path(".")) if branch else ""
-    state_pill = {"rebase": "🔄 rebasing", "merge": "🔀 merging"}.get(state, "")
+    state_pill = _styled(
+        _ANSI_AMBER,
+        {
+            "rebase": "🔄 rebasing",
+            "merge": "🔀 merging",
+        }.get(state, ""),
+    )
 
     # Cached `wip` pill (in `head`) covers tracked repos. Live dirty fallback
     # only for untracked branches so something always renders when editing.
-    dirty_pill = f"✏️ {dirty}" if dirty and not match else ""
+    dirty_pill = _styled(_ANSI_AMBER, f"✏️ {dirty}") if dirty and not match else ""
 
     pills_line = " · ".join(_session_pills(blob))
-    head_line = " · ".join(p for p in [head, state_pill, dirty_pill] if p)
+    head_line = " · ".join(p for p in [cwd, head, state_pill, dirty_pill] if p)
     out = "\n".join(line for line in (pills_line, head_line) if line)
     if out:
         print(out)

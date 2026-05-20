@@ -7,6 +7,7 @@ decisions and the renderer mappings.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -15,6 +16,13 @@ from lib.footer import _legacy_pr_segment, _pr_segment
 from lib.gh import PR
 from lib.git import Worktree
 from lib.pills import decide_pills
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(s: str) -> str:
+    return _ANSI_RE.sub("", s)
 
 
 def _pr(**overrides) -> PR:
@@ -183,13 +191,16 @@ def test_footer_pr_segment_renders_pills_array(monkeypatch):
         ],
     }
     monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    assert _pr_segment("khivi/feature") == "#42 khivi/feature · ✏️ 3 · ✗ lint · approved"
+    assert (
+        _strip_ansi(_pr_segment("khivi/feature"))
+        == "#42 khivi/feature · ✏️ 3 · ✗ lint · approved"
+    )
 
 
 def test_footer_pr_segment_empty_pills_array(monkeypatch):
     payload = {"number": 7, "branch": "khivi/feature", "pills": []}
     monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    assert _pr_segment("khivi/feature") == "#7 khivi/feature"
+    assert _strip_ansi(_pr_segment("khivi/feature")) == "#7 khivi/feature"
 
 
 def test_footer_no_pr_fallback(monkeypatch):
@@ -204,7 +215,7 @@ def test_footer_renders_state_pill(monkeypatch):
         "pills": [{"kind": "state", "state": "MERGED"}],
     }
     monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    assert _pr_segment("khivi/old") == "#9 khivi/old · merged"
+    assert _strip_ansi(_pr_segment("khivi/old")) == "#9 khivi/old · merged"
 
 
 def test_footer_skips_unknown_kind(monkeypatch):
@@ -214,7 +225,7 @@ def test_footer_skips_unknown_kind(monkeypatch):
         "pills": [{"kind": "future_kind"}, {"kind": "approved"}],
     }
     monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    assert _pr_segment("b") == "#1 b · approved"
+    assert _strip_ansi(_pr_segment("b")) == "#1 b · approved"
 
 
 def test_footer_legacy_fallback_when_pills_missing(monkeypatch):
@@ -228,7 +239,10 @@ def test_footer_legacy_fallback_when_pills_missing(monkeypatch):
         "review": "CHANGES_REQUESTED",
     }
     monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    assert _pr_segment("khivi/feature") == "#5 khivi/feature · ✗ · changes-requested"
+    assert (
+        _strip_ansi(_pr_segment("khivi/feature"))
+        == "#5 khivi/feature · ✗ · changes-requested"
+    )
 
 
 def test_legacy_pr_segment_merged_state():
@@ -262,6 +276,34 @@ def test_session_pills_prepends_clock():
     blob = '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000},"rate_limits":{"five_hour":{"used_percentage":5}}}'
     pills = _session_pills(blob)
     assert pills[0].startswith("🕐 "), pills
+
+
+# ── ANSI palette + CWD pill ─────────────────────────────────────────────────
+
+
+def test_pr_segment_wraps_pills_in_ansi(monkeypatch):
+    payload = {
+        "number": 1,
+        "branch": "b",
+        "pills": [{"kind": "approved"}, {"kind": "ci_failed", "phase": "test"}],
+    }
+    monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
+    rendered = _pr_segment("b")
+    # Approved is green (\033[32m), ci_failed is red (\033[31m), PR num blue.
+    assert "\033[32m" in rendered
+    assert "\033[31m" in rendered
+    assert "\033[34m" in rendered
+    assert rendered.endswith("\033[0m") or rendered.count("\033[0m") >= 3
+
+
+def test_cwd_pill_renders_leaf_in_cyan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from lib.footer import _cwd_pill
+
+    rendered = _cwd_pill()
+    assert "\033[36m" in rendered
+    assert tmp_path.name in rendered
+    assert "📁" in rendered
 
 
 # ── cache round-trip ────────────────────────────────────────────────────────
@@ -310,3 +352,95 @@ def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
     kinds = [p["kind"] for p in payload["pills"]]
     assert "wip" not in kinds
     assert "ci_failed" in kinds
+
+
+# ── install_statusline gating ───────────────────────────────────────────────
+
+
+def test_install_statusline_noop_when_flag_unset(tmp_path, monkeypatch):
+    import importlib
+    import json as _json
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    cfg = {"repos": [], "install_statusline": False}
+    (tmp_path / "config.json").write_text(_json.dumps(cfg))
+
+    import lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    cockpit_config.install_statusline_if_configured("/path/to/footer.py")
+
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_install_statusline_writes_when_flag_true(tmp_path, monkeypatch):
+    import importlib
+    import json as _json
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    cfg = {"repos": [], "install_statusline": True}
+    (tmp_path / "config.json").write_text(_json.dumps(cfg))
+
+    import lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    cockpit_config.install_statusline_if_configured("/path/to/footer.py")
+
+    settings = _json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert settings["statusLine"]["command"] == "/path/to/footer.py"
+
+
+def test_install_statusline_skips_if_already_set(tmp_path, monkeypatch):
+    import importlib
+    import json as _json
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    cfg = {"repos": [], "install_statusline": True}
+    (tmp_path / "config.json").write_text(_json.dumps(cfg))
+
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    (claude_dir / "settings.json").write_text(
+        _json.dumps(
+            {"statusLine": {"type": "command", "command": "/path/to/footer.py"}}
+        )
+    )
+
+    import lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    cockpit_config.install_statusline_if_configured("/path/to/footer.py")
+
+    # No backup created since nothing was rewritten.
+    backups = list(claude_dir.glob("settings.json.bak.*"))
+    assert backups == []
+
+
+def test_install_statusline_backs_up_existing(tmp_path, monkeypatch):
+    import importlib
+    import json as _json
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    cfg = {"repos": [], "install_statusline": True}
+    (tmp_path / "config.json").write_text(_json.dumps(cfg))
+
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    (claude_dir / "settings.json").write_text(
+        _json.dumps({"statusLine": {"type": "command", "command": "/old/statusline"}})
+    )
+
+    import lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    cockpit_config.install_statusline_if_configured("/path/to/footer.py")
+
+    backups = list(claude_dir.glob("settings.json.bak.*"))
+    assert len(backups) == 1
+    assert "/old/statusline" in backups[0].read_text()
+    new = _json.loads((claude_dir / "settings.json").read_text())
+    assert new["statusLine"]["command"] == "/path/to/footer.py"
