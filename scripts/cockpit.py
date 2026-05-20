@@ -69,7 +69,7 @@ from lib.colors import (  # noqa: E402
 from lib.config import (  # noqa: E402
     ensure_state_dirs,
     load_config,
-    prompt_statusline_setup,
+    install_statusline_if_configured,
 )
 from lib.daemon import run_watcher  # noqa: E402
 from lib.cache import delete_pr_caches_for_branch, write_pr_cache  # noqa: E402
@@ -290,8 +290,9 @@ def cycle_repo(
         flush=True,
     )
     if not dry:
+        wt_by_branch = {wt.branch: wt for wt in wts}
         for pr in prs:
-            write_pr_cache(name, pr)
+            write_pr_cache(name, pr, wt_by_branch.get(pr.branch))
 
     by_name: dict[str, list[str]] = {}
     for ref, ws_name in names.items():
@@ -611,7 +612,7 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     ensure_state_dirs()
-    prompt_statusline_setup(_footer_command())
+    install_statusline_if_configured(_footer_command())
 
     if args.watch is not None:
         cfg = load_config()

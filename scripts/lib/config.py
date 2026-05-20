@@ -5,7 +5,8 @@ Owns:
   - config.json read
   - state-dir bootstrap (copies config.example.json on first run)
   - discover_repo(): resolve cwd to a registered repo entry
-  - prompt_statusline_setup(): first-time prompt wiring Claude Code's statusLine
+  - install_statusline_if_configured(): declarative statusLine writer, gated
+    on the `install_statusline` config flag (default false).
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -114,23 +114,8 @@ def _read_current_statusline(settings_path: Path) -> str | None:
         return None
 
 
-def _ask_and_write(settings_path: Path, footer_command: str, current: str) -> None:
-    if current:
-        print(f"Claude statusLine is currently: {current}")
-        prompt = "replace with cockpit footer? [y/N] "
-    else:
-        prompt = f"wire Claude statusLine to cockpit footer ({footer_command})? [y/N] "
-    try:
-        reply = input(prompt).strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return
-    (COCKPIT_HOME / ".statusline-asked").touch()
-    if reply != "y":
-        print(
-            f"skipped; set .statusLine.command to '{footer_command}' in {settings_path}"
-        )
-        return
-
+def _write_statusline(settings_path: Path, footer_command: str) -> None:
+    """Write `footer_command` into Claude Code's statusLine, backing up first."""
     data: dict = {}
     if settings_path.exists():
         backup = settings_path.with_name(
@@ -147,23 +132,22 @@ def _ask_and_write(settings_path: Path, footer_command: str, current: str) -> No
     print(f"wrote Claude statusLine -> {footer_command}")
 
 
-def prompt_statusline_setup(footer_command: str) -> None:
-    """First-time prompt to wire Claude Code's statusLine to `scripts/footer.py`.
+def install_statusline_if_configured(footer_command: str) -> None:
+    """Declarative statusLine installer, gated on `install_statusline` config.
 
-    No-ops when stdin isn't a TTY (e.g. invoked from a hook) or when the user
-    has already been asked. Persists `~/.config/cockpit/.statusline-asked` to
-    avoid re-prompting.
+    When `install_statusline: true` in config.json, ensure Claude Code's
+    `~/.claude/settings.json` has `statusLine.command == footer_command`.
+    Backs up any existing settings.json before overwriting.
+
+    When the flag is unset or false, cockpit does not touch the statusLine —
+    users keep whatever they had. No interactive prompt; the config flag is
+    the entire opt-in surface.
     """
-    if not sys.stdin.isatty():
-        return
-    asked_flag = COCKPIT_HOME / ".statusline-asked"
-    if asked_flag.exists():
+    cfg = load_config()
+    if not cfg.get("install_statusline"):
         return
     settings_path = Path.home() / ".claude" / "settings.json"
     current = _read_current_statusline(settings_path)
-    if current is None:
+    if current is None or current == footer_command:
         return
-    if current == footer_command:
-        asked_flag.touch()
-        return
-    _ask_and_write(settings_path, footer_command, current)
+    _write_statusline(settings_path, footer_command)

@@ -13,13 +13,20 @@ import os
 from typing import TYPE_CHECKING
 
 from .config import CACHE_DIR, ensure_state_dirs
+from .pills import decide_pills
 
 if TYPE_CHECKING:
     from .gh import PR
+    from .git import Worktree
 
 
-def write_pr_cache(repo_name: str, pr: "PR") -> dict:
-    """Write a JSON snapshot of `pr` to the cache dir and return the payload."""
+def write_pr_cache(repo_name: str, pr: "PR", wt: "Worktree | None" = None) -> dict:
+    """Write a JSON snapshot of `pr` to the cache dir and return the payload.
+
+    `wt` is the local worktree backing `pr.branch`, if any. Used to bake
+    worktree-dependent pill decisions (rebase/merge/wip) into the cached
+    `pills` array so both cmux and footer read the same source of truth.
+    """
     ensure_state_dirs()
     safe = repo_name.replace("/", "_")
     path = CACHE_DIR / f"{safe}__pr-{pr.number}.json"
@@ -35,6 +42,7 @@ def write_pr_cache(repo_name: str, pr: "PR") -> dict:
         "updatedAt": pr.updated_at,
         "unaddressed": pr.unaddressed,
         "mergeable": pr.mergeable,
+        "pills": decide_pills(pr, wt),
     }
     tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(json.dumps(payload, indent=2))
