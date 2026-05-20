@@ -14,6 +14,7 @@ from . import run
 from .colors import bold, issue_color, magenta
 from .gh import PR
 from .git import Worktree, worktrees
+from .pills import decide_pills
 from .prompts import build_orphan_prompt, build_pr_prompt, claude_command
 
 GREEN = "#2dd36f"
@@ -199,30 +200,34 @@ def find_cockpit_workspaces(
     return out
 
 
+_CMUX_RENDERERS = {
+    "rebase": lambda _p: ("rebase", "🔄 rebasing", ORANGE),
+    "merge": lambda _p: ("merge", "🔀 merging", ORANGE),
+    "wip": lambda p: ("wip", f"✏️ {p['count']} dirty", ORANGE),
+    "ci_failed": lambda p: ("ci", f"❌ ci:{p['phase']}", RED),
+    "ci_pending": lambda _p: ("ci", "⏳ ci pending", ORANGE),
+    "unaddressed": lambda p: ("comments", f"💬 {p['count']} unaddressed", RED),
+    "changes_requested": lambda _p: ("comments", "💬 changes requested", RED),
+    "conflict": lambda _p: ("merge", "⚠️ conflict", ORANGE),
+    "draft": lambda _p: ("draft", "📝 draft", GREY),
+    "approved": lambda _p: ("approved", "✅ approved", GREEN),
+    # `state` is footer-only; cmux drops it since autoclose removes workspaces
+    # for non-OPEN PRs within a cycle.
+    "state": lambda _p: None,
+}
+
+
 def status_pills(pr: PR, wt: Worktree | None = None) -> list[tuple[str, str, str]]:
-    """(key, value, color) tuples for cmux set-status. Emoji-in-value only."""
-    pills: list[tuple[str, str, str]] = []
-    if wt is not None and wt.rebasing:
-        pills.append(("rebase", "🔄 rebasing", ORANGE))
-    if wt is not None and wt.merging:
-        pills.append(("merge", "🔀 merging", ORANGE))
-    if wt is not None and wt.dirty_count > 0:
-        pills.append(("wip", f"✏️ {wt.dirty_count} dirty", ORANGE))
-    if pr.ci.startswith("failed"):
-        pills.append(("ci", f"❌ ci:{pr.ci.split(':')[1]}", RED))
-    elif pr.ci == "pending":
-        pills.append(("ci", "⏳ ci pending", ORANGE))
-    if pr.unaddressed > 0:
-        pills.append(("comments", f"💬 {pr.unaddressed} unaddressed", RED))
-    elif pr.review_decision == "CHANGES_REQUESTED":
-        pills.append(("comments", "💬 changes requested", RED))
-    if pr.mergeable == "CONFLICTING":
-        pills.append(("merge", "⚠️ conflict", ORANGE))
-    if pr.is_draft:
-        pills.append(("draft", "📝 draft", GREY))
-    if pr.review_decision == "APPROVED":
-        pills.append(("approved", "✅ approved", GREEN))
-    return pills
+    """(key, value, color) tuples for cmux set-status. Maps decide_pills output."""
+    out: list[tuple[str, str, str]] = []
+    for p in decide_pills(pr, wt):
+        renderer = _CMUX_RENDERERS.get(p["kind"])
+        if renderer is None:
+            continue
+        tup = renderer(p)
+        if tup is not None:
+            out.append(tup)
+    return out
 
 
 def apply_pills(

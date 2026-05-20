@@ -290,8 +290,9 @@ def cycle_repo(
         flush=True,
     )
     if not dry:
+        wt_by_branch = {wt.branch: wt for wt in wts}
         for pr in prs:
-            write_pr_cache(name, pr)
+            write_pr_cache(name, pr, wt_by_branch.get(pr.branch))
 
     by_name: dict[str, list[str]] = {}
     for ref, ws_name in names.items():
