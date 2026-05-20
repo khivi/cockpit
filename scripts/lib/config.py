@@ -5,8 +5,9 @@ Owns:
   - config.json read
   - state-dir bootstrap (copies config.example.json on first run)
   - discover_repo(): resolve cwd to a registered repo entry
-  - install_statusline_if_configured(): declarative statusLine writer, gated
-    on the `install_statusline` config flag (default false).
+  - install_cship_statusline_if_configured(): declarative statusLine writer,
+    gated on `use_cship`. Points Claude Code's statusLine at the `cship`
+    binary directly; hard-errors when the flag is set but cship isn't on PATH.
 """
 
 from __future__ import annotations
@@ -132,20 +133,32 @@ def _write_statusline(settings_path: Path, footer_command: str) -> None:
     print(f"wrote Claude statusLine -> {footer_command}")
 
 
-def install_statusline_if_configured(footer_command: str) -> None:
-    """Declarative statusLine installer, gated on `install_statusline` config.
+class CshipNotInstalledError(RuntimeError):
+    """Raised when `use_cship: true` but the cship binary is not on PATH."""
 
-    When `install_statusline: true` in config.json, ensure Claude Code's
-    `~/.claude/settings.json` has `statusLine.command == footer_command`.
-    Backs up any existing settings.json before overwriting.
 
-    When the flag is unset or false, cockpit does not touch the statusLine —
-    users keep whatever they had. No interactive prompt; the config flag is
-    the entire opt-in surface.
+def install_cship_statusline_if_configured(footer_command: str) -> None:
+    """Point Claude Code's statusLine at cockpit's footer shim, gated on `use_cship`.
+
+    `footer_command` is the absolute invocation cockpit uses for its
+    `scripts/footer.py` shim (which itself delegates to `cship`). When
+    `use_cship: true` in config.json, cockpit verifies `cship` is on PATH and
+    writes `~/.claude/settings.json` so Claude Code invokes the shim each
+    render. Backs up any existing settings.json before overwriting. Raises
+    `CshipNotInstalledError` if the flag is set but `cship` is missing —
+    cockpit refuses to silently fall back since the user explicitly opted in.
+
+    When the flag is unset or false, cockpit does not touch the statusLine.
     """
     cfg = load_config()
-    if not cfg.get("install_statusline"):
+    if not cfg.get("use_cship"):
         return
+    if shutil.which("cship") is None:
+        raise CshipNotInstalledError(
+            "use_cship=true but `cship` is not on PATH. "
+            "Install cship (https://github.com/khivi/cship) or set "
+            f"use_cship=false in {CONFIG_PATH}."
+        )
     settings_path = Path.home() / ".claude" / "settings.json"
     current = _read_current_statusline(settings_path)
     if current is None or current == footer_command:

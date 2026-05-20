@@ -1,28 +1,20 @@
 """Pill decisions + consumer round-trips.
 
-`decide_pills` is the single source of truth; cmux and footer each consume
-its output via their own kind-to-styling maps. These tests pin both the
-decisions and the renderer mappings.
+`decide_pills` is the single source of truth; cmux consumes its output via
+its own kind-to-styling map. These tests pin the decisions and the cmux
+mapper.
 """
 
 from __future__ import annotations
 
-import re
+import sys
 from pathlib import Path
 
 
 from lib.cmux import status_pills
-from lib.footer import _legacy_pr_segment, _pr_segment
 from lib.gh import PR
 from lib.git import Worktree
 from lib.pills import decide_pills
-
-
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def _strip_ansi(s: str) -> str:
-    return _ANSI_RE.sub("", s)
 
 
 def _pr(**overrides) -> PR:
@@ -177,135 +169,6 @@ def test_cmux_conflict_emits_merge_key():
     assert out == [("merge", "⚠️ conflict", "#ff9500")]
 
 
-# ── footer mapper ───────────────────────────────────────────────────────────
-
-
-def test_footer_pr_segment_renders_pills_array(monkeypatch):
-    payload = {
-        "number": 42,
-        "branch": "khivi/feature",
-        "pills": [
-            {"kind": "wip", "count": 3},
-            {"kind": "ci_failed", "phase": "lint"},
-            {"kind": "approved"},
-        ],
-    }
-    monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    assert (
-        _strip_ansi(_pr_segment("khivi/feature"))
-        == "#42 khivi/feature · ✏️ 3 · ✗ lint · approved"
-    )
-
-
-def test_footer_pr_segment_empty_pills_array(monkeypatch):
-    payload = {"number": 7, "branch": "khivi/feature", "pills": []}
-    monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    assert _strip_ansi(_pr_segment("khivi/feature")) == "#7 khivi/feature"
-
-
-def test_footer_no_pr_fallback(monkeypatch):
-    monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: None)
-    assert _pr_segment("khivi/feature") == "khivi/feature · no PR"
-
-
-def test_footer_renders_state_pill(monkeypatch):
-    payload = {
-        "number": 9,
-        "branch": "khivi/old",
-        "pills": [{"kind": "state", "state": "MERGED"}],
-    }
-    monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    assert _strip_ansi(_pr_segment("khivi/old")) == "#9 khivi/old · merged"
-
-
-def test_footer_skips_unknown_kind(monkeypatch):
-    payload = {
-        "number": 1,
-        "branch": "b",
-        "pills": [{"kind": "future_kind"}, {"kind": "approved"}],
-    }
-    monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    assert _strip_ansi(_pr_segment("b")) == "#1 b · approved"
-
-
-def test_footer_legacy_fallback_when_pills_missing(monkeypatch):
-    """Pre-0.3.0 cache files have no `pills` — render from raw fields once."""
-    payload = {
-        "number": 5,
-        "branch": "khivi/feature",
-        "ci": "failed:test",
-        "state": "OPEN",
-        "isDraft": False,
-        "review": "CHANGES_REQUESTED",
-    }
-    monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    assert (
-        _strip_ansi(_pr_segment("khivi/feature"))
-        == "#5 khivi/feature · ✗ · changes-requested"
-    )
-
-
-def test_legacy_pr_segment_merged_state():
-    payload = {
-        "number": 11,
-        "ci": "passed",
-        "state": "MERGED",
-        "isDraft": False,
-        "review": "APPROVED",
-    }
-    assert _legacy_pr_segment("khivi/old", payload) == "#11 khivi/old · ✓ · merged"
-
-
-# ── 5h threshold pill ───────────────────────────────────────────────────────
-
-
-def test_five_hour_pill_colors():
-    from lib.footer import _five_hour_pill
-
-    assert _five_hour_pill(0) == "⌛ 5h 0%"
-    assert _five_hour_pill(59.4) == "⌛ 5h 59%"
-    assert _five_hour_pill(60).startswith("\033[33m")
-    assert _five_hour_pill(79.9).startswith("\033[33m")
-    assert _five_hour_pill(80).startswith("\033[31m")
-    assert _five_hour_pill(99).startswith("\033[31m")
-
-
-def test_session_pills_prepends_clock():
-    from lib.footer import _session_pills
-
-    blob = '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000},"rate_limits":{"five_hour":{"used_percentage":5}}}'
-    pills = _session_pills(blob)
-    assert pills[0].startswith("🕐 "), pills
-
-
-# ── ANSI palette + CWD pill ─────────────────────────────────────────────────
-
-
-def test_pr_segment_wraps_pills_in_ansi(monkeypatch):
-    payload = {
-        "number": 1,
-        "branch": "b",
-        "pills": [{"kind": "approved"}, {"kind": "ci_failed", "phase": "test"}],
-    }
-    monkeypatch.setattr("lib.footer.find_pr_payload", lambda b: payload)
-    rendered = _pr_segment("b")
-    # Approved is green (\033[32m), ci_failed is red (\033[31m), PR num blue.
-    assert "\033[32m" in rendered
-    assert "\033[31m" in rendered
-    assert "\033[34m" in rendered
-    assert rendered.endswith("\033[0m") or rendered.count("\033[0m") >= 3
-
-
-def test_cwd_pill_renders_leaf_in_cyan(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    from lib.footer import _cwd_pill
-
-    rendered = _cwd_pill()
-    assert "\033[36m" in rendered
-    assert tmp_path.name in rendered
-    assert "📁" in rendered
-
-
 # ── cache round-trip ────────────────────────────────────────────────────────
 
 
@@ -354,79 +217,97 @@ def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
     assert "ci_failed" in kinds
 
 
-# ── install_statusline gating ───────────────────────────────────────────────
+# ── use_cship gating ────────────────────────────────────────────────────────
 
 
-def test_install_statusline_noop_when_flag_unset(tmp_path, monkeypatch):
+def _setup_cockpit_config(tmp_path, monkeypatch, cfg: dict):
+    """Stand up an isolated cockpit config + fake $HOME, return reloaded module."""
     import importlib
     import json as _json
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    cfg = {"repos": [], "install_statusline": False}
     (tmp_path / "config.json").write_text(_json.dumps(cfg))
 
     import lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
-    cockpit_config.install_statusline_if_configured("/path/to/footer.py")
+    return cockpit_config
 
+
+def _stub_cship_on_path(monkeypatch, present: bool):
+    """Replace `shutil.which("cship")` inside lib.config so tests don't depend
+    on the host having (or not having) a real cship binary on $PATH."""
+    monkeypatch.setattr(
+        "lib.config.shutil.which",
+        lambda name: "/fake/bin/cship" if (present and name == "cship") else None,
+    )
+
+
+_FOOTER_CMD = "/path/to/footer.py"
+
+
+def test_use_cship_noop_when_flag_unset(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": False}
+    )
+    _stub_cship_on_path(monkeypatch, present=True)
+    cockpit_config.install_cship_statusline_if_configured(_FOOTER_CMD)
     assert not (tmp_path / ".claude" / "settings.json").exists()
 
 
-def test_install_statusline_writes_when_flag_true(tmp_path, monkeypatch):
-    import importlib
+def test_use_cship_raises_when_cship_missing(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": True}
+    )
+    _stub_cship_on_path(monkeypatch, present=False)
+    import pytest
+
+    with pytest.raises(cockpit_config.CshipNotInstalledError):
+        cockpit_config.install_cship_statusline_if_configured(_FOOTER_CMD)
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_use_cship_writes_footer_command(tmp_path, monkeypatch):
     import json as _json
 
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    cfg = {"repos": [], "install_statusline": True}
-    (tmp_path / "config.json").write_text(_json.dumps(cfg))
-
-    import lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    cockpit_config.install_statusline_if_configured("/path/to/footer.py")
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": True}
+    )
+    _stub_cship_on_path(monkeypatch, present=True)
+    cockpit_config.install_cship_statusline_if_configured(_FOOTER_CMD)
 
     settings = _json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert settings["statusLine"]["command"] == "/path/to/footer.py"
+    assert settings["statusLine"] == {"type": "command", "command": _FOOTER_CMD}
 
 
-def test_install_statusline_skips_if_already_set(tmp_path, monkeypatch):
-    import importlib
+def test_use_cship_skips_if_already_set(tmp_path, monkeypatch):
     import json as _json
 
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    cfg = {"repos": [], "install_statusline": True}
-    (tmp_path / "config.json").write_text(_json.dumps(cfg))
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": True}
+    )
+    _stub_cship_on_path(monkeypatch, present=True)
 
     claude_dir = tmp_path / ".claude"
     claude_dir.mkdir()
     (claude_dir / "settings.json").write_text(
-        _json.dumps(
-            {"statusLine": {"type": "command", "command": "/path/to/footer.py"}}
-        )
+        _json.dumps({"statusLine": {"type": "command", "command": _FOOTER_CMD}})
     )
 
-    import lib.config as cockpit_config
+    cockpit_config.install_cship_statusline_if_configured(_FOOTER_CMD)
 
-    importlib.reload(cockpit_config)
-    cockpit_config.install_statusline_if_configured("/path/to/footer.py")
-
-    # No backup created since nothing was rewritten.
     backups = list(claude_dir.glob("settings.json.bak.*"))
     assert backups == []
 
 
-def test_install_statusline_backs_up_existing(tmp_path, monkeypatch):
-    import importlib
+def test_use_cship_backs_up_existing_statusline(tmp_path, monkeypatch):
     import json as _json
 
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    cfg = {"repos": [], "install_statusline": True}
-    (tmp_path / "config.json").write_text(_json.dumps(cfg))
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": True}
+    )
+    _stub_cship_on_path(monkeypatch, present=True)
 
     claude_dir = tmp_path / ".claude"
     claude_dir.mkdir()
@@ -434,13 +315,88 @@ def test_install_statusline_backs_up_existing(tmp_path, monkeypatch):
         _json.dumps({"statusLine": {"type": "command", "command": "/old/statusline"}})
     )
 
-    import lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    cockpit_config.install_statusline_if_configured("/path/to/footer.py")
+    cockpit_config.install_cship_statusline_if_configured(_FOOTER_CMD)
 
     backups = list(claude_dir.glob("settings.json.bak.*"))
     assert len(backups) == 1
     assert "/old/statusline" in backups[0].read_text()
     new = _json.loads((claude_dir / "settings.json").read_text())
-    assert new["statusLine"]["command"] == "/path/to/footer.py"
+    assert new["statusLine"]["command"] == _FOOTER_CMD
+
+
+# ── footer shim (delegates to cship) ────────────────────────────────────────
+
+
+def test_footer_shim_pipes_stdin_to_cship(monkeypatch, capsysbinary):
+    """render_footer execs cship with the stdin blob and forwards stdout."""
+    import io
+    import subprocess as _sp
+
+    import lib.footer as footer
+
+    monkeypatch.setattr(footer.shutil, "which", lambda name: "/fake/cship")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+
+    captured = {}
+
+    class _FakeStdin:
+        buffer = io.BytesIO(b'{"hello":"world"}')
+
+        def isatty(self):
+            return False
+
+    monkeypatch.setattr("sys.stdin", _FakeStdin())
+
+    def fake_run(cmd, input=None, capture_output=False):
+        captured["cmd"] = cmd
+        captured["input"] = input
+        return _sp.CompletedProcess(cmd, 0, stdout=b"styled-output\n", stderr=b"")
+
+    monkeypatch.setattr("lib.footer.subprocess.run", fake_run)
+
+    assert footer.render_footer() == 0
+    assert captured["cmd"] == ["cship"]
+    assert captured["input"] == b'{"hello":"world"}'
+    out, _err = capsysbinary.readouterr()
+    assert out == b"styled-output\n"
+
+
+def test_footer_shim_silent_when_cship_missing(monkeypatch, capsysbinary):
+    """No cship on PATH → exit 0 with no output, so the statusline never breaks."""
+    import lib.footer as footer
+
+    monkeypatch.setattr(footer.shutil, "which", lambda name: None)
+    called = {"ran": False}
+
+    def fake_run(*_a, **_kw):
+        called["ran"] = True
+        raise AssertionError("subprocess.run must not run when cship is missing")
+
+    monkeypatch.setattr("lib.footer.subprocess.run", fake_run)
+    assert footer.render_footer() == 0
+    assert called["ran"] is False
+    out, err = capsysbinary.readouterr()
+    assert out == b""
+    assert err == b""
+
+
+def test_footer_shim_propagates_cship_exit_code(monkeypatch, capsysbinary):
+    import subprocess as _sp
+
+    import lib.footer as footer
+
+    monkeypatch.setattr(footer.shutil, "which", lambda name: "/fake/cship")
+
+    class _FakeStdin:
+        def isatty(self):
+            return True  # no stdin to forward
+
+    monkeypatch.setattr("sys.stdin", _FakeStdin())
+    monkeypatch.setattr(
+        "lib.footer.subprocess.run",
+        lambda *a, **kw: _sp.CompletedProcess(["cship"], 17, b"", b"boom\n"),
+    )
+
+    assert footer.render_footer() == 17
+    _out, err = capsysbinary.readouterr()
+    assert err == b"boom\n"

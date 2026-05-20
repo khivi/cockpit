@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""statusLine entry point — one line of cwd+PR+model state to stdout."""
+"""statusLine entry point — delegates to cship (see lib/footer)."""
 
 from __future__ import annotations
 

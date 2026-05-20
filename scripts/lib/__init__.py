@@ -5,7 +5,7 @@ helpers live in sibling modules:
 
   - lib.config    — paths, config.json IO, statusline setup, discover_repo
   - lib.cache     — PR snapshot read/write/delete under $COCKPIT_HOME/cache
-  - lib.footer    — statusLine footer rendering (reads via lib.cache)
+  - lib.footer    — statusLine shim that delegates to the `cship` binary
   - lib.colors    — ANSI terminal colors
   - lib.prompts   — Claude prompt builders + shell quoting
   - lib.registry  — register cwd's repo into config.json

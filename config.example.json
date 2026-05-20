@@ -10,5 +10,5 @@
   "poll_interval_seconds": 300,
   "auto_cleanup_on_merge": true,
   "prompt_prefix": "",
-  "install_statusline": false
+  "use_cship": false
 }
