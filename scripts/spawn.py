@@ -61,7 +61,7 @@ import re
 import sys
 from pathlib import Path
 
-from lib.cmux import cmux, workspace_names
+from lib.cmux import cmux, require_workspace_binary, workspace_names
 from lib.config import discover_repo, find_repo_by_name, find_repo_by_nwo
 from lib.daemon import kick_running
 from lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch
@@ -277,6 +277,7 @@ def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
 
 
 def main() -> int:
+    require_workspace_binary()
     args = parse_args()
 
     if args.repo is not None and find_repo_by_name(args.repo) is None:

@@ -658,10 +658,14 @@ def main(argv=None):
 
     startup_cfg = load_config()
     if startup_cfg.get("side_bar_from_file") is None and shutil.which("cmux") is None:
+        slash_status = (
+            "slash commands fall back to limux"
+            if shutil.which("limux")
+            else "slash commands (/cockpit:new, :focus, :close) disabled"
+        )
         print(
             f"{yellow('cockpit:')} cmux not found on PATH — running cache-only mode. "
-            "Footer/statusline works; side panel and slash commands "
-            "(/cockpit:new, :focus, :close, :list) are disabled. "
+            f"Footer/statusline works; side panel disabled; {slash_status}. "
             "Set 'side_bar_from_file': false in config to opt back into cmux mode.",
             file=sys.stderr,
             flush=True,
