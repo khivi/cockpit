@@ -267,12 +267,13 @@ def cycle_repo(
         print(f"  {yellow('skip')} {repo_path}: {e}", flush=True)
         return
 
+    headless = bool(cfg.get("side_bar_from_file"))
     with ThreadPoolExecutor(max_workers=3) as ex:
         wts_fut = ex.submit(worktrees, repo_path)
-        state_fut = ex.submit(workspace_state)
+        state_fut = None if headless else ex.submit(workspace_state)
         merged_fut = ex.submit(fetch_merged_branches, repo_path)
         wts = wts_fut.result()
-        names, cwds = state_fut.result()
+        names, cwds = ({}, {}) if state_fut is None else state_fut.result()
         merged_branches = merged_fut.result()
 
     coworker_branches = sorted(
@@ -305,6 +306,9 @@ def cycle_repo(
         wt_by_branch = {wt.branch: wt for wt in wts}
         for pr in prs:
             write_pr_cache(name, pr, wt_by_branch.get(pr.branch))
+
+    if cfg.get("side_bar_from_file"):
+        return
 
     by_name: dict[str, list[str]] = {}
     for ref, ws_name in names.items():
@@ -514,7 +518,7 @@ def cycle_all(
             flush=True,
         )
         return
-    if cfg.get("auto_cleanup_on_merge", True):
+    if cfg.get("auto_cleanup_on_merge", True) and not cfg.get("side_bar_from_file"):
         close_gone_cwd_workspaces(dry=dry)
     for repo_entry in repos:
         try:
