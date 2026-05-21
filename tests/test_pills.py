@@ -403,6 +403,61 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
     assert settings["statusLine"]["command"].endswith("/footer.py")
 
 
+def test_cli_once_does_not_touch_footer_files(tmp_path, monkeypatch):
+    """`--once` is pure reconcile — never seeds cship.toml or writes statusLine."""
+    import importlib
+
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
+    _stub_cship_on_path(monkeypatch, present=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit
+
+    importlib.reload(cockpit)
+    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
+    monkeypatch.setattr(cockpit, "_once_with", lambda _s: None)
+
+    assert cockpit.main(["--once"]) == 0
+    assert not (tmp_path / "xdg" / "cship.toml").exists()
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
+    """`--watch` is pure reconcile — never seeds cship.toml or writes statusLine."""
+    import importlib
+
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
+    _stub_cship_on_path(monkeypatch, present=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit
+
+    importlib.reload(cockpit)
+    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
+    monkeypatch.setattr(cockpit, "_watch", lambda _s, _secs: None)
+
+    assert cockpit.main(["--watch", "60"]) == 0
+    assert not (tmp_path / "xdg" / "cship.toml").exists()
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_cli_once_does_not_raise_when_cship_missing(tmp_path, monkeypatch):
+    """`--once` must not invoke the cship-on-PATH check; missing cship is a `--footer` concern."""
+    import importlib
+
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
+    _stub_cship_on_path(monkeypatch, present=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit
+
+    importlib.reload(cockpit)
+    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
+    monkeypatch.setattr(cockpit, "_once_with", lambda _s: None)
+
+    assert cockpit.main(["--once"]) == 0
+
+
 def test_cship_default_honors_xdg_config_home(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "use_cship": True}

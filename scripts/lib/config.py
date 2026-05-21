@@ -8,10 +8,12 @@ Owns:
   - install_cship_statusline_if_configured(): declarative statusLine writer,
     gated on `use_cship`. Points Claude Code's statusLine at the `cship`
     binary directly; hard-errors when the flag is set but cship isn't on PATH.
+    Invoked only by `cockpit.py --footer`, not by --once / --watch.
   - install_cship_default_config(): rewrite ~/.config/cship.toml from the
-    bundled default on every daemon start. Cockpit owns this file — local
-    edits are clobbered. Customize by editing scripts/defaults/cship.toml in
-    the plugin repo and shipping an update.
+    bundled default. Invoked only by `cockpit.py --footer`, not by --once /
+    --watch — so reconcile cycles never touch ~/.config/cship.toml. Local
+    edits to ~/.config/cship.toml survive across daemon restarts; running
+    `cockpit --footer` deliberately clobbers them back to the bundled default.
 """
 
 from __future__ import annotations
@@ -154,6 +156,11 @@ def install_cship_statusline_if_configured(footer_command: str) -> None:
     cockpit refuses to silently fall back since the user explicitly opted in.
 
     When the flag is unset or false, cockpit does not touch the statusLine.
+
+    Called only from `cockpit.py --footer`. --once / --watch do not invoke this
+    — they leave the existing statusLine and never trigger the PATH check, so
+    a misconfigured `use_cship: true` no longer blocks reconcile cycles. Run
+    `cockpit --footer` once after flipping the flag to wire the statusLine.
     """
     cfg = load_config()
     if not cfg.get("use_cship"):
@@ -180,11 +187,11 @@ def _cship_user_config_path() -> Path:
 def install_cship_default_config() -> None:
     """Rewrite ~/.config/cship.toml from the bundled default when `use_cship: true`.
 
-    Cockpit owns this file: every daemon start (and every `--footer` run) copies
-    `scripts/defaults/cship.toml` over the target. Local edits are clobbered —
-    customize by editing the bundled default in the plugin repo and shipping a
-    plugin update. Honors `$XDG_CONFIG_HOME`. Soft-fails if the bundled file is
-    missing.
+    Called only from `cockpit.py --footer`. --once / --watch never touch this
+    file, so reconcile cycles preserve local edits indefinitely. Running
+    `cockpit --footer` deliberately copies `scripts/defaults/cship.toml` over
+    the target — that command is the only thing that clobbers local edits.
+    Honors `$XDG_CONFIG_HOME`. Soft-fails if the bundled file is missing.
     """
     if not load_config().get("use_cship"):
         return

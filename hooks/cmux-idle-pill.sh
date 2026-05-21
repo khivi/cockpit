@@ -1,8 +1,14 @@
 #!/bin/bash
-# cmux idle pill — emits `idle=☕ rest` when the agent parks at the prompt
-# (Stop event) and clears it on UserPromptSubmit. Sole producer of the `idle=`
-# pill the cockpit reads in `nudge_if_idle` to decide whether a workspace is
-# at rest. Without this hook the cockpit's nudge logic never fires.
+# cmux idle + loop pills — owns two related cmux pills for the same workspace:
+#
+#   idle=☕ rest   — agent parked at the prompt (Stop with no live loop)
+#   loop=🔄       — agent is mid-/loop (dynamic ScheduleWakeup or cron)
+#
+# `idle=` is the signal the cockpit reads in `nudge_if_idle` to decide whether
+# to ping a workspace about an actionable PR signal. `loop=` is a visual-only
+# at-a-glance indicator that the session is iterating on its own schedule.
+# Without this hook, neither pill exists and the cockpit's nudge logic never
+# fires.
 #
 # Orthogonal to PR state: a workspace can rest with CI failing. cmux's own
 # `claude_code=Needs input` fires for any idle prompt; y/n permission prompts
@@ -13,15 +19,23 @@
 # and the session is *not* truly at rest during the wait window — broadcasters
 # that read this pill (e.g. `cmux send`) would happily target a session waiting
 # for its own next wakeup. So on Stop we scan the transcript's last assistant
-# turn; if it called ScheduleWakeup or CronCreate, we leave the pill cleared.
-# The next wakeup-triggered turn fires UserPromptSubmit, which clears it anyway
-# — so in steady state the pill stays cleared through the entire loop lifecycle.
-# Cron-mode /loop (CronCreate done once at setup, not re-armed per iteration)
-# is not covered by this heuristic; park such workspaces manually.
+# turn; if it called ScheduleWakeup or CronCreate, we leave `idle=` cleared and
+# set `loop=` on. Otherwise we clear `loop=` (the loop terminated — the model
+# stopped arming wakeups) and set `idle=`. This gives accurate "currently
+# looping" state for dynamic /loop, which a pure PreToolUse-only hook cannot
+# (it has no event for "model decided not to schedule another wakeup").
+#
+# Cron-mode /loop arms a cron once at setup and fires on a fixed schedule —
+# the Stop-time transcript scan would not see ScheduleWakeup on every iteration
+# for that mode, so it relies on the PreToolUse(CronCreate|CronDelete) wiring
+# to drive the `loop=` pill explicitly.
 #
 # Hook wiring (Claude Code event → arg):
-#   Stop             → stop
-#   UserPromptSubmit → prompt
+#   Stop                                                       → stop
+#   UserPromptSubmit                                           → prompt
+#   PreToolUse(ScheduleWakeup|CronCreate|CronUpdate)           → loop-set
+#   PreToolUse(CronDelete)                                     → loop-clear
+#   SessionEnd                                                 → loop-clear
 
 set -eu
 
@@ -73,14 +87,20 @@ case "${1:-}" in
   stop)
     hook_input="$(cat)"
     if [ -n "$hook_input" ] && loop_active_in_transcript "$hook_input"; then
-      # /loop active — keep the pill cleared so consumers of the idle pill
-      # don't see false rest on a session waiting for its own next wakeup.
+      # /loop iteration just scheduled another wakeup — keep `idle=` cleared
+      # (we are *not* at rest) and reflect the live loop in `loop=`.
       cmux clear-status idle
+      cmux set-status loop "🔄" --color "#a78bfa"
       exit 0
     fi
+    # No wakeup armed by the last turn — any prior dynamic /loop has ended.
+    # Clear `loop=` so the visual matches reality, then mark idle.
+    cmux clear-status loop
     cmux set-status idle "☕ rest" --color "#6b7280"
     ;;
   prompt) cmux clear-status idle ;;
+  loop-set) cmux set-status loop "🔄" --color "#a78bfa" ;;
+  loop-clear) cmux clear-status loop ;;
 esac
 
 exit 0
