@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""`/cockpit:close` — remove worktree + cmux workspace + PR cache.
+"""`/cockpit:close` — queue a worktree + workspace teardown for the daemon.
+
+Workflow:
+  1. Resolve target (from query arg, or from `cwd` when no arg).
+  2. Run inline blocker probe (dirty / unpushed / open PR) for fast refusal.
+  3. Write a close-request marker under `$COCKPIT_HOME/state/close-requests/`.
+  4. SIGUSR1-kick the daemon. If no daemon is running, run teardown inline
+     so the user still sees results — same code path either way.
 
 Refuses on uncommitted changes, unpushed commits, or open PR unless `--force`.
 """
@@ -7,31 +14,81 @@ Refuses on uncommitted changes, unpushed commits, or open PR unless `--force`.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from lib.cache import (  # noqa: E402
-    delete_pr_caches_for_branch,
-    find_pr_payload,
-)
+from lib import close_requests  # noqa: E402
 from lib.cmux import (  # noqa: E402
-    cmux_close_workspace_best_effort,
     require_workspace_binary,
     resolve_workspace,
+    workspace_cwds,
+    workspace_names,
 )
 from lib.config import discover_repo  # noqa: E402
-from lib.git import remove_worktree  # noqa: E402
+from lib.daemon import kick_running  # noqa: E402
+from lib.git import worktrees  # noqa: E402
+from lib.teardown import TeardownRequest, probe_blockers, teardown  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Close a cockpit worktree + workspace.")
-    p.add_argument("query", help="PR (#N or N), branch, or workspace slug")
+    p.add_argument(
+        "query",
+        nargs="?",
+        help="PR (#N or N), branch, or workspace slug; defaults to the worktree at cwd",
+    )
     p.add_argument(
         "--force", action="store_true", help="bypass dirty/unpushed/open-PR refusal"
     )
     return p.parse_args()
+
+
+def _git_toplevel(cwd: Path) -> Path | None:
+    res = subprocess.run(
+        ["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0:
+        return None
+    out = res.stdout.strip()
+    return Path(out).resolve() if out else None
+
+
+def _match_from_cwd(repo_dir: Path):
+    """Resolve the workspace + worktree at the user's current directory.
+
+    Used when `cockpit:close` is invoked with no query: pick the worktree
+    rooted at `git rev-parse --show-toplevel`, then find the cmux workspace
+    whose cwd resolves there. Refuses on ambiguity.
+    """
+    cwd = Path.cwd().resolve()
+    toplevel = _git_toplevel(cwd)
+    if toplevel is None:
+        raise LookupError(f"not inside a git worktree (cwd={cwd})")
+
+    wt = next((w for w in worktrees(repo_dir) if w.path.resolve() == toplevel), None)
+    if wt is None:
+        raise LookupError(f"no worktree at {toplevel}")
+
+    cwds = workspace_cwds()
+    names = workspace_names()
+    refs = [ref for ref, path in cwds.items() if path.resolve() == toplevel]
+    if not refs:
+        raise LookupError(f"no cmux workspace rooted at {toplevel}")
+    if len(refs) > 1:
+        raise LookupError(
+            f"multiple workspaces rooted at {toplevel}: {sorted(refs)} — "
+            "pass an explicit query"
+        )
+    ref = refs[0]
+
+    from lib.cmux import WorkspaceMatch
+
+    return WorkspaceMatch(ref=ref, name=names.get(ref, ""), worktree=wt)
 
 
 def main() -> int:
@@ -42,47 +99,54 @@ def main() -> int:
     repo_name = repo_cfg.get("name") if repo_cfg else None
 
     try:
-        match = resolve_workspace(args.query, repo_dir)
+        if args.query is None:
+            match = _match_from_cwd(repo_dir)
+        else:
+            match = resolve_workspace(args.query, repo_dir)
     except LookupError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
 
     wt = match.worktree
-    blockers: list[str] = []
-    if wt is not None:
-        if wt.dirty_count > 0:
-            blockers.append(f"{wt.dirty_count} uncommitted file(s)")
-        if wt.unpushed > 0:
-            blockers.append(f"{wt.unpushed} unpushed commit(s)")
-        elif wt.unpushed == -1:
-            blockers.append("could not verify push state")
+    label = match.name or match.ref
+    branch = wt.branch if wt is not None else None
+    wt_path = wt.path if wt is not None else None
 
-    payload = None
-    if wt is not None and repo_name is not None:
-        payload = find_pr_payload(wt.branch, repo_name=repo_name)
-    if payload and str(payload.get("state", "")).upper() == "OPEN":
-        blockers.append(f"PR #{payload['number']} is OPEN")
-
+    blockers = probe_blockers(wt_path, branch, repo_name)
     if blockers and not args.force:
         print(
-            f"ERROR: refusing to close {match.name or match.ref}: "
+            f"ERROR: refusing to close {label}: "
             + "; ".join(blockers)
             + " (re-run with --force to override)",
             file=sys.stderr,
         )
         return 1
 
-    cmux_close_workspace_best_effort(match.ref)
+    req = TeardownRequest(
+        ref=match.ref,
+        name=match.name or "",
+        worktree_path=wt_path,
+        branch=branch,
+        repo_path=repo_dir if wt is not None else None,
+        repo_name=repo_name,
+        forced=args.force,
+    )
+    marker = close_requests.enqueue(req)
 
-    if wt is not None:
-        ok, err = remove_worktree(repo_dir, wt.path, force=args.force)
-        if not ok:
-            print(f"WARN: git worktree remove failed: {err}", file=sys.stderr)
-        if repo_name is not None:
-            delete_pr_caches_for_branch(repo_name, wt.branch)
+    if kick_running(quiet=True):
+        print(f"queued close: {label} (daemon will process)")
+        return 0
 
-    print(f"closed workspace {match.name or match.ref}")
-    return 0
+    ok, refused = teardown(req)
+    if ok:
+        close_requests.pop(marker)
+        print(f"closed: {label}")
+        return 0
+    print(
+        f"ERROR: close failed for {label}: " + "; ".join(refused),
+        file=sys.stderr,
+    )
+    return 1
 
 
 if __name__ == "__main__":

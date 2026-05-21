@@ -50,9 +50,11 @@ from lib.cmux import (  # noqa: E402
     cmux,
     cmux_close_workspace_best_effort,
     find_cockpit_workspaces,
+    has_managed_pill,
     nudge_if_idle,
     spawn_orphan_workspace,
     spawn_pr_workspace,
+    stamp_managed_pill,
     status_pills,
     workspace_state,
 )
@@ -75,7 +77,8 @@ from lib.config import (  # noqa: E402
     install_starship_default_config,
 )
 from lib.daemon import run_watcher  # noqa: E402
-from lib.cache import delete_pr_caches_for_branch, write_pr_cache  # noqa: E402
+from lib.cache import write_pr_cache  # noqa: E402
+from lib import close_requests  # noqa: E402
 from lib.gh import (  # noqa: E402
     PR,
     fetch_merged_branches,
@@ -87,9 +90,9 @@ from lib.git import (  # noqa: E402
     Worktree,
     count_commits_since,
     ff_default_branch_worktrees,
-    remove_worktree,
     worktrees,
 )
+from lib.teardown import TeardownRequest, teardown  # noqa: E402
 
 # ── constants ───────────────────────────────────────────────────────────────
 MAIN_BRANCHES = {"master", "main"}
@@ -200,6 +203,9 @@ def _maybe_autoclose(
     The post-merge check uses `count_commits_since(wt, merged_head)` rather
     than `wt.unpushed` because `git cherry` (which powers `wt.unpushed`) cannot
     recognize GitHub squash-merges — see `_count_unpushed` docstring.
+
+    Teardown delegates to `lib.teardown.teardown` (forced=True since we've
+    already validated merge-state-clean above).
     """
     if not cfg.get("auto_cleanup_on_merge", True):
         return
@@ -229,24 +235,19 @@ def _maybe_autoclose(
                 flush=True,
             )
             continue
-        action = "[dry] autoclose" if dry else "autoclose:"
-        print(
-            f"  {magenta(action)} removing merged worktree {wt.short} and cmux workspace",
-            flush=True,
-        )
-        if dry:
-            continue
         ref = _workspace_ref_for_path(wt.path, cwds) or wt.short
-        cmux_close_workspace_best_effort(ref)
-        ok, err = remove_worktree(repo_path, wt.path)
-        if not ok:
-            print(
-                f"  warn: git worktree remove failed for {wt.path}: {err}",
-                file=sys.stderr,
-                flush=True,
-            )
-            continue
-        delete_pr_caches_for_branch(repo_name, wt.branch)
+        teardown(
+            TeardownRequest(
+                ref=ref,
+                name=wt.short,
+                worktree_path=wt.path,
+                branch=wt.branch,
+                repo_path=repo_path,
+                repo_name=repo_name,
+                forced=True,
+            ),
+            dry=dry,
+        )
 
 
 def cycle_repo(
@@ -408,11 +409,15 @@ def cycle_repo(
             )
 
     wt_by_name = {wt.short: wt for wt in wts}
+    wt_by_path = {wt.path.resolve(): wt for wt in wts}
     pr_branches = {pr.branch for pr in prs}
     my_prefix = f"{self_user}/"
     for ref in keep_refs:
         ws_name = names.get(ref, "")
-        wt = wt_by_name.get(ws_name)
+        cwd = cwds.get(ref)
+        wt = wt_by_path.get(cwd.resolve()) if cwd is not None else None
+        if wt is None:
+            wt = wt_by_name.get(ws_name)
         if wt is None or wt.branch in pr_branches or wt.branch in MAIN_BRANCHES:
             continue
         is_mine = wt.branch.startswith(my_prefix)
@@ -426,6 +431,7 @@ def cycle_repo(
                     )
                     continue
             if not dry:
+                stamp_managed_pill(ref)
                 cmux(
                     "set-status",
                     ORPHAN_KEY,
@@ -507,6 +513,103 @@ def cycle_repo(
     _log_ff_main(repo_path, wts, dry=dry)
 
 
+def _drain_close_requests(dry: bool) -> None:
+    """Process pending `/cockpit:close` markers through the shared teardown.
+
+    Refused markers (blockers reappeared between probe and drain) are dropped
+    with a log line — the user re-runs `cockpit:close --force` to retry.
+    """
+    close_requests.prune_stale()
+    for path, req in close_requests.iter_pending():
+        ok, blockers = teardown(req, dry=dry)
+        if ok:
+            if not dry:
+                close_requests.pop(path)
+            continue
+        label = req.name or req.ref
+        print(
+            f"  {yellow('close-request refused')} {label}: " + "; ".join(blockers),
+            file=sys.stderr,
+            flush=True,
+        )
+        if not dry:
+            close_requests.pop(path)
+
+
+def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> None:
+    """Close cockpit-managed workspaces whose worktree no longer exists.
+
+    Workspaces are matched against the union of worktrees across every
+    configured repo. A workspace whose cwd doesn't resolve to any worktree
+    and whose name doesn't match any `wt.short` is "stranded".
+
+    Stranded workspaces are gated by the MANAGED pill:
+      - has MANAGED pill → cockpit spawned this, safe to reap (enqueue close)
+      - no MANAGED pill → free-form user workspace, leave it alone
+
+    Only mine-prefix branches are reaped; coworker-spawned workspaces are
+    left to the user.
+    """
+    from lib.cmux import workspace_state as _ws_state
+
+    all_wts: list[Worktree] = []
+    repo_lookup: dict[Path, tuple[str, Path]] = {}
+    for entry in repos:
+        repo_path = Path(os.path.expanduser(entry["path"]))
+        if not repo_path.is_dir():
+            continue
+        repo_name = entry.get("name") or repo_path.name
+        try:
+            for wt in worktrees(repo_path):
+                all_wts.append(wt)
+                repo_lookup[wt.path.resolve()] = (repo_name, repo_path)
+        except RuntimeError:
+            continue
+
+    wt_by_path = {wt.path.resolve(): wt for wt in all_wts}
+    wt_by_name = {wt.short: wt for wt in all_wts}
+
+    names, cwds = _ws_state()
+    my_prefix = f"{self_user}/"
+
+    for ref, ws_name in names.items():
+        cwd = cwds.get(ref)
+        wt = wt_by_path.get(cwd.resolve()) if cwd is not None else None
+        if wt is None:
+            wt = wt_by_name.get(ws_name)
+        if wt is not None:
+            continue
+        if not has_managed_pill(ref):
+            continue
+        label = ws_name or ref
+        last_known_branch = ws_name if ws_name.startswith(my_prefix) else None
+        repo_name = None
+        repo_path = None
+        if cwd is not None:
+            for parent in [cwd, *cwd.parents]:
+                hit = repo_lookup.get(parent.resolve())
+                if hit:
+                    repo_name, repo_path = hit
+                    break
+        req = TeardownRequest(
+            ref=ref,
+            name=ws_name,
+            worktree_path=None,
+            branch=last_known_branch,
+            repo_path=repo_path,
+            repo_name=repo_name,
+            forced=True,
+        )
+        action = "[dry] reap orphan" if dry else "reap orphan:"
+        print(
+            f"  {magenta(action)} workspace {label} ({ref}) "
+            f"— no matching worktree (cwd={cwd})",
+            flush=True,
+        )
+        if not dry:
+            close_requests.enqueue(req)
+
+
 def cycle_all(
     cfg: dict,
     self_user: str,
@@ -527,6 +630,8 @@ def cycle_all(
             flush=True,
         )
         return
+    if not _cache_only(cfg):
+        _drain_close_requests(dry=dry)
     if cfg.get("auto_cleanup_on_merge", True) and not _cache_only(cfg):
         close_gone_cwd_workspaces(dry=dry)
     for repo_entry in repos:
@@ -550,6 +655,8 @@ def cycle_all(
                 file=sys.stderr,
                 flush=True,
             )
+    if not _cache_only(cfg):
+        _reap_workspace_orphans(repos, self_user, dry=dry)
 
 
 def _build_state(args) -> dict:

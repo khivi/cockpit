@@ -40,6 +40,12 @@ ORPHAN_ICON = "🛠️"
 WIP_KEY = "wip"
 WIP_ICON = "✏️"
 
+# Identity stamp: every workspace cockpit spawns gets this pill. The reaper
+# uses it to distinguish "cockpit-spawned, now stranded" from free-form
+# user-created workspaces it must not touch.
+MANAGED_KEY = "cockpit_managed"
+MANAGED_VALUE = "cockpit"
+
 ACTIONABLE_KEYS = ("ci", "comments", "merge", "draft", "approved", "rebase", "wip")
 
 # Verbs that need cmux specifically — limux fork lacks the persistent-pill API.
@@ -116,6 +122,26 @@ def cmux(*args: str, check: bool = True) -> str:
             raise FileNotFoundError(f"cockpit: '{verb}' unavailable{hint}")
         return ""
     return run([binary, *args], check=check)
+
+
+def stamp_managed_pill(ref: str) -> None:
+    """Mark `ref` as cockpit-spawned. Idempotent; safe to call repeatedly."""
+    cmux(
+        "set-status",
+        MANAGED_KEY,
+        MANAGED_VALUE,
+        "--workspace",
+        ref,
+        "--color",
+        BLUE,
+        check=False,
+    )
+
+
+def has_managed_pill(ref: str) -> bool:
+    """True if `ref` carries the MANAGED_KEY identity stamp."""
+    out = cmux("list-status", "--workspace", ref, check=False)
+    return any(line.lstrip().startswith(f"{MANAGED_KEY}=") for line in out.splitlines())
 
 
 def apply_wip_pill(ref: str, dirty_count: int) -> None:
@@ -332,6 +358,7 @@ def apply_pills(
     workspace has no claude_code or loop pills (indicates no active agent).
     """
     desired = tuple(status_pills(pr, wt))
+    stamp_managed_pill(ref)
     keys_to_clear = [*ACTIONABLE_KEYS, COCKPIT_KEY]
     with ThreadPoolExecutor(max_workers=len(keys_to_clear)) as ex:
         for f in [
@@ -487,6 +514,7 @@ def spawn_pr_workspace(pr: PR, wt: Worktree, *, dry: bool = False) -> str | None
             flush=True,
         )
         return None
+    stamp_managed_pill(ref)
     apply_pills(ref, pr, wt)
     print(
         f"  {magenta('spawned')} {bold(wt.short)} ({ref})  #{pr.number}"
@@ -509,6 +537,7 @@ def spawn_orphan_workspace(wt: Worktree, *, dry: bool = False) -> str | None:
             flush=True,
         )
         return None
+    stamp_managed_pill(ref)
     cmux(
         "set-status",
         ORPHAN_KEY,
