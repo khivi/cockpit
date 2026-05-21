@@ -90,6 +90,8 @@ Cockpit delegates the Claude Code statusline to [`cship`](https://github.com/khi
 
 Opt in by setting `use_cship: true` in `~/.config/cockpit/config.json`. On next daemon start, cockpit verifies `cship` is on `PATH` and writes `~/.claude/settings.json` so Claude Code invokes the shim each render (any existing file is backed up). If `use_cship: true` but `cship` is missing, cockpit hard-errors on startup — install cship first, or leave the flag off. When unset (the default), cockpit never touches Claude Code's settings.
 
+On first daemon start with the flag on, cockpit also seeds `~/.config/cship.toml` from a bundled default (`scripts/defaults/cship.toml`) if you don't already have one. cship renders an empty footer without a config file, so this keeps opt-in producing visible output. An existing `cship.toml` is left untouched across plugin upgrades.
+
 To wire by hand:
 
 ```json
@@ -111,6 +113,19 @@ Two non-obvious behaviors worth knowing:
 - **Fire-and-forget detach.** Every `cmux` call is backgrounded so the hook returns in <1 ms regardless of daemon state. The cmux socket occasionally stalls under contention (cockpit watcher + every session's hooks), and without the detach Claude Code's hook timeout surfaces a "non-blocking status code" banner on every prompt. Pill updates are best-effort by design.
 
 Outside cmux, the hook no-ops (early-exits on missing `CMUX_WORKSPACE_ID`).
+
+### Muting nudges per PR
+
+When a nudge is wrong (e.g. a Copilot thread you've intentionally left open), mute it from inside the Claude session with `/cockpit:nudge`:
+
+```text
+/cockpit:nudge mute --categories comments --until 7d --reason "copilot intentional"
+/cockpit:nudge unmute
+/cockpit:nudge status
+/cockpit:nudge list
+```
+
+The skill infers the current branch's PR via `gh pr view`. Mutes are persisted to `~/.config/cockpit/cache/nudges/<pr-number>.json` and survive both daemon and cmux restarts. The daemon auto-clears the mute once `until` passes. Categories: `comments`, `ci`, `conflicts` (omit `--categories` to mute all). Same surface is available as a regular CLI via `scripts/nudge.py` if you prefer the shell.
 
 ## Current defaults & how to change them
 

@@ -69,6 +69,7 @@ from lib.colors import (  # noqa: E402
 from lib.config import (  # noqa: E402
     ensure_state_dirs,
     load_config,
+    install_cship_default_config_if_missing,
     install_cship_statusline_if_configured,
 )
 from lib.daemon import run_watcher  # noqa: E402
@@ -99,7 +100,16 @@ MIN_POLL_SECS = 5
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
-def maybe_nudge(ref: str, message: str, nudge_state: dict, dry: bool, tag: str) -> None:
+def maybe_nudge(
+    ref: str,
+    message: str,
+    nudge_state: dict,
+    dry: bool,
+    tag: str,
+    *,
+    pr_number: int | None = None,
+    category: str | None = None,
+) -> None:
     if nudge_if_idle(
         ref,
         message,
@@ -107,6 +117,8 @@ def maybe_nudge(ref: str, message: str, nudge_state: dict, dry: bool, tag: str) 
         interval_secs=NUDGE_INTERVAL_SECS,
         dry=dry,
         tag=tag,
+        pr_number=pr_number,
+        category=category,
     ):
         print(f"  {yellow('nudged')} {tag} → {ref}", flush=True)
 
@@ -364,7 +376,15 @@ def cycle_repo(
                 desc = f"CI is failing ({pr.ci}) — run `gh pr checks {pr.number}` and address it"
             else:
                 desc = "merge conflicts vs base — rebase and force-push"
-            maybe_nudge(ref, f"PR #{pr.number}: {desc}.", nudge_state, dry, label)
+            maybe_nudge(
+                ref,
+                f"PR #{pr.number}: {desc}.",
+                nudge_state,
+                dry,
+                label,
+                pr_number=pr.number,
+                category=pr.display_issue,
+            )
 
     if tracked and not printed_refresh:
         labels = sorted(names.get(ref, ref) for ref in tracked if ref in keep_refs)
@@ -612,6 +632,7 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     ensure_state_dirs()
+    install_cship_default_config_if_missing()
     install_cship_statusline_if_configured(_footer_command())
 
     if args.watch is not None:
