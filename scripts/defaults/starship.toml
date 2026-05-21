@@ -1,0 +1,103 @@
+# Default starship config bundled with the cockpit plugin.
+#
+# cship's [starship_prompt] hook spawns the starship binary with
+# STARSHIP_CONFIG=~/.config/starship.toml whenever $starship_prompt appears
+# in cship.toml's `format`. That delegation is the only way to render
+# starship-flavored [custom.*] modules — cship's own line renderer does not
+# evaluate [custom.*] sections.
+#
+# Copied to ~/.config/starship.toml only when you run `cockpit --footer`
+# (the explicit footer-setup command). --once / --watch reconcile cycles
+# never touch this file, so any edits you make stick around until you
+# re-run --footer.
+
+# Explicit two-line layout. Line one is Claude Code + PR signals from the
+# custom modules below; pr_title gets its own line so long titles wrap
+# cleanly instead of crowding the metric strip.
+#
+# `${custom.<name>}` (braces required) is starship's syntax for referencing
+# a specific [custom.*] block. Bare `$custom` would expand to every custom
+# module concatenated in arbitrary order; the dotted form is what lets us
+# pin the line break between pr_checks and pr_title.
+format = """\
+${custom.context}\
+${custom.session_time}\
+${custom.ratelimit}\
+${custom.linear}\
+${custom.pr_state}\
+${custom.pr_num}\
+${custom.pr_checks}
+${custom.pr_title}"""
+
+add_newline = false
+
+# Disable starship's default modules so the format above is authoritative:
+# `format` listing only `${custom.*}` would normally still render the prefix
+# the host shell's starship default appends, which we don't want here.
+[character]
+disabled = true
+
+# Claude Code context usage (e.g. "4%/1M"); ceiling cached by cship-wrapper.sh from display_name.
+[custom.context]
+command     = "~/bin/cship/cship-context.sh"
+when        = "true"
+format      = "( [🧠 $output]($style))"
+style       = "fg:#475569"
+description = "Claude Code context window usage"
+
+# Claude Code session duration (e.g. "1h 23m"); cship-wrapper.sh stashes ms each render.
+[custom.session_time]
+command     = "~/bin/cship/cship-session-time.sh"
+when        = "true"
+format      = "( [⏱ $output]($style))"
+style       = "fg:#475569"
+description = "Claude Code session duration"
+
+# Rolling 5-hour usage limit, read from JSON Claude Code passes (cship's own usage_limits is broken).
+[custom.ratelimit]
+command     = "~/bin/cship/cship-rate-limit-5h.sh"
+when        = "true"
+format      = "( [$output]($style))"
+style       = "fg:#0369a1"
+description = "Anthropic rolling 5h usage limit"
+
+# Linear ticket extracted from current branch (e.g. "PRO-123"). Hidden if branch has none.
+[custom.linear]
+command     = "~/bin/cship/cship-linear.sh"
+when        = "true"
+format      = "( [$output]($style))"
+style       = "bold fg:#6d28d9"
+description = "Linear ticket ID from git branch"
+
+# PR state for current branch: OPEN | DRAFT | MERGED | CLOSED | APPROVED | CHANGES_REQUESTED.
+# Cached 60s. Hidden if no PR.
+[custom.pr_state]
+command     = "~/bin/cship/cship-pr-state.sh"
+when        = "true"
+format      = "( [$output]($style))"
+style       = "bold fg:#0369a1"
+description = "GitHub PR state for current branch"
+
+# PR number for current branch (e.g. "#27588"). Hidden if no PR.
+[custom.pr_num]
+command     = "~/bin/cship/cship-pr-num.sh"
+when        = "true"
+format      = "( [$output]($style))"
+style       = "fg:#1f2937"
+description = "GitHub PR number for current branch"
+
+# CI status glyph for current branch's PR: ✓ pass | ✗ fail | • pending. Cached 60s.
+[custom.pr_checks]
+command     = "~/bin/cship/cship-pr-checks.sh"
+when        = "true"
+format      = "( [$output]($style))"
+style       = "bold fg:#15803d"
+description = "GitHub PR CI status for current branch"
+
+# PR title for current branch — placed on line two of the footer.
+[custom.pr_title]
+command     = "~/bin/cship/cship-pr-title.sh"
+when        = "true"
+format      = "[$output]($style)"
+style       = "italic fg:#1f2937"
+description = "GitHub PR title for current branch"

@@ -88,9 +88,13 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 
 Cockpit delegates the Claude Code statusline to [`cship`](https://github.com/khivi/cship). `scripts/footer.py` is a thin shim that pipes Claude Code's stdin JSON through to `cship` and forwards its output — keeping it in the path lets cockpit shape input or fail soft when cship isn't installed.
 
-Opt in by setting `use_cship: true` in `~/.config/cockpit/config.json`, then run `cockpit.py --footer` once to wire everything up. That command (and only that command) verifies `cship` is on `PATH`, writes `~/.claude/settings.json` so Claude Code invokes the shim each render (any existing file is backed up), and copies `scripts/defaults/cship.toml` to `~/.config/cship.toml`. If `use_cship: true` but `cship` is missing, `--footer` hard-errors — install cship first, or leave the flag off.
+Opt in by setting `use_cship: true` in `~/.config/cockpit/config.json`, then run `cockpit.py --footer` once to wire everything up. That command (and only that command) verifies `cship` is on `PATH`, writes `~/.claude/settings.json` so Claude Code invokes the shim each render (any existing file is backed up), and copies both `scripts/defaults/cship.toml` to `~/.config/cship.toml` and `scripts/defaults/starship.toml` to `~/.config/starship.toml`. If `use_cship: true` but `cship` is missing, `--footer` hard-errors — install cship first, or leave the flag off.
 
-`--once` and `--watch` reconcile cycles never touch any of these files. So local edits to `~/.config/cship.toml` stick around indefinitely; re-run `cockpit.py --footer` to deliberately clobber them back to the bundled default. When `use_cship` is unset (the default), `--footer` is a no-op on the statusLine.
+Two toml files because the chain has two halves: cship's line renderer handles `[directory]`, `[time]`, and any `$cship.*` modules; everything starship-flavored (every `[custom.*]` — Linear ticket, PR state, CI checks, etc.) is rendered by spawning the starship binary, which cship does when its `format` expands `$starship_prompt`. Cockpit ships both files so the chain works end-to-end without dotfiles plumbing.
+
+If `~/.config/cship.toml` or `~/.config/starship.toml` is a symlink (e.g. into a dotfiles repo), `--footer` backs up the target file and replaces the symlink with a real file rather than writing through to it.
+
+`--once` and `--watch` reconcile cycles never touch any of these files. So local edits to `~/.config/cship.toml` or `~/.config/starship.toml` stick around indefinitely; re-run `cockpit.py --footer` to deliberately clobber them back to the bundled defaults. When `use_cship` is unset (the default), `--footer` is a no-op on the statusLine.
 
 To wire by hand:
 

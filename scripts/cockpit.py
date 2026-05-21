@@ -72,6 +72,7 @@ from lib.config import (  # noqa: E402
     load_config,
     install_cship_default_config,
     install_cship_statusline_if_configured,
+    install_starship_default_config,
 )
 from lib.daemon import run_watcher  # noqa: E402
 from lib.cache import delete_pr_caches_for_branch, write_pr_cache  # noqa: E402
@@ -640,7 +641,7 @@ def main(argv=None):
     g.add_argument(
         "--footer",
         action="store_true",
-        help="Re-run footer setup only (cship.toml + statusLine), then exit.",
+        help="Re-run footer setup only (cship.toml + starship.toml + statusLine), then exit.",
     )
     p.add_argument("--keep-stale", action="store_true")
     p.add_argument("--no-spawn", action="store_true")
@@ -652,6 +653,7 @@ def main(argv=None):
 
     if args.footer:
         install_cship_default_config()
+        install_starship_default_config()
         install_cship_statusline_if_configured(_footer_command())
         return 0
 
