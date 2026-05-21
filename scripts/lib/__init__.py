@@ -4,9 +4,10 @@ This `__init__` exposes only the shared subprocess wrapper. All other
 helpers live in sibling modules:
 
   - lib.config    — paths, config.json IO, statusline setup, discover_repo
-  - lib.cache     — PR snapshot read/write/delete under $COCKPIT_HOME/cache
-  - lib.claude    — statusLine shim that delegates to the `cship` binary
-  - lib.cship     — cship-cache writers + field-printer functions
+  - lib.cache     — JSON per-PR cache + flat cockpit-cache layout & writers
+  - lib.claude    — parse Claude Code statusLine JSON, write session caches
+  - lib.cship     — invoke_cship: exec the cship binary
+  - lib.starship  — starship field-printers + background refresh fork
   - lib.colors    — ANSI terminal colors
   - lib.prompts   — Claude prompt builders + shell quoting
   - lib.registry  — register cwd's repo into config.json

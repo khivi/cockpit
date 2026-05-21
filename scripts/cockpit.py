@@ -16,7 +16,7 @@ Modes:
   --once          run exactly one cycle and exit
 
 Sibling entry points (each script does one job):
-  scripts/claude.py   statusLine shim — pipes Claude Code's stdin to cship
+  scripts/footer.py   statusLine shim — pipes Claude Code's stdin to cship
   scripts/list.py     `/cockpit:list` table
   scripts/sync.py     USR1-kick the daemon, else fall back to `cockpit.py --once`
   scripts/spawn.py    `/cockpit:new` — create worktree + workspace
@@ -75,8 +75,11 @@ from lib.config import (  # noqa: E402
     install_starship_default_config,
 )
 from lib.daemon import run_watcher  # noqa: E402
-from lib.cache import delete_pr_caches_for_branch, write_pr_cache  # noqa: E402
-from lib.cship import write_branch_pr_cache  # noqa: E402
+from lib.cache import (  # noqa: E402
+    delete_pr_caches_for_branch,
+    write_branch_pr_cache,
+    write_pr_cache,
+)
 from lib.gh import (  # noqa: E402
     PR,
     fetch_merged_branches,
@@ -639,7 +642,7 @@ def _watch(state: dict, watch_secs: int) -> None:
 
 
 def _statusline_command() -> str:
-    return f"{sys.executable} {Path(__file__).resolve().parent / 'claude.py'}"
+    return f"{sys.executable} {Path(__file__).resolve().parent / 'footer.py'}"
 
 
 def main(argv=None):

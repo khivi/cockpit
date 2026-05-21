@@ -40,8 +40,8 @@ CSHIP_DEFAULT_TOML = Path(__file__).resolve().parent.parent / "defaults" / "cshi
 STARSHIP_DEFAULT_TOML = (
     Path(__file__).resolve().parent.parent / "defaults" / "starship.toml"
 )
-CSHIP_PY = Path(__file__).resolve().parent.parent / "cship.py"
-CSHIP_PLACEHOLDER = "__COCKPIT_CSHIP__"
+STARSHIP_PY = Path(__file__).resolve().parent.parent / "starship.py"
+STARSHIP_PLACEHOLDER = "__COCKPIT_STARSHIP__"
 
 
 def load_config() -> dict:
@@ -156,7 +156,7 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
     """Point Claude Code's statusLine at cockpit's statusline shim, gated on `use_cship`.
 
     `statusline_command` is the absolute invocation cockpit uses for its
-    `scripts/claude.py` shim (which itself delegates to `cship`). When
+    `scripts/footer.py` shim (which itself delegates to `cship`). When
     `use_cship: true` in config.json, cockpit verifies `cship` is on PATH and
     writes `~/.claude/settings.json` so Claude Code invokes the shim each
     render. Backs up any existing settings.json before overwriting. Raises
@@ -262,7 +262,7 @@ def install_starship_default_config() -> None:
         return
     dest = _starship_user_config_path()
     payload = STARSHIP_DEFAULT_TOML.read_text().replace(
-        CSHIP_PLACEHOLDER, str(CSHIP_PY)
+        STARSHIP_PLACEHOLDER, str(STARSHIP_PY)
     )
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.is_symlink():

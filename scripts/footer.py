@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Claude Code statusLine entry point.
+"""Claude Code statusLine entry — orchestrates the footer render.
 
-Two-step pipeline per render:
+First byte in, last byte out: this script is what Claude Code's
+statusLine.command points at, and its stdout is what Claude Code displays
+as the footer. Two-step pipeline per render:
+
   1. `lib.claude.stash_from_stdin(blob)` — parse Claude Code's JSON,
      write the session-scoped caches (context / rate-limit / transcript),
      return the (possibly mutated) blob + session_id.
   2. `lib.cship.invoke_cship(blob, sid)` — pipe that blob into the cship
-     binary, forward its output back to Claude Code.
+     binary; cship renders the line (delegating [custom.*] blocks to
+     starship, which spawns scripts/starship.py × 8 to fill them); the
+     resulting bytes are forwarded to this script's stdout, which Claude
+     Code reads and displays.
 
-Each module owns exactly one concern: lib.claude handles Claude Code's
-input format and its caches; lib.cship handles the cship binary and its
-PR-side caches.
+Each module owns one concern: lib.claude handles Claude Code's input
+format and session caches; lib.cship handles the cship binary; lib.cache
+owns the flat cockpit-cache layout; lib.starship has the field printers.
 """
 
 from __future__ import annotations

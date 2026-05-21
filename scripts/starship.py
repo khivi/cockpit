@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""cship dispatcher: replaces the retired `~/bin/cship/cship-*.sh` helpers.
+"""starship dispatcher: 8 field printers + background refreshers + warm.
 
-Invoked from `scripts/defaults/starship.toml` for the 8 `[custom.*]`
-modules, and from hooks / one-shot CLI for the `warm` prewarm.
+Invoked from `scripts/defaults/starship.toml`'s `[custom.*]` blocks for
+each render (8 subprocesses per render), and self-spawned for background
+refreshes when a PR-side cache is stale.
 
 Subcommands:
   context              — Claude Code context window usage
@@ -23,13 +24,15 @@ the statusline must never crash Claude Code.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from lib.cship import (  # noqa: E402
-    _current_branch,
+from lib.cache import refresh_pr_checks, refresh_pr_data, warm_all  # noqa: E402
+from lib.git import current_branch  # noqa: E402
+from lib.starship import (  # noqa: E402
     print_context,
     print_linear,
     print_pr_checks,
@@ -38,9 +41,6 @@ from lib.cship import (  # noqa: E402
     print_pr_title,
     print_rate_limit,
     print_session_time,
-    refresh_pr_checks,
-    refresh_pr_data,
-    warm_all,
 )
 
 
@@ -72,10 +72,10 @@ def main(argv: list[str]) -> int:
         if cmd == "pr-title":
             return _emit(print_pr_title())
         if cmd == "pr-state-refresh":
-            refresh_pr_data(_current_branch())
+            refresh_pr_data(current_branch(os.getcwd()))
             return 0
         if cmd == "pr-checks-refresh":
-            refresh_pr_checks(_current_branch())
+            refresh_pr_checks(current_branch(os.getcwd()))
             return 0
         if cmd == "warm":
             warm_all()

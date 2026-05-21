@@ -86,7 +86,7 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 
 ## Claude Code statusline
 
-Cockpit delegates the Claude Code statusline to [`cship`](https://github.com/khivi/cship). `scripts/claude.py` is a thin shim that pipes Claude Code's stdin JSON through to `cship` and forwards its output — keeping it in the path lets cockpit shape input or fail soft when cship isn't installed.
+Cockpit delegates the Claude Code statusline to [`cship`](https://github.com/khivi/cship). `scripts/footer.py` is a thin shim that pipes Claude Code's stdin JSON through to `cship` and forwards its output — keeping it in the path lets cockpit shape input or fail soft when cship isn't installed.
 
 Opt in by setting `use_cship: true` in `~/.config/cockpit/config.json`, then run `cockpit.py --footer` once to wire everything up. That command (and only that command) verifies `cship` is on `PATH`, writes `~/.claude/settings.json` so Claude Code invokes the shim each render (any existing file is backed up), and copies both `scripts/defaults/cship.toml` to `~/.config/cship.toml` and `scripts/defaults/starship.toml` to `~/.config/starship.toml`. If `use_cship: true` but `cship` is missing, `--footer` hard-errors — install cship first, or leave the flag off.
 
@@ -102,7 +102,7 @@ To wire by hand:
 {
   "statusLine": {
     "type": "command",
-    "command": "${CLAUDE_PLUGIN_ROOT}/scripts/claude.py"
+    "command": "${CLAUDE_PLUGIN_ROOT}/scripts/footer.py"
   }
 }
 ```

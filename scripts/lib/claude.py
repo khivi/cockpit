@@ -1,6 +1,6 @@
 """Claude Code-side: parse statusLine stdin JSON, write session caches.
 
-Cockpit's statusLine command (`scripts/claude.py`) reads Claude Code's
+Cockpit's statusLine command (`scripts/footer.py`) reads Claude Code's
 JSON blob from stdin once per render and calls `stash_from_stdin` here.
 Three session-scoped caches get populated:
 
@@ -14,7 +14,7 @@ transcript path. So this module is the sole writer for the session-scoped
 slice of the cship cache; the cship/PR-side writers live in `lib.cship`.
 
 No cship binary invocation lives here. The statusline entry-point
-(`scripts/claude.py`) handles the hand-off to cship after this returns.
+(`scripts/footer.py`) handles the hand-off to cship after this returns.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 
-from .cship import _atomic_write, _session_cache
+from .cache import atomic_write, session_cache
 
 
 def stash_from_stdin(blob: bytes) -> tuple[bytes, str | None]:
@@ -61,14 +61,14 @@ def stash_from_stdin(blob: bytes) -> tuple[bytes, str | None]:
 
     transcript = data.get("transcript_path")
     if isinstance(transcript, str) and transcript:
-        _atomic_write(_session_cache("transcript-path", sid), transcript)
+        atomic_write(session_cache("transcript-path", sid), transcript)
 
     ctx = data.get("context_window")
     if isinstance(ctx, dict):
         pct = ctx.get("used_percentage")
         limit = ctx.get("context_window_size")
         if isinstance(pct, (int, float)) and isinstance(limit, int) and limit > 0:
-            _atomic_write(_session_cache("context", sid), f"{int(pct)} {int(limit)}")
+            atomic_write(session_cache("context", sid), f"{int(pct)} {int(limit)}")
 
     rate_limits = data.get("rate_limits")
     if isinstance(rate_limits, dict):
@@ -77,8 +77,8 @@ def stash_from_stdin(blob: bytes) -> tuple[bytes, str | None]:
             pct = five.get("used_percentage")
             resets = five.get("resets_at")
             if isinstance(pct, (int, float)) and resets not in (None, ""):
-                _atomic_write(
-                    _session_cache("rate-limit-5h", sid),
+                atomic_write(
+                    session_cache("rate-limit-5h", sid),
                     f"{int(round(pct))} {resets}",
                 )
 

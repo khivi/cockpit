@@ -53,15 +53,15 @@ def _wt(
 
 
 def _expected_starship(cockpit_config) -> str:
-    """The bundled starship.toml after __COCKPIT_CSHIP__ placeholder substitution.
+    """The bundled starship.toml after __COCKPIT_STARSHIP__ placeholder substitution.
 
     `install_starship_default_config()` rewrites the placeholder to the
-    resolved absolute path of `scripts/cship.py` before writing to
+    resolved absolute path of `scripts/starship.py` before writing to
     ~/.config/starship.toml — assertions about installed content must
     match that substituted output, not the in-repo source.
     """
     return cockpit_config.STARSHIP_DEFAULT_TOML.read_text().replace(
-        cockpit_config.CSHIP_PLACEHOLDER, str(cockpit_config.CSHIP_PY)
+        cockpit_config.STARSHIP_PLACEHOLDER, str(cockpit_config.STARSHIP_PY)
     )
 
 
@@ -256,7 +256,7 @@ def _stub_cship_on_path(monkeypatch, present: bool):
     )
 
 
-_STATUSLINE_CMD = "/path/to/claude.py"
+_STATUSLINE_CMD = "/path/to/footer.py"
 
 
 def test_use_cship_noop_when_flag_unset(tmp_path, monkeypatch):
@@ -416,7 +416,7 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
 
     settings = _json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert settings["statusLine"]["type"] == "command"
-    assert settings["statusLine"]["command"].endswith("/claude.py")
+    assert settings["statusLine"]["command"].endswith("/footer.py")
 
 
 def test_cli_once_does_not_touch_footer_files(tmp_path, monkeypatch):
