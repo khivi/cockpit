@@ -277,7 +277,6 @@ def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
 
 
 def main() -> int:
-    require_workspace_binary()
     args = parse_args()
 
     if args.repo is not None and find_repo_by_name(args.repo) is None:
@@ -420,6 +419,7 @@ def main() -> int:
             prompt = _plan_only_prompt(branch, pr_info)
 
     ws_name = short
+    require_workspace_binary()
     attached_ws = ws_name in set(workspace_names().values())
     if not attached_ws:
         cmux(

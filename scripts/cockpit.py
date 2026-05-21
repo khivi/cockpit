@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -44,6 +43,7 @@ from lib.cmux import (  # noqa: E402
     ORANGE,
     ORPHAN_ICON,
     ORPHAN_KEY,
+    _resolve_tool,
     apply_pills,
     apply_wip_pill,
     close_gone_cwd_workspaces,
@@ -101,11 +101,10 @@ MIN_POLL_SECS = 5
 
 
 def _cache_only(cfg: dict) -> bool:
-    """Skip cmux this cycle? Explicit cfg wins; otherwise auto-detect cmux on PATH."""
-    explicit = cfg.get("side_bar_from_file")
-    if isinstance(explicit, bool):
-        return explicit
-    return shutil.which("cmux") is None
+    """Skip pill / cmux-only verbs this cycle? True whenever the resolved
+    workspace backend isn't cmux (limux can't do pills; 'none' = headless).
+    """
+    return _resolve_tool() != "cmux"
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -657,19 +656,26 @@ def main(argv=None):
         return 0
 
     startup_cfg = load_config()
-    if startup_cfg.get("side_bar_from_file") is None and shutil.which("cmux") is None:
-        slash_status = (
-            "slash commands fall back to limux"
-            if shutil.which("limux")
-            else "slash commands (/cockpit:new, :focus, :close) disabled"
-        )
-        print(
-            f"{yellow('cockpit:')} cmux not found on PATH — running cache-only mode. "
-            f"Footer/statusline works; side panel disabled; {slash_status}. "
-            "Set 'side_bar_from_file': false in config to opt back into cmux mode.",
-            file=sys.stderr,
-            flush=True,
-        )
+    if startup_cfg.get("tool", "auto") == "auto":
+        resolved = _resolve_tool()
+        if resolved == "limux":
+            print(
+                f"{yellow('cockpit:')} cmux not found — using limux. "
+                "Side panel disabled (limux lacks pill support); "
+                "footer/statusline and slash commands work. "
+                "Set 'tool': 'cmux' in config to require cmux instead.",
+                file=sys.stderr,
+                flush=True,
+            )
+        elif resolved == "none":
+            print(
+                f"{yellow('cockpit:')} no workspace tool on PATH (cmux/limux) — "
+                "running cache-only mode. Footer/statusline works; "
+                "side panel and slash commands disabled. "
+                "Set 'tool': 'none' in config to suppress this warning.",
+                file=sys.stderr,
+                flush=True,
+            )
 
     if args.watch is not None:
         cfg = load_config()
