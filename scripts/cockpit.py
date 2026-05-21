@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -97,6 +98,14 @@ ACTIONABLE_ISSUES = {"ci", "comments", "conflicts"}
 
 DEFAULT_POLL_SECS = 300
 MIN_POLL_SECS = 5
+
+
+def _cache_only(cfg: dict) -> bool:
+    """Skip cmux this cycle? Explicit cfg wins; otherwise auto-detect cmux on PATH."""
+    explicit = cfg.get("side_bar_from_file")
+    if isinstance(explicit, bool):
+        return explicit
+    return shutil.which("cmux") is None
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -267,7 +276,7 @@ def cycle_repo(
         print(f"  {yellow('skip')} {repo_path}: {e}", flush=True)
         return
 
-    headless = bool(cfg.get("side_bar_from_file"))
+    headless = _cache_only(cfg)
     with ThreadPoolExecutor(max_workers=3) as ex:
         wts_fut = ex.submit(worktrees, repo_path)
         state_fut = None if headless else ex.submit(workspace_state)
@@ -307,7 +316,7 @@ def cycle_repo(
         for pr in prs:
             write_pr_cache(name, pr, wt_by_branch.get(pr.branch))
 
-    if cfg.get("side_bar_from_file"):
+    if headless:
         return
 
     by_name: dict[str, list[str]] = {}
@@ -518,7 +527,7 @@ def cycle_all(
             flush=True,
         )
         return
-    if cfg.get("auto_cleanup_on_merge", True) and not cfg.get("side_bar_from_file"):
+    if cfg.get("auto_cleanup_on_merge", True) and not _cache_only(cfg):
         close_gone_cwd_workspaces(dry=dry)
     for repo_entry in repos:
         try:
@@ -646,6 +655,17 @@ def main(argv=None):
 
     if args.footer:
         return 0
+
+    startup_cfg = load_config()
+    if startup_cfg.get("side_bar_from_file") is None and shutil.which("cmux") is None:
+        print(
+            f"{yellow('cockpit:')} cmux not found on PATH — running cache-only mode. "
+            "Footer/statusline works; side panel and slash commands "
+            "(/cockpit:new, :focus, :close, :list) are disabled. "
+            "Set 'side_bar_from_file': false in config to opt back into cmux mode.",
+            file=sys.stderr,
+            flush=True,
+        )
 
     if args.watch is not None:
         cfg = load_config()
