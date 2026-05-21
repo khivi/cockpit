@@ -77,7 +77,7 @@ from lib.config import (  # noqa: E402
     install_starship_default_config,
 )
 from lib.daemon import run_watcher  # noqa: E402
-from lib.cache import write_pr_cache  # noqa: E402
+from lib.cache import write_branch_pr_cache, write_pr_cache  # noqa: E402
 from lib import close_requests  # noqa: E402
 from lib.gh import (  # noqa: E402
     PR,
@@ -316,6 +316,21 @@ def cycle_repo(
         wt_by_branch = {wt.branch: wt for wt in wts}
         for pr in prs:
             write_pr_cache(name, pr, wt_by_branch.get(pr.branch))
+            # Mirror PR fields into the cship cache so starship.toml [custom.*]
+            # modules render fresh on the first session render, without each
+            # field having to spawn its own `gh pr view` from cold.
+            ci_glyph = {"passed": "✓", "pending": "•"}.get(pr.ci, "")
+            if pr.ci.startswith("failed"):
+                ci_glyph = "✗"
+            write_branch_pr_cache(
+                pr.branch,
+                state=pr.state,
+                is_draft=pr.is_draft,
+                review_decision=pr.review_decision,
+                number=pr.number,
+                title=pr.title,
+                ci_glyph=ci_glyph,
+            )
 
     if headless:
         return
@@ -729,7 +744,7 @@ def _watch(state: dict, watch_secs: int) -> None:
     )
 
 
-def _footer_command() -> str:
+def _statusline_command() -> str:
     return f"{sys.executable} {Path(__file__).resolve().parent / 'footer.py'}"
 
 
@@ -761,7 +776,7 @@ def main(argv=None):
     if args.footer:
         install_cship_default_config()
         install_starship_default_config()
-        install_cship_statusline_if_configured(_footer_command())
+        install_cship_statusline_if_configured(_statusline_command())
         return 0
 
     startup_cfg = load_config()

@@ -1,15 +1,34 @@
-"""PR cache snapshots under $COCKPIT_HOME/cache/.
+"""Cockpit's two caches: per-PR JSON snapshots and the flat-file render cache.
 
-Cockpit writes one `{repo}__pr-{N}.json` file per relevant PR each cycle.
-Consumers:
-  - reconcile loop reads + writes via this module
-  - `lib/list.py` and `scripts/close.py` read via `find_pr_payload`
+Two cache directories, both owned by this module:
+
+1. `$COCKPIT_HOME/cache/{repo}__pr-{N}.json` (referenced as `CACHE_DIR`).
+   Rich JSON per PR. Written each reconcile cycle by `write_pr_cache`,
+   read by `/cockpit:list` and `scripts/close.py`.
+
+2. `$TMPDIR/cockpit-cache/{stem}[-<sid>|-<branch>]` (referenced as
+   `FLAT_CACHE_DIR`). Flat one-string-per-file payloads consumed by
+   `scripts/starship.py`'s field printers under starship. Written by:
+   - `lib.claude.stash_from_stdin` (session-scoped: context, rate-limit,
+     transcript-path)
+   - `refresh_pr_data` / `refresh_pr_checks` (60s stale-triggered, forked
+     from a field printer that sees its cache file is too old)
+   - `write_branch_pr_cache` (`cockpit.py` daemon tick, from PR data the
+     daemon already has)
+
+Flat layout exists because starship spawns 8 independent subprocesses per
+render and each one needs to read one cache cell in sub-millisecond time;
+parsing JSON in every subprocess is too expensive.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
+import tempfile
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import CACHE_DIR, ensure_state_dirs
@@ -18,6 +37,9 @@ from .pills import decide_pills
 if TYPE_CHECKING:
     from .gh import PR
     from .git import Worktree
+
+
+# ── JSON per-PR cache (cockpit's primary state) ────────────────────────────
 
 
 def write_pr_cache(repo_name: str, pr: "PR", wt: "Worktree | None" = None) -> dict:
@@ -94,3 +116,197 @@ def delete_pr_caches_for_branch(repo_name: str, branch: str) -> None:
     for path, data in _iter_cache(f"{prefix}__pr-*.json"):
         if data.get("branch") == branch:
             path.unlink(missing_ok=True)
+
+
+# ── flat-file render cache (read by starship field printers) ───────────────
+
+
+FLAT_CACHE_DIR = Path(tempfile.gettempdir()) / "cockpit-cache"
+PR_CACHE_TTL_SECS = 60
+
+
+def _ensure_flat_cache_dir() -> Path:
+    FLAT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return FLAT_CACHE_DIR
+
+
+def atomic_write(path: Path, payload: str) -> None:
+    """Write `payload` to `path` atomically via .tmp + rename."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(payload)
+    os.replace(tmp, path)
+
+
+def read_text(path: Path) -> str:
+    """Best-effort read; returns empty string on any IO error."""
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return ""
+
+
+def _branch_key(branch: str) -> str:
+    return branch.replace("/", "-")
+
+
+def session_cache(stem: str, sid: str | None) -> Path:
+    suffix = f"-{sid}" if sid else ""
+    return _ensure_flat_cache_dir() / f"{stem}{suffix}"
+
+
+def branch_cache(stem: str, branch: str) -> Path:
+    return _ensure_flat_cache_dir() / f"{stem}-{_branch_key(branch)}"
+
+
+def is_fresh(path: Path, ttl_secs: int = PR_CACHE_TTL_SECS) -> bool:
+    try:
+        return (time.time() - path.stat().st_mtime) < ttl_secs
+    except OSError:
+        return False
+
+
+def _gh_pr_view() -> dict | None:
+    """`gh pr view --json ...` for current branch → parsed dict or None."""
+    try:
+        res = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "view",
+                "--json",
+                "state,isDraft,reviewDecision,number,title",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode != 0 or not res.stdout.strip():
+        return None
+    try:
+        return json.loads(res.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def _resolve_state(state: str, is_draft: bool, review: str) -> str:
+    if state == "OPEN":
+        if is_draft:
+            return "DRAFT"
+        if review:
+            return review
+    return state
+
+
+def refresh_pr_data(branch: str) -> None:
+    """Populate pr-state / pr-num / pr-title caches for `branch` from one
+    `gh pr view` round-trip. Empty (no-PR) sentinel = zero-byte file with a
+    fresh mtime; that suppresses per-render gh calls during the 60s TTL.
+    """
+    if not branch:
+        return
+    data = _gh_pr_view()
+    state_path = branch_cache("pr-state", branch)
+    num_path = branch_cache("pr-num", branch)
+    title_path = branch_cache("pr-title", branch)
+    if data is None:
+        atomic_write(state_path, "")
+        atomic_write(num_path, "")
+        atomic_write(title_path, "")
+        return
+    state = _resolve_state(
+        str(data.get("state") or ""),
+        bool(data.get("isDraft")),
+        str(data.get("reviewDecision") or ""),
+    )
+    number = data.get("number")
+    title = data.get("title") or ""
+    atomic_write(state_path, state)
+    atomic_write(num_path, str(number) if number else "")
+    atomic_write(title_path, str(title))
+
+
+def refresh_pr_checks(branch: str) -> None:
+    """Populate pr-checks cache for `branch` from one `gh pr checks` call.
+
+    Exit codes (per gh): 0 → ✓, 8 → • (pending), other → ✗ (failing or no
+    runs). Empty payload when no PR is associated with the branch.
+    """
+    if not branch:
+        return
+    cache = branch_cache("pr-checks", branch)
+    view = subprocess.run(
+        ["gh", "pr", "view", "--json", "number"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if view.returncode != 0:
+        atomic_write(cache, "")
+        return
+    checks = subprocess.run(
+        ["gh", "pr", "checks"], capture_output=True, text=True, timeout=10
+    )
+    glyph = {0: "✓", 8: "•"}.get(checks.returncode, "✗")
+    atomic_write(cache, glyph)
+
+
+def write_branch_pr_cache(
+    branch: str,
+    *,
+    state: str,
+    is_draft: bool,
+    review_decision: str,
+    number: int | None,
+    title: str,
+    ci_glyph: str = "",
+) -> None:
+    """Daemon-tick entrypoint: write pre-resolved PR fields straight to the
+    flat cache, no `gh` round-trip needed. Caller (cockpit.py::cycle_repo)
+    already has this data from its own PR fetch.
+
+    `ci_glyph` is empty by default — the per-render background refresh
+    will repopulate `pr-checks-<branch>` from `gh pr checks` when stale.
+    """
+    if not branch:
+        return
+    resolved = _resolve_state(state, is_draft, review_decision)
+    atomic_write(branch_cache("pr-state", branch), resolved)
+    atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
+    atomic_write(branch_cache("pr-title", branch), title or "")
+    if ci_glyph:
+        atomic_write(branch_cache("pr-checks", branch), ci_glyph)
+
+
+def warm_all(branch: str | None = None) -> None:
+    """Synchronous prewarm for the current branch: PR data + checks + seed a
+    transcript-path from the latest project JSONL if Claude Code hasn't yet
+    fed one via statusLine input.
+    """
+    from .git import current_branch
+
+    branch = branch or current_branch(os.getcwd())
+    if not branch:
+        return
+    refresh_pr_data(branch)
+    refresh_pr_checks(branch)
+    _seed_transcript_from_project_dir()
+
+
+def _seed_transcript_from_project_dir() -> None:
+    """Pre-seed transcript-path cache (session-less) with the most recent
+    .jsonl under ~/.claude/projects/<mangled cwd> so session-time has
+    something to render on the first statusline tick.
+    """
+    cwd = os.getcwd()
+    mangled = "-" + cwd.lstrip("/").replace("/", "-").replace(".", "-")
+    project_dir = Path.home() / ".claude" / "projects" / mangled
+    if not project_dir.is_dir():
+        return
+    candidates = sorted(
+        project_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    if not candidates:
+        return
+    atomic_write(session_cache("transcript-path", None), str(candidates[0]))

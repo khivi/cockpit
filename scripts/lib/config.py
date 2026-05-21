@@ -40,6 +40,8 @@ CSHIP_DEFAULT_TOML = Path(__file__).resolve().parent.parent / "defaults" / "cshi
 STARSHIP_DEFAULT_TOML = (
     Path(__file__).resolve().parent.parent / "defaults" / "starship.toml"
 )
+STARSHIP_PY = Path(__file__).resolve().parent.parent / "starship.py"
+STARSHIP_PLACEHOLDER = "__COCKPIT_STARSHIP__"
 
 
 def load_config() -> dict:
@@ -128,8 +130,8 @@ def _read_current_statusline(settings_path: Path) -> str | None:
         return None
 
 
-def _write_statusline(settings_path: Path, footer_command: str) -> None:
-    """Write `footer_command` into Claude Code's statusLine, backing up first."""
+def _write_statusline(settings_path: Path, statusline_command: str) -> None:
+    """Write `statusline_command` into Claude Code's statusLine, backing up first."""
     data: dict = {}
     if settings_path.exists():
         backup = settings_path.with_name(
@@ -141,19 +143,19 @@ def _write_statusline(settings_path: Path, footer_command: str) -> None:
         except json.JSONDecodeError:
             data = {}
     settings_path.parent.mkdir(parents=True, exist_ok=True)
-    data["statusLine"] = {"type": "command", "command": footer_command}
+    data["statusLine"] = {"type": "command", "command": statusline_command}
     settings_path.write_text(json.dumps(data, indent=2) + "\n")
-    print(f"wrote Claude statusLine -> {footer_command}")
+    print(f"wrote Claude statusLine -> {statusline_command}")
 
 
 class CshipNotInstalledError(RuntimeError):
     """Raised when `use_cship: true` but the cship binary is not on PATH."""
 
 
-def install_cship_statusline_if_configured(footer_command: str) -> None:
-    """Point Claude Code's statusLine at cockpit's footer shim, gated on `use_cship`.
+def install_cship_statusline_if_configured(statusline_command: str) -> None:
+    """Point Claude Code's statusLine at cockpit's statusline shim, gated on `use_cship`.
 
-    `footer_command` is the absolute invocation cockpit uses for its
+    `statusline_command` is the absolute invocation cockpit uses for its
     `scripts/footer.py` shim (which itself delegates to `cship`). When
     `use_cship: true` in config.json, cockpit verifies `cship` is on PATH and
     writes `~/.claude/settings.json` so Claude Code invokes the shim each
@@ -179,9 +181,9 @@ def install_cship_statusline_if_configured(footer_command: str) -> None:
         )
     settings_path = Path.home() / ".claude" / "settings.json"
     current = _read_current_statusline(settings_path)
-    if current is None or current == footer_command:
+    if current is None or current == statusline_command:
         return
-    _write_statusline(settings_path, footer_command)
+    _write_statusline(settings_path, statusline_command)
 
 
 def _xdg_config_path(filename: str) -> Path:
@@ -247,9 +249,32 @@ def install_starship_default_config() -> None:
     STARSHIP_CONFIG=~/.config/starship.toml, so the [custom.*] modules are
     rendered out of THIS file, not cship.toml. Same --footer-only contract
     as install_cship_default_config: reconcile cycles never touch it.
+
+    Substitutes the literal `__COCKPIT_CSHIP__` token in the bundled toml
+    with the resolved absolute path to `scripts/cship.py` before writing —
+    starship spawns commands without changing cwd, so paths in the seeded
+    file must be absolute. Re-running `cockpit --footer` after the plugin
+    moves on disk re-substitutes with the new location.
     """
     if not load_config().get("use_cship"):
         return
     if not STARSHIP_DEFAULT_TOML.exists():
         return
-    _seed_default_toml(STARSHIP_DEFAULT_TOML, _starship_user_config_path(), "starship")
+    dest = _starship_user_config_path()
+    payload = STARSHIP_DEFAULT_TOML.read_text().replace(
+        STARSHIP_PLACEHOLDER, str(STARSHIP_PY)
+    )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink():
+        target = Path(os.readlink(dest))
+        if not target.is_absolute():
+            target = dest.parent / target
+        if target.exists():
+            backup = target.with_name(
+                f"{target.name}.bak.{datetime.now():%Y%m%d%H%M%S}"
+            )
+            target.rename(backup)
+            print(f"backed up starship symlink target -> {backup}")
+        dest.unlink()
+    dest.write_text(payload)
+    print(f"installed default starship config -> {dest}")
