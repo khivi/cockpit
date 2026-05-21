@@ -40,6 +40,7 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
     monkeypatch.setattr(spawn, "cmux", fake_cmux)
     monkeypatch.setattr(spawn, "workspace_names", lambda: {})
     monkeypatch.setattr(spawn, "kick_running", lambda *a, **kw: None)
+    monkeypatch.setattr(spawn, "require_workspace_binary", lambda: None)
 
     def _run(argv: list[str]) -> tuple[int, str, str]:
         monkeypatch.setattr(sys, "argv", ["spawn", *argv])
