@@ -333,10 +333,8 @@ def _relevant_pr_query(
     coworker branch) flow through GraphQL variables so a crafted branch name
     can't escape its string context and inject fragments.
     """
-    var_decls = ["$owner: String!", "$name: String!", "$search: String!"]
+    var_decls = ["$search: String!"]
     variables: dict[str, str] = {
-        "owner": owner,
-        "name": name,
         "search": f"repo:{owner}/{name} is:pr is:open author:{self_user}",
     }
     aliases: list[str] = []
@@ -348,11 +346,16 @@ def _relevant_pr_query(
             f"{key}: pullRequests(headRefName: ${key}, states: OPEN, first: 1) "
             f"{{ nodes {{ {fields} }} }}"
         )
-    repo_block = (
-        f"repo: repository(owner: $owner, name: $name) {{ {' '.join(aliases)} }}"
-        if aliases
-        else ""
-    )
+    if aliases:
+        var_decls = ["$owner: String!", "$name: String!", *var_decls]
+        variables["owner"] = owner
+        variables["name"] = name
+        repo_block = (
+            f"repo: repository(owner: $owner, name: $name) "
+            f"{{ {' '.join(aliases)} }}"
+        )
+    else:
+        repo_block = ""
     query = (
         f"query ({', '.join(var_decls)}) {{\n"
         f"  mine: search(query: $search, first: 30, type: ISSUE) {{\n"
