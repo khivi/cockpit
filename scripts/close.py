@@ -16,7 +16,11 @@ from lib.cache import (  # noqa: E402
     delete_pr_caches_for_branch,
     find_pr_payload,
 )
-from lib.cmux import cmux_close_workspace_best_effort, resolve_workspace  # noqa: E402
+from lib.cmux import (  # noqa: E402
+    cmux_close_workspace_best_effort,
+    require_workspace_binary,
+    resolve_workspace,
+)
 from lib.config import discover_repo  # noqa: E402
 from lib.git import remove_worktree  # noqa: E402
 
@@ -31,6 +35,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    require_workspace_binary()
     args = parse_args()
     repo_cfg = discover_repo()
     repo_dir = Path(repo_cfg["path"]).expanduser() if repo_cfg else Path.cwd()

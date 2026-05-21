@@ -43,6 +43,7 @@ from lib.cmux import (  # noqa: E402
     ORANGE,
     ORPHAN_ICON,
     ORPHAN_KEY,
+    _resolve_tool,
     apply_pills,
     apply_wip_pill,
     close_gone_cwd_workspaces,
@@ -97,6 +98,13 @@ ACTIONABLE_ISSUES = {"ci", "comments", "conflicts"}
 
 DEFAULT_POLL_SECS = 300
 MIN_POLL_SECS = 5
+
+
+def _cache_only(cfg: dict) -> bool:
+    """Skip pill / cmux-only verbs this cycle? True whenever the resolved
+    workspace backend isn't cmux (limux can't do pills; 'none' = headless).
+    """
+    return _resolve_tool() != "cmux"
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -267,12 +275,13 @@ def cycle_repo(
         print(f"  {yellow('skip')} {repo_path}: {e}", flush=True)
         return
 
+    headless = _cache_only(cfg)
     with ThreadPoolExecutor(max_workers=3) as ex:
         wts_fut = ex.submit(worktrees, repo_path)
-        state_fut = ex.submit(workspace_state)
+        state_fut = None if headless else ex.submit(workspace_state)
         merged_fut = ex.submit(fetch_merged_branches, repo_path)
         wts = wts_fut.result()
-        names, cwds = state_fut.result()
+        names, cwds = ({}, {}) if state_fut is None else state_fut.result()
         merged_branches = merged_fut.result()
 
     coworker_branches = sorted(
@@ -305,6 +314,9 @@ def cycle_repo(
         wt_by_branch = {wt.branch: wt for wt in wts}
         for pr in prs:
             write_pr_cache(name, pr, wt_by_branch.get(pr.branch))
+
+    if headless:
+        return
 
     by_name: dict[str, list[str]] = {}
     for ref, ws_name in names.items():
@@ -514,7 +526,7 @@ def cycle_all(
             flush=True,
         )
         return
-    if cfg.get("auto_cleanup_on_merge", True):
+    if cfg.get("auto_cleanup_on_merge", True) and not _cache_only(cfg):
         close_gone_cwd_workspaces(dry=dry)
     for repo_entry in repos:
         try:
@@ -642,6 +654,28 @@ def main(argv=None):
         install_cship_default_config()
         install_cship_statusline_if_configured(_footer_command())
         return 0
+
+    startup_cfg = load_config()
+    if startup_cfg.get("tool", "auto") == "auto":
+        resolved = _resolve_tool()
+        if resolved == "limux":
+            print(
+                f"{yellow('cockpit:')} cmux not found — using limux. "
+                "Side panel disabled (limux lacks pill support); "
+                "footer/statusline and slash commands work. "
+                "Set 'tool': 'cmux' in config to require cmux instead.",
+                file=sys.stderr,
+                flush=True,
+            )
+        elif resolved == "none":
+            print(
+                f"{yellow('cockpit:')} no workspace tool on PATH (cmux/limux) — "
+                "running cache-only mode. Footer/statusline works; "
+                "side panel and slash commands disabled. "
+                "Set 'tool': 'none' in config to suppress this warning.",
+                file=sys.stderr,
+                flush=True,
+            )
 
     if args.watch is not None:
         cfg = load_config()

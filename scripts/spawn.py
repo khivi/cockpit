@@ -61,7 +61,7 @@ import re
 import sys
 from pathlib import Path
 
-from lib.cmux import cmux, workspace_names
+from lib.cmux import cmux, require_workspace_binary, workspace_names
 from lib.config import discover_repo, find_repo_by_name, find_repo_by_nwo
 from lib.daemon import kick_running
 from lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch
@@ -419,6 +419,7 @@ def main() -> int:
             prompt = _plan_only_prompt(branch, pr_info)
 
     ws_name = short
+    require_workspace_binary()
     attached_ws = ws_name in set(workspace_names().values())
     if not attached_ws:
         cmux(

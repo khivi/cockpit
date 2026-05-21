@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -41,9 +42,80 @@ WIP_ICON = "✏️"
 
 ACTIONABLE_KEYS = ("ci", "comments", "merge", "draft", "approved", "rebase", "wip")
 
+# Verbs that need cmux specifically — limux fork lacks the persistent-pill API.
+_PILL_VERBS = frozenset({"set-status", "clear-status"})
+_VALID_TOOLS = frozenset({"cmux", "limux", "none", "auto"})
+
+
+def _resolve_tool() -> str:
+    """Pick the workspace backend: 'cmux', 'limux', or 'none'.
+
+    Reads cfg['tool'] (cmux|limux|none|auto, default auto). 'auto' detects:
+    prefers cmux, falls back to limux, else 'none'. Resolved fresh each call
+    so tests can vary PATH / config across cases without cache leakage.
+    """
+    from .config import load_config
+
+    explicit = load_config().get("tool", "auto")
+    if explicit not in _VALID_TOOLS:
+        print(
+            f"cockpit: invalid 'tool' value {explicit!r} "
+            f"(expected one of {sorted(_VALID_TOOLS)}); falling back to 'auto'",
+            file=sys.stderr,
+        )
+        explicit = "auto"
+    if explicit in {"cmux", "limux", "none"}:
+        return explicit
+    if shutil.which("cmux"):
+        return "cmux"
+    if shutil.which("limux"):
+        return "limux"
+    return "none"
+
+
+def _resolve_binary(verb: str) -> str | None:
+    """Pick a workspace-CLI binary for `verb`. Pills require cmux; everything
+    else accepts cmux or its limux fork. Honours cfg['tool'].
+    """
+    tool = _resolve_tool()
+    if tool == "none":
+        return None
+    if verb in _PILL_VERBS and tool != "cmux":
+        return None  # limux can't do pills
+    return tool if shutil.which(tool) else None
+
+
+def require_workspace_binary() -> None:
+    """Exit cleanly with a one-liner if no workspace backend is available.
+    Use at the top of slash-command entry scripts so the user gets a useful
+    message instead of a Python traceback.
+    """
+    tool = _resolve_tool()
+    if tool != "none" and shutil.which(tool):
+        return
+    msg = (
+        "cockpit: tool=none in config — workspace commands disabled"
+        if tool == "none"
+        else f"cockpit: '{tool}' not found on PATH"
+    )
+    print(msg, file=sys.stderr)
+    sys.exit(2)
+
 
 def cmux(*args: str, check: bool = True) -> str:
-    return run(["cmux", *args], check=check)
+    verb = args[0] if args else ""
+    binary = _resolve_binary(verb)
+    if binary is None:
+        if check:
+            tool = _resolve_tool()
+            hint = (
+                " (pills require cmux; current tool is limux)"
+                if verb in _PILL_VERBS and tool == "limux"
+                else f" (current tool: {tool})"
+            )
+            raise FileNotFoundError(f"cockpit: '{verb}' unavailable{hint}")
+        return ""
+    return run([binary, *args], check=check)
 
 
 def apply_wip_pill(ref: str, dirty_count: int) -> None:
