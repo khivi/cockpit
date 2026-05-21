@@ -1,6 +1,9 @@
-"""Regression test: _maybe_autoclose must close the cmux workspace BEFORE
+"""Regression test: `_maybe_autoclose` must close the cmux workspace BEFORE
 removing the worktree. Otherwise the cwd is yanked out from under a live
 Claude Code session and every Stop/PreToolUse hook fails with ENOENT.
+
+After the teardown refactor, `_maybe_autoclose` delegates to
+`lib.teardown.teardown`, so the patches target that module's references.
 """
 
 from __future__ import annotations
@@ -8,6 +11,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import cockpit
+from lib import teardown as teardown_mod
 from lib.git import Worktree
 
 
@@ -28,11 +32,13 @@ def test_cmux_close_runs_before_remove_worktree(tmp_path):
 
     with (
         patch.object(
-            cockpit, "cmux_close_workspace_best_effort", side_effect=fake_cmux_close
+            teardown_mod,
+            "cmux_close_workspace_best_effort",
+            side_effect=fake_cmux_close,
         ),
-        patch.object(cockpit, "remove_worktree", side_effect=fake_remove),
+        patch.object(teardown_mod, "remove_worktree", side_effect=fake_remove),
         patch.object(cockpit, "count_commits_since", return_value=0),
-        patch.object(cockpit, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
     ):
         cockpit._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -56,10 +62,10 @@ def test_dry_run_calls_neither(tmp_path):
     wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
 
     with (
-        patch.object(cockpit, "cmux_close_workspace_best_effort") as close_mock,
-        patch.object(cockpit, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
         patch.object(cockpit, "count_commits_since", return_value=0),
-        patch.object(cockpit, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
     ):
         cockpit._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -83,10 +89,10 @@ def test_remove_failure_still_runs_cmux_close_and_skips_cache_delete(tmp_path):
     wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
 
     with (
-        patch.object(cockpit, "cmux_close_workspace_best_effort") as close_mock,
-        patch.object(cockpit, "remove_worktree", return_value=(False, "boom")),
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree", return_value=(False, "boom")),
         patch.object(cockpit, "count_commits_since", return_value=0),
-        patch.object(cockpit, "delete_pr_caches_for_branch") as cache_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch") as cache_mock,
     ):
         cockpit._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
