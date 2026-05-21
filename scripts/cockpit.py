@@ -76,6 +76,7 @@ from lib.config import (  # noqa: E402
 )
 from lib.daemon import run_watcher  # noqa: E402
 from lib.cache import delete_pr_caches_for_branch, write_pr_cache  # noqa: E402
+from lib.cship import write_branch_pr_cache  # noqa: E402
 from lib.gh import (  # noqa: E402
     PR,
     fetch_merged_branches,
@@ -315,6 +316,21 @@ def cycle_repo(
         wt_by_branch = {wt.branch: wt for wt in wts}
         for pr in prs:
             write_pr_cache(name, pr, wt_by_branch.get(pr.branch))
+            # Mirror PR fields into the cship cache so starship.toml [custom.*]
+            # modules render fresh on the first session render, without each
+            # field having to spawn its own `gh pr view` from cold.
+            ci_glyph = {"passed": "✓", "pending": "•"}.get(pr.ci, "")
+            if pr.ci.startswith("failed"):
+                ci_glyph = "✗"
+            write_branch_pr_cache(
+                pr.branch,
+                state=pr.state,
+                is_draft=pr.is_draft,
+                review_decision=pr.review_decision,
+                number=pr.number,
+                title=pr.title,
+                ci_glyph=ci_glyph,
+            )
 
     if headless:
         return

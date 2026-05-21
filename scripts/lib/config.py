@@ -40,6 +40,8 @@ CSHIP_DEFAULT_TOML = Path(__file__).resolve().parent.parent / "defaults" / "cshi
 STARSHIP_DEFAULT_TOML = (
     Path(__file__).resolve().parent.parent / "defaults" / "starship.toml"
 )
+CSHIP_PY = Path(__file__).resolve().parent.parent / "cship.py"
+CSHIP_PLACEHOLDER = "__COCKPIT_CSHIP__"
 
 
 def load_config() -> dict:
@@ -247,9 +249,32 @@ def install_starship_default_config() -> None:
     STARSHIP_CONFIG=~/.config/starship.toml, so the [custom.*] modules are
     rendered out of THIS file, not cship.toml. Same --footer-only contract
     as install_cship_default_config: reconcile cycles never touch it.
+
+    Substitutes the literal `__COCKPIT_CSHIP__` token in the bundled toml
+    with the resolved absolute path to `scripts/cship.py` before writing —
+    starship spawns commands without changing cwd, so paths in the seeded
+    file must be absolute. Re-running `cockpit --footer` after the plugin
+    moves on disk re-substitutes with the new location.
     """
     if not load_config().get("use_cship"):
         return
     if not STARSHIP_DEFAULT_TOML.exists():
         return
-    _seed_default_toml(STARSHIP_DEFAULT_TOML, _starship_user_config_path(), "starship")
+    dest = _starship_user_config_path()
+    payload = STARSHIP_DEFAULT_TOML.read_text().replace(
+        CSHIP_PLACEHOLDER, str(CSHIP_PY)
+    )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink():
+        target = Path(os.readlink(dest))
+        if not target.is_absolute():
+            target = dest.parent / target
+        if target.exists():
+            backup = target.with_name(
+                f"{target.name}.bak.{datetime.now():%Y%m%d%H%M%S}"
+            )
+            target.rename(backup)
+            print(f"backed up starship symlink target -> {backup}")
+        dest.unlink()
+    dest.write_text(payload)
+    print(f"installed default starship config -> {dest}")

@@ -37,17 +37,23 @@ add_newline = false
 [character]
 disabled = true
 
-# Claude Code context usage (e.g. "4%/1M"); ceiling cached by cship-wrapper.sh from display_name.
+# All [custom.*] commands invoke the bundled `scripts/cship.py` dispatcher.
+# The literal `__COCKPIT_CSHIP__` token is replaced with the resolved absolute
+# path at install time by `install_starship_default_config()` in
+# scripts/lib/config.py — starship spawns commands without changing cwd, so
+# the path baked into ~/.config/starship.toml must be absolute.
+
+# Claude Code context usage (e.g. "4%/1M"); ceiling cached by cship.py wrapper from display_name.
 [custom.context]
-command     = "~/bin/cship/cship-context.sh"
+command     = "__COCKPIT_CSHIP__ context"
 when        = "true"
 format      = "( [🧠 $output]($style))"
 style       = "fg:#475569"
 description = "Claude Code context window usage"
 
-# Claude Code session duration (e.g. "1h 23m"); cship-wrapper.sh stashes ms each render.
+# Claude Code session duration (e.g. "1h 23m"); cship.py wrapper stashes transcript path each render.
 [custom.session_time]
-command     = "~/bin/cship/cship-session-time.sh"
+command     = "__COCKPIT_CSHIP__ session-time"
 when        = "true"
 format      = "( [⏱ $output]($style))"
 style       = "fg:#475569"
@@ -55,7 +61,7 @@ description = "Claude Code session duration"
 
 # Rolling 5-hour usage limit, read from JSON Claude Code passes (cship's own usage_limits is broken).
 [custom.ratelimit]
-command     = "~/bin/cship/cship-rate-limit-5h.sh"
+command     = "__COCKPIT_CSHIP__ rate-limit"
 when        = "true"
 format      = "( [$output]($style))"
 style       = "fg:#0369a1"
@@ -63,7 +69,7 @@ description = "Anthropic rolling 5h usage limit"
 
 # Linear ticket extracted from current branch (e.g. "PRO-123"). Hidden if branch has none.
 [custom.linear]
-command     = "~/bin/cship/cship-linear.sh"
+command     = "__COCKPIT_CSHIP__ linear"
 when        = "true"
 format      = "( [$output]($style))"
 style       = "bold fg:#6d28d9"
@@ -72,7 +78,7 @@ description = "Linear ticket ID from git branch"
 # PR state for current branch: OPEN | DRAFT | MERGED | CLOSED | APPROVED | CHANGES_REQUESTED.
 # Cached 60s. Hidden if no PR.
 [custom.pr_state]
-command     = "~/bin/cship/cship-pr-state.sh"
+command     = "__COCKPIT_CSHIP__ pr-state"
 when        = "true"
 format      = "( [$output]($style))"
 style       = "bold fg:#0369a1"
@@ -80,7 +86,7 @@ description = "GitHub PR state for current branch"
 
 # PR number for current branch (e.g. "#27588"). Hidden if no PR.
 [custom.pr_num]
-command     = "~/bin/cship/cship-pr-num.sh"
+command     = "__COCKPIT_CSHIP__ pr-num"
 when        = "true"
 format      = "( [$output]($style))"
 style       = "fg:#1f2937"
@@ -88,7 +94,7 @@ description = "GitHub PR number for current branch"
 
 # CI status glyph for current branch's PR: ✓ pass | ✗ fail | • pending. Cached 60s.
 [custom.pr_checks]
-command     = "~/bin/cship/cship-pr-checks.sh"
+command     = "__COCKPIT_CSHIP__ pr-checks"
 when        = "true"
 format      = "( [$output]($style))"
 style       = "bold fg:#15803d"
@@ -96,7 +102,7 @@ description = "GitHub PR CI status for current branch"
 
 # PR title for current branch — placed on line two of the footer.
 [custom.pr_title]
-command     = "~/bin/cship/cship-pr-title.sh"
+command     = "__COCKPIT_CSHIP__ pr-title"
 when        = "true"
 format      = "[$output]($style)"
 style       = "italic fg:#1f2937"

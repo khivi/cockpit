@@ -53,6 +53,19 @@ def _wt(
     )
 
 
+def _expected_starship(cockpit_config) -> str:
+    """The bundled starship.toml after __COCKPIT_CSHIP__ placeholder substitution.
+
+    `install_starship_default_config()` rewrites the placeholder to the
+    resolved absolute path of `scripts/cship.py` before writing to
+    ~/.config/starship.toml — assertions about installed content must
+    match that substituted output, not the in-repo source.
+    """
+    return cockpit_config.STARSHIP_DEFAULT_TOML.read_text().replace(
+        cockpit_config.CSHIP_PLACEHOLDER, str(cockpit_config.CSHIP_PY)
+    )
+
+
 # ── decide_pills ────────────────────────────────────────────────────────────
 
 
@@ -400,7 +413,7 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
 
     starship_toml = tmp_path / "xdg" / "starship.toml"
     assert starship_toml.exists()
-    assert starship_toml.read_text() == cockpit_config.STARSHIP_DEFAULT_TOML.read_text()
+    assert starship_toml.read_text() == _expected_starship(cockpit_config)
 
     settings = _json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert settings["statusLine"]["type"] == "command"
@@ -494,7 +507,7 @@ def test_starship_default_installed_when_missing(tmp_path, monkeypatch):
     cockpit_config.install_starship_default_config()
     dest = tmp_path / "xdg" / "starship.toml"
     assert dest.exists()
-    assert dest.read_text() == cockpit_config.STARSHIP_DEFAULT_TOML.read_text()
+    assert dest.read_text() == _expected_starship(cockpit_config)
 
 
 def test_starship_default_overwrites_existing(tmp_path, monkeypatch):
@@ -506,7 +519,7 @@ def test_starship_default_overwrites_existing(tmp_path, monkeypatch):
     dest.parent.mkdir(parents=True)
     dest.write_text("# my custom starship config\nformat = ''\n")
     cockpit_config.install_starship_default_config()
-    assert dest.read_text() == cockpit_config.STARSHIP_DEFAULT_TOML.read_text()
+    assert dest.read_text() == _expected_starship(cockpit_config)
 
 
 def test_starship_default_missing_package_file_is_soft_fail(tmp_path, monkeypatch):
@@ -579,7 +592,7 @@ def test_seed_replaces_dangling_symlink_with_real_file(tmp_path, monkeypatch):
 
     assert dest.exists()
     assert not dest.is_symlink()
-    assert dest.read_text() == cockpit_config.STARSHIP_DEFAULT_TOML.read_text()
+    assert dest.read_text() == _expected_starship(cockpit_config)
     # Target never existed, so nothing to back up.
     assert not missing_target.exists()
     assert not (tmp_path / "dotfiles").exists()
@@ -607,7 +620,7 @@ def test_seed_backs_up_live_symlink_target(tmp_path, monkeypatch):
 
     assert dest.exists()
     assert not dest.is_symlink()
-    assert dest.read_text() == cockpit_config.STARSHIP_DEFAULT_TOML.read_text()
+    assert dest.read_text() == _expected_starship(cockpit_config)
     # Original target moved aside, not deleted.
     assert not target.exists()
     backups = list(target_dir.glob("starship.toml.bak.*"))
@@ -659,9 +672,10 @@ def test_footer_shim_pipes_stdin_to_cship(monkeypatch, capsysbinary):
 
     monkeypatch.setattr("sys.stdin", _FakeStdin())
 
-    def fake_run(cmd, input=None, capture_output=False):
+    def fake_run(cmd, input=None, capture_output=False, env=None):
         captured["cmd"] = cmd
         captured["input"] = input
+        captured["env"] = env
         return _sp.CompletedProcess(cmd, 0, stdout=b"styled-output\n", stderr=b"")
 
     monkeypatch.setattr("lib.footer.subprocess.run", fake_run)
