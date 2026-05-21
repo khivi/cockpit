@@ -3,6 +3,18 @@
 # explicit footer-setup command). --once / --watch reconcile cycles never
 # touch this file, so any edits you make to ~/.config/cship.toml stick around
 # until you re-run --footer.
+#
+# cship's line renderer only evaluates its own $cship.* modules and the
+# small set of native blocks defined below ([directory], [time]). Anything
+# starship-flavored — every [custom.*] in particular — has to be rendered
+# by spawning the starship binary, which cship does whenever it expands
+# $starship_prompt. See scripts/defaults/starship.toml for the modules
+# rendered downstream.
+
+# Explicit format so cship knows to expand $starship_prompt — without this,
+# cship falls back to its default line layout and never invokes starship,
+# leaving custom modules invisible regardless of what cship.toml contains.
+format = "$directory$time$starship_prompt"
 
 [directory]
 truncate_to_repo  = false
@@ -20,67 +32,7 @@ format      = " [$time]($style)"
 time_format = "%H:%M"
 style       = "fg:#475569"
 
-# Claude Code context usage (e.g. "4%/1M"); ceiling cached by cship-wrapper.sh from display_name.
-[custom.context]
-command     = "~/bin/cship/cship-context.sh"
-when        = "true"
-format      = "( [🧠 $output]($style))"
-style       = "fg:#475569"
-description = "Claude Code context window usage"
-
-# Claude Code session duration (e.g. "1h 23m"); cship-wrapper.sh stashes ms each render.
-[custom.session_time]
-command     = "~/bin/cship/cship-session-time.sh"
-when        = "true"
-format      = "( [⏱ $output]($style))"
-style       = "fg:#475569"
-description = "Claude Code session duration"
-
-# Rolling 5-hour usage limit, read from JSON Claude Code passes (cship's own usage_limits is broken).
-[custom.ratelimit]
-command     = "~/bin/cship/cship-rate-limit-5h.sh"
-when        = "true"
-format      = "( [$output]($style))"
-style       = "fg:#0369a1"
-description = "Anthropic rolling 5h usage limit"
-
-# Linear ticket extracted from current branch (e.g. "PRO-123"). Hidden if branch has none.
-[custom.linear]
-command     = "~/bin/cship/cship-linear.sh"
-when        = "true"
-format      = "( [$output]($style))"
-style       = "bold fg:#6d28d9"
-description = "Linear ticket ID from git branch"
-
-# PR state for current branch: OPEN | DRAFT | MERGED | CLOSED | APPROVED | CHANGES_REQUESTED.
-# Cached 60s. Hidden if no PR.
-[custom.pr_state]
-command     = "~/bin/cship/cship-pr-state.sh"
-when        = "true"
-format      = "( [$output]($style))"
-style       = "bold fg:#0369a1"
-description = "GitHub PR state for current branch"
-
-# PR number for current branch (e.g. "#27588"). Hidden if no PR.
-[custom.pr_num]
-command     = "~/bin/cship/cship-pr-num.sh"
-when        = "true"
-format      = "( [$output]($style))"
-style       = "fg:#1f2937"
-description = "GitHub PR number for current branch"
-
-# CI status glyph for current branch's PR: ✓ pass | ✗ fail | • pending. Cached 60s.
-[custom.pr_checks]
-command     = "~/bin/cship/cship-pr-checks.sh"
-when        = "true"
-format      = "( [$output]($style))"
-style       = "bold fg:#15803d"
-description = "GitHub PR CI status for current branch"
-
-# PR title for current branch — shown on cship's second footer line. Cached 60s.
-[custom.pr_title]
-command     = "~/bin/cship/cship-pr-title.sh"
-when        = "true"
-format      = "[$output]($style)"
-style       = "italic fg:#1f2937"
-description = "GitHub PR title for current branch"
+# $starship_prompt in `format` above is what delegates [custom.*] rendering
+# to the starship binary. cship spawns starship with
+# STARSHIP_CONFIG=~/.config/starship.toml; --footer also seeds that file
+# from scripts/defaults/starship.toml.

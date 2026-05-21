@@ -14,6 +14,9 @@ Owns:
     --watch — so reconcile cycles never touch ~/.config/cship.toml. Local
     edits to ~/.config/cship.toml survive across daemon restarts; running
     `cockpit --footer` deliberately clobbers them back to the bundled default.
+  - install_starship_default_config(): same contract for ~/.config/starship.toml.
+    cship's $starship_prompt spawns starship with STARSHIP_CONFIG set to that
+    path, so any [custom.*] rendering depends on this file existing.
 """
 
 from __future__ import annotations
@@ -34,6 +37,9 @@ CACHE_DIR = COCKPIT_HOME / "cache"
 PID_FILE = COCKPIT_HOME / "cockpit.pid"
 CONFIG_EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.json"
 CSHIP_DEFAULT_TOML = Path(__file__).resolve().parent.parent / "defaults" / "cship.toml"
+STARSHIP_DEFAULT_TOML = (
+    Path(__file__).resolve().parent.parent / "defaults" / "starship.toml"
+)
 
 
 def load_config() -> dict:
@@ -178,10 +184,44 @@ def install_cship_statusline_if_configured(footer_command: str) -> None:
     _write_statusline(settings_path, footer_command)
 
 
-def _cship_user_config_path() -> Path:
+def _xdg_config_path(filename: str) -> Path:
     xdg = os.environ.get("XDG_CONFIG_HOME")
     base = Path(xdg) if xdg else Path.home() / ".config"
-    return base / "cship.toml"
+    return base / filename
+
+
+def _cship_user_config_path() -> Path:
+    return _xdg_config_path("cship.toml")
+
+
+def _starship_user_config_path() -> Path:
+    return _xdg_config_path("starship.toml")
+
+
+def _seed_default_toml(src: Path, dest: Path, label: str) -> None:
+    """Copy `src` to `dest`, replacing a symlink at `dest` with a real file.
+
+    If `dest` is a symlink, its current target is backed up (when the target
+    exists) to `<target>.bak.<ts>` and the symlink itself is unlinked before
+    writing — otherwise `shutil.copy` would follow the symlink and write
+    through to whatever the user had it pointing at, which is exactly the
+    scenario that broke this chain in the first place. Regular files are
+    overwritten in place as before.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink():
+        target = Path(os.readlink(dest))
+        if not target.is_absolute():
+            target = dest.parent / target
+        if target.exists():
+            backup = target.with_name(
+                f"{target.name}.bak.{datetime.now():%Y%m%d%H%M%S}"
+            )
+            target.rename(backup)
+            print(f"backed up {label} symlink target -> {backup}")
+        dest.unlink()
+    shutil.copy(src, dest)
+    print(f"installed default {label} config -> {dest}")
 
 
 def install_cship_default_config() -> None:
@@ -197,7 +237,19 @@ def install_cship_default_config() -> None:
         return
     if not CSHIP_DEFAULT_TOML.exists():
         return
-    dest = _cship_user_config_path()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(CSHIP_DEFAULT_TOML, dest)
-    print(f"installed default cship config -> {dest}")
+    _seed_default_toml(CSHIP_DEFAULT_TOML, _cship_user_config_path(), "cship")
+
+
+def install_starship_default_config() -> None:
+    """Rewrite ~/.config/starship.toml from the bundled default when `use_cship: true`.
+
+    cship's `format = "...$starship_prompt..."` spawns starship with
+    STARSHIP_CONFIG=~/.config/starship.toml, so the [custom.*] modules are
+    rendered out of THIS file, not cship.toml. Same --footer-only contract
+    as install_cship_default_config: reconcile cycles never touch it.
+    """
+    if not load_config().get("use_cship"):
+        return
+    if not STARSHIP_DEFAULT_TOML.exists():
+        return
+    _seed_default_toml(STARSHIP_DEFAULT_TOML, _starship_user_config_path(), "starship")
