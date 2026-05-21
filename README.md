@@ -103,13 +103,16 @@ To wire by hand:
 }
 ```
 
-## Nudge wiring (idle pill)
+## Nudge wiring (idle + loop pills)
 
-`hooks/cmux-idle-pill.sh` is wired automatically via the plugin's `hooks.json` and is what makes the cockpit's nudge logic actually fire. It writes a cmux pill `idle=☕ rest` on Claude Code's `Stop` event and clears it on `UserPromptSubmit`. Inside `--watch`, the reconciler reads this pill in `nudge_if_idle` to decide whether to ping a workspace about an actionable PR signal (CI failed, unresolved threads, merge conflict). Without it, the cockpit is a passive dashboard.
+`hooks/cmux-idle-pill.sh` is wired automatically via the plugin's `hooks.json` and owns two cmux pills on every Claude session:
+
+- **`idle=☕ rest`** — set on `Stop` when the agent has parked at the prompt with no live `/loop`; cleared on `UserPromptSubmit`. The cockpit reconciler reads this pill in `nudge_if_idle` to decide whether to ping a workspace about an actionable PR signal (CI failed, unresolved threads, merge conflict). Without it the cockpit is a passive dashboard.
+- **`loop=🔄`** — set on `PreToolUse(ScheduleWakeup|CronCreate|CronUpdate)` and refreshed on every `Stop` whose last assistant turn armed another wakeup; cleared on `PreToolUse(CronDelete)`, on `SessionEnd`, and on any `Stop` whose last turn did *not* arm a wakeup. Visual-only — at-a-glance signal that the session is iterating on its own schedule.
 
 Two non-obvious behaviors worth knowing:
 
-- **`/loop` suppression.** On `Stop`, the hook scans the transcript's most recent assistant turn. If it called `ScheduleWakeup` or `CronCreate`, the pill is left cleared — a session waiting for its own next wakeup is not at rest, even though it isn't running a turn right now.
+- **`/loop` suppression of `idle=`.** A dynamic `/loop` ends each turn with `ScheduleWakeup`, and the session is *not* truly at rest during the wait window — broadcasters that read `idle=` would happily target a session waiting for its own next wakeup. So on `Stop` the hook scans the transcript's last assistant turn; if it called `ScheduleWakeup` or `CronCreate`, `idle=` is left cleared and `loop=` is set.
 - **Fire-and-forget detach.** Every `cmux` call is backgrounded so the hook returns in <1 ms regardless of daemon state. The cmux socket occasionally stalls under contention (cockpit watcher + every session's hooks), and without the detach Claude Code's hook timeout surfaces a "non-blocking status code" banner on every prompt. Pill updates are best-effort by design.
 
 Outside cmux, the hook no-ops (early-exits on missing `CMUX_WORKSPACE_ID`).

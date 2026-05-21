@@ -16,6 +16,28 @@
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cmux-idle-pill.sh prompt" }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "ScheduleWakeup|CronCreate|CronUpdate",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cmux-idle-pill.sh loop-set" }
+        ]
+      },
+      {
+        "matcher": "CronDelete",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cmux-idle-pill.sh loop-clear" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cmux-idle-pill.sh loop-clear" }
+        ]
+      }
     ]
   }
 }
