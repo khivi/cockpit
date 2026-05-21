@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -41,9 +42,50 @@ WIP_ICON = "✏️"
 
 ACTIONABLE_KEYS = ("ci", "comments", "merge", "draft", "approved", "rebase", "wip")
 
+# Verbs that need cmux specifically — limux fork lacks the persistent-pill API.
+_PILL_VERBS = frozenset({"set-status", "clear-status"})
+
+
+def _resolve_binary(verb: str) -> str | None:
+    """Pick a workspace-CLI binary for `verb`. Pills require cmux; everything
+    else accepts cmux or its limux fork.
+    """
+    if shutil.which("cmux"):
+        return "cmux"
+    if verb in _PILL_VERBS:
+        return None
+    if shutil.which("limux"):
+        return "limux"
+    return None
+
+
+def require_workspace_binary() -> None:
+    """Exit cleanly with a one-liner if neither cmux nor limux is on PATH.
+    Use at the top of slash-command entry scripts so the user gets a useful
+    message instead of a Python traceback.
+    """
+    if shutil.which("cmux") or shutil.which("limux"):
+        return
+    print(
+        "cockpit: this command requires cmux or limux on PATH",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
 
 def cmux(*args: str, check: bool = True) -> str:
-    return run(["cmux", *args], check=check)
+    verb = args[0] if args else ""
+    binary = _resolve_binary(verb)
+    if binary is None:
+        if check:
+            hint = (
+                " (limux lacks pill support)"
+                if verb in _PILL_VERBS and shutil.which("limux")
+                else " or limux" if verb not in _PILL_VERBS else ""
+            )
+            raise FileNotFoundError(f"cockpit: '{verb}' requires cmux{hint} on PATH")
+        return ""
+    return run([binary, *args], check=check)
 
 
 def apply_wip_pill(ref: str, dirty_count: int) -> None:

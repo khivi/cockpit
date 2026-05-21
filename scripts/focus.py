@@ -8,11 +8,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from lib.cmux import cmux, resolve_workspace  # noqa: E402
+from lib.cmux import cmux, require_workspace_binary, resolve_workspace  # noqa: E402
 from lib.config import discover_repo  # noqa: E402
 
 
 def main() -> int:
+    require_workspace_binary()
+
     if len(sys.argv) != 2:
         print("usage: focus.py <pr|branch|slug>", file=sys.stderr)
         return 2
