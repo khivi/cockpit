@@ -8,6 +8,8 @@ Owns:
   - install_cship_statusline_if_configured(): declarative statusLine writer,
     gated on `use_cship`. Points Claude Code's statusLine at the `cship`
     binary directly; hard-errors when the flag is set but cship isn't on PATH.
+  - install_cship_default_config_if_missing(): seed ~/.config/cship.toml from
+    the bundled default on first daemon start; never clobbers a user copy.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ CONFIG_PATH = COCKPIT_HOME / "config.json"
 CACHE_DIR = COCKPIT_HOME / "cache"
 PID_FILE = COCKPIT_HOME / "cockpit.pid"
 CONFIG_EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.json"
+CSHIP_DEFAULT_TOML = Path(__file__).resolve().parent.parent / "defaults" / "cship.toml"
 
 
 def load_config() -> dict:
@@ -164,3 +167,31 @@ def install_cship_statusline_if_configured(footer_command: str) -> None:
     if current is None or current == footer_command:
         return
     _write_statusline(settings_path, footer_command)
+
+
+def _cship_user_config_path() -> Path:
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "cship.toml"
+
+
+def install_cship_default_config_if_missing() -> None:
+    """Seed ~/.config/cship.toml from the bundled default when `use_cship: true`.
+
+    Without a cship.toml on disk, cship renders an empty footer because its
+    `[custom.*]` blocks have nothing to drive them. The plugin ships a default
+    under `scripts/defaults/cship.toml` so opting in via `use_cship` produces a
+    populated statusline immediately. Honors `$XDG_CONFIG_HOME`. Never
+    overwrites an existing file — once the user has their own copy, edits stay
+    theirs across plugin upgrades.
+    """
+    if not load_config().get("use_cship"):
+        return
+    if not CSHIP_DEFAULT_TOML.exists():
+        return
+    dest = _cship_user_config_path()
+    if dest.exists():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(CSHIP_DEFAULT_TOML, dest)
+    print(f"seeded default cship config -> {dest}")

@@ -90,6 +90,8 @@ Cockpit delegates the Claude Code statusline to [`cship`](https://github.com/khi
 
 Opt in by setting `use_cship: true` in `~/.config/cockpit/config.json`. On next daemon start, cockpit verifies `cship` is on `PATH` and writes `~/.claude/settings.json` so Claude Code invokes the shim each render (any existing file is backed up). If `use_cship: true` but `cship` is missing, cockpit hard-errors on startup — install cship first, or leave the flag off. When unset (the default), cockpit never touches Claude Code's settings.
 
+On first daemon start with the flag on, cockpit also seeds `~/.config/cship.toml` from a bundled default (`scripts/defaults/cship.toml`) if you don't already have one. cship renders an empty footer without a config file, so this keeps opt-in producing visible output. An existing `cship.toml` is left untouched across plugin upgrades.
+
 To wire by hand:
 
 ```json

@@ -324,6 +324,64 @@ def test_use_cship_backs_up_existing_statusline(tmp_path, monkeypatch):
     assert new["statusLine"]["command"] == _FOOTER_CMD
 
 
+# ── default cship.toml seeding ──────────────────────────────────────────────
+
+
+def test_cship_default_noop_when_flag_unset(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": False}
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cockpit_config.install_cship_default_config_if_missing()
+    assert not (tmp_path / "xdg" / "cship.toml").exists()
+
+
+def test_cship_default_seeded_when_missing(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": True}
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cockpit_config.install_cship_default_config_if_missing()
+    dest = tmp_path / "xdg" / "cship.toml"
+    assert dest.exists()
+    assert dest.read_text() == cockpit_config.CSHIP_DEFAULT_TOML.read_text()
+
+
+def test_cship_default_preserves_existing(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": True}
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    dest = tmp_path / "xdg" / "cship.toml"
+    dest.parent.mkdir(parents=True)
+    custom = "# my custom cship config\n[time]\ndisabled = true\n"
+    dest.write_text(custom)
+    cockpit_config.install_cship_default_config_if_missing()
+    assert dest.read_text() == custom
+
+
+def test_cship_default_missing_package_file_is_soft_fail(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": True}
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(
+        cockpit_config, "CSHIP_DEFAULT_TOML", tmp_path / "does-not-exist.toml"
+    )
+    cockpit_config.install_cship_default_config_if_missing()
+    assert not (tmp_path / "xdg" / "cship.toml").exists()
+
+
+def test_cship_default_honors_xdg_config_home(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": True}
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "elsewhere"))
+    cockpit_config.install_cship_default_config_if_missing()
+    assert (tmp_path / "elsewhere" / "cship.toml").exists()
+    assert not (tmp_path / ".config" / "cship.toml").exists()
+
+
 # ── footer shim (delegates to cship) ────────────────────────────────────────
 
 
