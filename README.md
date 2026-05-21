@@ -114,6 +114,19 @@ Two non-obvious behaviors worth knowing:
 
 Outside cmux, the hook no-ops (early-exits on missing `CMUX_WORKSPACE_ID`).
 
+### Muting nudges per PR
+
+When a nudge is wrong (e.g. a Copilot thread you've intentionally left open), mute it from inside the Claude session with `/cockpit:nudge`:
+
+```text
+/cockpit:nudge mute --categories comments --until 7d --reason "copilot intentional"
+/cockpit:nudge unmute
+/cockpit:nudge status
+/cockpit:nudge list
+```
+
+The skill infers the current branch's PR via `gh pr view`. Mutes are persisted to `~/.config/cockpit/cache/nudges/<pr-number>.json` and survive both daemon and cmux restarts. The daemon auto-clears the mute once `until` passes. Categories: `comments`, `ci`, `conflicts` (omit `--categories` to mute all). Same surface is available as a regular CLI via `scripts/nudge.py` if you prefer the shell.
+
 ## Current defaults & how to change them
 
 | Knob | Default | Where to change |

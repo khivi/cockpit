@@ -95,16 +95,29 @@ def nudge_if_idle(
     interval_secs: int = 300,
     dry: bool = False,
     tag: str = "",
+    pr_number: int | None = None,
+    category: str | None = None,
 ) -> bool:
     """Send `message` + enter to workspace `ref` if it's idle and not parked.
 
-    Idempotent: skips if last nudge for this ref was within `interval_secs`,
-    or if there's no `idle=` pill, or if `parked=` is set. Updates `nudge_state`
-    in place. Returns True if a nudge was sent.
+    Two persistence regimes:
+      - When `pr_number` is set, gate on `lib.nudges` — file-backed prefs
+        survive daemon/cmux restarts and let the user mute via `cockpit nudge`.
+      - Otherwise (orphan worktree, no PR), gate on the in-memory `nudge_state`
+        dict only.
+
+    Always also gates on cmux pills: skips if `idle=` is absent or `parked=`
+    is present, so a transient runtime override still works.
     """
-    now = time.monotonic()
-    if now - nudge_state.get(ref, 0.0) < interval_secs:
-        return False
+    if pr_number is not None and category is not None:
+        from . import nudges
+
+        if not nudges.should_nudge(pr_number, category, interval_secs=interval_secs):
+            return False
+    else:
+        now = time.monotonic()
+        if now - nudge_state.get(ref, 0.0) < interval_secs:
+            return False
     status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
     if not any(line.lstrip().startswith("idle=") for line in status_lines):
         return False
@@ -113,7 +126,12 @@ def nudge_if_idle(
     if dry:
         print(f"  [dry] nudge {tag} → {ref}: {message[:70]}", flush=True)
         return False
-    nudge_state[ref] = now
+    if pr_number is not None and category is not None:
+        from . import nudges
+
+        nudges.record_nudge(pr_number, category)
+    else:
+        nudge_state[ref] = time.monotonic()
     cmux("send", "--workspace", ref, message, check=False)
     cmux("send-key", "--workspace", ref, "enter", check=False)
     return True
