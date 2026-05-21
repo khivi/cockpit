@@ -7,7 +7,6 @@ mapper.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 
@@ -257,7 +256,7 @@ def _stub_cship_on_path(monkeypatch, present: bool):
     )
 
 
-_FOOTER_CMD = "/path/to/footer.py"
+_STATUSLINE_CMD = "/path/to/claude.py"
 
 
 def test_use_cship_noop_when_flag_unset(tmp_path, monkeypatch):
@@ -265,7 +264,7 @@ def test_use_cship_noop_when_flag_unset(tmp_path, monkeypatch):
         tmp_path, monkeypatch, {"repos": [], "use_cship": False}
     )
     _stub_cship_on_path(monkeypatch, present=True)
-    cockpit_config.install_cship_statusline_if_configured(_FOOTER_CMD)
+    cockpit_config.install_cship_statusline_if_configured(_STATUSLINE_CMD)
     assert not (tmp_path / ".claude" / "settings.json").exists()
 
 
@@ -277,7 +276,7 @@ def test_use_cship_raises_when_cship_missing(tmp_path, monkeypatch):
     import pytest
 
     with pytest.raises(cockpit_config.CshipNotInstalledError):
-        cockpit_config.install_cship_statusline_if_configured(_FOOTER_CMD)
+        cockpit_config.install_cship_statusline_if_configured(_STATUSLINE_CMD)
     assert not (tmp_path / ".claude" / "settings.json").exists()
 
 
@@ -288,10 +287,10 @@ def test_use_cship_writes_footer_command(tmp_path, monkeypatch):
         tmp_path, monkeypatch, {"repos": [], "use_cship": True}
     )
     _stub_cship_on_path(monkeypatch, present=True)
-    cockpit_config.install_cship_statusline_if_configured(_FOOTER_CMD)
+    cockpit_config.install_cship_statusline_if_configured(_STATUSLINE_CMD)
 
     settings = _json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert settings["statusLine"] == {"type": "command", "command": _FOOTER_CMD}
+    assert settings["statusLine"] == {"type": "command", "command": _STATUSLINE_CMD}
 
 
 def test_use_cship_skips_if_already_set(tmp_path, monkeypatch):
@@ -305,10 +304,10 @@ def test_use_cship_skips_if_already_set(tmp_path, monkeypatch):
     claude_dir = tmp_path / ".claude"
     claude_dir.mkdir()
     (claude_dir / "settings.json").write_text(
-        _json.dumps({"statusLine": {"type": "command", "command": _FOOTER_CMD}})
+        _json.dumps({"statusLine": {"type": "command", "command": _STATUSLINE_CMD}})
     )
 
-    cockpit_config.install_cship_statusline_if_configured(_FOOTER_CMD)
+    cockpit_config.install_cship_statusline_if_configured(_STATUSLINE_CMD)
 
     backups = list(claude_dir.glob("settings.json.bak.*"))
     assert backups == []
@@ -328,13 +327,13 @@ def test_use_cship_backs_up_existing_statusline(tmp_path, monkeypatch):
         _json.dumps({"statusLine": {"type": "command", "command": "/old/statusline"}})
     )
 
-    cockpit_config.install_cship_statusline_if_configured(_FOOTER_CMD)
+    cockpit_config.install_cship_statusline_if_configured(_STATUSLINE_CMD)
 
     backups = list(claude_dir.glob("settings.json.bak.*"))
     assert len(backups) == 1
     assert "/old/statusline" in backups[0].read_text()
     new = _json.loads((claude_dir / "settings.json").read_text())
-    assert new["statusLine"]["command"] == _FOOTER_CMD
+    assert new["statusLine"]["command"] == _STATUSLINE_CMD
 
 
 # ── default cship.toml seeding ──────────────────────────────────────────────
@@ -417,7 +416,7 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
 
     settings = _json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert settings["statusLine"]["type"] == "command"
-    assert settings["statusLine"]["command"].endswith("/footer.py")
+    assert settings["statusLine"]["command"].endswith("/claude.py")
 
 
 def test_cli_once_does_not_touch_footer_files(tmp_path, monkeypatch):
@@ -649,28 +648,18 @@ def test_seed_replaces_dangling_cship_symlink(tmp_path, monkeypatch):
     assert dest.read_text() == cockpit_config.CSHIP_DEFAULT_TOML.read_text()
 
 
-# ── footer shim (delegates to cship) ────────────────────────────────────────
+# ── invoke_cship (cship-binary exec, no stdin reading) ─────────────────────
 
 
-def test_footer_shim_pipes_stdin_to_cship(monkeypatch, capsysbinary):
-    """render_footer execs cship with the stdin blob and forwards stdout."""
-    import io
+def test_invoke_cship_pipes_blob_and_forwards_stdout(monkeypatch, capsysbinary):
+    """invoke_cship pipes the given blob to cship and forwards its stdout."""
     import subprocess as _sp
 
-    import lib.footer as footer
+    import lib.cship as cship_mod
 
-    monkeypatch.setattr(footer.shutil, "which", lambda name: "/fake/cship")
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: "/fake/cship")
 
     captured = {}
-
-    class _FakeStdin:
-        buffer = io.BytesIO(b'{"hello":"world"}')
-
-        def isatty(self):
-            return False
-
-    monkeypatch.setattr("sys.stdin", _FakeStdin())
 
     def fake_run(cmd, input=None, capture_output=False, env=None):
         captured["cmd"] = cmd
@@ -678,51 +667,65 @@ def test_footer_shim_pipes_stdin_to_cship(monkeypatch, capsysbinary):
         captured["env"] = env
         return _sp.CompletedProcess(cmd, 0, stdout=b"styled-output\n", stderr=b"")
 
-    monkeypatch.setattr("lib.footer.subprocess.run", fake_run)
+    monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
 
-    assert footer.render_footer() == 0
+    assert cship_mod.invoke_cship(b'{"hello":"world"}', "sess1") == 0
     assert captured["cmd"] == ["cship"]
     assert captured["input"] == b'{"hello":"world"}'
+    assert captured["env"]["CSHIP_SESSION_ID"] == "sess1"
     out, _err = capsysbinary.readouterr()
     assert out == b"styled-output\n"
 
 
-def test_footer_shim_silent_when_cship_missing(monkeypatch, capsysbinary):
+def test_invoke_cship_silent_when_missing(monkeypatch, capsysbinary):
     """No cship on PATH → exit 0 with no output, so the statusline never breaks."""
-    import lib.footer as footer
+    import lib.cship as cship_mod
 
-    monkeypatch.setattr(footer.shutil, "which", lambda name: None)
+    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: None)
     called = {"ran": False}
 
     def fake_run(*_a, **_kw):
         called["ran"] = True
         raise AssertionError("subprocess.run must not run when cship is missing")
 
-    monkeypatch.setattr("lib.footer.subprocess.run", fake_run)
-    assert footer.render_footer() == 0
+    monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
+    assert cship_mod.invoke_cship(b'{"x":1}', None) == 0
     assert called["ran"] is False
     out, err = capsysbinary.readouterr()
     assert out == b""
     assert err == b""
 
 
-def test_footer_shim_propagates_cship_exit_code(monkeypatch, capsysbinary):
+def test_invoke_cship_propagates_exit_code(monkeypatch, capsysbinary):
     import subprocess as _sp
 
-    import lib.footer as footer
+    import lib.cship as cship_mod
 
-    monkeypatch.setattr(footer.shutil, "which", lambda name: "/fake/cship")
-
-    class _FakeStdin:
-        def isatty(self):
-            return True  # no stdin to forward
-
-    monkeypatch.setattr("sys.stdin", _FakeStdin())
+    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: "/fake/cship")
     monkeypatch.setattr(
-        "lib.footer.subprocess.run",
+        "lib.cship.subprocess.run",
         lambda *a, **kw: _sp.CompletedProcess(["cship"], 17, b"", b"boom\n"),
     )
 
-    assert footer.render_footer() == 17
+    assert cship_mod.invoke_cship(b"", None) == 17
     _out, err = capsysbinary.readouterr()
     assert err == b"boom\n"
+
+
+def test_invoke_cship_no_session_id_omits_env_export(monkeypatch):
+    """When sid is None, CSHIP_SESSION_ID must not be exported into cship's env."""
+    import subprocess as _sp
+
+    import lib.cship as cship_mod
+
+    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: "/fake/cship")
+    monkeypatch.delenv("CSHIP_SESSION_ID", raising=False)
+    captured = {}
+
+    def fake_run(cmd, input=None, capture_output=False, env=None):
+        captured["env"] = env
+        return _sp.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
+    cship_mod.invoke_cship(b"{}", None)
+    assert "CSHIP_SESSION_ID" not in captured["env"]

@@ -3,15 +3,21 @@
 Replaces the retired `~/bin/cship/cship-*.sh` shell helpers with a single
 in-repo Python module. The 8 `[custom.*]` blocks in
 `scripts/defaults/starship.toml` invoke `scripts/cship.py <field>` which
-calls `print_<field>()` here; the wrapper subcommand and the daemon tick
-populate the cache files those printers read.
+calls `print_<field>()` here.
 
-Two roles:
-- writers: stash_from_stdin (statusLine entry-point) + refresh_pr_data /
-  refresh_pr_checks (60s background) + write_branch_pr_cache (daemon tick).
-- readers: print_context / print_session_time / print_rate_limit /
-  print_linear / print_pr_state / print_pr_num / print_pr_checks /
-  print_pr_title — each returns a string and never raises.
+Three writer paths populate the cache files those printers read:
+- `lib.claude.stash_from_stdin`  : session-scoped (context, rate-limit, transcript)
+- `refresh_pr_data` / `refresh_pr_checks` (60s stale-triggered background)
+- `write_branch_pr_cache`        : daemon tick (every poll_interval_seconds)
+
+Readers:
+- `print_context` / `print_session_time` / `print_rate_limit` /
+  `print_linear` / `print_pr_state` / `print_pr_num` / `print_pr_checks` /
+  `print_pr_title` — each returns a string and never raises.
+
+`invoke_cship` is the binary-exec helper used by the statusLine entry
+point (scripts/claude.py) once `lib.claude.stash_from_stdin` has captured
+the session caches.
 
 Cache files live under `$TMPDIR/cship-cache/`, same scheme the historical
 shell scripts used (file-mtime-based 60s TTL, atomic .tmp→final rename).
@@ -23,6 +29,7 @@ import calendar
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -92,74 +99,39 @@ def _fresh(path: Path, ttl_secs: int = PR_CACHE_TTL_SECS) -> bool:
         return False
 
 
-# ── wrapper / cache writers ────────────────────────────────────────────────
+# ── cship binary invocation ────────────────────────────────────────────────
 
 
-def stash_from_stdin(blob: bytes) -> tuple[bytes, str | None]:
-    """Parse Claude Code's statusLine stdin JSON, populate caches, return
-    (mutated_blob, session_id).
+CSHIP_BIN = "cship"
 
-    Mutations:
-    - strip trailing " (...)" suffix from `model.display_name` (e.g.
-      "Opus 4.7 (1M context)" → "Opus 4.7") to match what cship's display
-      module expects.
 
-    Caches written (keyed by session_id so concurrent sessions don't collide):
-    - `context[-$sid]`        : "<pct> <limit>"
-    - `transcript-path[-$sid]`: transcript_path string
-    - `rate-limit-5h[-$sid]`  : "<pct> <resets_at>"
+def invoke_cship(blob: bytes, sid: str | None) -> int:
+    """Exec the cship binary with `blob` piped to stdin; forward output.
 
-    Returns the mutated JSON bytes and the resolved session_id (if any) so
-    the caller can export CSHIP_SESSION_ID for the downstream cship process.
-    Never raises: malformed input just yields (blob, None) with no caches.
+    Used by the statusLine entry point (`scripts/claude.py`) after the
+    Claude Code-side caches have been stashed via `lib.claude.stash_from_stdin`.
+
+    If cship isn't on PATH, returns 0 silently — the statusline must never
+    crash Claude Code. The loud opt-in check is in
+    `lib.config.install_cship_statusline_if_configured`.
+
+    Exports `CSHIP_SESSION_ID=<sid>` so the field-printer subprocesses
+    starship spawns under cship find the session-scoped cache entries.
     """
-    if not blob:
-        return blob, None
-    try:
-        data = json.loads(blob)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return blob, None
-    if not isinstance(data, dict):
-        return blob, None
+    if shutil.which(CSHIP_BIN) is None:
+        return 0
+    env = os.environ.copy()
+    if sid:
+        env["CSHIP_SESSION_ID"] = sid
+    res = subprocess.run([CSHIP_BIN], input=blob, capture_output=True, env=env)
+    if res.stdout:
+        sys.stdout.buffer.write(res.stdout)
+    if res.stderr:
+        sys.stderr.buffer.write(res.stderr)
+    return res.returncode
 
-    sid = data.get("session_id") if isinstance(data.get("session_id"), str) else None
 
-    mutated = False
-    model = data.get("model")
-    if isinstance(model, dict):
-        name = model.get("display_name")
-        if isinstance(name, str):
-            stripped = re.sub(r"\s*\([^)]*\)\s*$", "", name)
-            if stripped != name:
-                model["display_name"] = stripped
-                mutated = True
-
-    transcript = data.get("transcript_path")
-    if isinstance(transcript, str) and transcript:
-        _atomic_write(_session_cache("transcript-path", sid), transcript)
-
-    ctx = data.get("context_window")
-    if isinstance(ctx, dict):
-        pct = ctx.get("used_percentage")
-        limit = ctx.get("context_window_size")
-        if isinstance(pct, (int, float)) and isinstance(limit, int) and limit > 0:
-            _atomic_write(_session_cache("context", sid), f"{int(pct)} {int(limit)}")
-
-    rate_limits = data.get("rate_limits")
-    if isinstance(rate_limits, dict):
-        five = rate_limits.get("five_hour")
-        if isinstance(five, dict):
-            pct = five.get("used_percentage")
-            resets = five.get("resets_at")
-            if isinstance(pct, (int, float)) and resets not in (None, ""):
-                _atomic_write(
-                    _session_cache("rate-limit-5h", sid),
-                    f"{int(round(pct))} {resets}",
-                )
-
-    if not mutated:
-        return blob, sid
-    return json.dumps(data).encode("utf-8"), sid
+# ── PR-side cache writers ──────────────────────────────────────────────────
 
 
 def _gh_pr_view() -> dict | None:

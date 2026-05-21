@@ -130,8 +130,8 @@ def _read_current_statusline(settings_path: Path) -> str | None:
         return None
 
 
-def _write_statusline(settings_path: Path, footer_command: str) -> None:
-    """Write `footer_command` into Claude Code's statusLine, backing up first."""
+def _write_statusline(settings_path: Path, statusline_command: str) -> None:
+    """Write `statusline_command` into Claude Code's statusLine, backing up first."""
     data: dict = {}
     if settings_path.exists():
         backup = settings_path.with_name(
@@ -143,20 +143,20 @@ def _write_statusline(settings_path: Path, footer_command: str) -> None:
         except json.JSONDecodeError:
             data = {}
     settings_path.parent.mkdir(parents=True, exist_ok=True)
-    data["statusLine"] = {"type": "command", "command": footer_command}
+    data["statusLine"] = {"type": "command", "command": statusline_command}
     settings_path.write_text(json.dumps(data, indent=2) + "\n")
-    print(f"wrote Claude statusLine -> {footer_command}")
+    print(f"wrote Claude statusLine -> {statusline_command}")
 
 
 class CshipNotInstalledError(RuntimeError):
     """Raised when `use_cship: true` but the cship binary is not on PATH."""
 
 
-def install_cship_statusline_if_configured(footer_command: str) -> None:
-    """Point Claude Code's statusLine at cockpit's footer shim, gated on `use_cship`.
+def install_cship_statusline_if_configured(statusline_command: str) -> None:
+    """Point Claude Code's statusLine at cockpit's statusline shim, gated on `use_cship`.
 
-    `footer_command` is the absolute invocation cockpit uses for its
-    `scripts/footer.py` shim (which itself delegates to `cship`). When
+    `statusline_command` is the absolute invocation cockpit uses for its
+    `scripts/claude.py` shim (which itself delegates to `cship`). When
     `use_cship: true` in config.json, cockpit verifies `cship` is on PATH and
     writes `~/.claude/settings.json` so Claude Code invokes the shim each
     render. Backs up any existing settings.json before overwriting. Raises
@@ -181,9 +181,9 @@ def install_cship_statusline_if_configured(footer_command: str) -> None:
         )
     settings_path = Path.home() / ".claude" / "settings.json"
     current = _read_current_statusline(settings_path)
-    if current is None or current == footer_command:
+    if current is None or current == statusline_command:
         return
-    _write_statusline(settings_path, footer_command)
+    _write_statusline(settings_path, statusline_command)
 
 
 def _xdg_config_path(filename: str) -> Path:

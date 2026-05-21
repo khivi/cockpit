@@ -16,7 +16,7 @@ Modes:
   --once          run exactly one cycle and exit
 
 Sibling entry points (each script does one job):
-  scripts/footer.py   statusLine shim — pipes Claude Code's stdin to cship
+  scripts/claude.py   statusLine shim — pipes Claude Code's stdin to cship
   scripts/list.py     `/cockpit:list` table
   scripts/sync.py     USR1-kick the daemon, else fall back to `cockpit.py --once`
   scripts/spawn.py    `/cockpit:new` — create worktree + workspace
@@ -638,8 +638,8 @@ def _watch(state: dict, watch_secs: int) -> None:
     )
 
 
-def _footer_command() -> str:
-    return f"{sys.executable} {Path(__file__).resolve().parent / 'footer.py'}"
+def _statusline_command() -> str:
+    return f"{sys.executable} {Path(__file__).resolve().parent / 'claude.py'}"
 
 
 def main(argv=None):
@@ -670,7 +670,7 @@ def main(argv=None):
     if args.footer:
         install_cship_default_config()
         install_starship_default_config()
-        install_cship_statusline_if_configured(_footer_command())
+        install_cship_statusline_if_configured(_statusline_command())
         return 0
 
     startup_cfg = load_config()

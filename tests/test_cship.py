@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
+import lib.claude as claude_mod  # noqa: E402
 import lib.cship as cship  # noqa: E402
 
 
@@ -47,7 +48,7 @@ def test_stash_writes_context_rate_transcript(cache_dir):
             },
         }
     ).encode()
-    mutated, sid = cship.stash_from_stdin(blob)
+    mutated, sid = claude_mod.stash_from_stdin(blob)
     assert sid == "abc"
     out = json.loads(mutated)
     assert out["model"]["display_name"] == "Opus 4.7"
@@ -63,28 +64,28 @@ def test_stash_no_session_id_uses_unsuffixed_files(cache_dir):
             "transcript_path": "/tmp/t.jsonl",
         }
     ).encode()
-    mutated, sid = cship.stash_from_stdin(blob)
+    mutated, sid = claude_mod.stash_from_stdin(blob)
     assert sid is None
     assert (cache_dir / "context").read_text() == "50 200000"
     assert (cache_dir / "transcript-path").read_text() == "/tmp/t.jsonl"
 
 
 def test_stash_handles_malformed_json(cache_dir):
-    mutated, sid = cship.stash_from_stdin(b"not json")
+    mutated, sid = claude_mod.stash_from_stdin(b"not json")
     assert mutated == b"not json"
     assert sid is None
     assert not any(cache_dir.iterdir())
 
 
 def test_stash_handles_empty_blob(cache_dir):
-    mutated, sid = cship.stash_from_stdin(b"")
+    mutated, sid = claude_mod.stash_from_stdin(b"")
     assert mutated == b""
     assert sid is None
 
 
 def test_stash_strips_only_trailing_paren_suffix(cache_dir):
     blob = json.dumps({"model": {"display_name": "Claude 4.7 (something)"}}).encode()
-    mutated, _ = cship.stash_from_stdin(blob)
+    mutated, _ = claude_mod.stash_from_stdin(blob)
     assert json.loads(mutated)["model"]["display_name"] == "Claude 4.7"
 
 
@@ -327,7 +328,7 @@ def test_wrapper_to_context_roundtrip(cache_dir, monkeypatch):
             },
         }
     ).encode()
-    cship.stash_from_stdin(blob)
+    claude_mod.stash_from_stdin(blob)
     monkeypatch.setenv("CSHIP_SESSION_ID", "sess99")
     assert cship.print_context() == "4%/1M"
     assert cship.print_rate_limit() == "⌛ 12%/5h"
