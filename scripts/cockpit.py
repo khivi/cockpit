@@ -69,7 +69,7 @@ from lib.colors import (  # noqa: E402
 from lib.config import (  # noqa: E402
     ensure_state_dirs,
     load_config,
-    install_cship_default_config_if_missing,
+    install_cship_default_config,
     install_cship_statusline_if_configured,
 )
 from lib.daemon import run_watcher  # noqa: E402
@@ -625,6 +625,11 @@ def main(argv=None):
         help="Run as a daemon. With no arg, use config.poll_interval_seconds.",
     )
     g.add_argument("--once", action="store_true")
+    g.add_argument(
+        "--footer",
+        action="store_true",
+        help="Re-run footer setup only (cship.toml + statusLine), then exit.",
+    )
     p.add_argument("--keep-stale", action="store_true")
     p.add_argument("--no-spawn", action="store_true")
     p.add_argument("--dry-run", action="store_true")
@@ -632,8 +637,11 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     ensure_state_dirs()
-    install_cship_default_config_if_missing()
+    install_cship_default_config()
     install_cship_statusline_if_configured(_footer_command())
+
+    if args.footer:
+        return 0
 
     if args.watch is not None:
         cfg = load_config()
