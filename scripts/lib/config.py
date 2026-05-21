@@ -8,8 +8,10 @@ Owns:
   - install_cship_statusline_if_configured(): declarative statusLine writer,
     gated on `use_cship`. Points Claude Code's statusLine at the `cship`
     binary directly; hard-errors when the flag is set but cship isn't on PATH.
-  - install_cship_default_config_if_missing(): seed ~/.config/cship.toml from
-    the bundled default on first daemon start; never clobbers a user copy.
+  - install_cship_default_config(): rewrite ~/.config/cship.toml from the
+    bundled default on every daemon start. Cockpit owns this file — local
+    edits are clobbered. Customize by editing scripts/defaults/cship.toml in
+    the plugin repo and shipping an update.
 """
 
 from __future__ import annotations
@@ -175,23 +177,20 @@ def _cship_user_config_path() -> Path:
     return base / "cship.toml"
 
 
-def install_cship_default_config_if_missing() -> None:
-    """Seed ~/.config/cship.toml from the bundled default when `use_cship: true`.
+def install_cship_default_config() -> None:
+    """Rewrite ~/.config/cship.toml from the bundled default when `use_cship: true`.
 
-    Without a cship.toml on disk, cship renders an empty footer because its
-    `[custom.*]` blocks have nothing to drive them. The plugin ships a default
-    under `scripts/defaults/cship.toml` so opting in via `use_cship` produces a
-    populated statusline immediately. Honors `$XDG_CONFIG_HOME`. Never
-    overwrites an existing file — once the user has their own copy, edits stay
-    theirs across plugin upgrades.
+    Cockpit owns this file: every daemon start (and every `--footer` run) copies
+    `scripts/defaults/cship.toml` over the target. Local edits are clobbered —
+    customize by editing the bundled default in the plugin repo and shipping a
+    plugin update. Honors `$XDG_CONFIG_HOME`. Soft-fails if the bundled file is
+    missing.
     """
     if not load_config().get("use_cship"):
         return
     if not CSHIP_DEFAULT_TOML.exists():
         return
     dest = _cship_user_config_path()
-    if dest.exists():
-        return
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(CSHIP_DEFAULT_TOML, dest)
-    print(f"seeded default cship config -> {dest}")
+    print(f"installed default cship config -> {dest}")
