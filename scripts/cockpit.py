@@ -637,10 +637,10 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     ensure_state_dirs()
-    install_cship_default_config()
-    install_cship_statusline_if_configured(_footer_command())
 
     if args.footer:
+        install_cship_default_config()
+        install_cship_statusline_if_configured(_footer_command())
         return 0
 
     if args.watch is not None:

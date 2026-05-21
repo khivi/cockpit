@@ -1,7 +1,8 @@
 # Default cship statusline config bundled with the cockpit plugin.
-# Seeded to ~/.config/cship.toml on first daemon start when `use_cship: true`,
-# only if the user has no existing cship.toml. Edit ~/.config/cship.toml — not
-# this file — to customize; the plugin will never overwrite a user copy.
+# Copied to ~/.config/cship.toml only when you run `cockpit --footer` (the
+# explicit footer-setup command). --once / --watch reconcile cycles never
+# touch this file, so any edits you make to ~/.config/cship.toml stick around
+# until you re-run --footer.
 
 [directory]
 truncate_to_repo  = false

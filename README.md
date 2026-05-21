@@ -88,9 +88,9 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 
 Cockpit delegates the Claude Code statusline to [`cship`](https://github.com/khivi/cship). `scripts/footer.py` is a thin shim that pipes Claude Code's stdin JSON through to `cship` and forwards its output — keeping it in the path lets cockpit shape input or fail soft when cship isn't installed.
 
-Opt in by setting `use_cship: true` in `~/.config/cockpit/config.json`. On next daemon start, cockpit verifies `cship` is on `PATH` and writes `~/.claude/settings.json` so Claude Code invokes the shim each render (any existing file is backed up). If `use_cship: true` but `cship` is missing, cockpit hard-errors on startup — install cship first, or leave the flag off. When unset (the default), cockpit never touches Claude Code's settings.
+Opt in by setting `use_cship: true` in `~/.config/cockpit/config.json`, then run `cockpit.py --footer` once to wire everything up. That command (and only that command) verifies `cship` is on `PATH`, writes `~/.claude/settings.json` so Claude Code invokes the shim each render (any existing file is backed up), and copies `scripts/defaults/cship.toml` to `~/.config/cship.toml`. If `use_cship: true` but `cship` is missing, `--footer` hard-errors — install cship first, or leave the flag off.
 
-On first daemon start with the flag on, cockpit also seeds `~/.config/cship.toml` from a bundled default (`scripts/defaults/cship.toml`) if you don't already have one. cship renders an empty footer without a config file, so this keeps opt-in producing visible output. An existing `cship.toml` is left untouched across plugin upgrades.
+`--once` and `--watch` reconcile cycles never touch any of these files. So local edits to `~/.config/cship.toml` stick around indefinitely; re-run `cockpit.py --footer` to deliberately clobber them back to the bundled default. When `use_cship` is unset (the default), `--footer` is a no-op on the statusLine.
 
 To wire by hand:
 
