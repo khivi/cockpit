@@ -430,50 +430,67 @@ def cycle_repo(
             if not dry:
                 cmux_close_workspace_best_effort(extra)
 
+    tracked_kept = [
+        (ref, pr, wt) for ref, (pr, wt) in tracked.items() if ref in keep_refs
+    ]
+    mine_items = sorted(
+        (t for t in tracked_kept if t[1].author == self_user),
+        key=lambda t: -t[1].number,
+    )
+    others_items = sorted(
+        (t for t in tracked_kept if t[1].author != self_user),
+        key=lambda t: -t[1].number,
+    )
+
     printed_refresh = False
-    for ref, (pr, wt) in tracked.items():
-        if ref not in keep_refs:
-            continue
-        label = names.get(ref, ref)
-        desired = frozenset(status_pills(pr, wt))
-        changed = pill_state.get(ref) != desired
-        if changed and not dry:
-            apply_pills(ref, pr, wt)
-        if changed or verbose:
-            op = " rebasing" if wt.rebasing else (" merging" if wt.merging else "")
-            tag = pr.display_issue + op
-            print(
-                f"  {verb('refreshed')} {blue(f'#{pr.number}')} → {cyan(label)}  "
-                f"[{issue_color(pr.display_issue)(tag)}]",
-                flush=True,
-            )
-            printed_refresh = True
-        if changed and not dry:
-            pill_state[ref] = desired
-        if pr.display_issue in ACTIONABLE_ISSUES:
-            if pr.display_issue == "comments":
-                desc = f"{pr.unaddressed} unresolved review thread(s) — reply or push fixes"
-            elif pr.display_issue == "ci":
-                desc = f"CI is failing ({pr.ci}) — run `gh pr checks {pr.number}` and address it"
-            else:
-                desc = "merge conflicts vs base — rebase and force-push"
-            maybe_nudge(
-                ref,
-                f"PR #{pr.number}: {desc}.",
-                nudge_state,
-                dry,
-                label,
-                pr_number=pr.number,
-                category=pr.display_issue,
-            )
+    for group_label, group in (("mine", mine_items), ("coworkers", others_items)):
+        group_header_printed = False
+        for ref, pr, wt in group:
+            label = names.get(ref, ref)
+            desired = frozenset(status_pills(pr, wt, self_user))
+            changed = pill_state.get(ref) != desired
+            if changed and not dry:
+                apply_pills(ref, pr, wt, self_user)
+            if changed or verbose:
+                if not group_header_printed:
+                    print(f"  {dim(group_label)}", flush=True)
+                    group_header_printed = True
+                op = " rebasing" if wt.rebasing else (" merging" if wt.merging else "")
+                tag = pr.display_issue + op
+                print(
+                    f"    {verb('refreshed')} {blue(f'#{pr.number}')} → {cyan(label)}  "
+                    f"[{issue_color(pr.display_issue)(tag)}]",
+                    flush=True,
+                )
+                printed_refresh = True
+            if changed and not dry:
+                pill_state[ref] = desired
+            if pr.display_issue in ACTIONABLE_ISSUES:
+                if pr.display_issue == "comments":
+                    desc = f"{pr.unaddressed} unresolved review thread(s) — reply or push fixes"
+                elif pr.display_issue == "ci":
+                    desc = f"CI is failing ({pr.ci}) — run `gh pr checks {pr.number}` and address it"
+                else:
+                    desc = "merge conflicts vs base — rebase and force-push"
+                maybe_nudge(
+                    ref,
+                    f"PR #{pr.number}: {desc}.",
+                    nudge_state,
+                    dry,
+                    label,
+                    pr_number=pr.number,
+                    category=pr.display_issue,
+                )
 
     if tracked and not printed_refresh:
-        labels = sorted(names.get(ref, ref) for ref in tracked if ref in keep_refs)
-        if labels:
-            print(
-                f"  {verb('tracked')} {', '.join(cyan(lbl) for lbl in labels)}",
-                flush=True,
-            )
+        for group_label, group in (("mine", mine_items), ("coworkers", others_items)):
+            labels = sorted(names.get(ref, ref) for ref, _, _ in group)
+            if labels:
+                print(
+                    f"  {verb('tracked')} {dim(group_label)}: "
+                    f"{', '.join(cyan(lbl) for lbl in labels)}",
+                    flush=True,
+                )
 
     wt_by_name = {wt.short: wt for wt in wts}
     wt_by_path = {wt.path.resolve(): wt for wt in wts}
@@ -569,7 +586,7 @@ def cycle_repo(
         tracked_pr_numbers = {pr.number for pr, _ in tracked.values()}
         for pr, wt in matched:
             if pr.number not in tracked_pr_numbers:
-                spawn_pr_workspace(pr, wt, dry=dry)
+                spawn_pr_workspace(pr, wt, self_user=self_user, dry=dry)
         covered_paths = {p.resolve() for p in cwds.values()}
         for wt in wts:
             if not wt.branch.startswith(my_prefix) or wt.branch in pr_branches:

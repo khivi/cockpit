@@ -47,6 +47,9 @@ STALE_ICON = "↻"
 
 ACTIONABLE_KEYS = ("ci", "comments", "merge", "draft", "approved", "rebase", "wip")
 
+OWNER_KEY = "owner"
+OWNER_ICON = "👥"
+
 # Verbs that need cmux specifically — limux fork lacks the persistent-pill API.
 _PILL_VERBS = frozenset({"set-status", "clear-status"})
 _VALID_TOOLS = frozenset({"cmux", "limux", "none", "auto"})
@@ -336,9 +339,18 @@ _CMUX_RENDERERS = {
 }
 
 
-def status_pills(pr: PR, wt: Worktree | None = None) -> list[tuple[str, str, str]]:
-    """(key, value, color) tuples for cmux set-status. Maps decide_pills output."""
+def status_pills(
+    pr: PR, wt: Worktree | None = None, self_user: str | None = None
+) -> list[tuple[str, str, str]]:
+    """(key, value, color) tuples for cmux set-status. Maps decide_pills output.
+
+    When `self_user` is given and `pr.author` differs, prepends an `owner` pill
+    so coworker-owned PRs are visible in the sidebar. Prepended so reversed
+    set-order in `apply_pills` places it at the bottom of the visual stack.
+    """
     out: list[tuple[str, str, str]] = []
+    if self_user and pr.author and pr.author != self_user:
+        out.append((OWNER_KEY, f"{OWNER_ICON} @{pr.author}", BLUE))
     for p in decide_pills(pr, wt):
         renderer = _CMUX_RENDERERS.get(p["kind"])
         if renderer is None:
@@ -350,7 +362,10 @@ def status_pills(pr: PR, wt: Worktree | None = None) -> list[tuple[str, str, str
 
 
 def apply_pills(
-    ref: str, pr: PR, wt: Worktree | None = None
+    ref: str,
+    pr: PR,
+    wt: Worktree | None = None,
+    self_user: str | None = None,
 ) -> frozenset[tuple[str, str, str]]:
     """Idempotently sync cmux pills; return the desired snapshot for diffing.
 
@@ -360,9 +375,9 @@ def apply_pills(
     re-set in reverse display order. Also sets a default `idle=` pill if the
     workspace has no claude_code or loop pills (indicates no active agent).
     """
-    desired = tuple(status_pills(pr, wt))
+    desired = tuple(status_pills(pr, wt, self_user))
     # "cockpit_managed" is a one-release back-compat strip — remove next release.
-    keys_to_clear = [*ACTIONABLE_KEYS, COCKPIT_KEY, "cockpit_managed"]
+    keys_to_clear = [*ACTIONABLE_KEYS, COCKPIT_KEY, OWNER_KEY, "cockpit_managed"]
     with ThreadPoolExecutor(max_workers=len(keys_to_clear)) as ex:
         for f in [
             ex.submit(cmux, "clear-status", k, "--workspace", ref, check=False)
@@ -502,11 +517,13 @@ def spawn_workspace(name: str, cwd: Path, command: str) -> str | None:
     return wait_for_new_workspace_ref(before)
 
 
-def spawn_pr_workspace(pr: PR, wt: Worktree, *, dry: bool = False) -> str | None:
+def spawn_pr_workspace(
+    pr: PR, wt: Worktree, *, self_user: str | None = None, dry: bool = False
+) -> str | None:
     """Spawn the tracked cmux workspace for a PR; apply pills, log to stdout."""
     if dry:
         print(f"  [dry] spawn {wt.short}  #{pr.number}  cwd={wt.path}", flush=True)
-        for key, value, _ in status_pills(pr, wt):
+        for key, value, _ in status_pills(pr, wt, self_user):
             print(f"  [dry]   pill {key}={value}", flush=True)
         return None
     ref = spawn_workspace(wt.short, wt.path, claude_command(build_pr_prompt(pr)))
@@ -517,7 +534,7 @@ def spawn_pr_workspace(pr: PR, wt: Worktree, *, dry: bool = False) -> str | None
             flush=True,
         )
         return None
-    apply_pills(ref, pr, wt)
+    apply_pills(ref, pr, wt, self_user)
     print(
         f"  {verb('spawned')} {bold(wt.short)} ({ref})  #{pr.number}"
         f"  [{issue_color(pr.display_issue)(pr.display_issue)}]",
