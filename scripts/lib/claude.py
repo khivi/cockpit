@@ -19,8 +19,10 @@ No cship binary invocation lives here. The statusline entry-point
 
 from __future__ import annotations
 
+import calendar
 import json
 import re
+import time
 
 from .cache import atomic_write, session_cache
 
@@ -81,7 +83,27 @@ def stash_from_stdin(blob: bytes) -> tuple[bytes, str | None]:
                     session_cache("rate-limit-5h", sid),
                     f"{int(round(pct))} {resets}",
                 )
+            # cship 1.7.x parses Claude Code's JSON itself and rejects the
+            # WHOLE render (blank stdout, error to stderr) if any field
+            # type-mismatches its expectations — e.g. `resets_at` as an
+            # ISO string when it expects u64. Coerce ISO → epoch in the
+            # outgoing blob so cship can't blackout the footer.
+            if isinstance(resets, str):
+                epoch = _iso_to_epoch(resets)
+                if epoch is not None:
+                    five["resets_at"] = epoch
+                    mutated = True
 
     if not mutated:
         return blob, sid
     return json.dumps(data).encode("utf-8"), sid
+
+
+def _iso_to_epoch(ts: str) -> int | None:
+    """Parse `2026-05-22T15:00:00Z` (with optional fractional seconds) to
+    a UTC epoch int. Returns None on any parse failure."""
+    clean = ts.split(".", 1)[0].rstrip("Z")
+    try:
+        return calendar.timegm(time.strptime(clean, "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, TypeError):
+        return None

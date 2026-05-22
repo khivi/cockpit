@@ -92,6 +92,60 @@ def test_stash_strips_only_trailing_paren_suffix(cache_dir):
     assert json.loads(mutated)["model"]["display_name"] == "Claude 4.7"
 
 
+def test_stash_coerces_iso_resets_at_to_epoch(cache_dir):
+    """cship 1.7.x rejects the entire JSON if `resets_at` is a string;
+    when it does, the footer renders empty. Coerce ISO → epoch in the
+    outgoing blob so cship's u64 parser is satisfied."""
+    blob = json.dumps(
+        {
+            "session_id": "x",
+            "rate_limits": {
+                "five_hour": {
+                    "used_percentage": 4.6,
+                    "resets_at": "2026-05-22T15:00:00Z",
+                }
+            },
+        }
+    ).encode()
+    mutated, _ = claude_mod.stash_from_stdin(blob)
+    out = json.loads(mutated)
+    epoch = out["rate_limits"]["five_hour"]["resets_at"]
+    assert isinstance(epoch, int), f"resets_at not coerced: {epoch!r}"
+    assert epoch == 1779462000
+
+
+def test_stash_leaves_numeric_resets_at_alone(cache_dir):
+    """Numeric `resets_at` is already what cship wants — don't touch it."""
+    blob = json.dumps(
+        {
+            "session_id": "x",
+            "rate_limits": {
+                "five_hour": {"used_percentage": 1, "resets_at": 1779462000},
+            },
+        }
+    ).encode()
+    mutated, _ = claude_mod.stash_from_stdin(blob)
+    out = json.loads(mutated)
+    assert out["rate_limits"]["five_hour"]["resets_at"] == 1779462000
+
+
+def test_stash_leaves_unparseable_resets_at_alone(cache_dir):
+    """If the string can't be parsed as ISO, leave it. cship will still
+    reject this case — but that's an upstream schema bug, not ours to
+    silently mask."""
+    blob = json.dumps(
+        {
+            "session_id": "x",
+            "rate_limits": {
+                "five_hour": {"used_percentage": 1, "resets_at": "garbage"},
+            },
+        }
+    ).encode()
+    mutated, _ = claude_mod.stash_from_stdin(blob)
+    out = json.loads(mutated)
+    assert out["rate_limits"]["five_hour"]["resets_at"] == "garbage"
+
+
 # ── field printer: context (lib.starship) ──────────────────────────────────
 
 
@@ -109,6 +163,24 @@ def test_print_context_session_scoped(cache_dir, monkeypatch):
     (cache_dir / "context-S1").write_text("7 1000000")
     monkeypatch.setenv("CSHIP_SESSION_ID", "S1")
     assert starship.print_context() == "7%/1M"
+
+
+def test_print_context_fresh_session_falls_back_to_latest(cache_dir, monkeypatch):
+    """Fresh-session regression: Claude Code's first statusLine ping for
+    a new session has `session_id` but no `context_window`, so
+    `context-<sid>` is never written. The pill must still render by
+    falling back to the most recent existing `context-*` cache."""
+    (cache_dir / "context-OLD").write_text("33 200000")
+    time.sleep(0.01)
+    (cache_dir / "context-NEWER").write_text("55 1000000")
+    monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH-SID-NO-CACHE-YET")
+    assert starship.print_context() == "55%/1M"
+
+
+def test_print_context_fresh_session_no_history_empty(cache_dir, monkeypatch):
+    """No prior session caches exist → fall back returns empty cleanly."""
+    monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH-SID")
+    assert starship.print_context() == ""
 
 
 def test_print_context_missing_cache_empty(cache_dir):
@@ -135,6 +207,16 @@ def test_print_rate_limit(cache_dir):
 
 def test_print_rate_limit_missing_cache_empty(cache_dir):
     assert starship.print_rate_limit() == ""
+
+
+def test_print_rate_limit_fresh_session_falls_back_to_latest(cache_dir, monkeypatch):
+    """Fresh-session regression: same as context — rate_limits absent in
+    Claude Code's first ping, fall back to most recent cache."""
+    (cache_dir / "rate-limit-5h-OLD").write_text("3 2026-01-01T00:00:00Z")
+    time.sleep(0.01)
+    (cache_dir / "rate-limit-5h-NEWER").write_text("17 2026-05-21T15:00:00Z")
+    monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH-SID-NO-CACHE-YET")
+    assert starship.print_rate_limit() == "⌛ 17%/5h"
 
 
 # ── field printer: linear ──────────────────────────────────────────────────

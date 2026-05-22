@@ -12,6 +12,10 @@
 # STARSHIP_CONFIG=~/.config/starship.toml whenever $starship_prompt expands.
 # See scripts/defaults/starship.toml for the modules rendered downstream
 # (clock, context, session-time, rate-limit, Linear, PR pills).
+#
+# No `$cship.workspace.current_dir` — Claude Code's header already shows the
+# cwd (abbreviated with `~`); cship's built-in renders the absolute path and
+# duplicates it.
 
 [cship]
-lines = ["$cship.workspace.current_dir$starship_prompt"]
+lines = ["$starship_prompt"]

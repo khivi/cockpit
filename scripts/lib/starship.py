@@ -21,6 +21,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import cache as _cache
 from .cache import (
     PR_CACHE_TTL_SECS,
     branch_cache,
@@ -32,6 +33,34 @@ from .git import current_branch
 
 SESSION_TIME_MIN_SECS = 10
 LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
+
+
+def _read_session_or_fallback(stem: str, sid: str | None) -> str:
+    """Read `stem-<sid>` cache; if empty/missing and `sid` is set, fall
+    back to the most recently modified `stem-*` cache.
+
+    Claude Code's first statusLine pings on a fresh session arrive with
+    `session_id` + `transcript_path` only — no `context_window` or
+    `rate_limits` yet. Without a fallback the session pills disappear
+    for the first few seconds of every session. Showing the previous
+    session's value is honest (it's the most recent reading we have)
+    and gets overwritten as soon as the new session's data arrives.
+    """
+    raw = read_text(session_cache(stem, sid))
+    if raw or not sid:
+        return raw
+    try:
+        candidates = [
+            p
+            for p in _cache.FLAT_CACHE_DIR.glob(f"{stem}-*")
+            if p.is_file() and p.stat().st_size > 0
+        ]
+    except OSError:
+        return ""
+    if not candidates:
+        return ""
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    return read_text(latest)
 
 
 def _branch() -> str:
@@ -64,7 +93,7 @@ def _spawn_background_refresh(field: str) -> None:
 
 def print_context(sid: str | None = None) -> str:
     sid = sid or os.environ.get("CSHIP_SESSION_ID") or None
-    raw = read_text(session_cache("context", sid))
+    raw = _read_session_or_fallback("context", sid)
     if not raw:
         return ""
     parts = raw.split()
@@ -173,7 +202,7 @@ def _parse_iso_epoch(ts: str) -> int | None:
 
 def print_rate_limit(sid: str | None = None) -> str:
     sid = sid or os.environ.get("CSHIP_SESSION_ID") or None
-    raw = read_text(session_cache("rate-limit-5h", sid))
+    raw = _read_session_or_fallback("rate-limit-5h", sid)
     if not raw:
         return ""
     parts = raw.split()
