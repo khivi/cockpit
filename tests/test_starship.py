@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+from typing import Iterator
+
 import pytest
 
 
@@ -25,7 +27,7 @@ import lib.starship as starship  # noqa: E402
 
 
 @pytest.fixture
-def cache_dir(tmp_path, monkeypatch) -> Path:
+def cache_dir(tmp_path, monkeypatch) -> Iterator[Path]:
     """Redirect FLAT_CACHE_DIR to a tmpdir for the duration of one test."""
     cdir = tmp_path / "cockpit-cache"
     cdir.mkdir()

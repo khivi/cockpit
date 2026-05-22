@@ -138,7 +138,9 @@ def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:
         if result.returncode != 0:
             raise RuntimeError(f"gh pr view failed: {result.stderr.strip()}")
         return json.loads(result.stdout)
-    return gh_json(["pr", "view", pr_num, "--json", fields])
+    data = gh_json(["pr", "view", pr_num, "--json", fields])
+    assert isinstance(data, dict)
+    return data
 
 
 def resolve_pr_branch(pr_num: str, repo_dir: Path | None = None) -> str:
@@ -367,11 +369,13 @@ def _relevant_pr_query(
     return query, variables
 
 
-def _graphql(query: str, variables: dict[str, str]) -> dict | list:
+def _graphql(query: str, variables: dict[str, str]) -> dict:
     args = ["api", "graphql", "-f", f"query={query}"]
     for k, v in variables.items():
         args.extend(["-f", f"{k}={v}"])
-    return gh_json(args)
+    data = gh_json(args)
+    assert isinstance(data, dict)
+    return data
 
 
 def _collect_nodes(data: dict, n_coworker: int) -> list[dict]:

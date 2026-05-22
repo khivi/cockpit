@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Union
 
 from .config import prompt_prefix
 
@@ -36,7 +36,7 @@ _AUTHORITY = (
     "idle for follow-up unless a y/n is genuinely pending."
 )
 
-_ISSUE_ACTIONS: dict[object, tuple[object, bool]] = {
+_ISSUE_ACTIONS: dict[str | None, tuple[Union[str, Callable[["PR"], str]], bool]] = {
     "comments": (
         lambda pr: (
             f"Action: address {pr.unaddressed} unresolved review thread(s). Draft replies; "

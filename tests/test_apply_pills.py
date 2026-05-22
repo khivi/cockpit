@@ -11,7 +11,7 @@ from lib.git import Worktree
 
 
 def _pr(**overrides) -> PR:
-    base = dict(
+    base: dict = dict(
         number=1,
         title="t",
         branch="khivi/feature",

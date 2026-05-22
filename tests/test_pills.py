@@ -17,7 +17,7 @@ from lib.pills import decide_pills
 
 
 def _pr(**overrides) -> PR:
-    base = dict(
+    base: dict = dict(
         number=1,
         title="t",
         branch="khivi/feature",

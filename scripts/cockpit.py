@@ -160,10 +160,10 @@ def match_worktrees(
         else:
             matched.append((pr, wt))
     for wt in wts:
-        pr = pr_by_branch.get(wt.branch)
-        if pr is None or pr.author == self_user:
+        pr_opt = pr_by_branch.get(wt.branch)
+        if pr_opt is None or pr_opt.author == self_user:
             continue
-        matched.append((pr, wt))
+        matched.append((pr_opt, wt))
     return matched, skipped_self
 
 
@@ -482,11 +482,18 @@ def cycle_repo(
     for ref in keep_refs:
         ws_name = names.get(ref, "")
         cwd = cwds.get(ref)
-        wt = wt_by_path.get(cwd.resolve()) if cwd is not None else None
-        if wt is None:
-            wt = wt_by_name.get(ws_name)
-        if wt is None or wt.branch in pr_branches or wt.branch in MAIN_BRANCHES:
+        wt_opt: Worktree | None = (
+            wt_by_path.get(cwd.resolve()) if cwd is not None else None
+        )
+        if wt_opt is None:
+            wt_opt = wt_by_name.get(ws_name)
+        if (
+            wt_opt is None
+            or wt_opt.branch in pr_branches
+            or wt_opt.branch in MAIN_BRANCHES
+        ):
             continue
+        wt = wt_opt
         is_mine = wt.branch.startswith(my_prefix)
         if is_mine:
             if wt.branch in merged_branches:
@@ -655,10 +662,12 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
 
     for ref, ws_name in names.items():
         cwd = cwds.get(ref)
-        wt = wt_by_path.get(cwd.resolve()) if cwd is not None else None
-        if wt is None:
-            wt = wt_by_name.get(ws_name)
-        if wt is not None:
+        wt_opt: Worktree | None = (
+            wt_by_path.get(cwd.resolve()) if cwd is not None else None
+        )
+        if wt_opt is None:
+            wt_opt = wt_by_name.get(ws_name)
+        if wt_opt is not None:
             continue
         owner = _owning_repo(cwd)
         if owner is None:
@@ -782,7 +791,7 @@ def _watch(state: dict, watch_secs: int) -> None:
     show_loop_pill = bool(self_ws) and not state["dry"]
 
     def on_start() -> None:
-        if show_loop_pill:
+        if show_loop_pill and self_ws is not None:
             cmux(
                 "set-status",
                 LOOP_KEY,
@@ -795,7 +804,7 @@ def _watch(state: dict, watch_secs: int) -> None:
             )
 
     def on_stop() -> None:
-        if show_loop_pill:
+        if show_loop_pill and self_ws is not None:
             cmux("clear-status", LOOP_KEY, "--workspace", self_ws, check=False)
 
     def on_wake() -> None:

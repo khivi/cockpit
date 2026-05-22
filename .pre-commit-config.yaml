@@ -70,3 +70,13 @@ repos:
         types: [python]
         pass_filenames: false
         stages: [pre-push]
+
+      - id: mypy
+        name: mypy type check
+        entry: mypy
+        language: python
+        additional_dependencies: [mypy==2.1.0, pytest==9.0.3]
+        args: ['scripts/', 'tests/']
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
