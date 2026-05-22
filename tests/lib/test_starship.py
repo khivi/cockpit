@@ -417,17 +417,6 @@ def test_worktree_status_real_repo_dirty_and_untracked(
 # ── base-distance (↻N) on worktree_status ──────────────────────────────────
 
 
-def _stub_branch(monkeypatch, branch: str = "feature") -> None:
-    from lib import git as git_mod
-
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: branch)
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
-    )
-
-
 @pytest.mark.parametrize(
     "setup,check",
     [
@@ -452,7 +441,7 @@ def _stub_branch(monkeypatch, branch: str = "feature") -> None:
 def test_worktree_status_base_distance(
     cache_dir, _clean_git_env, monkeypatch, setup, check
 ):
-    _stub_branch(monkeypatch)
+    _stub(monkeypatch)
     setup(cache_dir / "base-distance-feature", int(time.time()))
     assert check(starship.print_worktree_status())
 
@@ -460,7 +449,7 @@ def test_worktree_status_base_distance(
 def test_worktree_status_base_distance_garbage_hidden(
     cache_dir, _clean_git_env, monkeypatch
 ):
-    _stub_branch(monkeypatch)
+    _stub(monkeypatch)
     (cache_dir / "base-distance-feature").write_text("not numbers")
     assert "↻" not in starship.print_worktree_status()
 
@@ -469,7 +458,7 @@ def test_worktree_status_base_distance_slash_branch_key(
     cache_dir, _clean_git_env, monkeypatch
 ):
     """branch_cache slug-escapes `/` to `-`; verify the cache file path."""
-    _stub_branch(monkeypatch, branch="khivi/master/foo")
+    _stub(monkeypatch, branch="khivi/master/foo")
     now = int(time.time())
     (cache_dir / "base-distance-khivi-master-foo").write_text(f"3 {now}")
     assert orange("↻3") in starship.print_worktree_status()
@@ -502,7 +491,7 @@ def test_worktree_status_base_distance_slash_branch_key(
 def test_branch_identity_base_ahead(
     cache_dir, _clean_git_env, monkeypatch, setup, check
 ):
-    _stub_branch(monkeypatch)
+    _stub(monkeypatch)
     setup(cache_dir / "base-ahead-feature", int(time.time()))
     assert check(starship.print_branch_identity())
 
