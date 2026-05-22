@@ -272,7 +272,7 @@ def print_permission_mode(sid: str | None = None) -> str:
 
 
 def print_branch_pill() -> str:
-    """`⎇ <branch>[ ↑A][ ↓B][ +S][ ~M][ ?U]` — segments hidden when 0.
+    """`⎇ <branch>[ ↑A][ ↓B][ ●S][ ✎M][ ✚U]` — segments hidden when 0.
     Each segment is independently ANSI-colored; the spaces between segments
     are uncolored. Empty when not in a git repo.
     """
@@ -289,11 +289,11 @@ def print_branch_pill() -> str:
         parts.append(f"\033[38;5;172m↓{behind}{_ANSI_RESET}")
     counts = count_status(Path(cwd))
     if counts.staged > 0:
-        parts.append(f"\033[38;5;34m+{counts.staged}{_ANSI_RESET}")
+        parts.append(f"\033[38;5;34m●{counts.staged}{_ANSI_RESET}")
     if counts.unstaged > 0:
-        parts.append(f"\033[38;5;220m~{counts.unstaged}{_ANSI_RESET}")
+        parts.append(f"\033[38;5;220m✎{counts.unstaged}{_ANSI_RESET}")
     if counts.untracked > 0:
-        parts.append(f"\033[38;5;240m?{counts.untracked}{_ANSI_RESET}")
+        parts.append(f"\033[38;5;240m✚{counts.untracked}{_ANSI_RESET}")
     ahead_base = _base_ahead_segment(branch)
     if ahead_base:
         parts.append(ahead_base)

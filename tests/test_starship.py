@@ -708,7 +708,7 @@ def test_print_branch_pill_staged_only(_clean_git_env, monkeypatch):
         starship, "count_status", lambda _p: git_mod.GitStatusCounts(1, 0, 0)
     )
     out = starship.print_branch_pill()
-    assert "\033[38;5;34m+1\033[0m" in out
+    assert "\033[38;5;34m●1\033[0m" in out
 
 
 def test_print_branch_pill_unstaged_only(_clean_git_env, monkeypatch):
@@ -721,7 +721,7 @@ def test_print_branch_pill_unstaged_only(_clean_git_env, monkeypatch):
         starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 2, 0)
     )
     out = starship.print_branch_pill()
-    assert "\033[38;5;220m~2\033[0m" in out
+    assert "\033[38;5;220m✎2\033[0m" in out
 
 
 def test_print_branch_pill_untracked_only(_clean_git_env, monkeypatch):
@@ -734,7 +734,7 @@ def test_print_branch_pill_untracked_only(_clean_git_env, monkeypatch):
         starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 4)
     )
     out = starship.print_branch_pill()
-    assert "\033[38;5;240m?4\033[0m" in out
+    assert "\033[38;5;240m✚4\033[0m" in out
 
 
 def test_print_branch_pill_all_segments(_clean_git_env, monkeypatch):
@@ -750,9 +750,9 @@ def test_print_branch_pill_all_segments(_clean_git_env, monkeypatch):
     assert "\033[38;5;243m⎇ feature\033[0m" in out
     assert "\033[38;5;38m↑1\033[0m" in out
     assert "\033[38;5;172m↓1\033[0m" in out
-    assert "\033[38;5;34m+1\033[0m" in out
-    assert "\033[38;5;220m~1\033[0m" in out
-    assert "\033[38;5;240m?1\033[0m" in out
+    assert "\033[38;5;34m●1\033[0m" in out
+    assert "\033[38;5;220m✎1\033[0m" in out
+    assert "\033[38;5;240m✚1\033[0m" in out
 
 
 def test_print_branch_pill_dirty_untracked_and_modified(
@@ -764,8 +764,8 @@ def test_print_branch_pill_dirty_untracked_and_modified(
     monkeypatch.chdir(tmp_path)
     out = starship.print_branch_pill()
     assert "⎇ main" in out
-    assert "~1" in out
-    assert "?1" in out
+    assert "✎1" in out
+    assert "✚1" in out
     assert "↑" not in out
 
 
