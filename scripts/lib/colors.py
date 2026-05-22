@@ -1,9 +1,13 @@
-"""ANSI color helpers for cockpit's terminal output.
+"""ANSI color primitives for cockpit's terminal output.
 
 NO_COLOR (https://no-color.org) opts the user out. The isatty heuristic
 isn't useful here: cockpit.py output goes through cmux's renderer and
 starship.py output is piped to cship — neither is ever a tty, but both
 DO render ANSI when forwarded to the terminal.
+
+This module exposes raw colorizers only. Higher-level helpers live elsewhere:
+  - `lib.log_format.verb()` — padded dim verb prefixes for log lines
+  - `lib.issue_color.issue_color()` — PR-issue → colorizer mapping
 """
 
 from __future__ import annotations
@@ -51,17 +55,3 @@ bold_crimson = _ansi("1;38;5;160")  # PR CHANGES_REQUESTED, tier-100
 bold_violet = _ansi("1;38;5;91")  # PR MERGED
 bold_ruby = _ansi("1;38;5;88")  # PR CLOSED
 bold_shadow = _ansi("1;38;5;240")  # PR DRAFT
-
-
-def issue_color(issue: str) -> Colorizer:
-    base = issue.split()[0] if issue else ""
-    return {
-        "clean": green,
-        "approved": green,
-        "comments": red,
-        "changes-requested": red,
-        "ci": red,
-        "conflicts": red,
-        "draft": dim,
-        "orphan": yellow,
-    }.get(base, lambda s: s)

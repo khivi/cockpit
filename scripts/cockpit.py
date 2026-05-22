@@ -65,11 +65,11 @@ from lib.colors import (  # noqa: E402
     cyan,
     dim,
     green,
-    issue_color,
-    magenta,
     red,
     yellow,
 )
+from lib.issue_color import issue_color  # noqa: E402
+from lib.log_format import verb  # noqa: E402
 from lib.config import (  # noqa: E402
     ensure_state_dirs,
     load_config,
@@ -141,7 +141,7 @@ def maybe_nudge(
         pr_number=pr_number,
         category=category,
     ):
-        print(f"  {yellow('nudged')} {tag} → {ref}", flush=True)
+        print(f"  {verb('nudged', color=yellow)} {tag} → {ref}", flush=True)
 
 
 def match_worktrees(
@@ -170,9 +170,9 @@ def match_worktrees(
 def _log_ff_main(repo_path: Path, wts: list[Worktree], *, dry: bool) -> None:
     """Fast-forward default-branch worktrees via lib.git, log each advance."""
     for wt, behind in ff_default_branch_worktrees(repo_path, wts, dry=dry):
-        action = "[dry] ff-main" if dry else "ff-main:"
+        action = "[dry] ff-main" if dry else "ff-main"
         print(
-            f"  {magenta(action)} {wt.short} → origin/{wt.branch}"
+            f"  {verb(action)} {wt.short} → origin/{wt.branch}"
             f"  ({behind} commit{'s' if behind != 1 else ''})",
             flush=True,
         )
@@ -226,21 +226,21 @@ def _maybe_autoclose(
             continue
         if wt.dirty_count > 0:
             print(
-                f"  {dim('autoclose skipped (uncommitted)')} {wt.short} "
-                f"({wt.dirty_count} dirty)",
+                f"  {verb('autoclose')} {dim(f'skipped (uncommitted) {wt.short}')} "
+                f"{dim(f'({wt.dirty_count} dirty)')}",
                 flush=True,
             )
             continue
         ahead = count_commits_since(wt.path, merged_head)
         if ahead < 0:
             print(
-                f"  {dim('autoclose skipped (merge-head check failed)')} {wt.short}",
+                f"  {verb('autoclose')} {dim(f'skipped (merge-head check failed) {wt.short}')}",
                 flush=True,
             )
             continue
         if ahead > 0:
             print(
-                f"  {dim(f'autoclose skipped ({ahead} commits after merge)')} {wt.short}",
+                f"  {verb('autoclose')} {dim(f'skipped ({ahead} commits after merge) {wt.short}')}",
                 flush=True,
             )
             continue
@@ -396,7 +396,7 @@ def cycle_repo(
         keep_refs.add(refs_sorted[0])
         for extra in refs_sorted[1:]:
             print(
-                f"  {red('closing duplicate')} {ws_name} → {extra}  "
+                f"  {verb('duplicate')} {ws_name} → {extra}  "
                 f"(keeping {refs_sorted[0]})",
                 flush=True,
             )
@@ -423,7 +423,7 @@ def cycle_repo(
             extra_name = names.get(extra, extra)
             keep_name = names.get(refs_sorted[0], refs_sorted[0])
             print(
-                f"  {red('closing duplicate')} {extra_name} → {extra}  "
+                f"  {verb('duplicate')} {extra_name} → {extra}  "
                 f"(same worktree as {keep_name})",
                 flush=True,
             )
@@ -443,7 +443,7 @@ def cycle_repo(
             op = " rebasing" if wt.rebasing else (" merging" if wt.merging else "")
             tag = pr.display_issue + op
             print(
-                f"  {dim('refreshed')} {blue(f'#{pr.number}')} → {cyan(label)}  "
+                f"  {verb('refreshed')} {blue(f'#{pr.number}')} → {cyan(label)}  "
                 f"[{issue_color(pr.display_issue)(tag)}]",
                 flush=True,
             )
@@ -471,7 +471,7 @@ def cycle_repo(
         labels = sorted(names.get(ref, ref) for ref in tracked if ref in keep_refs)
         if labels:
             print(
-                f"  {dim('tracked:')} {', '.join(cyan(lbl) for lbl in labels)}",
+                f"  {verb('tracked')} {', '.join(cyan(lbl) for lbl in labels)}",
                 flush=True,
             )
 
@@ -500,7 +500,7 @@ def cycle_repo(
                 ahead = count_commits_since(wt.path, merged_branches[wt.branch])
                 if ahead == 0:
                     print(
-                        f"  {dim(f'merged orphan {ws_name} ({wt.branch}) — autoclose may handle')}",
+                        f"  {verb('orphan')} {dim(f'{ws_name} ({wt.branch}) merged — autoclose may handle')}",
                         flush=True,
                     )
                     continue
@@ -530,7 +530,7 @@ def cycle_repo(
             changed = pill_state.get(ref) != orphan_snap
             if changed or verbose:
                 print(
-                    f"  {dim('refreshed')} {cyan(ws_name)} → {ref}  [{yellow(tag)}]",
+                    f"  {verb('refreshed')} {cyan(ws_name)} → {ref}  [{yellow(tag)}]",
                     flush=True,
                 )
             if changed and not dry:
@@ -546,12 +546,12 @@ def cycle_repo(
             continue
         if keep_stale:
             print(
-                f"  {dim(f'stale {ws_name} → {ref}  (kept; branch {wt.branch} has no open PR)')}",
+                f"  {verb('stale')} {dim(f'{ws_name} → {ref}  (kept; branch {wt.branch} has no open PR)')}",
                 flush=True,
             )
             continue
         print(
-            f"  {red('closing')} {ws_name} → {ref}  (branch {wt.branch} has no open PR)",
+            f"  {verb('closing')} {ws_name} → {ref}  (branch {wt.branch} has no open PR)",
             flush=True,
         )
         if not dry:
@@ -580,7 +580,7 @@ def cycle_repo(
                 ahead = count_commits_since(wt.path, merged_branches[wt.branch])
                 if ahead == 0:
                     print(
-                        f"  {dim(f'skip orphan-spawn {wt.short} — branch {wt.branch} has merged PR')}",
+                        f"  {verb('skip')} {dim(f'orphan-spawn {wt.short} — branch {wt.branch} has merged PR')}",
                         flush=True,
                     )
                     continue
@@ -605,7 +605,7 @@ def _drain_close_requests(dry: bool) -> None:
             continue
         label = req.name or req.ref
         print(
-            f"  {yellow('close-request refused')} {label}: " + "; ".join(blockers),
+            f"  {verb('refused', color=yellow)} {label}: " + "; ".join(blockers),
             file=sys.stderr,
             flush=True,
         )
@@ -676,8 +676,7 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
         label = ws_name or ref
         if not workspace_is_idle(ref):
             print(
-                f"  {magenta('defer reap:')} workspace {label} ({ref}) "
-                f"— not idle (Claude mid-turn)",
+                f"  {verb('defer')} {dim(f'reap workspace {label} ({ref}) — not idle (Claude mid-turn)')}",
                 flush=True,
             )
             continue
@@ -691,10 +690,9 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
             repo_name=repo_name,
             forced=True,
         )
-        action = "[dry] reap orphan" if dry else "reap orphan:"
+        action = "[dry] reap" if dry else "reap"
         print(
-            f"  {magenta(action)} workspace {label} ({ref}) "
-            f"— no matching worktree (cwd={cwd})",
+            f"  {verb(action)} {dim(f'orphan workspace {label} ({ref}) — no matching worktree (cwd={cwd})')}",
             flush=True,
         )
         if not dry:

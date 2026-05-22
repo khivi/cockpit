@@ -12,13 +12,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import run
-from .colors import bold, issue_color, magenta
+from .colors import bold, dim
+from .issue_color import issue_color
+from .log_format import verb
 from .gh import PR
 from .git import Worktree, worktrees
 from .pills import decide_pills
 from .prompts import build_orphan_prompt, build_pr_prompt, claude_command
 
-GREEN = "#2dd36f"
+GREEN = "#16a34a"
 RED = "#eb445a"
 ORANGE = "#ff9500"
 BLUE = "#3b82f6"
@@ -517,7 +519,7 @@ def spawn_pr_workspace(pr: PR, wt: Worktree, *, dry: bool = False) -> str | None
         return None
     apply_pills(ref, pr, wt)
     print(
-        f"  {magenta('spawned')} {bold(wt.short)} ({ref})  #{pr.number}"
+        f"  {verb('spawned')} {bold(wt.short)} ({ref})  #{pr.number}"
         f"  [{issue_color(pr.display_issue)(pr.display_issue)}]",
         flush=True,
     )
@@ -549,7 +551,7 @@ def spawn_orphan_workspace(wt: Worktree, *, dry: bool = False) -> str | None:
     )
     apply_wip_pill(ref, wt.dirty_count)
     print(
-        f"  {magenta('ORPHAN:')} spawned {bold(wt.short)} ({ref})  branch={wt.branch}",
+        f"  {verb('spawned')} {bold(wt.short)} ({ref})  {dim(f'orphan branch={wt.branch}')}",
         flush=True,
     )
     return ref
@@ -569,10 +571,9 @@ def close_gone_cwd_workspaces(*, dry: bool = False) -> list[str]:
         if cwd.exists():
             continue
         ws_name = names.get(ref, ref)
-        action = "[dry] autoclose" if dry else "autoclose:"
+        action = "[dry] autoclose" if dry else "autoclose"
         print(
-            f"  {magenta(action)} closing workspace {ws_name} ({ref}) "
-            f"— cwd missing: {cwd}",
+            f"  {verb(action)} {dim(f'closing workspace {ws_name} ({ref}) — cwd missing: {cwd}')}",
             flush=True,
         )
         if not dry:
