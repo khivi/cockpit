@@ -372,7 +372,7 @@ def _log_lock_reason(repo: Path, wt_path: Path) -> None:
 
     Resolves the admin dir via the worktree's own `.git` file
     (`gitdir: <repo>/.git/worktrees/<wt-name>`), falling back to `wt_path.name`.
-    Silently swallows any error.
+    Swallows FS read errors so a lock log never blocks remove_worktree.
     """
     try:
         wt_name = wt_path.name
@@ -388,8 +388,8 @@ def _log_lock_reason(repo: Path, wt_path: Path) -> None:
         if lock_file.exists():
             reason = lock_file.read_text().strip()
             print(f"preempting {reason}", file=sys.stderr)
-    except Exception:
-        pass
+    except (OSError, UnicodeDecodeError):
+        return
 
 
 def remove_worktree(
