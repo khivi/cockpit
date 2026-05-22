@@ -2,11 +2,13 @@
 
 Cockpit's statusLine command (`scripts/footer.py`) reads Claude Code's
 JSON blob from stdin once per render and calls `stash_from_stdin` here.
-Three session-scoped caches get populated:
+Five session-scoped caches get populated:
 
   - `context[-$sid]`         : "<pct> <limit>"
   - `transcript-path[-$sid]` : path to the current session JSONL
   - `rate-limit-5h[-$sid]`   : "<pct> <resets_at>"
+  - `model[-$sid]`           : display name with trailing "( ... )" stripped
+  - `permission-mode[-$sid]` : raw mode string (default / plan / acceptEdits / bypassPermissions)
 
 These caches are the *only* place those Claude Code-side values can be
 captured — `gh` doesn't know rate limits, the daemon can't see the
@@ -60,6 +62,12 @@ def stash_from_stdin(blob: bytes) -> tuple[bytes, str | None]:
             if stripped != name:
                 model["display_name"] = stripped
                 mutated = True
+            if stripped:
+                atomic_write(session_cache("model", sid), stripped)
+
+    mode = data.get("permission_mode")
+    if isinstance(mode, str) and mode:
+        atomic_write(session_cache("permission-mode", sid), mode)
 
     transcript = data.get("transcript_path")
     if isinstance(transcript, str) and transcript:

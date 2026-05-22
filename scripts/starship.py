@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""starship dispatcher: 8 field printers + background refreshers + warm.
+"""starship dispatcher: field printers + background refreshers + warm.
 
 Invoked from `scripts/defaults/starship.toml`'s `[custom.*]` blocks for
-each render (8 subprocesses per render), and self-spawned for background
-refreshes when a PR-side cache is stale.
+each render (one subprocess per module per render), and self-spawned for
+background refreshes when a PR-side cache is stale.
 
 Subcommands:
   context              — Claude Code context window usage
   session-time         — current session duration
   rate-limit           — rolling 5h usage %
+  model                — Claude model display name
+  permission-mode      — current permission mode (hidden when default)
+  branch-pill          — current branch + ahead/dirty markers
+  commit-age           — relative age of HEAD (hidden >24h)
   linear               — Linear ticket ID from branch name
   pr-state             — PR state (OPEN / DRAFT / APPROVED / ...)
   pr-num               — "#<n>" for the current branch's PR
@@ -33,8 +37,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from lib.cache import refresh_pr_checks, refresh_pr_data, warm_all  # noqa: E402
 from lib.git import current_branch  # noqa: E402
 from lib.starship import (  # noqa: E402
+    print_branch_pill,
+    print_commit_age,
     print_context,
     print_linear,
+    print_model,
+    print_permission_mode,
     print_pr_checks,
     print_pr_num,
     print_pr_state,
@@ -61,6 +69,14 @@ def main(argv: list[str]) -> int:
             return _emit(print_session_time())
         if cmd == "rate-limit":
             return _emit(print_rate_limit())
+        if cmd == "model":
+            return _emit(print_model())
+        if cmd == "permission-mode":
+            return _emit(print_permission_mode())
+        if cmd == "branch-pill":
+            return _emit(print_branch_pill())
+        if cmd == "commit-age":
+            return _emit(print_commit_age())
         if cmd == "linear":
             return _emit(print_linear())
         if cmd == "pr-state":

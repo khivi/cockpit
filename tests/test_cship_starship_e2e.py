@@ -95,12 +95,17 @@ def test_footer_renders_context_pill(footer_env):
     assert "42%/1M" in out, f"context pill missing from footer: {out!r}"
 
 
-def test_footer_renders_time_module(footer_env):
+def test_footer_does_not_render_time_pill(footer_env):
+    """The bundled config dropped the wall-clock pill — regression-guard
+    against accidental reintroduction (cship picks up `[time]` from
+    starship's defaults if our `format` re-references it)."""
     env, _cache, _cfg = footer_env
     res = _run_footer(env)
     assert res.returncode == 0
     out = res.stdout.decode("utf-8", errors="replace")
-    assert re.search(r"\d{2}:\d{2}", out), f"no HH:MM clock in footer: {out!r}"
+    assert not re.search(
+        r"\d{2}:\d{2}", out
+    ), f"clock pill should be gone but rendered: {out!r}"
 
 
 def test_footer_renders_ratelimit_pill(footer_env):
@@ -182,7 +187,6 @@ def test_footer_survives_iso_string_resets_at(footer_env):
     out = res.stdout.decode("utf-8", errors="replace")
     assert "7%/1M" in out, f"context pill missing (cship blackout?): {out!r}"
     assert "4%/5h" in out, f"ratelimit pill missing (cship blackout?): {out!r}"
-    assert re.search(r"\d{2}:\d{2}", out), f"clock missing: {out!r}"
 
 
 def test_footer_golden_full_render(footer_env):
@@ -225,14 +229,19 @@ def test_footer_golden_full_render(footer_env):
     assert len(lines) == 2, f"expected 2-line footer, got {len(lines)}: {stripped!r}"
     line1, line2 = lines
 
-    # Line 1: clock + session pills + PR signals, in declared order.
-    assert re.match(
-        r" \d{2}:\d{2}  🧠 7%/1M ⌛ 4%/5h .*APPROVED #9999 ✓\s*$",
-        line1,
-    ), f"line 1 didn't match expected pill order: {line1!r}"
+    # Line 1: session state. context + rate must appear; clock must not.
+    # branch_pill / commit_age also render because the subprocess inherits
+    # this repo's cwd, but we don't pin their exact text (commit age moves;
+    # dirty count depends on the worktree state when the test runs).
+    assert "🧠 7%/1M" in line1, f"context pill missing: {line1!r}"
+    assert "⌛ 4%/5h" in line1, f"ratelimit pill missing: {line1!r}"
+    assert not re.search(r"\d{2}:\d{2}", line1), f"clock pill should be gone: {line1!r}"
 
-    # Line 2: PR title only.
-    assert line2.strip() == "Golden test PR title", f"line 2 unexpected: {line2!r}"
+    # Line 2: PR identity in declared order — state → num → checks → title.
+    assert re.search(
+        r"APPROVED.*#9999.*✓.*Golden test PR title",
+        line2,
+    ), f"line 2 PR pills out of order: {line2!r}"
 
     # No absolute path leaks into either line.
     assert env["HOME"] not in stripped

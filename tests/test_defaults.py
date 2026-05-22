@@ -49,13 +49,17 @@ def test_cship_toml_uses_lines_wrapper_schema():
 
 
 def test_starship_toml_declares_expected_pills():
-    """All eight pill modules must stay declared — silent drops of a
+    """All bundled pill modules must stay declared — silent drops of a
     `[custom.*]` section is how Bug B-class regressions sneak in."""
     body = (DEFAULTS / "starship.toml").read_text()
     for name in (
         "[custom.context]",
         "[custom.session_time]",
         "[custom.ratelimit]",
+        "[custom.model]",
+        "[custom.permission_mode]",
+        "[custom.branch_pill]",
+        "[custom.commit_age]",
         "[custom.linear]",
         "[custom.pr_state]",
         "[custom.pr_num]",
@@ -63,6 +67,35 @@ def test_starship_toml_declares_expected_pills():
         "[custom.pr_title]",
     ):
         assert name in body, f"starship.toml missing {name}"
+
+
+def test_starship_toml_drops_time_pill():
+    """The wall-clock pill was removed in favor of more useful session
+    state. Guard against accidental reintroduction."""
+    body = _strip_comments((DEFAULTS / "starship.toml").read_text())
+    assert "${time}" not in body, "${time} pill reintroduced"
+    assert "[time]" not in body, "[time] section reintroduced"
+
+
+def test_starship_toml_pr_identity_on_line_two():
+    """PR/Linear identity (linear + pr_state + pr_num + pr_checks +
+    pr_title) lives on line two of the format string so the metric
+    strip stays uniform across sessions."""
+    body = _strip_comments((DEFAULTS / "starship.toml").read_text())
+    fmt_start = body.index('format = """')
+    fmt_end = body.index('"""', fmt_start + 12)
+    fmt = body[fmt_start:fmt_end]
+    lines = [ln for ln in fmt.replace("\\\n", "").split("\n") if "${custom" in ln]
+    assert len(lines) >= 2, f"format should have at least 2 lines, got {lines!r}"
+    line_two = lines[1]
+    for token in (
+        "${custom.linear}",
+        "${custom.pr_state}",
+        "${custom.pr_num}",
+        "${custom.pr_checks}",
+        "${custom.pr_title}",
+    ):
+        assert token in line_two, f"line 2 missing {token}: {line_two!r}"
 
 
 def test_starship_toml_uses_placeholder_for_dispatcher_path():
