@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Pre-push hook: ensure current plugin.json version > default branch's version.
+"""Pre-push hook: ensure current plugin.json version > main's version.
 
-Idempotent: if current > default-branch version (by any amount), exit 0.
-Otherwise rewrite plugin.json with default+patch, create a `chore: bump
+Idempotent: if current > main version (by any amount), exit 0.
+Otherwise rewrite plugin.json with main+patch, create a `chore: bump
 version` commit, exit 1 so the user re-runs `git push`.
 
-Default branch is resolved from `origin/HEAD` (not hardcoded). Read is local
-(no network). Branch ruleset enforces rebase-to-main before merge, so the
-cached ref is current at PR-merge time.
+Reads `origin/main` from the locally-cached ref (no network). Branch
+ruleset enforces rebase-to-main before merge, so the cached ref is
+current at PR-merge time.
 
-Minor/major bumps are done by hand in plugin.json — any value > default
+Minor/major bumps are done by hand in plugin.json — any value > main
 passes.
 """
 
@@ -24,6 +24,8 @@ from pathlib import Path
 import semver
 
 PLUGIN_FILE = Path(".claude-plugin/plugin.json")
+MAIN_REF = "origin/main"
+MAIN_BRANCH = "main"
 BUMP_COMMIT_PREFIX = "chore: bump version"
 
 
@@ -32,24 +34,9 @@ def run(*args: str, check: bool = True) -> str:
     return result.stdout.strip()
 
 
-def get_default_branch_ref() -> str:
-    for ref in ("origin/HEAD", "origin/main", "origin/master"):
-        if run("rev-parse", "--verify", "--quiet", ref, check=False):
-            return run("rev-parse", "--abbrev-ref", ref)
-    return ""
-
-
-def get_default_branch_name() -> str:
-    ref = get_default_branch_ref()
-    return ref.split("/", 1)[1] if ref else ""
-
-
 def get_main_version() -> semver.Version:
-    ref = get_default_branch_ref()
-    if not ref:
-        return semver.Version(0, 0, 0)
     try:
-        raw = run("show", f"{ref}:{PLUGIN_FILE}", check=True)
+        raw = run("show", f"{MAIN_REF}:{PLUGIN_FILE}", check=True)
         return semver.Version.parse(json.loads(raw)["version"])
     except subprocess.CalledProcessError:
         return semver.Version(0, 0, 0)
@@ -69,7 +56,7 @@ def write_version(new_version: str) -> None:
 
 
 def main() -> int:
-    if run("rev-parse", "--abbrev-ref", "HEAD") == get_default_branch_name():
+    if run("rev-parse", "--abbrev-ref", "HEAD") == MAIN_BRANCH:
         return 0
 
     current = semver.Version.parse(json.loads(PLUGIN_FILE.read_text())["version"])
