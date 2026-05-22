@@ -14,8 +14,8 @@ import json
 import sys
 from pathlib import Path
 
-DEFAULTS = Path(__file__).resolve().parent.parent / "scripts" / "defaults"
-REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULTS = Path(__file__).resolve().parent.parent.parent / "scripts" / "defaults"
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
