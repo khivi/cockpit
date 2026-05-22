@@ -769,6 +769,127 @@ def test_print_branch_pill_dirty_untracked_and_modified(
     assert "↑" not in out
 
 
+# ── base-distance (↻N) ─────────────────────────────────────────────────────
+
+
+def _stub_branch(monkeypatch, branch: str = "feature") -> None:
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: branch)
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
+    )
+
+
+def test_print_branch_pill_base_distance_fresh(cache_dir, _clean_git_env, monkeypatch):
+    _stub_branch(monkeypatch)
+    now = int(time.time())
+    (cache_dir / "base-distance-feature").write_text(f"7 {now}")
+    out = starship.print_branch_pill()
+    assert "\033[38;5;172m↻7\033[0m" in out
+    assert "ago" not in out
+
+
+def test_print_branch_pill_base_distance_aging(cache_dir, _clean_git_env, monkeypatch):
+    """30m–6h tier dims and includes the age."""
+    _stub_branch(monkeypatch)
+    epoch = int(time.time()) - (2 * 3600)
+    (cache_dir / "base-distance-feature").write_text(f"4 {epoch}")
+    out = starship.print_branch_pill()
+    assert "\033[38;5;240m↻4 (2h ago)\033[0m" in out
+
+
+def test_print_branch_pill_base_distance_too_stale_hidden(
+    cache_dir, _clean_git_env, monkeypatch
+):
+    """>6h hides the segment — stale counts breed false confidence."""
+    _stub_branch(monkeypatch)
+    epoch = int(time.time()) - (8 * 3600)
+    (cache_dir / "base-distance-feature").write_text(f"4 {epoch}")
+    out = starship.print_branch_pill()
+    assert "↻" not in out
+
+
+def test_print_branch_pill_base_distance_zero_hidden(
+    cache_dir, _clean_git_env, monkeypatch
+):
+    """`0` (branch is up to date with base) renders nothing."""
+    _stub_branch(monkeypatch)
+    now = int(time.time())
+    (cache_dir / "base-distance-feature").write_text(f"0 {now}")
+    out = starship.print_branch_pill()
+    assert "↻" not in out
+
+
+def test_print_branch_pill_base_distance_empty_payload_hidden(
+    cache_dir, _clean_git_env, monkeypatch
+):
+    _stub_branch(monkeypatch)
+    (cache_dir / "base-distance-feature").write_text("")
+    out = starship.print_branch_pill()
+    assert "↻" not in out
+
+
+def test_print_branch_pill_base_distance_garbage_hidden(
+    cache_dir, _clean_git_env, monkeypatch
+):
+    _stub_branch(monkeypatch)
+    (cache_dir / "base-distance-feature").write_text("not numbers")
+    out = starship.print_branch_pill()
+    assert "↻" not in out
+
+
+def test_print_branch_pill_base_distance_no_cache_hidden(
+    cache_dir, _clean_git_env, monkeypatch
+):
+    _stub_branch(monkeypatch)
+    out = starship.print_branch_pill()
+    assert "↻" not in out
+
+
+def test_print_branch_pill_base_distance_slash_branch_key(
+    cache_dir, _clean_git_env, monkeypatch
+):
+    """branch_cache slug-escapes `/` to `-`; verify the cache file path."""
+    _stub_branch(monkeypatch, branch="khivi/master/foo")
+    now = int(time.time())
+    (cache_dir / "base-distance-khivi-master-foo").write_text(f"3 {now}")
+    out = starship.print_branch_pill()
+    assert "\033[38;5;172m↻3\033[0m" in out
+
+
+# ── write_base_distance (lib.cache) ────────────────────────────────────────
+
+
+def test_write_base_distance_writes_payload(cache_dir):
+    cache_mod.write_base_distance("khivi/feature", 5, 1700000000)
+    assert (cache_dir / "base-distance-khivi-feature").read_text() == "5 1700000000"
+
+
+def test_write_base_distance_empty_on_negative_count(cache_dir):
+    cache_mod.write_base_distance("khivi/feature", -1, 1700000000)
+    assert (cache_dir / "base-distance-khivi-feature").read_text() == ""
+
+
+def test_write_base_distance_empty_on_missing_epoch(cache_dir):
+    cache_mod.write_base_distance("khivi/feature", 3, 0)
+    assert (cache_dir / "base-distance-khivi-feature").read_text() == ""
+
+
+def test_write_base_distance_zero_count_is_valid(cache_dir):
+    """0 commits behind base is a legitimate, fresh observation; the
+    reader hides 0 but the writer should preserve it for staleness gating."""
+    cache_mod.write_base_distance("khivi/feature", 0, 1700000000)
+    assert (cache_dir / "base-distance-khivi-feature").read_text() == "0 1700000000"
+
+
+def test_write_base_distance_no_branch_noop(cache_dir):
+    cache_mod.write_base_distance("", 3, 1700000000)
+    assert not any(cache_dir.iterdir())
+
+
 # ── integration: stash feeds field printers ────────────────────────────────
 
 

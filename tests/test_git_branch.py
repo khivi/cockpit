@@ -14,6 +14,7 @@ from lib.git import (
     _fetch_remote_branch,
     _has_local_branch,
     _has_remote_branch,
+    behind_of_base,
     branch_exists,
 )
 
@@ -64,3 +65,41 @@ def test_branch_exists_remote(cockpit_repo, push_branch):
 
 def test_branch_exists_neither(cockpit_repo):
     assert branch_exists(cockpit_repo.repo, "nope") is False
+
+
+def test_behind_of_base_counts_commits(cockpit_repo, push_branch):
+    """Branch carved at seed; main advances by 2 commits on origin. Branch
+    must report behind_of_base == 2 after fetching origin/main."""
+    import os
+
+    repo = cockpit_repo.repo
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+    }
+
+    def _git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(repo), *args], check=True, env=env)
+
+    push_branch("khivi/stale")  # carved off seed before main advances
+    (repo / "a").write_text("a")
+    _git("add", "a")
+    _git("commit", "-q", "-m", "a")
+    (repo / "b").write_text("b")
+    _git("add", "b")
+    _git("commit", "-q", "-m", "b")
+    _git("push", "-q", "origin", "main")
+    _git("fetch", "-q", "origin", "khivi/stale:khivi/stale")
+    _git("checkout", "-q", "khivi/stale")
+    assert behind_of_base(repo, "main") == 2
+
+
+def test_behind_of_base_zero_when_no_base(cockpit_repo):
+    assert behind_of_base(cockpit_repo.repo, "") == 0
+
+
+def test_behind_of_base_zero_when_base_unknown(cockpit_repo):
+    assert behind_of_base(cockpit_repo.repo, "no-such-base") == 0

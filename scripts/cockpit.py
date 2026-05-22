@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -45,6 +47,7 @@ from lib.cmux import (  # noqa: E402
     ORPHAN_KEY,
     _resolve_tool,
     apply_pills,
+    apply_stale_pill,
     apply_wip_pill,
     close_gone_cwd_workspaces,
     cmux,
@@ -77,7 +80,11 @@ from lib.config import (  # noqa: E402
     install_starship_default_config,
 )
 from lib.daemon import run_watcher  # noqa: E402
-from lib.cache import write_branch_pr_cache, write_pr_cache  # noqa: E402
+from lib.cache import (  # noqa: E402
+    write_base_distance,
+    write_branch_pr_cache,
+    write_pr_cache,
+)
 from lib import close_requests  # noqa: E402
 from lib.gh import (  # noqa: E402
     PR,
@@ -88,8 +95,10 @@ from lib.gh import (  # noqa: E402
 )
 from lib.git import (  # noqa: E402
     Worktree,
+    behind_of_base,
     count_commits_since,
     ff_default_branch_worktrees,
+    origin_head_branch,
     worktrees,
 )
 from lib.teardown import TeardownRequest, teardown  # noqa: E402
@@ -250,6 +259,42 @@ def _maybe_autoclose(
         )
 
 
+def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, int]:
+    """Fetch `origin/<default>` once per repo, then compute and cache
+    rebase-staleness (`HEAD..origin/<default>`) for each feature worktree.
+
+    Returns a `{branch: count}` map for the caller to consume (e.g. orphan
+    pill staleness). On any failure (no origin/HEAD, fetch error) all
+    feature worktrees get an empty cache so stale readings don't survive.
+
+    `git fetch` is run with `--quiet` from the main repo path; refs are
+    shared across worktrees, so fetching once per repo is sufficient.
+    """
+    feature = [w for w in wts if w.branch not in MAIN_BRANCHES]
+    distances: dict[str, int] = {}
+    default = origin_head_branch(repo_path)
+    if not default:
+        for wt in feature:
+            write_base_distance(wt.branch, -1, 0)
+        return distances
+    try:
+        subprocess.run(
+            ["git", "-C", str(repo_path), "fetch", "--quiet", "origin", default],
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        for wt in feature:
+            write_base_distance(wt.branch, -1, 0)
+        return distances
+    now = int(time.time())
+    for wt in feature:
+        n = behind_of_base(wt.path, default)
+        distances[wt.branch] = n
+        write_base_distance(wt.branch, n, now)
+    return distances
+
+
 def cycle_repo(
     repo_entry: dict,
     self_user: str,
@@ -312,7 +357,9 @@ def cycle_repo(
         f"tracked: {len(tracked)}  wip: {wip_count}",
         flush=True,
     )
+    base_distance: dict[str, int] = {}
     if not dry:
+        base_distance = _refresh_base_distance(repo_path, wts)
         wt_by_branch = {wt.branch: wt for wt in wts}
         for pr in prs:
             write_pr_cache(name, pr, wt_by_branch.get(pr.branch))
@@ -445,6 +492,7 @@ def cycle_repo(
                         flush=True,
                     )
                     continue
+            behind_base = base_distance.get(wt.branch, 0)
             if not dry:
                 stamp_managed_pill(ref)
                 cmux(
@@ -458,11 +506,14 @@ def cycle_repo(
                     check=False,
                 )
                 apply_wip_pill(ref, wt.dirty_count)
-            tag = f"orphan{' wip' if wt.dirty else ''}"
+                apply_stale_pill(ref, behind_base)
+            stale_tag = f" stale↻{behind_base}" if behind_base > 0 else ""
+            tag = f"orphan{' wip' if wt.dirty else ''}{stale_tag}"
             orphan_snap = frozenset(
                 [
                     ("orphan", ORPHAN_ICON),
                     ("wip", str(wt.dirty_count) if wt.dirty else ""),
+                    ("stale", str(behind_base) if behind_base > 0 else ""),
                 ]
             )
             changed = pill_state.get(ref) != orphan_snap

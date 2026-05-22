@@ -397,6 +397,21 @@ def behind_of_origin(cwd: str | os.PathLike, branch: str) -> int:
     return int(out) if out.isdigit() else 0
 
 
+def behind_of_base(cwd: str | os.PathLike, base: str) -> int:
+    """Commits HEAD is behind `origin/{base}` — rebase-staleness vs the
+    default branch. Returns 0 on any failure (no remote ref, base unknown,
+    git error). Caller is responsible for fetching `origin/{base}` first;
+    this function does not hit the network.
+    """
+    if not base:
+        return 0
+    res = _git(cwd, "rev-list", "--count", f"HEAD..origin/{base}")
+    if res.returncode != 0:
+        return 0
+    out = res.stdout.strip()
+    return int(out) if out.isdigit() else 0
+
+
 class GitStatusCounts(NamedTuple):
     staged: int
     unstaged: int

@@ -31,6 +31,9 @@ from .cache import (
 )
 from .git import ahead_of_origin, behind_of_origin, count_status, current_branch
 
+BASE_DISTANCE_FRESH_SECS = 30 * 60
+BASE_DISTANCE_MAX_AGE_SECS = 6 * 60 * 60
+
 SESSION_TIME_MIN_SECS = 10
 LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
 
@@ -291,7 +294,45 @@ def print_branch_pill() -> str:
         parts.append(f"\033[38;5;220m~{counts.unstaged}{_ANSI_RESET}")
     if counts.untracked > 0:
         parts.append(f"\033[38;5;240m?{counts.untracked}{_ANSI_RESET}")
+    stale = _base_distance_segment(branch)
+    if stale:
+        parts.append(stale)
     return " ".join(parts)
+
+
+def _base_distance_segment(branch: str) -> str:
+    """Render `↻N` (with optional `(Xh ago)` dim suffix) when the cached
+    base-distance is non-zero and not too stale. Returns "" otherwise.
+
+    Tiers driven by age since the daemon's last `git fetch`:
+      • <30m       → bright orange `↻N` (actionable now)
+      • 30m–6h     → dim `↻N (Xh ago)` (still useful, but flagged stale)
+      • >6h        → hidden (stale counts breed false confidence)
+
+    Empty/0/unreadable cache renders nothing.
+    """
+    raw = read_text(branch_cache("base-distance", branch))
+    if not raw:
+        return ""
+    parts = raw.split()
+    if len(parts) != 2:
+        return ""
+    try:
+        count = int(parts[0])
+        fetch_epoch = int(parts[1])
+    except ValueError:
+        return ""
+    if count <= 0:
+        return ""
+    age = int(time.time()) - fetch_epoch
+    if age < 0:
+        age = 0
+    if age > BASE_DISTANCE_MAX_AGE_SECS:
+        return ""
+    if age <= BASE_DISTANCE_FRESH_SECS:
+        return f"\033[38;5;172m↻{count}{_ANSI_RESET}"
+    hours = max(1, age // 3600)
+    return f"\033[38;5;240m↻{count} ({hours}h ago){_ANSI_RESET}"
 
 
 def print_linear() -> str:

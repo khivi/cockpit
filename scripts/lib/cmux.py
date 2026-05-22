@@ -40,6 +40,9 @@ ORPHAN_ICON = "🛠️"
 WIP_KEY = "wip"
 WIP_ICON = "✏️"
 
+STALE_KEY = "stale"
+STALE_ICON = "↻"
+
 # Identity stamp: every workspace cockpit spawns gets this pill. The reaper
 # uses it to distinguish "cockpit-spawned, now stranded" from free-form
 # user-created workspaces it must not touch.
@@ -159,6 +162,29 @@ def apply_wip_pill(ref: str, dirty_count: int) -> None:
         )
     else:
         cmux("clear-status", WIP_KEY, "--workspace", ref, check=False)
+
+
+def apply_stale_pill(ref: str, behind_base: int) -> None:
+    """Set or clear the rebase-staleness pill on `ref`.
+
+    Surfaces "branch is N commits behind base" on orphan workspaces, where
+    no PR-side conflict pill will catch it. PR-tracked workspaces already
+    get conflict signal from PR review state, so this pill is intentionally
+    omitted there.
+    """
+    if behind_base > 0:
+        cmux(
+            "set-status",
+            STALE_KEY,
+            f"{STALE_ICON} {behind_base}",
+            "--workspace",
+            ref,
+            "--color",
+            ORANGE,
+            check=False,
+        )
+    else:
+        cmux("clear-status", STALE_KEY, "--workspace", ref, check=False)
 
 
 def list_workspaces() -> list[str]:
