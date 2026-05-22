@@ -310,17 +310,7 @@ def test_print_permission_mode(cache_dir, value, expected):
     assert starship.print_permission_mode() == expected
 
 
-# ── field printer: branch_pill ─────────────────────────────────────────────
-
-
-def _full_pill() -> str:
-    """Composite of the two split segments — used by tests that exercise
-    cross-segment behavior (e.g. layout/ordering). Tests scoped to a single
-    segment should call the underlying printer directly.
-    """
-    identity = starship.print_branch_identity()
-    status = starship.print_worktree_status()
-    return f"{identity} {status}".strip()
+# ── field printers: branch_identity + worktree_status ──────────────────────
 
 
 def _init_repo(path: Path) -> None:
@@ -337,121 +327,94 @@ def _init_repo(path: Path) -> None:
     )
 
 
-def test_print_branch_pill_clean(_clean_git_env, tmp_path, monkeypatch):
-    _init_repo(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    # Clean repo: no status segments → no powerline separator emitted.
-    assert _full_pill() == slate("⎇ main")
-
-
-def test_print_branch_pill_branch_name_slate_colored(_clean_git_env, monkeypatch):
+def _stub(
+    monkeypatch, *, branch="feature", ahead=0, behind=0, status=(0, 0, 0)
+) -> None:
     from lib import git as git_mod
 
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
-    )
-    out = _full_pill()
-    assert out.startswith(slate("⎇ feature"))
-
-
-def test_print_branch_pill_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    assert _full_pill() == ""
-
-
-def _stub_branch_pill(monkeypatch, *, ahead=0, behind=0, status=(0, 0, 0)) -> None:
-    from lib import git as git_mod
-
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: branch)
     monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: ahead)
     monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: behind)
     monkeypatch.setattr(
-        starship,
-        "count_status",
-        lambda _p: git_mod.GitStatusCounts(*status),
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(*status)
     )
 
 
-def test_print_branch_pill_ahead_only(_clean_git_env, monkeypatch):
-    from lib import git as git_mod
+def test_branch_identity_clean(_clean_git_env, tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert starship.print_branch_identity() == slate("⎇ main")
 
-    monkeypatch.setattr(git_mod, "current_branch", lambda _cwd: "feature")
-    monkeypatch.setattr(git_mod, "ahead_of_origin", lambda _cwd, _b: 3)
-    monkeypatch.setattr(git_mod, "behind_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(
-        git_mod, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
-    )
-    monkeypatch.setattr(starship, "current_branch", git_mod.current_branch)
-    monkeypatch.setattr(starship, "ahead_of_origin", git_mod.ahead_of_origin)
-    monkeypatch.setattr(starship, "behind_of_origin", git_mod.behind_of_origin)
-    monkeypatch.setattr(starship, "count_status", git_mod.count_status)
-    out = _full_pill()
+
+def test_branch_identity_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert starship.print_branch_identity() == ""
+
+
+def test_branch_identity_ahead_origin(_clean_git_env, monkeypatch):
+    _stub(monkeypatch, ahead=3)
+    out = starship.print_branch_identity()
     assert slate("⎇ feature") in out
     assert azure("↑3") in out
 
 
-@pytest.mark.parametrize(
-    "ahead,behind,status,expected_fragments",
-    [
-        (0, 2, (0, 0, 0), [orange("↓2")]),
-        (3, 2, (0, 0, 0), [azure("↑3"), orange("↓2")]),
-        (0, 0, (1, 0, 0), [leaf("●1")]),
-        (0, 0, (0, 2, 0), [amber("✎2")]),
-        (0, 0, (0, 0, 4), [shadow("✚4")]),
-    ],
-    ids=[
-        "behind_only",
-        "ahead_and_behind",
-        "staged_only",
-        "unstaged_only",
-        "untracked_only",
-    ],
-)
-def test_print_branch_pill_segments(
-    _clean_git_env, monkeypatch, ahead, behind, status, expected_fragments
+def test_worktree_status_clean(_clean_git_env, tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert starship.print_worktree_status() == ""
+
+
+def test_worktree_status_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert starship.print_worktree_status() == ""
+
+
+def test_worktree_status_leads_with_separator_when_non_empty(
+    _clean_git_env, monkeypatch
 ):
-    _stub_branch_pill(monkeypatch, ahead=ahead, behind=behind, status=status)
-    out = _full_pill()
-    for frag in expected_fragments:
+    _stub(monkeypatch, status=(1, 0, 0))
+    out = starship.print_worktree_status()
+    assert out.startswith(slate(starship.POWERLINE_BRANCH))
+    assert leaf("●1") in out
+
+
+@pytest.mark.parametrize(
+    "behind,status,expected_fragment",
+    [
+        (2, (0, 0, 0), orange("↓2")),
+        (0, (1, 0, 0), leaf("●1")),
+        (0, (0, 2, 0), amber("✎2")),
+        (0, (0, 0, 4), shadow("✚4")),
+    ],
+    ids=["behind_only", "staged_only", "unstaged_only", "untracked_only"],
+)
+def test_worktree_status_segments(
+    _clean_git_env, monkeypatch, behind, status, expected_fragment
+):
+    _stub(monkeypatch, behind=behind, status=status)
+    assert expected_fragment in starship.print_worktree_status()
+
+
+def test_worktree_status_all_segments(_clean_git_env, monkeypatch):
+    _stub(monkeypatch, behind=1, status=(1, 1, 1))
+    out = starship.print_worktree_status()
+    for frag in (orange("↓1"), leaf("●1"), amber("✎1"), shadow("✚1")):
         assert frag in out
 
 
-def test_print_branch_pill_all_segments(_clean_git_env, monkeypatch):
-    from lib import git as git_mod
-
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 1)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 1)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(1, 1, 1)
-    )
-    out = _full_pill()
-    assert slate("⎇ feature") in out
-    assert azure("↑1") in out
-    assert orange("↓1") in out
-    assert leaf("●1") in out
-    assert amber("✎1") in out
-    assert shadow("✚1") in out
-
-
-def test_print_branch_pill_dirty_untracked_and_modified(
+def test_worktree_status_real_repo_dirty_and_untracked(
     _clean_git_env, tmp_path, monkeypatch
 ):
     _init_repo(tmp_path)
     (tmp_path / "f").write_text("y")
     (tmp_path / "new").write_text("z")
     monkeypatch.chdir(tmp_path)
-    out = _full_pill()
-    assert "⎇ main" in out
+    out = starship.print_worktree_status()
     assert "✎1" in out
     assert "✚1" in out
-    assert "↑" not in out
 
 
-# ── base-distance (↻N) ─────────────────────────────────────────────────────
+# ── base-distance (↻N) on worktree_status ──────────────────────────────────
 
 
 def _stub_branch(monkeypatch, branch: str = "feature") -> None:
@@ -466,129 +429,82 @@ def _stub_branch(monkeypatch, branch: str = "feature") -> None:
 
 
 @pytest.mark.parametrize(
-    "glyph,cache_prefix",
-    [("↻", "base-distance"), ("↗", "base-ahead")],
-    ids=["base_distance", "base_ahead"],
-)
-@pytest.mark.parametrize(
-    "scenario",
+    "setup,check",
     [
-        "fresh",
-        "aging",
-        "too_stale_hidden",
-        "zero_hidden",
-        "empty_payload_hidden",
-        "no_cache_hidden",
+        (
+            lambda p, now: p.write_text(f"7 {now}"),
+            lambda out: orange("↻7") in out and "ago" not in out,
+        ),
+        (
+            lambda p, now: p.write_text(f"4 {now - 2 * 3600}"),
+            lambda out: shadow("↻4 (2h ago)") in out,
+        ),
+        (
+            lambda p, now: p.write_text(f"4 {now - 8 * 3600}"),
+            lambda out: "↻" not in out,
+        ),
+        (lambda p, now: p.write_text(f"0 {now}"), lambda out: "↻" not in out),
+        (lambda p, now: p.write_text(""), lambda out: "↻" not in out),
+        (lambda p, now: None, lambda out: "↻" not in out),
     ],
+    ids=["fresh", "aging", "too_stale", "zero", "empty_payload", "no_cache"],
 )
-def test_print_branch_pill_base_relative(
-    cache_dir, _clean_git_env, monkeypatch, glyph, cache_prefix, scenario
+def test_worktree_status_base_distance(
+    cache_dir, _clean_git_env, monkeypatch, setup, check
 ):
     _stub_branch(monkeypatch)
-    fresh_color: Colorizer = orange if glyph == "↻" else azure
-    cache_path = cache_dir / f"{cache_prefix}-feature"
-    now = int(time.time())
-    if scenario == "fresh":
-        cache_path.write_text(f"7 {now}")
-        out = _full_pill()
-        assert fresh_color(f"{glyph}7") in out
-        assert "ago" not in out
-    elif scenario == "aging":
-        epoch = now - (2 * 3600)
-        cache_path.write_text(f"4 {epoch}")
-        out = _full_pill()
-        assert shadow(f"{glyph}4 (2h ago)") in out
-    elif scenario == "too_stale_hidden":
-        epoch = now - (8 * 3600)
-        cache_path.write_text(f"4 {epoch}")
-        assert glyph not in _full_pill()
-    elif scenario == "zero_hidden":
-        cache_path.write_text(f"0 {now}")
-        assert glyph not in _full_pill()
-    elif scenario == "empty_payload_hidden":
-        cache_path.write_text("")
-        assert glyph not in _full_pill()
-    elif scenario == "no_cache_hidden":
-        assert glyph not in _full_pill()
+    setup(cache_dir / "base-distance-feature", int(time.time()))
+    assert check(starship.print_worktree_status())
 
 
-def test_print_branch_pill_base_distance_garbage_hidden(
+def test_worktree_status_base_distance_garbage_hidden(
     cache_dir, _clean_git_env, monkeypatch
 ):
     _stub_branch(monkeypatch)
     (cache_dir / "base-distance-feature").write_text("not numbers")
-    out = _full_pill()
-    assert "↻" not in out
+    assert "↻" not in starship.print_worktree_status()
 
 
-def test_print_branch_pill_base_distance_slash_branch_key(
+def test_worktree_status_base_distance_slash_branch_key(
     cache_dir, _clean_git_env, monkeypatch
 ):
     """branch_cache slug-escapes `/` to `-`; verify the cache file path."""
     _stub_branch(monkeypatch, branch="khivi/master/foo")
     now = int(time.time())
     (cache_dir / "base-distance-khivi-master-foo").write_text(f"3 {now}")
-    out = _full_pill()
-    assert orange("↻3") in out
+    assert orange("↻3") in starship.print_worktree_status()
 
 
-# ── base-ahead (↗N) ────────────────────────────────────────────────────────
+# ── base-ahead (↗N) on branch_identity ─────────────────────────────────────
 
 
-def test_print_branch_pill_base_ahead_before_base_distance(
-    cache_dir, _clean_git_env, monkeypatch
+@pytest.mark.parametrize(
+    "setup,check",
+    [
+        (
+            lambda p, now: p.write_text(f"7 {now}"),
+            lambda out: azure("↗7") in out and "ago" not in out,
+        ),
+        (
+            lambda p, now: p.write_text(f"4 {now - 2 * 3600}"),
+            lambda out: shadow("↗4 (2h ago)") in out,
+        ),
+        (
+            lambda p, now: p.write_text(f"4 {now - 8 * 3600}"),
+            lambda out: "↗" not in out,
+        ),
+        (lambda p, now: p.write_text(f"0 {now}"), lambda out: "↗" not in out),
+        (lambda p, now: p.write_text(""), lambda out: "↗" not in out),
+        (lambda p, now: None, lambda out: "↗" not in out),
+    ],
+    ids=["fresh", "aging", "too_stale", "zero", "empty_payload", "no_cache"],
+)
+def test_branch_identity_base_ahead(
+    cache_dir, _clean_git_env, monkeypatch, setup, check
 ):
-    """`↗N` (ahead) renders before `↻N` (behind) so the two base-relative
-    segments read left-to-right as ahead-then-behind."""
     _stub_branch(monkeypatch)
-    now = int(time.time())
-    (cache_dir / "base-ahead-feature").write_text(f"7 {now}")
-    (cache_dir / "base-distance-feature").write_text(f"3 {now}")
-    out = _full_pill()
-    assert out.index("↗7") < out.index("↻3")
-
-
-def test_print_branch_pill_layout_ahead_before_separator_before_status(
-    cache_dir, _clean_git_env, monkeypatch
-):
-    """Ahead counters (↑, ↗) sit between branch and the powerline separator;
-    working-tree + behind + stale segments sit after the separator."""
-    from lib import git as git_mod
-
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 2)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 1)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(1, 1, 1)
-    )
-    now = int(time.time())
-    (cache_dir / "base-ahead-feature").write_text(f"9 {now}")
-    (cache_dir / "base-distance-feature").write_text(f"5 {now}")
-    out = _full_pill()
-    sep = starship.POWERLINE_BRANCH
-    assert sep in out
-    sep_pos = out.index(sep)
-    assert out.index("⎇ feature") < out.index("↑2") < sep_pos
-    assert out.index("↗9") < sep_pos
-    assert sep_pos < out.index("●1")
-    assert sep_pos < out.index("✎1")
-    assert sep_pos < out.index("✚1")
-    assert sep_pos < out.index("↓1")
-    assert sep_pos < out.index("↻5")
-
-
-def test_print_branch_pill_separator_hidden_without_status(_clean_git_env, monkeypatch):
-    """Powerline separator is hidden when no trailing status segments exist."""
-    from lib import git as git_mod
-
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
-    )
-    out = _full_pill()
-    assert starship.POWERLINE_BRANCH not in out
+    setup(cache_dir / "base-ahead-feature", int(time.time()))
+    assert check(starship.print_branch_identity())
 
 
 # ── integration: stash feeds field printers ────────────────────────────────
