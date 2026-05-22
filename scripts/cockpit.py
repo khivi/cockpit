@@ -110,6 +110,16 @@ MAIN_BRANCHES = {"master", "main"}
 NUDGE_INTERVAL_SECS = 300
 ACTIONABLE_ISSUES = {"ci", "comments", "conflicts"}
 
+_NUDGE_DESC = {
+    "comments": lambda pr: (
+        f"{pr.unaddressed} unresolved review thread(s) — reply or push fixes"
+    ),
+    "ci": lambda pr: (
+        f"CI is failing ({pr.ci}) — run `gh pr checks {pr.number}` and address it"
+    ),
+    "conflicts": lambda _pr: "merge conflicts vs base — rebase and force-push",
+}
+
 DEFAULT_POLL_SECS = 300
 MIN_POLL_SECS = 5
 
@@ -483,7 +493,6 @@ def cycle_repo(
         key=lambda t: -t[1].number,
     )
 
-    printed_refresh = False
     for group_label, group in (("mine", mine_items), ("coworkers", others_items)):
         group_header_printed = False
         for ref, pr, wt in group:
@@ -507,15 +516,9 @@ def cycle_repo(
             if changed and not dry:
                 pill_state[ref] = desired
             if pr.display_issue in ACTIONABLE_ISSUES:
-                if pr.display_issue == "comments":
-                    desc = f"{pr.unaddressed} unresolved review thread(s) — reply or push fixes"
-                elif pr.display_issue == "ci":
-                    desc = f"CI is failing ({pr.ci}) — run `gh pr checks {pr.number}` and address it"
-                else:
-                    desc = "merge conflicts vs base — rebase and force-push"
                 maybe_nudge(
                     ref,
-                    f"PR #{pr.number}: {desc}.",
+                    f"PR #{pr.number}: {_NUDGE_DESC[pr.display_issue](pr)}.",
                     nudge_state,
                     dry,
                     label,
