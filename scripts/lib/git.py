@@ -138,6 +138,15 @@ def worktrees(repo_dir: Path) -> list[Worktree]:
     return wts
 
 
+def _rev_list_count(cwd: str | os.PathLike, rev_range: str, *, fail: int = 0) -> int:
+    """`git rev-list --count <range>` → int, with `fail` returned on any error."""
+    res = _git(cwd, "rev-list", "--count", rev_range)
+    if res.returncode != 0:
+        return fail
+    out = res.stdout.strip()
+    return int(out) if out.isdigit() else fail
+
+
 def count_commits_since(wt_path: Path, sha: str) -> int:
     """Commits on HEAD after `sha`. Returns -1 if git fails or `sha` is unknown.
 
@@ -145,11 +154,7 @@ def count_commits_since(wt_path: Path, sha: str) -> int:
     SHA recorded when its PR was merged. 0 means "branch tip == merge head"
     (safe to remove); >0 means new local work after merge.
     """
-    res = _git(wt_path, "rev-list", "--count", f"{sha}..HEAD")
-    if res.returncode != 0:
-        return -1
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else -1
+    return _rev_list_count(wt_path, f"{sha}..HEAD", fail=-1)
 
 
 def has_unique_commits(wt_path: Path, base: str) -> bool:
@@ -158,11 +163,7 @@ def has_unique_commits(wt_path: Path, base: str) -> bool:
     Used to filter empty scaffolds (fresh worktrees at base HEAD) when computing
     drift. Uncommitted dirt does not count as work for this check.
     """
-    res = _git(wt_path, "rev-list", "--count", f"{base}..HEAD")
-    if res.returncode != 0:
-        return False
-    out = res.stdout.strip()
-    return out.isdigit() and int(out) > 0
+    return _rev_list_count(wt_path, f"{base}..HEAD") > 0
 
 
 def current_branch(cwd: str | os.PathLike) -> str:
@@ -417,22 +418,14 @@ def ahead_of_origin(cwd: str | os.PathLike, branch: str) -> int:
     """
     if not branch:
         return 0
-    res = _git(cwd, "rev-list", "--count", f"origin/{branch}..HEAD")
-    if res.returncode != 0:
-        return 0
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else 0
+    return _rev_list_count(cwd, f"origin/{branch}..HEAD")
 
 
 def behind_of_origin(cwd: str | os.PathLike, branch: str) -> int:
     """Commits HEAD is behind `origin/{branch}`. Returns 0 on any failure."""
     if not branch:
         return 0
-    res = _git(cwd, "rev-list", "--count", f"HEAD..origin/{branch}")
-    if res.returncode != 0:
-        return 0
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else 0
+    return _rev_list_count(cwd, f"HEAD..origin/{branch}")
 
 
 def behind_of_base(cwd: str | os.PathLike, base: str) -> int:
@@ -443,11 +436,7 @@ def behind_of_base(cwd: str | os.PathLike, base: str) -> int:
     """
     if not base:
         return 0
-    res = _git(cwd, "rev-list", "--count", f"HEAD..origin/{base}")
-    if res.returncode != 0:
-        return 0
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else 0
+    return _rev_list_count(cwd, f"HEAD..origin/{base}")
 
 
 def ahead_of_base(cwd: str | os.PathLike, base: str) -> int:
@@ -457,11 +446,7 @@ def ahead_of_base(cwd: str | os.PathLike, base: str) -> int:
     """
     if not base:
         return 0
-    res = _git(cwd, "rev-list", "--count", f"origin/{base}..HEAD")
-    if res.returncode != 0:
-        return 0
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else 0
+    return _rev_list_count(cwd, f"origin/{base}..HEAD")
 
 
 class GitStatusCounts(NamedTuple):
@@ -520,12 +505,8 @@ def ff_default_branch_worktrees(
             continue
         if _git(wt.path, "fetch", "origin", wt.branch).returncode != 0:
             continue
-        rev = _git(wt.path, "rev-list", "--count", f"HEAD..origin/{wt.branch}")
-        try:
-            behind = int(rev.stdout.strip())
-        except ValueError:
-            continue
-        if behind == 0:
+        behind = _rev_list_count(wt.path, f"HEAD..origin/{wt.branch}", fail=-1)
+        if behind <= 0:
             continue
         advanced.append((wt, behind))
         if dry:
