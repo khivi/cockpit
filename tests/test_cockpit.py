@@ -314,3 +314,110 @@ def test_reap_skips_workspace_matched_by_name(reap_isolated, tmp_path):
         cockpit_mod._reap_workspace_orphans(repos, "khivi", dry=False)
 
     assert cr.iter_pending() == []
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# CLI dispatch: --footer seeds statusLine + starship/cship configs; --once /
+# --watch do NOT touch those files. Verifies cockpit.main() routes the right
+# helpers per subcommand. Moved here from tests/lib/test_config.py.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+from cockpit_helpers import (  # noqa: E402
+    expected_starship as _expected_starship,
+    setup_cockpit_config as _setup_cockpit_config,
+    stub_cship_on_path as _stub_cship_on_path,
+)
+
+
+def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
+    """`--footer` installs cship.toml + starship.toml + statusLine and exits."""
+    import importlib
+    import json as _json
+
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_cship": True}
+    )
+    _stub_cship_on_path(monkeypatch, present=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit
+
+    importlib.reload(cockpit)
+
+    def _explode(*_a, **_kw):
+        raise AssertionError("--footer must not trigger a reconcile cycle")
+
+    monkeypatch.setattr(cockpit, "gh_self_user", _explode)
+    monkeypatch.setattr(cockpit, "cycle_all", _explode)
+
+    assert cockpit.main(["--footer"]) == 0
+
+    cship_toml = tmp_path / "xdg" / "cship.toml"
+    assert cship_toml.exists()
+    assert cship_toml.read_text() == cockpit_config.CSHIP_DEFAULT_TOML.read_text()
+
+    starship_toml = tmp_path / "xdg" / "starship.toml"
+    assert starship_toml.exists()
+    assert starship_toml.read_text() == _expected_starship(cockpit_config)
+
+    settings = _json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert settings["statusLine"]["type"] == "command"
+    assert settings["statusLine"]["command"].endswith("/footer.py")
+
+
+def test_cli_once_does_not_touch_footer_files(tmp_path, monkeypatch):
+    """`--once` is pure reconcile — never seeds either toml or writes statusLine."""
+    import importlib
+
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
+    _stub_cship_on_path(monkeypatch, present=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit
+
+    importlib.reload(cockpit)
+    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
+    monkeypatch.setattr(cockpit, "_once_with", lambda _s: None)
+
+    assert cockpit.main(["--once"]) == 0
+    assert not (tmp_path / "xdg" / "cship.toml").exists()
+    assert not (tmp_path / "xdg" / "starship.toml").exists()
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
+    """`--watch` is pure reconcile — never seeds either toml or writes statusLine."""
+    import importlib
+
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
+    _stub_cship_on_path(monkeypatch, present=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit
+
+    importlib.reload(cockpit)
+    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
+    monkeypatch.setattr(cockpit, "_watch", lambda _s, _secs: None)
+
+    assert cockpit.main(["--watch", "60"]) == 0
+    assert not (tmp_path / "xdg" / "cship.toml").exists()
+    assert not (tmp_path / "xdg" / "starship.toml").exists()
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_cli_once_does_not_raise_when_cship_missing(tmp_path, monkeypatch):
+    """`--once` must not invoke the cship-on-PATH check; missing cship is a `--footer` concern."""
+    import importlib
+
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
+    _stub_cship_on_path(monkeypatch, present=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit
+
+    importlib.reload(cockpit)
+    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
+    monkeypatch.setattr(cockpit, "_once_with", lambda _s: None)
+
+    assert cockpit.main(["--once"]) == 0

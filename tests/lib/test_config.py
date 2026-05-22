@@ -227,45 +227,11 @@ def test_footer_install_is_idempotent_and_announces_state(
     assert starship_path.read_bytes() == starship_bytes
 
 
-# ── helpers (from test_pills split) ─────────────────────────────────────────
-
-
-def _expected_starship(cockpit_config) -> str:
-    """The bundled starship.toml after __COCKPIT_STARSHIP__ placeholder substitution.
-
-    `install_starship_default_config()` rewrites the placeholder to the
-    resolved absolute path of `scripts/starship.py` before writing to
-    ~/.config/starship.toml — assertions about installed content must
-    match that substituted output, not the in-repo source.
-    """
-    return cockpit_config.STARSHIP_DEFAULT_TOML.read_text().replace(
-        cockpit_config.STARSHIP_PLACEHOLDER, str(cockpit_config.STARSHIP_PY)
-    )
-
-
-def _setup_cockpit_config(tmp_path, monkeypatch, cfg: dict):
-    """Stand up an isolated cockpit config + fake $HOME, return reloaded module."""
-    import importlib
-    import json as _json
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    (tmp_path / "config.json").write_text(_json.dumps(cfg))
-
-    import lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    return cockpit_config
-
-
-def _stub_cship_on_path(monkeypatch, present: bool):
-    """Replace `shutil.which("cship")` inside lib.config so tests don't depend
-    on the host having (or not having) a real cship binary on $PATH."""
-    monkeypatch.setattr(
-        "lib.config.shutil.which",
-        lambda name: "/fake/bin/cship" if (present and name == "cship") else None,
-    )
-
+from cockpit_helpers import (  # noqa: E402
+    expected_starship as _expected_starship,
+    setup_cockpit_config as _setup_cockpit_config,
+    stub_cship_on_path as _stub_cship_on_path,
+)
 
 _STATUSLINE_CMD = "/path/to/footer.py"
 
@@ -395,99 +361,6 @@ def test_cship_default_missing_package_file_is_soft_fail(tmp_path, monkeypatch):
     )
     cockpit_config.install_cship_default_config()
     assert not (tmp_path / "xdg" / "cship.toml").exists()
-
-
-def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
-    """`--footer` installs cship.toml + starship.toml + statusLine and exits."""
-    import importlib
-    import json as _json
-
-    cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "use_cship": True}
-    )
-    _stub_cship_on_path(monkeypatch, present=True)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-
-    import cockpit
-
-    importlib.reload(cockpit)
-
-    def _explode(*_a, **_kw):
-        raise AssertionError("--footer must not trigger a reconcile cycle")
-
-    monkeypatch.setattr(cockpit, "gh_self_user", _explode)
-    monkeypatch.setattr(cockpit, "cycle_all", _explode)
-
-    assert cockpit.main(["--footer"]) == 0
-
-    cship_toml = tmp_path / "xdg" / "cship.toml"
-    assert cship_toml.exists()
-    assert cship_toml.read_text() == cockpit_config.CSHIP_DEFAULT_TOML.read_text()
-
-    starship_toml = tmp_path / "xdg" / "starship.toml"
-    assert starship_toml.exists()
-    assert starship_toml.read_text() == _expected_starship(cockpit_config)
-
-    settings = _json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert settings["statusLine"]["type"] == "command"
-    assert settings["statusLine"]["command"].endswith("/footer.py")
-
-
-def test_cli_once_does_not_touch_footer_files(tmp_path, monkeypatch):
-    """`--once` is pure reconcile — never seeds either toml or writes statusLine."""
-    import importlib
-
-    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
-    _stub_cship_on_path(monkeypatch, present=True)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-
-    import cockpit
-
-    importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
-    monkeypatch.setattr(cockpit, "_once_with", lambda _s: None)
-
-    assert cockpit.main(["--once"]) == 0
-    assert not (tmp_path / "xdg" / "cship.toml").exists()
-    assert not (tmp_path / "xdg" / "starship.toml").exists()
-    assert not (tmp_path / ".claude" / "settings.json").exists()
-
-
-def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
-    """`--watch` is pure reconcile — never seeds either toml or writes statusLine."""
-    import importlib
-
-    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
-    _stub_cship_on_path(monkeypatch, present=True)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-
-    import cockpit
-
-    importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
-    monkeypatch.setattr(cockpit, "_watch", lambda _s, _secs: None)
-
-    assert cockpit.main(["--watch", "60"]) == 0
-    assert not (tmp_path / "xdg" / "cship.toml").exists()
-    assert not (tmp_path / "xdg" / "starship.toml").exists()
-    assert not (tmp_path / ".claude" / "settings.json").exists()
-
-
-def test_cli_once_does_not_raise_when_cship_missing(tmp_path, monkeypatch):
-    """`--once` must not invoke the cship-on-PATH check; missing cship is a `--footer` concern."""
-    import importlib
-
-    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
-    _stub_cship_on_path(monkeypatch, present=False)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-
-    import cockpit
-
-    importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
-    monkeypatch.setattr(cockpit, "_once_with", lambda _s: None)
-
-    assert cockpit.main(["--once"]) == 0
 
 
 def test_cship_default_honors_xdg_config_home(tmp_path, monkeypatch):
