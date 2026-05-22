@@ -174,3 +174,53 @@ def test_footer_install_roundtrip_overwrites_stale_user_config(tmp_path, monkeyp
         "__COCKPIT_STARSHIP__" not in new_starship
     ), "placeholder must be substituted at install time"
     assert "[custom.context]" in new_starship
+
+
+def test_footer_install_is_idempotent_and_announces_state(
+    tmp_path, monkeypatch, capsys
+):
+    """`cockpit --footer` must be verbose AND idempotent: a re-run on
+    already-installed defaults rewrites nothing but explicitly reports
+    each target as `unchanged, default kept at <path>`. Silent no-ops
+    are not acceptable — the user needs confirmation the command ran."""
+    xdg = tmp_path / "config"
+    xdg.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    cockpit_home = tmp_path / "cockpit"
+    cockpit_home.mkdir()
+    (cockpit_home / "config.json").write_text(json.dumps({"use_cship": True}))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("COCKPIT_HOME", str(cockpit_home))
+
+    import importlib
+
+    importlib.reload(config_mod)
+
+    config_mod.install_cship_default_config()
+    config_mod.install_starship_default_config()
+
+    cship_path = xdg / "cship.toml"
+    starship_path = xdg / "starship.toml"
+    cship_mtime = cship_path.stat().st_mtime_ns
+    starship_mtime = starship_path.stat().st_mtime_ns
+    cship_bytes = cship_path.read_bytes()
+    starship_bytes = starship_path.read_bytes()
+
+    capsys.readouterr()  # drain first-install output
+
+    config_mod.install_cship_default_config()
+    config_mod.install_starship_default_config()
+
+    out = capsys.readouterr().out
+    assert f"cship config unchanged, default kept at {cship_path}" in out
+    assert f"starship config unchanged, default kept at {starship_path}" in out
+    assert (
+        "installed default" not in out
+    ), "no-op re-run must not claim it installed anything"
+
+    assert cship_path.stat().st_mtime_ns == cship_mtime
+    assert starship_path.stat().st_mtime_ns == starship_mtime
+    assert cship_path.read_bytes() == cship_bytes
+    assert starship_path.read_bytes() == starship_bytes

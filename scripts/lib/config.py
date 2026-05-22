@@ -148,6 +148,22 @@ def _write_statusline(settings_path: Path, statusline_command: str) -> None:
     print(f"wrote Claude statusLine -> {statusline_command}")
 
 
+def _write_if_changed(dest: Path, payload: bytes, label: str, src: Path) -> bool:
+    """Write `payload` to `dest` only if contents differ; print verbose status either way.
+
+    On change (or first install): prints `installed default <label> config: <src> -> <dest>`.
+    On no-op: prints `<label> config unchanged, default kept at <dest>`.
+    Returns True iff the file was written.
+    """
+    if dest.exists() and not dest.is_symlink() and dest.read_bytes() == payload:
+        print(f"{label} config unchanged, default kept at {dest}")
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(payload)
+    print(f"installed default {label} config: {src} -> {dest}")
+    return True
+
+
 class CshipNotInstalledError(RuntimeError):
     """Raised when `use_cship: true` but the cship binary is not on PATH."""
 
@@ -181,7 +197,10 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
         )
     settings_path = Path.home() / ".claude" / "settings.json"
     current = _read_current_statusline(settings_path)
-    if current is None or current == statusline_command:
+    if current == statusline_command:
+        print(f"Claude statusLine unchanged, kept at {statusline_command}")
+        return
+    if current is None:
         return
     _write_statusline(settings_path, statusline_command)
 
@@ -208,7 +227,8 @@ def _seed_default_toml(src: Path, dest: Path, label: str) -> None:
     writing — otherwise `shutil.copy` would follow the symlink and write
     through to whatever the user had it pointing at, which is exactly the
     scenario that broke this chain in the first place. Regular files are
-    overwritten in place as before.
+    compared byte-for-byte against the bundled default; identical files are
+    left in place and reported as `unchanged` rather than re-written.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.is_symlink():
@@ -222,8 +242,7 @@ def _seed_default_toml(src: Path, dest: Path, label: str) -> None:
             target.rename(backup)
             print(f"backed up {label} symlink target -> {backup}")
         dest.unlink()
-    shutil.copy(src, dest)
-    print(f"installed default {label} config -> {dest}")
+    _write_if_changed(dest, src.read_bytes(), label, src)
 
 
 def install_cship_default_config() -> None:
@@ -277,5 +296,4 @@ def install_starship_default_config() -> None:
             target.rename(backup)
             print(f"backed up starship symlink target -> {backup}")
         dest.unlink()
-    dest.write_text(payload)
-    print(f"installed default starship config -> {dest}")
+    _write_if_changed(dest, payload.encode(), "starship", STARSHIP_DEFAULT_TOML)
