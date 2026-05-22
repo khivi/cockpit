@@ -30,28 +30,13 @@ from lib.cmux import (  # noqa: E402
 )
 from lib.config import discover_repo  # noqa: E402
 from lib.daemon import kick_running  # noqa: E402
-from lib.git import _count_unpushed, count_dirty, worktrees  # noqa: E402
-from lib.teardown import TeardownRequest, probe_blockers, teardown  # noqa: E402
-
-
-def hard_blockers(worktree_path: Path | None) -> list[str]:
-    """Refuse-no-matter-what conditions that protect unsaved work.
-
-    Distinct from `probe_blockers`: those include open-PR which `--force`
-    can override; these protect dirty + unpushed-to-default which it can't.
-    """
-    blockers: list[str] = []
-    if worktree_path is None or not worktree_path.is_dir():
-        return blockers
-    dirty = count_dirty(worktree_path)
-    if dirty > 0:
-        blockers.append(f"{dirty} uncommitted file(s)")
-    unpushed = _count_unpushed(worktree_path)
-    if unpushed > 0:
-        blockers.append(f"{unpushed} commit(s) not on origin/main")
-    elif unpushed == -1:
-        blockers.append("could not verify push state")
-    return blockers
+from lib.git import worktrees  # noqa: E402
+from orchestrators.teardown import (  # noqa: E402
+    TeardownRequest,
+    probe_blockers,
+    teardown,
+    worktree_state_blockers,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -135,7 +120,7 @@ def main() -> int:
     branch = wt.branch if wt is not None else None
     wt_path = wt.path if wt is not None else None
 
-    hard = hard_blockers(wt_path)
+    hard = worktree_state_blockers(wt_path)
     if hard:
         print(
             f"ERROR: refusing to close {label}: "

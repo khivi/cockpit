@@ -1,7 +1,7 @@
 """Persistent close-request queue under `$COCKPIT_HOME/state/close-requests/`.
 
 `scripts/close.py` writes one JSON marker per requested teardown; the daemon
-drains the queue each cycle through `lib.teardown.teardown`. The decoupling
+drains the queue each cycle through `orchestrators.teardown.teardown`. The decoupling
 keeps teardown logic in one place and lets the daemon own retry/refusal.
 
 Layout:
@@ -21,8 +21,9 @@ import os
 import time
 from pathlib import Path
 
+from orchestrators.teardown import TeardownRequest
+
 from .config import COCKPIT_HOME
-from .teardown import TeardownRequest
 
 STATE_DIR = COCKPIT_HOME / "state" / "close-requests"
 STALE_SECONDS = 3600

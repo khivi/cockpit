@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from lib import teardown as teardown_mod
-from lib.teardown import TeardownRequest, probe_blockers, teardown
+from orchestrators import teardown as teardown_mod
+from orchestrators.teardown import TeardownRequest, probe_blockers, teardown
 
 
 def _patch_all(*, dirty=0, unpushed=0, pr_state=None):

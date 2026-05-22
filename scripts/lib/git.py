@@ -79,11 +79,11 @@ def _count_unpushed(wt_path: Path) -> int:
 
 
 def _gitdir(wt_path: Path) -> Path | None:
-    try:
-        gitdir_raw = run(["git", "-C", str(wt_path), "rev-parse", "--git-dir"]).strip()
-    except RuntimeError:
+    res = _git(wt_path, "rev-parse", "--git-dir")
+    if res.returncode != 0:
         return None
-    return Path(gitdir_raw) if Path(gitdir_raw).is_absolute() else wt_path / gitdir_raw
+    raw = res.stdout.strip()
+    return Path(raw) if Path(raw).is_absolute() else wt_path / raw
 
 
 def _rebase_head_name(gitdir: Path) -> str | None:
@@ -98,7 +98,7 @@ def _rebase_head_name(gitdir: Path) -> str | None:
         if head_name.exists():
             content = head_name.read_text().strip()
             if content.startswith("refs/heads/"):
-                return content[len("refs/heads/") :]
+                return content.removeprefix("refs/heads/")
     return None
 
 
@@ -111,9 +111,9 @@ def worktrees(repo_dir: Path) -> list[Worktree]:
         detached = False
         for line in block.splitlines():
             if line.startswith("worktree "):
-                path = Path(line[len("worktree ") :])
+                path = Path(line.removeprefix("worktree "))
             elif line.startswith("branch "):
-                branch = line[len("branch refs/heads/") :]
+                branch = line.removeprefix("branch refs/heads/")
             elif line.strip() == "detached":
                 detached = True
         if path is None:
@@ -129,13 +129,23 @@ def worktrees(repo_dir: Path) -> list[Worktree]:
             wts.append(
                 Worktree(path=path, branch=branch, rebasing=rebasing, merging=merging)
             )
+
+    def _stats(w: Worktree) -> tuple[int, int]:
+        return count_dirty(w.path), _count_unpushed(w.path)
+
     with ThreadPoolExecutor(max_workers=max(1, len(wts))) as ex:
-        dirty = list(ex.map(lambda w: count_dirty(w.path), wts))
-        unpushed = list(ex.map(lambda w: _count_unpushed(w.path), wts))
-    for wt, d, u in zip(wts, dirty, unpushed):
-        wt.dirty_count = d
-        wt.unpushed = u
+        for wt, (d, u) in zip(wts, ex.map(_stats, wts)):
+            wt.dirty_count, wt.unpushed = d, u
     return wts
+
+
+def _rev_list_count(cwd: str | os.PathLike, rev_range: str, *, fail: int = 0) -> int:
+    """`git rev-list --count <range>` → int, with `fail` returned on any error."""
+    res = _git(cwd, "rev-list", "--count", rev_range)
+    if res.returncode != 0:
+        return fail
+    out = res.stdout.strip()
+    return int(out) if out.isdigit() else fail
 
 
 def count_commits_since(wt_path: Path, sha: str) -> int:
@@ -145,11 +155,7 @@ def count_commits_since(wt_path: Path, sha: str) -> int:
     SHA recorded when its PR was merged. 0 means "branch tip == merge head"
     (safe to remove); >0 means new local work after merge.
     """
-    res = _git(wt_path, "rev-list", "--count", f"{sha}..HEAD")
-    if res.returncode != 0:
-        return -1
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else -1
+    return _rev_list_count(wt_path, f"{sha}..HEAD", fail=-1)
 
 
 def has_unique_commits(wt_path: Path, base: str) -> bool:
@@ -158,11 +164,7 @@ def has_unique_commits(wt_path: Path, base: str) -> bool:
     Used to filter empty scaffolds (fresh worktrees at base HEAD) when computing
     drift. Uncommitted dirt does not count as work for this check.
     """
-    res = _git(wt_path, "rev-list", "--count", f"{base}..HEAD")
-    if res.returncode != 0:
-        return False
-    out = res.stdout.strip()
-    return out.isdigit() and int(out) > 0
+    return _rev_list_count(wt_path, f"{base}..HEAD") > 0
 
 
 def current_branch(cwd: str | os.PathLike) -> str:
@@ -371,7 +373,7 @@ def _log_lock_reason(repo: Path, wt_path: Path) -> None:
 
     Resolves the admin dir via the worktree's own `.git` file
     (`gitdir: <repo>/.git/worktrees/<wt-name>`), falling back to `wt_path.name`.
-    Silently swallows any error.
+    Swallows FS read errors so a lock log never blocks remove_worktree.
     """
     try:
         wt_name = wt_path.name
@@ -387,8 +389,8 @@ def _log_lock_reason(repo: Path, wt_path: Path) -> None:
         if lock_file.exists():
             reason = lock_file.read_text().strip()
             print(f"preempting {reason}", file=sys.stderr)
-    except Exception:
-        pass
+    except (OSError, UnicodeDecodeError):
+        return
 
 
 def remove_worktree(
@@ -417,22 +419,14 @@ def ahead_of_origin(cwd: str | os.PathLike, branch: str) -> int:
     """
     if not branch:
         return 0
-    res = _git(cwd, "rev-list", "--count", f"origin/{branch}..HEAD")
-    if res.returncode != 0:
-        return 0
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else 0
+    return _rev_list_count(cwd, f"origin/{branch}..HEAD")
 
 
 def behind_of_origin(cwd: str | os.PathLike, branch: str) -> int:
     """Commits HEAD is behind `origin/{branch}`. Returns 0 on any failure."""
     if not branch:
         return 0
-    res = _git(cwd, "rev-list", "--count", f"HEAD..origin/{branch}")
-    if res.returncode != 0:
-        return 0
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else 0
+    return _rev_list_count(cwd, f"HEAD..origin/{branch}")
 
 
 def behind_of_base(cwd: str | os.PathLike, base: str) -> int:
@@ -443,11 +437,7 @@ def behind_of_base(cwd: str | os.PathLike, base: str) -> int:
     """
     if not base:
         return 0
-    res = _git(cwd, "rev-list", "--count", f"HEAD..origin/{base}")
-    if res.returncode != 0:
-        return 0
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else 0
+    return _rev_list_count(cwd, f"HEAD..origin/{base}")
 
 
 def ahead_of_base(cwd: str | os.PathLike, base: str) -> int:
@@ -457,11 +447,7 @@ def ahead_of_base(cwd: str | os.PathLike, base: str) -> int:
     """
     if not base:
         return 0
-    res = _git(cwd, "rev-list", "--count", f"origin/{base}..HEAD")
-    if res.returncode != 0:
-        return 0
-    out = res.stdout.strip()
-    return int(out) if out.isdigit() else 0
+    return _rev_list_count(cwd, f"origin/{base}..HEAD")
 
 
 class GitStatusCounts(NamedTuple):
@@ -520,15 +506,29 @@ def ff_default_branch_worktrees(
             continue
         if _git(wt.path, "fetch", "origin", wt.branch).returncode != 0:
             continue
-        rev = _git(wt.path, "rev-list", "--count", f"HEAD..origin/{wt.branch}")
-        try:
-            behind = int(rev.stdout.strip())
-        except ValueError:
-            continue
-        if behind == 0:
+        behind = _rev_list_count(wt.path, f"HEAD..origin/{wt.branch}", fail=-1)
+        if behind <= 0:
             continue
         advanced.append((wt, behind))
         if dry:
             continue
         _git(wt.path, "merge", "--ff-only", f"origin/{wt.branch}")
     return advanced
+
+
+def log_ff_advances(advances: list[tuple[Worktree, int]], *, dry: bool = False) -> None:
+    """Print one `ff-main` line per (worktree, behind) from
+    `ff_default_branch_worktrees`. Shared by cockpit's per-cycle log and
+    teardown's post-close chore so the rendering stays in sync.
+    """
+    from .colors import dim
+    from .log_format import verb
+
+    action = "[dry] ff-main" if dry else "ff-main"
+    for wt, behind in advances:
+        plural = "s" if behind != 1 else ""
+        print(
+            f"  {verb(action)} {wt.short} → origin/{wt.branch}"
+            f"  {dim(f'{behind} commit{plural}')}",
+            flush=True,
+        )

@@ -19,17 +19,18 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .cache import delete_pr_caches_for_branch, find_pr_payload
-from .cmux import cmux_close_workspace_best_effort
-from .colors import dim
-from .git import (
+from lib.cache import delete_pr_caches_for_branch, find_pr_payload
+from lib.cmux import cmux_close_workspace_best_effort
+from lib.colors import dim
+from lib.git import (
     _count_unpushed,
     count_dirty,
     ff_default_branch_worktrees,
+    log_ff_advances,
     remove_worktree,
     worktrees,
 )
-from .log_format import verb
+from lib.log_format import verb
 
 
 @dataclass(frozen=True)
@@ -49,20 +50,31 @@ class TeardownRequest:
     forced: bool = False
 
 
+def worktree_state_blockers(worktree_path: Path | None) -> list[str]:
+    """Dirty + unpushed checks. Hard blockers — `--force` never overrides these."""
+    blockers: list[str] = []
+    if worktree_path is None or not worktree_path.is_dir():
+        return blockers
+    dirty = count_dirty(worktree_path)
+    if dirty > 0:
+        blockers.append(f"{dirty} uncommitted file(s)")
+    unpushed = _count_unpushed(worktree_path)
+    if unpushed > 0:
+        blockers.append(f"{unpushed} unpushed commit(s)")
+    elif unpushed == -1:
+        blockers.append("could not verify push state")
+    return blockers
+
+
 def probe_blockers(
     worktree_path: Path | None, branch: str | None, repo_name: str | None
 ) -> list[str]:
-    """Read-only check: reasons to refuse close. Empty list = safe to close."""
-    blockers: list[str] = []
-    if worktree_path is not None and worktree_path.is_dir():
-        dirty = count_dirty(worktree_path)
-        if dirty > 0:
-            blockers.append(f"{dirty} uncommitted file(s)")
-        unpushed = _count_unpushed(worktree_path)
-        if unpushed > 0:
-            blockers.append(f"{unpushed} unpushed commit(s)")
-        elif unpushed == -1:
-            blockers.append("could not verify push state")
+    """Read-only check: reasons to refuse close. Empty list = safe to close.
+
+    Combines `worktree_state_blockers` (hard — not `--force`-overridable) and
+    the open-PR check (soft — `--force` overrides).
+    """
+    blockers = worktree_state_blockers(worktree_path)
     if branch is not None and repo_name is not None:
         payload = find_pr_payload(branch, repo_name=repo_name)
         if payload and str(payload.get("state", "")).upper() == "OPEN":
@@ -109,14 +121,8 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
         delete_pr_caches_for_branch(req.repo_name, req.branch)
 
     if req.repo_path is not None:
-        for wt, behind in ff_default_branch_worktrees(
-            req.repo_path, worktrees(req.repo_path)
-        ):
-            plural = "s" if behind != 1 else ""
-            print(
-                f"  {verb('ff-main')} {wt.short} → origin/{wt.branch}"
-                f"  {dim(f'{behind} commit{plural}')}",
-                flush=True,
-            )
+        log_ff_advances(
+            ff_default_branch_worktrees(req.repo_path, worktrees(req.repo_path))
+        )
 
     return True, []

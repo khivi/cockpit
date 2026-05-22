@@ -55,6 +55,29 @@ _PILL_VERBS = frozenset({"set-status", "clear-status"})
 _VALID_TOOLS = frozenset({"cmux", "limux", "none", "auto"})
 
 
+def _has_pill(lines: list[str], *keys: str) -> bool:
+    """True if any `KEY=` line is present (KEY ∈ keys)."""
+    return any(line.lstrip().startswith(k + "=") for line in lines for k in keys)
+
+
+def _set_status(ref: str, key: str, value: str, color: str) -> None:
+    cmux("set-status", key, value, "--workspace", ref, "--color", color, check=False)
+
+
+def _clear_status(ref: str, key: str) -> None:
+    cmux("clear-status", key, "--workspace", ref, check=False)
+
+
+def _apply_count_pill(
+    ref: str, key: str, icon: str, count: int, *, color: str = ORANGE
+) -> None:
+    """Set `KEY=ICON N` when count>0, else clear it."""
+    if count > 0:
+        _set_status(ref, key, f"{icon} {count}", color)
+    else:
+        _clear_status(ref, key)
+
+
 def _resolve_tool() -> str:
     """Pick the workspace backend: 'cmux', 'limux', or 'none'.
 
@@ -128,19 +151,7 @@ def cmux(*args: str, check: bool = True) -> str:
 
 def apply_wip_pill(ref: str, dirty_count: int) -> None:
     """Set or clear the WIP pill on `ref` based on dirty-file count."""
-    if dirty_count > 0:
-        cmux(
-            "set-status",
-            WIP_KEY,
-            f"{WIP_ICON} {dirty_count}",
-            "--workspace",
-            ref,
-            "--color",
-            ORANGE,
-            check=False,
-        )
-    else:
-        cmux("clear-status", WIP_KEY, "--workspace", ref, check=False)
+    _apply_count_pill(ref, WIP_KEY, WIP_ICON, dirty_count)
 
 
 def apply_stale_pill(ref: str, behind_base: int) -> None:
@@ -151,19 +162,7 @@ def apply_stale_pill(ref: str, behind_base: int) -> None:
     get conflict signal from PR review state, so this pill is intentionally
     omitted there.
     """
-    if behind_base > 0:
-        cmux(
-            "set-status",
-            STALE_KEY,
-            f"{STALE_ICON} {behind_base}",
-            "--workspace",
-            ref,
-            "--color",
-            ORANGE,
-            check=False,
-        )
-    else:
-        cmux("clear-status", STALE_KEY, "--workspace", ref, check=False)
+    _apply_count_pill(ref, STALE_KEY, STALE_ICON, behind_base)
 
 
 def list_workspaces() -> list[str]:
@@ -222,9 +221,9 @@ def nudge_if_idle(
         if now - nudge_state.get(ref, 0.0) < interval_secs:
             return False
     status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
-    if not any(line.lstrip().startswith("idle=") for line in status_lines):
+    if not _has_pill(status_lines, "idle"):
         return False
-    if any(line.lstrip().startswith(f"{PARKED_KEY}=") for line in status_lines):
+    if _has_pill(status_lines, PARKED_KEY):
         return False
     if dry:
         print(f"  [dry] nudge {tag} → {ref}: {message[:70]}", flush=True)
@@ -278,13 +277,13 @@ def workspace_state() -> tuple[dict[str, str], dict[str, Path]]:
 def workspace_is_idle(ref: str) -> bool:
     """True if the workspace has an `idle=` pill (set by the Stop hook)."""
     out = cmux("list-status", "--workspace", ref, check=False)
-    return any(line.lstrip().startswith("idle=") for line in out.splitlines())
+    return _has_pill(out.splitlines(), "idle")
 
 
 def workspace_is_parked(ref: str) -> bool:
     """True if the user manually set the `parked=` pill (done-waiting marker)."""
     out = cmux("list-status", "--workspace", ref, check=False)
-    return any(line.lstrip().startswith(f"{PARKED_KEY}=") for line in out.splitlines())
+    return _has_pill(out.splitlines(), PARKED_KEY)
 
 
 def find_cockpit_workspaces(
@@ -379,33 +378,14 @@ def apply_pills(
     # "cockpit_managed" is a one-release back-compat strip — remove next release.
     keys_to_clear = [*ACTIONABLE_KEYS, COCKPIT_KEY, OWNER_KEY, "cockpit_managed"]
     with ThreadPoolExecutor(max_workers=len(keys_to_clear)) as ex:
-        for f in [
-            ex.submit(cmux, "clear-status", k, "--workspace", ref, check=False)
-            for k in keys_to_clear
-        ]:
+        for f in [ex.submit(_clear_status, ref, k) for k in keys_to_clear]:
             f.result()
     for key, value, color in reversed(desired):
-        cmux(
-            "set-status", key, value, "--workspace", ref, "--color", color, check=False
-        )
+        _set_status(ref, key, value, color)
 
     current_status = cmux("list-status", "--workspace", ref, check=False)
-    has_claude = any(
-        line.lstrip().startswith(k + "=")
-        for k in ("claude_code", "loop")
-        for line in current_status.splitlines()
-    )
-    if not has_claude:
-        cmux(
-            "set-status",
-            "idle",
-            "☕ rest",
-            "--workspace",
-            ref,
-            "--color",
-            GREY,
-            check=False,
-        )
+    if not _has_pill(current_status.splitlines(), "claude_code", "loop"):
+        _set_status(ref, "idle", "☕ rest", GREY)
 
     return frozenset(desired)
 
@@ -556,16 +536,7 @@ def spawn_orphan_workspace(wt: Worktree, *, dry: bool = False) -> str | None:
             flush=True,
         )
         return None
-    cmux(
-        "set-status",
-        ORPHAN_KEY,
-        ORPHAN_ICON,
-        "--workspace",
-        ref,
-        "--color",
-        ORANGE,
-        check=False,
-    )
+    _set_status(ref, ORPHAN_KEY, ORPHAN_ICON, ORANGE)
     apply_wip_pill(ref, wt.dirty_count)
     print(
         f"  {verb('spawned')} {bold(wt.short)} ({ref})  {dim(f'orphan branch={wt.branch}')}",

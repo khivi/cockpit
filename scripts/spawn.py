@@ -77,14 +77,26 @@ from lib.prompts import claude_command
 from lib.repos import repo_names
 
 
+def _die(msg: str, code: int = 1) -> int:
+    print(f"ERROR: {msg}", file=sys.stderr)
+    return code
+
+
+def _format_configured_repos(names: list[str]) -> str:
+    """`"<n1>, <n2> (+K more)"` from a list of repo names, capped at 10. Empty if no names."""
+    if not names:
+        return ""
+    listed = ", ".join(names[:10])
+    more = f" (+{len(names) - 10} more)" if len(names) > 10 else ""
+    return f"{listed}{more}"
+
+
 def _unknown_repo_msg(name: str) -> str:
-    names = repo_names()
-    if names:
-        listed = ", ".join(names[:10])
-        more = f" (+{len(names) - 10} more)" if len(names) > 10 else ""
+    listed = _format_configured_repos(repo_names())
+    if listed:
         return (
             f"--repo {name!r}: no configured repo with that name. "
-            f"Configured: {listed}{more}. Run /cockpit:repos for details."
+            f"Configured: {listed}. Run /cockpit:repos for details."
         )
     return (
         f"--repo {name!r}: no configured repo with that name, and no repos "
@@ -141,13 +153,8 @@ def select_repo(repo_name: str | None) -> dict:
         return repo_cfg
     repo_cfg = discover_repo()
     if repo_cfg is None:
-        names = repo_names()
-        hint = (
-            f" Configured repos: {', '.join(names[:10])}"
-            f"{' (+more)' if len(names) > 10 else ''}. Run /cockpit:repos."
-            if names
-            else ""
-        )
+        listed = _format_configured_repos(repo_names())
+        hint = f" Configured repos: {listed}. Run /cockpit:repos." if listed else ""
         raise ValueError(
             "cannot determine repo from cwd; pass --repo <name> or run from "
             "inside a managed repo (register first with `cockpit add`)." + hint
@@ -280,8 +287,7 @@ def main() -> int:
     args = parse_args()
 
     if args.repo is not None and find_repo_by_name(args.repo) is None:
-        print(f"ERROR: {_unknown_repo_msg(args.repo)}", file=sys.stderr)
-        return 1
+        return _die(_unknown_repo_msg(args.repo))
 
     cwd = args.cwd
 
@@ -299,37 +305,25 @@ def main() -> int:
         if v
     ]
     if len(chosen) > 1:
-        print(
-            "ERROR: at most one of positional, --branch, --pr, --name, --skill "
-            f"may be given (got: {', '.join(chosen)})",
-            file=sys.stderr,
+        return _die(
+            "at most one of positional, --branch, --pr, --name, --skill "
+            f"may be given (got: {', '.join(chosen)})"
         )
-        return 1
     if not chosen and not cwd:
-        print(
-            "ERROR: one of positional, --branch, --pr, --name, --skill, "
-            "or --cwd is required",
-            file=sys.stderr,
+        return _die(
+            "one of positional, --branch, --pr, --name, --skill, or --cwd is required"
         )
-        return 1
     if cwd and (args.positional or args.branch or args.pr):
-        print(
-            "ERROR: --cwd cannot combine with positional/--branch/--pr "
-            "(those resolve a repo; use --repo to target one)",
-            file=sys.stderr,
+        return _die(
+            "--cwd cannot combine with positional/--branch/--pr "
+            "(those resolve a repo; use --repo to target one)"
         )
-        return 1
     if (args.name or args.skill) and not (args.repo or cwd):
-        print(
-            "ERROR: --name and --skill require --repo <name> or --cwd <path>",
-            file=sys.stderr,
-        )
-        return 1
+        return _die("--name and --skill require --repo <name> or --cwd <path>")
     if cwd:
         cwd_path = Path(cwd).expanduser().resolve()
         if not cwd_path.exists():
-            print(f"ERROR: --cwd {cwd!r}: path does not exist", file=sys.stderr)
-            return 1
+            return _die(f"--cwd {cwd!r}: path does not exist")
 
     branch = args.branch
     pr_num = args.pr
@@ -366,8 +360,7 @@ def main() -> int:
         try:
             wt, skill_prompt = resolve_skill(skill, args.repo)
         except ValueError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return 1
+            return _die(str(e))
         if cwd:
             wt = Path(cwd).expanduser().resolve()
         if not short:
@@ -388,11 +381,9 @@ def main() -> int:
                 branch, pr_num, args.repo, from_name=from_name
             )
         except RuntimeError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return 2
+            return _die(str(e), code=2)
         except ValueError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return 1
+            return _die(str(e))
 
         if not short:
             short = slugify(branch.rsplit("/", 1)[-1])

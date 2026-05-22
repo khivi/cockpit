@@ -15,7 +15,6 @@ from __future__ import annotations
 import calendar
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -50,12 +49,27 @@ from .colors import (
     yellow,
 )
 from .git import ahead_of_origin, behind_of_origin, count_status, current_branch
+from .linear import extract_ticket
 
 BASE_DISTANCE_FRESH_SECS = 30 * 60
 BASE_DISTANCE_MAX_AGE_SECS = 6 * 60 * 60
 
 SESSION_TIME_MIN_SECS = 10
-LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
+POWERLINE_BRANCH = ""  # nf-pl-branch separator (Nerd Font powerline)
+
+# Statusline glyphs. One module-level constant per icon so a rename or palette
+# refresh has a single touch point. cship pills (cmux.py) follow the same pattern.
+ICON_CONTEXT = "🧠"  # 🧠 context-usage gauge
+ICON_SESSION = "⌛"  # ⌛ session 5h-bucket usage
+ICON_BRANCH = "⎇"  # ⎇ current branch
+ICON_AHEAD_ORIGIN = "↑"  # ↑ commits ahead of origin
+ICON_AHEAD_BASE = "↗"  # ↗ commits ahead of base
+ICON_BEHIND_ORIGIN = "↓"  # ↓ commits behind origin
+ICON_BEHIND_BASE = "↻"  # ↻ rebase-staleness vs base
+ICON_STAGED = "●"  # ● staged file count
+ICON_UNSTAGED = "✎"  # ✎ unstaged modifications
+ICON_UNTRACKED = "✚"  # ✚ untracked files
+ICON_PERMISSION_MODE = "✎"  # ✎ permission-mode label (same glyph as unstaged)
 
 # Claude Code's permission_mode values are camelCase; render them with the
 # user-visible label they show in /config and the slash menu, hiding the
@@ -171,7 +185,7 @@ def print_context(sid: str | None = None) -> str:
         ceiling = f"{limit // 1000}k"
     else:
         ceiling = str(limit)
-    return _pct_tier(pct)(f"🧠 {pct}%/{ceiling}")
+    return _pct_tier(pct)(f"{ICON_CONTEXT} {pct}%/{ceiling}")
 
 
 def print_session_time(sid: str | None = None) -> str:
@@ -270,7 +284,7 @@ def print_rate_limit(sid: str | None = None) -> str:
         pct = int(parts[0])
     except ValueError:
         return ""
-    return _pct_tier(pct)(f"⌛ {pct}%/5h")
+    return _pct_tier(pct)(f"{ICON_SESSION} {pct}%/5h")
 
 
 def print_model(sid: str | None = None) -> str:
@@ -286,43 +300,58 @@ def print_permission_mode(sid: str | None = None) -> str:
     label = _PERMISSION_MODE_LABELS.get(raw)
     if not label:
         return ""
-    return f"✎ {label}"
+    return f"{ICON_PERMISSION_MODE} {label}"
 
 
-def print_branch_pill() -> str:
-    """`⎇ <branch>[ ↑A][ ↗N]  [ ●S][ ✎M][ ✚U][ ↓B][ ↻N]` — segments hidden when 0.
+def print_branch_identity() -> str:
+    """`⎇ <branch>[ ↑A][ ↗N]` — branch + ahead-of-origin + ahead-of-base.
 
-    Layout groups branch-identity + ahead-of-* counters first, then a
-    powerline-branch separator, then working-tree + sync state. Each
-    segment is independently ANSI-colored; the spaces between segments
-    are uncolored. Empty when not in a git repo.
+    Empty when not in a git repo. Inter-segment spacing belongs to TOML;
+    this emits only its own content.
     """
     cwd = os.getcwd()
     branch = current_branch(cwd)
     if not branch:
         return ""
-    parts = [slate(f"⎇ {branch}")]
+    parts = [slate(f"{ICON_BRANCH} {branch}")]
     ahead = ahead_of_origin(cwd, branch)
     if ahead > 0:
-        parts.append(azure(f"↑{ahead}"))
+        parts.append(azure(f"{ICON_AHEAD_ORIGIN}{ahead}"))
     ahead_base = _base_ahead_segment(branch)
     if ahead_base:
         parts.append(ahead_base)
-    parts.append(slate(""))
+    return " ".join(parts)
+
+
+def print_worktree_status() -> str:
+    """`<sep> [●S] [✎M] [✚U] [↓B] [↻N]` — working-tree + sync state.
+
+    Empty (the empty string, not the separator alone) when nothing to show,
+    so the calling TOML segment's `format = "(   $output)"` collapses to
+    nothing. The leading powerline-branch separator pins this segment
+    visually to the preceding `[custom.branch_identity]` segment.
+    """
+    cwd = os.getcwd()
+    branch = current_branch(cwd)
+    if not branch:
+        return ""
+    parts: list[str] = []
     counts = count_status(Path(cwd))
     if counts.staged > 0:
-        parts.append(leaf(f"●{counts.staged}"))
+        parts.append(leaf(f"{ICON_STAGED}{counts.staged}"))
     if counts.unstaged > 0:
-        parts.append(amber(f"✎{counts.unstaged}"))
+        parts.append(amber(f"{ICON_UNSTAGED}{counts.unstaged}"))
     if counts.untracked > 0:
-        parts.append(shadow(f"✚{counts.untracked}"))
+        parts.append(shadow(f"{ICON_UNTRACKED}{counts.untracked}"))
     behind = behind_of_origin(cwd, branch)
     if behind > 0:
-        parts.append(orange(f"↓{behind}"))
+        parts.append(orange(f"{ICON_BEHIND_ORIGIN}{behind}"))
     stale = _base_distance_segment(branch)
     if stale:
         parts.append(stale)
-    return " ".join(parts)
+    if not parts:
+        return ""
+    return slate(POWERLINE_BRANCH) + " " + " ".join(parts)
 
 
 def _read_base_cache(stem: str, branch: str) -> tuple[int, int] | None:
@@ -371,7 +400,7 @@ def _base_distance_segment(branch: str) -> str:
     if cached is None:
         return ""
     count, fetch_epoch = cached
-    return _render_base_segment(count, fetch_epoch, "↻", orange)
+    return _render_base_segment(count, fetch_epoch, ICON_BEHIND_BASE, orange)
 
 
 def _base_ahead_segment(branch: str) -> str:
@@ -379,15 +408,11 @@ def _base_ahead_segment(branch: str) -> str:
     if cached is None:
         return ""
     count, fetch_epoch = cached
-    return _render_base_segment(count, fetch_epoch, "↗", azure)
+    return _render_base_segment(count, fetch_epoch, ICON_AHEAD_BASE, azure)
 
 
 def print_linear() -> str:
-    branch = _branch()
-    if not branch:
-        return ""
-    m = LINEAR_RE.search(branch)
-    return m.group(0) if m else ""
+    return extract_ticket(_branch())
 
 
 def _cached_or_refresh(branch: str, stem: str, field: str) -> str:

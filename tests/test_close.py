@@ -9,8 +9,9 @@ from unittest.mock import patch
 import pytest
 
 import close as close_script
-from close import hard_blockers
 from lib.git import Worktree
+from orchestrators import teardown as teardown_mod
+from orchestrators.teardown import worktree_state_blockers as hard_blockers
 
 
 def _make_wt(repo_dir: Path, path: Path, branch: str) -> Worktree:
@@ -126,8 +127,8 @@ def test_hard_blockers_clean_returns_empty(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
     with (
-        patch.object(close_script, "count_dirty", return_value=0),
-        patch.object(close_script, "_count_unpushed", return_value=0),
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=0),
     ):
         assert hard_blockers(wt) == []
 
@@ -136,8 +137,8 @@ def test_hard_blockers_flags_dirty(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
     with (
-        patch.object(close_script, "count_dirty", return_value=3),
-        patch.object(close_script, "_count_unpushed", return_value=0),
+        patch.object(teardown_mod, "count_dirty", return_value=3),
+        patch.object(teardown_mod, "_count_unpushed", return_value=0),
     ):
         blockers = hard_blockers(wt)
     assert any("3 uncommitted" in b for b in blockers)
@@ -147,19 +148,19 @@ def test_hard_blockers_flags_unpushed(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
     with (
-        patch.object(close_script, "count_dirty", return_value=0),
-        patch.object(close_script, "_count_unpushed", return_value=2),
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=2),
     ):
         blockers = hard_blockers(wt)
-    assert any("2 commit(s) not on origin" in b for b in blockers)
+    assert any("2 unpushed commit" in b for b in blockers)
 
 
 def test_hard_blockers_flags_unverifiable_push_state(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
     with (
-        patch.object(close_script, "count_dirty", return_value=0),
-        patch.object(close_script, "_count_unpushed", return_value=-1),
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=-1),
     ):
         blockers = hard_blockers(wt)
     assert any("could not verify" in b for b in blockers)

@@ -1,7 +1,8 @@
 """Cockpit library package.
 
-This `__init__` exposes only the shared subprocess wrapper. All other
-helpers live in sibling modules:
+Shared helpers cockpit's entry-point scripts import. Most modules wrap a
+single tool or own a single concern; multi-tool pipelines that span more
+than one of these belong in `orchestrators/` instead.
 
   - lib.config    — paths, config.json IO, statusline setup, discover_repo
   - lib.cache     — JSON per-PR cache + flat cockpit-cache layout & writers

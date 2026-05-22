@@ -23,7 +23,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/close.py "$@"
 1. Resolve the target: from `<query>` if given, else from `git rev-parse --show-toplevel`.
 2. Inline blocker probe (skipped under `--force`): uncommitted files, unpushed commits, open PR. Fast refusal with a clear message.
 3. Write a close-request marker under `$COCKPIT_HOME/state/close-requests/<repo>/<ref>.json`.
-4. SIGUSR1-kick the running daemon. The daemon's next cycle drains the queue through `lib.teardown` — one code path for `/cockpit:close`, autoclose-on-merge, and orphan reaping.
+4. SIGUSR1-kick the running daemon. The daemon's next cycle drains the queue through `orchestrators.teardown` — one code path for `/cockpit:close`, autoclose-on-merge, and orphan reaping.
 5. If no daemon is running, run teardown inline against the same request (and pop the marker on success) so the user always sees results immediately.
 
 Teardown order is invariant: cmux close → `git worktree remove` → cache delete. Pulling the cwd out from under a live Claude session breaks every Stop/PreToolUse hook with ENOENT.
