@@ -129,12 +129,13 @@ def worktrees(repo_dir: Path) -> list[Worktree]:
             wts.append(
                 Worktree(path=path, branch=branch, rebasing=rebasing, merging=merging)
             )
+
+    def _stats(w: Worktree) -> tuple[int, int]:
+        return count_dirty(w.path), _count_unpushed(w.path)
+
     with ThreadPoolExecutor(max_workers=max(1, len(wts))) as ex:
-        dirty = list(ex.map(lambda w: count_dirty(w.path), wts))
-        unpushed = list(ex.map(lambda w: _count_unpushed(w.path), wts))
-    for wt, d, u in zip(wts, dirty, unpushed):
-        wt.dirty_count = d
-        wt.unpushed = u
+        for wt, (d, u) in zip(wts, ex.map(_stats, wts)):
+            wt.dirty_count, wt.unpushed = d, u
     return wts
 
 
