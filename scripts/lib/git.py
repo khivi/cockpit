@@ -14,23 +14,6 @@ from typing import NamedTuple
 from . import run
 
 
-def require_git() -> None:
-    """Exit cleanly with a one-liner if `git` is not on PATH.
-
-    Mirrors `lib.cmux.require_workspace_binary`: surfaces a structured
-    install hint at startup instead of letting a cryptic FileNotFoundError
-    surface deep inside a daemon cycle.
-    """
-    try:
-        subprocess.run(["git", "--version"], capture_output=True, check=False)
-    except FileNotFoundError:
-        print(
-            "cockpit: `git` not found on PATH — install from https://git-scm.com",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-
-
 def _git(repo: str | os.PathLike, *args: str) -> subprocess.CompletedProcess:
     """`git -C <repo> <args>` capturing stdout/stderr as text; never raises."""
     return subprocess.run(
