@@ -313,6 +313,16 @@ def test_print_permission_mode(cache_dir, value, expected):
 # ── field printer: branch_pill ─────────────────────────────────────────────
 
 
+def _full_pill() -> str:
+    """Composite of the two split segments — used by tests that exercise
+    cross-segment behavior (e.g. layout/ordering). Tests scoped to a single
+    segment should call the underlying printer directly.
+    """
+    identity = starship.print_branch_identity()
+    status = starship.print_worktree_status()
+    return f"{identity} {status}".strip()
+
+
 def _init_repo(path: Path) -> None:
     import subprocess as sp
 
@@ -330,7 +340,8 @@ def _init_repo(path: Path) -> None:
 def test_print_branch_pill_clean(_clean_git_env, tmp_path, monkeypatch):
     _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert starship.print_branch_pill() == slate("⎇ main") + " " + slate("")
+    # Clean repo: no status segments → no powerline separator emitted.
+    assert _full_pill() == slate("⎇ main")
 
 
 def test_print_branch_pill_branch_name_slate_colored(_clean_git_env, monkeypatch):
@@ -342,13 +353,13 @@ def test_print_branch_pill_branch_name_slate_colored(_clean_git_env, monkeypatch
     monkeypatch.setattr(
         starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
     )
-    out = starship.print_branch_pill()
+    out = _full_pill()
     assert out.startswith(slate("⎇ feature"))
 
 
 def test_print_branch_pill_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert starship.print_branch_pill() == ""
+    assert _full_pill() == ""
 
 
 def _stub_branch_pill(monkeypatch, *, ahead=0, behind=0, status=(0, 0, 0)) -> None:
@@ -377,7 +388,7 @@ def test_print_branch_pill_ahead_only(_clean_git_env, monkeypatch):
     monkeypatch.setattr(starship, "ahead_of_origin", git_mod.ahead_of_origin)
     monkeypatch.setattr(starship, "behind_of_origin", git_mod.behind_of_origin)
     monkeypatch.setattr(starship, "count_status", git_mod.count_status)
-    out = starship.print_branch_pill()
+    out = _full_pill()
     assert slate("⎇ feature") in out
     assert azure("↑3") in out
 
@@ -403,7 +414,7 @@ def test_print_branch_pill_segments(
     _clean_git_env, monkeypatch, ahead, behind, status, expected_fragments
 ):
     _stub_branch_pill(monkeypatch, ahead=ahead, behind=behind, status=status)
-    out = starship.print_branch_pill()
+    out = _full_pill()
     for frag in expected_fragments:
         assert frag in out
 
@@ -417,7 +428,7 @@ def test_print_branch_pill_all_segments(_clean_git_env, monkeypatch):
     monkeypatch.setattr(
         starship, "count_status", lambda _p: git_mod.GitStatusCounts(1, 1, 1)
     )
-    out = starship.print_branch_pill()
+    out = _full_pill()
     assert slate("⎇ feature") in out
     assert azure("↑1") in out
     assert orange("↓1") in out
@@ -433,7 +444,7 @@ def test_print_branch_pill_dirty_untracked_and_modified(
     (tmp_path / "f").write_text("y")
     (tmp_path / "new").write_text("z")
     monkeypatch.chdir(tmp_path)
-    out = starship.print_branch_pill()
+    out = _full_pill()
     assert "⎇ main" in out
     assert "✎1" in out
     assert "✚1" in out
@@ -479,26 +490,26 @@ def test_print_branch_pill_base_relative(
     now = int(time.time())
     if scenario == "fresh":
         cache_path.write_text(f"7 {now}")
-        out = starship.print_branch_pill()
+        out = _full_pill()
         assert fresh_color(f"{glyph}7") in out
         assert "ago" not in out
     elif scenario == "aging":
         epoch = now - (2 * 3600)
         cache_path.write_text(f"4 {epoch}")
-        out = starship.print_branch_pill()
+        out = _full_pill()
         assert shadow(f"{glyph}4 (2h ago)") in out
     elif scenario == "too_stale_hidden":
         epoch = now - (8 * 3600)
         cache_path.write_text(f"4 {epoch}")
-        assert glyph not in starship.print_branch_pill()
+        assert glyph not in _full_pill()
     elif scenario == "zero_hidden":
         cache_path.write_text(f"0 {now}")
-        assert glyph not in starship.print_branch_pill()
+        assert glyph not in _full_pill()
     elif scenario == "empty_payload_hidden":
         cache_path.write_text("")
-        assert glyph not in starship.print_branch_pill()
+        assert glyph not in _full_pill()
     elif scenario == "no_cache_hidden":
-        assert glyph not in starship.print_branch_pill()
+        assert glyph not in _full_pill()
 
 
 def test_print_branch_pill_base_distance_garbage_hidden(
@@ -506,7 +517,7 @@ def test_print_branch_pill_base_distance_garbage_hidden(
 ):
     _stub_branch(monkeypatch)
     (cache_dir / "base-distance-feature").write_text("not numbers")
-    out = starship.print_branch_pill()
+    out = _full_pill()
     assert "↻" not in out
 
 
@@ -517,7 +528,7 @@ def test_print_branch_pill_base_distance_slash_branch_key(
     _stub_branch(monkeypatch, branch="khivi/master/foo")
     now = int(time.time())
     (cache_dir / "base-distance-khivi-master-foo").write_text(f"3 {now}")
-    out = starship.print_branch_pill()
+    out = _full_pill()
     assert orange("↻3") in out
 
 
@@ -533,7 +544,7 @@ def test_print_branch_pill_base_ahead_before_base_distance(
     now = int(time.time())
     (cache_dir / "base-ahead-feature").write_text(f"7 {now}")
     (cache_dir / "base-distance-feature").write_text(f"3 {now}")
-    out = starship.print_branch_pill()
+    out = _full_pill()
     assert out.index("↗7") < out.index("↻3")
 
 
@@ -553,8 +564,8 @@ def test_print_branch_pill_layout_ahead_before_separator_before_status(
     now = int(time.time())
     (cache_dir / "base-ahead-feature").write_text(f"9 {now}")
     (cache_dir / "base-distance-feature").write_text(f"5 {now}")
-    out = starship.print_branch_pill()
-    sep = ""
+    out = _full_pill()
+    sep = starship.POWERLINE_BRANCH
     assert sep in out
     sep_pos = out.index(sep)
     assert out.index("⎇ feature") < out.index("↑2") < sep_pos
@@ -566,8 +577,8 @@ def test_print_branch_pill_layout_ahead_before_separator_before_status(
     assert sep_pos < out.index("↻5")
 
 
-def test_print_branch_pill_separator_always_renders(_clean_git_env, monkeypatch):
-    """Powerline separator renders even when no trailing status segments exist."""
+def test_print_branch_pill_separator_hidden_without_status(_clean_git_env, monkeypatch):
+    """Powerline separator is hidden when no trailing status segments exist."""
     from lib import git as git_mod
 
     monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
@@ -576,8 +587,8 @@ def test_print_branch_pill_separator_always_renders(_clean_git_env, monkeypatch)
     monkeypatch.setattr(
         starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
     )
-    out = starship.print_branch_pill()
-    assert "" in out
+    out = _full_pill()
+    assert starship.POWERLINE_BRANCH not in out
 
 
 # ── integration: stash feeds field printers ────────────────────────────────

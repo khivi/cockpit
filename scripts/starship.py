@@ -11,7 +11,8 @@ Subcommands:
   rate-limit           — rolling 5h usage %
   model                — Claude model display name
   permission-mode      — current permission mode (hidden when default)
-  branch-pill          — current branch + ahead/behind + staged/unstaged/untracked
+  branch-identity      — current branch + ahead-of-origin + ahead-of-base
+  worktree-status      — staged/unstaged/untracked + behind-origin + base-staleness
   linear               — Linear ticket ID from branch name
   pr-state             — PR state (OPEN / DRAFT / APPROVED / ...)
   pr-num               — "#<n>" for the current branch's PR
@@ -36,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from lib.cache import refresh_pr_checks, refresh_pr_data, warm_all  # noqa: E402
 from lib.git import current_branch  # noqa: E402
 from lib.starship import (  # noqa: E402
-    print_branch_pill,
+    print_branch_identity,
     print_context,
     print_linear,
     print_model,
@@ -47,6 +48,7 @@ from lib.starship import (  # noqa: E402
     print_pr_title,
     print_rate_limit,
     print_session_time,
+    print_worktree_status,
 )
 
 
@@ -71,8 +73,10 @@ def main(argv: list[str]) -> int:
             return _emit(print_model())
         if cmd == "permission-mode":
             return _emit(print_permission_mode())
-        if cmd == "branch-pill":
-            return _emit(print_branch_pill())
+        if cmd == "branch-identity":
+            return _emit(print_branch_identity())
+        if cmd == "worktree-status":
+            return _emit(print_worktree_status())
         if cmd == "linear":
             return _emit(print_linear())
         if cmd == "pr-state":

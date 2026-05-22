@@ -27,7 +27,8 @@ format = """\
 ${custom.model}\
 ${custom.context}\
 ${custom.ratelimit}\
-${custom.branch_pill}\
+${custom.branch_identity}\
+${custom.worktree_status}\
 ${custom.permission_mode}\
 ${custom.session_time}
 ${custom.linear}\
@@ -74,14 +75,22 @@ when        = "true"
 format      = "(   $output)"
 description = "Anthropic rolling 5h usage limit"
 
-# Current branch, ahead-of-origin / ahead-of-base counts, then a powerline-branch
-# separator, then working-tree + sync state (e.g. "⎇ khivi/feature ↑3 ↗9  ●1 ✎2 ↓1 ↻5").
+# Branch identity + ahead-of-* counts (e.g. "⎇ khivi/feature ↑3 ↗9").
 # Per-segment ANSI is emitted by the Python output so each marker carries its own color.
-[custom.branch_pill]
-command     = "__COCKPIT_STARSHIP__ branch-pill"
+[custom.branch_identity]
+command     = "__COCKPIT_STARSHIP__ branch-identity"
 when        = "true"
 format      = "(   $output)"
-description = "Git branch + ahead counts then working-tree status"
+description = "Git branch + ahead-of-origin + ahead-of-base"
+
+# Working-tree + sync state (e.g. " ●1 ✎2 ✚3 ↓1 ↻5"), hidden when nothing
+# to report. The Python output leads with a powerline-branch separator so
+# the segment visually attaches to [custom.branch_identity].
+[custom.worktree_status]
+command     = "__COCKPIT_STARSHIP__ worktree-status"
+when        = "true"
+format      = "(   $output)"
+description = "staged/unstaged/untracked + behind + base-staleness"
 
 # Permission mode (plan / accept-edits / bypass). Hidden when mode == default.
 [custom.permission_mode]
