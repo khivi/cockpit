@@ -55,8 +55,9 @@ repos:
     hooks:
       - id: version-bump-pre-push
         name: Bump version on pre-push
-        entry: .githooks/version-bump.sh
-        language: script
+        entry: python .githooks/version-bump.py
+        language: python
+        additional_dependencies: [semver==3.0.2]
         stages: [pre-push]
         always_run: true
         pass_filenames: false
