@@ -11,41 +11,39 @@
 # never touch this file, so any edits you make stick around until you
 # re-run --footer.
 
-# Explicit two-line layout. Line one is Claude Code + PR signals from the
-# custom modules below; pr_title gets its own line so long titles wrap
-# cleanly instead of crowding the metric strip.
+# Explicit two-line layout:
+#   line 1 = session state (context / rate / session / model / mode / branch / commit age)
+#   line 2 = PR/Linear identity (ticket / state / num / checks / title)
+#
+# Line 2 collapses entirely when there's no Linear ticket and no PR for the
+# current branch — the trailing newline still prints, but cship trims
+# blank trailing lines, so the footer stays single-line in that case.
 #
 # `${custom.<name>}` (braces required) is starship's syntax for referencing
 # a specific [custom.*] block. Bare `$custom` would expand to every custom
 # module concatenated in arbitrary order; the dotted form is what lets us
-# pin the line break between pr_checks and pr_title.
+# pin the line break between commit_age and linear.
 format = """\
-${time}\
 ${custom.context}\
 ${custom.session_time}\
 ${custom.ratelimit}\
+${custom.model}\
+${custom.permission_mode}\
+${custom.branch_pill}\
+${custom.commit_age}
 ${custom.linear}\
 ${custom.pr_state}\
 ${custom.pr_num}\
-${custom.pr_checks}
+${custom.pr_checks}\
 ${custom.pr_title}"""
 
 add_newline = false
 
 # Disable starship's default modules so the format above is authoritative:
-# `format` listing only `${time}${custom.*}` would normally still render the
-# prefix the host shell's starship default appends, which we don't want here.
+# `format` listing only `${custom.*}` would normally still render the prefix
+# the host shell's starship default appends, which we don't want here.
 [character]
 disabled = true
-
-# Clock rendered by starship instead of cship — cship 1.7.x's `[cship]/lines`
-# schema has no native [time] module, so the wall-clock pill moved here when
-# cship.toml switched away from the legacy wrapper-free format.
-[time]
-disabled    = false
-format      = " [$time]($style) "
-time_format = "%H:%M"
-style       = "fg:#475569"
 
 # All [custom.*] commands invoke the bundled `scripts/cship.py` dispatcher.
 # The literal `__COCKPIT_STARSHIP__` token is replaced with the resolved absolute
@@ -76,6 +74,38 @@ when        = "true"
 format      = "( [$output]($style))"
 style       = "fg:#0369a1"
 description = "Anthropic rolling 5h usage limit"
+
+# Claude model display name (e.g. "Opus 4.7"); stashed by cship.py wrapper from statusLine JSON.
+[custom.model]
+command     = "__COCKPIT_STARSHIP__ model"
+when        = "true"
+format      = "( [$output]($style))"
+style       = "fg:#1f2937"
+description = "Claude model display name"
+
+# Permission mode (plan / accept-edits / bypass). Hidden when mode == default.
+[custom.permission_mode]
+command     = "__COCKPIT_STARSHIP__ permission-mode"
+when        = "true"
+format      = "( [$output]($style))"
+style       = "bold fg:#b45309"
+description = "Claude Code permission mode"
+
+# Current branch + ahead/dirty markers (e.g. "khivi/feature ↑3 ●2"). Empty outside a git repo.
+[custom.branch_pill]
+command     = "__COCKPIT_STARSHIP__ branch-pill"
+when        = "true"
+format      = "( [$output]($style))"
+style       = "fg:#475569"
+description = "Git branch + ahead-of-origin + dirty file count"
+
+# Relative age of HEAD commit (e.g. "⊙ 5m"). Hidden when older than 24h.
+[custom.commit_age]
+command     = "__COCKPIT_STARSHIP__ commit-age"
+when        = "true"
+format      = "( [$output]($style))"
+style       = "fg:#475569"
+description = "Relative age of the HEAD commit"
 
 # Linear ticket extracted from current branch (e.g. "PRO-123"). Hidden if branch has none.
 [custom.linear]
@@ -110,10 +140,10 @@ format      = "( [$output]($style))"
 style       = "bold fg:#15803d"
 description = "GitHub PR CI status for current branch"
 
-# PR title for current branch — placed on line two of the footer.
+# PR title for current branch — sits on line two alongside Linear + PR pills.
 [custom.pr_title]
 command     = "__COCKPIT_STARSHIP__ pr-title"
 when        = "true"
-format      = "[$output]($style)"
+format      = "( [$output]($style))"
 style       = "italic fg:#1f2937"
 description = "GitHub PR title for current branch"

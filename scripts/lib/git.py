@@ -370,6 +370,32 @@ def remove_worktree(
     return res.returncode == 0, res.stderr.strip()
 
 
+def ahead_of_origin(cwd: str | os.PathLike, branch: str) -> int:
+    """Commits HEAD is ahead of `origin/{branch}`. Returns 0 on any failure
+    (no remote ref, branch never pushed, git error). The footer pill
+    treats 0 as "nothing to show", which is the right behavior in all
+    failure modes.
+    """
+    if not branch:
+        return 0
+    res = _git(cwd, "rev-list", "--count", f"origin/{branch}..HEAD")
+    if res.returncode != 0:
+        return 0
+    out = res.stdout.strip()
+    return int(out) if out.isdigit() else 0
+
+
+def head_commit_epoch(cwd: str | os.PathLike) -> int | None:
+    """UTC epoch of HEAD's commit time, or None if not in a git repo or
+    HEAD has no commits yet. Used by the commit-age pill.
+    """
+    res = _git(cwd, "log", "-1", "--format=%ct", "HEAD")
+    if res.returncode != 0:
+        return None
+    out = res.stdout.strip()
+    return int(out) if out.isdigit() else None
+
+
 def origin_head_branch(repo: Path) -> str | None:
     """Return the branch `origin/HEAD` points at (e.g. 'main'), or None."""
     r = _git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")

@@ -398,6 +398,178 @@ def test_print_session_time_skips_under_10s(cache_dir, tmp_path):
     assert starship.print_session_time() == ""
 
 
+# ── stash: model + permission_mode caches ──────────────────────────────────
+
+
+def test_stash_writes_model_cache(cache_dir):
+    blob = json.dumps(
+        {
+            "session_id": "S",
+            "model": {"display_name": "Opus 4.7 (1M context)"},
+        }
+    ).encode()
+    claude_mod.stash_from_stdin(blob)
+    assert (cache_dir / "model-S").read_text() == "Opus 4.7"
+
+
+def test_stash_writes_permission_mode_cache(cache_dir):
+    blob = json.dumps({"session_id": "S", "permission_mode": "plan"}).encode()
+    claude_mod.stash_from_stdin(blob)
+    assert (cache_dir / "permission-mode-S").read_text() == "plan"
+
+
+def test_stash_skips_empty_permission_mode(cache_dir):
+    blob = json.dumps({"session_id": "S", "permission_mode": ""}).encode()
+    claude_mod.stash_from_stdin(blob)
+    assert not (cache_dir / "permission-mode-S").exists()
+
+
+# ── field printer: model ───────────────────────────────────────────────────
+
+
+def test_print_model_reads_session_cache(cache_dir, monkeypatch):
+    (cache_dir / "model-S").write_text("Opus 4.7")
+    monkeypatch.setenv("CSHIP_SESSION_ID", "S")
+    assert starship.print_model() == "Opus 4.7"
+
+
+def test_print_model_fresh_session_falls_back(cache_dir, monkeypatch):
+    (cache_dir / "model-OLD").write_text("Sonnet 4.6")
+    time.sleep(0.01)
+    (cache_dir / "model-NEWER").write_text("Opus 4.7")
+    monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH")
+    assert starship.print_model() == "Opus 4.7"
+
+
+def test_print_model_missing_empty(cache_dir):
+    assert starship.print_model() == ""
+
+
+# ── field printer: permission_mode ─────────────────────────────────────────
+
+
+def test_print_permission_mode_default_hidden(cache_dir):
+    (cache_dir / "permission-mode").write_text("default")
+    assert starship.print_permission_mode() == ""
+
+
+def test_print_permission_mode_plan(cache_dir):
+    (cache_dir / "permission-mode").write_text("plan")
+    assert starship.print_permission_mode() == "✎ plan"
+
+
+def test_print_permission_mode_accept_edits(cache_dir):
+    (cache_dir / "permission-mode").write_text("acceptEdits")
+    assert starship.print_permission_mode() == "✎ accept-edits"
+
+
+def test_print_permission_mode_bypass(cache_dir):
+    (cache_dir / "permission-mode").write_text("bypassPermissions")
+    assert starship.print_permission_mode() == "✎ bypass"
+
+
+def test_print_permission_mode_unknown_value_hidden(cache_dir):
+    (cache_dir / "permission-mode").write_text("zaphod")
+    assert starship.print_permission_mode() == ""
+
+
+def test_print_permission_mode_missing_empty(cache_dir):
+    assert starship.print_permission_mode() == ""
+
+
+# ── field printer: branch_pill ─────────────────────────────────────────────
+
+
+@pytest.fixture
+def _clean_git_env(monkeypatch) -> None:
+    """Strip ambient GIT_* env vars so git commands target the tmpdir's
+    repo (or no repo) instead of inheriting the caller's repo. Pre-commit
+    in particular exports GIT_DIR pointing at the host repo, which makes
+    `git -C tmp_path log` return the host's HEAD instead of failing
+    cleanly when tmp_path is not a repo."""
+    for var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def _init_repo(path: Path) -> None:
+    import subprocess as sp
+
+    sp.run(["git", "-C", str(path), "init", "-q", "-b", "main"], check=True)
+    sp.run(["git", "-C", str(path), "config", "user.email", "t@t"], check=True)
+    sp.run(["git", "-C", str(path), "config", "user.name", "t"], check=True)
+    (path / "f").write_text("x")
+    sp.run(["git", "-C", str(path), "add", "f"], check=True)
+    sp.run(
+        ["git", "-C", str(path), "commit", "-q", "-m", "init"],
+        check=True,
+    )
+
+
+def test_print_branch_pill_clean(_clean_git_env, tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert starship.print_branch_pill() == "main"
+
+
+def test_print_branch_pill_dirty(_clean_git_env, tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    (tmp_path / "f").write_text("y")
+    (tmp_path / "new").write_text("z")
+    monkeypatch.chdir(tmp_path)
+    out = starship.print_branch_pill()
+    assert out.startswith("main ")
+    assert "●2" in out
+    assert "↑" not in out  # no remote
+
+
+def test_print_branch_pill_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert starship.print_branch_pill() == ""
+
+
+# ── field printer: commit_age ──────────────────────────────────────────────
+
+
+def test_print_commit_age_seconds(_clean_git_env, tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    out = starship.print_commit_age()
+    assert out.startswith("⊙ ")
+    assert out.endswith("s") or out.endswith("m")  # may flip between s and m
+
+
+def test_print_commit_age_minutes(_clean_git_env, tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with patch.object(
+        starship, "head_commit_epoch", return_value=int(time.time()) - 305
+    ):
+        assert starship.print_commit_age() == "⊙ 5m"
+
+
+def test_print_commit_age_hours(_clean_git_env, tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with patch.object(
+        starship, "head_commit_epoch", return_value=int(time.time()) - 3 * 3600 - 600
+    ):
+        assert starship.print_commit_age() == "⊙ 3h 10m"
+
+
+def test_print_commit_age_hidden_over_24h(_clean_git_env, tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with patch.object(
+        starship, "head_commit_epoch", return_value=int(time.time()) - 25 * 3600
+    ):
+        assert starship.print_commit_age() == ""
+
+
+def test_print_commit_age_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert starship.print_commit_age() == ""
+
+
 # ── integration: stash feeds field printers ────────────────────────────────
 
 

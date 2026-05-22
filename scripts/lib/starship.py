@@ -29,10 +29,20 @@ from .cache import (
     read_text,
     session_cache,
 )
-from .git import current_branch
+from .git import ahead_of_origin, count_dirty, current_branch, head_commit_epoch
 
 SESSION_TIME_MIN_SECS = 10
+COMMIT_AGE_MAX_SECS = 24 * 3600
 LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
+
+# Claude Code's permission_mode values are camelCase; render them with the
+# user-visible label they show in /config and the slash menu, hiding the
+# `default` case so the pill is silent in normal use.
+_PERMISSION_MODE_LABELS = {
+    "plan": "plan",
+    "acceptEdits": "accept-edits",
+    "bypassPermissions": "bypass",
+}
 
 
 def _read_session_or_fallback(stem: str, sid: str | None) -> str:
@@ -213,6 +223,58 @@ def print_rate_limit(sid: str | None = None) -> str:
     except ValueError:
         return ""
     return f"⌛ {pct}%/5h"
+
+
+def print_model(sid: str | None = None) -> str:
+    sid = sid or os.environ.get("CSHIP_SESSION_ID") or None
+    return _read_session_or_fallback("model", sid)
+
+
+def print_permission_mode(sid: str | None = None) -> str:
+    sid = sid or os.environ.get("CSHIP_SESSION_ID") or None
+    raw = _read_session_or_fallback("permission-mode", sid)
+    if not raw:
+        return ""
+    label = _PERMISSION_MODE_LABELS.get(raw)
+    if not label:
+        return ""
+    return f"✎ {label}"
+
+
+def print_branch_pill() -> str:
+    """`<branch> ↑<ahead> ●<dirty>` — ahead/dirty segments hidden when 0.
+    Empty when not in a git repo.
+    """
+    cwd = os.getcwd()
+    branch = current_branch(cwd)
+    if not branch:
+        return ""
+    parts = [branch]
+    ahead = ahead_of_origin(cwd, branch)
+    if ahead > 0:
+        parts.append(f"↑{ahead}")
+    dirty = count_dirty(Path(cwd))
+    if dirty > 0:
+        parts.append(f"●{dirty}")
+    return " ".join(parts)
+
+
+def print_commit_age() -> str:
+    """Relative age of HEAD as `Ns` / `Nm` / `Nh`. Hidden when >24h or
+    when not in a git repo / no commits yet."""
+    epoch = head_commit_epoch(os.getcwd())
+    if epoch is None:
+        return ""
+    age = int(time.time()) - epoch
+    if age < 0 or age > COMMIT_AGE_MAX_SECS:
+        return ""
+    if age < 60:
+        return f"⊙ {age}s"
+    if age < 3600:
+        return f"⊙ {age // 60}m"
+    h, rem = divmod(age, 3600)
+    m = rem // 60
+    return f"⊙ {h}h {m}m" if m else f"⊙ {h}h"
 
 
 def print_linear() -> str:
