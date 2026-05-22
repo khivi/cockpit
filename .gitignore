@@ -19,3 +19,7 @@ uv.lock
 *~
 *.swp
 *.swo
+
+# Per-worktree planning scratch
+PLAN.md
+plan.md
