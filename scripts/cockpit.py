@@ -786,13 +786,13 @@ def cycle_all(
         _reap_workspace_orphans(repos, self_user, dry=dry)
 
 
-def _build_state(args) -> dict:
+def _build_state(args: argparse.Namespace) -> dict:
     return {
         "self_user": None,
-        "keep_stale": getattr(args, "keep_stale", False) if args else False,
-        "no_spawn": getattr(args, "no_spawn", False) if args else False,
-        "dry": getattr(args, "dry_run", False) if args else False,
-        "verbose": getattr(args, "verbose", False) if args else False,
+        "keep_stale": args.keep_stale,
+        "no_spawn": args.no_spawn,
+        "dry": args.dry_run,
+        "verbose": args.verbose,
         "pr_cache": {},
         "nudge_state": {},
         "pill_state": {},
@@ -814,12 +814,6 @@ def _once_with(state: dict) -> None:
         pill_state=state["pill_state"],
         verbose=state["verbose"],
     )
-
-
-def _once_cli() -> int:
-    state = _build_state(None)
-    _once_with(state)
-    return 0
 
 
 def _watch(state: dict, watch_secs: int) -> None:
