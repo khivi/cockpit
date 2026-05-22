@@ -90,3 +90,33 @@ def test_cmux_drops_state_pill():
 def test_cmux_conflict_emits_merge_key():
     out = status_pills(_pr(mergeable="CONFLICTING"), _wt())
     assert out == [("merge", "⚠️ conflict", "#ff9500")]
+
+
+def test_cmux_owner_pill_added_for_coworker():
+    out = status_pills(_pr(author="bob"), _wt(), self_user="khivi")
+    assert ("owner", "👥 @bob", "#3b82f6") in out
+    assert out[0] == ("owner", "👥 @bob", "#3b82f6")
+
+
+def test_cmux_owner_pill_absent_for_self():
+    out = status_pills(_pr(author="khivi"), _wt(), self_user="khivi")
+    assert all(k != "owner" for k, _, _ in out)
+
+
+def test_cmux_owner_pill_absent_when_self_user_none():
+    out = status_pills(_pr(author="bob"), _wt())
+    assert all(k != "owner" for k, _, _ in out)
+
+
+def test_apply_pills_clears_owner_key():
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return ""
+
+    with patch("lib.cmux.cmux", side_effect=fake_cmux):
+        apply_pills("workspace:1", _pr(), _wt())
+
+    cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}
+    assert "owner" in cleared_keys
