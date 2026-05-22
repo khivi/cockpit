@@ -79,11 +79,11 @@ def _count_unpushed(wt_path: Path) -> int:
 
 
 def _gitdir(wt_path: Path) -> Path | None:
-    try:
-        gitdir_raw = run(["git", "-C", str(wt_path), "rev-parse", "--git-dir"]).strip()
-    except RuntimeError:
+    res = _git(wt_path, "rev-parse", "--git-dir")
+    if res.returncode != 0:
         return None
-    return Path(gitdir_raw) if Path(gitdir_raw).is_absolute() else wt_path / gitdir_raw
+    raw = res.stdout.strip()
+    return Path(raw) if Path(raw).is_absolute() else wt_path / raw
 
 
 def _rebase_head_name(gitdir: Path) -> str | None:
