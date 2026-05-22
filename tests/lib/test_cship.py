@@ -12,17 +12,14 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SHIM = REPO_ROOT / "scripts" / "bin" / "starship"
 SHIM_DIR = SHIM.parent
-
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import lib.cship as cship_mod  # noqa: E402
 
@@ -200,3 +197,61 @@ def test_invoke_cship_errors_on_missing_starship(monkeypatch, capsysbinary):
     assert rc != 0
     err = capsysbinary.readouterr().err.decode()
     assert "starship" in err and "not on PATH" in err
+
+
+# ── invoke_cship: subprocess plumbing ──────────────────────────────────────
+
+
+def test_invoke_cship_pipes_blob_and_forwards_stdout(monkeypatch, capsysbinary):
+    """invoke_cship pipes the given blob to cship and forwards its stdout."""
+    import subprocess as _sp
+
+    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: "/fake/cship")
+
+    captured = {}
+
+    def fake_run(cmd, input=None, capture_output=False, env=None):
+        captured["cmd"] = cmd
+        captured["input"] = input
+        captured["env"] = env
+        return _sp.CompletedProcess(cmd, 0, stdout=b"styled-output\n", stderr=b"")
+
+    monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
+
+    assert cship_mod.invoke_cship(b'{"hello":"world"}', "sess1") == 0
+    assert captured["cmd"] == ["cship"]
+    assert captured["input"] == b'{"hello":"world"}'
+    assert captured["env"]["CSHIP_SESSION_ID"] == "sess1"
+    out, _err = capsysbinary.readouterr()
+    assert out == b"styled-output\n"
+
+
+def test_invoke_cship_propagates_exit_code(monkeypatch, capsysbinary):
+    import subprocess as _sp
+
+    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: "/fake/cship")
+    monkeypatch.setattr(
+        "lib.cship.subprocess.run",
+        lambda *a, **kw: _sp.CompletedProcess(["cship"], 17, b"", b"boom\n"),
+    )
+
+    assert cship_mod.invoke_cship(b"", None) == 17
+    _out, err = capsysbinary.readouterr()
+    assert err == b"boom\n"
+
+
+def test_invoke_cship_no_session_id_omits_env_export(monkeypatch):
+    """When sid is None, CSHIP_SESSION_ID must not be exported into cship's env."""
+    import subprocess as _sp
+
+    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: "/fake/cship")
+    monkeypatch.delenv("CSHIP_SESSION_ID", raising=False)
+    captured = {}
+
+    def fake_run(cmd, input=None, capture_output=False, env=None):
+        captured["env"] = env
+        return _sp.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
+    cship_mod.invoke_cship(b"{}", None)
+    assert "CSHIP_SESSION_ID" not in captured["env"]
