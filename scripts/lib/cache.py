@@ -252,6 +252,25 @@ def refresh_pr_checks(branch: str) -> None:
     atomic_write(cache, glyph)
 
 
+def write_base_distance(branch: str, count: int, fetch_epoch: int) -> None:
+    """Cache rebase-staleness for `branch` as `<count> <fetch_epoch>`.
+
+    Written by the cockpit daemon once per cycle, after one shared
+    `git fetch origin <base>` per repo. The fetch_epoch lets readers
+    decide whether the count is fresh enough to display.
+
+    Empty / no-base writes the empty payload so a stale reader doesn't
+    keep showing a value from a previous repo state.
+    """
+    if not branch:
+        return
+    path = branch_cache("base-distance", branch)
+    if count < 0 or fetch_epoch <= 0:
+        atomic_write(path, "")
+        return
+    atomic_write(path, f"{count} {fetch_epoch}")
+
+
 def write_branch_pr_cache(
     branch: str,
     *,
