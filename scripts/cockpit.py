@@ -320,12 +320,16 @@ def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, in
     """
     feature = [w for w in wts if w.branch not in MAIN_BRANCHES]
     distances: dict[str, int] = {}
-    default = origin_head_branch(repo_path)
-    if not default:
+
+    def _invalidate() -> dict[str, int]:
         for wt in feature:
             write_base_distance(wt.branch, -1, 0)
             write_base_ahead(wt.branch, -1, 0)
         return distances
+
+    default = origin_head_branch(repo_path)
+    if not default:
+        return _invalidate()
     try:
         subprocess.run(
             ["git", "-C", str(repo_path), "fetch", "--quiet", "origin", default],
@@ -333,10 +337,7 @@ def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, in
             timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
-        for wt in feature:
-            write_base_distance(wt.branch, -1, 0)
-            write_base_ahead(wt.branch, -1, 0)
-        return distances
+        return _invalidate()
     now = int(time.time())
     for wt in feature:
         n = behind_of_base(wt.path, default)
