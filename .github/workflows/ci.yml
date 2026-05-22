@@ -32,6 +32,10 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
+          ignore-nothing-to-cache: true
+
+      - name: Prime uv cache via uv sync
+        run: uv sync --quiet
 
       - name: Seed .relint.yml (gitignored locally; CI uses the example as a stub)
         run: |
