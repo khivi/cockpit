@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 import lib.claude as claude_mod
 import lib.starship as starship
 
@@ -49,32 +51,26 @@ def test_print_context_fresh_session_falls_back_to_latest(cache_dir, monkeypatch
     assert "🧠 55%/1M" in out
 
 
-def test_print_context_tier_slate_under_70(cache_dir):
-    (cache_dir / "context").write_text("5 1000000")
+@pytest.mark.parametrize(
+    "pct,prefix",
+    [
+        (5, "\033[38;5;243m"),
+        (75, "\033[38;5;172m"),
+        (95, "\033[38;5;160m"),
+        (100, "\033[1;38;5;160m"),
+    ],
+    ids=[
+        "tier_slate_under_70",
+        "tier_amber_70_to_89",
+        "tier_red_90_to_99",
+        "tier_red_bold_at_100",
+    ],
+)
+def test_print_context_tier(cache_dir, pct, prefix):
+    (cache_dir / "context").write_text(f"{pct} 1000000")
     out = starship.print_context()
-    assert out.startswith("\033[38;5;243m")
-    assert "🧠 5%/1M" in out
-
-
-def test_print_context_tier_amber_70_to_89(cache_dir):
-    (cache_dir / "context").write_text("75 1000000")
-    out = starship.print_context()
-    assert out.startswith("\033[38;5;172m")
-    assert "🧠 75%/1M" in out
-
-
-def test_print_context_tier_red_90_to_99(cache_dir):
-    (cache_dir / "context").write_text("95 1000000")
-    out = starship.print_context()
-    assert out.startswith("\033[38;5;160m")
-    assert "🧠 95%/1M" in out
-
-
-def test_print_context_tier_red_bold_at_100(cache_dir):
-    (cache_dir / "context").write_text("100 1000000")
-    out = starship.print_context()
-    assert out.startswith("\033[1;38;5;160m")
-    assert "🧠 100%/1M" in out
+    assert out.startswith(prefix)
+    assert f"🧠 {pct}%/1M" in out
 
 
 def test_print_context_fresh_session_no_history_empty(cache_dir, monkeypatch):
@@ -118,32 +114,26 @@ def test_print_rate_limit_fresh_session_falls_back_to_latest(cache_dir, monkeypa
     assert "⌛ 17%/5h" in out
 
 
-def test_print_rate_limit_tier_slate_under_70(cache_dir):
-    (cache_dir / "rate-limit-5h").write_text("5 2026-05-21T15:00:00Z")
+@pytest.mark.parametrize(
+    "pct,prefix",
+    [
+        (5, "\033[38;5;243m"),
+        (72, "\033[38;5;172m"),
+        (95, "\033[38;5;160m"),
+        (100, "\033[1;38;5;160m"),
+    ],
+    ids=[
+        "tier_slate_under_70",
+        "tier_amber_70_to_89",
+        "tier_red_90_to_99",
+        "tier_red_bold_at_100",
+    ],
+)
+def test_print_rate_limit_tier(cache_dir, pct, prefix):
+    (cache_dir / "rate-limit-5h").write_text(f"{pct} 2026-05-21T15:00:00Z")
     out = starship.print_rate_limit()
-    assert out.startswith("\033[38;5;243m")
-    assert "⌛ 5%/5h" in out
-
-
-def test_print_rate_limit_tier_amber_70_to_89(cache_dir):
-    (cache_dir / "rate-limit-5h").write_text("72 2026-05-21T15:00:00Z")
-    out = starship.print_rate_limit()
-    assert out.startswith("\033[38;5;172m")
-    assert "⌛ 72%/5h" in out
-
-
-def test_print_rate_limit_tier_red_90_to_99(cache_dir):
-    (cache_dir / "rate-limit-5h").write_text("95 2026-05-21T15:00:00Z")
-    out = starship.print_rate_limit()
-    assert out.startswith("\033[38;5;160m")
-    assert "⌛ 95%/5h" in out
-
-
-def test_print_rate_limit_tier_red_bold_at_100(cache_dir):
-    (cache_dir / "rate-limit-5h").write_text("100 2026-05-21T15:00:00Z")
-    out = starship.print_rate_limit()
-    assert out.startswith("\033[1;38;5;160m")
-    assert "⌛ 100%/5h" in out
+    assert out.startswith(prefix)
+    assert f"⌛ {pct}%/5h" in out
 
 
 # ── field printer: linear ──────────────────────────────────────────────────
@@ -162,54 +152,32 @@ def test_print_linear_no_ticket(cache_dir):
 # ── PR cache reads ─────────────────────────────────────────────────────────
 
 
-def test_print_pr_state_fresh_cache(cache_dir):
-    (cache_dir / "pr-state-khivi-foo").write_text("APPROVED")
-    out = starship.print_pr_state("khivi/foo")
-    assert "APPROVED" in out
-    assert out.startswith("\033[1;38;5;34m")
-    assert out.endswith("\033[0m")
-
-
-def test_print_pr_state_draft(cache_dir):
-    (cache_dir / "pr-state-khivi-foo").write_text("DRAFT")
-    out = starship.print_pr_state("khivi/foo")
-    assert out == "\033[1;38;5;240mDRAFT\033[0m"
-
-
-def test_print_pr_state_open(cache_dir):
-    (cache_dir / "pr-state-khivi-foo").write_text("OPEN")
-    out = starship.print_pr_state("khivi/foo")
-    assert out == "\033[1;38;5;32mOPEN\033[0m"
-
-
-def test_print_pr_state_review_required(cache_dir):
-    (cache_dir / "pr-state-khivi-foo").write_text("REVIEW_REQUIRED")
-    out = starship.print_pr_state("khivi/foo")
-    assert out == "\033[1;38;5;172mREVIEW_REQUIRED\033[0m"
-
-
-def test_print_pr_state_changes_requested(cache_dir):
-    (cache_dir / "pr-state-khivi-foo").write_text("CHANGES_REQUESTED")
-    out = starship.print_pr_state("khivi/foo")
-    assert out == "\033[1;38;5;160mCHANGES_REQUESTED\033[0m"
-
-
-def test_print_pr_state_merged(cache_dir):
-    (cache_dir / "pr-state-khivi-foo").write_text("MERGED")
-    out = starship.print_pr_state("khivi/foo")
-    assert out == "\033[1;38;5;91mMERGED\033[0m"
-
-
-def test_print_pr_state_closed(cache_dir):
-    (cache_dir / "pr-state-khivi-foo").write_text("CLOSED")
-    out = starship.print_pr_state("khivi/foo")
-    assert out == "\033[1;38;5;88mCLOSED\033[0m"
-
-
-def test_print_pr_state_unknown_passes_through(cache_dir):
-    (cache_dir / "pr-state-khivi-foo").write_text("WHATEVER")
-    out = starship.print_pr_state("khivi/foo")
-    assert out == "WHATEVER"
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("APPROVED", "\033[1;38;5;34mAPPROVED\033[0m"),
+        ("DRAFT", "\033[1;38;5;240mDRAFT\033[0m"),
+        ("OPEN", "\033[1;38;5;32mOPEN\033[0m"),
+        ("REVIEW_REQUIRED", "\033[1;38;5;172mREVIEW_REQUIRED\033[0m"),
+        ("CHANGES_REQUESTED", "\033[1;38;5;160mCHANGES_REQUESTED\033[0m"),
+        ("MERGED", "\033[1;38;5;91mMERGED\033[0m"),
+        ("CLOSED", "\033[1;38;5;88mCLOSED\033[0m"),
+        ("WHATEVER", "WHATEVER"),
+    ],
+    ids=[
+        "fresh_cache",
+        "draft",
+        "open",
+        "review_required",
+        "changes_requested",
+        "merged",
+        "closed",
+        "unknown_passes_through",
+    ],
+)
+def test_print_pr_state(cache_dir, value, expected):
+    (cache_dir / "pr-state-khivi-foo").write_text(value)
+    assert starship.print_pr_state("khivi/foo") == expected
 
 
 def test_print_pr_num_formats_hash(cache_dir):
@@ -227,22 +195,18 @@ def test_print_pr_title(cache_dir):
     assert starship.print_pr_title("khivi/foo") == "My PR"
 
 
-def test_print_pr_checks_fresh_pass(cache_dir):
-    (cache_dir / "pr-checks-khivi-foo").write_text("✓")
-    out = starship.print_pr_checks("khivi/foo")
-    assert out == "\033[32m✓\033[0m"
-
-
-def test_print_pr_checks_fresh_fail(cache_dir):
-    (cache_dir / "pr-checks-khivi-foo").write_text("✗")
-    out = starship.print_pr_checks("khivi/foo")
-    assert out == "\033[31m✗\033[0m"
-
-
-def test_print_pr_checks_fresh_pending(cache_dir):
-    (cache_dir / "pr-checks-khivi-foo").write_text("•")
-    out = starship.print_pr_checks("khivi/foo")
-    assert out == "\033[33m•\033[0m"
+@pytest.mark.parametrize(
+    "glyph,expected",
+    [
+        ("✓", "\033[32m✓\033[0m"),
+        ("✗", "\033[31m✗\033[0m"),
+        ("•", "\033[33m•\033[0m"),
+    ],
+    ids=["fresh_pass", "fresh_fail", "fresh_pending"],
+)
+def test_print_pr_checks(cache_dir, glyph, expected):
+    (cache_dir / "pr-checks-khivi-foo").write_text(glyph)
+    assert starship.print_pr_checks("khivi/foo") == expected
 
 
 def test_print_pr_state_stale_triggers_refresh(cache_dir):
@@ -316,29 +280,20 @@ def test_print_model_missing_empty(cache_dir):
 # ── field printer: permission_mode ─────────────────────────────────────────
 
 
-def test_print_permission_mode_default_hidden(cache_dir):
-    (cache_dir / "permission-mode").write_text("default")
-    assert starship.print_permission_mode() == ""
-
-
-def test_print_permission_mode_plan(cache_dir):
-    (cache_dir / "permission-mode").write_text("plan")
-    assert starship.print_permission_mode() == "✎ plan"
-
-
-def test_print_permission_mode_accept_edits(cache_dir):
-    (cache_dir / "permission-mode").write_text("acceptEdits")
-    assert starship.print_permission_mode() == "✎ accept-edits"
-
-
-def test_print_permission_mode_bypass(cache_dir):
-    (cache_dir / "permission-mode").write_text("bypassPermissions")
-    assert starship.print_permission_mode() == "✎ bypass"
-
-
-def test_print_permission_mode_unknown_value_hidden(cache_dir):
-    (cache_dir / "permission-mode").write_text("zaphod")
-    assert starship.print_permission_mode() == ""
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("default", ""),
+        ("plan", "✎ plan"),
+        ("acceptEdits", "✎ accept-edits"),
+        ("bypassPermissions", "✎ bypass"),
+        ("zaphod", ""),
+    ],
+    ids=["default_hidden", "plan", "accept_edits", "bypass", "unknown_value_hidden"],
+)
+def test_print_permission_mode(cache_dir, value, expected):
+    (cache_dir / "permission-mode").write_text(value)
+    assert starship.print_permission_mode() == expected
 
 
 # ── field printer: branch_pill ─────────────────────────────────────────────
@@ -385,6 +340,19 @@ def test_print_branch_pill_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
     assert starship.print_branch_pill() == ""
 
 
+def _stub_branch_pill(monkeypatch, *, ahead=0, behind=0, status=(0, 0, 0)) -> None:
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: ahead)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: behind)
+    monkeypatch.setattr(
+        starship,
+        "count_status",
+        lambda _p: git_mod.GitStatusCounts(*status),
+    )
+
+
 def test_print_branch_pill_ahead_only(_clean_git_env, monkeypatch):
     from lib import git as git_mod
 
@@ -403,70 +371,30 @@ def test_print_branch_pill_ahead_only(_clean_git_env, monkeypatch):
     assert "\033[38;5;38m↑3\033[0m" in out
 
 
-def test_print_branch_pill_behind_only(_clean_git_env, monkeypatch):
-    from lib import git as git_mod
-
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 2)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
-    )
+@pytest.mark.parametrize(
+    "ahead,behind,status,expected_fragments",
+    [
+        (0, 2, (0, 0, 0), ["\033[38;5;172m↓2\033[0m"]),
+        (3, 2, (0, 0, 0), ["\033[38;5;38m↑3\033[0m", "\033[38;5;172m↓2\033[0m"]),
+        (0, 0, (1, 0, 0), ["\033[38;5;34m●1\033[0m"]),
+        (0, 0, (0, 2, 0), ["\033[38;5;220m✎2\033[0m"]),
+        (0, 0, (0, 0, 4), ["\033[38;5;240m✚4\033[0m"]),
+    ],
+    ids=[
+        "behind_only",
+        "ahead_and_behind",
+        "staged_only",
+        "unstaged_only",
+        "untracked_only",
+    ],
+)
+def test_print_branch_pill_segments(
+    _clean_git_env, monkeypatch, ahead, behind, status, expected_fragments
+):
+    _stub_branch_pill(monkeypatch, ahead=ahead, behind=behind, status=status)
     out = starship.print_branch_pill()
-    assert "\033[38;5;172m↓2\033[0m" in out
-
-
-def test_print_branch_pill_ahead_and_behind(_clean_git_env, monkeypatch):
-    from lib import git as git_mod
-
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 3)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 2)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
-    )
-    out = starship.print_branch_pill()
-    assert "\033[38;5;38m↑3\033[0m" in out
-    assert "\033[38;5;172m↓2\033[0m" in out
-
-
-def test_print_branch_pill_staged_only(_clean_git_env, monkeypatch):
-    from lib import git as git_mod
-
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(1, 0, 0)
-    )
-    out = starship.print_branch_pill()
-    assert "\033[38;5;34m●1\033[0m" in out
-
-
-def test_print_branch_pill_unstaged_only(_clean_git_env, monkeypatch):
-    from lib import git as git_mod
-
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 2, 0)
-    )
-    out = starship.print_branch_pill()
-    assert "\033[38;5;220m✎2\033[0m" in out
-
-
-def test_print_branch_pill_untracked_only(_clean_git_env, monkeypatch):
-    from lib import git as git_mod
-
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 4)
-    )
-    out = starship.print_branch_pill()
-    assert "\033[38;5;240m✚4\033[0m" in out
+    for frag in expected_fragments:
+        assert frag in out
 
 
 def test_print_branch_pill_all_segments(_clean_git_env, monkeypatch):
@@ -515,53 +443,51 @@ def _stub_branch(monkeypatch, branch: str = "feature") -> None:
     )
 
 
-def test_print_branch_pill_base_distance_fresh(cache_dir, _clean_git_env, monkeypatch):
+@pytest.mark.parametrize(
+    "glyph,cache_prefix",
+    [("↻", "base-distance"), ("↗", "base-ahead")],
+    ids=["base_distance", "base_ahead"],
+)
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "fresh",
+        "aging",
+        "too_stale_hidden",
+        "zero_hidden",
+        "empty_payload_hidden",
+        "no_cache_hidden",
+    ],
+)
+def test_print_branch_pill_base_relative(
+    cache_dir, _clean_git_env, monkeypatch, glyph, cache_prefix, scenario
+):
     _stub_branch(monkeypatch)
+    fresh_color = "\033[38;5;172m" if glyph == "↻" else "\033[38;5;38m"
+    cache_path = cache_dir / f"{cache_prefix}-feature"
     now = int(time.time())
-    (cache_dir / "base-distance-feature").write_text(f"7 {now}")
-    out = starship.print_branch_pill()
-    assert "\033[38;5;172m↻7\033[0m" in out
-    assert "ago" not in out
-
-
-def test_print_branch_pill_base_distance_aging(cache_dir, _clean_git_env, monkeypatch):
-    """30m–6h tier dims and includes the age."""
-    _stub_branch(monkeypatch)
-    epoch = int(time.time()) - (2 * 3600)
-    (cache_dir / "base-distance-feature").write_text(f"4 {epoch}")
-    out = starship.print_branch_pill()
-    assert "\033[38;5;240m↻4 (2h ago)\033[0m" in out
-
-
-def test_print_branch_pill_base_distance_too_stale_hidden(
-    cache_dir, _clean_git_env, monkeypatch
-):
-    """>6h hides the segment — stale counts breed false confidence."""
-    _stub_branch(monkeypatch)
-    epoch = int(time.time()) - (8 * 3600)
-    (cache_dir / "base-distance-feature").write_text(f"4 {epoch}")
-    out = starship.print_branch_pill()
-    assert "↻" not in out
-
-
-def test_print_branch_pill_base_distance_zero_hidden(
-    cache_dir, _clean_git_env, monkeypatch
-):
-    """`0` (branch is up to date with base) renders nothing."""
-    _stub_branch(monkeypatch)
-    now = int(time.time())
-    (cache_dir / "base-distance-feature").write_text(f"0 {now}")
-    out = starship.print_branch_pill()
-    assert "↻" not in out
-
-
-def test_print_branch_pill_base_distance_empty_payload_hidden(
-    cache_dir, _clean_git_env, monkeypatch
-):
-    _stub_branch(monkeypatch)
-    (cache_dir / "base-distance-feature").write_text("")
-    out = starship.print_branch_pill()
-    assert "↻" not in out
+    if scenario == "fresh":
+        cache_path.write_text(f"7 {now}")
+        out = starship.print_branch_pill()
+        assert f"{fresh_color}{glyph}7\033[0m" in out
+        assert "ago" not in out
+    elif scenario == "aging":
+        epoch = now - (2 * 3600)
+        cache_path.write_text(f"4 {epoch}")
+        out = starship.print_branch_pill()
+        assert f"\033[38;5;240m{glyph}4 (2h ago)\033[0m" in out
+    elif scenario == "too_stale_hidden":
+        epoch = now - (8 * 3600)
+        cache_path.write_text(f"4 {epoch}")
+        assert glyph not in starship.print_branch_pill()
+    elif scenario == "zero_hidden":
+        cache_path.write_text(f"0 {now}")
+        assert glyph not in starship.print_branch_pill()
+    elif scenario == "empty_payload_hidden":
+        cache_path.write_text("")
+        assert glyph not in starship.print_branch_pill()
+    elif scenario == "no_cache_hidden":
+        assert glyph not in starship.print_branch_pill()
 
 
 def test_print_branch_pill_base_distance_garbage_hidden(
@@ -569,14 +495,6 @@ def test_print_branch_pill_base_distance_garbage_hidden(
 ):
     _stub_branch(monkeypatch)
     (cache_dir / "base-distance-feature").write_text("not numbers")
-    out = starship.print_branch_pill()
-    assert "↻" not in out
-
-
-def test_print_branch_pill_base_distance_no_cache_hidden(
-    cache_dir, _clean_git_env, monkeypatch
-):
-    _stub_branch(monkeypatch)
     out = starship.print_branch_pill()
     assert "↻" not in out
 
@@ -593,60 +511,6 @@ def test_print_branch_pill_base_distance_slash_branch_key(
 
 
 # ── base-ahead (↗N) ────────────────────────────────────────────────────────
-
-
-def test_print_branch_pill_base_ahead_fresh(cache_dir, _clean_git_env, monkeypatch):
-    _stub_branch(monkeypatch)
-    now = int(time.time())
-    (cache_dir / "base-ahead-feature").write_text(f"7 {now}")
-    out = starship.print_branch_pill()
-    assert "\033[38;5;38m↗7\033[0m" in out
-    assert "ago" not in out
-
-
-def test_print_branch_pill_base_ahead_aging(cache_dir, _clean_git_env, monkeypatch):
-    _stub_branch(monkeypatch)
-    epoch = int(time.time()) - (2 * 3600)
-    (cache_dir / "base-ahead-feature").write_text(f"4 {epoch}")
-    out = starship.print_branch_pill()
-    assert "\033[38;5;240m↗4 (2h ago)\033[0m" in out
-
-
-def test_print_branch_pill_base_ahead_too_stale_hidden(
-    cache_dir, _clean_git_env, monkeypatch
-):
-    _stub_branch(monkeypatch)
-    epoch = int(time.time()) - (8 * 3600)
-    (cache_dir / "base-ahead-feature").write_text(f"4 {epoch}")
-    out = starship.print_branch_pill()
-    assert "↗" not in out
-
-
-def test_print_branch_pill_base_ahead_zero_hidden(
-    cache_dir, _clean_git_env, monkeypatch
-):
-    _stub_branch(monkeypatch)
-    now = int(time.time())
-    (cache_dir / "base-ahead-feature").write_text(f"0 {now}")
-    out = starship.print_branch_pill()
-    assert "↗" not in out
-
-
-def test_print_branch_pill_base_ahead_empty_payload_hidden(
-    cache_dir, _clean_git_env, monkeypatch
-):
-    _stub_branch(monkeypatch)
-    (cache_dir / "base-ahead-feature").write_text("")
-    out = starship.print_branch_pill()
-    assert "↗" not in out
-
-
-def test_print_branch_pill_base_ahead_no_cache_hidden(
-    cache_dir, _clean_git_env, monkeypatch
-):
-    _stub_branch(monkeypatch)
-    out = starship.print_branch_pill()
-    assert "↗" not in out
 
 
 def test_print_branch_pill_base_ahead_before_base_distance(
