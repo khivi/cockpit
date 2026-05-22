@@ -20,6 +20,7 @@
 # module concatenated in arbitrary order; the dotted form is what lets us
 # pin the line break between pr_checks and pr_title.
 format = """\
+${time}\
 ${custom.context}\
 ${custom.session_time}\
 ${custom.ratelimit}\
@@ -32,10 +33,19 @@ ${custom.pr_title}"""
 add_newline = false
 
 # Disable starship's default modules so the format above is authoritative:
-# `format` listing only `${custom.*}` would normally still render the prefix
-# the host shell's starship default appends, which we don't want here.
+# `format` listing only `${time}${custom.*}` would normally still render the
+# prefix the host shell's starship default appends, which we don't want here.
 [character]
 disabled = true
+
+# Clock rendered by starship instead of cship — cship 1.7.x's `[cship]/lines`
+# schema has no native [time] module, so the wall-clock pill moved here when
+# cship.toml switched away from the legacy wrapper-free format.
+[time]
+disabled    = false
+format      = " [$time]($style) "
+time_format = "%H:%M"
+style       = "fg:#475569"
 
 # All [custom.*] commands invoke the bundled `scripts/cship.py` dispatcher.
 # The literal `__COCKPIT_STARSHIP__` token is replaced with the resolved absolute

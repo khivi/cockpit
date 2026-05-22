@@ -245,8 +245,9 @@ def install_cship_default_config() -> None:
 def install_starship_default_config() -> None:
     """Rewrite ~/.config/starship.toml from the bundled default when `use_cship: true`.
 
-    cship's `format = "...$starship_prompt..."` spawns starship with
-    STARSHIP_CONFIG=~/.config/starship.toml, so the [custom.*] modules are
+    cship's `[cship]/lines = ["...$starship_prompt..."]` schema spawns
+    starship with STARSHIP_CONFIG=~/.config/starship.toml whenever
+    $starship_prompt expands, so the [time] and [custom.*] modules are
     rendered out of THIS file, not cship.toml. Same --footer-only contract
     as install_cship_default_config: reconcile cycles never touch it.
 

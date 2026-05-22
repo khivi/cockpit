@@ -4,35 +4,14 @@
 # touch this file, so any edits you make to ~/.config/cship.toml stick around
 # until you re-run --footer.
 #
-# cship's line renderer only evaluates its own $cship.* modules and the
-# small set of native blocks defined below ([directory], [time]). Anything
-# starship-flavored — every [custom.*] in particular — has to be rendered
-# by spawning the starship binary, which cship does whenever it expands
-# $starship_prompt. See scripts/defaults/starship.toml for the modules
-# rendered downstream.
+# cship 1.7.x requires the `[cship]` wrapper schema to expand $starship_prompt.
+# The legacy top-level `format = "..."` layout silently loads in "wrapper-free"
+# mode (see cship's debug log: "loading cship.toml in legacy wrapper-free
+# format") and never spawns starship, so every [custom.*] module disappears.
+# The wrapper form below makes cship invoke starship with
+# STARSHIP_CONFIG=~/.config/starship.toml whenever $starship_prompt expands.
+# See scripts/defaults/starship.toml for the modules rendered downstream
+# (clock, context, session-time, rate-limit, Linear, PR pills).
 
-# Explicit format so cship knows to expand $starship_prompt — without this,
-# cship falls back to its default line layout and never invokes starship,
-# leaving custom modules invisible regardless of what cship.toml contains.
-format = "$directory$time$starship_prompt"
-
-[directory]
-truncate_to_repo  = false
-truncation_length = 1
-truncation_symbol = ""
-home_symbol       = "~"
-
-# Color palette tuned for Selenized Light (Ghostty bg ~#fbf3db). Tokyo Night's
-# dark-theme pastels wash out on cream — these are slate/violet/teal/sky/emerald
-# at ~600-700 saturation so they read crisply on the light bg without going harsh.
-
-[time]
-disabled    = false
-format      = " [$time]($style)"
-time_format = "%H:%M"
-style       = "fg:#475569"
-
-# $starship_prompt in `format` above is what delegates [custom.*] rendering
-# to the starship binary. cship spawns starship with
-# STARSHIP_CONFIG=~/.config/starship.toml; --footer also seeds that file
-# from scripts/defaults/starship.toml.
+[cship]
+lines = ["$cship.workspace.current_dir$starship_prompt"]
