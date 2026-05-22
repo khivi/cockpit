@@ -677,8 +677,10 @@ def test_invoke_cship_pipes_blob_and_forwards_stdout(monkeypatch, capsysbinary):
     assert out == b"styled-output\n"
 
 
-def test_invoke_cship_silent_when_missing(monkeypatch, capsysbinary):
-    """No cship on PATH → exit 0 with no output, so the statusline never breaks."""
+def test_invoke_cship_errors_when_missing(monkeypatch, capsysbinary):
+    """No cship on PATH → non-zero exit + stderr message. use_cship=true
+    implies cship is installed; a missing binary is misconfiguration and
+    should surface loudly, not silently return 0."""
     import lib.cship as cship_mod
 
     monkeypatch.setattr(cship_mod.shutil, "which", lambda name: None)
@@ -689,11 +691,10 @@ def test_invoke_cship_silent_when_missing(monkeypatch, capsysbinary):
         raise AssertionError("subprocess.run must not run when cship is missing")
 
     monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
-    assert cship_mod.invoke_cship(b'{"x":1}', None) == 0
+    assert cship_mod.invoke_cship(b'{"x":1}', None) != 0
     assert called["ran"] is False
-    out, err = capsysbinary.readouterr()
-    assert out == b""
-    assert err == b""
+    _out, err = capsysbinary.readouterr()
+    assert b"cship" in err and b"not on PATH" in err
 
 
 def test_invoke_cship_propagates_exit_code(monkeypatch, capsysbinary):
