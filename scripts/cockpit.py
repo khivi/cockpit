@@ -192,6 +192,14 @@ def _resolve_wt(
     return wt_by_name.get(ws_name)
 
 
+def _is_post_merge_stale(wt: Worktree, merged_branches: dict[str, str]) -> bool:
+    """True if `wt`'s branch matches a merged PR and HEAD has not advanced past it."""
+    merged_head = merged_branches.get(wt.branch)
+    if merged_head is None:
+        return False
+    return count_commits_since(wt.path, merged_head) == 0
+
+
 def _workspace_ref_for_path(wt_path: Path, cwds: dict[str, Path]) -> str | None:
     """Find the cmux workspace ref whose cwd matches `wt_path`.
 
@@ -522,14 +530,12 @@ def cycle_repo(
         wt = wt_opt
         is_mine = wt.branch.startswith(my_prefix)
         if is_mine:
-            if wt.branch in merged_branches:
-                ahead = count_commits_since(wt.path, merged_branches[wt.branch])
-                if ahead == 0:
-                    print(
-                        f"  {verb('orphan')} {dim(f'{ws_name} ({wt.branch}) merged — autoclose may handle')}",
-                        flush=True,
-                    )
-                    continue
+            if _is_post_merge_stale(wt, merged_branches):
+                print(
+                    f"  {verb('orphan')} {dim(f'{ws_name} ({wt.branch}) merged — autoclose may handle')}",
+                    flush=True,
+                )
+                continue
             behind_base = base_distance.get(wt.branch, 0)
             if not dry:
                 cmux(
@@ -602,14 +608,12 @@ def cycle_repo(
                 continue
             if wt.path.resolve() in covered_paths:
                 continue
-            if wt.branch in merged_branches:
-                ahead = count_commits_since(wt.path, merged_branches[wt.branch])
-                if ahead == 0:
-                    print(
-                        f"  {verb('skip')} {dim(f'orphan-spawn {wt.short} — branch {wt.branch} has merged PR')}",
-                        flush=True,
-                    )
-                    continue
+            if _is_post_merge_stale(wt, merged_branches):
+                print(
+                    f"  {verb('skip')} {dim(f'orphan-spawn {wt.short} — branch {wt.branch} has merged PR')}",
+                    flush=True,
+                )
+                continue
             spawn_orphan_workspace(wt, dry=dry)
 
     _maybe_autoclose(cfg, repo_path, name, wts, merged_branches, cwds, dry=dry)
