@@ -74,13 +74,14 @@ when        = "true"
 format      = "(   $output)"
 description = "Anthropic rolling 5h usage limit"
 
-# Current branch + ahead/behind + staged/unstaged/untracked (e.g. "⎇ khivi/feature ↑3 ↓1 +2 ~1 ?4"). Empty outside a git repo.
+# Current branch, ahead-of-origin / ahead-of-base counts, then a powerline-branch
+# separator, then working-tree + sync state (e.g. "⎇ khivi/feature ↑3 ↗9  ●1 ✎2 ↓1 ↻5").
 # Per-segment ANSI is emitted by the Python output so each marker carries its own color.
 [custom.branch_pill]
 command     = "__COCKPIT_STARSHIP__ branch-pill"
 when        = "true"
 format      = "(   $output)"
-description = "Git branch + ahead/behind + staged/unstaged/untracked counts"
+description = "Git branch + ahead counts then working-tree status"
 
 # Permission mode (plan / accept-edits / bypass). Hidden when mode == default.
 [custom.permission_mode]

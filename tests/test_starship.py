@@ -632,7 +632,10 @@ def _init_repo(path: Path) -> None:
 def test_print_branch_pill_clean(_clean_git_env, tmp_path, monkeypatch):
     _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert starship.print_branch_pill() == "\033[38;5;243m⎇ main\033[0m"
+    assert (
+        starship.print_branch_pill()
+        == "\033[38;5;243m⎇ main\033[0m \033[38;5;243m\033[0m"
+    )
 
 
 def test_print_branch_pill_branch_name_slate_colored(_clean_git_env, monkeypatch):
@@ -958,6 +961,49 @@ def test_print_branch_pill_base_ahead_before_base_distance(
     (cache_dir / "base-distance-feature").write_text(f"3 {now}")
     out = starship.print_branch_pill()
     assert out.index("↗7") < out.index("↻3")
+
+
+def test_print_branch_pill_layout_ahead_before_separator_before_status(
+    cache_dir, _clean_git_env, monkeypatch
+):
+    """Ahead counters (↑, ↗) sit between branch and the powerline separator;
+    working-tree + behind + stale segments sit after the separator."""
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 2)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 1)
+    monkeypatch.setattr(
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(1, 1, 1)
+    )
+    now = int(time.time())
+    (cache_dir / "base-ahead-feature").write_text(f"9 {now}")
+    (cache_dir / "base-distance-feature").write_text(f"5 {now}")
+    out = starship.print_branch_pill()
+    sep = ""
+    assert sep in out
+    sep_pos = out.index(sep)
+    assert out.index("⎇ feature") < out.index("↑2") < sep_pos
+    assert out.index("↗9") < sep_pos
+    assert sep_pos < out.index("●1")
+    assert sep_pos < out.index("✎1")
+    assert sep_pos < out.index("✚1")
+    assert sep_pos < out.index("↓1")
+    assert sep_pos < out.index("↻5")
+
+
+def test_print_branch_pill_separator_always_renders(_clean_git_env, monkeypatch):
+    """Powerline separator renders even when no trailing status segments exist."""
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
+    )
+    out = starship.print_branch_pill()
+    assert "" in out
 
 
 # ── write_base_ahead (lib.cache) ───────────────────────────────────────────
