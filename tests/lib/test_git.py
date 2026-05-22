@@ -20,6 +20,7 @@ from lib.git import (
     ahead_of_base,
     behind_of_base,
     branch_exists,
+    create_worktree,
 )
 
 
@@ -143,6 +144,41 @@ def test_ahead_of_base_zero_when_no_base(cockpit_repo):
 
 def test_ahead_of_base_zero_when_base_unknown(cockpit_repo):
     assert ahead_of_base(cockpit_repo.repo, "no-such-base") == 0
+
+
+# ── create_worktree: attach existing prefixed branch (option A) ────────────
+
+
+def test_create_worktree_attaches_existing_prefixed_branch(cockpit_repo):
+    """Reproduces the worktree-gone-but-branch-survives case: a forced
+    teardown left `khivi/todo` on disk. `create_worktree("todo", …,
+    branch_prefix="khivi/")` must attach to it rather than die on `-b`."""
+    repo = cockpit_repo.repo
+    subprocess.run(["git", "-C", str(repo), "branch", "khivi/todo", "main"], check=True)
+    wt_path = repo.parent / "todo"
+
+    branch = create_worktree(repo, "todo", wt_path, base="main", branch_prefix="khivi/")
+    assert branch == "khivi/todo"
+    assert wt_path.exists()
+    head = subprocess.check_output(
+        ["git", "-C", str(wt_path), "rev-parse", "--abbrev-ref", "HEAD"],
+        text=True,
+    ).strip()
+    assert head == "khivi/todo"
+
+
+def test_create_worktree_creates_fresh_when_no_prefixed_branch(cockpit_repo):
+    """Sanity: when neither short nor prefixed exists, the new-branch path
+    still fires and applies the prefix."""
+    repo = cockpit_repo.repo
+    wt_path = repo.parent / "freshfeat"
+
+    branch = create_worktree(
+        repo, "freshfeat", wt_path, base="main", branch_prefix="khivi/"
+    )
+    assert branch == "khivi/freshfeat"
+    assert wt_path.exists()
+    assert _has_local_branch(repo, "khivi/freshfeat") is True
 
 
 # ── remove_worktree: double-force + lock-reason logging ────────────────────

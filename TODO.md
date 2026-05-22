@@ -47,12 +47,9 @@ With 2 commits past the merge head, autoclose would have refused. So the teardow
 
 Either way, `lib/teardown.teardown` only calls `remove_worktree` + `delete_pr_caches_for_branch`. **It never deletes the branch** — by design (`teardown.py:87-99`), so commits survive as a dangling branch.
 
-**Why this is painful:** `spawn.py` always invokes `git worktree add -b <branch> <path> <base>`. The `-b` flag refuses to attach an existing branch, so the user cannot re-enter the workspace via `/cockpit:new`. Recovery requires a manual `git worktree add <path> <existing-branch>` (no `-b`).
+**Why this is painful:** `create_worktree`'s local/remote existence checks (`scripts/lib/git.py:309`) query the un-prefixed input ("todo"), so a prefixed branch (`khivi/todo`) left behind by a prior teardown is invisible to them. The fallback then runs `git worktree add -b khivi/todo …`, which errors because `khivi/todo` already exists.
 
-**Options:**
+### Resolution
 
-- **A. spawn.py auto-attach** — if `git rev-parse --verify khivi/<name>` succeeds and no worktree maps to it, drop `-b` and attach the existing branch. Cleanest, no data loss possible.
-- **B. Loud refusal in forced teardown** — `cockpit:close --force` still tears down, but logs a recovery hint (`branch <name> retained at <sha> — re-enter with: git worktree add <path> <branch>`).
-- **C. Optional branch delete on forced teardown** — `cockpit:close --force --delete-branch` to wipe both. Off by default so unpushed commits aren't silently lost.
-
-A + B together is the minimum-friction combo: A makes the common case work, B makes the rare case (user manually removed the worktree, forgot the branch existed) discoverable.
+- **Option A — implemented.** `create_worktree` now checks the prefixed name before the `-b` fallback and attaches when it finds a match (`scripts/lib/git.py:313-321`). `/cockpit:new todo` re-enters the workspace seamlessly.
+- **Option B — implemented via hard-refuse.** `/cockpit:close --force` no longer overrides dirty or unpushed-to-origin/main; the dangling-branch scenario can no longer be produced from cockpit's own tooling. Manual `git worktree remove` can still strand a branch, in which case Option A handles re-entry.

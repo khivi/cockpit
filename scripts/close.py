@@ -3,12 +3,13 @@
 
 Workflow:
   1. Resolve target (from query arg, or from `cwd` when no arg).
-  2. Run inline blocker probe (dirty / unpushed / open PR) for fast refusal.
-  3. Write a close-request marker under `$COCKPIT_HOME/state/close-requests/`.
-  4. SIGUSR1-kick the daemon. If no daemon is running, run teardown inline
+  2. Hard refuse on dirty / unpushed (these protect unsaved work and are
+     never `--force`-overridable — only autoclose, which pre-validates
+     cleanliness, can tear down such worktrees).
+  3. Refuse on open-PR unless `--force` is given.
+  4. Write a close-request marker under `$COCKPIT_HOME/state/close-requests/`.
+  5. SIGUSR1-kick the daemon. If no daemon is running, run teardown inline
      so the user still sees results — same code path either way.
-
-Refuses on uncommitted changes, unpushed commits, or open PR unless `--force`.
 """
 
 from __future__ import annotations
@@ -29,8 +30,28 @@ from lib.cmux import (  # noqa: E402
 )
 from lib.config import discover_repo  # noqa: E402
 from lib.daemon import kick_running  # noqa: E402
-from lib.git import worktrees  # noqa: E402
+from lib.git import _count_unpushed, count_dirty, worktrees  # noqa: E402
 from lib.teardown import TeardownRequest, probe_blockers, teardown  # noqa: E402
+
+
+def hard_blockers(worktree_path: Path | None) -> list[str]:
+    """Refuse-no-matter-what conditions that protect unsaved work.
+
+    Distinct from `probe_blockers`: those include open-PR which `--force`
+    can override; these protect dirty + unpushed-to-default which it can't.
+    """
+    blockers: list[str] = []
+    if worktree_path is None or not worktree_path.is_dir():
+        return blockers
+    dirty = count_dirty(worktree_path)
+    if dirty > 0:
+        blockers.append(f"{dirty} uncommitted file(s)")
+    unpushed = _count_unpushed(worktree_path)
+    if unpushed > 0:
+        blockers.append(f"{unpushed} commit(s) not on origin/main")
+    elif unpushed == -1:
+        blockers.append("could not verify push state")
+    return blockers
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,7 +62,9 @@ def parse_args() -> argparse.Namespace:
         help="PR (#N or N), branch, or workspace slug; defaults to the worktree at cwd",
     )
     p.add_argument(
-        "--force", action="store_true", help="bypass dirty/unpushed/open-PR refusal"
+        "--force",
+        action="store_true",
+        help="override open-PR refusal (does not override dirty/unpushed)",
     )
     return p.parse_args()
 
@@ -111,6 +134,16 @@ def main() -> int:
     label = match.name or match.ref
     branch = wt.branch if wt is not None else None
     wt_path = wt.path if wt is not None else None
+
+    hard = hard_blockers(wt_path)
+    if hard:
+        print(
+            f"ERROR: refusing to close {label}: "
+            + "; ".join(hard)
+            + " (commit, push, or merge before closing — --force does not override)",
+            file=sys.stderr,
+        )
+        return 1
 
     blockers = probe_blockers(wt_path, branch, repo_name)
     if blockers and not args.force:

@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 import close as close_script
+from close import hard_blockers
 from lib.git import Worktree
 
 
@@ -116,3 +117,57 @@ def test_match_from_cwd_resolves_from_subdirectory(cockpit_repo, monkeypatch):
         match = close_script._match_from_cwd(cockpit_repo.repo)
 
     assert match.ref == "workspace:9"
+
+
+# ── hard_blockers: dirty + unpushed cannot be --force'd through ────────────
+
+
+def test_hard_blockers_clean_returns_empty(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(close_script, "count_dirty", return_value=0),
+        patch.object(close_script, "_count_unpushed", return_value=0),
+    ):
+        assert hard_blockers(wt) == []
+
+
+def test_hard_blockers_flags_dirty(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(close_script, "count_dirty", return_value=3),
+        patch.object(close_script, "_count_unpushed", return_value=0),
+    ):
+        blockers = hard_blockers(wt)
+    assert any("3 uncommitted" in b for b in blockers)
+
+
+def test_hard_blockers_flags_unpushed(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(close_script, "count_dirty", return_value=0),
+        patch.object(close_script, "_count_unpushed", return_value=2),
+    ):
+        blockers = hard_blockers(wt)
+    assert any("2 commit(s) not on origin" in b for b in blockers)
+
+
+def test_hard_blockers_flags_unverifiable_push_state(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(close_script, "count_dirty", return_value=0),
+        patch.object(close_script, "_count_unpushed", return_value=-1),
+    ):
+        blockers = hard_blockers(wt)
+    assert any("could not verify" in b for b in blockers)
+
+
+def test_hard_blockers_skips_missing_path():
+    assert hard_blockers(Path("/nope/missing")) == []
+
+
+def test_hard_blockers_skips_none():
+    assert hard_blockers(None) == []

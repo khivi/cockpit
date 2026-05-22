@@ -25,6 +25,24 @@ Before committing, scan for:
 
 Before opening a PR, bump `.claude-plugin/plugin.json`'s `version` field (semver patch for fixes, minor for features). Stage and commit the bump with the rest of the change — do not ship a PR that leaves the version untouched.
 
+## Test layout
+
+Tests mirror sources one-to-one: `scripts/<path>/<name>.py` is exercised by `tests/<path>/test_<name>.py`. New modules get their own `test_<name>.py`; do not append tests for a new source file to an unrelated test module. Shell hooks under `hooks/` are the only exception — they live as `tests/test_<hook>.py` without a Python source mirror.
+
+## Python dev env (uv)
+
+`pyproject.toml` declares dev dependencies under `[dependency-groups].dev`. Each worktree gets its own `.venv/` via `uv sync` — the venvs are independent, but installs are cheap because uv hardlinks from its global content-addressed cache (`~/.cache/uv/`).
+
+Workflow in a fresh worktree:
+
+```sh
+uv sync       # creates .venv with pinned dev deps; cheap if cache is warm
+uv run pytest # tests; equivalent to .venv/bin/pytest
+uv run mypy scripts/ tests/
+```
+
+`uv.lock` is gitignored on purpose — version pins in `pyproject.toml` are exact (`==`), so the lockfile adds no extra reproducibility for this tools-only env. Pre-commit still maintains its own per-hook venvs (`~/.cache/pre-commit/`); the two caches are independent.
+
 ## Enforcement
 
 The `gitleaks` pre-commit hook (`.gitleaks.toml`) blocks the regex-catchable cases at commit time: hardcoded home paths, Slack IDs, bare UUIDs, plus gitleaks' default credential ruleset. This document covers the judgment calls the regex can't reliably catch.
