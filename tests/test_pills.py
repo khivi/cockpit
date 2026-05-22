@@ -68,8 +68,36 @@ def _expected_starship(cockpit_config) -> str:
 # ── decide_pills ────────────────────────────────────────────────────────────
 
 
-def test_clean_open_pr_emits_no_pills():
-    assert decide_pills(_pr(), _wt()) == []
+def test_clean_open_pr_with_passing_ci_emits_ci_passed():
+    # All-green PR: surface a sentinel ✓ so the sidebar isn't empty.
+    assert decide_pills(_pr(), _wt()) == [{"kind": "ci_passed"}]
+
+
+def test_clean_open_pr_without_ci_emits_no_pills():
+    # No CI configured (or not yet queued) — no sentinel.
+    assert decide_pills(_pr(ci="none"), _wt()) == []
+
+
+def test_ci_passed_suppressed_when_other_pills_present():
+    # `approved` already conveys readiness; don't double up with ci_passed.
+    pills = decide_pills(_pr(review_decision="APPROVED"), _wt())
+    kinds = [p["kind"] for p in pills]
+    assert kinds == ["approved"]
+
+
+def test_ci_passed_suppressed_when_unaddressed_present():
+    pills = decide_pills(_pr(unaddressed=1), _wt())
+    kinds = [p["kind"] for p in pills]
+    assert "ci_passed" not in kinds
+    assert "unaddressed" in kinds
+
+
+def test_ci_passed_suppressed_for_merged_pr():
+    # State pill (cmux-dropped) still counts as "other pill" → no sentinel.
+    pills = decide_pills(_pr(state="MERGED"), _wt())
+    kinds = [p["kind"] for p in pills]
+    assert "ci_passed" not in kinds
+    assert kinds == ["state"]
 
 
 def test_ci_failed_carries_phase():
@@ -111,11 +139,13 @@ def test_draft_and_approved_coexist():
 
 
 def test_state_pill_only_for_non_open():
-    assert decide_pills(_pr(state="OPEN"), _wt()) == []
-    assert decide_pills(_pr(state="MERGED"), _wt()) == [
+    # OPEN + ci=none → no pills; MERGED/CLOSED → state pill (and ci_passed is
+    # suppressed by the state pill, see test_ci_passed_suppressed_for_merged_pr).
+    assert decide_pills(_pr(state="OPEN", ci="none"), _wt()) == []
+    assert decide_pills(_pr(state="MERGED", ci="none"), _wt()) == [
         {"kind": "state", "state": "MERGED"}
     ]
-    assert decide_pills(_pr(state="CLOSED"), _wt()) == [
+    assert decide_pills(_pr(state="CLOSED", ci="none"), _wt()) == [
         {"kind": "state", "state": "CLOSED"}
     ]
 

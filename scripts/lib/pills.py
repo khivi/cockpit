@@ -29,6 +29,7 @@ KIND_ORDER = (
     "wip",
     "ci_failed",
     "ci_pending",
+    "ci_passed",
     "unaddressed",
     "changes_requested",
     "conflict",
@@ -68,4 +69,8 @@ def decide_pills(pr: "PR", wt: "Worktree | None") -> list[dict]:
         pills.append({"kind": "approved"})
     if pr.state and pr.state != "OPEN":
         pills.append({"kind": "state", "state": pr.state})
+    # Sentinel "all green" pill — only when no other pill would render. Without
+    # it the sidebar collapses to empty, indistinguishable from "no CI" / stale.
+    if pr.ci == "passed" and not pills:
+        pills.append({"kind": "ci_passed"})
     return pills

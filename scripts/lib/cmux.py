@@ -322,6 +322,7 @@ _CMUX_RENDERERS = {
     "wip": lambda p: ("wip", f"✏️ {p['count']} dirty", ORANGE),
     "ci_failed": lambda p: ("ci", f"❌ ci:{p['phase']}", RED),
     "ci_pending": lambda _p: ("ci", "⏳ ci pending", ORANGE),
+    "ci_passed": lambda _p: ("ci", "✓ ci", GREEN),
     "unaddressed": lambda p: ("comments", f"💬 {p['count']} unaddressed", RED),
     "changes_requested": lambda _p: ("comments", "💬 changes requested", RED),
     "conflict": lambda _p: ("merge", "⚠️ conflict", ORANGE),
