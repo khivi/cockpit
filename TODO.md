@@ -19,12 +19,6 @@ The data path cockpit could still own: enrich `~/.config/cockpit/cache/{repo}__p
 
 Patterns staged for review and potential promotion to global rules (`~/.claude/CLAUDE.md` or `claude/rules/`) via the `/promote-memories` skill.
 
-### Prefer `rg` over `grep`
-
-**Why:** On macOS the system `grep` is BSD, which silently lacks `--type` and other GNU flags. Falling back to `/usr/bin/grep -rn` works but is ~10× slower than `rg` and doesn't respect `.gitignore`. Burning a turn discovering the `--type` flag is missing is wasteful.
-
-**How to apply:** Default to `rg <pattern> [<path>]` for any text search. `rg --type py "<pattern>"` for language-filtered. Reach for `grep` only for stdin pipes where rg isn't available.
-
 ### `git show --stat` before full diff
 
 **Why:** `git show <sha>` or `git diff main...HEAD` on a multi-file commit dumps the whole patch into context. Even with rtk's compaction, a 40-file diff burns tokens that targeted reads avoid. The stat output gives the file list + change size; from there `Read <path>` extracts only what you need.
