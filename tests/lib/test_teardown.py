@@ -102,12 +102,17 @@ def test_teardown_forced_bypasses_blockers(tmp_path):
             teardown_mod, "remove_worktree", return_value=(True, "")
         ) as rm_mock,
         patch.object(teardown_mod, "delete_pr_caches_for_branch") as cache_mock,
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(
+            teardown_mod, "ff_default_branch_worktrees", return_value=[]
+        ) as ff_mock,
     ):
         ok, _ = teardown(req)
     assert ok
     close_mock.assert_called_once_with("ws:1")
     rm_mock.assert_called_once()
     cache_mock.assert_called_once_with("repo", "khivi/x")
+    ff_mock.assert_called_once()
 
 
 def test_teardown_no_worktree_skips_remove(tmp_path):
@@ -145,6 +150,53 @@ def test_teardown_remove_failure_returns_error(tmp_path):
     assert not ok
     assert any("locked" in b for b in blockers)
     cache_mock.assert_not_called()
+
+
+def test_teardown_advances_default_branch_worktree(tmp_path, capsys):
+    """Successful teardown fast-forwards any worktree on the default branch."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    req = TeardownRequest(
+        ref="ws:1",
+        worktree_path=wt,
+        branch="khivi/x",
+        repo_path=tmp_path,
+        repo_name="repo",
+        forced=True,
+    )
+    from lib.git import Worktree
+
+    main_wt = Worktree(path=tmp_path / "main", branch="main")
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort"),
+        patch.object(teardown_mod, "remove_worktree", return_value=(True, "")),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "worktrees", return_value=[main_wt]),
+        patch.object(
+            teardown_mod,
+            "ff_default_branch_worktrees",
+            return_value=[(main_wt, 3)],
+        ) as ff_mock,
+    ):
+        ok, _ = teardown(req)
+    assert ok
+    ff_mock.assert_called_once_with(tmp_path, [main_wt])
+    out = capsys.readouterr().out
+    assert "ff-main" in out
+    assert "main → origin/main" in out
+    assert "3 commits" in out
+
+
+def test_teardown_skips_ff_when_repo_path_missing():
+    """Orphan-reaping case (repo_path=None) must not invoke ff."""
+    req = TeardownRequest(ref="ws:1", forced=True)
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort"),
+        patch.object(teardown_mod, "ff_default_branch_worktrees") as ff_mock,
+    ):
+        ok, _ = teardown(req)
+    assert ok
+    ff_mock.assert_not_called()
 
 
 def test_teardown_dry_run(tmp_path):

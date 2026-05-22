@@ -22,7 +22,13 @@ from pathlib import Path
 from .cache import delete_pr_caches_for_branch, find_pr_payload
 from .cmux import cmux_close_workspace_best_effort
 from .colors import dim
-from .git import _count_unpushed, count_dirty, remove_worktree
+from .git import (
+    _count_unpushed,
+    count_dirty,
+    ff_default_branch_worktrees,
+    remove_worktree,
+    worktrees,
+)
 from .log_format import verb
 
 
@@ -101,5 +107,16 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
 
     if req.branch is not None and req.repo_name is not None:
         delete_pr_caches_for_branch(req.repo_name, req.branch)
+
+    if req.repo_path is not None:
+        for wt, behind in ff_default_branch_worktrees(
+            req.repo_path, worktrees(req.repo_path)
+        ):
+            plural = "s" if behind != 1 else ""
+            print(
+                f"  {verb('ff-main')} {wt.short} → origin/{wt.branch}"
+                f"  {dim(f'{behind} commit{plural}')}",
+                flush=True,
+            )
 
     return True, []
