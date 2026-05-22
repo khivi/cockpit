@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 
 from lib.gh import PR
 from lib.git import Worktree
@@ -54,93 +55,89 @@ def _wt(
 # ── decide_pills ────────────────────────────────────────────────────────────
 
 
-def test_clean_open_pr_with_passing_ci_emits_ci_passed():
-    # All-green PR: surface a sentinel ✓ so the sidebar isn't empty.
-    assert decide_pills(_pr(), _wt()) == [{"kind": "ci_passed"}]
+@pytest.mark.parametrize(
+    "pr_overrides,wt_kwargs,expected",
+    [
+        ({}, {}, [{"kind": "ci_passed"}]),
+        ({"ci": "none"}, {}, []),
+        ({"review_decision": "APPROVED"}, {}, [{"kind": "approved"}]),
+        ({"ci": "failed:lint"}, {}, [{"kind": "ci_failed", "phase": "lint"}]),
+        ({"ci": "failed"}, {}, [{"kind": "ci_failed", "phase": ""}]),
+        ({"ci": "pending"}, {}, [{"kind": "ci_pending"}]),
+        ({"review_decision": "CHANGES_REQUESTED"}, {}, [{"kind": "changes_requested"}]),
+        ({"mergeable": "CONFLICTING"}, {}, [{"kind": "conflict"}]),
+        (
+            {"state": "MERGED"},
+            {},
+            [{"kind": "state", "state": "MERGED"}],
+        ),
+        (
+            {},
+            {"rebasing": True, "dirty": 4},
+            [{"kind": "rebase"}, {"kind": "wip", "count": 4}],
+        ),
+    ],
+    ids=[
+        "clean_open_pr_with_passing_ci_emits_ci_passed",
+        "clean_open_pr_without_ci_emits_no_pills",
+        "ci_passed_suppressed_when_other_pills_present",
+        "ci_failed_carries_phase",
+        "ci_failed_without_phase_marker",
+        "ci_pending",
+        "changes_requested_alone",
+        "conflict_pill",
+        "ci_passed_suppressed_for_merged_pr",
+        "worktree_pills_independent_of_pr",
+    ],
+)
+def test_decide_pills_equality(pr_overrides, wt_kwargs, expected):
+    assert decide_pills(_pr(**pr_overrides), _wt(**wt_kwargs)) == expected
 
 
-def test_clean_open_pr_without_ci_emits_no_pills():
-    # No CI configured (or not yet queued) — no sentinel.
-    assert decide_pills(_pr(ci="none"), _wt()) == []
+@pytest.mark.parametrize(
+    "pr_overrides,expected_kinds",
+    [
+        ({"is_draft": True, "review_decision": "APPROVED"}, ["draft", "approved"]),
+    ],
+    ids=["draft_and_approved_coexist"],
+)
+def test_decide_pills_kinds(pr_overrides, expected_kinds):
+    pills = decide_pills(_pr(**pr_overrides), _wt())
+    assert [p["kind"] for p in pills] == expected_kinds
 
 
-def test_ci_passed_suppressed_when_other_pills_present():
-    # `approved` already conveys readiness; don't double up with ci_passed.
-    pills = decide_pills(_pr(review_decision="APPROVED"), _wt())
-    kinds = [p["kind"] for p in pills]
-    assert kinds == ["approved"]
-
-
-def test_ci_passed_suppressed_when_unaddressed_present():
-    pills = decide_pills(_pr(unaddressed=1), _wt())
-    kinds = [p["kind"] for p in pills]
-    assert "ci_passed" not in kinds
-    assert "unaddressed" in kinds
-
-
-def test_ci_passed_suppressed_for_merged_pr():
-    # State pill (cmux-dropped) still counts as "other pill" → no sentinel.
-    pills = decide_pills(_pr(state="MERGED"), _wt())
-    kinds = [p["kind"] for p in pills]
-    assert "ci_passed" not in kinds
-    assert kinds == ["state"]
-
-
-def test_ci_failed_carries_phase():
-    pills = decide_pills(_pr(ci="failed:lint"), _wt())
-    assert pills == [{"kind": "ci_failed", "phase": "lint"}]
-
-
-def test_ci_failed_without_phase_marker():
-    # `ci` is "failed" with no `:phase`; phase becomes empty string.
-    pills = decide_pills(_pr(ci="failed"), _wt())
-    assert pills == [{"kind": "ci_failed", "phase": ""}]
-
-
-def test_ci_pending():
-    assert decide_pills(_pr(ci="pending"), _wt()) == [{"kind": "ci_pending"}]
-
-
-def test_unaddressed_supersedes_changes_requested():
-    pills = decide_pills(_pr(unaddressed=3, review_decision="CHANGES_REQUESTED"), _wt())
-    kinds = [p["kind"] for p in pills]
-    assert "unaddressed" in kinds
-    assert "changes_requested" not in kinds
-
-
-def test_changes_requested_alone():
-    pills = decide_pills(_pr(review_decision="CHANGES_REQUESTED"), _wt())
-    assert pills == [{"kind": "changes_requested"}]
-
-
-def test_conflict_pill():
-    pills = decide_pills(_pr(mergeable="CONFLICTING"), _wt())
-    assert pills == [{"kind": "conflict"}]
-
-
-def test_draft_and_approved_coexist():
-    pills = decide_pills(_pr(is_draft=True, review_decision="APPROVED"), _wt())
-    kinds = [p["kind"] for p in pills]
-    assert kinds == ["draft", "approved"]
+@pytest.mark.parametrize(
+    "pr_overrides,must_have,must_not_have",
+    [
+        ({"unaddressed": 1}, ["unaddressed"], ["ci_passed"]),
+        (
+            {"unaddressed": 3, "review_decision": "CHANGES_REQUESTED"},
+            ["unaddressed"],
+            ["changes_requested"],
+        ),
+    ],
+    ids=[
+        "ci_passed_suppressed_when_unaddressed_present",
+        "unaddressed_supersedes_changes_requested",
+    ],
+)
+def test_decide_pills_membership(pr_overrides, must_have, must_not_have):
+    kinds = [p["kind"] for p in decide_pills(_pr(**pr_overrides), _wt())]
+    for k in must_have:
+        assert k in kinds
+    for k in must_not_have:
+        assert k not in kinds
 
 
 def test_state_pill_only_for_non_open():
     # OPEN + ci=none → no pills; MERGED/CLOSED → state pill (and ci_passed is
-    # suppressed by the state pill, see test_ci_passed_suppressed_for_merged_pr).
+    # suppressed by the state pill, see ci_passed_suppressed_for_merged_pr).
     assert decide_pills(_pr(state="OPEN", ci="none"), _wt()) == []
     assert decide_pills(_pr(state="MERGED", ci="none"), _wt()) == [
         {"kind": "state", "state": "MERGED"}
     ]
     assert decide_pills(_pr(state="CLOSED", ci="none"), _wt()) == [
         {"kind": "state", "state": "CLOSED"}
-    ]
-
-
-def test_worktree_pills_independent_of_pr():
-    pills = decide_pills(_pr(), _wt(rebasing=True, dirty=4))
-    assert pills == [
-        {"kind": "rebase"},
-        {"kind": "wip", "count": 4},
     ]
 
 
