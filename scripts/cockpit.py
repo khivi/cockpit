@@ -91,6 +91,7 @@ from lib.gh import (  # noqa: E402
     gh_self_user,
     list_relevant_prs,
     repo_nwo,
+    require_gh,
 )
 from lib.git import (  # noqa: E402
     Worktree,
@@ -99,6 +100,7 @@ from lib.git import (  # noqa: E402
     count_commits_since,
     ff_default_branch_worktrees,
     origin_head_branch,
+    require_git,
     worktrees,
 )
 from lib.teardown import TeardownRequest, teardown  # noqa: E402
@@ -846,6 +848,9 @@ def main(argv=None):
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--verbose", "-v", action="store_true")
     args = p.parse_args(argv)
+
+    require_git()
+    require_gh()
 
     ensure_state_dirs()
 
