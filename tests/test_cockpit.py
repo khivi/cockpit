@@ -50,6 +50,8 @@ def test_cmux_close_runs_before_remove_worktree(tmp_path):
         patch.object(teardown_mod, "remove_worktree", side_effect=fake_remove),
         patch.object(cockpit, "count_commits_since", return_value=0),
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
     ):
         cockpit._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
