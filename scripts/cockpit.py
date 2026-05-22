@@ -193,6 +193,13 @@ def _resolve_wt(
     return wt_by_name.get(ws_name)
 
 
+def _ci_glyph(ci: str) -> str:
+    """One-char glyph for a PR's CI state. Empty when state is unknown."""
+    if ci.startswith("failed"):
+        return "✗"
+    return {"passed": "✓", "pending": "•"}.get(ci, "")
+
+
 def _orphan_snapshot(
     wt: Worktree, behind_base: int
 ) -> tuple[frozenset[tuple[str, str]], str]:
@@ -410,9 +417,6 @@ def cycle_repo(
             # Mirror PR fields into the cship cache so starship.toml [custom.*]
             # modules render fresh on the first session render, without each
             # field having to spawn its own `gh pr view` from cold.
-            ci_glyph = {"passed": "✓", "pending": "•"}.get(pr.ci, "")
-            if pr.ci.startswith("failed"):
-                ci_glyph = "✗"
             write_branch_pr_cache(
                 pr.branch,
                 state=pr.state,
@@ -420,7 +424,7 @@ def cycle_repo(
                 review_decision=pr.review_decision,
                 number=pr.number,
                 title=pr.title,
-                ci_glyph=ci_glyph,
+                ci_glyph=_ci_glyph(pr.ci),
             )
 
     if headless:
