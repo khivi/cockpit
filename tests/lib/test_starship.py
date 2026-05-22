@@ -11,6 +11,26 @@ import pytest
 
 import lib.claude as claude_mod
 import lib.starship as starship
+from lib.colors import (
+    Colorizer,
+    amber,
+    azure,
+    bold_azure,
+    bold_crimson,
+    bold_leaf,
+    bold_orange,
+    bold_ruby,
+    bold_shadow,
+    bold_violet,
+    crimson,
+    green,
+    leaf,
+    orange,
+    red,
+    shadow,
+    slate,
+    yellow,
+)
 
 
 # ── field printer: context (lib.starship) ──────────────────────────────────
@@ -19,16 +39,13 @@ import lib.starship as starship
 def test_print_context_formats_ceiling_M(cache_dir):
     (cache_dir / "context").write_text("12 1000000")
     out = starship.print_context()
-    assert "🧠 12%/1M" in out
-    assert "\033[38;5;243m" in out
-    assert out.endswith("\033[0m")
+    assert slate("🧠 12%/1M") == out
 
 
 def test_print_context_formats_ceiling_k(cache_dir):
     (cache_dir / "context").write_text("33 200000")
     out = starship.print_context()
-    assert "🧠 33%/200k" in out
-    assert "\033[38;5;243m" in out
+    assert slate("🧠 33%/200k") == out
 
 
 def test_print_context_session_scoped(cache_dir, monkeypatch):
@@ -52,12 +69,12 @@ def test_print_context_fresh_session_falls_back_to_latest(cache_dir, monkeypatch
 
 
 @pytest.mark.parametrize(
-    "pct,prefix",
+    "pct,color",
     [
-        (5, "\033[38;5;243m"),
-        (75, "\033[38;5;172m"),
-        (95, "\033[38;5;160m"),
-        (100, "\033[1;38;5;160m"),
+        (5, slate),
+        (75, orange),
+        (95, crimson),
+        (100, bold_crimson),
     ],
     ids=[
         "tier_slate_under_70",
@@ -66,11 +83,10 @@ def test_print_context_fresh_session_falls_back_to_latest(cache_dir, monkeypatch
         "tier_red_bold_at_100",
     ],
 )
-def test_print_context_tier(cache_dir, pct, prefix):
+def test_print_context_tier(cache_dir, pct, color: Colorizer):
     (cache_dir / "context").write_text(f"{pct} 1000000")
     out = starship.print_context()
-    assert out.startswith(prefix)
-    assert f"🧠 {pct}%/1M" in out
+    assert out == color(f"🧠 {pct}%/1M")
 
 
 def test_print_context_fresh_session_no_history_empty(cache_dir, monkeypatch):
@@ -95,8 +111,7 @@ def test_print_context_zero_limit_empty(cache_dir):
 def test_print_rate_limit(cache_dir):
     (cache_dir / "rate-limit-5h").write_text("8 2026-05-21T15:00:00Z")
     out = starship.print_rate_limit()
-    assert "⌛ 8%/5h" in out
-    assert out.endswith("\033[0m")
+    assert out == slate("⌛ 8%/5h")
 
 
 def test_print_rate_limit_missing_cache_empty(cache_dir):
@@ -115,12 +130,12 @@ def test_print_rate_limit_fresh_session_falls_back_to_latest(cache_dir, monkeypa
 
 
 @pytest.mark.parametrize(
-    "pct,prefix",
+    "pct,color",
     [
-        (5, "\033[38;5;243m"),
-        (72, "\033[38;5;172m"),
-        (95, "\033[38;5;160m"),
-        (100, "\033[1;38;5;160m"),
+        (5, slate),
+        (72, orange),
+        (95, crimson),
+        (100, bold_crimson),
     ],
     ids=[
         "tier_slate_under_70",
@@ -129,11 +144,10 @@ def test_print_rate_limit_fresh_session_falls_back_to_latest(cache_dir, monkeypa
         "tier_red_bold_at_100",
     ],
 )
-def test_print_rate_limit_tier(cache_dir, pct, prefix):
+def test_print_rate_limit_tier(cache_dir, pct, color: Colorizer):
     (cache_dir / "rate-limit-5h").write_text(f"{pct} 2026-05-21T15:00:00Z")
     out = starship.print_rate_limit()
-    assert out.startswith(prefix)
-    assert f"⌛ {pct}%/5h" in out
+    assert out == color(f"⌛ {pct}%/5h")
 
 
 # ── field printer: linear ──────────────────────────────────────────────────
@@ -155,13 +169,13 @@ def test_print_linear_no_ticket(cache_dir):
 @pytest.mark.parametrize(
     "value,expected",
     [
-        ("APPROVED", "\033[1;38;5;34mAPPROVED\033[0m"),
-        ("DRAFT", "\033[1;38;5;240mDRAFT\033[0m"),
-        ("OPEN", "\033[1;38;5;32mOPEN\033[0m"),
-        ("REVIEW_REQUIRED", "\033[1;38;5;172mREVIEW_REQUIRED\033[0m"),
-        ("CHANGES_REQUESTED", "\033[1;38;5;160mCHANGES_REQUESTED\033[0m"),
-        ("MERGED", "\033[1;38;5;91mMERGED\033[0m"),
-        ("CLOSED", "\033[1;38;5;88mCLOSED\033[0m"),
+        ("APPROVED", bold_leaf("APPROVED")),
+        ("DRAFT", bold_shadow("DRAFT")),
+        ("OPEN", bold_azure("OPEN")),
+        ("REVIEW_REQUIRED", bold_orange("REVIEW_REQUIRED")),
+        ("CHANGES_REQUESTED", bold_crimson("CHANGES_REQUESTED")),
+        ("MERGED", bold_violet("MERGED")),
+        ("CLOSED", bold_ruby("CLOSED")),
         ("WHATEVER", "WHATEVER"),
     ],
     ids=[
@@ -198,9 +212,9 @@ def test_print_pr_title(cache_dir):
 @pytest.mark.parametrize(
     "glyph,expected",
     [
-        ("✓", "\033[32m✓\033[0m"),
-        ("✗", "\033[31m✗\033[0m"),
-        ("•", "\033[33m•\033[0m"),
+        ("✓", green("✓")),
+        ("✗", red("✗")),
+        ("•", yellow("•")),
     ],
     ids=["fresh_pass", "fresh_fail", "fresh_pending"],
 )
@@ -316,10 +330,7 @@ def _init_repo(path: Path) -> None:
 def test_print_branch_pill_clean(_clean_git_env, tmp_path, monkeypatch):
     _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert (
-        starship.print_branch_pill()
-        == "\033[38;5;243m⎇ main\033[0m \033[38;5;243m\033[0m"
-    )
+    assert starship.print_branch_pill() == slate("⎇ main") + " " + slate("")
 
 
 def test_print_branch_pill_branch_name_slate_colored(_clean_git_env, monkeypatch):
@@ -332,7 +343,7 @@ def test_print_branch_pill_branch_name_slate_colored(_clean_git_env, monkeypatch
         starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
     )
     out = starship.print_branch_pill()
-    assert out.startswith("\033[38;5;243m⎇ feature\033[0m")
+    assert out.startswith(slate("⎇ feature"))
 
 
 def test_print_branch_pill_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
@@ -367,18 +378,18 @@ def test_print_branch_pill_ahead_only(_clean_git_env, monkeypatch):
     monkeypatch.setattr(starship, "behind_of_origin", git_mod.behind_of_origin)
     monkeypatch.setattr(starship, "count_status", git_mod.count_status)
     out = starship.print_branch_pill()
-    assert "\033[38;5;243m⎇ feature\033[0m" in out
-    assert "\033[38;5;38m↑3\033[0m" in out
+    assert slate("⎇ feature") in out
+    assert azure("↑3") in out
 
 
 @pytest.mark.parametrize(
     "ahead,behind,status,expected_fragments",
     [
-        (0, 2, (0, 0, 0), ["\033[38;5;172m↓2\033[0m"]),
-        (3, 2, (0, 0, 0), ["\033[38;5;38m↑3\033[0m", "\033[38;5;172m↓2\033[0m"]),
-        (0, 0, (1, 0, 0), ["\033[38;5;34m●1\033[0m"]),
-        (0, 0, (0, 2, 0), ["\033[38;5;220m✎2\033[0m"]),
-        (0, 0, (0, 0, 4), ["\033[38;5;240m✚4\033[0m"]),
+        (0, 2, (0, 0, 0), [orange("↓2")]),
+        (3, 2, (0, 0, 0), [azure("↑3"), orange("↓2")]),
+        (0, 0, (1, 0, 0), [leaf("●1")]),
+        (0, 0, (0, 2, 0), [amber("✎2")]),
+        (0, 0, (0, 0, 4), [shadow("✚4")]),
     ],
     ids=[
         "behind_only",
@@ -407,12 +418,12 @@ def test_print_branch_pill_all_segments(_clean_git_env, monkeypatch):
         starship, "count_status", lambda _p: git_mod.GitStatusCounts(1, 1, 1)
     )
     out = starship.print_branch_pill()
-    assert "\033[38;5;243m⎇ feature\033[0m" in out
-    assert "\033[38;5;38m↑1\033[0m" in out
-    assert "\033[38;5;172m↓1\033[0m" in out
-    assert "\033[38;5;34m●1\033[0m" in out
-    assert "\033[38;5;220m✎1\033[0m" in out
-    assert "\033[38;5;240m✚1\033[0m" in out
+    assert slate("⎇ feature") in out
+    assert azure("↑1") in out
+    assert orange("↓1") in out
+    assert leaf("●1") in out
+    assert amber("✎1") in out
+    assert shadow("✚1") in out
 
 
 def test_print_branch_pill_dirty_untracked_and_modified(
@@ -463,19 +474,19 @@ def test_print_branch_pill_base_relative(
     cache_dir, _clean_git_env, monkeypatch, glyph, cache_prefix, scenario
 ):
     _stub_branch(monkeypatch)
-    fresh_color = "\033[38;5;172m" if glyph == "↻" else "\033[38;5;38m"
+    fresh_color: Colorizer = orange if glyph == "↻" else azure
     cache_path = cache_dir / f"{cache_prefix}-feature"
     now = int(time.time())
     if scenario == "fresh":
         cache_path.write_text(f"7 {now}")
         out = starship.print_branch_pill()
-        assert f"{fresh_color}{glyph}7\033[0m" in out
+        assert fresh_color(f"{glyph}7") in out
         assert "ago" not in out
     elif scenario == "aging":
         epoch = now - (2 * 3600)
         cache_path.write_text(f"4 {epoch}")
         out = starship.print_branch_pill()
-        assert f"\033[38;5;240m{glyph}4 (2h ago)\033[0m" in out
+        assert shadow(f"{glyph}4 (2h ago)") in out
     elif scenario == "too_stale_hidden":
         epoch = now - (8 * 3600)
         cache_path.write_text(f"4 {epoch}")
@@ -507,7 +518,7 @@ def test_print_branch_pill_base_distance_slash_branch_key(
     now = int(time.time())
     (cache_dir / "base-distance-khivi-master-foo").write_text(f"3 {now}")
     out = starship.print_branch_pill()
-    assert "\033[38;5;172m↻3\033[0m" in out
+    assert orange("↻3") in out
 
 
 # ── base-ahead (↗N) ────────────────────────────────────────────────────────

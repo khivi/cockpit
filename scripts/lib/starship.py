@@ -29,6 +29,26 @@ from .cache import (
     read_text,
     session_cache,
 )
+from .colors import (
+    Colorizer,
+    amber,
+    azure,
+    bold_azure,
+    bold_crimson,
+    bold_leaf,
+    bold_orange,
+    bold_ruby,
+    bold_shadow,
+    bold_violet,
+    crimson,
+    green,
+    leaf,
+    orange,
+    red,
+    shadow,
+    slate,
+    yellow,
+)
 from .git import ahead_of_origin, behind_of_origin, count_status, current_branch
 
 BASE_DISTANCE_FRESH_SECS = 30 * 60
@@ -36,8 +56,6 @@ BASE_DISTANCE_MAX_AGE_SECS = 6 * 60 * 60
 
 SESSION_TIME_MIN_SECS = 10
 LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
-
-_ANSI_RESET = "\033[0m"
 
 # Claude Code's permission_mode values are camelCase; render them with the
 # user-visible label they show in /config and the slash menu, hiding the
@@ -48,31 +66,31 @@ _PERMISSION_MODE_LABELS = {
     "bypassPermissions": "bypass",
 }
 
-_PR_STATE_ANSI = {
-    "DRAFT": "\033[1;38;5;240m",
-    "OPEN": "\033[1;38;5;32m",
-    "REVIEW_REQUIRED": "\033[1;38;5;172m",
-    "APPROVED": "\033[1;38;5;34m",
-    "CHANGES_REQUESTED": "\033[1;38;5;160m",
-    "MERGED": "\033[1;38;5;91m",
-    "CLOSED": "\033[1;38;5;88m",
+_PR_STATE_COLOR: dict[str, Colorizer] = {
+    "DRAFT": bold_shadow,
+    "OPEN": bold_azure,
+    "REVIEW_REQUIRED": bold_orange,
+    "APPROVED": bold_leaf,
+    "CHANGES_REQUESTED": bold_crimson,
+    "MERGED": bold_violet,
+    "CLOSED": bold_ruby,
 }
 
-_PR_CHECKS_ANSI = {
-    "✓": "\033[32m",
-    "✗": "\033[31m",
-    "•": "\033[33m",
+_PR_CHECKS_COLOR: dict[str, Colorizer] = {
+    "✓": green,
+    "✗": red,
+    "•": yellow,
 }
 
 
-def _pct_tier_ansi(pct: int) -> str:
+def _pct_tier(pct: int) -> Colorizer:
     if pct >= 100:
-        return "\033[1;38;5;160m"
+        return bold_crimson
     if pct >= 90:
-        return "\033[38;5;160m"
+        return crimson
     if pct >= 70:
-        return "\033[38;5;172m"
-    return "\033[38;5;243m"
+        return orange
+    return slate
 
 
 def _read_session_or_fallback(stem: str, sid: str | None) -> str:
@@ -153,7 +171,7 @@ def print_context(sid: str | None = None) -> str:
         ceiling = f"{limit // 1000}k"
     else:
         ceiling = str(limit)
-    return f"{_pct_tier_ansi(pct)}🧠 {pct}%/{ceiling}{_ANSI_RESET}"
+    return _pct_tier(pct)(f"🧠 {pct}%/{ceiling}")
 
 
 def print_session_time(sid: str | None = None) -> str:
@@ -252,7 +270,7 @@ def print_rate_limit(sid: str | None = None) -> str:
         pct = int(parts[0])
     except ValueError:
         return ""
-    return f"{_pct_tier_ansi(pct)}⌛ {pct}%/5h{_ANSI_RESET}"
+    return _pct_tier(pct)(f"⌛ {pct}%/5h")
 
 
 def print_model(sid: str | None = None) -> str:
@@ -283,24 +301,24 @@ def print_branch_pill() -> str:
     branch = current_branch(cwd)
     if not branch:
         return ""
-    parts = [f"\033[38;5;243m⎇ {branch}{_ANSI_RESET}"]
+    parts = [slate(f"⎇ {branch}")]
     ahead = ahead_of_origin(cwd, branch)
     if ahead > 0:
-        parts.append(f"\033[38;5;38m↑{ahead}{_ANSI_RESET}")
+        parts.append(azure(f"↑{ahead}"))
     ahead_base = _base_ahead_segment(branch)
     if ahead_base:
         parts.append(ahead_base)
-    parts.append(f"\033[38;5;243m{_ANSI_RESET}")
+    parts.append(slate(""))
     counts = count_status(Path(cwd))
     if counts.staged > 0:
-        parts.append(f"\033[38;5;34m●{counts.staged}{_ANSI_RESET}")
+        parts.append(leaf(f"●{counts.staged}"))
     if counts.unstaged > 0:
-        parts.append(f"\033[38;5;220m✎{counts.unstaged}{_ANSI_RESET}")
+        parts.append(amber(f"✎{counts.unstaged}"))
     if counts.untracked > 0:
-        parts.append(f"\033[38;5;240m✚{counts.untracked}{_ANSI_RESET}")
+        parts.append(shadow(f"✚{counts.untracked}"))
     behind = behind_of_origin(cwd, branch)
     if behind > 0:
-        parts.append(f"\033[38;5;172m↓{behind}{_ANSI_RESET}")
+        parts.append(orange(f"↓{behind}"))
     stale = _base_distance_segment(branch)
     if stale:
         parts.append(stale)
@@ -328,12 +346,12 @@ def _read_base_cache(stem: str, branch: str) -> tuple[int, int] | None:
 
 
 def _render_base_segment(
-    count: int, fetch_epoch: int, glyph: str, fresh_ansi: str
+    count: int, fetch_epoch: int, glyph: str, fresh_color: Colorizer
 ) -> str:
     """Apply the shared fresh/dim/hidden staleness ladder to a base-* count.
 
     Tiers driven by age since the daemon's last `git fetch`:
-      • <30m       → `fresh_ansi <glyph>N` (actionable now)
+      • <30m       → `fresh_color <glyph>N` (actionable now)
       • 30m–6h     → dim `<glyph>N (Xh ago)` (still useful, but flagged stale)
       • >6h        → hidden (stale counts breed false confidence)
     """
@@ -343,9 +361,9 @@ def _render_base_segment(
     if age > BASE_DISTANCE_MAX_AGE_SECS:
         return ""
     if age <= BASE_DISTANCE_FRESH_SECS:
-        return f"{fresh_ansi}{glyph}{count}{_ANSI_RESET}"
+        return fresh_color(f"{glyph}{count}")
     hours = max(1, age // 3600)
-    return f"\033[38;5;240m{glyph}{count} ({hours}h ago){_ANSI_RESET}"
+    return shadow(f"{glyph}{count} ({hours}h ago)")
 
 
 def _base_distance_segment(branch: str) -> str:
@@ -353,7 +371,7 @@ def _base_distance_segment(branch: str) -> str:
     if cached is None:
         return ""
     count, fetch_epoch = cached
-    return _render_base_segment(count, fetch_epoch, "↻", "\033[38;5;172m")
+    return _render_base_segment(count, fetch_epoch, "↻", orange)
 
 
 def _base_ahead_segment(branch: str) -> str:
@@ -361,7 +379,7 @@ def _base_ahead_segment(branch: str) -> str:
     if cached is None:
         return ""
     count, fetch_epoch = cached
-    return _render_base_segment(count, fetch_epoch, "↗", "\033[38;5;38m")
+    return _render_base_segment(count, fetch_epoch, "↗", azure)
 
 
 def print_linear() -> str:
@@ -390,10 +408,10 @@ def print_pr_state(branch: str | None = None) -> str:
     raw = _cached_or_refresh(branch, "pr-state", "pr-state")
     if not raw:
         return ""
-    ansi = _PR_STATE_ANSI.get(raw)
-    if not ansi:
+    color = _PR_STATE_COLOR.get(raw)
+    if not color:
         return raw
-    return f"{ansi}{raw}{_ANSI_RESET}"
+    return color(raw)
 
 
 def print_pr_num(branch: str | None = None) -> str:
@@ -413,10 +431,10 @@ def print_pr_checks(branch: str | None = None) -> str:
     glyph = _cached_or_refresh(branch, "pr-checks", "pr-checks")
     if not glyph:
         return ""
-    ansi = _PR_CHECKS_ANSI.get(glyph)
-    if not ansi:
+    color = _PR_CHECKS_COLOR.get(glyph)
+    if not color:
         return glyph
-    return f"{ansi}{glyph}{_ANSI_RESET}"
+    return color(glyph)
 
 
 def print_pr_title(branch: str | None = None) -> str:
