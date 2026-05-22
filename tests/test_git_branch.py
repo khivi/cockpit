@@ -14,6 +14,7 @@ from lib.git import (
     _fetch_remote_branch,
     _has_local_branch,
     _has_remote_branch,
+    ahead_of_base,
     behind_of_base,
     branch_exists,
 )
@@ -103,3 +104,39 @@ def test_behind_of_base_zero_when_no_base(cockpit_repo):
 
 def test_behind_of_base_zero_when_base_unknown(cockpit_repo):
     assert behind_of_base(cockpit_repo.repo, "no-such-base") == 0
+
+
+def test_ahead_of_base_counts_commits(cockpit_repo, push_branch):
+    """Branch carves off main, then adds 2 commits — must report
+    ahead_of_base == 2 against origin/main."""
+    import os
+
+    repo = cockpit_repo.repo
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+    }
+
+    def _git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(repo), *args], check=True, env=env)
+
+    push_branch("khivi/feat")
+    _git("checkout", "-q", "khivi/feat")
+    (repo / "x").write_text("x")
+    _git("add", "x")
+    _git("commit", "-q", "-m", "x")
+    (repo / "y").write_text("y")
+    _git("add", "y")
+    _git("commit", "-q", "-m", "y")
+    assert ahead_of_base(repo, "main") == 2
+
+
+def test_ahead_of_base_zero_when_no_base(cockpit_repo):
+    assert ahead_of_base(cockpit_repo.repo, "") == 0
+
+
+def test_ahead_of_base_zero_when_base_unknown(cockpit_repo):
+    assert ahead_of_base(cockpit_repo.repo, "no-such-base") == 0
