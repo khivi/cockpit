@@ -11,8 +11,7 @@ Subcommands:
   rate-limit           — rolling 5h usage %
   model                — Claude model display name
   permission-mode      — current permission mode (hidden when default)
-  branch-pill          — current branch + ahead/dirty markers
-  commit-age           — relative age of HEAD (hidden >24h)
+  branch-pill          — current branch + ahead/behind + staged/unstaged/untracked
   linear               — Linear ticket ID from branch name
   pr-state             — PR state (OPEN / DRAFT / APPROVED / ...)
   pr-num               — "#<n>" for the current branch's PR
@@ -38,7 +37,6 @@ from lib.cache import refresh_pr_checks, refresh_pr_data, warm_all  # noqa: E402
 from lib.git import current_branch  # noqa: E402
 from lib.starship import (  # noqa: E402
     print_branch_pill,
-    print_commit_age,
     print_context,
     print_linear,
     print_model,
@@ -75,8 +73,6 @@ def main(argv: list[str]) -> int:
             return _emit(print_permission_mode())
         if cmd == "branch-pill":
             return _emit(print_branch_pill())
-        if cmd == "commit-age":
-            return _emit(print_commit_age())
         if cmd == "linear":
             return _emit(print_linear())
         if cmd == "pr-state":

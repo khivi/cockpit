@@ -29,11 +29,12 @@ from .cache import (
     read_text,
     session_cache,
 )
-from .git import ahead_of_origin, count_dirty, current_branch, head_commit_epoch
+from .git import ahead_of_origin, behind_of_origin, count_status, current_branch
 
 SESSION_TIME_MIN_SECS = 10
-COMMIT_AGE_MAX_SECS = 24 * 3600
 LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
+
+_ANSI_RESET = "\033[0m"
 
 # Claude Code's permission_mode values are camelCase; render them with the
 # user-visible label they show in /config and the slash menu, hiding the
@@ -43,6 +44,32 @@ _PERMISSION_MODE_LABELS = {
     "acceptEdits": "accept-edits",
     "bypassPermissions": "bypass",
 }
+
+_PR_STATE_ANSI = {
+    "DRAFT": "\033[1;38;5;240m",
+    "OPEN": "\033[1;38;5;32m",
+    "REVIEW_REQUIRED": "\033[1;38;5;172m",
+    "APPROVED": "\033[1;38;5;34m",
+    "CHANGES_REQUESTED": "\033[1;38;5;160m",
+    "MERGED": "\033[1;38;5;91m",
+    "CLOSED": "\033[1;38;5;88m",
+}
+
+_PR_CHECKS_ANSI = {
+    "✓": "\033[32m",
+    "✗": "\033[31m",
+    "•": "\033[33m",
+}
+
+
+def _pct_tier_ansi(pct: int) -> str:
+    if pct >= 100:
+        return "\033[1;38;5;160m"
+    if pct >= 90:
+        return "\033[38;5;160m"
+    if pct >= 70:
+        return "\033[38;5;172m"
+    return "\033[38;5;243m"
 
 
 def _read_session_or_fallback(stem: str, sid: str | None) -> str:
@@ -123,7 +150,7 @@ def print_context(sid: str | None = None) -> str:
         ceiling = f"{limit // 1000}k"
     else:
         ceiling = str(limit)
-    return f"{pct}%/{ceiling}"
+    return f"{_pct_tier_ansi(pct)}🧠 {pct}%/{ceiling}{_ANSI_RESET}"
 
 
 def print_session_time(sid: str | None = None) -> str:
@@ -222,7 +249,7 @@ def print_rate_limit(sid: str | None = None) -> str:
         pct = int(parts[0])
     except ValueError:
         return ""
-    return f"⌛ {pct}%/5h"
+    return f"{_pct_tier_ansi(pct)}⌛ {pct}%/5h{_ANSI_RESET}"
 
 
 def print_model(sid: str | None = None) -> str:
@@ -242,39 +269,29 @@ def print_permission_mode(sid: str | None = None) -> str:
 
 
 def print_branch_pill() -> str:
-    """`<branch> ↑<ahead> ●<dirty>` — ahead/dirty segments hidden when 0.
-    Empty when not in a git repo.
+    """`⎇ <branch>[ ↑A][ ↓B][ +S][ ~M][ ?U]` — segments hidden when 0.
+    Each segment is independently ANSI-colored; the spaces between segments
+    are uncolored. Empty when not in a git repo.
     """
     cwd = os.getcwd()
     branch = current_branch(cwd)
     if not branch:
         return ""
-    parts = [branch]
+    parts = [f"\033[38;5;243m⎇ {branch}{_ANSI_RESET}"]
     ahead = ahead_of_origin(cwd, branch)
     if ahead > 0:
-        parts.append(f"↑{ahead}")
-    dirty = count_dirty(Path(cwd))
-    if dirty > 0:
-        parts.append(f"●{dirty}")
+        parts.append(f"\033[38;5;38m↑{ahead}{_ANSI_RESET}")
+    behind = behind_of_origin(cwd, branch)
+    if behind > 0:
+        parts.append(f"\033[38;5;172m↓{behind}{_ANSI_RESET}")
+    counts = count_status(Path(cwd))
+    if counts.staged > 0:
+        parts.append(f"\033[38;5;34m+{counts.staged}{_ANSI_RESET}")
+    if counts.unstaged > 0:
+        parts.append(f"\033[38;5;220m~{counts.unstaged}{_ANSI_RESET}")
+    if counts.untracked > 0:
+        parts.append(f"\033[38;5;240m?{counts.untracked}{_ANSI_RESET}")
     return " ".join(parts)
-
-
-def print_commit_age() -> str:
-    """Relative age of HEAD as `Ns` / `Nm` / `Nh`. Hidden when >24h or
-    when not in a git repo / no commits yet."""
-    epoch = head_commit_epoch(os.getcwd())
-    if epoch is None:
-        return ""
-    age = int(time.time()) - epoch
-    if age < 0 or age > COMMIT_AGE_MAX_SECS:
-        return ""
-    if age < 60:
-        return f"⊙ {age}s"
-    if age < 3600:
-        return f"⊙ {age // 60}m"
-    h, rem = divmod(age, 3600)
-    m = rem // 60
-    return f"⊙ {h}h {m}m" if m else f"⊙ {h}h"
 
 
 def print_linear() -> str:
@@ -300,7 +317,13 @@ def print_pr_state(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    return _cached_or_refresh(branch, "pr-state", "pr-state")
+    raw = _cached_or_refresh(branch, "pr-state", "pr-state")
+    if not raw:
+        return ""
+    ansi = _PR_STATE_ANSI.get(raw)
+    if not ansi:
+        return raw
+    return f"{ansi}{raw}{_ANSI_RESET}"
 
 
 def print_pr_num(branch: str | None = None) -> str:
@@ -317,7 +340,13 @@ def print_pr_checks(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    return _cached_or_refresh(branch, "pr-checks", "pr-checks")
+    glyph = _cached_or_refresh(branch, "pr-checks", "pr-checks")
+    if not glyph:
+        return ""
+    ansi = _PR_CHECKS_ANSI.get(glyph)
+    if not ansi:
+        return glyph
+    return f"{ansi}{glyph}{_ANSI_RESET}"
 
 
 def print_pr_title(branch: str | None = None) -> str:
