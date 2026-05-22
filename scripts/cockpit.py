@@ -409,21 +409,26 @@ def cycle_repo(
     if headless:
         return
 
-    by_name: dict[str, list[str]] = {}
-    for ref, ws_name in names.items():
-        by_name.setdefault(ws_name, []).append(ref)
-    keep_refs: set[str] = set()
-    for ws_name, refs in by_name.items():
-        refs_sorted = sorted(refs, key=lambda r: int(r.split(":")[1]))
-        keep_refs.add(refs_sorted[0])
+    def _close_extras(refs_sorted: list[str], reason: str) -> None:
+        keep_name = names.get(refs_sorted[0], refs_sorted[0])
         for extra in refs_sorted[1:]:
+            extra_name = names.get(extra, extra)
             print(
-                f"  {verb('duplicate')} {ws_name} → {extra}  "
-                f"(keeping {refs_sorted[0]})",
+                f"  {verb('duplicate')} {extra_name} → {extra}  "
+                f"({reason.format(keep=keep_name, first=refs_sorted[0])})",
                 flush=True,
             )
             if not dry:
                 cmux_close_workspace_best_effort(extra)
+
+    by_name: dict[str, list[str]] = {}
+    for ref, ws_name in names.items():
+        by_name.setdefault(ws_name, []).append(ref)
+    keep_refs: set[str] = set()
+    for refs in by_name.values():
+        refs_sorted = sorted(refs, key=lambda r: int(r.split(":")[1]))
+        keep_refs.add(refs_sorted[0])
+        _close_extras(refs_sorted, "keeping {first}")
 
     feature_wt_paths = {
         wt.path.resolve() for wt in wts if wt.branch not in MAIN_BRANCHES
@@ -436,21 +441,13 @@ def cycle_repo(
         resolved = cwd.resolve()
         if resolved in feature_wt_paths:
             by_wt_path.setdefault(resolved, []).append(ref)
-    for _wt_path, refs in by_wt_path.items():
+    for refs in by_wt_path.values():
         if len(refs) <= 1:
             continue
         refs_sorted = sorted(refs, key=lambda r: int(r.split(":")[1]))
         for extra in refs_sorted[1:]:
             keep_refs.discard(extra)
-            extra_name = names.get(extra, extra)
-            keep_name = names.get(refs_sorted[0], refs_sorted[0])
-            print(
-                f"  {verb('duplicate')} {extra_name} → {extra}  "
-                f"(same worktree as {keep_name})",
-                flush=True,
-            )
-            if not dry:
-                cmux_close_workspace_best_effort(extra)
+        _close_extras(refs_sorted, "same worktree as {keep}")
 
     tracked_kept = [
         (ref, pr, wt) for ref, (pr, wt) in tracked.items() if ref in keep_refs
