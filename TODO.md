@@ -30,3 +30,29 @@ Patterns staged for review and potential promotion to global rules (`~/.claude/C
 **Why:** `git show <sha>` or `git diff main...HEAD` on a multi-file commit dumps the whole patch into context. Even with rtk's compaction, a 40-file diff burns tokens that targeted reads avoid. The stat output gives the file list + change size; from there `Read <path>` extracts only what you need.
 
 **How to apply:** Before `git show <sha>` or `git diff <range>`, ask "do I need every hunk?" If you only need the file list or a couple files, use `git show --stat <sha>` (or `git diff --stat <range>`) then `Read`/`rg` on the specific paths.
+
+## Worktree-gone-but-branch-survives gap
+
+**Symptom:** `/cockpit:new todo --repo Cockpit` fails with `fatal: a branch named 'khivi/todo' already exists`, but `git worktree list` shows no worktree on that branch. Branch carries unpushed commits — in this case `f395357 docs(todo): …` and `979e571 chore: bump version to 0.20.4` — that are not in `origin/main`.
+
+**Why the worktree disappeared:** `_maybe_autoclose` (`scripts/cockpit.py:195`) has two guards that should have protected this case:
+
+- Line 227: `wt.dirty_count > 0` → `autoclose skipped (uncommitted)`.
+- Line 234: `count_commits_since(wt.path, merged_head) > 0` → `autoclose skipped (N commits after merge)`.
+
+With 2 commits past the merge head, autoclose would have refused. So the teardown came from one of:
+
+1. `/cockpit:close --force` — `forced=True` in `TeardownRequest` skips `probe_blockers` entirely (`lib/teardown.py:74`). Worktree is removed even with unpushed commits.
+2. Manual `git worktree remove` — bypasses cockpit completely.
+
+Either way, `lib/teardown.teardown` only calls `remove_worktree` + `delete_pr_caches_for_branch`. **It never deletes the branch** — by design (`teardown.py:87-99`), so commits survive as a dangling branch.
+
+**Why this is painful:** `spawn.py` always invokes `git worktree add -b <branch> <path> <base>`. The `-b` flag refuses to attach an existing branch, so the user cannot re-enter the workspace via `/cockpit:new`. Recovery requires a manual `git worktree add <path> <existing-branch>` (no `-b`).
+
+**Options:**
+
+- **A. spawn.py auto-attach** — if `git rev-parse --verify khivi/<name>` succeeds and no worktree maps to it, drop `-b` and attach the existing branch. Cleanest, no data loss possible.
+- **B. Loud refusal in forced teardown** — `cockpit:close --force` still tears down, but logs a recovery hint (`branch <name> retained at <sha> — re-enter with: git worktree add <path> <branch>`).
+- **C. Optional branch delete on forced teardown** — `cockpit:close --force --delete-branch` to wipe both. Off by default so unpushed commits aren't silently lost.
+
+A + B together is the minimum-friction combo: A makes the common case work, B makes the rare case (user manually removed the worktree, forgot the branch existed) discoverable.
