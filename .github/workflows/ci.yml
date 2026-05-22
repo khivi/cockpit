@@ -28,6 +28,11 @@ jobs:
         with:
           go-version: "1.24"
 
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
       - name: Seed .relint.yml (gitignored locally; CI uses the example as a stub)
         run: |
           if [ ! -f .relint.yml ] && [ -f .relint.yml.example ]; then
@@ -37,9 +42,12 @@ jobs:
       - uses: pre-commit/action@v3.0.1
         env:
           SKIP: ""
+          PRE_COMMIT_USE_UV: "1"
 
       - name: Run pre-push stage hooks (pytest)
         run: pre-commit run --all-files --hook-stage pre-push
+        env:
+          PRE_COMMIT_USE_UV: "1"
 
   ci:
     needs: [pre-commit]

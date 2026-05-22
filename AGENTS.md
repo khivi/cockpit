@@ -41,7 +41,11 @@ uv run pytest # tests; equivalent to .venv/bin/pytest
 uv run mypy scripts/ tests/
 ```
 
-`uv.lock` is gitignored on purpose — version pins in `pyproject.toml` are exact (`==`), so the lockfile adds no extra reproducibility for this tools-only env. Pre-commit still maintains its own per-hook venvs (`~/.cache/pre-commit/`); the two caches are independent.
+`uv.lock` is gitignored on purpose — version pins in `pyproject.toml` are exact (`==`), so the lockfile adds no extra reproducibility for this tools-only env.
+
+Pre-commit maintains its own per-hook venvs in `~/.cache/pre-commit/`. CI runs them with `PRE_COMMIT_USE_UV=1`, which routes pre-commit's installs through `uv pip install` so the package files hardlink from `~/.cache/uv/` (cached by `astral-sh/setup-uv` keyed on `pyproject.toml`).
+
+For local dev, [direnv](https://direnv.net/) is recommended-but-optional: the repo ships a `.envrc` that exports `PRE_COMMIT_USE_UV=1`, runs `uv sync`, and puts `.venv/bin` on PATH. Run `direnv allow` once per worktree. Without direnv, `uv sync && export PRE_COMMIT_USE_UV=1` does the same by hand.
 
 ## Enforcement
 
