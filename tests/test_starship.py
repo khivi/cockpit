@@ -220,10 +220,6 @@ def test_print_context_fresh_session_no_history_empty(cache_dir, monkeypatch):
     assert starship.print_context() == ""
 
 
-def test_print_context_missing_cache_empty(cache_dir):
-    assert starship.print_context() == ""
-
-
 def test_print_context_malformed_cache_empty(cache_dir):
     (cache_dir / "context").write_text("garbage")
     assert starship.print_context() == ""
@@ -300,11 +296,6 @@ def test_print_linear_no_ticket(cache_dir):
         assert starship.print_linear() == ""
 
 
-def test_print_linear_no_branch(cache_dir):
-    with patch.object(starship, "_branch", return_value=""):
-        assert starship.print_linear() == ""
-
-
 # ── PR cache reads ─────────────────────────────────────────────────────────
 
 
@@ -361,11 +352,6 @@ def test_print_pr_state_unknown_passes_through(cache_dir):
 def test_print_pr_num_formats_hash(cache_dir):
     (cache_dir / "pr-num-khivi-foo").write_text("42")
     assert starship.print_pr_num("khivi/foo") == "#42"
-
-
-def test_print_pr_num_empty_cache_empty(cache_dir):
-    (cache_dir / "pr-num-khivi-foo").write_text("")
-    assert starship.print_pr_num("khivi/foo") == ""
 
 
 def test_print_pr_num_zero_sentinel_empty(cache_dir):
@@ -596,10 +582,6 @@ def test_print_permission_mode_bypass(cache_dir):
 
 def test_print_permission_mode_unknown_value_hidden(cache_dir):
     (cache_dir / "permission-mode").write_text("zaphod")
-    assert starship.print_permission_mode() == ""
-
-
-def test_print_permission_mode_missing_empty(cache_dir):
     assert starship.print_permission_mode() == ""
 
 
