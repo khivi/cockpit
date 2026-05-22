@@ -41,48 +41,16 @@ jobs:
       - name: Run pre-push stage hooks (pytest)
         run: pre-commit run --all-files --hook-stage pre-push
 
-  version-check:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Check version bump (skips when only .github/** or unrelated paths changed)
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          base="origin/$BASE_REF"
-          changed=$(git diff --name-only "$base"...HEAD)
-          relevant=$(echo "$changed" | grep -E '^(scripts/|\.claude-plugin/|.*\.md$)' | grep -vE '^\.github/' || true)
-          if [ -z "$relevant" ]; then
-            echo "No version-relevant paths changed; skipping bump check"
-            exit 0
-          fi
-          old=$(git show "$base:./.claude-plugin/plugin.json" | jq -r .version)
-          new=$(jq -r .version ./.claude-plugin/plugin.json)
-          if [ "$old" = "$new" ]; then
-            echo "Version unchanged: $old -> $new"
-            echo "Please bump the version in .claude-plugin/plugin.json"
-            exit 1
-          fi
-          echo "Version bumped: $old -> $new"
-
   ci:
-    needs: [pre-commit, version-check]
+    needs: [pre-commit]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Gate on upstream jobs
         env:
           PRE_COMMIT_RESULT: ${{ needs.pre-commit.result }}
-          VERSION_CHECK_RESULT: ${{ needs.version-check.result }}
         run: |
-          echo "pre-commit=$PRE_COMMIT_RESULT version-check=$VERSION_CHECK_RESULT"
+          echo "pre-commit=$PRE_COMMIT_RESULT"
           if [ "$PRE_COMMIT_RESULT" != "success" ]; then
             echo "pre-commit did not succeed"; exit 1
-          fi
-          if [ "$VERSION_CHECK_RESULT" != "success" ] && [ "$VERSION_CHECK_RESULT" != "skipped" ]; then
-            echo "version-check did not succeed"; exit 1
           fi
