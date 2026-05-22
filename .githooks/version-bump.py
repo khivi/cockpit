@@ -32,19 +32,9 @@ def run(*args: str, check: bool = True) -> str:
 def bump_version(
     base: semver.Version, messages: list[str]
 ) -> tuple[semver.Version, str]:
-    kind = "patch"
-    for msg in messages:
-        if msg.lower().startswith("break") or msg.startswith("BREAK"):
-            kind = "major"
-            break
-        if msg.lower().startswith("feat"):
-            kind = "minor"
-    bumped = {
-        "major": base.bump_major,
-        "minor": base.bump_minor,
-        "patch": base.bump_patch,
-    }[kind]()
-    return bumped, kind
+    if any(msg.lower().startswith("feat") for msg in messages):
+        return base.bump_minor(), "minor"
+    return base.bump_patch(), "patch"
 
 
 def get_parent_version() -> semver.Version:
