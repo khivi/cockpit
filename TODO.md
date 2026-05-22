@@ -14,3 +14,11 @@ Both should follow the same detect → derive-branch → plan-only-prompt patter
 Cockpit no longer renders the statusline itself — `use_cship: true` delegates to the `cship` binary. Any "Linear title in the statusline" work belongs in cship's repo, not here.
 
 The data path cockpit could still own: enrich `~/.config/cockpit/cache/{repo}__pr-{N}.json` with `linear_id` / `linear_title` so cship (or any other consumer) reads them without its own Linear API call. Deferred until cship grows a hook for that.
+
+## Repo-rooted imports (drop `mypy_path` / `pythonpath`)
+
+`pyproject.toml` currently needs `mypy_path = "scripts:tests"` and `pythonpath = ["scripts", "tests"]` because imports are package-root relative (`import lib.git`, `from cockpit_helpers import …`).
+
+Alternative: rewrite all imports as repo-rooted (`from scripts.lib import git`, `from tests.cockpit_helpers import …`). Mypy/pytest would then resolve everything from cwd with zero extra config.
+
+Trade-off: cleaner `pyproject.toml` vs. touching every `import lib.X` site across ~40 files + every test, and treating `scripts/`+`tests/` as packages they aren't really. Currently judged not worth the churn; revisit if more `tests/` helpers need cross-dir imports.
