@@ -77,6 +77,11 @@ from lib.prompts import claude_command
 from lib.repos import repo_names
 
 
+def _die(msg: str, code: int = 1) -> int:
+    print(f"ERROR: {msg}", file=sys.stderr)
+    return code
+
+
 def _format_configured_repos(names: list[str]) -> str:
     """`"<n1>, <n2> (+K more)"` from a list of repo names, capped at 10. Empty if no names."""
     if not names:
@@ -282,8 +287,7 @@ def main() -> int:
     args = parse_args()
 
     if args.repo is not None and find_repo_by_name(args.repo) is None:
-        print(f"ERROR: {_unknown_repo_msg(args.repo)}", file=sys.stderr)
-        return 1
+        return _die(_unknown_repo_msg(args.repo))
 
     cwd = args.cwd
 
@@ -301,37 +305,25 @@ def main() -> int:
         if v
     ]
     if len(chosen) > 1:
-        print(
-            "ERROR: at most one of positional, --branch, --pr, --name, --skill "
-            f"may be given (got: {', '.join(chosen)})",
-            file=sys.stderr,
+        return _die(
+            "at most one of positional, --branch, --pr, --name, --skill "
+            f"may be given (got: {', '.join(chosen)})"
         )
-        return 1
     if not chosen and not cwd:
-        print(
-            "ERROR: one of positional, --branch, --pr, --name, --skill, "
-            "or --cwd is required",
-            file=sys.stderr,
+        return _die(
+            "one of positional, --branch, --pr, --name, --skill, or --cwd is required"
         )
-        return 1
     if cwd and (args.positional or args.branch or args.pr):
-        print(
-            "ERROR: --cwd cannot combine with positional/--branch/--pr "
-            "(those resolve a repo; use --repo to target one)",
-            file=sys.stderr,
+        return _die(
+            "--cwd cannot combine with positional/--branch/--pr "
+            "(those resolve a repo; use --repo to target one)"
         )
-        return 1
     if (args.name or args.skill) and not (args.repo or cwd):
-        print(
-            "ERROR: --name and --skill require --repo <name> or --cwd <path>",
-            file=sys.stderr,
-        )
-        return 1
+        return _die("--name and --skill require --repo <name> or --cwd <path>")
     if cwd:
         cwd_path = Path(cwd).expanduser().resolve()
         if not cwd_path.exists():
-            print(f"ERROR: --cwd {cwd!r}: path does not exist", file=sys.stderr)
-            return 1
+            return _die(f"--cwd {cwd!r}: path does not exist")
 
     branch = args.branch
     pr_num = args.pr
@@ -368,8 +360,7 @@ def main() -> int:
         try:
             wt, skill_prompt = resolve_skill(skill, args.repo)
         except ValueError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return 1
+            return _die(str(e))
         if cwd:
             wt = Path(cwd).expanduser().resolve()
         if not short:
@@ -390,11 +381,9 @@ def main() -> int:
                 branch, pr_num, args.repo, from_name=from_name
             )
         except RuntimeError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return 2
+            return _die(str(e), code=2)
         except ValueError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return 1
+            return _die(str(e))
 
         if not short:
             short = slugify(branch.rsplit("/", 1)[-1])
