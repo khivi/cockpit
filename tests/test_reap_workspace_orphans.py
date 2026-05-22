@@ -1,9 +1,8 @@
 """Tests for `_reap_workspace_orphans` gating.
 
-Validates that:
-- workspaces resolving to a known worktree (via cwd OR name) are LEFT ALONE
-- workspaces with the MANAGED pill but no matching worktree are ENQUEUED for close
-- workspaces with NO MANAGED pill are LEFT ALONE (free-form user workspace)
+Ownership is derived from cwd vs registered repos. A workspace is reap-eligible
+iff its cwd resolves under a registered repo (main path or live worktree) AND
+no live worktree matches by cwd or name.
 """
 
 from __future__ import annotations
@@ -38,40 +37,35 @@ def _wt_stub(path: Path, branch: str):
 
 def test_tracked_workspace_not_reaped(isolated, tmp_path):
     cockpit, cr = isolated
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
     wt_path = tmp_path / "wt-tracked"
     wt_path.mkdir()
     wt = _wt_stub(wt_path, "khivi/feat")
 
-    repos = [{"path": str(tmp_path / "repo"), "name": "repo"}]
-    (tmp_path / "repo").mkdir()
+    repos = [{"path": str(repo_path), "name": "repo"}]
 
     with (
         patch.object(cockpit, "worktrees", return_value=[wt]),
         patch(
-            "cockpit._reap_workspace_orphans.__wrapped__", create=True
-        ),  # no-op decorator import-guard
-        patch(
             "lib.cmux.workspace_state",
             return_value=({"workspace:1": "feat-x"}, {"workspace:1": wt_path}),
         ),
-        patch.object(cockpit, "has_managed_pill", return_value=True),
     ):
         cockpit._reap_workspace_orphans(repos, "khivi", dry=False)
 
     assert cr.iter_pending() == []
 
 
-def test_managed_orphan_workspace_enqueued(isolated, tmp_path):
+def test_stranded_in_registered_repo_is_reaped(isolated, tmp_path):
     cockpit, cr = isolated
-    wt_path = tmp_path / "wt-live"
-    wt_path.mkdir()
-    wt = _wt_stub(wt_path, "khivi/live")
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    wt = _wt_stub(repo_path, "main")
 
-    repos = [{"path": str(tmp_path / "repo"), "name": "repo"}]
-    (tmp_path / "repo").mkdir()
+    repos = [{"path": str(repo_path), "name": "repo"}]
 
-    # workspace:99 has a cwd at a path that doesn't match any wt.path
-    ghost_cwd = tmp_path / "ghost"
+    ghost_cwd = repo_path / "removed-worktree"
     ghost_cwd.mkdir()
 
     with (
@@ -83,7 +77,7 @@ def test_managed_orphan_workspace_enqueued(isolated, tmp_path):
                 {"workspace:99": ghost_cwd},
             ),
         ),
-        patch.object(cockpit, "has_managed_pill", return_value=True),
+        patch("lib.cmux.workspace_is_idle", return_value=True),
     ):
         cockpit._reap_workspace_orphans(repos, "khivi", dry=False)
 
@@ -93,18 +87,18 @@ def test_managed_orphan_workspace_enqueued(isolated, tmp_path):
     assert req.ref == "workspace:99"
     assert req.worktree_path is None
     assert req.forced is True
+    assert req.repo_name == "repo"
 
 
-def test_unmanaged_orphan_workspace_left_alone(isolated, tmp_path):
+def test_not_idle_workspace_deferred(isolated, tmp_path, capsys):
+    """A stranded workspace whose Claude is mid-turn is left for next cycle."""
     cockpit, cr = isolated
-    wt_path = tmp_path / "wt-live"
-    wt_path.mkdir()
-    wt = _wt_stub(wt_path, "khivi/live")
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    wt = _wt_stub(repo_path, "main")
 
-    repos = [{"path": str(tmp_path / "repo"), "name": "repo"}]
-    (tmp_path / "repo").mkdir()
-
-    ghost_cwd = tmp_path / "freeform"
+    repos = [{"path": str(repo_path), "name": "repo"}]
+    ghost_cwd = repo_path / "removed-worktree"
     ghost_cwd.mkdir()
 
     with (
@@ -112,11 +106,41 @@ def test_unmanaged_orphan_workspace_left_alone(isolated, tmp_path):
         patch(
             "lib.cmux.workspace_state",
             return_value=(
-                {"workspace:42": "research"},
-                {"workspace:42": ghost_cwd},
+                {"workspace:99": "khivi/ghost"},
+                {"workspace:99": ghost_cwd},
             ),
         ),
-        patch.object(cockpit, "has_managed_pill", return_value=False),
+        patch("lib.cmux.workspace_is_idle", return_value=False),
+    ):
+        cockpit._reap_workspace_orphans(repos, "khivi", dry=False)
+
+    assert cr.iter_pending() == []
+    out = capsys.readouterr().out
+    assert "defer reap" in out
+    assert "not idle" in out
+    assert "workspace:99" in out
+
+
+def test_workspace_outside_registered_repos_is_ignored(isolated, tmp_path):
+    cockpit, cr = isolated
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    wt = _wt_stub(repo_path, "main")
+
+    repos = [{"path": str(repo_path), "name": "repo"}]
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    with (
+        patch.object(cockpit, "worktrees", return_value=[wt]),
+        patch(
+            "lib.cmux.workspace_state",
+            return_value=(
+                {"workspace:42": "research"},
+                {"workspace:42": elsewhere},
+            ),
+        ),
     ):
         cockpit._reap_workspace_orphans(repos, "khivi", dry=False)
 
@@ -125,13 +149,16 @@ def test_unmanaged_orphan_workspace_left_alone(isolated, tmp_path):
 
 def test_dry_run_does_not_enqueue(isolated, tmp_path):
     cockpit, cr = isolated
-    repos = [{"path": str(tmp_path / "repo"), "name": "repo"}]
-    (tmp_path / "repo").mkdir()
-    ghost_cwd = tmp_path / "ghost"
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    wt = _wt_stub(repo_path, "main")
+
+    repos = [{"path": str(repo_path), "name": "repo"}]
+    ghost_cwd = repo_path / "ghost"
     ghost_cwd.mkdir()
 
     with (
-        patch.object(cockpit, "worktrees", return_value=[]),
+        patch.object(cockpit, "worktrees", return_value=[wt]),
         patch(
             "lib.cmux.workspace_state",
             return_value=(
@@ -139,7 +166,7 @@ def test_dry_run_does_not_enqueue(isolated, tmp_path):
                 {"workspace:99": ghost_cwd},
             ),
         ),
-        patch.object(cockpit, "has_managed_pill", return_value=True),
+        patch("lib.cmux.workspace_is_idle", return_value=True),
     ):
         cockpit._reap_workspace_orphans(repos, "khivi", dry=True)
 
@@ -149,12 +176,13 @@ def test_dry_run_does_not_enqueue(isolated, tmp_path):
 def test_workspace_matching_by_name_not_reaped(isolated, tmp_path):
     """Even with a missing cwd, name-match to an existing wt.short keeps it alive."""
     cockpit, cr = isolated
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
     wt_path = tmp_path / "feat-named"
     wt_path.mkdir()
     wt = _wt_stub(wt_path, "khivi/feat-named")
 
-    repos = [{"path": str(tmp_path / "repo"), "name": "repo"}]
-    (tmp_path / "repo").mkdir()
+    repos = [{"path": str(repo_path), "name": "repo"}]
 
     with (
         patch.object(cockpit, "worktrees", return_value=[wt]),
@@ -162,7 +190,6 @@ def test_workspace_matching_by_name_not_reaped(isolated, tmp_path):
             "lib.cmux.workspace_state",
             return_value=({"workspace:5": "feat-named"}, {}),
         ),
-        patch.object(cockpit, "has_managed_pill", return_value=True),
     ):
         cockpit._reap_workspace_orphans(repos, "khivi", dry=False)
 

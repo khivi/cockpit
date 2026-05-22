@@ -53,11 +53,9 @@ from lib.cmux import (  # noqa: E402
     cmux,
     cmux_close_workspace_best_effort,
     find_cockpit_workspaces,
-    has_managed_pill,
     nudge_if_idle,
     spawn_orphan_workspace,
     spawn_pr_workspace,
-    stamp_managed_pill,
     status_pills,
     workspace_state,
 )
@@ -501,7 +499,6 @@ def cycle_repo(
                     continue
             behind_base = base_distance.get(wt.branch, 0)
             if not dry:
-                stamp_managed_pill(ref)
                 cmux(
                     "set-status",
                     ORPHAN_KEY,
@@ -610,28 +607,29 @@ def _drain_close_requests(dry: bool) -> None:
 
 
 def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> None:
-    """Close cockpit-managed workspaces whose worktree no longer exists.
+    """Close cockpit-owned workspaces whose worktree no longer exists.
 
-    Workspaces are matched against the union of worktrees across every
-    configured repo. A workspace whose cwd doesn't resolve to any worktree
-    and whose name doesn't match any `wt.short` is "stranded".
+    Ownership is derived from cwd: a workspace is cockpit's iff its cwd
+    resolves under a registered repo's path or one of its live worktrees.
+    Workspaces outside every registered repo are ignored entirely.
 
-    Stranded workspaces are gated by the MANAGED pill:
-      - has MANAGED pill → cockpit spawned this, safe to reap (enqueue close)
-      - no MANAGED pill → free-form user workspace, leave it alone
-
-    Only mine-prefix branches are reaped; coworker-spawned workspaces are
-    left to the user.
+    Within owned workspaces, a stranded one (no matching live worktree by
+    cwd or name) is enqueued for tear-down — but only when Claude is idle.
+    If Claude is mid-turn the reap is deferred to the next cycle so we
+    don't yank the session out from under an active turn. Only mine-prefix
+    branches are reaped; coworker-spawned workspaces are left to the user.
     """
-    from lib.cmux import workspace_state as _ws_state
+    from lib.cmux import workspace_is_idle, workspace_state as _ws_state
 
     all_wts: list[Worktree] = []
     repo_lookup: dict[Path, tuple[str, Path]] = {}
+    registered_roots: dict[Path, tuple[str, Path]] = {}
     for entry in repos:
         repo_path = Path(os.path.expanduser(entry["path"]))
         if not repo_path.is_dir():
             continue
         repo_name = entry.get("name") or repo_path.name
+        registered_roots[repo_path.resolve()] = (repo_name, repo_path)
         try:
             for wt in worktrees(repo_path):
                 all_wts.append(wt)
@@ -645,6 +643,16 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
     names, cwds = _ws_state()
     my_prefix = f"{self_user}/"
 
+    def _owning_repo(cwd: Path | None) -> tuple[str, Path] | None:
+        if cwd is None:
+            return None
+        for parent in [cwd, *cwd.parents]:
+            resolved = parent.resolve()
+            hit = repo_lookup.get(resolved) or registered_roots.get(resolved)
+            if hit:
+                return hit
+        return None
+
     for ref, ws_name in names.items():
         cwd = cwds.get(ref)
         wt = wt_by_path.get(cwd.resolve()) if cwd is not None else None
@@ -652,18 +660,19 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
             wt = wt_by_name.get(ws_name)
         if wt is not None:
             continue
-        if not has_managed_pill(ref):
+        owner = _owning_repo(cwd)
+        if owner is None:
             continue
+        repo_name, repo_path = owner
         label = ws_name or ref
+        if not workspace_is_idle(ref):
+            print(
+                f"  {magenta('defer reap:')} workspace {label} ({ref}) "
+                f"— not idle (Claude mid-turn)",
+                flush=True,
+            )
+            continue
         last_known_branch = ws_name if ws_name.startswith(my_prefix) else None
-        repo_name = None
-        repo_path = None
-        if cwd is not None:
-            for parent in [cwd, *cwd.parents]:
-                hit = repo_lookup.get(parent.resolve())
-                if hit:
-                    repo_name, repo_path = hit
-                    break
         req = TeardownRequest(
             ref=ref,
             name=ws_name,
