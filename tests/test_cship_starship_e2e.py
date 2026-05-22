@@ -230,9 +230,9 @@ def test_footer_golden_full_render(footer_env):
     line1, line2 = lines
 
     # Line 1: session state. context + rate must appear; clock must not.
-    # branch_pill / commit_age also render because the subprocess inherits
-    # this repo's cwd, but we don't pin their exact text (commit age moves;
-    # dirty count depends on the worktree state when the test runs).
+    # branch_pill also renders because the subprocess inherits this repo's
+    # cwd, but we don't pin its exact text (dirty/staged/untracked counts
+    # depend on the worktree state when the test runs).
     assert "🧠 7%/1M" in line1, f"context pill missing: {line1!r}"
     assert "⌛ 4%/5h" in line1, f"ratelimit pill missing: {line1!r}"
     assert not re.search(r"\d{2}:\d{2}", line1), f"clock pill should be gone: {line1!r}"

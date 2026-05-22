@@ -151,18 +151,24 @@ def test_stash_leaves_unparseable_resets_at_alone(cache_dir):
 
 def test_print_context_formats_ceiling_M(cache_dir):
     (cache_dir / "context").write_text("12 1000000")
-    assert starship.print_context() == "12%/1M"
+    out = starship.print_context()
+    assert "🧠 12%/1M" in out
+    assert "\033[38;5;243m" in out
+    assert out.endswith("\033[0m")
 
 
 def test_print_context_formats_ceiling_k(cache_dir):
     (cache_dir / "context").write_text("33 200000")
-    assert starship.print_context() == "33%/200k"
+    out = starship.print_context()
+    assert "🧠 33%/200k" in out
+    assert "\033[38;5;243m" in out
 
 
 def test_print_context_session_scoped(cache_dir, monkeypatch):
     (cache_dir / "context-S1").write_text("7 1000000")
     monkeypatch.setenv("CSHIP_SESSION_ID", "S1")
-    assert starship.print_context() == "7%/1M"
+    out = starship.print_context()
+    assert "🧠 7%/1M" in out
 
 
 def test_print_context_fresh_session_falls_back_to_latest(cache_dir, monkeypatch):
@@ -174,7 +180,36 @@ def test_print_context_fresh_session_falls_back_to_latest(cache_dir, monkeypatch
     time.sleep(0.01)
     (cache_dir / "context-NEWER").write_text("55 1000000")
     monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH-SID-NO-CACHE-YET")
-    assert starship.print_context() == "55%/1M"
+    out = starship.print_context()
+    assert "🧠 55%/1M" in out
+
+
+def test_print_context_tier_slate_under_70(cache_dir):
+    (cache_dir / "context").write_text("5 1000000")
+    out = starship.print_context()
+    assert out.startswith("\033[38;5;243m")
+    assert "🧠 5%/1M" in out
+
+
+def test_print_context_tier_amber_70_to_89(cache_dir):
+    (cache_dir / "context").write_text("75 1000000")
+    out = starship.print_context()
+    assert out.startswith("\033[38;5;172m")
+    assert "🧠 75%/1M" in out
+
+
+def test_print_context_tier_red_90_to_99(cache_dir):
+    (cache_dir / "context").write_text("95 1000000")
+    out = starship.print_context()
+    assert out.startswith("\033[38;5;160m")
+    assert "🧠 95%/1M" in out
+
+
+def test_print_context_tier_red_bold_at_100(cache_dir):
+    (cache_dir / "context").write_text("100 1000000")
+    out = starship.print_context()
+    assert out.startswith("\033[1;38;5;160m")
+    assert "🧠 100%/1M" in out
 
 
 def test_print_context_fresh_session_no_history_empty(cache_dir, monkeypatch):
@@ -202,7 +237,9 @@ def test_print_context_zero_limit_empty(cache_dir):
 
 def test_print_rate_limit(cache_dir):
     (cache_dir / "rate-limit-5h").write_text("8 2026-05-21T15:00:00Z")
-    assert starship.print_rate_limit() == "⌛ 8%/5h"
+    out = starship.print_rate_limit()
+    assert "⌛ 8%/5h" in out
+    assert out.endswith("\033[0m")
 
 
 def test_print_rate_limit_missing_cache_empty(cache_dir):
@@ -216,7 +253,36 @@ def test_print_rate_limit_fresh_session_falls_back_to_latest(cache_dir, monkeypa
     time.sleep(0.01)
     (cache_dir / "rate-limit-5h-NEWER").write_text("17 2026-05-21T15:00:00Z")
     monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH-SID-NO-CACHE-YET")
-    assert starship.print_rate_limit() == "⌛ 17%/5h"
+    out = starship.print_rate_limit()
+    assert "⌛ 17%/5h" in out
+
+
+def test_print_rate_limit_tier_slate_under_70(cache_dir):
+    (cache_dir / "rate-limit-5h").write_text("5 2026-05-21T15:00:00Z")
+    out = starship.print_rate_limit()
+    assert out.startswith("\033[38;5;243m")
+    assert "⌛ 5%/5h" in out
+
+
+def test_print_rate_limit_tier_amber_70_to_89(cache_dir):
+    (cache_dir / "rate-limit-5h").write_text("72 2026-05-21T15:00:00Z")
+    out = starship.print_rate_limit()
+    assert out.startswith("\033[38;5;172m")
+    assert "⌛ 72%/5h" in out
+
+
+def test_print_rate_limit_tier_red_90_to_99(cache_dir):
+    (cache_dir / "rate-limit-5h").write_text("95 2026-05-21T15:00:00Z")
+    out = starship.print_rate_limit()
+    assert out.startswith("\033[38;5;160m")
+    assert "⌛ 95%/5h" in out
+
+
+def test_print_rate_limit_tier_red_bold_at_100(cache_dir):
+    (cache_dir / "rate-limit-5h").write_text("100 2026-05-21T15:00:00Z")
+    out = starship.print_rate_limit()
+    assert out.startswith("\033[1;38;5;160m")
+    assert "⌛ 100%/5h" in out
 
 
 # ── field printer: linear ──────────────────────────────────────────────────
@@ -242,7 +308,52 @@ def test_print_linear_no_branch(cache_dir):
 
 def test_print_pr_state_fresh_cache(cache_dir):
     (cache_dir / "pr-state-khivi-foo").write_text("APPROVED")
-    assert starship.print_pr_state("khivi/foo") == "APPROVED"
+    out = starship.print_pr_state("khivi/foo")
+    assert "APPROVED" in out
+    assert out.startswith("\033[1;38;5;34m")
+    assert out.endswith("\033[0m")
+
+
+def test_print_pr_state_draft(cache_dir):
+    (cache_dir / "pr-state-khivi-foo").write_text("DRAFT")
+    out = starship.print_pr_state("khivi/foo")
+    assert out == "\033[1;38;5;240mDRAFT\033[0m"
+
+
+def test_print_pr_state_open(cache_dir):
+    (cache_dir / "pr-state-khivi-foo").write_text("OPEN")
+    out = starship.print_pr_state("khivi/foo")
+    assert out == "\033[1;38;5;32mOPEN\033[0m"
+
+
+def test_print_pr_state_review_required(cache_dir):
+    (cache_dir / "pr-state-khivi-foo").write_text("REVIEW_REQUIRED")
+    out = starship.print_pr_state("khivi/foo")
+    assert out == "\033[1;38;5;172mREVIEW_REQUIRED\033[0m"
+
+
+def test_print_pr_state_changes_requested(cache_dir):
+    (cache_dir / "pr-state-khivi-foo").write_text("CHANGES_REQUESTED")
+    out = starship.print_pr_state("khivi/foo")
+    assert out == "\033[1;38;5;160mCHANGES_REQUESTED\033[0m"
+
+
+def test_print_pr_state_merged(cache_dir):
+    (cache_dir / "pr-state-khivi-foo").write_text("MERGED")
+    out = starship.print_pr_state("khivi/foo")
+    assert out == "\033[1;38;5;91mMERGED\033[0m"
+
+
+def test_print_pr_state_closed(cache_dir):
+    (cache_dir / "pr-state-khivi-foo").write_text("CLOSED")
+    out = starship.print_pr_state("khivi/foo")
+    assert out == "\033[1;38;5;88mCLOSED\033[0m"
+
+
+def test_print_pr_state_unknown_passes_through(cache_dir):
+    (cache_dir / "pr-state-khivi-foo").write_text("WHATEVER")
+    out = starship.print_pr_state("khivi/foo")
+    assert out == "WHATEVER"
 
 
 def test_print_pr_num_formats_hash(cache_dir):
@@ -265,9 +376,22 @@ def test_print_pr_title(cache_dir):
     assert starship.print_pr_title("khivi/foo") == "My PR"
 
 
-def test_print_pr_checks_fresh(cache_dir):
+def test_print_pr_checks_fresh_pass(cache_dir):
     (cache_dir / "pr-checks-khivi-foo").write_text("✓")
-    assert starship.print_pr_checks("khivi/foo") == "✓"
+    out = starship.print_pr_checks("khivi/foo")
+    assert out == "\033[32m✓\033[0m"
+
+
+def test_print_pr_checks_fresh_fail(cache_dir):
+    (cache_dir / "pr-checks-khivi-foo").write_text("✗")
+    out = starship.print_pr_checks("khivi/foo")
+    assert out == "\033[31m✗\033[0m"
+
+
+def test_print_pr_checks_fresh_pending(cache_dir):
+    (cache_dir / "pr-checks-khivi-foo").write_text("•")
+    out = starship.print_pr_checks("khivi/foo")
+    assert out == "\033[33m•\033[0m"
 
 
 def test_print_pr_state_stale_triggers_refresh(cache_dir):
@@ -280,7 +404,7 @@ def test_print_pr_state_stale_triggers_refresh(cache_dir):
     os.utime(cache, (old, old))
     with patch.object(starship, "_spawn_background_refresh") as spawn:
         out = starship.print_pr_state("khivi/foo")
-    assert out == "OPEN"  # stale payload still returned
+    assert "OPEN" in out  # stale payload still returned (with ANSI)
     spawn.assert_called_once_with("pr-state")
 
 
@@ -508,18 +632,20 @@ def _init_repo(path: Path) -> None:
 def test_print_branch_pill_clean(_clean_git_env, tmp_path, monkeypatch):
     _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
-    assert starship.print_branch_pill() == "main"
+    assert starship.print_branch_pill() == "\033[38;5;243m⎇ main\033[0m"
 
 
-def test_print_branch_pill_dirty(_clean_git_env, tmp_path, monkeypatch):
-    _init_repo(tmp_path)
-    (tmp_path / "f").write_text("y")
-    (tmp_path / "new").write_text("z")
-    monkeypatch.chdir(tmp_path)
+def test_print_branch_pill_branch_name_slate_colored(_clean_git_env, monkeypatch):
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
+    )
     out = starship.print_branch_pill()
-    assert out.startswith("main ")
-    assert "●2" in out
-    assert "↑" not in out  # no remote
+    assert out.startswith("\033[38;5;243m⎇ feature\033[0m")
 
 
 def test_print_branch_pill_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
@@ -527,47 +653,120 @@ def test_print_branch_pill_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
     assert starship.print_branch_pill() == ""
 
 
-# ── field printer: commit_age ──────────────────────────────────────────────
+def test_print_branch_pill_ahead_only(_clean_git_env, monkeypatch):
+    from lib import git as git_mod
+
+    monkeypatch.setattr(git_mod, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(git_mod, "ahead_of_origin", lambda _cwd, _b: 3)
+    monkeypatch.setattr(git_mod, "behind_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(
+        git_mod, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
+    )
+    monkeypatch.setattr(starship, "current_branch", git_mod.current_branch)
+    monkeypatch.setattr(starship, "ahead_of_origin", git_mod.ahead_of_origin)
+    monkeypatch.setattr(starship, "behind_of_origin", git_mod.behind_of_origin)
+    monkeypatch.setattr(starship, "count_status", git_mod.count_status)
+    out = starship.print_branch_pill()
+    assert "\033[38;5;243m⎇ feature\033[0m" in out
+    assert "\033[38;5;38m↑3\033[0m" in out
 
 
-def test_print_commit_age_seconds(_clean_git_env, tmp_path, monkeypatch):
+def test_print_branch_pill_behind_only(_clean_git_env, monkeypatch):
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 2)
+    monkeypatch.setattr(
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
+    )
+    out = starship.print_branch_pill()
+    assert "\033[38;5;172m↓2\033[0m" in out
+
+
+def test_print_branch_pill_ahead_and_behind(_clean_git_env, monkeypatch):
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 3)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 2)
+    monkeypatch.setattr(
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 0)
+    )
+    out = starship.print_branch_pill()
+    assert "\033[38;5;38m↑3\033[0m" in out
+    assert "\033[38;5;172m↓2\033[0m" in out
+
+
+def test_print_branch_pill_staged_only(_clean_git_env, monkeypatch):
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(1, 0, 0)
+    )
+    out = starship.print_branch_pill()
+    assert "\033[38;5;34m+1\033[0m" in out
+
+
+def test_print_branch_pill_unstaged_only(_clean_git_env, monkeypatch):
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 2, 0)
+    )
+    out = starship.print_branch_pill()
+    assert "\033[38;5;220m~2\033[0m" in out
+
+
+def test_print_branch_pill_untracked_only(_clean_git_env, monkeypatch):
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 0)
+    monkeypatch.setattr(
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(0, 0, 4)
+    )
+    out = starship.print_branch_pill()
+    assert "\033[38;5;240m?4\033[0m" in out
+
+
+def test_print_branch_pill_all_segments(_clean_git_env, monkeypatch):
+    from lib import git as git_mod
+
+    monkeypatch.setattr(starship, "current_branch", lambda _cwd: "feature")
+    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: 1)
+    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: 1)
+    monkeypatch.setattr(
+        starship, "count_status", lambda _p: git_mod.GitStatusCounts(1, 1, 1)
+    )
+    out = starship.print_branch_pill()
+    assert "\033[38;5;243m⎇ feature\033[0m" in out
+    assert "\033[38;5;38m↑1\033[0m" in out
+    assert "\033[38;5;172m↓1\033[0m" in out
+    assert "\033[38;5;34m+1\033[0m" in out
+    assert "\033[38;5;220m~1\033[0m" in out
+    assert "\033[38;5;240m?1\033[0m" in out
+
+
+def test_print_branch_pill_dirty_untracked_and_modified(
+    _clean_git_env, tmp_path, monkeypatch
+):
     _init_repo(tmp_path)
+    (tmp_path / "f").write_text("y")
+    (tmp_path / "new").write_text("z")
     monkeypatch.chdir(tmp_path)
-    out = starship.print_commit_age()
-    assert out.startswith("⊙ ")
-    assert out.endswith("s") or out.endswith("m")  # may flip between s and m
-
-
-def test_print_commit_age_minutes(_clean_git_env, tmp_path, monkeypatch):
-    _init_repo(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    with patch.object(
-        starship, "head_commit_epoch", return_value=int(time.time()) - 305
-    ):
-        assert starship.print_commit_age() == "⊙ 5m"
-
-
-def test_print_commit_age_hours(_clean_git_env, tmp_path, monkeypatch):
-    _init_repo(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    with patch.object(
-        starship, "head_commit_epoch", return_value=int(time.time()) - 3 * 3600 - 600
-    ):
-        assert starship.print_commit_age() == "⊙ 3h 10m"
-
-
-def test_print_commit_age_hidden_over_24h(_clean_git_env, tmp_path, monkeypatch):
-    _init_repo(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    with patch.object(
-        starship, "head_commit_epoch", return_value=int(time.time()) - 25 * 3600
-    ):
-        assert starship.print_commit_age() == ""
-
-
-def test_print_commit_age_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    assert starship.print_commit_age() == ""
+    out = starship.print_branch_pill()
+    assert "⎇ main" in out
+    assert "~1" in out
+    assert "?1" in out
+    assert "↑" not in out
 
 
 # ── integration: stash feeds field printers ────────────────────────────────
@@ -589,5 +788,5 @@ def test_stash_to_context_roundtrip(cache_dir, monkeypatch):
     ).encode()
     claude_mod.stash_from_stdin(blob)
     monkeypatch.setenv("CSHIP_SESSION_ID", "sess99")
-    assert starship.print_context() == "4%/1M"
-    assert starship.print_rate_limit() == "⌛ 12%/5h"
+    assert "🧠 4%/1M" in starship.print_context()
+    assert "⌛ 12%/5h" in starship.print_rate_limit()

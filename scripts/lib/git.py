@@ -8,6 +8,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from . import run
 
@@ -385,15 +386,45 @@ def ahead_of_origin(cwd: str | os.PathLike, branch: str) -> int:
     return int(out) if out.isdigit() else 0
 
 
-def head_commit_epoch(cwd: str | os.PathLike) -> int | None:
-    """UTC epoch of HEAD's commit time, or None if not in a git repo or
-    HEAD has no commits yet. Used by the commit-age pill.
-    """
-    res = _git(cwd, "log", "-1", "--format=%ct", "HEAD")
+def behind_of_origin(cwd: str | os.PathLike, branch: str) -> int:
+    """Commits HEAD is behind `origin/{branch}`. Returns 0 on any failure."""
+    if not branch:
+        return 0
+    res = _git(cwd, "rev-list", "--count", f"HEAD..origin/{branch}")
     if res.returncode != 0:
-        return None
+        return 0
     out = res.stdout.strip()
-    return int(out) if out.isdigit() else None
+    return int(out) if out.isdigit() else 0
+
+
+class GitStatusCounts(NamedTuple):
+    staged: int
+    unstaged: int
+    untracked: int
+
+
+def count_status(wt_path: Path) -> GitStatusCounts:
+    """Parse `git status --porcelain` once and return staged/unstaged/untracked counts.
+
+    Porcelain v1 format: two status chars `XY` followed by space and path.
+    X = index status, Y = worktree status. `??` marks untracked.
+    """
+    res = _git(wt_path, "status", "--porcelain")
+    if res.returncode != 0:
+        return GitStatusCounts(0, 0, 0)
+    staged = unstaged = untracked = 0
+    for line in res.stdout.splitlines():
+        if len(line) < 2:
+            continue
+        xy = line[:2]
+        if xy == "??":
+            untracked += 1
+            continue
+        if line[0] in "MADRC":
+            staged += 1
+        if line[1] in "MD":
+            unstaged += 1
+    return GitStatusCounts(staged, unstaged, untracked)
 
 
 def origin_head_branch(repo: Path) -> str | None:

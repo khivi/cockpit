@@ -59,7 +59,6 @@ def test_starship_toml_declares_expected_pills():
         "[custom.model]",
         "[custom.permission_mode]",
         "[custom.branch_pill]",
-        "[custom.commit_age]",
         "[custom.linear]",
         "[custom.pr_state]",
         "[custom.pr_num]",
@@ -67,6 +66,20 @@ def test_starship_toml_declares_expected_pills():
         "[custom.pr_title]",
     ):
         assert name in body, f"starship.toml missing {name}"
+    assert "[custom.commit_age]" not in body, "commit_age block must be removed"
+    assert body.index("[custom.model]") < body.index(
+        "[custom.context]"
+    ), "[custom.model] must come before [custom.context] in starship.toml"
+    model_block_start = body.index("[custom.model]")
+    next_block = body.index("\n[custom.", model_block_start + 1)
+    assert (
+        "🤖" in body[model_block_start:next_block]
+    ), "[custom.model].format must include the 🤖 icon"
+    linear_block_start = body.index("[custom.linear]")
+    linear_next = body.index("\n[custom.", linear_block_start + 1)
+    assert (
+        "◫" in body[linear_block_start:linear_next]
+    ), "[custom.linear].format must include the ◫ icon"
 
 
 def test_starship_toml_drops_time_pill():
