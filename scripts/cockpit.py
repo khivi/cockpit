@@ -178,6 +178,20 @@ def _log_ff_main(repo_path: Path, wts: list[Worktree], *, dry: bool) -> None:
         )
 
 
+def _resolve_wt(
+    ref: str,
+    ws_name: str,
+    cwds: dict[str, Path],
+    wt_by_path: dict[Path, Worktree],
+    wt_by_name: dict[str, Worktree],
+) -> Worktree | None:
+    """Resolve a workspace ref to its Worktree via cwd → path lookup, then name."""
+    cwd = cwds.get(ref)
+    if cwd is not None and (wt := wt_by_path.get(cwd.resolve())) is not None:
+        return wt
+    return wt_by_name.get(ws_name)
+
+
 def _workspace_ref_for_path(wt_path: Path, cwds: dict[str, Path]) -> str | None:
     """Find the cmux workspace ref whose cwd matches `wt_path`.
 
@@ -498,12 +512,7 @@ def cycle_repo(
     my_prefix = f"{self_user}/"
     for ref in keep_refs:
         ws_name = names.get(ref, "")
-        cwd = cwds.get(ref)
-        wt_opt: Worktree | None = (
-            wt_by_path.get(cwd.resolve()) if cwd is not None else None
-        )
-        if wt_opt is None:
-            wt_opt = wt_by_name.get(ws_name)
+        wt_opt = _resolve_wt(ref, ws_name, cwds, wt_by_path, wt_by_name)
         if (
             wt_opt is None
             or wt_opt.branch in pr_branches
@@ -679,11 +688,7 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
 
     for ref, ws_name in names.items():
         cwd = cwds.get(ref)
-        wt_opt: Worktree | None = (
-            wt_by_path.get(cwd.resolve()) if cwd is not None else None
-        )
-        if wt_opt is None:
-            wt_opt = wt_by_name.get(ws_name)
+        wt_opt = _resolve_wt(ref, ws_name, cwds, wt_by_path, wt_by_name)
         if wt_opt is not None:
             continue
         owner = _owning_repo(cwd)
