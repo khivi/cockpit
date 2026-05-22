@@ -271,6 +271,21 @@ def write_base_distance(branch: str, count: int, fetch_epoch: int) -> None:
     atomic_write(path, f"{count} {fetch_epoch}")
 
 
+def write_base_ahead(branch: str, count: int, fetch_epoch: int) -> None:
+    """Cache ahead-of-base for `branch` as `<count> <fetch_epoch>`.
+
+    Mirrors `write_base_distance` — same payload shape, same staleness
+    semantics, written from the same daemon tick on the same fetch.
+    """
+    if not branch:
+        return
+    path = branch_cache("base-ahead", branch)
+    if count < 0 or fetch_epoch <= 0:
+        atomic_write(path, "")
+        return
+    atomic_write(path, f"{count} {fetch_epoch}")
+
+
 def write_branch_pr_cache(
     branch: str,
     *,

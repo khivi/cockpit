@@ -412,6 +412,20 @@ def behind_of_base(cwd: str | os.PathLike, base: str) -> int:
     return int(out) if out.isdigit() else 0
 
 
+def ahead_of_base(cwd: str | os.PathLike, base: str) -> int:
+    """Commits HEAD is ahead of `origin/{base}` — branch divergence from
+    the default branch. Returns 0 on any failure. Like `behind_of_base`,
+    this is a local rev-list; caller is responsible for any prior fetch.
+    """
+    if not base:
+        return 0
+    res = _git(cwd, "rev-list", "--count", f"origin/{base}..HEAD")
+    if res.returncode != 0:
+        return 0
+    out = res.stdout.strip()
+    return int(out) if out.isdigit() else 0
+
+
 class GitStatusCounts(NamedTuple):
     staged: int
     unstaged: int

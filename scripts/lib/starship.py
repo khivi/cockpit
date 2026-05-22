@@ -294,45 +294,70 @@ def print_branch_pill() -> str:
         parts.append(f"\033[38;5;220m~{counts.unstaged}{_ANSI_RESET}")
     if counts.untracked > 0:
         parts.append(f"\033[38;5;240m?{counts.untracked}{_ANSI_RESET}")
+    ahead_base = _base_ahead_segment(branch)
+    if ahead_base:
+        parts.append(ahead_base)
     stale = _base_distance_segment(branch)
     if stale:
         parts.append(stale)
     return " ".join(parts)
 
 
-def _base_distance_segment(branch: str) -> str:
-    """Render `↻N` (with optional `(Xh ago)` dim suffix) when the cached
-    base-distance is non-zero and not too stale. Returns "" otherwise.
-
-    Tiers driven by age since the daemon's last `git fetch`:
-      • <30m       → bright orange `↻N` (actionable now)
-      • 30m–6h     → dim `↻N (Xh ago)` (still useful, but flagged stale)
-      • >6h        → hidden (stale counts breed false confidence)
-
-    Empty/0/unreadable cache renders nothing.
+def _read_base_cache(stem: str, branch: str) -> tuple[int, int] | None:
+    """Read a `<count> <fetch_epoch>` base-* cache. Returns None for any
+    unreadable/malformed payload or non-positive count.
     """
-    raw = read_text(branch_cache("base-distance", branch))
+    raw = read_text(branch_cache(stem, branch))
     if not raw:
-        return ""
+        return None
     parts = raw.split()
     if len(parts) != 2:
-        return ""
+        return None
     try:
         count = int(parts[0])
         fetch_epoch = int(parts[1])
     except ValueError:
-        return ""
+        return None
     if count <= 0:
-        return ""
+        return None
+    return count, fetch_epoch
+
+
+def _render_base_segment(
+    count: int, fetch_epoch: int, glyph: str, fresh_ansi: str
+) -> str:
+    """Apply the shared fresh/dim/hidden staleness ladder to a base-* count.
+
+    Tiers driven by age since the daemon's last `git fetch`:
+      • <30m       → `fresh_ansi <glyph>N` (actionable now)
+      • 30m–6h     → dim `<glyph>N (Xh ago)` (still useful, but flagged stale)
+      • >6h        → hidden (stale counts breed false confidence)
+    """
     age = int(time.time()) - fetch_epoch
     if age < 0:
         age = 0
     if age > BASE_DISTANCE_MAX_AGE_SECS:
         return ""
     if age <= BASE_DISTANCE_FRESH_SECS:
-        return f"\033[38;5;172m↻{count}{_ANSI_RESET}"
+        return f"{fresh_ansi}{glyph}{count}{_ANSI_RESET}"
     hours = max(1, age // 3600)
-    return f"\033[38;5;240m↻{count} ({hours}h ago){_ANSI_RESET}"
+    return f"\033[38;5;240m{glyph}{count} ({hours}h ago){_ANSI_RESET}"
+
+
+def _base_distance_segment(branch: str) -> str:
+    cached = _read_base_cache("base-distance", branch)
+    if cached is None:
+        return ""
+    count, fetch_epoch = cached
+    return _render_base_segment(count, fetch_epoch, "↻", "\033[38;5;172m")
+
+
+def _base_ahead_segment(branch: str) -> str:
+    cached = _read_base_cache("base-ahead", branch)
+    if cached is None:
+        return ""
+    count, fetch_epoch = cached
+    return _render_base_segment(count, fetch_epoch, "↗", "\033[38;5;38m")
 
 
 def print_linear() -> str:

@@ -81,6 +81,7 @@ from lib.config import (  # noqa: E402
 )
 from lib.daemon import run_watcher  # noqa: E402
 from lib.cache import (  # noqa: E402
+    write_base_ahead,
     write_base_distance,
     write_branch_pr_cache,
     write_pr_cache,
@@ -95,6 +96,7 @@ from lib.gh import (  # noqa: E402
 )
 from lib.git import (  # noqa: E402
     Worktree,
+    ahead_of_base,
     behind_of_base,
     count_commits_since,
     ff_default_branch_worktrees,
@@ -260,12 +262,14 @@ def _maybe_autoclose(
 
 
 def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, int]:
-    """Fetch `origin/<default>` once per repo, then compute and cache
-    rebase-staleness (`HEAD..origin/<default>`) for each feature worktree.
+    """Fetch `origin/<default>` once per repo, then compute and cache both
+    rebase-staleness (`HEAD..origin/<default>`) and ahead-of-base
+    (`origin/<default>..HEAD`) for each feature worktree.
 
-    Returns a `{branch: count}` map for the caller to consume (e.g. orphan
-    pill staleness). On any failure (no origin/HEAD, fetch error) all
-    feature worktrees get an empty cache so stale readings don't survive.
+    Returns a `{branch: behind_count}` map for the caller to consume (e.g.
+    orphan pill staleness). On any failure (no origin/HEAD, fetch error)
+    all feature worktrees get an empty cache so stale readings don't
+    survive.
 
     `git fetch` is run with `--quiet` from the main repo path; refs are
     shared across worktrees, so fetching once per repo is sufficient.
@@ -276,6 +280,7 @@ def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, in
     if not default:
         for wt in feature:
             write_base_distance(wt.branch, -1, 0)
+            write_base_ahead(wt.branch, -1, 0)
         return distances
     try:
         subprocess.run(
@@ -286,12 +291,14 @@ def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, in
     except (OSError, subprocess.SubprocessError):
         for wt in feature:
             write_base_distance(wt.branch, -1, 0)
+            write_base_ahead(wt.branch, -1, 0)
         return distances
     now = int(time.time())
     for wt in feature:
         n = behind_of_base(wt.path, default)
         distances[wt.branch] = n
         write_base_distance(wt.branch, n, now)
+        write_base_ahead(wt.branch, ahead_of_base(wt.path, default), now)
     return distances
 
 
