@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Pre-push hook: ensure .claude-plugin/plugin.json has been bumped vs main.
+"""Pre-push hook: ensure current plugin.json version > default branch's version.
 
-Idempotent: if current version > main's version (by any amount), exit 0.
-Otherwise rewrite plugin.json with main's version + patch, create a
-`chore: bump version` commit, exit 1 so the user re-runs `git push`.
+Idempotent: if current > default-branch version (by any amount), exit 0.
+Otherwise rewrite plugin.json with default+patch, create a `chore: bump
+version` commit, exit 1 so the user re-runs `git push`.
 
-Minor/major bumps are done by hand in plugin.json — any value > main passes.
+Default branch is resolved from `origin/HEAD` (not hardcoded). Read is local
+(no network). Branch ruleset enforces rebase-to-main before merge, so the
+cached ref is current at PR-merge time.
 
-origin/main is read from the locally-cached ref (no network). Branch
-ruleset enforces rebase-to-main before merge, so the cached ref reflects
-the merge target at PR-merge time.
+Minor/major bumps are done by hand in plugin.json — any value > default
+passes.
 """
 
 from __future__ import annotations
@@ -31,9 +32,17 @@ def run(*args: str, check: bool = True) -> str:
     return result.stdout.strip()
 
 
+def get_default_branch_ref() -> str:
+    return run("rev-parse", "--abbrev-ref", "origin/HEAD")
+
+
+def get_default_branch_name() -> str:
+    return get_default_branch_ref().split("/", 1)[1]
+
+
 def get_main_version() -> semver.Version:
     try:
-        raw = run("show", f"origin/main:{PLUGIN_FILE}", check=True)
+        raw = run("show", f"{get_default_branch_ref()}:{PLUGIN_FILE}", check=True)
         return semver.Version.parse(json.loads(raw)["version"])
     except subprocess.CalledProcessError:
         return semver.Version(0, 0, 0)
@@ -53,7 +62,7 @@ def write_version(new_version: str) -> None:
 
 
 def main() -> int:
-    if run("rev-parse", "--abbrev-ref", "HEAD") == "main":
+    if run("rev-parse", "--abbrev-ref", "HEAD") == get_default_branch_name():
         return 0
 
     current = semver.Version.parse(json.loads(PLUGIN_FILE.read_text())["version"])
