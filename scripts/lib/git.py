@@ -285,10 +285,13 @@ def create_worktree(
     """Create a worktree at `wt_path` for `branch`. Returns the final branch name.
 
     Resolution order:
-      1. PR num  → fetch pull/{N}/head into local ref
-      2. local   → branch already exists locally
-      3. remote  → fetch from origin into local ref
-      4. new     → create from origin/{base} (prefix applied to short names)
+      1. PR num         → fetch pull/{N}/head into local ref
+      2. local          → branch already exists locally
+      3. remote         → fetch from origin into local ref
+      4. local-prefixed → `{branch_prefix}{branch}` already exists locally,
+                          left behind by a forced teardown — attach to it
+                          rather than crashing on `-b`
+      5. new            → create from origin/{base} (prefix applied to short names)
     """
     if pr_num:
         run(
@@ -313,6 +316,9 @@ def create_worktree(
     full_branch = (
         f"{branch_prefix}{branch}" if branch_prefix and "/" not in branch else branch
     )
+    if full_branch != branch and _has_local_branch(repo, full_branch):
+        run(["git", "-C", str(repo), "worktree", "add", str(wt_path), full_branch])
+        return full_branch
     run(
         [
             "git",

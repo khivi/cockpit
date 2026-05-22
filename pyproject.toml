@@ -1,3 +1,19 @@
+[project]
+name = "cockpit"
+version = "0"
+requires-python = ">=3.12"
+description = "cmux workspaces backed by git worktrees, aligned to GitHub PRs."
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
+    "mypy==2.1.0",
+    "semver==3.0.2",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["scripts"]

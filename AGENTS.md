@@ -25,6 +25,28 @@ Before committing, scan for:
 
 Before opening a PR, bump `.claude-plugin/plugin.json`'s `version` field (semver patch for fixes, minor for features). Stage and commit the bump with the rest of the change — do not ship a PR that leaves the version untouched.
 
+## Test layout
+
+Tests mirror sources one-to-one: `scripts/<path>/<name>.py` is exercised by `tests/<path>/test_<name>.py`. New modules get their own `test_<name>.py`; do not append tests for a new source file to an unrelated test module. Shell hooks under `hooks/` are the only exception — they live as `tests/test_<hook>.py` without a Python source mirror.
+
+## Python dev env (uv)
+
+`pyproject.toml` declares dev dependencies under `[dependency-groups].dev`. Each worktree gets its own `.venv/` via `uv sync` — the venvs are independent, but installs are cheap because uv hardlinks from its global content-addressed cache (`~/.cache/uv/`).
+
+Workflow in a fresh worktree:
+
+```sh
+uv sync       # creates .venv with pinned dev deps; cheap if cache is warm
+uv run pytest # tests; equivalent to .venv/bin/pytest
+uv run mypy scripts/ tests/
+```
+
+`uv.lock` is gitignored on purpose — version pins in `pyproject.toml` are exact (`==`), so the lockfile adds no extra reproducibility for this tools-only env.
+
+Pre-commit maintains its own per-hook venvs in `~/.cache/pre-commit/`. CI runs them with `PRE_COMMIT_USE_UV=1`, which routes pre-commit's installs through `uv pip install` so the package files hardlink from `~/.cache/uv/` (cached by `astral-sh/setup-uv` keyed on `pyproject.toml`).
+
+For local dev, [direnv](https://direnv.net/) is recommended-but-optional: the repo ships a `.envrc` that exports `PRE_COMMIT_USE_UV=1`, runs `uv sync`, and puts `.venv/bin` on PATH. Run `direnv allow` once per worktree. Without direnv, `uv sync && export PRE_COMMIT_USE_UV=1` does the same by hand.
+
 ## Enforcement
 
 The `gitleaks` pre-commit hook (`.gitleaks.toml`) blocks the regex-catchable cases at commit time: hardcoded home paths, Slack IDs, bare UUIDs, plus gitleaks' default credential ruleset. This document covers the judgment calls the regex can't reliably catch.
