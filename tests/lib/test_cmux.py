@@ -1,11 +1,15 @@
-"""Tests for `apply_pills` clear/set behavior."""
+"""Tests for cmux pill consumption targeting scripts/lib/cmux.py.
+
+Covers `apply_pills` (clear/set behavior) and `status_pills` (kind→styling
+mapping from `decide_pills` output).
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import patch
 
-from lib.cmux import ACTIONABLE_KEYS, COCKPIT_KEY, apply_pills
+from lib.cmux import ACTIONABLE_KEYS, COCKPIT_KEY, apply_pills, status_pills
 from lib.gh import PR
 from lib.git import Worktree
 
@@ -30,8 +34,23 @@ def _pr(**overrides) -> PR:
     return PR(**base)
 
 
-def _wt() -> Worktree:
-    return Worktree(path=Path("/tmp/wt"), branch="khivi/feature", dirty_count=0)
+def _wt(
+    branch: str = "khivi/feature",
+    *,
+    rebasing: bool = False,
+    merging: bool = False,
+    dirty: int = 0,
+) -> Worktree:
+    return Worktree(
+        path=Path("/tmp/wt"),
+        branch=branch,
+        rebasing=rebasing,
+        merging=merging,
+        dirty_count=dirty,
+    )
+
+
+# ── apply_pills ─────────────────────────────────────────────────────────────
 
 
 def test_apply_pills_clears_legacy_managed_key():
@@ -49,3 +68,25 @@ def test_apply_pills_clears_legacy_managed_key():
         assert k in cleared_keys
     assert COCKPIT_KEY in cleared_keys
     assert "cockpit_managed" in cleared_keys
+
+
+# ── status_pills (cmux mapper) ──────────────────────────────────────────────
+
+
+def test_cmux_status_pills_matches_decisions():
+    out = status_pills(_pr(ci="failed:lint", unaddressed=2), _wt(dirty=1))
+    assert out == [
+        ("wip", "✏️ 1 dirty", "#ff9500"),
+        ("ci", "❌ ci:lint", "#eb445a"),
+        ("comments", "💬 2 unaddressed", "#eb445a"),
+    ]
+
+
+def test_cmux_drops_state_pill():
+    out = status_pills(_pr(state="MERGED"), _wt())
+    assert out == []
+
+
+def test_cmux_conflict_emits_merge_key():
+    out = status_pills(_pr(mergeable="CONFLICTING"), _wt())
+    assert out == [("merge", "⚠️ conflict", "#ff9500")]
