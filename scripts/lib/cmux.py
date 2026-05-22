@@ -55,6 +55,11 @@ _PILL_VERBS = frozenset({"set-status", "clear-status"})
 _VALID_TOOLS = frozenset({"cmux", "limux", "none", "auto"})
 
 
+def _has_pill(lines: list[str], *keys: str) -> bool:
+    """True if any `KEY=` line is present (KEY ∈ keys)."""
+    return any(line.lstrip().startswith(k + "=") for line in lines for k in keys)
+
+
 def _resolve_tool() -> str:
     """Pick the workspace backend: 'cmux', 'limux', or 'none'.
 
@@ -222,9 +227,9 @@ def nudge_if_idle(
         if now - nudge_state.get(ref, 0.0) < interval_secs:
             return False
     status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
-    if not any(line.lstrip().startswith("idle=") for line in status_lines):
+    if not _has_pill(status_lines, "idle"):
         return False
-    if any(line.lstrip().startswith(f"{PARKED_KEY}=") for line in status_lines):
+    if _has_pill(status_lines, PARKED_KEY):
         return False
     if dry:
         print(f"  [dry] nudge {tag} → {ref}: {message[:70]}", flush=True)
@@ -278,13 +283,13 @@ def workspace_state() -> tuple[dict[str, str], dict[str, Path]]:
 def workspace_is_idle(ref: str) -> bool:
     """True if the workspace has an `idle=` pill (set by the Stop hook)."""
     out = cmux("list-status", "--workspace", ref, check=False)
-    return any(line.lstrip().startswith("idle=") for line in out.splitlines())
+    return _has_pill(out.splitlines(), "idle")
 
 
 def workspace_is_parked(ref: str) -> bool:
     """True if the user manually set the `parked=` pill (done-waiting marker)."""
     out = cmux("list-status", "--workspace", ref, check=False)
-    return any(line.lstrip().startswith(f"{PARKED_KEY}=") for line in out.splitlines())
+    return _has_pill(out.splitlines(), PARKED_KEY)
 
 
 def find_cockpit_workspaces(
@@ -390,12 +395,7 @@ def apply_pills(
         )
 
     current_status = cmux("list-status", "--workspace", ref, check=False)
-    has_claude = any(
-        line.lstrip().startswith(k + "=")
-        for k in ("claude_code", "loop")
-        for line in current_status.splitlines()
-    )
-    if not has_claude:
+    if not _has_pill(current_status.splitlines(), "claude_code", "loop"):
         cmux(
             "set-status",
             "idle",
