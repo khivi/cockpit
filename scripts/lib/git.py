@@ -98,7 +98,7 @@ def _rebase_head_name(gitdir: Path) -> str | None:
         if head_name.exists():
             content = head_name.read_text().strip()
             if content.startswith("refs/heads/"):
-                return content[len("refs/heads/") :]
+                return content.removeprefix("refs/heads/")
     return None
 
 
@@ -111,9 +111,9 @@ def worktrees(repo_dir: Path) -> list[Worktree]:
         detached = False
         for line in block.splitlines():
             if line.startswith("worktree "):
-                path = Path(line[len("worktree ") :])
+                path = Path(line.removeprefix("worktree "))
             elif line.startswith("branch "):
-                branch = line[len("branch refs/heads/") :]
+                branch = line.removeprefix("branch refs/heads/")
             elif line.strip() == "detached":
                 detached = True
         if path is None:
