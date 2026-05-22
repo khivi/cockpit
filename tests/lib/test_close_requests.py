@@ -75,7 +75,7 @@ def test_iter_pending_scoped_by_repo(queue):
     assert refs == ["workspace:1", "workspace:2", "workspace:3"]
 
 
-def test_prune_stale_drops_old_markers(queue):
+def test_prune_stale_removes_stale_requests(queue):
     from lib.teardown import TeardownRequest
 
     fresh = queue.enqueue(TeardownRequest(ref="workspace:fresh", repo_name="r"))

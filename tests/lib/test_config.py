@@ -1,55 +1,232 @@
-"""Pill decisions + consumer round-trips.
+"""Static guards on the bundled defaults under scripts/defaults/ + a
+plug-and-play roundtrip that drives the real `cockpit --footer` install
+helpers against a tmp $XDG_CONFIG_HOME.
 
-`decide_pills` is the single source of truth; cmux consumes its output via
-its own kind-to-styling map. These tests pin the decisions and the cmux
-mapper.
+These configs ship with the plugin and only get copied to
+`~/.config/{cship,starship}.toml` when the user runs `cockpit --footer`.
+A regression here silently breaks every install on the next plugin
+update — long after the test would have flagged it if we had one.
 """
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 
+DEFAULTS = Path(__file__).resolve().parent.parent.parent / "scripts" / "defaults"
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-from lib.cmux import status_pills
-from lib.gh import PR
-from lib.git import Worktree
-from lib.pills import decide_pills
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import lib.config as config_mod  # noqa: E402
 
 
-def _pr(**overrides) -> PR:
-    base = dict(
-        number=1,
-        title="t",
-        branch="khivi/feature",
-        url="https://example/pr/1",
-        author="khivi",
-        is_draft=False,
-        review_decision="REVIEW_REQUIRED",
-        mergeable="MERGEABLE",
-        ci="passed",
-        unaddressed=0,
-        total_from_others=0,
-        state="OPEN",
-        updated_at="",
+def _strip_comments(toml_body: str) -> str:
+    """Strip `#`-comments so static asserts only see real TOML directives."""
+    return "\n".join(line.split("#", 1)[0] for line in toml_body.splitlines())
+
+
+def test_cship_toml_does_not_duplicate_cwd():
+    """`$cship.workspace.current_dir` prints the absolute cwd, duplicating
+    Claude Code's own header. Keep it out of the bundled config."""
+    body = _strip_comments((DEFAULTS / "cship.toml").read_text())
+    assert "current_dir" not in body, (
+        "cship.toml reintroduced `$cship.workspace.current_dir` — "
+        "Claude Code's header already shows the cwd and cship "
+        "renders the unabbreviated absolute path on top of it."
     )
-    base.update(overrides)
-    return PR(**base)
 
 
-def _wt(
-    branch: str = "khivi/feature",
-    *,
-    rebasing: bool = False,
-    merging: bool = False,
-    dirty: int = 0,
-) -> Worktree:
-    return Worktree(
-        path=Path("/tmp/wt"),
-        branch=branch,
-        rebasing=rebasing,
-        merging=merging,
-        dirty_count=dirty,
+def test_cship_toml_uses_lines_wrapper_schema():
+    """cship 1.7.x silently falls back to a no-op renderer if the config
+    uses the legacy `format = "..."` top-level layout. The `[cship]/lines`
+    wrapper is mandatory for `$starship_prompt` to expand."""
+    body = (DEFAULTS / "cship.toml").read_text()
+    assert "[cship]" in body
+    assert "lines = " in body
+    assert "$starship_prompt" in body
+
+
+def test_starship_toml_declares_expected_pills():
+    """All bundled pill modules must stay declared — silent drops of a
+    `[custom.*]` section is how Bug B-class regressions sneak in."""
+    body = (DEFAULTS / "starship.toml").read_text()
+    for name in (
+        "[custom.context]",
+        "[custom.session_time]",
+        "[custom.ratelimit]",
+        "[custom.model]",
+        "[custom.permission_mode]",
+        "[custom.branch_pill]",
+        "[custom.linear]",
+        "[custom.pr_state]",
+        "[custom.pr_num]",
+        "[custom.pr_checks]",
+        "[custom.pr_title]",
+    ):
+        assert name in body, f"starship.toml missing {name}"
+    assert "[custom.commit_age]" not in body, "commit_age block must be removed"
+    assert body.index("[custom.model]") < body.index(
+        "[custom.context]"
+    ), "[custom.model] must come before [custom.context] in starship.toml"
+    model_block_start = body.index("[custom.model]")
+    next_block = body.index("\n[custom.", model_block_start + 1)
+    assert (
+        "🤖" in body[model_block_start:next_block]
+    ), "[custom.model].format must include the 🤖 icon"
+    linear_block_start = body.index("[custom.linear]")
+    linear_next = body.index("\n[custom.", linear_block_start + 1)
+    assert (
+        "◫" in body[linear_block_start:linear_next]
+    ), "[custom.linear].format must include the ◫ icon"
+
+
+def test_starship_toml_drops_time_pill():
+    """The wall-clock pill was removed in favor of more useful session
+    state. Guard against accidental reintroduction."""
+    body = _strip_comments((DEFAULTS / "starship.toml").read_text())
+    assert "${time}" not in body, "${time} pill reintroduced"
+    assert "[time]" not in body, "[time] section reintroduced"
+
+
+def test_starship_toml_pr_identity_on_line_two():
+    """PR/Linear identity (linear + pr_state + pr_num + pr_checks +
+    pr_title) lives on line two of the format string so the metric
+    strip stays uniform across sessions."""
+    body = _strip_comments((DEFAULTS / "starship.toml").read_text())
+    fmt_start = body.index('format = """')
+    fmt_end = body.index('"""', fmt_start + 12)
+    fmt = body[fmt_start:fmt_end]
+    lines = [ln for ln in fmt.replace("\\\n", "").split("\n") if "${custom" in ln]
+    assert len(lines) >= 2, f"format should have at least 2 lines, got {lines!r}"
+    line_two = lines[1]
+    for token in (
+        "${custom.linear}",
+        "${custom.pr_state}",
+        "${custom.pr_num}",
+        "${custom.pr_checks}",
+        "${custom.pr_title}",
+    ):
+        assert token in line_two, f"line 2 missing {token}: {line_two!r}"
+
+
+def test_starship_toml_uses_placeholder_for_dispatcher_path():
+    """`__COCKPIT_STARSHIP__` gets substituted at install time by
+    `install_starship_default_config()`. If a hardcoded absolute path
+    creeps in, the install on someone else's machine breaks silently."""
+    body = (DEFAULTS / "starship.toml").read_text()
+    assert "__COCKPIT_STARSHIP__" in body
+    assert "/Users/" not in body, "starship.toml has a hardcoded macOS home path"
+    assert "/home/" not in body, "starship.toml has a hardcoded linux home path"
+
+
+def test_footer_install_roundtrip_overwrites_stale_user_config(tmp_path, monkeypatch):
+    """Plug-and-play: when the user reinstalls the plugin and runs
+    `cockpit --footer`, the bundled defaults MUST clobber whatever's
+    already at `~/.config/{cship,starship}.toml` — otherwise the user
+    is stuck on stale config (e.g. the pre-fix `current_dir` line) and
+    the fix doesn't take effect until they hand-edit. This test drives
+    the real install helpers against a tmp $XDG_CONFIG_HOME with stale
+    files in place and asserts they're overwritten with the new
+    bundled content."""
+    xdg = tmp_path / "config"
+    xdg.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    cockpit_home = tmp_path / "cockpit"
+    cockpit_home.mkdir()
+    (cockpit_home / "config.json").write_text(json.dumps({"use_cship": True}))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("COCKPIT_HOME", str(cockpit_home))
+
+    # Plant a stale cship.toml containing the pre-fix `current_dir` line —
+    # this is the exact regression we want to be sure the install flow
+    # blows away.
+    stale_cship = xdg / "cship.toml"
+    stale_cship.write_text(
+        '[cship]\nlines = ["$cship.workspace.current_dir$starship_prompt"]\n'
     )
+    stale_starship = xdg / "starship.toml"
+    stale_starship.write_text("format = 'STALE'\n")
+
+    # Reload the config module so XDG_CONFIG_HOME / COCKPIT_HOME are picked
+    # up by module-level path constants captured at import time.
+    import importlib
+
+    importlib.reload(config_mod)
+
+    config_mod.install_cship_default_config()
+    config_mod.install_starship_default_config()
+
+    new_cship = (xdg / "cship.toml").read_text()
+    new_starship = (xdg / "starship.toml").read_text()
+
+    # Stale `current_dir` is gone; new wrapper schema is in place.
+    assert "current_dir" not in _strip_comments(new_cship)
+    assert 'lines = ["$starship_prompt"]' in new_cship
+
+    # Stale starship.toml is replaced with the bundled defaults, with the
+    # `__COCKPIT_STARSHIP__` placeholder substituted to an absolute path.
+    assert "STALE" not in new_starship
+    assert (
+        "__COCKPIT_STARSHIP__" not in new_starship
+    ), "placeholder must be substituted at install time"
+    assert "[custom.context]" in new_starship
+
+
+def test_footer_install_is_idempotent_and_announces_state(
+    tmp_path, monkeypatch, capsys
+):
+    """`cockpit --footer` must be verbose AND idempotent: a re-run on
+    already-installed defaults rewrites nothing but explicitly reports
+    each target as `unchanged, default kept at <path>`. Silent no-ops
+    are not acceptable — the user needs confirmation the command ran."""
+    xdg = tmp_path / "config"
+    xdg.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    cockpit_home = tmp_path / "cockpit"
+    cockpit_home.mkdir()
+    (cockpit_home / "config.json").write_text(json.dumps({"use_cship": True}))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("COCKPIT_HOME", str(cockpit_home))
+
+    import importlib
+
+    importlib.reload(config_mod)
+
+    config_mod.install_cship_default_config()
+    config_mod.install_starship_default_config()
+
+    cship_path = xdg / "cship.toml"
+    starship_path = xdg / "starship.toml"
+    cship_mtime = cship_path.stat().st_mtime_ns
+    starship_mtime = starship_path.stat().st_mtime_ns
+    cship_bytes = cship_path.read_bytes()
+    starship_bytes = starship_path.read_bytes()
+
+    capsys.readouterr()  # drain first-install output
+
+    config_mod.install_cship_default_config()
+    config_mod.install_starship_default_config()
+
+    out = capsys.readouterr().out
+    assert f"cship config unchanged, default kept at {cship_path}" in out
+    assert f"starship config unchanged, default kept at {starship_path}" in out
+    assert (
+        "installed default" not in out
+    ), "no-op re-run must not claim it installed anything"
+
+    assert cship_path.stat().st_mtime_ns == cship_mtime
+    assert starship_path.stat().st_mtime_ns == starship_mtime
+    assert cship_path.read_bytes() == cship_bytes
+    assert starship_path.read_bytes() == starship_bytes
+
+
+# ── helpers (from test_pills split) ─────────────────────────────────────────
 
 
 def _expected_starship(cockpit_config) -> str:
@@ -63,203 +240,6 @@ def _expected_starship(cockpit_config) -> str:
     return cockpit_config.STARSHIP_DEFAULT_TOML.read_text().replace(
         cockpit_config.STARSHIP_PLACEHOLDER, str(cockpit_config.STARSHIP_PY)
     )
-
-
-# ── decide_pills ────────────────────────────────────────────────────────────
-
-
-def test_clean_open_pr_with_passing_ci_emits_ci_passed():
-    # All-green PR: surface a sentinel ✓ so the sidebar isn't empty.
-    assert decide_pills(_pr(), _wt()) == [{"kind": "ci_passed"}]
-
-
-def test_clean_open_pr_without_ci_emits_no_pills():
-    # No CI configured (or not yet queued) — no sentinel.
-    assert decide_pills(_pr(ci="none"), _wt()) == []
-
-
-def test_ci_passed_suppressed_when_other_pills_present():
-    # `approved` already conveys readiness; don't double up with ci_passed.
-    pills = decide_pills(_pr(review_decision="APPROVED"), _wt())
-    kinds = [p["kind"] for p in pills]
-    assert kinds == ["approved"]
-
-
-def test_ci_passed_suppressed_when_unaddressed_present():
-    pills = decide_pills(_pr(unaddressed=1), _wt())
-    kinds = [p["kind"] for p in pills]
-    assert "ci_passed" not in kinds
-    assert "unaddressed" in kinds
-
-
-def test_ci_passed_suppressed_for_merged_pr():
-    # State pill (cmux-dropped) still counts as "other pill" → no sentinel.
-    pills = decide_pills(_pr(state="MERGED"), _wt())
-    kinds = [p["kind"] for p in pills]
-    assert "ci_passed" not in kinds
-    assert kinds == ["state"]
-
-
-def test_ci_failed_carries_phase():
-    pills = decide_pills(_pr(ci="failed:lint"), _wt())
-    assert pills == [{"kind": "ci_failed", "phase": "lint"}]
-
-
-def test_ci_failed_without_phase_marker():
-    # `ci` is "failed" with no `:phase`; phase becomes empty string.
-    pills = decide_pills(_pr(ci="failed"), _wt())
-    assert pills == [{"kind": "ci_failed", "phase": ""}]
-
-
-def test_ci_pending():
-    assert decide_pills(_pr(ci="pending"), _wt()) == [{"kind": "ci_pending"}]
-
-
-def test_unaddressed_supersedes_changes_requested():
-    pills = decide_pills(_pr(unaddressed=3, review_decision="CHANGES_REQUESTED"), _wt())
-    kinds = [p["kind"] for p in pills]
-    assert "unaddressed" in kinds
-    assert "changes_requested" not in kinds
-
-
-def test_changes_requested_alone():
-    pills = decide_pills(_pr(review_decision="CHANGES_REQUESTED"), _wt())
-    assert pills == [{"kind": "changes_requested"}]
-
-
-def test_conflict_pill():
-    pills = decide_pills(_pr(mergeable="CONFLICTING"), _wt())
-    assert pills == [{"kind": "conflict"}]
-
-
-def test_draft_and_approved_coexist():
-    pills = decide_pills(_pr(is_draft=True, review_decision="APPROVED"), _wt())
-    kinds = [p["kind"] for p in pills]
-    assert kinds == ["draft", "approved"]
-
-
-def test_state_pill_only_for_non_open():
-    # OPEN + ci=none → no pills; MERGED/CLOSED → state pill (and ci_passed is
-    # suppressed by the state pill, see test_ci_passed_suppressed_for_merged_pr).
-    assert decide_pills(_pr(state="OPEN", ci="none"), _wt()) == []
-    assert decide_pills(_pr(state="MERGED", ci="none"), _wt()) == [
-        {"kind": "state", "state": "MERGED"}
-    ]
-    assert decide_pills(_pr(state="CLOSED", ci="none"), _wt()) == [
-        {"kind": "state", "state": "CLOSED"}
-    ]
-
-
-def test_worktree_pills_independent_of_pr():
-    pills = decide_pills(_pr(), _wt(rebasing=True, dirty=4))
-    assert pills == [
-        {"kind": "rebase"},
-        {"kind": "wip", "count": 4},
-    ]
-
-
-def test_wip_dropped_when_no_worktree():
-    # PR exists but worktree is unknown (e.g. external repo): no wip pill.
-    pills = decide_pills(_pr(ci="failed:test"), None)
-    kinds = [p["kind"] for p in pills]
-    assert "wip" not in kinds
-    assert "ci_failed" in kinds
-
-
-def test_full_house_canonical_order():
-    pills = decide_pills(
-        _pr(
-            is_draft=True,
-            review_decision="APPROVED",
-            mergeable="CONFLICTING",
-            ci="failed:tests",
-            unaddressed=2,
-            state="OPEN",
-        ),
-        _wt(merging=True, dirty=3),
-    )
-    assert [p["kind"] for p in pills] == [
-        "merge",
-        "wip",
-        "ci_failed",
-        "unaddressed",
-        "conflict",
-        "draft",
-        "approved",
-    ]
-
-
-# ── cmux mapper ─────────────────────────────────────────────────────────────
-
-
-def test_cmux_status_pills_matches_decisions():
-    out = status_pills(_pr(ci="failed:lint", unaddressed=2), _wt(dirty=1))
-    assert out == [
-        ("wip", "✏️ 1 dirty", "#ff9500"),
-        ("ci", "❌ ci:lint", "#eb445a"),
-        ("comments", "💬 2 unaddressed", "#eb445a"),
-    ]
-
-
-def test_cmux_drops_state_pill():
-    out = status_pills(_pr(state="MERGED"), _wt())
-    assert out == []
-
-
-def test_cmux_conflict_emits_merge_key():
-    out = status_pills(_pr(mergeable="CONFLICTING"), _wt())
-    assert out == [("merge", "⚠️ conflict", "#ff9500")]
-
-
-# ── cache round-trip ────────────────────────────────────────────────────────
-
-
-def test_write_pr_cache_includes_pills(tmp_path, monkeypatch):
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    import lib.cache as cache_mod
-
-    importlib.reload(cache_mod)
-
-    pr = _pr(ci="failed:lint", review_decision="APPROVED")
-    wt = _wt(dirty=2)
-    payload = cache_mod.write_pr_cache("testrepo", pr, wt)
-
-    assert "pills" in payload
-    kinds = [p["kind"] for p in payload["pills"]]
-    assert kinds == ["wip", "ci_failed", "approved"]
-
-    on_disk = cache_mod.find_pr_payload("khivi/feature", repo_name="testrepo")
-    assert on_disk is not None
-    assert [p["kind"] for p in on_disk["pills"]] == kinds
-
-
-def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    import lib.cache as cache_mod
-
-    importlib.reload(cache_mod)
-
-    pr = _pr(ci="failed:lint")
-    payload = cache_mod.write_pr_cache("testrepo", pr)
-
-    assert "pills" in payload
-    # Without wt, no rebase/merge/wip pills appear.
-    kinds = [p["kind"] for p in payload["pills"]]
-    assert "wip" not in kinds
-    assert "ci_failed" in kinds
-
-
-# ── use_cship gating ────────────────────────────────────────────────────────
 
 
 def _setup_cockpit_config(tmp_path, monkeypatch, cfg: dict):
@@ -287,6 +267,9 @@ def _stub_cship_on_path(monkeypatch, present: bool):
 
 
 _STATUSLINE_CMD = "/path/to/footer.py"
+
+
+# ── use_cship gating ────────────────────────────────────────────────────────
 
 
 def test_use_cship_noop_when_flag_unset(tmp_path, monkeypatch):
@@ -676,87 +659,3 @@ def test_seed_replaces_dangling_cship_symlink(tmp_path, monkeypatch):
     assert dest.exists()
     assert not dest.is_symlink()
     assert dest.read_text() == cockpit_config.CSHIP_DEFAULT_TOML.read_text()
-
-
-# ── invoke_cship (cship-binary exec, no stdin reading) ─────────────────────
-
-
-def test_invoke_cship_pipes_blob_and_forwards_stdout(monkeypatch, capsysbinary):
-    """invoke_cship pipes the given blob to cship and forwards its stdout."""
-    import subprocess as _sp
-
-    import lib.cship as cship_mod
-
-    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: "/fake/cship")
-
-    captured = {}
-
-    def fake_run(cmd, input=None, capture_output=False, env=None):
-        captured["cmd"] = cmd
-        captured["input"] = input
-        captured["env"] = env
-        return _sp.CompletedProcess(cmd, 0, stdout=b"styled-output\n", stderr=b"")
-
-    monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
-
-    assert cship_mod.invoke_cship(b'{"hello":"world"}', "sess1") == 0
-    assert captured["cmd"] == ["cship"]
-    assert captured["input"] == b'{"hello":"world"}'
-    assert captured["env"]["CSHIP_SESSION_ID"] == "sess1"
-    out, _err = capsysbinary.readouterr()
-    assert out == b"styled-output\n"
-
-
-def test_invoke_cship_errors_when_missing(monkeypatch, capsysbinary):
-    """No cship on PATH → non-zero exit + stderr message. use_cship=true
-    implies cship is installed; a missing binary is misconfiguration and
-    should surface loudly, not silently return 0."""
-    import lib.cship as cship_mod
-
-    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: None)
-    called = {"ran": False}
-
-    def fake_run(*_a, **_kw):
-        called["ran"] = True
-        raise AssertionError("subprocess.run must not run when cship is missing")
-
-    monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
-    assert cship_mod.invoke_cship(b'{"x":1}', None) != 0
-    assert called["ran"] is False
-    _out, err = capsysbinary.readouterr()
-    assert b"cship" in err and b"not on PATH" in err
-
-
-def test_invoke_cship_propagates_exit_code(monkeypatch, capsysbinary):
-    import subprocess as _sp
-
-    import lib.cship as cship_mod
-
-    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: "/fake/cship")
-    monkeypatch.setattr(
-        "lib.cship.subprocess.run",
-        lambda *a, **kw: _sp.CompletedProcess(["cship"], 17, b"", b"boom\n"),
-    )
-
-    assert cship_mod.invoke_cship(b"", None) == 17
-    _out, err = capsysbinary.readouterr()
-    assert err == b"boom\n"
-
-
-def test_invoke_cship_no_session_id_omits_env_export(monkeypatch):
-    """When sid is None, CSHIP_SESSION_ID must not be exported into cship's env."""
-    import subprocess as _sp
-
-    import lib.cship as cship_mod
-
-    monkeypatch.setattr(cship_mod.shutil, "which", lambda name: "/fake/cship")
-    monkeypatch.delenv("CSHIP_SESSION_ID", raising=False)
-    captured = {}
-
-    def fake_run(cmd, input=None, capture_output=False, env=None):
-        captured["env"] = env
-        return _sp.CompletedProcess(cmd, 0, b"", b"")
-
-    monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
-    cship_mod.invoke_cship(b"{}", None)
-    assert "CSHIP_SESSION_ID" not in captured["env"]

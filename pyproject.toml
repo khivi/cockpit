@@ -2,3 +2,8 @@
 testpaths = ["tests"]
 pythonpath = ["scripts"]
 addopts = "-ra"
+
+[tool.mypy]
+mypy_path = "scripts"
+explicit_package_bases = true
+namespace_packages = true
