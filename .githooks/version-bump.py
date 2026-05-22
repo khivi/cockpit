@@ -33,16 +33,23 @@ def run(*args: str, check: bool = True) -> str:
 
 
 def get_default_branch_ref() -> str:
-    return run("rev-parse", "--abbrev-ref", "origin/HEAD")
+    for ref in ("origin/HEAD", "origin/main", "origin/master"):
+        if run("rev-parse", "--verify", "--quiet", ref, check=False):
+            return run("rev-parse", "--abbrev-ref", ref)
+    return ""
 
 
 def get_default_branch_name() -> str:
-    return get_default_branch_ref().split("/", 1)[1]
+    ref = get_default_branch_ref()
+    return ref.split("/", 1)[1] if ref else ""
 
 
 def get_main_version() -> semver.Version:
+    ref = get_default_branch_ref()
+    if not ref:
+        return semver.Version(0, 0, 0)
     try:
-        raw = run("show", f"{get_default_branch_ref()}:{PLUGIN_FILE}", check=True)
+        raw = run("show", f"{ref}:{PLUGIN_FILE}", check=True)
         return semver.Version.parse(json.loads(raw)["version"])
     except subprocess.CalledProcessError:
         return semver.Version(0, 0, 0)
