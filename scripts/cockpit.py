@@ -193,6 +193,22 @@ def _resolve_wt(
     return wt_by_name.get(ws_name)
 
 
+def _orphan_snapshot(
+    wt: Worktree, behind_base: int
+) -> tuple[frozenset[tuple[str, str]], str]:
+    """Pill-state snapshot + display tag for an orphan worktree."""
+    stale_tag = f" stale ↻{behind_base}" if behind_base > 0 else ""
+    tag = f"orphan{' wip' if wt.dirty else ''}{stale_tag}"
+    snap = frozenset(
+        [
+            ("orphan", ORPHAN_ICON),
+            ("wip", str(wt.dirty_count) if wt.dirty else ""),
+            ("stale", str(behind_base) if behind_base > 0 else ""),
+        ]
+    )
+    return snap, tag
+
+
 def _is_post_merge_stale(wt: Worktree, merged_branches: dict[str, str]) -> bool:
     """True if `wt`'s branch matches a merged PR and HEAD has not advanced past it."""
     merged_head = merged_branches.get(wt.branch)
@@ -548,15 +564,7 @@ def cycle_repo(
                 )
                 apply_wip_pill(ref, wt.dirty_count)
                 apply_stale_pill(ref, behind_base)
-            stale_tag = f" stale ↻{behind_base}" if behind_base > 0 else ""
-            tag = f"orphan{' wip' if wt.dirty else ''}{stale_tag}"
-            orphan_snap = frozenset(
-                [
-                    ("orphan", ORPHAN_ICON),
-                    ("wip", str(wt.dirty_count) if wt.dirty else ""),
-                    ("stale", str(behind_base) if behind_base > 0 else ""),
-                ]
-            )
+            orphan_snap, tag = _orphan_snapshot(wt, behind_base)
             changed = pill_state.get(ref) != orphan_snap
             if changed or verbose:
                 print(
