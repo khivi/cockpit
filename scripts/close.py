@@ -31,7 +31,7 @@ from lib.cmux import (  # noqa: E402
 from lib.config import discover_repo  # noqa: E402
 from lib.daemon import kick_running  # noqa: E402
 from lib.git import worktrees  # noqa: E402
-from lib.teardown import (  # noqa: E402
+from orchestrators.teardown import (  # noqa: E402
     TeardownRequest,
     probe_blockers,
     teardown,

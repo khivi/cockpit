@@ -24,7 +24,7 @@ def queue(tmp_path, monkeypatch):
 
 
 def test_enqueue_and_iter_round_trip(queue):
-    from lib.teardown import TeardownRequest
+    from orchestrators.teardown import TeardownRequest
 
     req = TeardownRequest(
         ref="workspace:7",
@@ -51,7 +51,7 @@ def test_enqueue_and_iter_round_trip(queue):
 
 
 def test_pop_removes_marker(queue):
-    from lib.teardown import TeardownRequest
+    from orchestrators.teardown import TeardownRequest
 
     req = TeardownRequest(ref="workspace:1", repo_name="r")
     path = queue.enqueue(req)
@@ -61,7 +61,7 @@ def test_pop_removes_marker(queue):
 
 
 def test_iter_pending_scoped_by_repo(queue):
-    from lib.teardown import TeardownRequest
+    from orchestrators.teardown import TeardownRequest
 
     queue.enqueue(TeardownRequest(ref="workspace:1", repo_name="repo-a"))
     queue.enqueue(TeardownRequest(ref="workspace:2", repo_name="repo-b"))
@@ -76,7 +76,7 @@ def test_iter_pending_scoped_by_repo(queue):
 
 
 def test_prune_stale_removes_stale_requests(queue):
-    from lib.teardown import TeardownRequest
+    from orchestrators.teardown import TeardownRequest
 
     fresh = queue.enqueue(TeardownRequest(ref="workspace:fresh", repo_name="r"))
     stale = queue.enqueue(TeardownRequest(ref="workspace:stale", repo_name="r"))
@@ -92,7 +92,7 @@ def test_prune_stale_removes_stale_requests(queue):
 
 
 def test_corrupt_marker_skipped(queue, tmp_path):
-    from lib.teardown import TeardownRequest
+    from orchestrators.teardown import TeardownRequest
 
     queue.enqueue(TeardownRequest(ref="workspace:1", repo_name="r"))
     (queue.STATE_DIR / "r" / "garbage.json").write_text("not json {")

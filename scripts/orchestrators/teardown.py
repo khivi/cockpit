@@ -19,10 +19,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .cache import delete_pr_caches_for_branch, find_pr_payload
-from .cmux import cmux_close_workspace_best_effort
-from .colors import dim
-from .git import (
+from lib.cache import delete_pr_caches_for_branch, find_pr_payload
+from lib.cmux import cmux_close_workspace_best_effort
+from lib.colors import dim
+from lib.git import (
     _count_unpushed,
     count_dirty,
     ff_default_branch_worktrees,
@@ -30,7 +30,7 @@ from .git import (
     remove_worktree,
     worktrees,
 )
-from .log_format import verb
+from lib.log_format import verb
 
 
 @dataclass(frozen=True)

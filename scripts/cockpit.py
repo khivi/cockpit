@@ -104,7 +104,7 @@ from lib.git import (  # noqa: E402
     origin_head_branch,
     worktrees,
 )
-from lib.teardown import TeardownRequest, teardown  # noqa: E402
+from orchestrators.teardown import TeardownRequest, teardown  # noqa: E402
 
 # ── constants ───────────────────────────────────────────────────────────────
 MAIN_BRANCHES = {"master", "main"}
@@ -260,7 +260,7 @@ def _maybe_autoclose(
     than `wt.unpushed` because `git cherry` (which powers `wt.unpushed`) cannot
     recognize GitHub squash-merges — see `_count_unpushed` docstring.
 
-    Teardown delegates to `lib.teardown.teardown` (forced=True since we've
+    Teardown delegates to `orchestrators.teardown.teardown` (forced=True since we've
     already validated merge-state-clean above).
     """
     if not cfg.get("auto_cleanup_on_merge", True):

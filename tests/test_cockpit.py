@@ -1,7 +1,7 @@
 """Tests for scripts/cockpit.py.
 
 Two sections:
-  - _maybe_autoclose: ordering + dry/error guards (delegates to lib.teardown).
+  - _maybe_autoclose: ordering + dry/error guards (delegates to orchestrators.teardown).
   - _reap_workspace_orphans: gating logic for orphan-workspace cleanup
     (ownership derived from cwd vs registered repos).
 """
@@ -15,8 +15,8 @@ from unittest.mock import patch
 import pytest
 
 import cockpit
-from lib import teardown as teardown_mod
 from lib.git import Worktree
+from orchestrators import teardown as teardown_mod
 
 
 # ────────────────────────────────────────────────────────────────────────────

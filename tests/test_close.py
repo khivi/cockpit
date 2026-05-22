@@ -9,9 +9,9 @@ from unittest.mock import patch
 import pytest
 
 import close as close_script
-from lib import teardown as teardown_mod
 from lib.git import Worktree
-from lib.teardown import worktree_state_blockers as hard_blockers
+from orchestrators import teardown as teardown_mod
+from orchestrators.teardown import worktree_state_blockers as hard_blockers
 
 
 def _make_wt(repo_dir: Path, path: Path, branch: str) -> Worktree:
