@@ -579,6 +579,7 @@ def test_print_branch_pill_separator_always_renders(_clean_git_env, monkeypatch)
     out = starship.print_branch_pill()
     assert "" in out
 
+
 # ── integration: stash feeds field printers ────────────────────────────────
 
 
