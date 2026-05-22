@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 import lib.cache as cache_mod
 from lib.gh import PR
 from lib.git import Worktree
@@ -127,61 +129,48 @@ def test_refresh_pr_data_populates_from_gh(cache_dir):
     assert (cache_dir / "pr-title-khivi-bar").read_text() == "Fix it"
 
 
-# ── write_base_distance (lib.cache) ────────────────────────────────────────
+# ── write_base_distance / write_base_ahead (lib.cache) ─────────────────────
 
 
-def test_write_base_distance_writes_payload(cache_dir):
-    cache_mod.write_base_distance("khivi/feature", 5, 1700000000)
-    assert (cache_dir / "base-distance-khivi-feature").read_text() == "5 1700000000"
+@pytest.mark.parametrize(
+    "writer,cache_file",
+    [
+        (cache_mod.write_base_distance, "base-distance-khivi-feature"),
+        (cache_mod.write_base_ahead, "base-ahead-khivi-feature"),
+    ],
+    ids=["write_base_distance", "write_base_ahead"],
+)
+@pytest.mark.parametrize(
+    "branch,count,epoch,expected",
+    [
+        ("khivi/feature", 5, 1700000000, "5 1700000000"),
+        ("khivi/feature", -1, 1700000000, ""),
+        ("khivi/feature", 3, 0, ""),
+        ("khivi/feature", 0, 1700000000, "0 1700000000"),
+    ],
+    ids=[
+        "writes_payload",
+        "empty_on_negative_count",
+        "empty_on_missing_epoch",
+        "zero_count_is_valid",
+    ],
+)
+def test_write_base_relative_payload(
+    cache_dir, writer, cache_file, branch, count, epoch, expected
+):
+    """0 commits is a legitimate, fresh observation; the reader hides 0
+    but the writer preserves it for staleness gating."""
+    writer(branch, count, epoch)
+    assert (cache_dir / cache_file).read_text() == expected
 
 
-def test_write_base_distance_empty_on_negative_count(cache_dir):
-    cache_mod.write_base_distance("khivi/feature", -1, 1700000000)
-    assert (cache_dir / "base-distance-khivi-feature").read_text() == ""
-
-
-def test_write_base_distance_empty_on_missing_epoch(cache_dir):
-    cache_mod.write_base_distance("khivi/feature", 3, 0)
-    assert (cache_dir / "base-distance-khivi-feature").read_text() == ""
-
-
-def test_write_base_distance_zero_count_is_valid(cache_dir):
-    """0 commits behind base is a legitimate, fresh observation; the
-    reader hides 0 but the writer should preserve it for staleness gating."""
-    cache_mod.write_base_distance("khivi/feature", 0, 1700000000)
-    assert (cache_dir / "base-distance-khivi-feature").read_text() == "0 1700000000"
-
-
-def test_write_base_distance_no_branch_noop(cache_dir):
-    cache_mod.write_base_distance("", 3, 1700000000)
-    assert not any(cache_dir.iterdir())
-
-
-# ── write_base_ahead (lib.cache) ───────────────────────────────────────────
-
-
-def test_write_base_ahead_writes_payload(cache_dir):
-    cache_mod.write_base_ahead("khivi/feature", 5, 1700000000)
-    assert (cache_dir / "base-ahead-khivi-feature").read_text() == "5 1700000000"
-
-
-def test_write_base_ahead_empty_on_negative_count(cache_dir):
-    cache_mod.write_base_ahead("khivi/feature", -1, 1700000000)
-    assert (cache_dir / "base-ahead-khivi-feature").read_text() == ""
-
-
-def test_write_base_ahead_empty_on_missing_epoch(cache_dir):
-    cache_mod.write_base_ahead("khivi/feature", 3, 0)
-    assert (cache_dir / "base-ahead-khivi-feature").read_text() == ""
-
-
-def test_write_base_ahead_zero_count_is_valid(cache_dir):
-    cache_mod.write_base_ahead("khivi/feature", 0, 1700000000)
-    assert (cache_dir / "base-ahead-khivi-feature").read_text() == "0 1700000000"
-
-
-def test_write_base_ahead_no_branch_noop(cache_dir):
-    cache_mod.write_base_ahead("", 3, 1700000000)
+@pytest.mark.parametrize(
+    "writer",
+    [cache_mod.write_base_distance, cache_mod.write_base_ahead],
+    ids=["write_base_distance", "write_base_ahead"],
+)
+def test_write_base_relative_no_branch_noop(cache_dir, writer):
+    writer("", 3, 1700000000)
     assert not any(cache_dir.iterdir())
 
 
