@@ -77,14 +77,21 @@ from lib.prompts import claude_command
 from lib.repos import repo_names
 
 
+def _format_configured_repos(names: list[str]) -> str:
+    """`"<n1>, <n2> (+K more)"` from a list of repo names, capped at 10. Empty if no names."""
+    if not names:
+        return ""
+    listed = ", ".join(names[:10])
+    more = f" (+{len(names) - 10} more)" if len(names) > 10 else ""
+    return f"{listed}{more}"
+
+
 def _unknown_repo_msg(name: str) -> str:
-    names = repo_names()
-    if names:
-        listed = ", ".join(names[:10])
-        more = f" (+{len(names) - 10} more)" if len(names) > 10 else ""
+    listed = _format_configured_repos(repo_names())
+    if listed:
         return (
             f"--repo {name!r}: no configured repo with that name. "
-            f"Configured: {listed}{more}. Run /cockpit:repos for details."
+            f"Configured: {listed}. Run /cockpit:repos for details."
         )
     return (
         f"--repo {name!r}: no configured repo with that name, and no repos "
@@ -141,13 +148,8 @@ def select_repo(repo_name: str | None) -> dict:
         return repo_cfg
     repo_cfg = discover_repo()
     if repo_cfg is None:
-        names = repo_names()
-        hint = (
-            f" Configured repos: {', '.join(names[:10])}"
-            f"{' (+more)' if len(names) > 10 else ''}. Run /cockpit:repos."
-            if names
-            else ""
-        )
+        listed = _format_configured_repos(repo_names())
+        hint = f" Configured repos: {listed}. Run /cockpit:repos." if listed else ""
         raise ValueError(
             "cannot determine repo from cwd; pass --repo <name> or run from "
             "inside a managed repo (register first with `cockpit add`)." + hint
