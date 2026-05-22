@@ -77,6 +77,7 @@ def test_stranded_in_registered_repo_is_reaped(isolated, tmp_path):
                 {"workspace:99": ghost_cwd},
             ),
         ),
+        patch("lib.cmux.workspace_is_idle", return_value=True),
     ):
         cockpit._reap_workspace_orphans(repos, "khivi", dry=False)
 
@@ -87,6 +88,37 @@ def test_stranded_in_registered_repo_is_reaped(isolated, tmp_path):
     assert req.worktree_path is None
     assert req.forced is True
     assert req.repo_name == "repo"
+
+
+def test_not_idle_workspace_deferred(isolated, tmp_path, capsys):
+    """A stranded workspace whose Claude is mid-turn is left for next cycle."""
+    cockpit, cr = isolated
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    wt = _wt_stub(repo_path, "main")
+
+    repos = [{"path": str(repo_path), "name": "repo"}]
+    ghost_cwd = repo_path / "removed-worktree"
+    ghost_cwd.mkdir()
+
+    with (
+        patch.object(cockpit, "worktrees", return_value=[wt]),
+        patch(
+            "lib.cmux.workspace_state",
+            return_value=(
+                {"workspace:99": "khivi/ghost"},
+                {"workspace:99": ghost_cwd},
+            ),
+        ),
+        patch("lib.cmux.workspace_is_idle", return_value=False),
+    ):
+        cockpit._reap_workspace_orphans(repos, "khivi", dry=False)
+
+    assert cr.iter_pending() == []
+    out = capsys.readouterr().out
+    assert "defer reap" in out
+    assert "not idle" in out
+    assert "workspace:99" in out
 
 
 def test_workspace_outside_registered_repos_is_ignored(isolated, tmp_path):
@@ -134,6 +166,7 @@ def test_dry_run_does_not_enqueue(isolated, tmp_path):
                 {"workspace:99": ghost_cwd},
             ),
         ),
+        patch("lib.cmux.workspace_is_idle", return_value=True),
     ):
         cockpit._reap_workspace_orphans(repos, "khivi", dry=True)
 

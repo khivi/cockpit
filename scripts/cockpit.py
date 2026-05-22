@@ -614,10 +614,12 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
     Workspaces outside every registered repo are ignored entirely.
 
     Within owned workspaces, a stranded one (no matching live worktree by
-    cwd or name) is enqueued for tear-down. Only mine-prefix branches are
-    reaped; coworker-spawned workspaces are left to the user.
+    cwd or name) is enqueued for tear-down — but only when Claude is idle.
+    If Claude is mid-turn the reap is deferred to the next cycle so we
+    don't yank the session out from under an active turn. Only mine-prefix
+    branches are reaped; coworker-spawned workspaces are left to the user.
     """
-    from lib.cmux import workspace_state as _ws_state
+    from lib.cmux import workspace_is_idle, workspace_state as _ws_state
 
     all_wts: list[Worktree] = []
     repo_lookup: dict[Path, tuple[str, Path]] = {}
@@ -663,6 +665,13 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
             continue
         repo_name, repo_path = owner
         label = ws_name or ref
+        if not workspace_is_idle(ref):
+            print(
+                f"  {magenta('defer reap:')} workspace {label} ({ref}) "
+                f"— not idle (Claude mid-turn)",
+                flush=True,
+            )
+            continue
         last_known_branch = ws_name if ws_name.startswith(my_prefix) else None
         req = TeardownRequest(
             ref=ref,
