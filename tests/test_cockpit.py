@@ -160,8 +160,9 @@ def test_reap_skips_tracked_workspace(reap_isolated, tmp_path):
 
     with (
         patch.object(cockpit_mod, "worktrees", return_value=[wt]),
-        patch(
-            "lib.cmux.workspace_state",
+        patch.object(
+            cockpit_mod,
+            "workspace_state",
             return_value=({"workspace:1": "feat-x"}, {"workspace:1": wt_path}),
         ),
     ):
@@ -183,14 +184,15 @@ def test_reap_enqueues_stranded_workspace_in_registered_repo(reap_isolated, tmp_
 
     with (
         patch.object(cockpit_mod, "worktrees", return_value=[wt]),
-        patch(
-            "lib.cmux.workspace_state",
+        patch.object(
+            cockpit_mod,
+            "workspace_state",
             return_value=(
                 {"workspace:99": "khivi/ghost"},
                 {"workspace:99": ghost_cwd},
             ),
         ),
-        patch("lib.cmux.workspace_is_idle", return_value=True),
+        patch.object(cockpit_mod, "workspace_is_idle", return_value=True),
     ):
         cockpit_mod._reap_workspace_orphans(repos, "khivi", dry=False)
 
@@ -216,14 +218,15 @@ def test_reap_defers_when_workspace_not_idle(reap_isolated, tmp_path, capsys):
 
     with (
         patch.object(cockpit_mod, "worktrees", return_value=[wt]),
-        patch(
-            "lib.cmux.workspace_state",
+        patch.object(
+            cockpit_mod,
+            "workspace_state",
             return_value=(
                 {"workspace:99": "khivi/ghost"},
                 {"workspace:99": ghost_cwd},
             ),
         ),
-        patch("lib.cmux.workspace_is_idle", return_value=False),
+        patch.object(cockpit_mod, "workspace_is_idle", return_value=False),
     ):
         cockpit_mod._reap_workspace_orphans(repos, "khivi", dry=False)
 
@@ -248,8 +251,9 @@ def test_reap_ignores_workspace_outside_registered_repos(reap_isolated, tmp_path
 
     with (
         patch.object(cockpit_mod, "worktrees", return_value=[wt]),
-        patch(
-            "lib.cmux.workspace_state",
+        patch.object(
+            cockpit_mod,
+            "workspace_state",
             return_value=(
                 {"workspace:42": "research"},
                 {"workspace:42": elsewhere},
@@ -273,14 +277,15 @@ def test_reap_dry_run_does_not_enqueue(reap_isolated, tmp_path):
 
     with (
         patch.object(cockpit_mod, "worktrees", return_value=[wt]),
-        patch(
-            "lib.cmux.workspace_state",
+        patch.object(
+            cockpit_mod,
+            "workspace_state",
             return_value=(
                 {"workspace:99": "khivi/ghost"},
                 {"workspace:99": ghost_cwd},
             ),
         ),
-        patch("lib.cmux.workspace_is_idle", return_value=True),
+        patch.object(cockpit_mod, "workspace_is_idle", return_value=True),
     ):
         cockpit_mod._reap_workspace_orphans(repos, "khivi", dry=True)
 
@@ -300,8 +305,9 @@ def test_reap_skips_workspace_matched_by_name(reap_isolated, tmp_path):
 
     with (
         patch.object(cockpit_mod, "worktrees", return_value=[wt]),
-        patch(
-            "lib.cmux.workspace_state",
+        patch.object(
+            cockpit_mod,
+            "workspace_state",
             return_value=({"workspace:5": "feat-named"}, {}),
         ),
     ):

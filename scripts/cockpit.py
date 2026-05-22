@@ -57,6 +57,7 @@ from lib.cmux import (  # noqa: E402
     spawn_orphan_workspace,
     spawn_pr_workspace,
     status_pills,
+    workspace_is_idle,
     workspace_state,
 )
 from lib.colors import (  # noqa: E402
@@ -653,8 +654,6 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
     don't yank the session out from under an active turn. Only mine-prefix
     branches are reaped; coworker-spawned workspaces are left to the user.
     """
-    from lib.cmux import workspace_is_idle, workspace_state as _ws_state
-
     all_wts: list[Worktree] = []
     repo_lookup: dict[Path, tuple[str, Path]] = {}
     registered_roots: dict[Path, tuple[str, Path]] = {}
@@ -674,7 +673,7 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
     wt_by_path = {wt.path.resolve(): wt for wt in all_wts}
     wt_by_name = {wt.short: wt for wt in all_wts}
 
-    names, cwds = _ws_state()
+    names, cwds = workspace_state()
     my_prefix = f"{self_user}/"
 
     def _owning_repo(cwd: Path | None) -> tuple[str, Path] | None:
