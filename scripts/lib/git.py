@@ -514,3 +514,21 @@ def ff_default_branch_worktrees(
             continue
         _git(wt.path, "merge", "--ff-only", f"origin/{wt.branch}")
     return advanced
+
+
+def log_ff_advances(advances: list[tuple[Worktree, int]], *, dry: bool = False) -> None:
+    """Print one `ff-main` line per (worktree, behind) from
+    `ff_default_branch_worktrees`. Shared by cockpit's per-cycle log and
+    teardown's post-close chore so the rendering stays in sync.
+    """
+    from .colors import dim
+    from .log_format import verb
+
+    action = "[dry] ff-main" if dry else "ff-main"
+    for wt, behind in advances:
+        plural = "s" if behind != 1 else ""
+        print(
+            f"  {verb(action)} {wt.short} → origin/{wt.branch}"
+            f"  {dim(f'{behind} commit{plural}')}",
+            flush=True,
+        )

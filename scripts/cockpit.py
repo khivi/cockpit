@@ -100,6 +100,7 @@ from lib.git import (  # noqa: E402
     behind_of_base,
     count_commits_since,
     ff_default_branch_worktrees,
+    log_ff_advances,
     origin_head_branch,
     worktrees,
 )
@@ -177,17 +178,6 @@ def match_worktrees(
             continue
         matched.append((pr_opt, wt))
     return matched, skipped_self
-
-
-def _log_ff_main(repo_path: Path, wts: list[Worktree], *, dry: bool) -> None:
-    """Fast-forward default-branch worktrees via lib.git, log each advance."""
-    for wt, behind in ff_default_branch_worktrees(repo_path, wts, dry=dry):
-        action = "[dry] ff-main" if dry else "ff-main"
-        print(
-            f"  {verb(action)} {wt.short} → origin/{wt.branch}"
-            f"  ({behind} commit{'s' if behind != 1 else ''})",
-            flush=True,
-        )
 
 
 def _resolve_wt(
@@ -761,7 +751,9 @@ def cycle_repo(
     _maybe_autoclose(
         cfg, ctx.repo_path, ctx.name, ctx.wts, ctx.merged_branches, ctx.cwds, dry=dry
     )
-    _log_ff_main(ctx.repo_path, ctx.wts, dry=dry)
+    log_ff_advances(
+        ff_default_branch_worktrees(ctx.repo_path, ctx.wts, dry=dry), dry=dry
+    )
 
 
 def _drain_close_requests(dry: bool) -> None:
