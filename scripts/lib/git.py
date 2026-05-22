@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -359,13 +360,44 @@ def create_new_branch_worktree(
     return branch
 
 
+def _log_lock_reason(repo: Path, wt_path: Path) -> None:
+    """Best-effort: print `preempting <lock-reason>` to stderr for a locked worktree.
+
+    Resolves the admin dir via the worktree's own `.git` file
+    (`gitdir: <repo>/.git/worktrees/<wt-name>`), falling back to `wt_path.name`.
+    Silently swallows any error.
+    """
+    try:
+        wt_name = wt_path.name
+        dotgit = wt_path / ".git"
+        if dotgit.is_file():
+            content = dotgit.read_text().strip()
+            for line in content.splitlines():
+                if line.startswith("gitdir:"):
+                    gitdir = line.split(":", 1)[1].strip()
+                    wt_name = Path(gitdir).name
+                    break
+        lock_file = Path(repo) / ".git" / "worktrees" / wt_name / "locked"
+        if lock_file.exists():
+            reason = lock_file.read_text().strip()
+            print(f"preempting {reason}", file=sys.stderr)
+    except Exception:
+        pass
+
+
 def remove_worktree(
     repo: Path, wt_path: Path, *, force: bool = False
 ) -> tuple[bool, str]:
-    """Run `git worktree remove`. Returns (ok, stderr) — non-raising."""
+    """Run `git worktree remove`. Returns (ok, stderr) — non-raising.
+
+    With `force=True`, passes `--force --force` so git overrides its refusal
+    to remove a locked worktree, and logs the lock reason (if any) to stderr
+    first so the operator sees what was preempted.
+    """
     args = ["worktree", "remove"]
     if force:
-        args.append("--force")
+        _log_lock_reason(repo, wt_path)
+        args.extend(["--force", "--force"])
     args.append(str(wt_path))
     res = _git(repo, *args)
     return res.returncode == 0, res.stderr.strip()
