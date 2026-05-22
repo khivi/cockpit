@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Pre-push hook: ensure .claude-plugin/plugin.json has a patch bump vs HEAD~1.
+"""Pre-push hook: ensure .claude-plugin/plugin.json has been bumped vs main.
 
-Idempotent: if current version is already >= HEAD~1 + patch, exit 0.
-Otherwise rewrite plugin.json, create a `chore: bump version` commit, exit 1
-so the user re-runs `git push` to include the new commit.
+Idempotent: if current version > main's version (by any amount), exit 0.
+Otherwise rewrite plugin.json with main's version + patch, create a
+`chore: bump version` commit, exit 1 so the user re-runs `git push`.
 
-Minor/major bumps are done by hand in plugin.json — the idempotency check
-sees `current >= expected` and exits 0.
+Minor/major bumps are done by hand in plugin.json — any value > main passes.
 
-Base for the bump is HEAD~1's plugin.json. Branch ruleset enforces
-rebase-to-main before merge, so HEAD~1 reflects the latest main state.
+origin/main is read from the locally-cached ref (no network). Branch
+ruleset enforces rebase-to-main before merge, so the cached ref reflects
+the merge target at PR-merge time.
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ def run(*args: str, check: bool = True) -> str:
     return result.stdout.strip()
 
 
-def get_parent_version() -> semver.Version:
+def get_main_version() -> semver.Version:
     try:
-        raw = run("show", f"HEAD~1:{PLUGIN_FILE}", check=True)
+        raw = run("show", f"origin/main:{PLUGIN_FILE}", check=True)
         return semver.Version.parse(json.loads(raw)["version"])
     except subprocess.CalledProcessError:
         return semver.Version(0, 0, 0)
@@ -57,12 +57,12 @@ def main() -> int:
         return 0
 
     current = semver.Version.parse(json.loads(PLUGIN_FILE.read_text())["version"])
-    expected = get_parent_version().bump_patch()
+    main_version = get_main_version()
 
-    if current >= expected:
+    if current > main_version:
         return 0
 
-    new_version = str(expected)
+    new_version = str(main_version.bump_patch())
     write_version(new_version)
     run("add", str(PLUGIN_FILE))
     run("commit", "-m", f"{BUMP_COMMIT_PREFIX} to {new_version}")
