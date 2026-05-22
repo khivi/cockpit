@@ -20,10 +20,28 @@ helpers live in sibling modules:
 from __future__ import annotations
 
 import subprocess
+import sys
+
+_INSTALL_HINTS = {
+    "gh": "https://cli.github.com",
+    "git": "https://git-scm.com",
+    "cship": "https://github.com/khivi/cship",
+    "starship": "https://starship.rs",
+}
 
 
 def run(cmd: list[str], check: bool = True, env: dict | None = None) -> str:
-    res = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    except FileNotFoundError:
+        binary = cmd[0] if cmd else ""
+        hint = _INSTALL_HINTS.get(binary)
+        suffix = f" — install from {hint}" if hint else ""
+        print(
+            f"cockpit: {binary!r} not found on PATH{suffix}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if check and res.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd)} failed: {res.stderr.strip()}")
     return res.stdout
