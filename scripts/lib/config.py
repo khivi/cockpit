@@ -198,7 +198,7 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
     settings_path = Path.home() / ".claude" / "settings.json"
     current = _read_current_statusline(settings_path)
     if current == statusline_command:
-        print(f"Claude statusLine unchanged, kept at {statusline_command}")
+        print("Claude statusLine unchanged")
         return
     if current is None:
         return
