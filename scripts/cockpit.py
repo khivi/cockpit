@@ -511,7 +511,7 @@ def cycle_repo(
                 )
                 apply_wip_pill(ref, wt.dirty_count)
                 apply_stale_pill(ref, behind_base)
-            stale_tag = f" stale↻{behind_base}" if behind_base > 0 else ""
+            stale_tag = f" stale ↻{behind_base}" if behind_base > 0 else ""
             tag = f"orphan{' wip' if wt.dirty else ''}{stale_tag}"
             orphan_snap = frozenset(
                 [
