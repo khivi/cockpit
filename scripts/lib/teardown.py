@@ -21,8 +21,9 @@ from pathlib import Path
 
 from .cache import delete_pr_caches_for_branch, find_pr_payload
 from .cmux import cmux_close_workspace_best_effort
-from .colors import magenta
+from .colors import dim
 from .git import _count_unpushed, count_dirty, remove_worktree
+from .log_format import verb
 
 
 @dataclass(frozen=True)
@@ -76,9 +77,9 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
         if blockers:
             return False, blockers
 
-    action = "[dry] teardown" if dry else "teardown:"
+    action = "[dry] teardown" if dry else "teardown"
     detail = f"branch={req.branch}" if req.branch else f"cwd={req.worktree_path}"
-    print(f"  {magenta(action)} {label} ({req.ref})  {detail}", flush=True)
+    print(f"  {verb(action)} {label} ({req.ref})  {dim(detail)}", flush=True)
     if dry:
         return True, []
 

@@ -227,7 +227,8 @@ def test_reap_defers_when_workspace_not_idle(reap_isolated, tmp_path, capsys):
 
     assert cr.iter_pending() == []
     out = capsys.readouterr().out
-    assert "defer reap" in out
+    assert "defer" in out
+    assert "reap" in out
     assert "not idle" in out
     assert "workspace:99" in out
 
