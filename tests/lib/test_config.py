@@ -225,9 +225,9 @@ def test_footer_install_is_idempotent_and_announces_state(
 
 from tests.cockpit_helpers import (  # noqa: E402
     expected_starship as _expected_starship,
-    fake_cship_on_path as _fake_cship_on_path,
     setup_cockpit_config as _setup_cockpit_config,
 )
+from fixtures import make_bin_on_path as _make_bin_on_path  # noqa: E402
 
 _STATUSLINE_CMD = "/path/to/footer.py"
 
@@ -239,7 +239,7 @@ def test_use_cship_noop_when_flag_unset(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "use_cship": False}
     )
-    _fake_cship_on_path(tmp_path, monkeypatch, present=True)
+    _make_bin_on_path(tmp_path, monkeypatch, "cship")
     cockpit_config.install_cship_statusline_if_configured(_STATUSLINE_CMD)
     assert not (tmp_path / ".claude" / "settings.json").exists()
 
@@ -248,7 +248,7 @@ def test_use_cship_raises_when_cship_missing(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "use_cship": True}
     )
-    _fake_cship_on_path(tmp_path, monkeypatch, present=False)
+    _make_bin_on_path(tmp_path, monkeypatch)
     import pytest
 
     with pytest.raises(cockpit_config.CshipNotInstalledError):
@@ -262,7 +262,7 @@ def test_use_cship_writes_footer_command(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "use_cship": True}
     )
-    _fake_cship_on_path(tmp_path, monkeypatch, present=True)
+    _make_bin_on_path(tmp_path, monkeypatch, "cship")
     cockpit_config.install_cship_statusline_if_configured(_STATUSLINE_CMD)
 
     settings = _json.loads((tmp_path / ".claude" / "settings.json").read_text())
@@ -275,7 +275,7 @@ def test_use_cship_skips_if_already_set(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "use_cship": True}
     )
-    _fake_cship_on_path(tmp_path, monkeypatch, present=True)
+    _make_bin_on_path(tmp_path, monkeypatch, "cship")
 
     claude_dir = tmp_path / ".claude"
     claude_dir.mkdir()
@@ -295,7 +295,7 @@ def test_use_cship_backs_up_existing_statusline(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "use_cship": True}
     )
-    _fake_cship_on_path(tmp_path, monkeypatch, present=True)
+    _make_bin_on_path(tmp_path, monkeypatch, "cship")
 
     claude_dir = tmp_path / ".claude"
     claude_dir.mkdir()

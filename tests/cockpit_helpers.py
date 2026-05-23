@@ -2,8 +2,8 @@
 
 Used by `tests/lib/test_config.py` (lib-level: config + statusLine seeding)
 and `tests/test_cockpit.py` (entry-point: `cockpit.main(...)` CLI dispatch).
-Both need the same setup (fake $HOME, COCKPIT_HOME, optional cship-on-PATH
-stub) — this module is the single source of truth.
+Both need the same setup (fake $HOME, COCKPIT_HOME) — this module is the
+single source of truth.
 """
 
 from __future__ import annotations
@@ -35,12 +35,3 @@ def setup_cockpit_config(tmp_path, monkeypatch, cfg: dict):
 
     importlib.reload(cockpit_config)
     return cockpit_config
-
-
-def fake_cship_on_path(tmp_path, monkeypatch, present: bool) -> None:
-    from fixtures import make_bin_on_path
-
-    if present:
-        make_bin_on_path(tmp_path, monkeypatch, "cship")
-    else:
-        make_bin_on_path(tmp_path, monkeypatch)
