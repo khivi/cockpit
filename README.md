@@ -145,10 +145,6 @@ rm -rf ~/.config/cockpit    # nuke state (your worktrees remain)
 
 Then inside Claude Code: `/plugin uninstall cockpit`.
 
-## Contributing
-
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup. Public repo — read [`AGENTS.md`](./AGENTS.md) before opening a PR.
-
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Contributing? Read [`AGENTS.md`](./AGENTS.md) first.

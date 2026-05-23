@@ -21,6 +21,17 @@ Before committing, scan for:
 - `linear.app`, `atlassian.net`, internal company domains
 - `@firstname` references that aren't GitHub handles
 
+## Setup
+
+One-time per clone:
+
+```bash
+./setup.sh                  # installs pre-commit (commit + push stages)
+pre-commit run --all-files  # smoke-test the hooks against the current tree
+```
+
+`setup.sh` requires `pre-commit` on PATH (`brew install pre-commit`). It wires both the commit-stage hook (lint/format) and the pre-push hook (version-bump + `pytest`).
+
 ## Architecture notes
 
 **Worktree + workspace inventory is derived, not stored.** Each cycle re-reads `git worktree list` and `cmux tree` rather than maintaining its own `state.json`. PR payloads *are* cached (`~/.config/cockpit/cache/<repo>__pr-<N>.json`) because they're a network round-trip; everything else is recomputed. Don't add a `state.json` for worktree/workspace identity — drift between cached identity and the real `git`/`cmux` state was the bug class this design avoids.
@@ -28,6 +39,8 @@ Before committing, scan for:
 ## Release versioning
 
 Before opening a PR, bump `.claude-plugin/plugin.json`'s `version` field (semver patch for fixes, minor for features). Stage and commit the bump with the rest of the change — do not ship a PR that leaves the version untouched.
+
+The pre-push hook (`.githooks/version-bump.py`, wired via `setup.sh`) auto-bumps `version` when commits land on a non-`main` branch with no bump yet. Manual bump is still the contract; the hook is a safety net, not a replacement.
 
 ## Test layout
 
@@ -66,8 +79,10 @@ For local dev, [direnv](https://direnv.net/) is recommended-but-optional: the re
 
 ## Enforcement
 
-The `gitleaks` pre-commit hook (`.gitleaks.toml`) blocks the regex-catchable cases at commit time: hardcoded home paths, Slack IDs, bare UUIDs, plus gitleaks' default credential ruleset. This document covers the judgment calls the regex can't reliably catch.
+Linters and formatters run via `pre-commit` — see `.pre-commit-config.yaml` for the canonical list (`ruff`, `black`, `mypy`, `shellcheck`, `shfmt`, `markdownlint`, `codespell`, `actionlint`, [`gitleaks`](https://github.com/gitleaks/gitleaks), the standard `pre-commit-hooks` suite, plus the pre-push `pytest` + version-bump pair).
+
+`gitleaks` (`.gitleaks.toml`) blocks the regex-catchable secret/identity leaks: hardcoded home paths, Slack IDs, bare UUIDs, plus gitleaks' default credential ruleset. The Privacy section above covers the judgment calls the regex can't reliably catch.
 
 ## Sync
 
-This file is the canonical source. `CLAUDE.md` imports it via `@AGENTS.md`, `.github/copilot-instructions.md` is a symlink to it, and `CONTRIBUTING.md` references it. Edit `AGENTS.md`; the rest stay in sync automatically.
+This file is the canonical source. `CLAUDE.md` imports it via `@AGENTS.md`, and `.github/copilot-instructions.md` is a symlink to it. Edit `AGENTS.md`; the rest stay in sync automatically.
