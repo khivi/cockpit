@@ -385,3 +385,218 @@ def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
     assert "skip" in err
     assert "exited 128" in err
     assert "no such remote" in err
+
+
+# ── cycle_repo phase ordering ────────────────────────────────────────────────
+
+
+def _stub_repo_cycle(tmp_path, *, headless: bool = False):
+    return cycle.RepoCycle(
+        cfg={},
+        repo_path=tmp_path,
+        owner="o",
+        name="n",
+        self_user="khivi",
+        wts=[],
+        prs=[],
+        tracked={},
+        names={},
+        cwds={},
+        merged_branches={},
+        pill_state={},
+        nudge_state={},
+        keep_stale=False,
+        no_spawn=False,
+        dry=False,
+        verbose=False,
+        headless=headless,
+    )
+
+
+def _cycle_patches(tmp_path, calls, *, headless=False):
+    ctx = _stub_repo_cycle(tmp_path, headless=headless)
+    return [
+        patch.object(cycle, "_prepare_cycle", return_value=ctx),
+        patch.object(cycle, "_write_pr_caches"),
+        patch.object(
+            cycle,
+            "_dedupe_workspaces",
+            side_effect=lambda *_a, **_kw: (calls.append("dedupe") or set()),
+        ),
+        patch.object(
+            cycle,
+            "_refresh_tracked_pills",
+            side_effect=lambda *_a, **_kw: (
+                calls.append("refresh_pills") or (True, [], [])
+            ),
+        ),
+        patch.object(
+            cycle,
+            "_handle_orphans_and_close_stale",
+            side_effect=lambda *_a, **_kw: calls.append("handle_orphans"),
+        ),
+        patch.object(
+            cycle,
+            "_spawn_missing_workspaces",
+            side_effect=lambda *_a, **_kw: calls.append("spawn_missing"),
+        ),
+        patch.object(
+            cycle,
+            "_maybe_autoclose",
+            side_effect=lambda *_a, **_kw: calls.append("autoclose"),
+        ),
+        patch.object(cycle, "log_ff_advances"),
+        patch.object(cycle, "ff_default_branch_worktrees", return_value=[]),
+    ]
+
+
+def _run_cycle_repo(no_spawn=False):
+    cycle.cycle_repo(
+        repo_entry={"name": "n", "path": "/tmp"},
+        self_user="khivi",
+        keep_stale=False,
+        no_spawn=no_spawn,
+        dry=False,
+        pr_cache={},
+        nudge_state={},
+        pill_state={},
+        verbose=False,
+        cfg={},
+    )
+
+
+def _enter_all(patches):
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    for p in patches:
+        stack.enter_context(p)
+    return stack
+
+
+def test_cycle_repo_phase_order(tmp_path):
+    calls: list[str] = []
+    with _enter_all(_cycle_patches(tmp_path, calls)):
+        _run_cycle_repo()
+    assert calls == [
+        "dedupe",
+        "refresh_pills",
+        "handle_orphans",
+        "spawn_missing",
+        "autoclose",
+    ]
+
+
+def test_cycle_repo_headless_skips_workspace_phases(tmp_path):
+    """When ctx.headless is True (cache_only backend), cycle_repo returns
+    after writing PR caches — none of the 5 workspace phases run."""
+    calls: list[str] = []
+    with _enter_all(_cycle_patches(tmp_path, calls, headless=True)):
+        _run_cycle_repo()
+    assert calls == []
+
+
+def test_cycle_repo_no_spawn_skips_spawn_phase(tmp_path):
+    calls: list[str] = []
+    with _enter_all(_cycle_patches(tmp_path, calls)):
+        _run_cycle_repo(no_spawn=True)
+    assert "spawn_missing" not in calls
+    assert calls == ["dedupe", "refresh_pills", "handle_orphans", "autoclose"]
+
+
+# ── _drain_close_requests composition: real queue + mocked teardown ──────────
+
+
+@pytest.fixture
+def drain_isolated(tmp_path, monkeypatch):
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "cockpit-home"))
+    import scripts.lib.config as cfg
+
+    importlib.reload(cfg)
+    import scripts.lib.daemon_signal as ds
+
+    importlib.reload(ds)
+    importlib.reload(cycle)
+    return cycle, ds
+
+
+def _enqueue_marker(ds_mod, repo_name="repo", ref="workspace:1"):
+    from scripts.orchestrators.teardown import TeardownRequest
+
+    return ds_mod.enqueue(
+        TeardownRequest(
+            ref=ref,
+            name="feat",
+            worktree_path=None,
+            branch="khivi/feat",
+            repo_path=None,
+            repo_name=repo_name,
+            forced=False,
+        )
+    )
+
+
+def test_drain_refused_marker_is_popped_not_requeued(drain_isolated):
+    """Teardown refuses (blockers reappeared); marker must still be popped to
+    prevent the daemon refusing the same blocker every cycle forever.
+
+    Also asserts prune_stale runs BEFORE iter_pending — stale markers must
+    not survive a drain cycle just because the live queue is non-empty.
+    """
+    cycle_mod, ds = drain_isolated
+    marker = _enqueue_marker(ds)
+    order: list[str] = []
+    real_iter_pending = ds.iter_pending
+
+    with (
+        patch.object(
+            cycle_mod.daemon_signal,
+            "prune_stale",
+            side_effect=lambda *_a, **_kw: order.append("prune") or [],
+        ),
+        patch.object(
+            cycle_mod.daemon_signal,
+            "iter_pending",
+            side_effect=lambda *_a, **_kw: (
+                order.append("iter") or real_iter_pending(*_a, **_kw)
+            ),
+        ),
+        patch.object(
+            cycle_mod,
+            "teardown",
+            return_value=(False, ["dirty: 3 uncommitted file(s)"]),
+        ),
+    ):
+        cycle_mod._drain_close_requests(dry=False)
+
+    assert not marker.exists(), "refused marker must be popped, not requeued"
+    assert ds.iter_pending() == []
+    assert order == ["prune", "iter"], f"prune must precede iter, got {order}"
+
+
+def test_drain_dry_run_leaves_refused_markers_in_queue(drain_isolated):
+    """Dry-run is read-only: refused markers stay so the user can inspect them."""
+    cycle_mod, ds = drain_isolated
+    marker = _enqueue_marker(ds)
+
+    with patch.object(
+        cycle_mod,
+        "teardown",
+        return_value=(False, ["dirty: 3 uncommitted file(s)"]),
+    ):
+        cycle_mod._drain_close_requests(dry=True)
+
+    assert marker.exists(), "dry-run must not delete refused markers"
+    assert len(ds.iter_pending()) == 1
+
+
+def test_drain_successful_teardown_pops_marker(drain_isolated):
+    """Sanity: success also pops, so the dry-run inverse really tests dry."""
+    cycle_mod, ds = drain_isolated
+    marker = _enqueue_marker(ds)
+
+    with patch.object(cycle_mod, "teardown", return_value=(True, [])):
+        cycle_mod._drain_close_requests(dry=False)
+
+    assert not marker.exists()
+    assert ds.iter_pending() == []
