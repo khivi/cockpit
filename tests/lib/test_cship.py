@@ -22,14 +22,7 @@ SHIM = REPO_ROOT / "scripts" / "bin" / "starship"
 SHIM_DIR = SHIM.parent
 
 import scripts.lib.cship as cship_mod  # noqa: E402
-
-
-def _install_fake_bin(dir_: Path, name: str) -> Path:
-    dir_.mkdir(parents=True, exist_ok=True)
-    f = dir_ / name
-    f.write_text("#!/bin/sh\nexit 0\n")
-    f.chmod(f.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return f
+from fixtures import make_bin_on_path  # noqa: E402
 
 
 # ── shim: STARSHIP_SHELL rewrite ──────────────────────────────────────────
@@ -134,9 +127,7 @@ def test_shim_no_real_starship_exits_127(tmp_path):
 @pytest.fixture
 def both_bins_installed(tmp_path, monkeypatch):
     """Plant real cship + starship executables and put them on PATH."""
-    bindir = tmp_path / "bin"
-    _install_fake_bin(bindir, "cship")
-    _install_fake_bin(bindir, "starship")
+    bindir = make_bin_on_path(tmp_path, monkeypatch, "cship", "starship")
     monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
     return bindir
 
@@ -199,9 +190,7 @@ def test_invoke_cship_errors_on_missing_cship(tmp_path, monkeypatch, capsysbinar
 
 
 def test_invoke_cship_errors_on_missing_starship(tmp_path, monkeypatch, capsysbinary):
-    bindir = tmp_path / "bin"
-    _install_fake_bin(bindir, "cship")
-    monkeypatch.setenv("PATH", str(bindir))
+    make_bin_on_path(tmp_path, monkeypatch, "cship")
     rc = cship_mod.invoke_cship(b"{}", None)
     assert rc != 0
     err = capsysbinary.readouterr().err.decode()
@@ -217,10 +206,7 @@ def test_invoke_cship_pipes_blob_and_forwards_stdout(
     """invoke_cship pipes the given blob to cship and forwards its stdout."""
     import subprocess as _sp
 
-    bindir = tmp_path / "bin"
-    _install_fake_bin(bindir, "cship")
-    _install_fake_bin(bindir, "starship")
-    monkeypatch.setenv("PATH", str(bindir))
+    make_bin_on_path(tmp_path, monkeypatch, "cship", "starship")
 
     captured = {}
 
@@ -243,10 +229,7 @@ def test_invoke_cship_pipes_blob_and_forwards_stdout(
 def test_invoke_cship_propagates_exit_code(tmp_path, monkeypatch, capsysbinary):
     import subprocess as _sp
 
-    bindir = tmp_path / "bin"
-    _install_fake_bin(bindir, "cship")
-    _install_fake_bin(bindir, "starship")
-    monkeypatch.setenv("PATH", str(bindir))
+    make_bin_on_path(tmp_path, monkeypatch, "cship", "starship")
     monkeypatch.setattr(
         "scripts.lib.cship.subprocess.run",
         lambda *a, **kw: _sp.CompletedProcess(["cship"], 17, b"", b"boom\n"),
@@ -261,10 +244,7 @@ def test_invoke_cship_no_session_id_omits_env_export(tmp_path, monkeypatch):
     """When sid is None, CSHIP_SESSION_ID must not be exported into cship's env."""
     import subprocess as _sp
 
-    bindir = tmp_path / "bin"
-    _install_fake_bin(bindir, "cship")
-    _install_fake_bin(bindir, "starship")
-    monkeypatch.setenv("PATH", str(bindir))
+    make_bin_on_path(tmp_path, monkeypatch, "cship", "starship")
     monkeypatch.delenv("CSHIP_SESSION_ID", raising=False)
     captured = {}
 

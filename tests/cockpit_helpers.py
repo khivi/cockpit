@@ -38,13 +38,9 @@ def setup_cockpit_config(tmp_path, monkeypatch, cfg: dict):
 
 
 def fake_cship_on_path(tmp_path, monkeypatch, present: bool) -> None:
-    """Pin $PATH to a tmp bin dir, optionally containing an executable
-    `cship` shim, so `shutil.which("cship")` resolves deterministically
-    against the real filesystem instead of being mocked."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
+    from fixtures import make_bin_on_path
+
     if present:
-        shim = bin_dir / "cship"
-        shim.write_text("#!/bin/sh\nexit 0\n")
-        shim.chmod(0o755)
-    monkeypatch.setenv("PATH", str(bin_dir))
+        make_bin_on_path(tmp_path, monkeypatch, "cship")
+    else:
+        make_bin_on_path(tmp_path, monkeypatch)

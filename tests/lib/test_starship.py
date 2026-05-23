@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -154,14 +153,14 @@ def test_print_rate_limit_tier(cache_dir, pct, color: Colorizer):
 
 
 def test_print_linear_extracts_ticket(_clean_git_env, tmp_path, monkeypatch):
-    _init_repo(tmp_path, branch="khivi/PRO-123-fix")
-    monkeypatch.chdir(tmp_path)
+    repo = _make_repo(tmp_path, branch="khivi/PRO-123-fix")
+    monkeypatch.chdir(repo)
     assert starship.print_linear() == "PRO-123"
 
 
 def test_print_linear_no_ticket(_clean_git_env, tmp_path, monkeypatch):
-    _init_repo(tmp_path, branch="khivi/cleanup")
-    monkeypatch.chdir(tmp_path)
+    repo = _make_repo(tmp_path, branch="khivi/cleanup")
+    monkeypatch.chdir(repo)
     assert starship.print_linear() == ""
 
 
@@ -315,83 +314,12 @@ def test_print_permission_mode(cache_dir, value, expected):
 # ── field printers: branch_identity + worktree_status ──────────────────────
 
 
-def _git(path: Path, *args: str) -> None:
-    import subprocess as sp
-
-    sp.run(["git", "-C", str(path), *args], check=True, capture_output=True)
-
-
-def _init_repo(path: Path, branch: str = "main") -> None:
-    _git(path, "init", "-q", "-b", branch)
-    _git(path, "config", "user.email", "t@t")
-    _git(path, "config", "user.name", "t")
-    (path / "f").write_text("x")
-    _git(path, "add", "f")
-    _git(path, "commit", "-q", "-m", "init")
-
-
-def _make_repo(
-    tmp_path: Path,
-    *,
-    branch: str = "feature",
-    ahead: int = 0,
-    behind: int = 0,
-    status: tuple[int, int, int] = (0, 0, 0),
-) -> Path:
-    """Build a real git repo with the requested branch + sync + dirty state.
-
-    `ahead`/`behind` are measured against `origin/<branch>`. `status` is
-    (staged, unstaged, untracked) — files are actually created so
-    `git status --porcelain` produces matching counts.
-    """
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _init_repo(repo, branch=branch)
-
-    staged, unstaged, untracked = status
-    if unstaged > 0:
-        for i in range(unstaged):
-            (repo / f"m{i}").write_text("orig")
-            _git(repo, "add", f"m{i}")
-        _git(repo, "commit", "-q", "-m", "tracked")
-
-    origin = tmp_path / "origin.git"
-    _git(tmp_path, "init", "--bare", "-q", "-b", branch, str(origin))
-    _git(repo, "remote", "add", "origin", str(origin))
-    _git(repo, "push", "-q", "-u", "origin", branch)
-
-    if behind > 0:
-        scratch = tmp_path / "scratch"
-        _git(tmp_path, "clone", "-q", str(origin), str(scratch))
-        _git(scratch, "config", "user.email", "t@t")
-        _git(scratch, "config", "user.name", "t")
-        for i in range(behind):
-            (scratch / f"b{i}").write_text(str(i))
-            _git(scratch, "add", f"b{i}")
-            _git(scratch, "commit", "-q", "-m", f"b{i}")
-        _git(scratch, "push", "-q", "origin", branch)
-        _git(repo, "fetch", "-q", "origin")
-
-    for i in range(ahead):
-        (repo / f"a{i}").write_text(str(i))
-        _git(repo, "add", f"a{i}")
-        _git(repo, "commit", "-q", "-m", f"a{i}")
-
-    if unstaged > 0:
-        for i in range(unstaged):
-            (repo / f"m{i}").write_text("dirty")
-    for i in range(staged):
-        (repo / f"s{i}").write_text(str(i))
-        _git(repo, "add", f"s{i}")
-    for i in range(untracked):
-        (repo / f"u{i}").write_text(str(i))
-
-    return repo
+from fixtures import make_git_repo as _make_repo  # noqa: E402
 
 
 def test_branch_identity_clean(_clean_git_env, tmp_path, monkeypatch):
-    _init_repo(tmp_path)
-    monkeypatch.chdir(tmp_path)
+    repo = _make_repo(tmp_path, branch="main")
+    monkeypatch.chdir(repo)
     assert starship.print_branch_identity() == slate("⎇ main")
 
 
@@ -409,8 +337,8 @@ def test_branch_identity_ahead_origin(_clean_git_env, tmp_path, monkeypatch):
 
 
 def test_worktree_status_clean(_clean_git_env, tmp_path, monkeypatch):
-    _init_repo(tmp_path)
-    monkeypatch.chdir(tmp_path)
+    repo = _make_repo(tmp_path, branch="main")
+    monkeypatch.chdir(repo)
     assert starship.print_worktree_status() == ""
 
 
@@ -458,10 +386,10 @@ def test_worktree_status_all_segments(_clean_git_env, tmp_path, monkeypatch):
 def test_worktree_status_real_repo_dirty_and_untracked(
     _clean_git_env, tmp_path, monkeypatch
 ):
-    _init_repo(tmp_path)
-    (tmp_path / "f").write_text("y")
-    (tmp_path / "new").write_text("z")
-    monkeypatch.chdir(tmp_path)
+    repo = _make_repo(tmp_path, branch="main")
+    (repo / "f").write_text("y")
+    (repo / "new").write_text("z")
+    monkeypatch.chdir(repo)
     out = starship.print_worktree_status()
     assert "✎1" in out
     assert "✚1" in out
