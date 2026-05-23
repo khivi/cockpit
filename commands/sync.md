@@ -1,5 +1,6 @@
 ---
 description: "Force the cockpit to run one reconciliation cycle now."
+argument-hint: ""
 model: haiku
 allowed-tools: Bash
 ---
