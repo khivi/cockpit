@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import run
+from .cache import find_pr_payload_by_number
 from .colors import bold, dim
+from .config import discover_repo
 from .issue_color import issue_color
 from .log_format import verb
 from .gh import PR
@@ -398,9 +400,6 @@ class WorkspaceMatch:
 
 
 def _pr_num_to_branch(pr_num: str) -> str:
-    from .cache import find_pr_payload_by_number
-    from .config import discover_repo
-
     repo_cfg = discover_repo()
     repo_name = repo_cfg.get("name") if repo_cfg else None
     payload = find_pr_payload_by_number(pr_num, repo_name=repo_name)
