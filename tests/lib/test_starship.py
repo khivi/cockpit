@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 import pytest
 
-import lib.claude as claude_mod
-import lib.starship as starship
-from lib.colors import (
+import scripts.lib.claude as claude_mod
+import scripts.lib.starship as starship
+from scripts.lib.colors import (
     Colorizer,
     amber,
     azure,
@@ -330,7 +330,7 @@ def _init_repo(path: Path) -> None:
 def _stub(
     monkeypatch, *, branch="feature", ahead=0, behind=0, status=(0, 0, 0)
 ) -> None:
-    from lib import git as git_mod
+    import scripts.lib.git as git_mod
 
     monkeypatch.setattr(starship, "current_branch", lambda _cwd: branch)
     monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: ahead)

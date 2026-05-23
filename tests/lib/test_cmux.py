@@ -9,9 +9,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from lib.cmux import ACTIONABLE_KEYS, COCKPIT_KEY, apply_pills, status_pills
-from lib.gh import PR
-from lib.git import Worktree
+from scripts.lib.cmux import ACTIONABLE_KEYS, COCKPIT_KEY, apply_pills, status_pills
+from scripts.lib.gh import PR
+from scripts.lib.git import Worktree
 
 
 def _pr(**overrides) -> PR:
@@ -60,7 +60,7 @@ def test_apply_pills_clears_legacy_managed_key():
         calls.append(args)
         return ""
 
-    with patch("lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
         apply_pills("workspace:1", _pr(), _wt())
 
     cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}
@@ -115,7 +115,7 @@ def test_apply_pills_clears_owner_key():
         calls.append(args)
         return ""
 
-    with patch("lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
         apply_pills("workspace:1", _pr(), _wt())
 
     cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}

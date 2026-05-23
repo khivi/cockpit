@@ -12,8 +12,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-from lib import git as gitlib
-from lib.git import (
+import scripts.lib.git as gitlib
+from scripts.lib.git import (
     _fetch_remote_branch,
     _has_local_branch,
     _has_remote_branch,

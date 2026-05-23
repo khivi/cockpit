@@ -14,17 +14,17 @@ import pytest
 def queue(tmp_path, monkeypatch):
     """Isolate close-request state under tmp_path and reload the module."""
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import lib.config as cfg
+    import scripts.lib.config as cfg
 
     importlib.reload(cfg)
-    import lib.close_requests as cr
+    import scripts.lib.close_requests as cr
 
     importlib.reload(cr)
     return cr
 
 
 def test_enqueue_and_iter_round_trip(queue):
-    from orchestrators.teardown import TeardownRequest
+    from scripts.orchestrators.teardown import TeardownRequest
 
     req = TeardownRequest(
         ref="workspace:7",
@@ -51,7 +51,7 @@ def test_enqueue_and_iter_round_trip(queue):
 
 
 def test_pop_removes_marker(queue):
-    from orchestrators.teardown import TeardownRequest
+    from scripts.orchestrators.teardown import TeardownRequest
 
     req = TeardownRequest(ref="workspace:1", repo_name="r")
     path = queue.enqueue(req)
@@ -61,7 +61,7 @@ def test_pop_removes_marker(queue):
 
 
 def test_iter_pending_scoped_by_repo(queue):
-    from orchestrators.teardown import TeardownRequest
+    from scripts.orchestrators.teardown import TeardownRequest
 
     queue.enqueue(TeardownRequest(ref="workspace:1", repo_name="repo-a"))
     queue.enqueue(TeardownRequest(ref="workspace:2", repo_name="repo-b"))
@@ -76,7 +76,7 @@ def test_iter_pending_scoped_by_repo(queue):
 
 
 def test_prune_stale_removes_stale_requests(queue):
-    from orchestrators.teardown import TeardownRequest
+    from scripts.orchestrators.teardown import TeardownRequest
 
     fresh = queue.enqueue(TeardownRequest(ref="workspace:fresh", repo_name="r"))
     stale = queue.enqueue(TeardownRequest(ref="workspace:stale", repo_name="r"))
@@ -92,7 +92,7 @@ def test_prune_stale_removes_stale_requests(queue):
 
 
 def test_corrupt_marker_skipped(queue, tmp_path):
-    from orchestrators.teardown import TeardownRequest
+    from scripts.orchestrators.teardown import TeardownRequest
 
     queue.enqueue(TeardownRequest(ref="workspace:1", repo_name="r"))
     (queue.STATE_DIR / "r" / "garbage.json").write_text("not json {")

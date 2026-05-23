@@ -55,11 +55,3 @@ Options:
 
 Tackle alongside the cycle extraction above so the package boundaries land in
 one PR rather than churning twice.
-
-## Repo-rooted imports (drop `mypy_path` / `pythonpath`)
-
-`pyproject.toml` currently needs `mypy_path = "scripts:tests"` and `pythonpath = ["scripts", "tests"]` because imports are package-root relative (`import lib.git`, `from cockpit_helpers import …`).
-
-Alternative: rewrite all imports as repo-rooted (`from scripts.lib import git`, `from tests.cockpit_helpers import …`). Mypy/pytest would then resolve everything from cwd with zero extra config.
-
-Trade-off: cleaner `pyproject.toml` vs. touching every `import lib.X` site across ~40 files + every test, and treating `scripts/`+`tests/` as packages they aren't really. Currently judged not worth the churn; revisit if more `tests/` helpers need cross-dir imports.

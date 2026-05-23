@@ -61,11 +61,21 @@ import re
 import sys
 from pathlib import Path
 
-from lib.cmux import cmux, require_workspace_binary, workspace_names
-from lib.config import discover_repo, find_repo_by_name, find_repo_by_nwo
-from lib.daemon import kick_running
-from lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch
-from lib.git import (
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from scripts.lib.cmux import (
+    cmux,
+    require_workspace_binary,
+    workspace_names,
+)  # noqa: E402
+from scripts.lib.config import (
+    discover_repo,
+    find_repo_by_name,
+    find_repo_by_nwo,
+)  # noqa: E402
+from scripts.lib.daemon import kick_running  # noqa: E402
+from scripts.lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch  # noqa: E402
+from scripts.lib.git import (  # noqa: E402
     branch_exists,
     collision_free,
     create_new_branch_worktree,
@@ -73,8 +83,8 @@ from lib.git import (
     slugify,
     worktree_for_branch,
 )
-from lib.prompts import claude_command
-from lib.repos import repo_names
+from scripts.lib.prompts import claude_command  # noqa: E402
+from scripts.lib.repos import repo_names  # noqa: E402
 
 
 def _die(msg: str, code: int = 1) -> int:

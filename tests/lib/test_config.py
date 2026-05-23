@@ -11,15 +11,11 @@ update — long after the test would have flagged it if we had one.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 DEFAULTS = Path(__file__).resolve().parent.parent.parent / "scripts" / "defaults"
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-
-import lib.config as config_mod  # noqa: E402
+import scripts.lib.config as config_mod  # noqa: E402
 
 
 def _strip_comments(toml_body: str) -> str:
@@ -227,7 +223,7 @@ def test_footer_install_is_idempotent_and_announces_state(
     assert starship_path.read_bytes() == starship_bytes
 
 
-from cockpit_helpers import (  # noqa: E402
+from tests.cockpit_helpers import (  # noqa: E402
     expected_starship as _expected_starship,
     setup_cockpit_config as _setup_cockpit_config,
     stub_cship_on_path as _stub_cship_on_path,

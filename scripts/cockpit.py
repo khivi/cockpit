@@ -37,9 +37,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lib.cmux import (  # noqa: E402
+from scripts.lib.cmux import (  # noqa: E402
     BLUE,
     LOOP_ICON,
     LOOP_KEY,
@@ -61,7 +61,7 @@ from lib.cmux import (  # noqa: E402
     workspace_is_idle,
     workspace_state,
 )
-from lib.colors import (  # noqa: E402
+from scripts.lib.colors import (  # noqa: E402
     bold,
     blue,
     cyan,
@@ -70,31 +70,31 @@ from lib.colors import (  # noqa: E402
     red,
     yellow,
 )
-from lib.issue_color import issue_color  # noqa: E402
-from lib.log_format import verb  # noqa: E402
-from lib.config import (  # noqa: E402
+from scripts.lib.issue_color import issue_color  # noqa: E402
+from scripts.lib.log_format import verb  # noqa: E402
+from scripts.lib.config import (  # noqa: E402
     ensure_state_dirs,
     load_config,
     install_cship_default_config,
     install_cship_statusline_if_configured,
     install_starship_default_config,
 )
-from lib.daemon import run_watcher  # noqa: E402
-from lib.cache import (  # noqa: E402
+from scripts.lib.daemon import run_watcher  # noqa: E402
+from scripts.lib.cache import (  # noqa: E402
     write_base_ahead,
     write_base_distance,
     write_branch_pr_cache,
     write_pr_cache,
 )
-from lib import close_requests  # noqa: E402
-from lib.gh import (  # noqa: E402
+import scripts.lib.close_requests as close_requests  # noqa: E402
+from scripts.lib.gh import (  # noqa: E402
     PR,
     fetch_merged_branches,
     gh_self_user,
     list_relevant_prs,
     repo_nwo,
 )
-from lib.git import (  # noqa: E402
+from scripts.lib.git import (  # noqa: E402
     Worktree,
     ahead_of_base,
     behind_of_base,
@@ -104,7 +104,7 @@ from lib.git import (  # noqa: E402
     origin_head_branch,
     worktrees,
 )
-from orchestrators.teardown import TeardownRequest, teardown  # noqa: E402
+from scripts.orchestrators.teardown import TeardownRequest, teardown  # noqa: E402
 
 # ── constants ───────────────────────────────────────────────────────────────
 MAIN_BRANCHES = {"master", "main"}

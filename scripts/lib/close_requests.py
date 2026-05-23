@@ -21,7 +21,7 @@ import os
 import time
 from pathlib import Path
 
-from orchestrators.teardown import TeardownRequest
+from scripts.orchestrators.teardown import TeardownRequest
 
 from .config import COCKPIT_HOME
 

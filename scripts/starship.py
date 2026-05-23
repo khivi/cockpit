@@ -32,11 +32,11 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lib.cache import refresh_pr_checks, refresh_pr_data, warm_all  # noqa: E402
-from lib.git import current_branch  # noqa: E402
-from lib.starship import (  # noqa: E402
+from scripts.lib.cache import refresh_pr_checks, refresh_pr_data, warm_all  # noqa: E402
+from scripts.lib.git import current_branch  # noqa: E402
+from scripts.lib.starship import (  # noqa: E402
     print_branch_identity,
     print_context,
     print_linear,

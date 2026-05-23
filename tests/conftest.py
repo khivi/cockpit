@@ -90,11 +90,11 @@ def cockpit_repo(tmp_path, monkeypatch) -> RepoFixture:
     # COCKPIT_HOME is read at module-import time in lib.config; reload so the
     # env override actually takes effect.
     import importlib
-    import lib.config as cockpit_config
+    import scripts.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     # spawn imports find_repo_by_name from lib.config; refresh that binding.
-    import spawn
+    import scripts.spawn as spawn
 
     importlib.reload(spawn)
 

@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SHIM = REPO_ROOT / "scripts" / "bin" / "starship"
 SHIM_DIR = SHIM.parent
 
-import lib.cship as cship_mod  # noqa: E402
+import scripts.lib.cship as cship_mod  # noqa: E402
 
 
 # ── shim: STARSHIP_SHELL rewrite ──────────────────────────────────────────
@@ -216,7 +216,7 @@ def test_invoke_cship_pipes_blob_and_forwards_stdout(monkeypatch, capsysbinary):
         captured["env"] = env
         return _sp.CompletedProcess(cmd, 0, stdout=b"styled-output\n", stderr=b"")
 
-    monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
+    monkeypatch.setattr("scripts.lib.cship.subprocess.run", fake_run)
 
     assert cship_mod.invoke_cship(b'{"hello":"world"}', "sess1") == 0
     assert captured["cmd"] == ["cship"]
@@ -231,7 +231,7 @@ def test_invoke_cship_propagates_exit_code(monkeypatch, capsysbinary):
 
     monkeypatch.setattr(cship_mod.shutil, "which", lambda name: "/fake/cship")
     monkeypatch.setattr(
-        "lib.cship.subprocess.run",
+        "scripts.lib.cship.subprocess.run",
         lambda *a, **kw: _sp.CompletedProcess(["cship"], 17, b"", b"boom\n"),
     )
 
@@ -252,6 +252,6 @@ def test_invoke_cship_no_session_id_omits_env_export(monkeypatch):
         captured["env"] = env
         return _sp.CompletedProcess(cmd, 0, b"", b"")
 
-    monkeypatch.setattr("lib.cship.subprocess.run", fake_run)
+    monkeypatch.setattr("scripts.lib.cship.subprocess.run", fake_run)
     cship_mod.invoke_cship(b"{}", None)
     assert "CSHIP_SESSION_ID" not in captured["env"]

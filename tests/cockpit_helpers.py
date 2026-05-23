@@ -31,7 +31,7 @@ def setup_cockpit_config(tmp_path, monkeypatch, cfg: dict):
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     (tmp_path / "config.json").write_text(_json.dumps(cfg))
 
-    import lib.config as cockpit_config
+    import scripts.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     return cockpit_config
@@ -41,6 +41,6 @@ def stub_cship_on_path(monkeypatch, present: bool) -> None:
     """Replace `shutil.which("cship")` inside lib.config so tests don't depend
     on the host having (or not having) a real cship binary on $PATH."""
     monkeypatch.setattr(
-        "lib.config.shutil.which",
+        "scripts.lib.config.shutil.which",
         lambda name: "/fake/bin/cship" if (present and name == "cship") else None,
     )

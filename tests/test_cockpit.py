@@ -14,9 +14,9 @@ from unittest.mock import patch
 
 import pytest
 
-import cockpit
-from lib.git import Worktree
-from orchestrators import teardown as teardown_mod
+import scripts.cockpit as cockpit
+from scripts.lib.git import Worktree
+from scripts.orchestrators import teardown as teardown_mod
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -132,13 +132,13 @@ def test_autoclose_remove_failure_still_closes_cmux_and_skips_cache_delete(tmp_p
 def reap_isolated(tmp_path, monkeypatch):
     """Isolated COCKPIT_HOME and reloaded modules so each test starts fresh."""
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "cockpit-home"))
-    import lib.config as cfg
+    import scripts.lib.config as cfg
 
     importlib.reload(cfg)
-    import lib.close_requests as cr
+    import scripts.lib.close_requests as cr
 
     importlib.reload(cr)
-    import cockpit as cockpit_mod
+    import scripts.cockpit as cockpit_mod
 
     importlib.reload(cockpit_mod)
     return cockpit_mod, cr
@@ -323,7 +323,7 @@ def test_reap_skips_workspace_matched_by_name(reap_isolated, tmp_path):
 # ────────────────────────────────────────────────────────────────────────────
 
 
-from cockpit_helpers import (  # noqa: E402
+from tests.cockpit_helpers import (  # noqa: E402
     expected_starship as _expected_starship,
     setup_cockpit_config as _setup_cockpit_config,
     stub_cship_on_path as _stub_cship_on_path,
@@ -341,7 +341,7 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
     _stub_cship_on_path(monkeypatch, present=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    import cockpit
+    import scripts.cockpit as cockpit
 
     importlib.reload(cockpit)
 
@@ -374,7 +374,7 @@ def test_cli_once_does_not_touch_footer_files(tmp_path, monkeypatch):
     _stub_cship_on_path(monkeypatch, present=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    import cockpit
+    import scripts.cockpit as cockpit
 
     importlib.reload(cockpit)
     monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
@@ -394,7 +394,7 @@ def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
     _stub_cship_on_path(monkeypatch, present=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    import cockpit
+    import scripts.cockpit as cockpit
 
     importlib.reload(cockpit)
     monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
@@ -414,7 +414,7 @@ def test_cli_once_does_not_raise_when_cship_missing(tmp_path, monkeypatch):
     _stub_cship_on_path(monkeypatch, present=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    import cockpit
+    import scripts.cockpit as cockpit
 
     importlib.reload(cockpit)
     monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})

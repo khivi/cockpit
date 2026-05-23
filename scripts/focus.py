@@ -6,10 +6,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lib.cmux import cmux, require_workspace_binary, resolve_workspace  # noqa: E402
-from lib.config import discover_repo  # noqa: E402
+from scripts.lib.cmux import (
+    cmux,
+    require_workspace_binary,
+    resolve_workspace,
+)  # noqa: E402
+from scripts.lib.config import discover_repo  # noqa: E402
 
 
 def main() -> int:

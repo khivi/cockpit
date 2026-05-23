@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from orchestrators import teardown as teardown_mod
-from orchestrators.teardown import TeardownRequest, probe_blockers, teardown
+from scripts.orchestrators import teardown as teardown_mod
+from scripts.orchestrators.teardown import TeardownRequest, probe_blockers, teardown
 
 
 def _patch_all(*, dirty=0, unpushed=0, pr_state=None):
@@ -164,7 +164,7 @@ def test_teardown_advances_default_branch_worktree(tmp_path, capsys):
         repo_name="repo",
         forced=True,
     )
-    from lib.git import Worktree
+    from scripts.lib.git import Worktree
 
     main_wt = Worktree(path=tmp_path / "main", branch="main")
     with (

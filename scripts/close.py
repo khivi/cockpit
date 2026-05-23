@@ -19,19 +19,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lib import close_requests  # noqa: E402
-from lib.cmux import (  # noqa: E402
+import scripts.lib.close_requests as close_requests  # noqa: E402
+from scripts.lib.cmux import (  # noqa: E402
     require_workspace_binary,
     resolve_workspace,
     workspace_cwds,
     workspace_names,
 )
-from lib.config import discover_repo  # noqa: E402
-from lib.daemon import kick_running  # noqa: E402
-from lib.git import worktrees  # noqa: E402
-from orchestrators.teardown import (  # noqa: E402
+from scripts.lib.config import discover_repo  # noqa: E402
+from scripts.lib.daemon import kick_running  # noqa: E402
+from scripts.lib.git import worktrees  # noqa: E402
+from scripts.orchestrators.teardown import (  # noqa: E402
     TeardownRequest,
     probe_blockers,
     teardown,
@@ -94,7 +94,7 @@ def _match_from_cwd(repo_dir: Path):
         )
     ref = refs[0]
 
-    from lib.cmux import WorkspaceMatch
+    from scripts.lib.cmux import WorkspaceMatch
 
     return WorkspaceMatch(ref=ref, name=names.get(ref, ""), worktree=wt)
 
