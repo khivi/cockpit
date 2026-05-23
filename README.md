@@ -36,18 +36,18 @@ Inside Claude Code:
 /plugin install cockpit@khivi-cockpit
 ```
 
-That installs the plugin. To actually run the daemon, start it once by hand from inside a Claude Code session (where `$CLAUDE_PLUGIN_ROOT` is set):
+That installs the slash commands. You can use `/cockpit:new` and the rest immediately — see [Quick start](#quick-start) below.
+
+For live PR/CI status to flow into `/cockpit:list` and the statusline, you also need to start the polling daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/cockpit.py --watch    # long-running
-${CLAUDE_PLUGIN_ROOT}/scripts/cockpit.py --once     # single cycle
+${CLAUDE_PLUGIN_ROOT}/scripts/cockpit.py --watch    # long-running poller
+${CLAUDE_PLUGIN_ROOT}/scripts/cockpit.py --once     # single cycle, then exit
 ```
 
-From a plain shell, look the path up once (`echo $CLAUDE_PLUGIN_ROOT` inside Claude Code, then save it as an alias).
+`$CLAUDE_PLUGIN_ROOT` is set inside Claude Code sessions. From a plain shell, `echo $CLAUDE_PLUGIN_ROOT` from a Claude session once and save it as an alias. The daemon is a foreground process — close the terminal, it dies; run it in `tmux`/`cmux`/`screen` for persistence.
 
 First run auto-creates `~/.config/cockpit/`, seeds `config.json`, and prompts once to wire Claude Code's statusLine to the cockpit footer.
-
-> **No daemon auto-start.** Cockpit does not install a LaunchAgent or systemd unit. Run it yourself in a terminal or cmux tab — silent failures are worse than a visible log.
 
 ## Quick start
 
@@ -62,6 +62,16 @@ Cockpit auto-registers the GitHub repo, creates a worktree at `<parent>/fix-logi
 Open the PR however you normally do. Once it exists, cockpit picks it up on the next daemon cycle (default 5 minutes; force it with `/cockpit:sync`).
 
 When the PR merges and the worktree is clean, cockpit tears both down automatically (configurable — see [Defaults](#defaults)).
+
+### Is it working?
+
+| Check | Expected |
+|---|---|
+| `cat ~/.config/cockpit/cockpit.pid` | a running PID; absent or stale → daemon not running |
+| `/cockpit:list` | your managed worktrees show with PR / CI / review columns populated |
+| `/cockpit:sync` | forces a poll; PR data should refresh within a few seconds |
+
+If `/cockpit:list` shows `—` everywhere, the daemon hasn't completed a cycle yet — wait for the polling interval or run `/cockpit:sync`. If pidfile exists but `/cockpit:list` is stale, tail the `--watch` terminal for the cycle error.
 
 ## Commands
 
@@ -96,7 +106,26 @@ State and config live under `~/.config/cockpit/`:
 └── cockpit.pid
 ```
 
-Edit `config.json` to register repos manually, or just run `/cockpit:new` and let cockpit add the current repo for you. See [`config.example.json`](config.example.json) for the schema.
+Edit `config.json` to register repos manually, or just run `/cockpit:new` and let cockpit add the current repo for you. Minimal shape:
+
+```json
+{
+  "repos": [
+    {
+      "name": "myrepo",
+      "path": "/absolute/path/to/main/repo",
+      "branch_prefix": "yourusername/",
+      "default_base": "main"
+    }
+  ],
+  "poll_interval_seconds": 300,
+  "auto_cleanup_on_merge": true,
+  "use_cship": false,
+  "tool": "auto"
+}
+```
+
+Full schema with every optional key in [`config.example.json`](config.example.json).
 
 The cockpit logs to stderr — visible in the `--watch` terminal. No log file is written.
 
@@ -112,7 +141,16 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 
 ## Claude Code statusline (optional)
 
-Cockpit can render PR/CI/review state into the Claude Code statusline via [`cship`](https://github.com/khivi/cship) and [`starship`](https://starship.rs/). To opt in:
+PR/CI/review state surfaces under the Claude Code prompt — model + context + rate-limit on line 1, branch identity + PR status on line 2:
+
+```text
+🤖 Opus 4.7   🧠 7%/1M   ⌛ 4%/5h   khivi/fix-login   ✓ clean   14:32
+TICKET-123   APPROVED   #9999   ✓   Add login flow
+```
+
+Both lines collapse cleanly: line 2 disappears when there's no Linear ticket and no PR for the current branch; individual pills hide when their data is missing. Rendered by [`cship`](https://github.com/khivi/cship) + [`starship`](https://starship.rs/) reading cockpit's PR cache — no network calls in the prompt path.
+
+To opt in:
 
 1. Install `cship` and `starship` on `PATH`.
 2. Set `use_cship: true` in `~/.config/cockpit/config.json`.
