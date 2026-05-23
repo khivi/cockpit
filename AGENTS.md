@@ -29,10 +29,18 @@ Before opening a PR, bump `.claude-plugin/plugin.json`'s `version` field (semver
 
 Tests mirror sources one-to-one: `scripts/<path>/<name>.py` is exercised by `tests/<path>/test_<name>.py`. New modules get their own `test_<name>.py`; do not append tests for a new source file to an unrelated test module. Shell hooks under `hooks/` are the only exception — they live as `tests/test_<hook>.py` without a Python source mirror.
 
-## Test style: leaves vs orchestrators
+## Test style by layer
 
 - **Leaf modules** (`scripts/lib/*` wrapping `git`, `gh`, `cmux`, `shutil.which`, `subprocess.run`, etc.) test against the real tool on `tmp_path`. Stubbing the underlying command tests the stub, not the integration.
 - **Orchestrators** (`scripts/orchestrators/*`) compose those leaves. Tests mock collaborator calls (`patch.object(teardown_mod, "remove_worktree", …)`) to assert ordering, guards, and gating without re-validating the leaves underneath.
+- **CLI entry-points** (`tests/test_<script>.py` for `scripts/{close,cockpit,spawn}.py`) test the argparse layer and dispatch. Mock at the orchestrator boundary (`patch("scripts.cockpit.teardown", …)`) — the layer below is covered by orchestrator tests, so re-exercising it here adds noise.
+- **Shell hooks** (`tests/test_<hook>.py` for `hooks/*.sh`) drive the real script via `subprocess.run` against a `tmp_path` setup. No Python source mirror exists.
+- **End-to-end** (`tests/e2e/*`) run the full pipeline against real binaries. No mocking. These are the slowest and most fragile — reserve for genuinely cross-layer behavior (e.g. `cship` + `starship` integration).
+
+Shared test helpers live at `tests/` root:
+
+- `tests/fixtures.py` — real-state builders (`make_bin_on_path`, `make_git_repo`, `setup_cockpit_config`)
+- `tests/asserts.py` — assertion helpers (`expected_starship`)
 
 ## Python dev env (uv)
 
