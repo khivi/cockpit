@@ -29,6 +29,11 @@ Before opening a PR, bump `.claude-plugin/plugin.json`'s `version` field (semver
 
 Tests mirror sources one-to-one: `scripts/<path>/<name>.py` is exercised by `tests/<path>/test_<name>.py`. New modules get their own `test_<name>.py`; do not append tests for a new source file to an unrelated test module. Shell hooks under `hooks/` are the only exception — they live as `tests/test_<hook>.py` without a Python source mirror.
 
+## Test style: leaves vs orchestrators
+
+- **Leaf modules** (`scripts/lib/*` wrapping `git`, `gh`, `cmux`, `shutil.which`, `subprocess.run`, etc.) test against the real tool on `tmp_path`. Stubbing the underlying command tests the stub, not the integration.
+- **Orchestrators** (`scripts/orchestrators/*`) compose those leaves. Tests mock collaborator calls (`patch.object(teardown_mod, "remove_worktree", …)`) to assert ordering, guards, and gating without re-validating the leaves underneath.
+
 ## Python dev env (uv)
 
 `pyproject.toml` declares dev dependencies under `[dependency-groups].dev`. Each worktree gets its own `.venv/` via `uv sync` — the venvs are independent, but installs are cheap because uv hardlinks from its global content-addressed cache (`~/.cache/uv/`).
