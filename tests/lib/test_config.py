@@ -248,7 +248,9 @@ def test_use_cship_raises_when_cship_missing(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "use_cship": True}
     )
-    _make_bin_on_path(tmp_path, monkeypatch)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
     import pytest
 
     with pytest.raises(cockpit_config.CshipNotInstalledError):

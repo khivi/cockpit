@@ -90,7 +90,8 @@ def test_cli_once_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, 
     cship on PATH must hard-fail `--once` (and `--watch`, `--footer`) — same
     contract as the standalone `lib.preflight.preflight()` test suite."""
     _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
-    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "starship")
+    bin_dir = _make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "starship")
+    monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
     import scripts.cockpit as cockpit

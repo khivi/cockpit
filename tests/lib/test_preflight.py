@@ -24,7 +24,8 @@ def test_preflight_passes_when_required_bins_present(tmp_path, monkeypatch, caps
 
 
 def test_preflight_exits_when_gh_missing(tmp_path, monkeypatch, capsys):
-    make_bin_on_path(tmp_path, monkeypatch, "git", "cmux")
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "git", "cmux")
+    monkeypatch.setenv("PATH", str(bin_dir))
     with pytest.raises(SystemExit) as exc:
         preflight({})
     assert exc.value.code == 2
@@ -32,7 +33,8 @@ def test_preflight_exits_when_gh_missing(tmp_path, monkeypatch, capsys):
 
 
 def test_preflight_exits_when_git_missing(tmp_path, monkeypatch, capsys):
-    make_bin_on_path(tmp_path, monkeypatch, "gh", "cmux")
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "gh", "cmux")
+    monkeypatch.setenv("PATH", str(bin_dir))
     with pytest.raises(SystemExit) as exc:
         preflight({})
     assert exc.value.code == 2
@@ -42,7 +44,8 @@ def test_preflight_exits_when_git_missing(tmp_path, monkeypatch, capsys):
 def test_preflight_exits_when_use_cship_and_cship_missing(
     tmp_path, monkeypatch, capsys
 ):
-    make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cmux", "starship")
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cmux", "starship")
+    monkeypatch.setenv("PATH", str(bin_dir))
     with pytest.raises(SystemExit) as exc:
         preflight({"use_cship": True})
     assert exc.value.code == 2
@@ -54,7 +57,8 @@ def test_preflight_exits_when_use_cship_and_cship_missing(
 def test_preflight_exits_when_use_cship_and_starship_missing(
     tmp_path, monkeypatch, capsys
 ):
-    make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cmux", "cship")
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cmux", "cship")
+    monkeypatch.setenv("PATH", str(bin_dir))
     with pytest.raises(SystemExit) as exc:
         preflight({"use_cship": True})
     assert exc.value.code == 2
@@ -72,20 +76,23 @@ def test_preflight_skips_cship_check_when_use_cship_false(
 
 
 def test_preflight_warns_when_only_limux_present(tmp_path, monkeypatch, capsys):
-    make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "limux")
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "limux")
+    monkeypatch.setenv("PATH", str(bin_dir))
     preflight({"tool": "auto"})
     err = capsys.readouterr().err
     assert "cmux not found — using limux" in err
 
 
 def test_preflight_warns_when_no_workspace_backend(tmp_path, monkeypatch, capsys):
-    make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    monkeypatch.setenv("PATH", str(bin_dir))
     preflight({"tool": "auto"})
     err = capsys.readouterr().err
     assert "no workspace tool on PATH" in err
 
 
 def test_preflight_silent_when_tool_explicitly_set(tmp_path, monkeypatch, capsys):
-    make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    monkeypatch.setenv("PATH", str(bin_dir))
     preflight({"tool": "none"})
     assert capsys.readouterr().err == ""

@@ -15,7 +15,7 @@ def make_bin_on_path(tmp_path: Path, monkeypatch, *names: str) -> Path:
         f = bin_dir / name
         f.write_text("#!/bin/sh\nexit 0\n")
         f.chmod(f.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return bin_dir
 
 

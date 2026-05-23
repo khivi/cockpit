@@ -128,7 +128,6 @@ def test_shim_no_real_starship_exits_127(tmp_path):
 def both_bins_installed(tmp_path, monkeypatch):
     """Plant real cship + starship executables and put them on PATH."""
     bindir = make_bin_on_path(tmp_path, monkeypatch, "cship", "starship")
-    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
     return bindir
 
 
@@ -190,7 +189,8 @@ def test_invoke_cship_errors_on_missing_cship(tmp_path, monkeypatch, capsysbinar
 
 
 def test_invoke_cship_errors_on_missing_starship(tmp_path, monkeypatch, capsysbinary):
-    make_bin_on_path(tmp_path, monkeypatch, "cship")
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "cship")
+    monkeypatch.setenv("PATH", str(bin_dir))
     rc = cship_mod.invoke_cship(b"{}", None)
     assert rc != 0
     err = capsysbinary.readouterr().err.decode()
