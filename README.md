@@ -79,10 +79,10 @@ When the PR merges and the worktree is clean, cockpit tears both down automatica
 Example `/cockpit:list` output:
 
 ```text
-REPO          BRANCH              PR     CI       REVIEW          UPDATED
-myrepo        feature/foo         #123   pass     approved        2m ago
-myrepo        fix/bar             #124   fail     changes-req     1h ago
-otherrepo     experiment/baz      —      —        —               3d ago  (no PR)
+REPO          BRANCH                          PR      CI        REVIEW                UPDATED
+myrepo        feature/foo                     #123    pass      approved              2025-05-17T14:23:01
+myrepo        fix/bar                         #124    fail      changes-req 💬3       2025-05-17T13:10:44
+otherrepo     experiment/baz                  —       —         —                     —                    (no PR)
 ```
 
 ## Configuration

@@ -16,10 +16,10 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/list.py
 ## Output
 
 ```text
-REPO          BRANCH              PR     CI       REVIEW              UPDATED
-myrepo        feature/foo         #123   pass     approved            2025-05-17T14:23:01
-myrepo        fix/bar             #124   fail     changes-req 💬3     2025-05-17T13:10:44
-otherrepo     experiment/baz      —      —        —                   2025-05-14T09:05:22  (no PR)
+REPO          BRANCH                          PR      CI        REVIEW                UPDATED
+myrepo        feature/foo                     #123    pass      approved              2025-05-17T14:23:01
+myrepo        fix/bar                         #124    fail      changes-req 💬3       2025-05-17T13:10:44
+otherrepo     experiment/baz                  —       —         —                     2025-05-14T09:05:22 (no workspace)
 ```
 
 Drift markers appended where they apply:

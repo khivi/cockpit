@@ -39,7 +39,7 @@ Tests mirror sources one-to-one: `scripts/<path>/<name>.py` is exercised by `tes
 
 Shared test helpers live at `tests/` root:
 
-- `tests/fixtures.py` — real-state builders (`make_bin_on_path`, `make_git_repo`, `setup_cockpit_config`)
+- `tests/fixtures.py` — real-state builders (`make_bin_on_path`, `make_shim_on_path`, `make_git_repo`, `setup_cockpit_config`)
 - `tests/asserts.py` — assertion helpers (`expected_starship`)
 
 ## Python dev env (uv)
