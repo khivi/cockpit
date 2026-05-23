@@ -37,10 +37,14 @@ def setup_cockpit_config(tmp_path, monkeypatch, cfg: dict):
     return cockpit_config
 
 
-def stub_cship_on_path(monkeypatch, present: bool) -> None:
-    """Replace `shutil.which("cship")` inside lib.config so tests don't depend
-    on the host having (or not having) a real cship binary on $PATH."""
-    monkeypatch.setattr(
-        "scripts.lib.config.shutil.which",
-        lambda name: "/fake/bin/cship" if (present and name == "cship") else None,
-    )
+def fake_cship_on_path(tmp_path, monkeypatch, present: bool) -> None:
+    """Pin $PATH to a tmp bin dir, optionally containing an executable
+    `cship` shim, so `shutil.which("cship")` resolves deterministically
+    against the real filesystem instead of being mocked."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    if present:
+        shim = bin_dir / "cship"
+        shim.write_text("#!/bin/sh\nexit 0\n")
+        shim.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))

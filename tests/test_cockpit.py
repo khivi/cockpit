@@ -11,8 +11,8 @@ import json as _json
 
 from tests.cockpit_helpers import (
     expected_starship as _expected_starship,
+    fake_cship_on_path as _fake_cship_on_path,
     setup_cockpit_config as _setup_cockpit_config,
-    stub_cship_on_path as _stub_cship_on_path,
 )
 
 
@@ -21,7 +21,7 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "use_cship": True}
     )
-    _stub_cship_on_path(monkeypatch, present=True)
+    _fake_cship_on_path(tmp_path, monkeypatch, present=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
     import scripts.cockpit as cockpit
@@ -52,7 +52,7 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
 def test_cli_once_does_not_touch_footer_files(tmp_path, monkeypatch):
     """`--once` is pure reconcile — never seeds either toml or writes statusLine."""
     _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
-    _stub_cship_on_path(monkeypatch, present=True)
+    _fake_cship_on_path(tmp_path, monkeypatch, present=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
     import scripts.cockpit as cockpit
@@ -70,7 +70,7 @@ def test_cli_once_does_not_touch_footer_files(tmp_path, monkeypatch):
 def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
     """`--watch` is pure reconcile — never seeds either toml or writes statusLine."""
     _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
-    _stub_cship_on_path(monkeypatch, present=True)
+    _fake_cship_on_path(tmp_path, monkeypatch, present=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
     import scripts.cockpit as cockpit
@@ -88,7 +88,7 @@ def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
 def test_cli_once_does_not_raise_when_cship_missing(tmp_path, monkeypatch):
     """`--once` must not invoke the cship-on-PATH check; missing cship is a `--footer` concern."""
     _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
-    _stub_cship_on_path(monkeypatch, present=False)
+    _fake_cship_on_path(tmp_path, monkeypatch, present=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
     import scripts.cockpit as cockpit
