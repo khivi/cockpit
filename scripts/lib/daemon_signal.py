@@ -32,21 +32,38 @@ from .config import COCKPIT_HOME, PID_FILE
 
 
 def kick_running(*, quiet: bool = False) -> bool:
-    """SIGUSR1 a running watcher. True if signalled, False if no live pidfile.
+    """SIGUSR1 a running watcher. True if signalled, False otherwise.
+
+    Differentiates failure modes so transient signal errors don't masquerade
+    as "no daemon":
+
+      - No pidfile → return False quietly.
+      - Stale pidfile (ProcessLookupError) → unlink, return False quietly.
+      - Corrupt pidfile (ValueError) → warn to stderr, return False.
+      - Other OSError (e.g. EPERM) → surface the cause to stderr, return False.
 
     `quiet=True` suppresses the success print so callers (e.g. spawn.py) can
     keep their own stdout clean.
     """
     if not PID_FILE.exists():
         return False
+    raw = PID_FILE.read_text().strip()
     try:
-        pid = int(PID_FILE.read_text().strip())
-        os.kill(pid, signal.SIGUSR1)
-        if not quiet:
-            print(f"kicked cockpit pid={pid}")
-        return True
-    except (ProcessLookupError, ValueError, OSError):
+        pid = int(raw)
+    except ValueError as e:
+        print(f"cockpit: corrupt pidfile (raw={raw!r}): {e}", file=sys.stderr)
         return False
+    try:
+        os.kill(pid, signal.SIGUSR1)
+    except ProcessLookupError:
+        PID_FILE.unlink(missing_ok=True)
+        return False
+    except OSError as e:
+        print(f"cockpit: cannot signal daemon pid={pid}: {e}", file=sys.stderr)
+        return False
+    if not quiet:
+        print(f"kicked cockpit pid={pid}")
+    return True
 
 
 def sync(once_fn: Callable[[], int]) -> int:
@@ -119,7 +136,11 @@ def enqueue(req: TeardownRequest) -> Path:
 def _read_marker(path: Path) -> TeardownRequest | None:
     try:
         data = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as e:
+        print(
+            f"cockpit: skipping corrupt close-request marker {path}: {e}",
+            file=sys.stderr,
+        )
         return None
     wt_path = data.get("worktree_path")
     repo_path = data.get("repo_path")

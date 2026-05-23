@@ -95,7 +95,7 @@ def test_prune_stale_removes_stale_requests(signal_mod):
     assert fresh.exists()
 
 
-def test_corrupt_marker_skipped(signal_mod):
+def test_corrupt_marker_skipped(signal_mod, capsys):
     from scripts.orchestrators.teardown import TeardownRequest
 
     signal_mod.enqueue(TeardownRequest(ref="workspace:1", repo_name="r"))
@@ -103,6 +103,9 @@ def test_corrupt_marker_skipped(signal_mod):
     pending = signal_mod.iter_pending()
     assert len(pending) == 1
     assert pending[0][1].ref == "workspace:1"
+    err = capsys.readouterr().err
+    assert "skipping corrupt close-request marker" in err
+    assert "garbage.json" in err
 
 
 # ── SIGUSR1 kick / SIGTERM stop ─────────────────────────────────────────────
@@ -124,7 +127,7 @@ def test_kick_running_signals_pid(signal_mod, monkeypatch):
     assert sent == [(4242, signal.SIGUSR1)]
 
 
-def test_kick_running_dead_pid_returns_false(signal_mod, monkeypatch):
+def test_kick_running_dead_pid_unlinks_pidfile(signal_mod, monkeypatch, capsys):
     from scripts.lib.config import PID_FILE
 
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -135,14 +138,35 @@ def test_kick_running_dead_pid_returns_false(signal_mod, monkeypatch):
 
     monkeypatch.setattr(os, "kill", boom)
     assert signal_mod.kick_running(quiet=True) is False
+    assert not PID_FILE.exists()
+    assert capsys.readouterr().err == ""
 
 
-def test_kick_running_unreadable_pidfile_returns_false(signal_mod):
+def test_kick_running_corrupt_pidfile_warns(signal_mod, capsys):
     from scripts.lib.config import PID_FILE
 
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text("not-an-int")
     assert signal_mod.kick_running(quiet=True) is False
+    err = capsys.readouterr().err
+    assert "corrupt pidfile" in err
+    assert "not-an-int" in err
+
+
+def test_kick_running_permission_error_surfaces(signal_mod, monkeypatch, capsys):
+    from scripts.lib.config import PID_FILE
+
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text("4242")
+
+    def boom(_pid, _sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "kill", boom)
+    assert signal_mod.kick_running(quiet=True) is False
+    err = capsys.readouterr().err
+    assert "cannot signal daemon pid=4242" in err
+    assert "not permitted" in err
 
 
 def test_stop_running_no_pidfile_returns_zero(signal_mod, capsys):

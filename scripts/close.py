@@ -7,11 +7,12 @@ Workflow:
      never `--force`-overridable — only autoclose, which pre-validates
      cleanliness, can tear down such worktrees).
   3. Refuse on open-PR unless `--force` is given.
-  4. If a daemon is running, write a close-request marker under
+  4. Require a running daemon: write a close-request marker under
      `$COCKPIT_HOME/state/close-requests/` and SIGUSR1-kick it — the daemon
      drains and runs `teardown` outside this shell, so we don't yank the
-     cwd out from under our own session.
-  5. Otherwise, run `teardown` inline so the user still sees results.
+     cwd out from under our own session. If no daemon is running, error out
+     and tell the operator to start one (so we don't dual-run with a real
+     daemon, and so transient teardown failures stay durable).
 """
 
 from __future__ import annotations
@@ -35,7 +36,6 @@ from scripts.lib.git import worktrees  # noqa: E402
 from scripts.orchestrators.teardown import (  # noqa: E402
     TeardownRequest,
     probe_blockers,
-    teardown,
     worktree_state_blockers,
 )
 
@@ -150,20 +150,16 @@ def main() -> int:
         repo_name=repo_name,
         forced=args.force,
     )
-    if kick_running(quiet=True):
-        enqueue(req)
-        print(f"queued close: {label} (daemon will process)")
-        return 0
-
-    ok, refused = teardown(req)
-    if ok:
-        print(f"closed: {label}")
-        return 0
-    print(
-        f"ERROR: close failed for {label}: " + "; ".join(refused),
-        file=sys.stderr,
-    )
-    return 1
+    if not kick_running(quiet=True):
+        print(
+            "ERROR: cockpit daemon not running; "
+            "start with `cockpit --watch` and retry",
+            file=sys.stderr,
+        )
+        return 1
+    enqueue(req)
+    print(f"queued close: {label} (daemon will process)")
+    return 0
 
 
 if __name__ == "__main__":

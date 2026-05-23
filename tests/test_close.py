@@ -112,3 +112,78 @@ def test_match_from_cwd_resolves_from_subdirectory(cockpit_repo, monkeypatch):
         match = close_script._match_from_cwd(cockpit_repo.repo)
 
     assert match.ref == "workspace:9"
+
+
+# ── main: daemon-required ───────────────────────────────────────────────────
+
+
+def test_main_errors_when_daemon_absent(cockpit_repo, monkeypatch, capsys):
+    """No running daemon → clean stderr + exit 1, no teardown, no enqueue."""
+    wt_path = cockpit_repo.repo.parent / "feat-no-daemon"
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-no-daemon")
+    monkeypatch.chdir(wt_path)
+
+    enqueue_calls: list = []
+
+    with (
+        patch.object(close_script, "require_workspace_binary"),
+        patch.object(
+            close_script, "workspace_cwds", return_value={"workspace:7": wt_path}
+        ),
+        patch.object(
+            close_script,
+            "workspace_names",
+            return_value={"workspace:7": "feat-no-daemon"},
+        ),
+        patch.object(
+            close_script, "discover_repo", return_value={"path": str(cockpit_repo.repo)}
+        ),
+        patch.object(close_script, "worktree_state_blockers", return_value=[]),
+        patch.object(close_script, "probe_blockers", return_value=[]),
+        patch.object(close_script, "kick_running", return_value=False),
+        patch.object(close_script, "enqueue", side_effect=enqueue_calls.append),
+        patch("sys.argv", ["close"]),
+    ):
+        rc = close_script.main()
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "daemon not running" in err
+    assert "cockpit --watch" in err
+    assert enqueue_calls == []
+
+
+def test_main_queues_when_daemon_running(cockpit_repo, monkeypatch, capsys):
+    """Daemon up → enqueue + 0; no inline teardown call."""
+    wt_path = cockpit_repo.repo.parent / "feat-queued"
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-queued")
+    monkeypatch.chdir(wt_path)
+
+    enqueued: list = []
+
+    with (
+        patch.object(close_script, "require_workspace_binary"),
+        patch.object(
+            close_script, "workspace_cwds", return_value={"workspace:7": wt_path}
+        ),
+        patch.object(
+            close_script,
+            "workspace_names",
+            return_value={"workspace:7": "feat-queued"},
+        ),
+        patch.object(
+            close_script, "discover_repo", return_value={"path": str(cockpit_repo.repo)}
+        ),
+        patch.object(close_script, "worktree_state_blockers", return_value=[]),
+        patch.object(close_script, "probe_blockers", return_value=[]),
+        patch.object(close_script, "kick_running", return_value=True),
+        patch.object(close_script, "enqueue", side_effect=enqueued.append),
+        patch("sys.argv", ["close"]),
+    ):
+        rc = close_script.main()
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "queued close" in out
+    assert len(enqueued) == 1
+    assert enqueued[0].ref == "workspace:7"
