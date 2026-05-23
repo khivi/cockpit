@@ -14,31 +14,3 @@ Both should follow the same detect → derive-branch → plan-only-prompt patter
 Cockpit no longer renders the statusline itself — `use_cship: true` delegates to the `cship` binary. Any "Linear title in the statusline" work belongs in cship's repo, not here.
 
 The data path cockpit could still own: enrich `~/.config/cockpit/cache/{repo}__pr-{N}.json` with `linear_id` / `linear_title` so cship (or any other consumer) reads them without its own Linear API call. Deferred until cship grows a hook for that.
-
-## Extract cycle pipeline → `orchestrators/cycle.py`
-
-`scripts/cockpit.py` is still ~1050 LoC. ~565 of those are the per-repo
-reconciliation pipeline (composing gh + cmux + git + cache + starship + teardown),
-not CLI dispatch. Move:
-
-- `RepoCycle` dataclass, 8 phase helpers (`_prepare_cycle`, `_write_pr_caches`,
-  `_dedupe_workspaces`, `_refresh_tracked_pills`, `_print_tracked_summary`,
-  `_handle_orphans_and_close_stale`, `_refresh_orphan`, `_spawn_missing_workspaces`),
-  and `cycle_repo` itself
-- `cycle_all`, `_drain_close_requests`, `_reap_workspace_orphans`
-- `_maybe_autoclose` (forced-teardown on PR merge)
-- supporting helpers used only by the pipeline: `maybe_nudge`, `match_worktrees`,
-  `_resolve_wt`, `_orphan_snapshot`, `_ci_glyph`, `_is_post_merge_stale`,
-  `_workspace_ref_for_path`, `_refresh_base_distance`
-
-After: `scripts/cockpit.py` shrinks to ~485 LoC of pure CLI (argparse, `_build_state`,
-`_once_with`, `_watch`, `_statusline_command`, `main`) that imports the orchestrator.
-
-## Re-home non-tool-wrapper lib modules
-
-Done. `lib/daemon.py` is now strictly the daemon-side runtime (pidfile +
-sleep/wake loop), and the caller-side IPC (SIGUSR1 kick, SIGTERM stop, and
-the close-request queue formerly in `lib/close_requests.py`) lives in
-`lib/daemon_signal.py`. `scripts/close.py` is also flipped to inline-first:
-if no daemon is running, it skips the marker entirely and runs `teardown`
-directly.
