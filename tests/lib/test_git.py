@@ -9,8 +9,6 @@ remove_worktree double-force + lock-reason logging.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
-from unittest.mock import patch
 
 import scripts.lib.git as gitlib
 from scripts.lib.git import (
@@ -184,58 +182,98 @@ def test_create_worktree_creates_fresh_when_no_prefixed_branch(cockpit_repo):
 # ── remove_worktree: double-force + lock-reason logging ────────────────────
 
 
-def _ok(stderr: str = "") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=stderr)
+def test_remove_worktree_force_removes_locked_worktree(cockpit_repo) -> None:
+    """`force=True` passes `--force --force`, which is what lets git override
+    its refusal to remove a locked worktree."""
+    repo = cockpit_repo.repo
+    wt = repo.parent / "wt"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-b", "wtbr", str(wt), "main"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "lock", "--reason", "test", str(wt)],
+        check=True,
+    )
 
+    ok, _ = gitlib.remove_worktree(repo, wt, force=True)
 
-def test_remove_worktree_force_passes_double_force(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    wt = tmp_path / "wt"
-    with patch.object(gitlib, "_git", return_value=_ok()) as mock_git:
-        ok, _ = gitlib.remove_worktree(repo, wt, force=True)
     assert ok is True
-    args = mock_git.call_args.args
-    assert args[0] is repo
-    assert list(args[1:]) == ["worktree", "remove", "--force", "--force", str(wt)]
+    assert not wt.exists()
 
 
-def test_remove_worktree_no_force_omits_force_flag(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    wt = tmp_path / "wt"
-    with patch.object(gitlib, "_git", return_value=_ok()) as mock_git:
-        ok, _ = gitlib.remove_worktree(repo, wt, force=False)
+def test_remove_worktree_no_force_removes_clean_worktree(cockpit_repo) -> None:
+    repo = cockpit_repo.repo
+    wt = repo.parent / "wt"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-b", "wtbr", str(wt), "main"],
+        check=True,
+    )
+
+    ok, _ = gitlib.remove_worktree(repo, wt, force=False)
+
     assert ok is True
-    args = mock_git.call_args.args
-    assert list(args[1:]) == ["worktree", "remove", str(wt)]
-    assert "--force" not in args
+    assert not wt.exists()
 
 
-def test_remove_worktree_force_logs_lock_reason(tmp_path: Path, capsys) -> None:
-    repo = tmp_path / "repo"
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    admin = repo / ".git" / "worktrees" / "wt"
-    admin.mkdir(parents=True)
-    (admin / "locked").write_text("checkout in progress\n")
-    (wt / ".git").write_text(f"gitdir: {admin}\n")
+def test_remove_worktree_no_force_fails_on_locked_worktree(cockpit_repo) -> None:
+    """Without `--force`, git refuses to remove a locked worktree — proves
+    the force flag is what's doing the work in the test above."""
+    repo = cockpit_repo.repo
+    wt = repo.parent / "wt"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-b", "wtbr", str(wt), "main"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "lock", "--reason", "test", str(wt)],
+        check=True,
+    )
 
-    with patch.object(gitlib, "_git", return_value=_ok()):
-        gitlib.remove_worktree(repo, wt, force=True)
+    ok, _ = gitlib.remove_worktree(repo, wt, force=False)
+
+    assert ok is False
+    assert wt.exists()
+
+
+def test_remove_worktree_force_logs_lock_reason(cockpit_repo, capsys) -> None:
+    repo = cockpit_repo.repo
+    wt = repo.parent / "wt"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-b", "wtbr", str(wt), "main"],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "worktree",
+            "lock",
+            "--reason",
+            "checkout in progress",
+            str(wt),
+        ],
+        check=True,
+    )
+
+    gitlib.remove_worktree(repo, wt, force=True)
 
     captured = capsys.readouterr()
     assert "preempting checkout in progress" in captured.err
 
 
-def test_remove_worktree_force_no_lock_file_is_quiet(tmp_path: Path, capsys) -> None:
-    repo = tmp_path / "repo"
-    wt = tmp_path / "wt"
-    wt.mkdir()
+def test_remove_worktree_force_no_lock_file_is_quiet(cockpit_repo, capsys) -> None:
+    repo = cockpit_repo.repo
+    wt = repo.parent / "wt"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-b", "wtbr", str(wt), "main"],
+        check=True,
+    )
 
-    with patch.object(gitlib, "_git", return_value=_ok()) as mock_git:
-        ok, _ = gitlib.remove_worktree(repo, wt, force=True)
+    ok, _ = gitlib.remove_worktree(repo, wt, force=True)
 
     assert ok is True
-    args = mock_git.call_args.args
-    assert list(args[1:]) == ["worktree", "remove", "--force", "--force", str(wt)]
+    assert not wt.exists()
     captured = capsys.readouterr()
     assert "preempting" not in captured.err
