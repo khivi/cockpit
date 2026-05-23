@@ -223,3 +223,93 @@ def test_sync_kicks_when_running(signal_mod, monkeypatch):
 def test_sync_falls_back_when_not_running(signal_mod, monkeypatch):
     monkeypatch.setattr(signal_mod, "kick_running", lambda: False)
     assert signal_mod.sync(lambda: 7) == 7
+
+
+# ── real-subprocess signal validation (no os.kill mocks) ────────────────────
+
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+import textwrap  # noqa: E402
+import threading  # noqa: E402
+
+
+def _wait_for(path, timeout: float = 5.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if path.exists() and path.stat().st_size > 0:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def _spawn_trap(tmp_path):
+    """Launch a subprocess that records SIGUSR1 and exits on SIGTERM."""
+    usr1_marker = tmp_path / "trap_usr1.log"
+    term_marker = tmp_path / "trap_term.log"
+    script = textwrap.dedent(
+        f"""
+        import signal, sys, time
+        def on_usr1(*_):
+            with open({str(usr1_marker)!r}, 'w') as fh:
+                fh.write('usr1\\n')
+        def on_term(*_):
+            with open({str(term_marker)!r}, 'w') as fh:
+                fh.write('term\\n')
+            sys.exit(0)
+        signal.signal(signal.SIGUSR1, on_usr1)
+        signal.signal(signal.SIGTERM, on_term)
+        sys.stdout.write('ready\\n')
+        sys.stdout.flush()
+        while True:
+            time.sleep(0.05)
+        """
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True
+    )
+    assert proc.stdout is not None
+    ready = proc.stdout.readline().strip()
+    assert ready == "ready", f"trap subprocess did not signal ready: {ready!r}"
+    return proc, usr1_marker, term_marker
+
+
+def test_kick_running_signals_real_process(signal_mod, tmp_path):
+    from scripts.lib.config import PID_FILE
+
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    proc, usr1_marker, _ = _spawn_trap(tmp_path)
+    try:
+        PID_FILE.write_text(str(proc.pid))
+        assert signal_mod.kick_running(quiet=True) is True
+        assert _wait_for(usr1_marker), "subprocess never received SIGUSR1"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5.0)
+
+
+def test_stop_running_terminates_real_process(signal_mod, tmp_path):
+    from scripts.lib.config import PID_FILE
+
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    proc, _, term_marker = _spawn_trap(tmp_path)
+    try:
+        PID_FILE.write_text(str(proc.pid))
+
+        # The trap subprocess doesn't unlink the pidfile itself (that's
+        # run_watcher's `finally:` cleanup). Help stop_running observe a
+        # "clean shutdown" by clearing the pidfile shortly after SIGTERM.
+        def _cleanup_pidfile():
+            time.sleep(0.05)
+            PID_FILE.unlink(missing_ok=True)
+
+        threading.Thread(target=_cleanup_pidfile, daemon=True).start()
+
+        rc = signal_mod.stop_running()
+        assert rc == 0
+        assert _wait_for(term_marker), "subprocess never received SIGTERM"
+        assert proc.wait(timeout=5.0) == 0
+        assert not PID_FILE.exists()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=5.0)
