@@ -19,7 +19,7 @@ def make_bin_on_path(tmp_path: Path, monkeypatch, *names: str) -> Path:
     return bin_dir
 
 
-def make_logging_shim_on_path(tmp_path: Path, monkeypatch, name: str) -> Path:
+def make_shim_on_path(tmp_path: Path, monkeypatch, name: str) -> Path:
     """Plant a shim for `name` that appends its argv to tmp_path/<name>.log
     on each call. PATH is prepended (not pinned) so system binaries remain
     available — required for shell-hook tests that exec the SUT script."""

@@ -14,14 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from tests.fixtures import make_logging_shim_on_path
+from tests.fixtures import make_shim_on_path
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "cmux-idle-pill.sh"
 
 
 @pytest.fixture
 def fake_cmux(tmp_path, monkeypatch) -> Path:
-    log = make_logging_shim_on_path(tmp_path, monkeypatch, "cmux")
+    log = make_shim_on_path(tmp_path, monkeypatch, "cmux")
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
     return log
 
@@ -104,7 +104,7 @@ def test_stop_with_missing_transcript_falls_through_to_idle(fake_cmux, tmp_path)
 
 
 def test_no_workspace_id_is_noop(tmp_path, monkeypatch):
-    log = make_logging_shim_on_path(tmp_path, monkeypatch, "cmux")
+    log = make_shim_on_path(tmp_path, monkeypatch, "cmux")
     monkeypatch.delenv("CMUX_WORKSPACE_ID", raising=False)
     subprocess.run([str(HOOK), "loop-set"], check=True)
     time.sleep(0.1)
