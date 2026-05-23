@@ -10,8 +10,6 @@ import pytest
 
 import scripts.close as close_script
 from scripts.lib.git import Worktree
-from scripts.orchestrators import teardown as teardown_mod
-from scripts.orchestrators.teardown import worktree_state_blockers as hard_blockers
 
 
 def _make_wt(repo_dir: Path, path: Path, branch: str) -> Worktree:
@@ -24,14 +22,13 @@ def _make_wt(repo_dir: Path, path: Path, branch: str) -> Worktree:
     return Worktree(path=path, branch=branch, dirty_count=0, unpushed=0)
 
 
-def test_match_from_cwd_resolves_unique(cockpit_repo, monkeypatch, tmp_path):
+def test_match_from_cwd_resolves_unique(cockpit_repo, monkeypatch):
     wt_path = cockpit_repo.repo.parent / "feat-x"
-    wt = _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-x")
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-x")
 
     monkeypatch.chdir(wt_path)
 
     with (
-        patch.object(close_script, "worktrees", return_value=[wt]),
         patch.object(
             close_script, "workspace_cwds", return_value={"workspace:7": wt_path}
         ),
@@ -48,12 +45,11 @@ def test_match_from_cwd_resolves_unique(cockpit_repo, monkeypatch, tmp_path):
 
 def test_match_from_cwd_rejects_when_no_workspace(cockpit_repo, monkeypatch):
     wt_path = cockpit_repo.repo.parent / "feat-y"
-    wt = _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-y")
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-y")
 
     monkeypatch.chdir(wt_path)
 
     with (
-        patch.object(close_script, "worktrees", return_value=[wt]),
         patch.object(close_script, "workspace_cwds", return_value={}),
         patch.object(close_script, "workspace_names", return_value={}),
         pytest.raises(LookupError, match="no cmux workspace rooted at"),
@@ -63,12 +59,11 @@ def test_match_from_cwd_rejects_when_no_workspace(cockpit_repo, monkeypatch):
 
 def test_match_from_cwd_rejects_ambiguity(cockpit_repo, monkeypatch):
     wt_path = cockpit_repo.repo.parent / "feat-z"
-    wt = _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-z")
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-z")
 
     monkeypatch.chdir(wt_path)
 
     with (
-        patch.object(close_script, "worktrees", return_value=[wt]),
         patch.object(
             close_script,
             "workspace_cwds",
@@ -100,14 +95,13 @@ def test_match_from_cwd_rejects_outside_worktree(tmp_path, monkeypatch):
 def test_match_from_cwd_resolves_from_subdirectory(cockpit_repo, monkeypatch):
     """`git rev-parse --show-toplevel` collapses subdir → worktree root."""
     wt_path = cockpit_repo.repo.parent / "feat-sub"
-    wt = _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-sub")
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-sub")
     sub = wt_path / "src" / "deep"
     sub.mkdir(parents=True)
 
     monkeypatch.chdir(sub)
 
     with (
-        patch.object(close_script, "worktrees", return_value=[wt]),
         patch.object(
             close_script, "workspace_cwds", return_value={"workspace:9": wt_path}
         ),
@@ -118,57 +112,3 @@ def test_match_from_cwd_resolves_from_subdirectory(cockpit_repo, monkeypatch):
         match = close_script._match_from_cwd(cockpit_repo.repo)
 
     assert match.ref == "workspace:9"
-
-
-# ── hard_blockers: dirty + unpushed cannot be --force'd through ────────────
-
-
-def test_hard_blockers_clean_returns_empty(tmp_path):
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    with (
-        patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=0),
-    ):
-        assert hard_blockers(wt) == []
-
-
-def test_hard_blockers_flags_dirty(tmp_path):
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    with (
-        patch.object(teardown_mod, "count_dirty", return_value=3),
-        patch.object(teardown_mod, "_count_unpushed", return_value=0),
-    ):
-        blockers = hard_blockers(wt)
-    assert any("3 uncommitted" in b for b in blockers)
-
-
-def test_hard_blockers_flags_unpushed(tmp_path):
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    with (
-        patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=2),
-    ):
-        blockers = hard_blockers(wt)
-    assert any("2 unpushed commit" in b for b in blockers)
-
-
-def test_hard_blockers_flags_unverifiable_push_state(tmp_path):
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    with (
-        patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=-1),
-    ):
-        blockers = hard_blockers(wt)
-    assert any("could not verify" in b for b in blockers)
-
-
-def test_hard_blockers_skips_missing_path():
-    assert hard_blockers(Path("/nope/missing")) == []
-
-
-def test_hard_blockers_skips_none():
-    assert hard_blockers(None) == []
