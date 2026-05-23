@@ -21,6 +21,10 @@ Before committing, scan for:
 - `linear.app`, `atlassian.net`, internal company domains
 - `@firstname` references that aren't GitHub handles
 
+## Architecture notes
+
+**Worktree + workspace inventory is derived, not stored.** Each cycle re-reads `git worktree list` and `cmux tree` rather than maintaining its own `state.json`. PR payloads *are* cached (`~/.config/cockpit/cache/<repo>__pr-<N>.json`) because they're a network round-trip; everything else is recomputed. Don't add a `state.json` for worktree/workspace identity — drift between cached identity and the real `git`/`cmux` state was the bug class this design avoids.
+
 ## Release versioning
 
 Before opening a PR, bump `.claude-plugin/plugin.json`'s `version` field (semver patch for fixes, minor for features). Stage and commit the bump with the rest of the change — do not ship a PR that leaves the version untouched.

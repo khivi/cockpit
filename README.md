@@ -6,12 +6,12 @@ A Claude Code plugin that keeps **one git worktree, one cmux workspace, and one 
 
 If you juggle several PRs at once, you end up babysitting three parallel things per task: a git worktree on disk, a terminal/agent workspace, and a PR on GitHub. Cockpit collapses them into a single object. You ask for `/cockpit:new fix-login`; you get the worktree, the workspace, and (once you push) the PR — all addressable by **PR number, branch, or slug** (the short workspace name, e.g. `fix-login`).
 
-A background daemon polls GitHub every few minutes and caches each PR's CI / review state to `~/.config/cockpit/cache/` so the statusline can render it without blocking. The worktree and workspace inventory itself isn't stored — cockpit re-derives it from `git worktree list` and `cmux tree` each cycle, so there's no `state.json` to drift out of sync.
+A background daemon polls GitHub every few minutes and caches each PR's CI / review state to `~/.config/cockpit/cache/` — the statusline reads from cache, so it never blocks on the network.
 
 ## Requirements
 
 - Python **3.11+**
-- `git` **2.30+** (needs `worktree --porcelain`)
+- `git` **2.30+**
 - Workspace backend on `PATH`:
   - macOS → `cmux`
   - Linux → `limux` (cmux fork; nudge pills are disabled and cockpit warns at startup)
@@ -21,13 +21,11 @@ A background daemon polls GitHub every few minutes and caches each PR's CI / rev
 
 ### What happens if a dependency is missing
 
-Every `cockpit` invocation (`--watch`, `--once`, `--footer`) runs the same check:
-
-| Binary | Behavior | When |
-|---|---|---|
-| `gh`, `git` | hard-fail (`exit 2`) | always |
-| `cship`, `starship` | hard-fail (`exit 2`) | `use_cship: true` in config |
-| `cmux` / `limux` | warning; falls back to cache-only mode | `tool: auto` and neither on PATH |
+| Missing | Behavior |
+|---|---|
+| `gh` or `git` | refuses to start |
+| `cship` or `starship` (with `use_cship: true`) | refuses to start |
+| both `cmux` and `limux` | warns once; runs in cache-only mode |
 
 ## Install
 
@@ -59,7 +57,7 @@ Inside any git repo:
 /cockpit:new fix-login
 ```
 
-Cockpit auto-registers the GitHub repo, creates a worktree at `<parent>/fix-login` (sibling to your repo — e.g. `/code/myrepo` → `/code/fix-login`), spawns a cmux workspace named `fix-login`, and starts `claude` in it. Re-running the same command attaches to the existing setup — it's idempotent.
+Cockpit auto-registers the GitHub repo, creates a worktree at `<parent>/fix-login` (sibling to your repo — e.g. `/code/myrepo` → `/code/fix-login`), spawns a cmux workspace named `fix-login`, and starts `claude` in it. Re-running the same command attaches to the existing setup; it's safe to re-run.
 
 Open the PR however you normally do. Once it exists, cockpit picks it up on the next daemon cycle (default 5 minutes; force it with `/cockpit:sync`).
 
@@ -124,7 +122,7 @@ Cockpit can render PR/CI/review state into the Claude Code statusline via [`cshi
 
 ## Nudge pills (optional)
 
-When the agent is idle, cockpit can ping the workspace about actionable PR signals (CI failed, unresolved threads, merge conflict). It's wired automatically via the plugin's `hooks.json` and no-ops outside cmux.
+When the agent is idle, cockpit can ping the workspace about actionable PR signals (CI failed, unresolved threads, merge conflict). It's automatic and no-ops outside cmux.
 
 Mute per-PR when a nudge is wrong:
 
