@@ -26,9 +26,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from scripts.orchestrators.teardown import TeardownRequest
-
 from .config import COCKPIT_HOME, PID_FILE
+from .teardown_types import TeardownRequest
 
 
 def kick_running(*, quiet: bool = False) -> bool:
