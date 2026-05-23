@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`/cockpit:close` — queue a worktree + workspace teardown for the daemon.
+"""`/cockpit:close` — tear down a worktree + workspace.
 
 Workflow:
   1. Resolve target (from query arg, or from `cwd` when no arg).
@@ -7,9 +7,12 @@ Workflow:
      never `--force`-overridable — only autoclose, which pre-validates
      cleanliness, can tear down such worktrees).
   3. Refuse on open-PR unless `--force` is given.
-  4. Write a close-request marker under `$COCKPIT_HOME/state/close-requests/`.
-  5. SIGUSR1-kick the daemon. If no daemon is running, run teardown inline
-     so the user still sees results — same code path either way.
+  4. Require a running daemon: write a close-request marker under
+     `$COCKPIT_HOME/state/close-requests/` and SIGUSR1-kick it — the daemon
+     drains and runs `teardown` outside this shell, so we don't yank the
+     cwd out from under our own session. If no daemon is running, error out
+     and tell the operator to start one (so we don't dual-run with a real
+     daemon, and so transient teardown failures stay durable).
 """
 
 from __future__ import annotations
@@ -19,22 +22,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lib import close_requests  # noqa: E402
-from lib.cmux import (  # noqa: E402
+from scripts.lib.cmux import (  # noqa: E402
     require_workspace_binary,
     resolve_workspace,
     workspace_cwds,
     workspace_names,
 )
-from lib.config import discover_repo  # noqa: E402
-from lib.daemon import kick_running  # noqa: E402
-from lib.git import worktrees  # noqa: E402
-from orchestrators.teardown import (  # noqa: E402
+from scripts.lib.config import discover_repo  # noqa: E402
+from scripts.lib.daemon_signal import enqueue, kick_running  # noqa: E402
+from scripts.lib.git import worktrees  # noqa: E402
+from scripts.orchestrators.teardown import (  # noqa: E402
     TeardownRequest,
     probe_blockers,
-    teardown,
     worktree_state_blockers,
 )
 
@@ -94,7 +95,7 @@ def _match_from_cwd(repo_dir: Path):
         )
     ref = refs[0]
 
-    from lib.cmux import WorkspaceMatch
+    from scripts.lib.cmux import WorkspaceMatch
 
     return WorkspaceMatch(ref=ref, name=names.get(ref, ""), worktree=wt)
 
@@ -149,22 +150,16 @@ def main() -> int:
         repo_name=repo_name,
         forced=args.force,
     )
-    marker = close_requests.enqueue(req)
-
-    if kick_running(quiet=True):
-        print(f"queued close: {label} (daemon will process)")
-        return 0
-
-    ok, refused = teardown(req)
-    if ok:
-        close_requests.pop(marker)
-        print(f"closed: {label}")
-        return 0
-    print(
-        f"ERROR: close failed for {label}: " + "; ".join(refused),
-        file=sys.stderr,
-    )
-    return 1
+    if not kick_running(quiet=True):
+        print(
+            "ERROR: cockpit daemon not running; "
+            "start with `cockpit --watch` and retry",
+            file=sys.stderr,
+        )
+        return 1
+    enqueue(req)
+    print(f"queued close: {label} (daemon will process)")
+    return 0
 
 
 if __name__ == "__main__":

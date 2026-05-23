@@ -8,30 +8,20 @@ then assert the recorded calls.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
 
+from tests.fixtures import make_shim_on_path
+
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "cmux-idle-pill.sh"
-
-
-def _install_fake_cmux(tmp_path: Path, monkeypatch) -> Path:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    log = tmp_path / "cmux.log"
-    shim = bin_dir / "cmux"
-    shim.write_text(f'#!/bin/bash\nprintf "%s\\n" "$*" >> "{log}"\n')
-    shim.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    return log
 
 
 @pytest.fixture
 def fake_cmux(tmp_path, monkeypatch) -> Path:
-    log = _install_fake_cmux(tmp_path, monkeypatch)
+    log = make_shim_on_path(tmp_path, monkeypatch, "cmux")
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
     return log
 
@@ -114,7 +104,7 @@ def test_stop_with_missing_transcript_falls_through_to_idle(fake_cmux, tmp_path)
 
 
 def test_no_workspace_id_is_noop(tmp_path, monkeypatch):
-    log = _install_fake_cmux(tmp_path, monkeypatch)
+    log = make_shim_on_path(tmp_path, monkeypatch, "cmux")
     monkeypatch.delenv("CMUX_WORKSPACE_ID", raising=False)
     subprocess.run([str(HOOK), "loop-set"], check=True)
     time.sleep(0.1)

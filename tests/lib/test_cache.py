@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 import pytest
 
-import lib.cache as cache_mod
-from lib.gh import PR
-from lib.git import Worktree
+import scripts.lib.cache as cache_mod
+from scripts.lib.gh import PR
+from scripts.lib.git import Worktree
 
 
 def _pr(**overrides) -> PR:
@@ -181,7 +181,7 @@ def test_write_pr_cache_includes_pills(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import lib.config as cockpit_config
+    import scripts.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -203,7 +203,7 @@ def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import lib.config as cockpit_config
+    import scripts.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)

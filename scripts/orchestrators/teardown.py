@@ -16,13 +16,12 @@ worktree remove.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
-from lib.cache import delete_pr_caches_for_branch, find_pr_payload
-from lib.cmux import cmux_close_workspace_best_effort
-from lib.colors import dim
-from lib.git import (
+from scripts.lib.cache import delete_pr_caches_for_branch, find_pr_payload
+from scripts.lib.cmux import cmux_close_workspace_best_effort
+from scripts.lib.colors import dim
+from scripts.lib.git import (
     _count_unpushed,
     count_dirty,
     ff_default_branch_worktrees,
@@ -30,24 +29,15 @@ from lib.git import (
     remove_worktree,
     worktrees,
 )
-from lib.log_format import verb
+from scripts.lib.log_format import verb
+from scripts.lib.teardown_types import TeardownRequest
 
-
-@dataclass(frozen=True)
-class TeardownRequest:
-    """Inputs for a single workspace teardown.
-
-    `worktree_path` / `branch` / `repo_path` / `repo_name` are all optional
-    because the `close_gone_cwd_workspaces` path has only `ref` to work with.
-    """
-
-    ref: str
-    name: str = ""
-    worktree_path: Path | None = None
-    branch: str | None = None
-    repo_path: Path | None = None
-    repo_name: str | None = None
-    forced: bool = False
+__all__ = [
+    "TeardownRequest",
+    "probe_blockers",
+    "teardown",
+    "worktree_state_blockers",
+]
 
 
 def worktree_state_blockers(worktree_path: Path | None) -> list[str]:

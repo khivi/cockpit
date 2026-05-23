@@ -16,10 +16,8 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["scripts", "tests"]
 addopts = "-ra"
 
 [tool.mypy]
-mypy_path = "scripts:tests"
 explicit_package_bases = true
 namespace_packages = true

@@ -9,9 +9,20 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from lib.cmux import ACTIONABLE_KEYS, COCKPIT_KEY, apply_pills, status_pills
-from lib.gh import PR
-from lib.git import Worktree
+import pytest
+
+from scripts.lib.cmux import (
+    ACTIONABLE_KEYS,
+    COCKPIT_KEY,
+    CmuxUnavailable,
+    apply_pills,
+    status_pills,
+    workspace_cwds,
+    workspace_names,
+    workspace_state,
+)
+from scripts.lib.gh import PR
+from scripts.lib.git import Worktree
 
 
 def _pr(**overrides) -> PR:
@@ -60,7 +71,7 @@ def test_apply_pills_clears_legacy_managed_key():
         calls.append(args)
         return ""
 
-    with patch("lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
         apply_pills("workspace:1", _pr(), _wt())
 
     cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}
@@ -115,8 +126,58 @@ def test_apply_pills_clears_owner_key():
         calls.append(args)
         return ""
 
-    with patch("lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
         apply_pills("workspace:1", _pr(), _wt())
 
     cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}
     assert "owner" in cleared_keys
+
+
+# ── CmuxUnavailable: nonzero rc must raise, not return {} ────────────────────
+
+
+def test_workspace_names_raises_on_nonzero_rc():
+    def fake_cmux(*_args, **_kwargs):
+        raise RuntimeError("cmux list-workspaces failed: socket missing")
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        with pytest.raises(CmuxUnavailable, match="list-workspaces failed"):
+            workspace_names()
+
+
+def test_workspace_cwds_raises_on_nonzero_rc():
+    def fake_cmux(*_args, **_kwargs):
+        raise RuntimeError("cmux rpc workspace.list failed: daemon down")
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        with pytest.raises(CmuxUnavailable, match="rpc workspace.list failed"):
+            workspace_cwds()
+
+
+def test_workspace_cwds_raises_on_non_json():
+    with patch("scripts.lib.cmux.cmux", return_value="not json"):
+        with pytest.raises(CmuxUnavailable, match="non-JSON"):
+            workspace_cwds()
+
+
+def test_workspace_state_propagates_cmux_unavailable():
+    def fake_cmux(*_args, **_kwargs):
+        raise RuntimeError("backend offline")
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        with pytest.raises(CmuxUnavailable):
+            workspace_state()
+
+
+def test_workspace_names_parses_ok_when_cmux_ok():
+    with patch(
+        "scripts.lib.cmux.cmux",
+        return_value="workspace:1 feat-x\nworkspace:2 other\n",
+    ):
+        assert workspace_names() == {"workspace:1": "feat-x", "workspace:2": "other"}
+
+
+def test_workspace_cwds_parses_ok_when_cmux_ok():
+    payload = '{"workspaces":[{"ref":"workspace:1","current_directory":"/tmp/wt"}]}'
+    with patch("scripts.lib.cmux.cmux", return_value=payload):
+        assert workspace_cwds() == {"workspace:1": Path("/tmp/wt")}

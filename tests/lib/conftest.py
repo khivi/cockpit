@@ -7,7 +7,7 @@ from typing import Iterator
 
 import pytest
 
-import lib.cache as cache_mod
+import scripts.lib.cache as cache_mod
 
 
 @pytest.fixture

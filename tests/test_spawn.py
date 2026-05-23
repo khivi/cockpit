@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from spawn import detect_source
+from scripts.spawn import detect_source
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ def test_branch_name_returns_branch_mode():
 
 
 def test_from_name_creates_prefixed_branch_when_free(cockpit_repo):
-    from spawn import resolve_worktree
+    from scripts.spawn import resolve_worktree
 
     wt, branch, attached = resolve_worktree("cship", None, "testrepo", from_name=True)
     assert branch == "khivi/cship"
@@ -72,7 +72,7 @@ def test_from_name_creates_prefixed_branch_when_free(cockpit_repo):
 
 
 def test_from_name_bumps_branch_when_remote_collides(cockpit_repo, push_branch):
-    from spawn import resolve_worktree
+    from scripts.spawn import resolve_worktree
 
     push_branch("khivi/cship")
 
@@ -83,7 +83,7 @@ def test_from_name_bumps_branch_when_remote_collides(cockpit_repo, push_branch):
 
 
 def test_from_name_bumps_branch_when_local_collides(cockpit_repo):
-    from spawn import resolve_worktree
+    from scripts.spawn import resolve_worktree
 
     subprocess.run(
         ["git", "-C", str(cockpit_repo.repo), "branch", "khivi/cship", "main"],
@@ -99,7 +99,7 @@ def test_from_name_does_not_match_suffix_ref(cockpit_repo, push_branch):
     suffix-match a remote like `khivi/foo/cship` and trigger a failing
     `fetch origin cship:cship`. The from_name path must skip the fetch
     dance entirely and create khivi/cship fresh."""
-    from spawn import resolve_worktree
+    from scripts.spawn import resolve_worktree
 
     push_branch("khivi/foo/cship")
 
@@ -110,7 +110,7 @@ def test_from_name_does_not_match_suffix_ref(cockpit_repo, push_branch):
 
 def test_from_name_creates_branch_from_origin_main(cockpit_repo):
     """New branch's tip must be origin/main, not some stale local ref."""
-    from spawn import resolve_worktree
+    from scripts.spawn import resolve_worktree
 
     wt, _branch, _ = resolve_worktree("cship", None, "testrepo", from_name=True)
 
@@ -130,7 +130,7 @@ def test_from_name_creates_branch_from_origin_main(cockpit_repo):
 
 
 def test_unknown_repo_name_raises(cockpit_repo):
-    from spawn import resolve_worktree
+    from scripts.spawn import resolve_worktree
 
     with pytest.raises(ValueError, match="no configured repo"):
         resolve_worktree("cship", None, "nonexistent", from_name=True)
@@ -139,7 +139,7 @@ def test_unknown_repo_name_raises(cockpit_repo):
 def test_non_from_name_attaches_to_existing_remote_branch(cockpit_repo, push_branch):
     """Regression on the original code path: passing an existing branch
     explicitly (no from_name) should still attach to it, not bump."""
-    from spawn import resolve_worktree
+    from scripts.spawn import resolve_worktree
 
     push_branch("khivi/existing")
 
@@ -172,7 +172,7 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
 
     Captures cmux call args on `spawn_main.cmux_calls` for assertions.
     """
-    import spawn
+    import scripts.spawn as spawn
 
     cmux_calls: list[tuple] = []
 

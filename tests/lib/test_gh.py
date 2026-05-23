@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from lib.gh import _PR_LIGHT_FIELDS, _relevant_pr_query
+from scripts.lib.gh import _PR_LIGHT_FIELDS, _relevant_pr_query
 
 
 def _referenced_vars(query: str) -> set[str]:

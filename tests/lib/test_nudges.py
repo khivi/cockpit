@@ -17,10 +17,10 @@ import pytest
 def nudges(tmp_path, monkeypatch):
     """Isolated COCKPIT_HOME + reloaded nudges module pointing at it."""
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import lib.config as cockpit_config
+    import scripts.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
-    import lib.nudges as nudges_mod
+    import scripts.lib.nudges as nudges_mod
 
     importlib.reload(nudges_mod)
     return nudges_mod
@@ -139,7 +139,7 @@ def test_normalize_categories(nudges):
 
 @pytest.fixture
 def nudge_cli(nudges):
-    import lib.nudge_cli as cli
+    import scripts.lib.nudge_cli as cli
 
     importlib.reload(cli)
     return cli

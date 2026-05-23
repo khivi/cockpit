@@ -5,8 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from orchestrators import teardown as teardown_mod
-from orchestrators.teardown import TeardownRequest, probe_blockers, teardown
+from scripts.orchestrators import teardown as teardown_mod
+from scripts.orchestrators.teardown import (
+    TeardownRequest,
+    probe_blockers,
+    teardown,
+    worktree_state_blockers,
+)
 
 
 def _patch_all(*, dirty=0, unpushed=0, pr_state=None):
@@ -51,6 +56,60 @@ def test_probe_blockers_unpushed_verification_failed(tmp_path):
 
 def test_probe_blockers_skips_missing_path():
     assert probe_blockers(Path("/nope/missing"), "branch", "repo") == []
+
+
+# ── worktree_state_blockers: subset called from close.py for --force gating ──
+
+
+def test_worktree_state_blockers_clean_returns_empty(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=0),
+    ):
+        assert worktree_state_blockers(wt) == []
+
+
+def test_worktree_state_blockers_flags_dirty(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=3),
+        patch.object(teardown_mod, "_count_unpushed", return_value=0),
+    ):
+        blockers = worktree_state_blockers(wt)
+    assert any("3 uncommitted" in b for b in blockers)
+
+
+def test_worktree_state_blockers_flags_unpushed(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=2),
+    ):
+        blockers = worktree_state_blockers(wt)
+    assert any("2 unpushed commit" in b for b in blockers)
+
+
+def test_worktree_state_blockers_flags_unverifiable_push_state(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=-1),
+    ):
+        blockers = worktree_state_blockers(wt)
+    assert any("could not verify" in b for b in blockers)
+
+
+def test_worktree_state_blockers_skips_missing_path():
+    assert worktree_state_blockers(Path("/nope/missing")) == []
+
+
+def test_worktree_state_blockers_skips_none():
+    assert worktree_state_blockers(None) == []
 
 
 def test_teardown_refuses_on_blockers(tmp_path):
@@ -164,7 +223,7 @@ def test_teardown_advances_default_branch_worktree(tmp_path, capsys):
         repo_name="repo",
         forced=True,
     )
-    from lib.git import Worktree
+    from scripts.lib.git import Worktree
 
     main_wt = Worktree(path=tmp_path / "main", branch="main")
     with (

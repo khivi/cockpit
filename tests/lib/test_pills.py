@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from lib.gh import PR
-from lib.git import Worktree
-from lib.pills import decide_pills
+from scripts.lib.gh import PR
+from scripts.lib.git import Worktree
+from scripts.lib.pills import decide_pills
 
 
 def _pr(**overrides) -> PR:

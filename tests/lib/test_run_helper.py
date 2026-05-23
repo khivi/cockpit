@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-import lib as lib_pkg
+import scripts.lib as lib_pkg
 
 
 def _raise_fnf(*_args, **_kwargs):

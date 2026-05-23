@@ -8,10 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-import close as close_script
-from lib.git import Worktree
-from orchestrators import teardown as teardown_mod
-from orchestrators.teardown import worktree_state_blockers as hard_blockers
+import scripts.close as close_script
+from scripts.lib.git import Worktree
 
 
 def _make_wt(repo_dir: Path, path: Path, branch: str) -> Worktree:
@@ -24,14 +22,13 @@ def _make_wt(repo_dir: Path, path: Path, branch: str) -> Worktree:
     return Worktree(path=path, branch=branch, dirty_count=0, unpushed=0)
 
 
-def test_match_from_cwd_resolves_unique(cockpit_repo, monkeypatch, tmp_path):
+def test_match_from_cwd_resolves_unique(cockpit_repo, monkeypatch):
     wt_path = cockpit_repo.repo.parent / "feat-x"
-    wt = _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-x")
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-x")
 
     monkeypatch.chdir(wt_path)
 
     with (
-        patch.object(close_script, "worktrees", return_value=[wt]),
         patch.object(
             close_script, "workspace_cwds", return_value={"workspace:7": wt_path}
         ),
@@ -48,12 +45,11 @@ def test_match_from_cwd_resolves_unique(cockpit_repo, monkeypatch, tmp_path):
 
 def test_match_from_cwd_rejects_when_no_workspace(cockpit_repo, monkeypatch):
     wt_path = cockpit_repo.repo.parent / "feat-y"
-    wt = _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-y")
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-y")
 
     monkeypatch.chdir(wt_path)
 
     with (
-        patch.object(close_script, "worktrees", return_value=[wt]),
         patch.object(close_script, "workspace_cwds", return_value={}),
         patch.object(close_script, "workspace_names", return_value={}),
         pytest.raises(LookupError, match="no cmux workspace rooted at"),
@@ -63,12 +59,11 @@ def test_match_from_cwd_rejects_when_no_workspace(cockpit_repo, monkeypatch):
 
 def test_match_from_cwd_rejects_ambiguity(cockpit_repo, monkeypatch):
     wt_path = cockpit_repo.repo.parent / "feat-z"
-    wt = _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-z")
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-z")
 
     monkeypatch.chdir(wt_path)
 
     with (
-        patch.object(close_script, "worktrees", return_value=[wt]),
         patch.object(
             close_script,
             "workspace_cwds",
@@ -100,14 +95,13 @@ def test_match_from_cwd_rejects_outside_worktree(tmp_path, monkeypatch):
 def test_match_from_cwd_resolves_from_subdirectory(cockpit_repo, monkeypatch):
     """`git rev-parse --show-toplevel` collapses subdir → worktree root."""
     wt_path = cockpit_repo.repo.parent / "feat-sub"
-    wt = _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-sub")
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-sub")
     sub = wt_path / "src" / "deep"
     sub.mkdir(parents=True)
 
     monkeypatch.chdir(sub)
 
     with (
-        patch.object(close_script, "worktrees", return_value=[wt]),
         patch.object(
             close_script, "workspace_cwds", return_value={"workspace:9": wt_path}
         ),
@@ -120,55 +114,76 @@ def test_match_from_cwd_resolves_from_subdirectory(cockpit_repo, monkeypatch):
     assert match.ref == "workspace:9"
 
 
-# ── hard_blockers: dirty + unpushed cannot be --force'd through ────────────
+# ── main: daemon-required ───────────────────────────────────────────────────
 
 
-def test_hard_blockers_clean_returns_empty(tmp_path):
-    wt = tmp_path / "wt"
-    wt.mkdir()
+def test_main_errors_when_daemon_absent(cockpit_repo, monkeypatch, capsys):
+    """No running daemon → clean stderr + exit 1, no teardown, no enqueue."""
+    wt_path = cockpit_repo.repo.parent / "feat-no-daemon"
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-no-daemon")
+    monkeypatch.chdir(wt_path)
+
+    enqueue_calls: list = []
+
     with (
-        patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=0),
+        patch.object(close_script, "require_workspace_binary"),
+        patch.object(
+            close_script, "workspace_cwds", return_value={"workspace:7": wt_path}
+        ),
+        patch.object(
+            close_script,
+            "workspace_names",
+            return_value={"workspace:7": "feat-no-daemon"},
+        ),
+        patch.object(
+            close_script, "discover_repo", return_value={"path": str(cockpit_repo.repo)}
+        ),
+        patch.object(close_script, "worktree_state_blockers", return_value=[]),
+        patch.object(close_script, "probe_blockers", return_value=[]),
+        patch.object(close_script, "kick_running", return_value=False),
+        patch.object(close_script, "enqueue", side_effect=enqueue_calls.append),
+        patch("sys.argv", ["close"]),
     ):
-        assert hard_blockers(wt) == []
+        rc = close_script.main()
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "daemon not running" in err
+    assert "cockpit --watch" in err
+    assert enqueue_calls == []
 
 
-def test_hard_blockers_flags_dirty(tmp_path):
-    wt = tmp_path / "wt"
-    wt.mkdir()
+def test_main_queues_when_daemon_running(cockpit_repo, monkeypatch, capsys):
+    """Daemon up → enqueue + 0; no inline teardown call."""
+    wt_path = cockpit_repo.repo.parent / "feat-queued"
+    _make_wt(cockpit_repo.repo, wt_path, "khivi/feat-queued")
+    monkeypatch.chdir(wt_path)
+
+    enqueued: list = []
+
     with (
-        patch.object(teardown_mod, "count_dirty", return_value=3),
-        patch.object(teardown_mod, "_count_unpushed", return_value=0),
+        patch.object(close_script, "require_workspace_binary"),
+        patch.object(
+            close_script, "workspace_cwds", return_value={"workspace:7": wt_path}
+        ),
+        patch.object(
+            close_script,
+            "workspace_names",
+            return_value={"workspace:7": "feat-queued"},
+        ),
+        patch.object(
+            close_script, "discover_repo", return_value={"path": str(cockpit_repo.repo)}
+        ),
+        patch.object(close_script, "worktree_state_blockers", return_value=[]),
+        patch.object(close_script, "probe_blockers", return_value=[]),
+        patch.object(close_script, "kick_running", return_value=True),
+        patch.object(close_script, "enqueue", side_effect=enqueued.append),
+        patch("sys.argv", ["close"]),
     ):
-        blockers = hard_blockers(wt)
-    assert any("3 uncommitted" in b for b in blockers)
+        rc = close_script.main()
 
-
-def test_hard_blockers_flags_unpushed(tmp_path):
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    with (
-        patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=2),
-    ):
-        blockers = hard_blockers(wt)
-    assert any("2 unpushed commit" in b for b in blockers)
-
-
-def test_hard_blockers_flags_unverifiable_push_state(tmp_path):
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    with (
-        patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=-1),
-    ):
-        blockers = hard_blockers(wt)
-    assert any("could not verify" in b for b in blockers)
-
-
-def test_hard_blockers_skips_missing_path():
-    assert hard_blockers(Path("/nope/missing")) == []
-
-
-def test_hard_blockers_skips_none():
-    assert hard_blockers(None) == []
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "queued close" in out
+    assert len(enqueued) == 1
+    assert enqueued[0].ref == "workspace:7"

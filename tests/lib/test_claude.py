@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-import lib.claude as claude_mod
+import scripts.lib.claude as claude_mod
 
 
 # ── stash_from_stdin (lib.claude) ──────────────────────────────────────────
