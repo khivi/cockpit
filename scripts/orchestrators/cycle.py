@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,6 +26,7 @@ from scripts.lib.cmux import (
     apply_pills,
     apply_stale_pill,
     apply_wip_pill,
+    CmuxUnavailable,
     close_gone_cwd_workspaces,
     cmux,
     cmux_close_workspace_best_effort,
@@ -294,12 +296,28 @@ def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, in
     if not default:
         return _invalidate()
     try:
-        subprocess.run(
+        res = subprocess.run(
             ["git", "-C", str(repo_path), "fetch", "--quiet", "origin", default],
             check=False,
+            capture_output=True,
+            text=True,
             timeout=30,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as e:
+        print(
+            f"  {yellow('skip')} base-distance refresh for {repo_path.name}: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return _invalidate()
+    if res.returncode != 0:
+        print(
+            f"  {yellow('skip')} base-distance refresh for {repo_path.name}: "
+            f"fetch origin {default} exited {res.returncode}: "
+            f"{res.stderr.strip()}",
+            file=sys.stderr,
+            flush=True,
+        )
         return _invalidate()
     now = int(time.time())
     for wt in feature:
@@ -373,7 +391,14 @@ def _prepare_cycle(
         state_fut = None if headless else ex.submit(workspace_state)
         merged_fut = ex.submit(fetch_merged_branches, repo_path)
         wts = wts_fut.result()
-        names, cwds = ({}, {}) if state_fut is None else state_fut.result()
+        try:
+            names, cwds = ({}, {}) if state_fut is None else state_fut.result()
+        except CmuxUnavailable as e:
+            print(
+                f"  {yellow('skip')} {owner}/{name}: cmux unavailable: {e}",
+                flush=True,
+            )
+            return None
         merged_branches = merged_fut.result()
 
     coworker_branches = sorted(
@@ -844,7 +869,15 @@ def cycle_all(
     if not _cache_only(cfg):
         _drain_close_requests(dry=dry)
     if cfg.get("auto_cleanup_on_merge", True) and not _cache_only(cfg):
-        close_gone_cwd_workspaces(dry=dry)
+        try:
+            close_gone_cwd_workspaces(dry=dry)
+        except CmuxUnavailable as e:
+            ts = datetime.now().isoformat(timespec="seconds")
+            print(
+                f"[{ts}] {yellow('skip')} close_gone_cwd_workspaces: cmux unavailable: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
     for repo_entry in repos:
         try:
             cycle_repo(
@@ -859,12 +892,21 @@ def cycle_all(
                 verbose=verbose,
                 cfg=cfg,
             )
-        except Exception as e:
+        except (RuntimeError, subprocess.SubprocessError, OSError) as e:
             ts = datetime.now().isoformat(timespec="seconds")
             print(
-                f"[{ts}] cycle error for {repo_entry.get('name')}: {e}",
+                f"[{ts}] cycle error for {repo_entry.get('name')}: {e}\n"
+                f"{traceback.format_exc()}",
                 file=sys.stderr,
                 flush=True,
             )
     if not _cache_only(cfg):
-        _reap_workspace_orphans(repos, self_user, dry=dry)
+        try:
+            _reap_workspace_orphans(repos, self_user, dry=dry)
+        except CmuxUnavailable as e:
+            ts = datetime.now().isoformat(timespec="seconds")
+            print(
+                f"[{ts}] {yellow('skip')} _reap_workspace_orphans: cmux unavailable: {e}",
+                file=sys.stderr,
+                flush=True,
+            )

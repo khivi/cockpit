@@ -57,6 +57,15 @@ _PILL_VERBS = frozenset({"set-status", "clear-status"})
 _VALID_TOOLS = frozenset({"cmux", "limux", "none", "auto"})
 
 
+class CmuxUnavailable(RuntimeError):
+    """Raised when the workspace backend (cmux/limux) refuses or fails a query.
+
+    Callers needing authoritative workspace state must let this propagate;
+    best-effort callers (status pings, close-by-ref) should keep `check=False`
+    and ignore empty output.
+    """
+
+
 def _has_pill(lines: list[str], *keys: str) -> bool:
     """True if any `KEY=` line is present (KEY ∈ keys)."""
     return any(line.lstrip().startswith(k + "=") for line in lines for k in keys)
@@ -242,8 +251,15 @@ def nudge_if_idle(
 
 
 def workspace_names() -> dict[str, str]:
-    """{ref: name} from `cmux list-workspaces`."""
-    out = cmux("list-workspaces", check=False)
+    """{ref: name} from `cmux list-workspaces`.
+
+    Raises `CmuxUnavailable` if cmux exits nonzero — callers must not treat
+    an empty dict as "no workspaces" when cmux itself failed.
+    """
+    try:
+        out = cmux("list-workspaces", check=True)
+    except RuntimeError as e:
+        raise CmuxUnavailable(f"list-workspaces failed: {e}") from e
     names: dict[str, str] = {}
     for line in out.splitlines():
         m = re.search(r"(workspace:\d+)\s+(\S+)", line)
@@ -253,12 +269,19 @@ def workspace_names() -> dict[str, str]:
 
 
 def workspace_cwds() -> dict[str, Path]:
-    """{ref: current_directory} via `cmux rpc workspace.list`."""
-    out = cmux("rpc", "workspace.list", "{}", check=False)
+    """{ref: current_directory} via `cmux rpc workspace.list`.
+
+    Raises `CmuxUnavailable` on nonzero rc or unparsable output, so a cmux
+    hiccup is not misread as an empty workspace set.
+    """
+    try:
+        out = cmux("rpc", "workspace.list", "{}", check=True)
+    except RuntimeError as e:
+        raise CmuxUnavailable(f"rpc workspace.list failed: {e}") from e
     try:
         data = json.loads(out)
-    except json.JSONDecodeError:
-        return {}
+    except json.JSONDecodeError as e:
+        raise CmuxUnavailable(f"rpc workspace.list returned non-JSON: {e}") from e
     cwds: dict[str, Path] = {}
     for ws in data.get("workspaces", []):
         ref = ws.get("ref")

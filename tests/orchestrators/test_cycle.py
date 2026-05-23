@@ -314,3 +314,74 @@ def test_reap_skips_workspace_matched_by_name(reap_isolated, tmp_path):
         cycle_mod._reap_workspace_orphans(repos, "khivi", dry=False)
 
     assert cr.iter_pending() == []
+
+
+# ── _prepare_cycle: cmux unavailable should skip the repo ────────────────────
+
+
+def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, capsys):
+    from scripts.lib.cmux import CmuxUnavailable
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_entry = {"path": str(repo_path), "name": "repo"}
+
+    monkeypatch.setattr(cycle, "repo_nwo", lambda _p: ("ai-needl", "repo"))
+    monkeypatch.setattr(cycle, "worktrees", lambda _p: [])
+    monkeypatch.setattr(cycle, "fetch_merged_branches", lambda _p: {})
+
+    def _boom() -> tuple[dict, dict]:
+        raise CmuxUnavailable("backend offline")
+
+    monkeypatch.setattr(cycle, "workspace_state", _boom)
+
+    result = cycle._prepare_cycle(
+        repo_entry,
+        "khivi",
+        cfg={},
+        pr_cache={},
+        pill_state={},
+        nudge_state={},
+        keep_stale=False,
+        no_spawn=False,
+        dry=False,
+        verbose=False,
+    )
+
+    assert result is None
+    out = capsys.readouterr().out
+    assert "skip" in out
+    assert "cmux unavailable" in out
+    assert "backend offline" in out
+
+
+def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
+    from scripts.lib.git import Worktree
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat")
+
+    with (
+        patch.object(cycle, "origin_head_branch", return_value="main"),
+        patch.object(
+            cycle.subprocess,
+            "run",
+            return_value=type(
+                "Res",
+                (),
+                {"returncode": 128, "stderr": "fatal: no such remote", "stdout": ""},
+            )(),
+        ),
+        patch.object(cycle, "write_base_distance") as wbd,
+        patch.object(cycle, "write_base_ahead") as wba,
+    ):
+        distances = cycle._refresh_base_distance(repo_path, [wt])
+
+    assert distances == {}
+    wbd.assert_called_once_with("khivi/feat", -1, 0)
+    wba.assert_called_once_with("khivi/feat", -1, 0)
+    err = capsys.readouterr().err
+    assert "skip" in err
+    assert "exited 128" in err
+    assert "no such remote" in err
