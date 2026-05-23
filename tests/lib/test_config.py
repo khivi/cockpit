@@ -223,11 +223,11 @@ def test_footer_install_is_idempotent_and_announces_state(
     assert starship_path.read_bytes() == starship_bytes
 
 
-from tests.cockpit_helpers import (  # noqa: E402
-    expected_starship as _expected_starship,
+from tests.asserts import expected_starship as _expected_starship  # noqa: E402
+from tests.fixtures import (  # noqa: E402
+    make_bin_on_path as _make_bin_on_path,
     setup_cockpit_config as _setup_cockpit_config,
 )
-from fixtures import make_bin_on_path as _make_bin_on_path  # noqa: E402
 
 _STATUSLINE_CMD = "/path/to/footer.py"
 

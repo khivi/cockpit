@@ -9,11 +9,11 @@ from __future__ import annotations
 import importlib
 import json as _json
 
-from tests.cockpit_helpers import (
-    expected_starship as _expected_starship,
+from tests.asserts import expected_starship as _expected_starship
+from tests.fixtures import (
+    make_bin_on_path as _make_bin_on_path,
     setup_cockpit_config as _setup_cockpit_config,
 )
-from fixtures import make_bin_on_path as _make_bin_on_path  # noqa: E402
 
 
 def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):

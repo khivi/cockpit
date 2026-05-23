@@ -22,7 +22,7 @@ SHIM = REPO_ROOT / "scripts" / "bin" / "starship"
 SHIM_DIR = SHIM.parent
 
 import scripts.lib.cship as cship_mod  # noqa: E402
-from fixtures import make_bin_on_path  # noqa: E402
+from tests.fixtures import make_bin_on_path  # noqa: E402
 
 
 # ── shim: STARSHIP_SHELL rewrite ──────────────────────────────────────────

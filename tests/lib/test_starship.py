@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-import lib.claude as claude_mod
-import lib.starship as starship
-from lib.colors import (
+import scripts.lib.claude as claude_mod
+import scripts.lib.starship as starship
+from scripts.lib.colors import (
     Colorizer,
     amber,
     azure,
@@ -314,7 +314,7 @@ def test_print_permission_mode(cache_dir, value, expected):
 # ── field printers: branch_identity + worktree_status ──────────────────────
 
 
-from fixtures import make_git_repo as _make_repo  # noqa: E402
+from tests.fixtures import make_git_repo as _make_repo  # noqa: E402
 
 
 def test_branch_identity_clean(_clean_git_env, tmp_path, monkeypatch):

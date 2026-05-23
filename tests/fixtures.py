@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import json
 import stat
 import subprocess
 from pathlib import Path
@@ -76,3 +78,14 @@ def make_git_repo(
         (repo / f"u{i}").write_text(str(i))
 
     return repo
+
+
+def setup_cockpit_config(tmp_path: Path, monkeypatch, cfg: dict):
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+
+    import scripts.lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    return cockpit_config
