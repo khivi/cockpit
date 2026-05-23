@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import stat
 import subprocess
 from pathlib import Path
@@ -16,6 +17,20 @@ def make_bin_on_path(tmp_path: Path, monkeypatch, *names: str) -> Path:
         f.chmod(f.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", str(bin_dir))
     return bin_dir
+
+
+def make_logging_shim_on_path(tmp_path: Path, monkeypatch, name: str) -> Path:
+    """Plant a shim for `name` that appends its argv to tmp_path/<name>.log
+    on each call. PATH is prepended (not pinned) so system binaries remain
+    available — required for shell-hook tests that exec the SUT script."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    log = tmp_path / f"{name}.log"
+    shim = bin_dir / name
+    shim.write_text(f'#!/bin/bash\nprintf "%s\\n" "$*" >> "{log}"\n')
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return log
 
 
 def _git(path: Path, *args: str) -> None:
