@@ -36,22 +36,9 @@ After: `scripts/cockpit.py` shrinks to ~485 LoC of pure CLI (argparse, `_build_s
 
 ## Re-home non-tool-wrapper lib modules
 
-`lib/` is documented as "single-tool wrappers + single-concern modules", but a
-few residents don't fit either bucket:
-
-- `lib/close_requests.py` — file-based queue (`$COCKPIT_HOME/state/close-requests/`)
-  marshaling `TeardownRequest` payloads between the `cockpit close` CLI and the
-  daemon. Marker schema already mirrors `TeardownRequest`.
-- `lib/daemon.py` — pidfile + SIGUSR1 kick + sleep/wake loop. App-internal IPC,
-  not a tool wrapper.
-
-Options:
-
-- Group under a new `state/` (or `runtime/`) package — clean taxonomy but two-file
-  package is borderline over-engineered.
-- Fold `close_requests` into `orchestrators/teardown.py` (tight coupling already
-  exists via the shared payload).
-- Leave both in `lib/` and broaden its definition formally.
-
-Tackle alongside the cycle extraction above so the package boundaries land in
-one PR rather than churning twice.
+Done. `lib/daemon.py` is now strictly the daemon-side runtime (pidfile +
+sleep/wake loop), and the caller-side IPC (SIGUSR1 kick, SIGTERM stop, and
+the close-request queue formerly in `lib/close_requests.py`) lives in
+`lib/daemon_signal.py`. `scripts/close.py` is also flipped to inline-first:
+if no daemon is running, it skips the marker entirely and runs `teardown`
+directly.

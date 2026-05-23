@@ -1,0 +1,201 @@
+"""Tests for the CLI→daemon signaling channel: kick/stop signals + close-request queue."""
+
+from __future__ import annotations
+
+import importlib
+import json
+import os
+import signal
+import time
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture
+def signal_mod(tmp_path, monkeypatch):
+    """Isolate $COCKPIT_HOME and reload config + daemon_signal so each test starts fresh."""
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    import scripts.lib.config as cfg
+
+    importlib.reload(cfg)
+    import scripts.lib.daemon_signal as ds
+
+    importlib.reload(ds)
+    return ds
+
+
+# ── close-request queue ─────────────────────────────────────────────────────
+
+
+def test_enqueue_and_iter_round_trip(signal_mod):
+    from scripts.orchestrators.teardown import TeardownRequest
+
+    req = TeardownRequest(
+        ref="workspace:7",
+        name="feat-x",
+        worktree_path=Path("/tmp/wt"),
+        branch="khivi/feat-x",
+        repo_path=Path("/tmp/repo"),
+        repo_name="needl-ai",
+        forced=True,
+    )
+    path = signal_mod.enqueue(req)
+    assert path.exists()
+
+    pending = signal_mod.iter_pending()
+    assert len(pending) == 1
+    got_path, got_req = pending[0]
+    assert got_path == path
+    assert got_req.ref == "workspace:7"
+    assert got_req.name == "feat-x"
+    assert got_req.worktree_path == Path("/tmp/wt")
+    assert got_req.branch == "khivi/feat-x"
+    assert got_req.repo_name == "needl-ai"
+    assert got_req.forced is True
+
+
+def test_pop_removes_marker(signal_mod):
+    from scripts.orchestrators.teardown import TeardownRequest
+
+    req = TeardownRequest(ref="workspace:1", repo_name="r")
+    path = signal_mod.enqueue(req)
+    signal_mod.pop(path)
+    assert not path.exists()
+    assert signal_mod.iter_pending() == []
+
+
+def test_iter_pending_scoped_by_repo(signal_mod):
+    from scripts.orchestrators.teardown import TeardownRequest
+
+    signal_mod.enqueue(TeardownRequest(ref="workspace:1", repo_name="repo-a"))
+    signal_mod.enqueue(TeardownRequest(ref="workspace:2", repo_name="repo-b"))
+    signal_mod.enqueue(TeardownRequest(ref="workspace:3", repo_name=None))
+
+    a_only = signal_mod.iter_pending(repo_name="repo-a")
+    assert [r.ref for _, r in a_only] == ["workspace:1"]
+
+    global_only = signal_mod.iter_pending(repo_name=None)
+    refs = sorted(r.ref for _, r in global_only)
+    assert refs == ["workspace:1", "workspace:2", "workspace:3"]
+
+
+def test_prune_stale_removes_stale_requests(signal_mod):
+    from scripts.orchestrators.teardown import TeardownRequest
+
+    fresh = signal_mod.enqueue(TeardownRequest(ref="workspace:fresh", repo_name="r"))
+    stale = signal_mod.enqueue(TeardownRequest(ref="workspace:stale", repo_name="r"))
+
+    data = json.loads(stale.read_text())
+    data["requested_at"] = time.time() - signal_mod.STALE_SECONDS - 10
+    stale.write_text(json.dumps(data))
+
+    pruned = signal_mod.prune_stale()
+    assert stale in pruned
+    assert fresh.exists()
+
+
+def test_corrupt_marker_skipped(signal_mod):
+    from scripts.orchestrators.teardown import TeardownRequest
+
+    signal_mod.enqueue(TeardownRequest(ref="workspace:1", repo_name="r"))
+    (signal_mod.STATE_DIR / "r" / "garbage.json").write_text("not json {")
+    pending = signal_mod.iter_pending()
+    assert len(pending) == 1
+    assert pending[0][1].ref == "workspace:1"
+
+
+# ── SIGUSR1 kick / SIGTERM stop ─────────────────────────────────────────────
+
+
+def test_kick_running_no_pidfile_returns_false(signal_mod):
+    assert signal_mod.kick_running() is False
+
+
+def test_kick_running_signals_pid(signal_mod, monkeypatch):
+    from scripts.lib.config import PID_FILE
+
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append((pid, sig)))
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text("4242")
+
+    assert signal_mod.kick_running(quiet=True) is True
+    assert sent == [(4242, signal.SIGUSR1)]
+
+
+def test_kick_running_dead_pid_returns_false(signal_mod, monkeypatch):
+    from scripts.lib.config import PID_FILE
+
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text("4242")
+
+    def boom(_pid, _sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(os, "kill", boom)
+    assert signal_mod.kick_running(quiet=True) is False
+
+
+def test_kick_running_unreadable_pidfile_returns_false(signal_mod):
+    from scripts.lib.config import PID_FILE
+
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text("not-an-int")
+    assert signal_mod.kick_running(quiet=True) is False
+
+
+def test_stop_running_no_pidfile_returns_zero(signal_mod, capsys):
+    assert signal_mod.stop_running() == 0
+    assert "no cockpit running" in capsys.readouterr().out
+
+
+def test_stop_running_stale_pidfile_cleans_up(signal_mod, monkeypatch, capsys):
+    from scripts.lib.config import PID_FILE
+
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text("4242")
+
+    def boom(_pid, _sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(os, "kill", boom)
+    assert signal_mod.stop_running() == 0
+    assert not PID_FILE.exists()
+    assert "stale pidfile" in capsys.readouterr().out
+
+
+def test_stop_running_signals_and_waits_for_pidfile_removal(
+    signal_mod, monkeypatch, capsys
+):
+    from scripts.lib.config import PID_FILE
+
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text("4242")
+    sent: list[tuple[int, int]] = []
+
+    def fake_kill(pid, sig):
+        sent.append((pid, sig))
+        PID_FILE.unlink()
+
+    monkeypatch.setattr(os, "kill", fake_kill)
+    assert signal_mod.stop_running() == 0
+    assert sent == [(4242, signal.SIGTERM)]
+    assert "stopped cockpit pid=4242" in capsys.readouterr().out
+
+
+def test_sync_kicks_when_running(signal_mod, monkeypatch):
+    monkeypatch.setattr(signal_mod, "kick_running", lambda: True)
+    fallback_calls: list[int] = []
+
+    def fallback() -> int:
+        fallback_calls.append(1)
+        return 7
+
+    assert signal_mod.sync(fallback) == 0
+    assert fallback_calls == []
+
+
+def test_sync_falls_back_when_not_running(signal_mod, monkeypatch):
+    monkeypatch.setattr(signal_mod, "kick_running", lambda: False)
+    assert signal_mod.sync(lambda: 7) == 7

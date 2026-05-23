@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`/cockpit:close` — queue a worktree + workspace teardown for the daemon.
+"""`/cockpit:close` — tear down a worktree + workspace.
 
 Workflow:
   1. Resolve target (from query arg, or from `cwd` when no arg).
@@ -7,9 +7,11 @@ Workflow:
      never `--force`-overridable — only autoclose, which pre-validates
      cleanliness, can tear down such worktrees).
   3. Refuse on open-PR unless `--force` is given.
-  4. Write a close-request marker under `$COCKPIT_HOME/state/close-requests/`.
-  5. SIGUSR1-kick the daemon. If no daemon is running, run teardown inline
-     so the user still sees results — same code path either way.
+  4. If a daemon is running, write a close-request marker under
+     `$COCKPIT_HOME/state/close-requests/` and SIGUSR1-kick it — the daemon
+     drains and runs `teardown` outside this shell, so we don't yank the
+     cwd out from under our own session.
+  5. Otherwise, run `teardown` inline so the user still sees results.
 """
 
 from __future__ import annotations
@@ -21,7 +23,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import scripts.lib.close_requests as close_requests  # noqa: E402
 from scripts.lib.cmux import (  # noqa: E402
     require_workspace_binary,
     resolve_workspace,
@@ -29,7 +30,7 @@ from scripts.lib.cmux import (  # noqa: E402
     workspace_names,
 )
 from scripts.lib.config import discover_repo  # noqa: E402
-from scripts.lib.daemon import kick_running  # noqa: E402
+from scripts.lib.daemon_signal import enqueue, kick_running  # noqa: E402
 from scripts.lib.git import worktrees  # noqa: E402
 from scripts.orchestrators.teardown import (  # noqa: E402
     TeardownRequest,
@@ -149,15 +150,13 @@ def main() -> int:
         repo_name=repo_name,
         forced=args.force,
     )
-    marker = close_requests.enqueue(req)
-
     if kick_running(quiet=True):
+        enqueue(req)
         print(f"queued close: {label} (daemon will process)")
         return 0
 
     ok, refused = teardown(req)
     if ok:
-        close_requests.pop(marker)
         print(f"closed: {label}")
         return 0
     print(

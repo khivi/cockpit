@@ -73,7 +73,7 @@ from scripts.lib.config import (
     find_repo_by_name,
     find_repo_by_nwo,
 )  # noqa: E402
-from scripts.lib.daemon import kick_running  # noqa: E402
+from scripts.lib.daemon_signal import kick_running  # noqa: E402
 from scripts.lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch  # noqa: E402
 from scripts.lib.git import (  # noqa: E402
     branch_exists,

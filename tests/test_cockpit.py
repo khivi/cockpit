@@ -135,7 +135,7 @@ def reap_isolated(tmp_path, monkeypatch):
     import scripts.lib.config as cfg
 
     importlib.reload(cfg)
-    import scripts.lib.close_requests as cr
+    import scripts.lib.daemon_signal as cr
 
     importlib.reload(cr)
     import scripts.cockpit as cockpit_mod

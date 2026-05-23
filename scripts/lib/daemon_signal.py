@@ -1,29 +1,87 @@
-"""Persistent close-request queue under `$COCKPIT_HOME/state/close-requests/`.
+"""CLI → daemon signaling: SIGUSR1 kick, SIGTERM stop, and the close-request queue.
 
-`scripts/close.py` writes one JSON marker per requested teardown; the daemon
-drains the queue each cycle through `orchestrators.teardown.teardown`. The decoupling
-keeps teardown logic in one place and lets the daemon own retry/refusal.
+This is the *caller-side* IPC channel — everything `scripts/close.py`,
+`scripts/sync.py`, `scripts/spawn.py`, etc. use to talk *to* the daemon.
+The daemon-side runtime (pidfile + watch loop) lives in `lib/daemon.py`.
 
-Layout:
-    $COCKPIT_HOME/state/close-requests/<repo>/<ref>.json
-    $COCKPIT_HOME/state/close-requests/_global/<ref>.json   # repo unknown
+Two channels live here because they're two halves of the same conversation:
 
-Marker schema mirrors `TeardownRequest` plus a `requested_at` timestamp.
-Markers older than `STALE_SECONDS` are pruned silently — a long enough
-window for a brief daemon outage, short enough that a reboot doesn't
-auto-close worktrees the user has stopped caring about.
+  - **Signal**: `kick_running` (SIGUSR1 to wake), `stop_running` (SIGTERM to halt).
+  - **Queue**: `enqueue` / `iter_pending` / `pop` / `prune_stale` — durable
+    JSON markers under `$COCKPIT_HOME/state/close-requests/<repo>/<ref>.json`.
+    `scripts/close.py` writes a marker when the daemon is up; the daemon drains
+    them each cycle through `orchestrators.teardown.teardown`. Markers older
+    than `STALE_SECONDS` are pruned silently — long enough for a brief daemon
+    outage, short enough that a reboot doesn't auto-close worktrees the user
+    has stopped caring about.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import signal
+import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 from scripts.orchestrators.teardown import TeardownRequest
 
-from .config import COCKPIT_HOME
+from .config import COCKPIT_HOME, PID_FILE
+
+
+def kick_running(*, quiet: bool = False) -> bool:
+    """SIGUSR1 a running watcher. True if signalled, False if no live pidfile.
+
+    `quiet=True` suppresses the success print so callers (e.g. spawn.py) can
+    keep their own stdout clean.
+    """
+    if not PID_FILE.exists():
+        return False
+    try:
+        pid = int(PID_FILE.read_text().strip())
+        os.kill(pid, signal.SIGUSR1)
+        if not quiet:
+            print(f"kicked cockpit pid={pid}")
+        return True
+    except (ProcessLookupError, ValueError, OSError):
+        return False
+
+
+def sync(once_fn: Callable[[], int]) -> int:
+    """USR1-kick a running watcher; if none, run `once_fn` inline."""
+    return 0 if kick_running() else once_fn()
+
+
+def stop_running() -> int:
+    """SIGTERM the watcher and wait up to 5s for clean shutdown. Returns exit code."""
+    if not PID_FILE.exists():
+        print("no cockpit running (no pidfile)")
+        return 0
+    try:
+        pid = int(PID_FILE.read_text().strip())
+    except (ValueError, OSError) as e:
+        print(f"unreadable pidfile: {e}", file=sys.stderr)
+        return 1
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        PID_FILE.unlink(missing_ok=True)
+        print(f"cockpit pid={pid} was not running; removed stale pidfile")
+        return 0
+    deadline = time.time() + 5.0
+    while time.time() < deadline and PID_FILE.exists():
+        time.sleep(0.1)
+    if PID_FILE.exists():
+        print(
+            f"sent SIGTERM to pid={pid} but pidfile still present after 5s",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"stopped cockpit pid={pid}")
+    return 0
+
 
 STATE_DIR = COCKPIT_HOME / "state" / "close-requests"
 STALE_SECONDS = 3600

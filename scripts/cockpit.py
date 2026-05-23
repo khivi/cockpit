@@ -80,13 +80,13 @@ from scripts.lib.config import (  # noqa: E402
     install_starship_default_config,
 )
 from scripts.lib.daemon import run_watcher  # noqa: E402
+import scripts.lib.daemon_signal as daemon_signal  # noqa: E402
 from scripts.lib.cache import (  # noqa: E402
     write_base_ahead,
     write_base_distance,
     write_branch_pr_cache,
     write_pr_cache,
 )
-import scripts.lib.close_requests as close_requests  # noqa: E402
 from scripts.lib.gh import (  # noqa: E402
     PR,
     fetch_merged_branches,
@@ -762,12 +762,12 @@ def _drain_close_requests(dry: bool) -> None:
     Refused markers (blockers reappeared between probe and drain) are dropped
     with a log line — the user re-runs `cockpit:close --force` to retry.
     """
-    close_requests.prune_stale()
-    for path, req in close_requests.iter_pending():
+    daemon_signal.prune_stale()
+    for path, req in daemon_signal.iter_pending():
         ok, blockers = teardown(req, dry=dry)
         if ok:
             if not dry:
-                close_requests.pop(path)
+                daemon_signal.pop(path)
             continue
         label = req.name or req.ref
         print(
@@ -776,7 +776,7 @@ def _drain_close_requests(dry: bool) -> None:
             flush=True,
         )
         if not dry:
-            close_requests.pop(path)
+            daemon_signal.pop(path)
 
 
 def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> None:
@@ -856,7 +856,7 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
             flush=True,
         )
         if not dry:
-            close_requests.enqueue(req)
+            daemon_signal.enqueue(req)
 
 
 def cycle_all(

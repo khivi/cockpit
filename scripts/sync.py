@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scripts.lib.daemon import kick_running  # noqa: E402
+from scripts.lib.daemon_signal import kick_running  # noqa: E402
 
 if __name__ == "__main__":
     if kick_running():
