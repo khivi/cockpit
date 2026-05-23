@@ -38,10 +38,9 @@ from scripts.lib.cmux import (  # noqa: E402
     BLUE,
     LOOP_ICON,
     LOOP_KEY,
-    _resolve_tool,
     cmux,
 )
-from scripts.lib.colors import green, yellow  # noqa: E402
+from scripts.lib.colors import green  # noqa: E402
 from scripts.lib.config import (  # noqa: E402
     ensure_state_dirs,
     load_config,
@@ -51,6 +50,7 @@ from scripts.lib.config import (  # noqa: E402
 )
 from scripts.lib.daemon import run_watcher  # noqa: E402
 from scripts.lib.gh import gh_self_user  # noqa: E402
+from scripts.lib.preflight import preflight  # noqa: E402
 from scripts.orchestrators.cycle import cycle_all  # noqa: E402
 
 DEFAULT_POLL_SECS = 300
@@ -149,34 +149,13 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     ensure_state_dirs()
+    preflight(load_config())
 
     if args.footer:
         install_cship_default_config()
         install_starship_default_config()
         install_cship_statusline_if_configured(_statusline_command())
         return 0
-
-    startup_cfg = load_config()
-    if startup_cfg.get("tool", "auto") == "auto":
-        resolved = _resolve_tool()
-        if resolved == "limux":
-            print(
-                f"{yellow('cockpit:')} cmux not found — using limux. "
-                "Side panel disabled (limux lacks pill support); "
-                "footer/statusline and slash commands work. "
-                "Set 'tool': 'cmux' in config to require cmux instead.",
-                file=sys.stderr,
-                flush=True,
-            )
-        elif resolved == "none":
-            print(
-                f"{yellow('cockpit:')} no workspace tool on PATH (cmux/limux) — "
-                "running cache-only mode. Footer/statusline works; "
-                "side panel and slash commands disabled. "
-                "Set 'tool': 'none' in config to suppress this warning.",
-                file=sys.stderr,
-                flush=True,
-            )
 
     if args.watch is not None:
         cfg = load_config()

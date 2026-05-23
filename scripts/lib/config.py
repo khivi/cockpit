@@ -181,10 +181,12 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
 
     When the flag is unset or false, cockpit does not touch the statusLine.
 
-    Called only from `cockpit.py --footer`. --once / --watch do not invoke this
-    — they leave the existing statusLine and never trigger the PATH check, so
-    a misconfigured `use_cship: true` no longer blocks reconcile cycles. Run
-    `cockpit --footer` once after flipping the flag to wire the statusLine.
+    Called only from `cockpit.py --footer` — only --footer needs to mutate
+    the statusLine. --once / --watch do not invoke this, but they still
+    enforce the same `use_cship` → cship-on-PATH contract via
+    `lib.preflight.preflight()`, which runs at the top of every cockpit
+    invocation. The cship check here is defensive belt-and-suspenders for
+    callers that bypass preflight.
     """
     cfg = load_config()
     if not cfg.get("use_cship"):
