@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 import pytest
 
-import scripts.lib.claude as claude_mod
-import scripts.lib.starship as starship
-from scripts.lib.colors import (
+import lib.claude as claude_mod
+import lib.starship as starship
+from lib.colors import (
     Colorizer,
     amber,
     azure,
@@ -153,14 +153,16 @@ def test_print_rate_limit_tier(cache_dir, pct, color: Colorizer):
 # ── field printer: linear ──────────────────────────────────────────────────
 
 
-def test_print_linear_extracts_ticket(cache_dir):
-    with patch.object(starship, "_branch", return_value="khivi/PRO-123-fix"):
-        assert starship.print_linear() == "PRO-123"
+def test_print_linear_extracts_ticket(_clean_git_env, tmp_path, monkeypatch):
+    _init_repo(tmp_path, branch="khivi/PRO-123-fix")
+    monkeypatch.chdir(tmp_path)
+    assert starship.print_linear() == "PRO-123"
 
 
-def test_print_linear_no_ticket(cache_dir):
-    with patch.object(starship, "_branch", return_value="khivi/cleanup"):
-        assert starship.print_linear() == ""
+def test_print_linear_no_ticket(_clean_git_env, tmp_path, monkeypatch):
+    _init_repo(tmp_path, branch="khivi/cleanup")
+    monkeypatch.chdir(tmp_path)
+    assert starship.print_linear() == ""
 
 
 # ── PR cache reads ─────────────────────────────────────────────────────────
@@ -313,31 +315,78 @@ def test_print_permission_mode(cache_dir, value, expected):
 # ── field printers: branch_identity + worktree_status ──────────────────────
 
 
-def _init_repo(path: Path) -> None:
+def _git(path: Path, *args: str) -> None:
     import subprocess as sp
 
-    sp.run(["git", "-C", str(path), "init", "-q", "-b", "main"], check=True)
-    sp.run(["git", "-C", str(path), "config", "user.email", "t@t"], check=True)
-    sp.run(["git", "-C", str(path), "config", "user.name", "t"], check=True)
+    sp.run(["git", "-C", str(path), *args], check=True, capture_output=True)
+
+
+def _init_repo(path: Path, branch: str = "main") -> None:
+    _git(path, "init", "-q", "-b", branch)
+    _git(path, "config", "user.email", "t@t")
+    _git(path, "config", "user.name", "t")
     (path / "f").write_text("x")
-    sp.run(["git", "-C", str(path), "add", "f"], check=True)
-    sp.run(
-        ["git", "-C", str(path), "commit", "-q", "-m", "init"],
-        check=True,
-    )
+    _git(path, "add", "f")
+    _git(path, "commit", "-q", "-m", "init")
 
 
-def _stub(
-    monkeypatch, *, branch="feature", ahead=0, behind=0, status=(0, 0, 0)
-) -> None:
-    import scripts.lib.git as git_mod
+def _make_repo(
+    tmp_path: Path,
+    *,
+    branch: str = "feature",
+    ahead: int = 0,
+    behind: int = 0,
+    status: tuple[int, int, int] = (0, 0, 0),
+) -> Path:
+    """Build a real git repo with the requested branch + sync + dirty state.
 
-    monkeypatch.setattr(starship, "current_branch", lambda _cwd: branch)
-    monkeypatch.setattr(starship, "ahead_of_origin", lambda _cwd, _b: ahead)
-    monkeypatch.setattr(starship, "behind_of_origin", lambda _cwd, _b: behind)
-    monkeypatch.setattr(
-        starship, "count_status", lambda _p: git_mod.GitStatusCounts(*status)
-    )
+    `ahead`/`behind` are measured against `origin/<branch>`. `status` is
+    (staged, unstaged, untracked) — files are actually created so
+    `git status --porcelain` produces matching counts.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo, branch=branch)
+
+    staged, unstaged, untracked = status
+    if unstaged > 0:
+        for i in range(unstaged):
+            (repo / f"m{i}").write_text("orig")
+            _git(repo, "add", f"m{i}")
+        _git(repo, "commit", "-q", "-m", "tracked")
+
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", "-q", "-b", branch, str(origin))
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "push", "-q", "-u", "origin", branch)
+
+    if behind > 0:
+        scratch = tmp_path / "scratch"
+        _git(tmp_path, "clone", "-q", str(origin), str(scratch))
+        _git(scratch, "config", "user.email", "t@t")
+        _git(scratch, "config", "user.name", "t")
+        for i in range(behind):
+            (scratch / f"b{i}").write_text(str(i))
+            _git(scratch, "add", f"b{i}")
+            _git(scratch, "commit", "-q", "-m", f"b{i}")
+        _git(scratch, "push", "-q", "origin", branch)
+        _git(repo, "fetch", "-q", "origin")
+
+    for i in range(ahead):
+        (repo / f"a{i}").write_text(str(i))
+        _git(repo, "add", f"a{i}")
+        _git(repo, "commit", "-q", "-m", f"a{i}")
+
+    if unstaged > 0:
+        for i in range(unstaged):
+            (repo / f"m{i}").write_text("dirty")
+    for i in range(staged):
+        (repo / f"s{i}").write_text(str(i))
+        _git(repo, "add", f"s{i}")
+    for i in range(untracked):
+        (repo / f"u{i}").write_text(str(i))
+
+    return repo
 
 
 def test_branch_identity_clean(_clean_git_env, tmp_path, monkeypatch):
@@ -351,8 +400,9 @@ def test_branch_identity_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
     assert starship.print_branch_identity() == ""
 
 
-def test_branch_identity_ahead_origin(_clean_git_env, monkeypatch):
-    _stub(monkeypatch, ahead=3)
+def test_branch_identity_ahead_origin(_clean_git_env, tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path, ahead=3)
+    monkeypatch.chdir(repo)
     out = starship.print_branch_identity()
     assert slate("⎇ feature") in out
     assert azure("↑3") in out
@@ -370,9 +420,10 @@ def test_worktree_status_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
 
 
 def test_worktree_status_leads_with_separator_when_non_empty(
-    _clean_git_env, monkeypatch
+    _clean_git_env, tmp_path, monkeypatch
 ):
-    _stub(monkeypatch, status=(1, 0, 0))
+    repo = _make_repo(tmp_path, status=(1, 0, 0))
+    monkeypatch.chdir(repo)
     out = starship.print_worktree_status()
     assert out.startswith(slate(starship.POWERLINE_BRANCH))
     assert leaf("●1") in out
@@ -389,14 +440,16 @@ def test_worktree_status_leads_with_separator_when_non_empty(
     ids=["behind_only", "staged_only", "unstaged_only", "untracked_only"],
 )
 def test_worktree_status_segments(
-    _clean_git_env, monkeypatch, behind, status, expected_fragment
+    _clean_git_env, tmp_path, monkeypatch, behind, status, expected_fragment
 ):
-    _stub(monkeypatch, behind=behind, status=status)
+    repo = _make_repo(tmp_path, behind=behind, status=status)
+    monkeypatch.chdir(repo)
     assert expected_fragment in starship.print_worktree_status()
 
 
-def test_worktree_status_all_segments(_clean_git_env, monkeypatch):
-    _stub(monkeypatch, behind=1, status=(1, 1, 1))
+def test_worktree_status_all_segments(_clean_git_env, tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path, behind=1, status=(1, 1, 1))
+    monkeypatch.chdir(repo)
     out = starship.print_worktree_status()
     for frag in (orange("↓1"), leaf("●1"), amber("✎1"), shadow("✚1")):
         assert frag in out
@@ -439,26 +492,29 @@ def test_worktree_status_real_repo_dirty_and_untracked(
     ids=["fresh", "aging", "too_stale", "zero", "empty_payload", "no_cache"],
 )
 def test_worktree_status_base_distance(
-    cache_dir, _clean_git_env, monkeypatch, setup, check
+    cache_dir, _clean_git_env, tmp_path, monkeypatch, setup, check
 ):
-    _stub(monkeypatch)
+    repo = _make_repo(tmp_path)
+    monkeypatch.chdir(repo)
     setup(cache_dir / "base-distance-feature", int(time.time()))
     assert check(starship.print_worktree_status())
 
 
 def test_worktree_status_base_distance_garbage_hidden(
-    cache_dir, _clean_git_env, monkeypatch
+    cache_dir, _clean_git_env, tmp_path, monkeypatch
 ):
-    _stub(monkeypatch)
+    repo = _make_repo(tmp_path)
+    monkeypatch.chdir(repo)
     (cache_dir / "base-distance-feature").write_text("not numbers")
     assert "↻" not in starship.print_worktree_status()
 
 
 def test_worktree_status_base_distance_slash_branch_key(
-    cache_dir, _clean_git_env, monkeypatch
+    cache_dir, _clean_git_env, tmp_path, monkeypatch
 ):
     """branch_cache slug-escapes `/` to `-`; verify the cache file path."""
-    _stub(monkeypatch, branch="khivi/master/foo")
+    repo = _make_repo(tmp_path, branch="khivi/master/foo")
+    monkeypatch.chdir(repo)
     now = int(time.time())
     (cache_dir / "base-distance-khivi-master-foo").write_text(f"3 {now}")
     assert orange("↻3") in starship.print_worktree_status()
@@ -489,9 +545,10 @@ def test_worktree_status_base_distance_slash_branch_key(
     ids=["fresh", "aging", "too_stale", "zero", "empty_payload", "no_cache"],
 )
 def test_branch_identity_base_ahead(
-    cache_dir, _clean_git_env, monkeypatch, setup, check
+    cache_dir, _clean_git_env, tmp_path, monkeypatch, setup, check
 ):
-    _stub(monkeypatch)
+    repo = _make_repo(tmp_path)
+    monkeypatch.chdir(repo)
     setup(cache_dir / "base-ahead-feature", int(time.time()))
     assert check(starship.print_branch_identity())
 
