@@ -26,25 +26,25 @@ Optional:
                           Defaults to a plan-only prompt when input is a PR.
                           Defaults to none (bare `claude`) for branch/cwd input.
 
-Positional detection (7 steps):
+Positional detection (6 steps):
   1. GitHub PR URL (https://github.com/.../pull/N) → PR mode
   2. #-prefixed PR number (#N)                       → PR mode
                                                        (bare N is a branch — see below)
   3. Linear ID ([A-Z]{2,6}-\\d+, case-insensitive)   → linear mode
-  4. Slack archives URL                              → slack mode
-  5. Local branch (refs/heads/<branch> exists)           → checkout
-  6. Remote branch (ls-remote origin <branch> matches)   → fetch + checkout
-  7. New branch (neither local nor remote)               → create from default_base
+  4. Local branch (refs/heads/<branch> exists)           → checkout
+  5. Remote branch (ls-remote origin <branch> matches)   → fetch + checkout
+  6. New branch (neither local nor remote)               → create from default_base
 
-  After branch resolution (steps 5-7), gh is queried for an open PR on
+  After branch resolution (steps 4-6), gh is queried for an open PR on
   the head ref; if found, the PR info is printed and the plan-only prompt
   is auto-generated (unless --claude-prompt overrides).
 
-  Linear/Slack modes create a fresh branch under `branch_prefix` (named
-  `<id-lower>` / `slack-<channel>-<ts>`) and seed a plan-only prompt that
-  instructs Claude to fetch the ticket/thread via its MCP connector on the
-  first turn. Cockpit does not call the Linear/Slack APIs itself — if the
-  relevant MCP is not connected, the spawned Claude reports that and stops.
+  Linear mode creates a fresh branch `<branch_prefix><id-lower>` (e.g.
+  `khivi/pe-1234`). With `use_linear: true` and the Linear MCP detected
+  via `claude mcp list`, cockpit seeds a plan-only prompt that instructs
+  Claude to fetch the ticket via the Linear MCP and rename the branch +
+  workspace to include the ticket title slug. Otherwise the workspace
+  starts with the generic plan prompt.
 
 Behaviour:
   - For positional/--branch/--pr without --repo: walk up from cwd to match a
@@ -93,7 +93,6 @@ from scripts.lib.git import (  # noqa: E402
 from scripts.lib.linear import LINEAR_RE_CI, linear_mcp_available  # noqa: E402
 from scripts.lib.prompts import claude_command  # noqa: E402
 from scripts.lib.repos import repo_names  # noqa: E402
-from scripts.lib.slack import SLACK_URL_RE, parse_url as parse_slack_url  # noqa: E402
 
 
 def _die(msg: str, code: int = 1) -> int:
@@ -155,7 +154,6 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
       - `pr`     : GitHub PR URL or `#N`. Bare integers stay `branch`.
       - `linear` : whole positional matches `[A-Z]{2,6}-\\d+` (case-insensitive).
                    Normalised to uppercase in `value`.
-      - `slack`  : whole positional is a Slack archives URL.
       - `branch` : anything else; local/remote/new resolved by create_worktree.
     """
     m = re.match(r"https?://github\.com/([^/]+/[^/]+)/pull/(\d+)", value)
@@ -163,26 +161,9 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
         return "pr", m.group(2), m.group(1)
     if re.fullmatch(r"#\d+", value):
         return "pr", value.lstrip("#"), None
-    if SLACK_URL_RE.match(value):
-        return "slack", value, None
     if LINEAR_RE_CI.fullmatch(value):
         return "linear", value.upper(), None
     return "branch", value, None
-
-
-def _slack_branch_name(url: str) -> str:
-    """Deterministic `slack-<channel-lower>-<ts-dash>` from a Slack archives URL.
-
-    Cockpit deliberately avoids fetching the thread body to pick a prettier
-    name: that's Claude's job on the first turn, via the Slack MCP. The
-    branch name only needs to be unique and re-derivable — re-spawning on
-    the same URL must hit the same branch (idempotency).
-    """
-    parsed = parse_slack_url(url)
-    if parsed is None:
-        return slugify(url) or "slack-thread"
-    ch, ts = parsed
-    return f"slack-{ch.lower()}-{ts.replace('.', '-')}"
 
 
 _PLAN_TAIL = [
@@ -241,32 +222,6 @@ def _linear_prompt(branch: str, identifier: str) -> str:
         "- Cockpit's next reconcile cycle reads `cmux list-workspaces`, so the renamed "
         "workspace surfaces in `/cockpit:list` automatically.",
         "- Do not push or change anything else in this step.",
-    ]
-    return "\n".join(lines + _PLAN_TAIL)
-
-
-def _slack_prompt(branch: str, url: str) -> str:
-    """First-turn prompt that delegates Slack thread fetch to the Slack MCP.
-
-    Same contract as `_linear_prompt`: Claude reads the thread via MCP; no
-    cockpit-side API. The `(channel, ts)` pair is parsed out only so Claude
-    has them ready to pass to the MCP tool.
-    """
-    parsed = parse_slack_url(url)
-    channel_ts = (
-        f"channel `{parsed[0]}`, ts `{parsed[1]}`" if parsed else "(unparsed URL)"
-    )
-    lines = [
-        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
-        "",
-        f"**Source**: Slack thread — {channel_ts}",
-        f"**Permalink**: {url}",
-        "",
-        "**First step (REQUIRED)**: Fetch the thread via the Slack MCP before planning.",
-        "- Use the Slack MCP tool to read the full thread (root message + replies).",
-        "- If the Slack MCP is not connected, STOP. Report to the user that the "
-        "Slack connector is required and exit without writing a plan. Do not "
-        "fall back to guessing from the URL alone.",
     ]
     return "\n".join(lines + _PLAN_TAIL)
 
@@ -458,7 +413,7 @@ def main() -> int:
     from_name = False
 
     prompt: str | None = args.claude_prompt
-    seeded_prompt: str | None = None  # holds the linear/slack MCP-instructing prompt
+    seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
 
     if args.positional:
         mode, value, nwo_hint = detect_source(args.positional)
@@ -477,10 +432,6 @@ def main() -> int:
                     )
                 else:
                     seeded_prompt = _linear_prompt(branch, value)
-        elif mode == "slack":
-            branch = _slack_branch_name(value)
-            from_name = True
-            seeded_prompt = _slack_prompt(branch, value)
         else:
             branch = value
         if nwo_hint and not args.repo:
@@ -500,7 +451,7 @@ def main() -> int:
         branch = args.name
         from_name = True
 
-    # --claude-prompt wins over the linear/slack-seeded prompt; otherwise the
+    # --claude-prompt wins over the linear-seeded prompt; otherwise the
     # seeded one wins over the generic plan-only prompt added below.
     if prompt is None:
         prompt = seeded_prompt

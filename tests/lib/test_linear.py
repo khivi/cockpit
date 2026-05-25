@@ -100,7 +100,7 @@ def test_linear_mcp_available_case_insensitive():
 def test_linear_mcp_available_false_when_no_linear_entry():
     with patch(
         "scripts.lib.linear.subprocess.run",
-        return_value=_fake_completed(stdout="github: gh-stuff\nslack: slack-thing\n"),
+        return_value=_fake_completed(stdout="github: gh-stuff\nfilesystem: fs-thing\n"),
     ):
         assert linear_mcp_available() is False
 

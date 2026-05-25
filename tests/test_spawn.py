@@ -90,23 +90,6 @@ def test_linear_id_inside_path_stays_branch():
     assert value == "khivi/PE-1234-foo"
 
 
-def test_slack_url_returns_slack_mode():
-    url = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
-    mode, value, nwo = detect_source(url)
-    assert mode == "slack"
-    assert value == url
-    assert nwo is None
-
-
-def test_slack_thread_reply_url_still_slack_mode():
-    url = (
-        "https://acme.slack.com/archives/C0123ABC/p1700000000999999"
-        "?thread_ts=1700000000.123456"
-    )
-    mode, _, _ = detect_source(url)
-    assert mode == "slack"
-
-
 # ────────────────────────────────────────────────────────────────────────────
 # resolve_worktree (real tmp repo via cockpit_repo)
 # ────────────────────────────────────────────────────────────────────────────
@@ -379,13 +362,13 @@ def test_positional_branch_dispatches_to_branch_mode(spawn_main, push_branch):
     assert "on khivi/positional-branch" in out
 
 
-# ── linear / slack dispatch ────────────────────────────────────────────────
+# ── linear dispatch ────────────────────────────────────────────────────────
 #
-# `/cockpit:new PE-1234` and `/cockpit:new <slack-url>` create a worktree
-# with a deterministic branch name and seed a first-turn prompt that
-# instructs Claude to fetch ticket/thread context via its Linear/Slack MCP
-# connector. Cockpit does NOT call the Linear or Slack APIs itself, so
-# there's no network surface to mock — only the prompt + branch shape.
+# `/cockpit:new PE-1234` creates a worktree on `khivi/<id-lower>` and, when
+# `use_linear: true` AND the Linear MCP is detected, seeds a first-turn
+# prompt instructing Claude to fetch the ticket via the Linear MCP and
+# rename the branch + workspace. Cockpit does NOT call the Linear API
+# itself — no network surface to mock, only prompt + branch shape + gating.
 
 
 def test_positional_linear_creates_lowercased_branch(spawn_main):
@@ -517,31 +500,6 @@ def test_linear_on_with_inconclusive_probe_seeds_smart_prompt(
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "Linear MCP" in cmd
     assert "STOP" in cmd
-
-
-def test_positional_slack_creates_channel_ts_branch(spawn_main):
-    url = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
-    code, out, _err = spawn_main([url, "--repo", "testrepo"])
-    assert code == 0
-    # Branch keeps the full deterministic name; the workspace `name` is
-    # slugified to ≤30 chars (so it gets truncated for long Slack ts strings).
-    assert "on khivi/slack-c0123abc-1700000000-123456" in out
-    call = spawn_main.cmux_calls[0]
-    name = _cmux_kwarg(call, "name")
-    assert name.startswith("slack-c0123abc-1700000000")
-    assert len(name) <= 30
-
-
-def test_positional_slack_prompt_instructs_mcp_fetch(spawn_main):
-    url = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
-    spawn_main([url, "--repo", "testrepo"])
-    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
-    assert url in cmd
-    assert "C0123ABC" in cmd
-    assert "1700000000.123456" in cmd
-    assert "Slack MCP" in cmd
-    assert "STOP" in cmd
-    assert "PLAN ONLY" in cmd
 
 
 def test_explicit_claude_prompt_overrides_linear_seeded_prompt(

@@ -26,10 +26,9 @@ A background daemon polls GitHub every few minutes and caches each PR's CI / rev
 | `gh` or `git` | refuses to start |
 | `cship` or `starship` (with `use_cship: true`) | refuses to start |
 | both `cmux` and `limux` | warns once; runs in cache-only mode |
-| `cmux` only (Linux falls back to `limux`) | worktrees, workspaces, and `/cockpit:new` (including Linear/Slack positional input) all work; the nudge pills feature is disabled (limux lacks the persistent-pill API) and cockpit warns at startup |
-| `cship` (with `use_cship: false` or unset) | the statusline pills don't render; everything else, including `/cockpit:new <linear-id\|slack-url>`, still creates the workspace and seeds the plan prompt |
+| `cmux` only (Linux falls back to `limux`) | worktrees, workspaces, and `/cockpit:new` (including Linear positional input) all work; the nudge pills feature is disabled (limux lacks the persistent-pill API) and cockpit warns at startup |
+| `cship` (with `use_cship: false` or unset) | the statusline pills don't render; everything else, including `/cockpit:new <linear-id>`, still creates the workspace and seeds the plan prompt |
 | Linear MCP connector (for `/cockpit:new <linear-id>`, only when `use_linear: true`) | worktree + workspace still get created and named after the id (e.g. `khivi/pe-1234`). If `claude mcp list` reports no Linear entry, cockpit warns once and seeds the generic plan prompt instead of the MCP-instructing one. If detection is inconclusive and Claude can't actually reach the MCP, the spawned Claude reports that on its first turn and exits without writing a plan. With `use_linear: false` (default) the MCP is never consulted. |
-| Slack MCP connector (for `/cockpit:new <slack-url>`) | same as above — the workspace exists on `khivi/slack-<channel>-<ts>` but Claude can't read the thread and stops on the first turn |
 
 ## Install
 
@@ -77,21 +76,19 @@ When the PR merges and the worktree is clean, cockpit tears both down automatica
 
 If `/cockpit:list` shows `—` everywhere, the daemon hasn't completed a cycle yet — wait for the polling interval or run `/cockpit:sync`. If pidfile exists but `/cockpit:list` is stale, tail the `--watch` terminal for the cycle error.
 
-## Linear & Slack positional input
+## Linear positional input
 
-`/cockpit:new` accepts a Linear ticket id or a Slack thread URL in the same positional slot that takes a branch name or PR number:
+`/cockpit:new` accepts a Linear ticket id in the same positional slot that takes a branch name or PR number:
 
 ```text
 /cockpit:new PE-1234
-/cockpit:new https://acme.slack.com/archives/C0123ABC/p1700000000123456
 ```
 
-- **Linear id** — matches `[A-Z]{2,6}-\d+` (case-insensitive). Creates a worktree on `<branch_prefix><id-lower>` (e.g. `khivi/pe-1234`) and a cmux workspace named `pe-1234`. With `use_linear: true` and the Linear MCP detected via `claude mcp list`, Claude's first turn reads the ticket via the Linear MCP, derives a `<slug>` from the title, then renames both the branch (`khivi/pe-1234-add-login-flow`) and the workspace (`add-login-flow` — no id prefix). Cockpit's next reconcile cycle picks both up automatically. With `use_linear: false` (default) or no Linear MCP detected, the workspace just starts on `khivi/pe-1234` with the generic plan prompt — same as `/cockpit:new --branch pe-1234`.
-- **Slack URL** — matches `https://<workspace>.slack.com/archives/<channel>/p<ts>` (`?thread_ts=…` reply links resolve to the root). Creates a worktree on `<branch_prefix>slack-<channel>-<ts>`.
+Matches `[A-Z]{2,6}-\d+` (case-insensitive). Creates a worktree on `<branch_prefix><id-lower>` (e.g. `khivi/pe-1234`) and a cmux workspace named `pe-1234`.
 
-In both cases, cockpit seeds Claude's first turn with a prompt that instructs it to fetch the ticket/thread context via the appropriate Claude **MCP connector** before planning. Cockpit itself does **not** call the Linear or Slack APIs — auth lives in your Claude MCP config (Linear / Slack connectors under Claude.ai or your local MCP setup).
+With `use_linear: true` AND the Linear MCP detected via `claude mcp list`, Claude's first turn reads the ticket via the Linear MCP, derives a `<slug>` from the title, then renames both the branch (`khivi/pe-1234-add-login-flow`) and the workspace (`add-login-flow` — no id prefix). Cockpit's next reconcile cycle picks both up automatically.
 
-If the relevant MCP connector is not installed, the spawned Claude reports that on its first turn and stops without writing a plan. Install the Linear / Slack connector in Claude and re-spawn (the second run attaches to the existing worktree).
+With `use_linear: false` (default) or no Linear MCP detected, the workspace just starts on `khivi/pe-1234` with the generic plan prompt — same as `/cockpit:new --branch pe-1234`. Auth lives in your Claude MCP config, never in cockpit.
 
 Out of scope here: rendering the Linear ticket title in the cship statusline pill. That requires cship-side support (see [TODO.md](TODO.md)).
 
