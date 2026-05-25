@@ -117,6 +117,23 @@ def prompt_prefix() -> str:
     return str(load_config().get("prompt_prefix", "")).strip()
 
 
+def use_linear() -> bool:
+    """Whether the "smart" Linear flow is enabled (default: False).
+
+    When False (default), `/cockpit:new PE-1234` still classifies as Linear
+    mode (so the statusline pill keeps working), but spawn skips the
+    MCP-instructing prompt — the workspace starts on `<prefix>pe-1234` with
+    the generic plan-only prompt, equivalent to `/cockpit:new --branch pe-1234`.
+    Safer default for users without the Linear MCP configured.
+
+    When True, spawn pre-flights `claude mcp list` to confirm the Linear MCP
+    is connected and only then seeds the 3-step rename prompt. If the
+    pre-flight definitively reports no Linear MCP, spawn warns once and
+    falls back to the plain-branch path.
+    """
+    return bool(load_config().get("use_linear", False))
+
+
 def _read_current_statusline(settings_path: Path) -> str | None:
     if not settings_path.exists():
         return ""

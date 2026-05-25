@@ -78,6 +78,7 @@ from scripts.lib.config import (
     discover_repo,
     find_repo_by_name,
     find_repo_by_nwo,
+    use_linear as cfg_use_linear,
 )  # noqa: E402
 from scripts.lib.daemon_signal import kick_running  # noqa: E402
 from scripts.lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch  # noqa: E402
@@ -89,7 +90,7 @@ from scripts.lib.git import (  # noqa: E402
     slugify,
     worktree_for_branch,
 )
-from scripts.lib.linear import LINEAR_RE_CI  # noqa: E402
+from scripts.lib.linear import LINEAR_RE_CI, linear_mcp_available  # noqa: E402
 from scripts.lib.prompts import claude_command  # noqa: E402
 from scripts.lib.repos import repo_names  # noqa: E402
 from scripts.lib.slack import SLACK_URL_RE, parse_url as parse_slack_url  # noqa: E402
@@ -466,7 +467,16 @@ def main() -> int:
         elif mode == "linear":
             branch = value.lower()
             from_name = True
-            seeded_prompt = _linear_prompt(branch, value)
+            if cfg_use_linear():
+                mcp = linear_mcp_available()
+                if mcp is False:
+                    print(
+                        f"cockpit: Linear MCP not detected via 'claude mcp list'; "
+                        f"falling back to plain branch mode for {value}",
+                        file=sys.stderr,
+                    )
+                else:
+                    seeded_prompt = _linear_prompt(branch, value)
         elif mode == "slack":
             branch = _slack_branch_name(value)
             from_name = True

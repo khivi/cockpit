@@ -19,6 +19,7 @@ spawned workspace.
 from __future__ import annotations
 
 import re
+import subprocess
 
 LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
 LINEAR_RE_CI = re.compile(r"[A-Za-z]{2,6}-[0-9]+")
@@ -30,3 +31,30 @@ def extract_ticket(branch: str) -> str:
         return ""
     m = LINEAR_RE.search(branch)
     return m.group(0) if m else ""
+
+
+def linear_mcp_available() -> bool | None:
+    """Return True/False if `claude mcp list` definitively says, else None.
+
+    Runs `claude mcp list` with a short timeout. Returns:
+      * True  — stdout contains a case-insensitive `linear` substring.
+      * False — command ran cleanly with no Linear entry in stdout.
+      * None  — the `claude` binary is missing, the command failed/timed out,
+                or any other reason we couldn't tell. Callers treat None as
+                "proceed with the smart flow anyway" (Claude itself will
+                STOP on the first turn if the MCP is truly missing).
+
+    No network — `claude mcp list` is a local config dump.
+    """
+    try:
+        res = subprocess.run(
+            ["claude", "mcp", "list"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if res.returncode != 0:
+        return None
+    return "linear" in res.stdout.lower()

@@ -531,3 +531,25 @@ def test_seed_replaces_dangling_cship_symlink(tmp_path, monkeypatch):
     assert dest.exists()
     assert not dest.is_symlink()
     assert dest.read_text() == cockpit_config.CSHIP_DEFAULT_TOML.read_text()
+
+
+# ── use_linear reader ───────────────────────────────────────────────────────
+
+
+def test_use_linear_defaults_false_when_unset(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.use_linear() is False
+
+
+def test_use_linear_returns_true_when_set(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_linear": True}
+    )
+    assert cockpit_config.use_linear() is True
+
+
+def test_use_linear_returns_false_when_explicitly_false(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_linear": False}
+    )
+    assert cockpit_config.use_linear() is False

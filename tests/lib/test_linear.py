@@ -7,7 +7,15 @@ for the spawn-side dispatch (which only inspects the id).
 
 from __future__ import annotations
 
-from scripts.lib.linear import LINEAR_RE, LINEAR_RE_CI, extract_ticket
+import subprocess
+from unittest.mock import patch
+
+from scripts.lib.linear import (
+    LINEAR_RE,
+    LINEAR_RE_CI,
+    extract_ticket,
+    linear_mcp_available,
+)
 
 
 def test_linear_re_matches_uppercase_only():
@@ -33,3 +41,81 @@ def test_extract_ticket_returns_first_match():
 def test_extract_ticket_empty_returns_empty():
     assert extract_ticket("") == ""
     assert extract_ticket("khivi/no-ticket") == ""
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# linear_mcp_available — pre-flight against `claude mcp list`
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _fake_completed(
+    stdout: str = "", returncode: int = 0
+) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(
+        args=["claude", "mcp", "list"], returncode=returncode, stdout=stdout, stderr=""
+    )
+
+
+def test_linear_mcp_available_returns_none_when_claude_missing():
+    """No `claude` on PATH → FileNotFoundError → None (can't tell)."""
+    with patch("scripts.lib.linear.subprocess.run", side_effect=FileNotFoundError):
+        assert linear_mcp_available() is None
+
+
+def test_linear_mcp_available_returns_none_on_timeout():
+    with patch(
+        "scripts.lib.linear.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=3),
+    ):
+        assert linear_mcp_available() is None
+
+
+def test_linear_mcp_available_returns_none_on_nonzero_exit():
+    """`claude mcp list` ran but failed → can't tell → None."""
+    with patch(
+        "scripts.lib.linear.subprocess.run",
+        return_value=_fake_completed(stdout="", returncode=1),
+    ):
+        assert linear_mcp_available() is None
+
+
+def test_linear_mcp_available_true_when_output_contains_linear():
+    with patch(
+        "scripts.lib.linear.subprocess.run",
+        return_value=_fake_completed(
+            stdout="linear: https://mcp.linear.app/sse (HTTP)\n",
+        ),
+    ):
+        assert linear_mcp_available() is True
+
+
+def test_linear_mcp_available_case_insensitive():
+    with patch(
+        "scripts.lib.linear.subprocess.run",
+        return_value=_fake_completed(stdout="LINEAR Connector enabled\n"),
+    ):
+        assert linear_mcp_available() is True
+
+
+def test_linear_mcp_available_false_when_no_linear_entry():
+    with patch(
+        "scripts.lib.linear.subprocess.run",
+        return_value=_fake_completed(stdout="github: gh-stuff\nslack: slack-thing\n"),
+    ):
+        assert linear_mcp_available() is False
+
+
+def test_linear_mcp_available_false_on_empty_output():
+    with patch(
+        "scripts.lib.linear.subprocess.run",
+        return_value=_fake_completed(stdout=""),
+    ):
+        assert linear_mcp_available() is False
+
+
+def test_linear_mcp_available_returns_none_on_oserror():
+    with patch(
+        "scripts.lib.linear.subprocess.run",
+        side_effect=OSError("permission denied"),
+    ):
+        assert linear_mcp_available() is None
