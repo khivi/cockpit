@@ -231,13 +231,12 @@ _PR_FIELDS = """
   }
   reviews(first: 100) { nodes { author { login __typename } body } }
   commits(last: 1) {
-    nodes { commit { statusCheckRollup {
-      contexts(first: 30) { nodes {
-        __typename
-        ... on CheckRun { status conclusion }
-        ... on StatusContext { state }
+    nodes { commit {
+      checkSuites(first: 20) { nodes {
+        checkRuns(first: 100) { nodes { status conclusion } }
       } }
-    } } }
+      status { contexts { state } }
+    } }
   }
 """
 
@@ -279,28 +278,20 @@ def _pr_from_node(n: dict) -> PR | None:
     author = (n.get("author") or {}).get("login")
     if not author:
         return None
-    contexts = (
-        (
-            ((n["commits"]["nodes"] or [{}])[0].get("commit") or {}).get(
-                "statusCheckRollup"
-            )
-            or {}
-        )
-        .get("contexts", {})
-        .get("nodes", [])
-    )
+    commit = (n["commits"]["nodes"] or [{}])[0].get("commit") or {}
+    check_runs = [
+        run
+        for suite in (commit.get("checkSuites") or {}).get("nodes", [])
+        for run in (suite.get("checkRuns") or {}).get("nodes", [])
+    ]
+    legacy_contexts = (commit.get("status") or {}).get("contexts", []) or []
     pending = sum(
-        1
-        for c in contexts
-        if c.get("status") in ("IN_PROGRESS", "QUEUED", "PENDING")
-        or c.get("state") == "PENDING"
+        1 for r in check_runs if r.get("status") in ("IN_PROGRESS", "QUEUED", "PENDING")
+    ) + sum(1 for c in legacy_contexts if c.get("state") == "PENDING")
+    failed = sum(1 for r in check_runs if r.get("conclusion") == "FAILURE") + sum(
+        1 for c in legacy_contexts if c.get("state") in ("FAILURE", "ERROR")
     )
-    failed = sum(
-        1
-        for c in contexts
-        if c.get("conclusion") == "FAILURE" or c.get("state") in ("FAILURE", "ERROR")
-    )
-    if not contexts:
+    if not check_runs and not legacy_contexts:
         ci = "none"
     elif pending:
         ci = "pending"
