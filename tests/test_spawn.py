@@ -366,158 +366,68 @@ def test_positional_branch_dispatches_to_branch_mode(spawn_main, push_branch):
 
 # ── linear / slack dispatch ────────────────────────────────────────────────
 #
-# These exercise main()'s positional path for Linear ids and Slack URLs. The
-# `resolve_*` calls are patched on the spawn module so the tests don't hit
-# the network; the underlying lib.linear / lib.slack are covered separately
-# in tests/lib/.
+# `/cockpit:new PE-1234` and `/cockpit:new <slack-url>` create a worktree
+# with a deterministic branch name and seed a first-turn prompt that
+# instructs Claude to fetch ticket/thread context via its Linear/Slack MCP
+# connector. Cockpit does NOT call the Linear or Slack APIs itself, so
+# there's no network surface to mock — only the prompt + branch shape.
 
 
-def test_positional_linear_resolved_creates_derived_branch(spawn_main, monkeypatch):
-    import scripts.spawn as spawn
-    from scripts.lib.linear import ResolvedIssue
-
-    issue = ResolvedIssue(
-        identifier="PE-1234",
-        title="Add login flow",
-        description="Users need to log in.",
-        url="https://linear.app/team/issue/PE-1234",
-        branch_name="",
-    )
-    monkeypatch.setattr(spawn, "resolve_issue", lambda _id: issue)
-
+def test_positional_linear_creates_lowercased_branch(spawn_main):
     code, out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
     assert code == 0
-    assert "on khivi/pe-1234-add-login-flow" in out
+    assert "on khivi/pe-1234" in out
     call = spawn_main.cmux_calls[0]
-    assert _cmux_kwarg(call, "name") == "pe-1234-add-login-flow"
-    # Seeded prompt should include the Linear context.
-    cmd = _cmux_kwarg(call, "command")
-    assert "PE-1234" in cmd
-    assert "Add login flow" in cmd
-    assert "Users need to log in." in cmd
-    assert "PLAN ONLY" in cmd
+    assert _cmux_kwarg(call, "name") == "pe-1234"
 
 
-def test_positional_linear_degrades_to_branch_without_api_key(spawn_main, monkeypatch):
-    """`resolve_issue` returns None → fall through to plain branch mode with
-    the lowercased id as the branch name. Repo's `branch_prefix` still applies."""
-    import scripts.spawn as spawn
-
-    monkeypatch.setattr(spawn, "resolve_issue", lambda _id: None)
-
-    code, out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
+def test_positional_linear_lowercase_input_normalised(spawn_main):
+    """`pe-1234` and `PE-1234` produce the same branch."""
+    code, out, _err = spawn_main(["pe-1234", "--repo", "testrepo"])
     assert code == 0
-    # branch_prefix `khivi/` is applied by resolve_worktree's no-slash branch path.
     assert "on khivi/pe-1234" in out
 
 
-def test_positional_linear_lowercase_normalised(spawn_main, monkeypatch):
-    """`pe-1234` and `PE-1234` go through the same resolve path."""
-    import scripts.spawn as spawn
-
-    captured: dict = {}
-
-    def _capture(identifier):
-        captured["id"] = identifier
-        return None
-
-    monkeypatch.setattr(spawn, "resolve_issue", _capture)
-    spawn_main(["pe-1234", "--repo", "testrepo"])
-    assert captured["id"] == "PE-1234"
-
-
-def test_positional_linear_no_title_falls_back_to_bare_id(spawn_main, monkeypatch):
-    import scripts.spawn as spawn
-    from scripts.lib.linear import ResolvedIssue
-
-    issue = ResolvedIssue(
-        identifier="PE-7", title="", description="", url="", branch_name=""
-    )
-    monkeypatch.setattr(spawn, "resolve_issue", lambda _id: issue)
-
-    code, out, _err = spawn_main(["PE-7", "--repo", "testrepo"])
-    assert code == 0
-    assert "on khivi/pe-7" in out
-
-
-def test_positional_slack_resolved_creates_text_branch(spawn_main, monkeypatch):
-    import scripts.spawn as spawn
-    from scripts.lib.slack import ResolvedThread
-
-    thread = ResolvedThread(
-        channel="C0123ABC",
-        ts="1700000000.123456",
-        text="Investigate login flake",
-        permalink="https://acme.slack.com/archives/C0123ABC/p1700000000123456",
-        reply_count=3,
-    )
-    monkeypatch.setattr(spawn, "resolve_thread", lambda _url: thread)
-
-    url = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
-    code, out, _err = spawn_main([url, "--repo", "testrepo"])
-    assert code == 0
-    assert "on khivi/slack-investigate-login-flake" in out
-    call = spawn_main.cmux_calls[0]
-    cmd = _cmux_kwarg(call, "command")
-    assert "Investigate login flake" in cmd
-    assert "C0123ABC" in cmd
+def test_positional_linear_prompt_instructs_mcp_fetch(spawn_main):
+    spawn_main(["PE-1234", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "PE-1234" in cmd
+    assert "Linear MCP" in cmd
+    assert "STOP" in cmd  # error path when MCP not connected
     assert "PLAN ONLY" in cmd
 
 
-def test_positional_slack_degrades_to_url_derived_branch(spawn_main, monkeypatch):
-    """`resolve_thread` None → fall back to a deterministic branch from URL."""
-    import scripts.spawn as spawn
-
-    monkeypatch.setattr(spawn, "resolve_thread", lambda _url: None)
-
+def test_positional_slack_creates_channel_ts_branch(spawn_main):
     url = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
     code, out, _err = spawn_main([url, "--repo", "testrepo"])
     assert code == 0
+    # Branch keeps the full deterministic name; the workspace `name` is
+    # slugified to ≤30 chars (so it gets truncated for long Slack ts strings).
     assert "on khivi/slack-c0123abc-1700000000-123456" in out
-
-
-def test_positional_slack_empty_text_falls_back_to_channel_ts(spawn_main, monkeypatch):
-    import scripts.spawn as spawn
-    from scripts.lib.slack import ResolvedThread
-
-    thread = ResolvedThread(
-        channel="C0123ABC",
-        ts="1700000000.123456",
-        text="",  # file-only post
-        permalink="https://acme.slack.com/archives/C0123ABC/p1700000000123456",
-        reply_count=0,
-    )
-    monkeypatch.setattr(spawn, "resolve_thread", lambda _url: thread)
-
-    url = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
-    code, out, _err = spawn_main([url, "--repo", "testrepo"])
-    assert code == 0
-    assert "on khivi/slack-c0123abc-1700000000-123456" in out
-
-
-def test_explicit_claude_prompt_overrides_linear_seeded_prompt(spawn_main, monkeypatch):
-    """`--claude-prompt` wins over the auto-seeded Linear prompt."""
-    import scripts.spawn as spawn
-    from scripts.lib.linear import ResolvedIssue
-
-    issue = ResolvedIssue(
-        identifier="PE-1", title="t", description="d", url="", branch_name=""
-    )
-    monkeypatch.setattr(spawn, "resolve_issue", lambda _id: issue)
-
-    spawn_main(
-        [
-            "PE-1",
-            "--repo",
-            "testrepo",
-            "--claude-prompt",
-            "OVERRIDDEN",
-        ]
-    )
     call = spawn_main.cmux_calls[0]
-    cmd = _cmux_kwarg(call, "command")
+    name = _cmux_kwarg(call, "name")
+    assert name.startswith("slack-c0123abc-1700000000")
+    assert len(name) <= 30
+
+
+def test_positional_slack_prompt_instructs_mcp_fetch(spawn_main):
+    url = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
+    spawn_main([url, "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert url in cmd
+    assert "C0123ABC" in cmd
+    assert "1700000000.123456" in cmd
+    assert "Slack MCP" in cmd
+    assert "STOP" in cmd
+    assert "PLAN ONLY" in cmd
+
+
+def test_explicit_claude_prompt_overrides_linear_seeded_prompt(spawn_main):
+    """`--claude-prompt` wins over the auto-seeded MCP-instructing prompt."""
+    spawn_main(["PE-1", "--repo", "testrepo", "--claude-prompt", "OVERRIDDEN"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "OVERRIDDEN" in cmd
-    assert "PLAN ONLY" not in cmd
+    assert "Linear MCP" not in cmd
 
 
 # ── --skill semantics ──────────────────────────────────────────────────────

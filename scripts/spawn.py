@@ -40,11 +40,11 @@ Positional detection (7 steps):
   the head ref; if found, the PR info is printed and the plan-only prompt
   is auto-generated (unless --claude-prompt overrides).
 
-  Linear/Slack modes resolve the ticket/thread via API, derive a fresh
-  branch name (`<id-lower>-<title-slug>` / `slack-<text-slug>`), and seed
-  a plan-only prompt with the ticket/thread body. Missing `LINEAR_API_KEY`
-  / `SLACK_TOKEN` (or any API error) degrades to plain branch mode — see
-  README.
+  Linear/Slack modes create a fresh branch under `branch_prefix` (named
+  `<id-lower>` / `slack-<channel>-<ts>`) and seed a plan-only prompt that
+  instructs Claude to fetch the ticket/thread via its MCP connector on the
+  first turn. Cockpit does not call the Linear/Slack APIs itself — if the
+  relevant MCP is not connected, the spawned Claude reports that and stops.
 
 Behaviour:
   - For positional/--branch/--pr without --repo: walk up from cwd to match a
@@ -89,19 +89,10 @@ from scripts.lib.git import (  # noqa: E402
     slugify,
     worktree_for_branch,
 )
-from scripts.lib.linear import (  # noqa: E402
-    LINEAR_RE_CI,
-    ResolvedIssue,
-    resolve_issue,
-)
+from scripts.lib.linear import LINEAR_RE_CI  # noqa: E402
 from scripts.lib.prompts import claude_command  # noqa: E402
 from scripts.lib.repos import repo_names  # noqa: E402
-from scripts.lib.slack import (  # noqa: E402
-    SLACK_URL_RE,
-    ResolvedThread,
-    parse_url as parse_slack_url,
-    resolve_thread,
-)
+from scripts.lib.slack import SLACK_URL_RE, parse_url as parse_slack_url  # noqa: E402
 
 
 def _die(msg: str, code: int = 1) -> int:
@@ -178,94 +169,80 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
     return "branch", value, None
 
 
-def _linear_branch_name(issue: ResolvedIssue) -> str:
-    """Derive `<id-lower>-<title-slug>`. Falls back to bare id when title is empty.
+def _slack_branch_name(url: str) -> str:
+    """Deterministic `slack-<channel-lower>-<ts-dash>` from a Slack archives URL.
 
-    Linear's own `branchName` is ignored: it bakes in the team's Linear-side
-    prefix configuration, which doesn't necessarily match the cockpit repo's
-    `branch_prefix` (and we want the cockpit prefix applied uniformly via
-    `resolve_worktree` with `from_name=True`).
-    """
-    title_slug = slugify(issue.title)
-    if not title_slug:
-        return issue.identifier.lower()
-    return f"{issue.identifier.lower()}-{title_slug}"
-
-
-def _slack_branch_name(thread: ResolvedThread) -> str:
-    """Derive `slack-<text-slug>`, falling back to `slack-<channel>-<ts>` when
-    the first message has no text (file-only post, attachment-only, etc.)."""
-    slug = slugify(thread.text) if thread.text else ""
-    if slug:
-        return f"slack-{slug}"
-    return f"slack-{thread.channel.lower()}-{thread.ts.replace('.', '-')}"
-
-
-def _slack_degraded_branch(url: str) -> str:
-    """Branch name when SLACK_TOKEN is missing or the API call failed.
-
-    Deterministic but ugly — uses `(channel, ts)` from the URL so a re-run on
-    the same link lands on the same branch.
+    Cockpit deliberately avoids fetching the thread body to pick a prettier
+    name: that's Claude's job on the first turn, via the Slack MCP. The
+    branch name only needs to be unique and re-derivable — re-spawning on
+    the same URL must hit the same branch (idempotency).
     """
     parsed = parse_slack_url(url)
-    if parsed is not None:
-        ch, ts = parsed
-        return f"slack-{ch.lower()}-{ts.replace('.', '-')}"
-    return slugify(url) or "slack-thread"
+    if parsed is None:
+        return slugify(url) or "slack-thread"
+    ch, ts = parsed
+    return f"slack-{ch.lower()}-{ts.replace('.', '-')}"
 
 
-def _linear_prompt(branch: str, issue: ResolvedIssue) -> str:
-    """Plan-only first-turn prompt seeded with the Linear ticket body."""
+_PLAN_TAIL = [
+    "",
+    "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
+    "- DO NOT edit files, write code, run tests, or commit anything.",
+    "- You MAY use Read, Grep, Glob for context (re-fetch the source where relevant).",
+    "- Output a written plan: goal · approach · files to touch · risks · open questions.",
+    "- Ask clarifying questions if the task is ambiguous.",
+    "- Wait for the user to approve or refine before implementing.",
+    "",
+    "Begin by fetching the source above, then write the plan.",
+]
+
+
+def _linear_prompt(branch: str, identifier: str) -> str:
+    """First-turn prompt that delegates Linear ticket fetch to the Linear MCP.
+
+    Cockpit does not call the Linear API itself. Claude reads the ticket via
+    the MCP on its first turn; if the MCP isn't connected the prompt
+    instructs Claude to stop and surface that to the user (no fallback to
+    `LINEAR_API_KEY` / direct HTTP — there isn't one).
+    """
     lines = [
         f"You are starting a fresh task in a new worktree on branch `{branch}`.",
         "",
-        f"**Source**: Linear ticket {issue.identifier}",
-        f"**Task**: {issue.title or '(no title)'}",
-    ]
-    if issue.url:
-        lines += ["", f"**Context**: {issue.url}"]
-    if issue.description:
-        lines += ["", "**Description**:", "", issue.description]
-    lines += [
+        f"**Source**: Linear ticket {identifier}",
         "",
-        "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
-        "- DO NOT edit files, write code, run tests, or commit anything.",
-        "- You MAY use Read, Grep, Glob for context (re-fetch the ticket where relevant).",
-        "- Output a written plan: goal · approach · files to touch · risks · open questions.",
-        "- Ask clarifying questions if the task is ambiguous.",
-        "- Wait for the user to approve or refine before implementing.",
-        "",
-        "Begin by writing the plan.",
+        "**First step (REQUIRED)**: Fetch the ticket via the Linear MCP before planning.",
+        f"- Use the Linear MCP tool to read issue `{identifier}` (title, description, comments).",
+        "- If the Linear MCP is not connected, STOP. Report to the user that the "
+        "Linear connector is required and exit without writing a plan. Do not "
+        "fall back to guessing from the ticket id alone.",
     ]
-    return "\n".join(lines)
+    return "\n".join(lines + _PLAN_TAIL)
 
 
-def _slack_prompt(branch: str, thread: ResolvedThread) -> str:
-    """Plan-only first-turn prompt seeded with the Slack thread body."""
+def _slack_prompt(branch: str, url: str) -> str:
+    """First-turn prompt that delegates Slack thread fetch to the Slack MCP.
+
+    Same contract as `_linear_prompt`: Claude reads the thread via MCP; no
+    cockpit-side API. The `(channel, ts)` pair is parsed out only so Claude
+    has them ready to pass to the MCP tool.
+    """
+    parsed = parse_slack_url(url)
+    channel_ts = (
+        f"channel `{parsed[0]}`, ts `{parsed[1]}`" if parsed else "(unparsed URL)"
+    )
     lines = [
         f"You are starting a fresh task in a new worktree on branch `{branch}`.",
         "",
-        f"**Source**: Slack thread (channel {thread.channel}, ts {thread.ts})",
-        f"**Context**: {thread.permalink}",
-    ]
-    if thread.reply_count:
-        lines.append(
-            f"**Replies**: {thread.reply_count} (not fetched; re-read the thread for details)"
-        )
-    if thread.text:
-        lines += ["", "**First message**:", "", thread.text]
-    lines += [
+        f"**Source**: Slack thread — {channel_ts}",
+        f"**Permalink**: {url}",
         "",
-        "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
-        "- DO NOT edit files, write code, run tests, or commit anything.",
-        "- You MAY use Read, Grep, Glob for context (re-fetch the thread where relevant).",
-        "- Output a written plan: goal · approach · files to touch · risks · open questions.",
-        "- Ask clarifying questions if the task is ambiguous.",
-        "- Wait for the user to approve or refine before implementing.",
-        "",
-        "Begin by writing the plan.",
+        "**First step (REQUIRED)**: Fetch the thread via the Slack MCP before planning.",
+        "- Use the Slack MCP tool to read the full thread (root message + replies).",
+        "- If the Slack MCP is not connected, STOP. Report to the user that the "
+        "Slack connector is required and exit without writing a plan. Do not "
+        "fall back to guessing from the URL alone.",
     ]
-    return "\n".join(lines)
+    return "\n".join(lines + _PLAN_TAIL)
 
 
 def select_repo(repo_name: str | None) -> dict:
@@ -455,29 +432,20 @@ def main() -> int:
     from_name = False
 
     prompt: str | None = args.claude_prompt
-    seeded_prompt: str | None = None  # holds the linear/slack-derived prompt
+    seeded_prompt: str | None = None  # holds the linear/slack MCP-instructing prompt
 
     if args.positional:
         mode, value, nwo_hint = detect_source(args.positional)
         if mode == "pr":
             pr_num = value
         elif mode == "linear":
-            issue = resolve_issue(value)
-            if issue is None:
-                branch = value.lower()
-            else:
-                branch = _linear_branch_name(issue)
-                from_name = True
-                seeded_prompt = _linear_prompt(branch, issue)
+            branch = value.lower()
+            from_name = True
+            seeded_prompt = _linear_prompt(branch, value)
         elif mode == "slack":
-            thread = resolve_thread(value)
-            if thread is None:
-                branch = _slack_degraded_branch(value)
-                from_name = True
-            else:
-                branch = _slack_branch_name(thread)
-                from_name = True
-                seeded_prompt = _slack_prompt(branch, thread)
+            branch = _slack_branch_name(value)
+            from_name = True
+            seeded_prompt = _slack_prompt(branch, value)
         else:
             branch = value
         if nwo_hint and not args.repo:
