@@ -90,6 +90,19 @@ _PR_STATE_COLOR: dict[str, Colorizer] = {
     "CLOSED": bold_ruby,
 }
 
+_PR_STATE_ICON: dict[str, str] = {
+    "DRAFT": "📝",
+    "OPEN": "🔵",
+    "REVIEW_REQUIRED": "👀",
+    "APPROVED": "✅",
+    "CHANGES_REQUESTED": "💬",
+    "MERGED": "🟣",
+    "CLOSED": "⛔",
+}
+
+ICON_PR_NUM = "🔗"
+ICON_PR_TITLE = "📄"
+
 _PR_CHECKS_COLOR: dict[str, Colorizer] = {
     "✓": green,
     "✗": red,
@@ -433,10 +446,12 @@ def print_pr_state(branch: str | None = None) -> str:
     raw = _cached_or_refresh(branch, "pr-state", "pr-state")
     if not raw:
         return ""
+    icon = _PR_STATE_ICON.get(raw, "")
+    label = f"{icon} {raw}" if icon else raw
     color = _PR_STATE_COLOR.get(raw)
     if not color:
-        return raw
-    return color(raw)
+        return label
+    return color(label)
 
 
 def print_pr_num(branch: str | None = None) -> str:
@@ -446,7 +461,7 @@ def print_pr_num(branch: str | None = None) -> str:
     raw = read_text(branch_cache("pr-num", branch))
     if not raw or raw in ("0", "null"):
         return ""
-    return f"#{raw}"
+    return f"{ICON_PR_NUM} #{raw}"
 
 
 def print_pr_checks(branch: str | None = None) -> str:
@@ -466,4 +481,7 @@ def print_pr_title(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    return read_text(branch_cache("pr-title", branch))
+    raw = read_text(branch_cache("pr-title", branch))
+    if not raw:
+        return ""
+    return f"{ICON_PR_TITLE} {raw}"
