@@ -39,17 +39,45 @@ from .pills import decide_pills
 if TYPE_CHECKING:
     from .gh import PR
     from .git import Worktree
+    from .nudges import NudgePref
+
+
+def muted_payload(pref: "NudgePref | None") -> str:
+    """Serialize a NudgePref into the `pr-muted` flat-cell contract.
+
+    Returns "" when not muted, "all" for full mute, or a sorted comma-joined
+    category list (e.g. "ci,comments") for partial. Same string is also
+    embedded as JSON `muted` so renderer-spawned refreshers can copy it
+    straight through.
+    """
+    if pref is None or not pref.disabled_categories:
+        return ""
+    from .nudges import KNOWN_CATEGORIES
+
+    cats = pref.disabled_categories
+    if cats >= set(KNOWN_CATEGORIES):
+        return "all"
+    return ",".join(sorted(cats))
 
 
 # ── JSON per-PR cache (cockpit's primary state) ────────────────────────────
 
 
-def write_pr_cache(repo_name: str, pr: "PR", wt: "Worktree | None" = None) -> dict:
+def write_pr_cache(
+    repo_name: str,
+    pr: "PR",
+    wt: "Worktree | None" = None,
+    pref: "NudgePref | None" = None,
+) -> dict:
     """Write a JSON snapshot of `pr` to the cache dir and return the payload.
 
     `wt` is the local worktree backing `pr.branch`, if any. Used to bake
     worktree-dependent pill decisions (rebase/merge/wip) into the cached
     `pills` array so both cmux and footer read the same source of truth.
+
+    `pref` is the daemon-resolved nudge mute state. Baked in as `muted` so the
+    renderer-spawned `refresh_pr_data` can republish the same snapshot into
+    the `pr-muted` flat cell without re-reading `nudges`.
     """
     ensure_state_dirs()
     safe = repo_name.replace("/", "_")
@@ -66,7 +94,8 @@ def write_pr_cache(repo_name: str, pr: "PR", wt: "Worktree | None" = None) -> di
         "updatedAt": pr.updated_at,
         "unaddressed": pr.unaddressed,
         "mergeable": pr.mergeable,
-        "pills": decide_pills(pr, wt),
+        "muted": muted_payload(pref),
+        "pills": decide_pills(pr, wt, pref),
     }
     tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(json.dumps(payload, indent=2))
@@ -177,22 +206,28 @@ def _resolve_state(state: str, is_draft: bool, review: str) -> str:
 
 
 def refresh_pr_data(branch: str) -> None:
-    """Repopulate pr-state / pr-num / pr-title flat-cache cells for `branch`
-    from the daemon's per-PR JSON snapshot.
+    """Repopulate pr-state / pr-num / pr-title / pr-muted flat-cache cells
+    for `branch` from the daemon's per-PR JSON snapshot.
 
     Empty (no-PR) sentinel = zero-byte file with a fresh mtime; suppresses
     per-render reads during the 60s TTL.
+
+    The mute cell is copied straight from the JSON's `muted` field — the
+    daemon is the only place mute state is resolved (see write_pr_cache).
+    Importing `nudges` here would defeat the single-authority invariant.
     """
     if not branch:
         return
     state_path = branch_cache("pr-state", branch)
     num_path = branch_cache("pr-num", branch)
     title_path = branch_cache("pr-title", branch)
+    muted_path = branch_cache("pr-muted", branch)
     data = find_pr_payload(branch)
     if data is None:
         atomic_write(state_path, "")
         atomic_write(num_path, "")
         atomic_write(title_path, "")
+        atomic_write(muted_path, "")
         return
     state = _resolve_state(
         str(data.get("state") or ""),
@@ -204,6 +239,7 @@ def refresh_pr_data(branch: str) -> None:
     atomic_write(state_path, state)
     atomic_write(num_path, str(number) if number else "")
     atomic_write(title_path, str(title))
+    atomic_write(muted_path, str(data.get("muted") or ""))
 
 
 def refresh_pr_checks(branch: str) -> None:
@@ -266,6 +302,7 @@ def write_branch_pr_cache(
     number: int | None,
     title: str,
     ci_glyph: str = "",
+    muted: str = "",
 ) -> None:
     """Daemon-tick entrypoint: write pre-resolved PR fields straight to the
     flat cache, no `gh` round-trip needed. Caller (cockpit.py::cycle_repo)
@@ -273,6 +310,10 @@ def write_branch_pr_cache(
 
     `ci_glyph` is empty by default — the per-render background refresh
     will repopulate `pr-checks-<branch>` from `gh pr checks` when stale.
+
+    `muted` follows the `pr-muted` flat-cell contract: "" (not muted), "all"
+    (full mute), or sorted comma-joined category list (partial). Always
+    written so an unmute clears the cell same-tick.
     """
     if not branch:
         return
@@ -280,6 +321,7 @@ def write_branch_pr_cache(
     atomic_write(branch_cache("pr-state", branch), resolved)
     atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
     atomic_write(branch_cache("pr-title", branch), title or "")
+    atomic_write(branch_cache("pr-muted", branch), muted)
     if ci_glyph:
         atomic_write(branch_cache("pr-checks", branch), ci_glyph)
 

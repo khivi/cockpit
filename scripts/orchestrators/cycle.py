@@ -52,6 +52,7 @@ from scripts.lib.log_format import verb
 from scripts.lib.config import ensure_state_dirs
 import scripts.lib.daemon_signal as daemon_signal
 from scripts.lib.cache import (
+    muted_payload,
     write_base_ahead,
     write_base_distance,
     write_branch_pr_cache,
@@ -63,6 +64,7 @@ from scripts.lib.gh import (
     list_relevant_prs,
     repo_nwo,
 )
+from scripts.lib.nudges import NudgePref, load_pref as _load_nudge_pref
 from scripts.lib.pills import ci_glyph
 from scripts.lib.git import (
     Worktree,
@@ -346,6 +348,7 @@ class RepoCycle:
     dry: bool
     verbose: bool
     headless: bool
+    prefs: dict[int, NudgePref] = field(default_factory=dict)
     base_distance: dict[str, int] = field(default_factory=dict)
 
 
@@ -409,6 +412,10 @@ def _prepare_cycle(
         return None
 
     tracked = find_cockpit_workspaces(prs, wts, names=names, cwds=cwds)
+    # Resolve nudge prefs once per cycle — the single point of mute-state I/O.
+    # Everything downstream (write_pr_cache, write_branch_pr_cache, apply_pills,
+    # status_pills) reads from this dict. See AGENTS.md "PR cache writers".
+    prefs = {pr.number: _load_nudge_pref(pr.number) for pr in prs}
     mine = sum(1 for pr in prs if pr.author == self_user)
     coworker_relevant = len(prs) - mine
     feature_wts = [w for w in wts if w.branch not in MAIN_BRANCHES]
@@ -439,6 +446,7 @@ def _prepare_cycle(
         dry=dry,
         verbose=verbose,
         headless=headless,
+        prefs=prefs,
     )
 
 
@@ -454,7 +462,8 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     ctx.base_distance = _refresh_base_distance(ctx.repo_path, ctx.wts)
     wt_by_branch = {wt.branch: wt for wt in ctx.wts}
     for pr in ctx.prs:
-        write_pr_cache(ctx.name, pr, wt_by_branch.get(pr.branch))
+        pref = ctx.prefs.get(pr.number)
+        write_pr_cache(ctx.name, pr, wt_by_branch.get(pr.branch), pref)
         write_branch_pr_cache(
             pr.branch,
             state=pr.state,
@@ -463,6 +472,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             number=pr.number,
             title=pr.title,
             ci_glyph=ci_glyph(pr.ci),
+            muted=muted_payload(pref),
         )
 
 
@@ -538,10 +548,11 @@ def _refresh_tracked_pills(
         group_header_printed = False
         for ref, pr, wt in group:
             label = ctx.names.get(ref, ref)
-            desired = frozenset(status_pills(pr, wt, ctx.self_user))
+            pref = ctx.prefs.get(pr.number)
+            desired = frozenset(status_pills(pr, wt, ctx.self_user, pref))
             changed = ctx.pill_state.get(ref) != desired
             if changed and not ctx.dry:
-                apply_pills(ref, pr, wt, ctx.self_user)
+                apply_pills(ref, pr, wt, ctx.self_user, pref)
             if changed or ctx.verbose:
                 if not group_header_printed:
                     print(f"  {dim(group_label)}", flush=True)
@@ -673,7 +684,13 @@ def _spawn_missing_workspaces(ctx: RepoCycle) -> None:
     tracked_pr_numbers = {pr.number for pr, _ in ctx.tracked.values()}
     for pr, wt in matched:
         if pr.number not in tracked_pr_numbers:
-            spawn_pr_workspace(pr, wt, self_user=ctx.self_user, dry=ctx.dry)
+            spawn_pr_workspace(
+                pr,
+                wt,
+                self_user=ctx.self_user,
+                pref=ctx.prefs.get(pr.number),
+                dry=ctx.dry,
+            )
     pr_branches = {pr.branch for pr in ctx.prs}
     my_prefix = f"{ctx.self_user}/"
     covered_paths = {p.resolve() for p in ctx.cwds.values()}

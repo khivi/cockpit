@@ -18,8 +18,10 @@ Subcommands:
   pr-num               — "#<n>" for the current branch's PR
   pr-checks            — CI glyph (✓ / • / ✗)
   pr-title             — PR title
-  pr-state-refresh     — internal background refresh of pr-state/num/title
+  pr-muted             — 🔇 muted[: cats] when nudges are silenced
+  pr-state-refresh     — internal background refresh of pr-state/num/title/muted
   pr-checks-refresh    — internal background refresh of pr-checks
+  pr-muted-refresh     — alias of pr-state-refresh (writes pr-muted cell too)
   warm                 — synchronous prewarm (PR data + checks + transcript seed)
 
 Every subcommand exits 0 even on error and prints nothing on failure —
@@ -43,6 +45,7 @@ from scripts.lib.starship import (  # noqa: E402
     print_model,
     print_permission_mode,
     print_pr_checks,
+    print_pr_muted,
     print_pr_num,
     print_pr_state,
     print_pr_title,
@@ -87,7 +90,10 @@ def main(argv: list[str]) -> int:
             return _emit(print_pr_checks())
         if cmd == "pr-title":
             return _emit(print_pr_title())
-        if cmd == "pr-state-refresh":
+        if cmd == "pr-muted":
+            return _emit(print_pr_muted())
+        if cmd in ("pr-state-refresh", "pr-muted-refresh"):
+            # Same refresher repopulates pr-state/num/title/muted from JSON.
             refresh_pr_data(current_branch(os.getcwd()))
             return 0
         if cmd == "pr-checks-refresh":

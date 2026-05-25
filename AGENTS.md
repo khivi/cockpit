@@ -24,6 +24,8 @@ Before committing, scan for cases gitleaks can't catch:
 
 **Worktree + workspace inventory is derived, not stored.** Each cycle re-reads `git worktree list` and `cmux tree` rather than maintaining its own `state.json`. PR payloads *are* cached (`~/.config/cockpit/cache/<repo>__pr-<N>.json`) because they're a network round-trip; everything else is recomputed. Don't add a `state.json` for worktree/workspace identity — drift between cached identity and the real `git`/`cmux` state was the bug class this design avoids.
 
+**PR cache writes are confined to the daemon and renderer-spawned refreshers.** The daemon (`scripts/orchestrators/cycle.py`) is the single authority for PR-derived state: it resolves every signal once per cycle, then bakes the result into the per-PR JSON (`write_pr_cache`) and the flat cells (`write_branch_pr_cache`). The renderer-spawned background refreshers (`refresh_pr_data`, `refresh_pr_checks` in `scripts/lib/cache.py`) only republish JSON → flat cells; they never re-decide state and must not import resolvers like `nudges`. Renderer field printers in `scripts/lib/starship.py` are read-only. New PR-state signals (e.g. nudge mute) must be loaded once in the daemon's `_prepare_cycle` and threaded through `write_pr_cache` / `write_branch_pr_cache` / `apply_pills`. Letting renderer paths consult source state directly produces same-render disagreement between fields (one segment reads the snapshot, another reads live state).
+
 ## Release versioning
 
 Handled by the pre-push hook — bumps `.claude-plugin/plugin.json`'s `version` automatically. No manual action needed.

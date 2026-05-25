@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .gh import PR
     from .git import Worktree
+    from .nudges import NudgePref
 
 
 def ci_glyph(ci: str) -> str:
@@ -32,6 +33,7 @@ def ci_glyph(ci: str) -> str:
 
 
 KIND_ORDER = (
+    "muted",
     "rebase",
     "merge",
     "wip",
@@ -47,13 +49,32 @@ KIND_ORDER = (
 )
 
 
-def decide_pills(pr: "PR", wt: "Worktree | None") -> list[dict]:
+def _muted_pill(pref: "NudgePref | None") -> dict | None:
+    if pref is None or not pref.disabled_categories:
+        return None
+    from .nudges import KNOWN_CATEGORIES
+
+    cats = pref.disabled_categories
+    if cats >= set(KNOWN_CATEGORIES):
+        return {"kind": "muted", "scope": "all", "categories": []}
+    return {"kind": "muted", "scope": "some", "categories": sorted(cats)}
+
+
+def decide_pills(
+    pr: "PR", wt: "Worktree | None", pref: "NudgePref | None" = None
+) -> list[dict]:
     """Ordered semantic pill list for `pr` (and its local `wt` if known).
 
     Each entry has `kind` plus optional payload (e.g. `count`, `phase`,
     `state`). Order is canonical — see KIND_ORDER. No styling, no emoji.
+
+    `pref` is the persisted nudge pref (mute state). When non-empty, a
+    `muted` pill anchors the front of the list.
     """
     pills: list[dict] = []
+    muted = _muted_pill(pref)
+    if muted is not None:
+        pills.append(muted)
     if wt is not None and wt.rebasing:
         pills.append({"kind": "rebase"})
     if wt is not None and wt.merging:
@@ -77,8 +98,10 @@ def decide_pills(pr: "PR", wt: "Worktree | None") -> list[dict]:
         pills.append({"kind": "approved"})
     if pr.state and pr.state != "OPEN":
         pills.append({"kind": "state", "state": pr.state})
-    # Sentinel "all green" pill — only when no other pill would render. Without
-    # it the sidebar collapses to empty, indistinguishable from "no CI" / stale.
-    if pr.ci == "passed" and not pills:
+    # Sentinel "all green" pill — only when no other actionable pill would
+    # render. Muted is meta-state and doesn't suppress it; without the sentinel
+    # the sidebar collapses to empty for a passing PR, indistinguishable from
+    # "no CI" / stale.
+    if pr.ci == "passed" and not any(p["kind"] != "muted" for p in pills):
         pills.append({"kind": "ci_passed"})
     return pills
