@@ -397,6 +397,17 @@ def test_positional_linear_prompt_instructs_mcp_fetch(spawn_main):
     assert "PLAN ONLY" in cmd
 
 
+def test_positional_linear_prompt_instructs_branch_rename(spawn_main):
+    """Step 2 of the Linear prompt asks Claude to rename the branch to include
+    the ticket title slug — that's how the title gets into the branch name
+    without cockpit ever calling the Linear API. The prompt reads the current
+    branch via git so it's robust against `-2`/`-3` collision bumping."""
+    spawn_main(["PE-1234", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "git branch --show-current" in cmd
+    assert 'git branch -m "$CUR" "$CUR-<slug>"' in cmd
+
+
 def test_positional_slack_creates_channel_ts_branch(spawn_main):
     url = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
     code, out, _err = spawn_main([url, "--repo", "testrepo"])

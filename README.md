@@ -86,7 +86,7 @@ If `/cockpit:list` shows `—` everywhere, the daemon hasn't completed a cycle y
 /cockpit:new https://acme.slack.com/archives/C0123ABC/p1700000000123456
 ```
 
-- **Linear id** — matches `[A-Z]{2,6}-\d+` (case-insensitive). Creates a worktree on `<branch_prefix><id-lower>` (e.g. `khivi/pe-1234`).
+- **Linear id** — matches `[A-Z]{2,6}-\d+` (case-insensitive). Creates a worktree on `<branch_prefix><id-lower>` (e.g. `khivi/pe-1234`). On the first turn, Claude reads the ticket via the Linear MCP and then `git branch -m`s the branch to include a slug of the ticket title (e.g. `khivi/pe-1234-add-login-flow`). The next cockpit daemon cycle picks up the renamed branch automatically.
 - **Slack URL** — matches `https://<workspace>.slack.com/archives/<channel>/p<ts>` (`?thread_ts=…` reply links resolve to the root). Creates a worktree on `<branch_prefix>slack-<channel>-<ts>`.
 
 In both cases, cockpit seeds Claude's first turn with a prompt that instructs it to fetch the ticket/thread context via the appropriate Claude **MCP connector** before planning. Cockpit itself does **not** call the Linear or Slack APIs — auth lives in your Claude MCP config (Linear / Slack connectors under Claude.ai or your local MCP setup).

@@ -198,23 +198,37 @@ _PLAN_TAIL = [
 
 
 def _linear_prompt(branch: str, identifier: str) -> str:
-    """First-turn prompt that delegates Linear ticket fetch to the Linear MCP.
+    """First-turn prompt that delegates Linear ticket fetch to the Linear MCP
+    and then renames the branch to include the ticket title slug.
 
-    Cockpit does not call the Linear API itself. Claude reads the ticket via
-    the MCP on its first turn; if the MCP isn't connected the prompt
-    instructs Claude to stop and surface that to the user (no fallback to
-    `LINEAR_API_KEY` / direct HTTP — there isn't one).
+    Cockpit does not call the Linear API itself: spawn creates the worktree
+    on `<prefix><id-lower>` (e.g. `khivi/pe-1234`) and Claude does both the
+    ticket fetch and the post-fetch `git branch -m` to `<prefix><id-lower>-<title-slug>`.
+    Workspace name + worktree directory stay on the original short slug;
+    cockpit's reconciliation re-reads `git worktree list` each cycle, so the
+    rename surfaces in `/cockpit:list` without further action.
     """
     lines = [
         f"You are starting a fresh task in a new worktree on branch `{branch}`.",
         "",
         f"**Source**: Linear ticket {identifier}",
         "",
-        "**First step (REQUIRED)**: Fetch the ticket via the Linear MCP before planning.",
+        "**Step 1 (REQUIRED)** — Fetch the ticket via the Linear MCP:",
         f"- Use the Linear MCP tool to read issue `{identifier}` (title, description, comments).",
         "- If the Linear MCP is not connected, STOP. Report to the user that the "
         "Linear connector is required and exit without writing a plan. Do not "
         "fall back to guessing from the ticket id alone.",
+        "",
+        "**Step 2 (REQUIRED)** — Rename the branch to include the ticket title:",
+        "- Read the current branch: `CUR=$(git branch --show-current)`.",
+        "- Derive a short slug from the ticket title: lowercase, non-alphanumerics → `-`, "
+        "trim leading/trailing `-`, cap at 30 chars.",
+        '- Run: `git branch -m "$CUR" "$CUR-<slug>"` (append `-<slug>` to whatever '
+        "the current branch is — cockpit may have bumped it to `-2`/`-3` to avoid a collision).",
+        "- Verify with `git branch --show-current` — it should now end with `-<slug>`.",
+        "- If the rename fails (target already exists, etc.), keep the original "
+        "branch and note it in your plan.",
+        "- Do not push or change anything else in this step.",
     ]
     return "\n".join(lines + _PLAN_TAIL)
 
