@@ -327,25 +327,32 @@ def _pr_from_node(n: dict) -> PR | None:
 
 
 def _relevant_pr_query(
-    owner: str, name: str, self_user: str, coworker_branches: list[str], fields: str
+    owner: str, name: str, self_user: str, branches: list[str], fields: str
 ) -> tuple[str, dict[str, str]]:
     """Build the GraphQL query and the variable map for `gh api graphql -f`.
 
     All string-typed user-influenced inputs (owner, name, self_user, every
-    coworker branch) flow through GraphQL variables so a crafted branch name
-    can't escape its string context and inject fragments.
+    branch) flow through GraphQL variables so a crafted branch name can't
+    escape its string context and inject fragments.
+
+    Per-branch alias fetches the newest PR for that head (any state — OPEN,
+    MERGED, CLOSED) so the daemon's tick can refresh the per-PR cache after
+    OPEN→MERGED / OPEN→CLOSED transitions. Without this, a merged PR drops
+    out of the `is:open` search and its cached snapshot (consumed by the
+    statusline footer) freezes at the last pre-merge state.
     """
     var_decls = ["$search: String!"]
     variables: dict[str, str] = {
         "search": f"repo:{owner}/{name} is:pr is:open author:{self_user}",
     }
     aliases: list[str] = []
-    for i, branch in enumerate(coworker_branches):
-        key = f"cw{i}"
+    for i, branch in enumerate(branches):
+        key = f"b{i}"
         var_decls.append(f"${key}: String!")
         variables[key] = branch
         aliases.append(
-            f"{key}: pullRequests(headRefName: ${key}, states: OPEN, first: 1) "
+            f"{key}: pullRequests(headRefName: ${key}, "
+            f"orderBy: {{field: CREATED_AT, direction: DESC}}, first: 1) "
             f"{{ nodes {{ {fields} }} }}"
         )
     if aliases:
@@ -378,22 +385,22 @@ def _graphql(query: str, variables: dict[str, str]) -> dict:
     return data
 
 
-def _collect_nodes(data: dict, n_coworker: int) -> list[dict]:
+def _collect_nodes(data: dict, n_branches: int) -> list[dict]:
     nodes: list[dict] = list(data["data"]["mine"]["nodes"])
     repo = data["data"].get("repo") or {}
-    for i in range(n_coworker):
-        nodes.extend(repo.get(f"cw{i}", {}).get("nodes", []))
+    for i in range(n_branches):
+        nodes.extend(repo.get(f"b{i}", {}).get("nodes", []))
     return nodes
 
 
 def _fetch_light_phase(
-    owner: str, name: str, self_user: str, coworker_branches: list[str]
+    owner: str, name: str, self_user: str, branches: list[str]
 ) -> dict[int, str]:
     query, variables = _relevant_pr_query(
-        owner, name, self_user, coworker_branches, _PR_LIGHT_FIELDS
+        owner, name, self_user, branches, _PR_LIGHT_FIELDS
     )
     light_data = _graphql(query, variables)
-    light_nodes = _collect_nodes(light_data, len(coworker_branches))
+    light_nodes = _collect_nodes(light_data, len(branches))
     light_by_number: dict[int, str] = {}
     for ln in light_nodes:
         if ln.get("number") is not None:
@@ -442,10 +449,16 @@ def list_relevant_prs(
     owner: str,
     name: str,
     self_user: str,
-    coworker_branches: list[str],
+    branches: list[str],
     cache: dict[int, tuple[PR, str]] | None = None,
 ) -> list[PR]:
-    """Mine (by author) + coworker PRs whose head matches a local worktree.
+    """My open PRs (by author search) + newest PR for each local worktree
+    branch (any state — OPEN, MERGED, or CLOSED).
+
+    The per-branch leg includes non-OPEN states so the daemon's tick can keep
+    the per-PR cache fresh after a PR transitions to MERGED or CLOSED. The
+    statusline footer renders from that cache; without this it would freeze
+    at the last pre-merge snapshot until the worktree is torn down.
 
     Two-phase fetch when `cache` is given: a cheap (number, updatedAt) query
     first, then full detail only for PRs whose updatedAt changed (or whose
@@ -453,7 +466,7 @@ def list_relevant_prs(
     cycles where nothing moved cost one cheap GraphQL call instead of the
     heavy one.
     """
-    light_by_number = _fetch_light_phase(owner, name, self_user, coworker_branches)
+    light_by_number = _fetch_light_phase(owner, name, self_user, branches)
     if cache is None:
         cache = {}
     stale = _identify_stale(light_by_number, cache)
