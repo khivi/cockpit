@@ -170,13 +170,13 @@ def test_print_linear_no_ticket(_clean_git_env, tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "value,expected",
     [
-        ("APPROVED", bold_leaf("APPROVED")),
-        ("DRAFT", bold_shadow("DRAFT")),
-        ("OPEN", bold_azure("OPEN")),
-        ("REVIEW_REQUIRED", bold_orange("REVIEW_REQUIRED")),
-        ("CHANGES_REQUESTED", bold_crimson("CHANGES_REQUESTED")),
-        ("MERGED", bold_violet("MERGED")),
-        ("CLOSED", bold_ruby("CLOSED")),
+        ("APPROVED", bold_leaf("✅ APPROVED")),
+        ("DRAFT", bold_shadow("📝 DRAFT")),
+        ("OPEN", bold_azure("🔵 OPEN")),
+        ("REVIEW_REQUIRED", bold_orange("👀 REVIEW_REQUIRED")),
+        ("CHANGES_REQUESTED", bold_crimson("💬 CHANGES_REQUESTED")),
+        ("MERGED", bold_violet("🟣 MERGED")),
+        ("CLOSED", bold_ruby("⛔ CLOSED")),
         ("WHATEVER", "WHATEVER"),
     ],
     ids=[
@@ -197,7 +197,7 @@ def test_print_pr_state(cache_dir, value, expected):
 
 def test_print_pr_num_formats_hash(cache_dir):
     (cache_dir / "pr-num-khivi-foo").write_text("42")
-    assert starship.print_pr_num("khivi/foo") == "#42"
+    assert starship.print_pr_num("khivi/foo") == "🔗 #42"
 
 
 def test_print_pr_num_zero_sentinel_empty(cache_dir):
@@ -207,7 +207,12 @@ def test_print_pr_num_zero_sentinel_empty(cache_dir):
 
 def test_print_pr_title(cache_dir):
     (cache_dir / "pr-title-khivi-foo").write_text("My PR")
-    assert starship.print_pr_title("khivi/foo") == "My PR"
+    assert starship.print_pr_title("khivi/foo") == "📄 My PR"
+
+
+def test_print_pr_title_empty_returns_empty(cache_dir):
+    (cache_dir / "pr-title-khivi-foo").write_text("")
+    assert starship.print_pr_title("khivi/foo") == ""
 
 
 @pytest.mark.parametrize(

@@ -63,6 +63,7 @@ from scripts.lib.gh import (
     list_relevant_prs,
     repo_nwo,
 )
+from scripts.lib.pills import ci_glyph
 from scripts.lib.git import (
     Worktree,
     ahead_of_base,
@@ -156,13 +157,6 @@ def _resolve_wt(
     if cwd is not None and (wt := wt_by_path.get(cwd.resolve())) is not None:
         return wt
     return wt_by_name.get(ws_name)
-
-
-def _ci_glyph(ci: str) -> str:
-    """One-char glyph for a PR's CI state. Empty when state is unknown."""
-    if ci.startswith("failed"):
-        return "✗"
-    return {"passed": "✓", "pending": "•"}.get(ci, "")
 
 
 def _orphan_snapshot(
@@ -469,7 +463,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             review_decision=pr.review_decision,
             number=pr.number,
             title=pr.title,
-            ci_glyph=_ci_glyph(pr.ci),
+            ci_glyph=ci_glyph(pr.ci),
         )
 
 

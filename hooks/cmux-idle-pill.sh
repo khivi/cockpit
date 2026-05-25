@@ -1,14 +1,14 @@
 #!/bin/bash
 # cmux idle + loop pills — owns two related cmux pills for the same workspace:
 #
-#   idle=☕ rest   — agent parked at the prompt (Stop with no live loop)
-#   loop=🔄       — agent is mid-/loop (dynamic ScheduleWakeup or cron)
-#
-# `idle=` is the signal the cockpit reads in `nudge_if_idle` to decide whether
-# to ping a workspace about an actionable PR signal. `loop=` is a visual-only
-# at-a-glance indicator that the session is iterating on its own schedule.
-# Without this hook, neither pill exists and the cockpit's nudge logic never
-# fires.
+#   idle=        — agent parked at the prompt (Stop with no live loop).
+#                  Value is intentionally empty: cmux already renders its own
+#                  `Idle` workspace badge, so the pill is a marker only — read
+#                  by `nudge_if_idle` to decide whether the workspace is safe
+#                  to ping with an actionable PR signal.
+#   loop=🔄      — agent is mid-/loop (dynamic ScheduleWakeup or cron). Visual
+#                  only; suppresses idle gating so broadcasters skip the
+#                  workspace while a wakeup is queued.
 #
 # Orthogonal to PR state: a workspace can rest with CI failing. cmux's own
 # `claude_code=Needs input` fires for any idle prompt; y/n permission prompts
@@ -96,7 +96,7 @@ case "${1:-}" in
     # No wakeup armed by the last turn — any prior dynamic /loop has ended.
     # Clear `loop=` so the visual matches reality, then mark idle.
     cmux clear-status loop
-    cmux set-status idle "☕ rest" --color "#6b7280"
+    cmux set-status idle "" --color "#6b7280"
     ;;
   prompt) cmux clear-status idle ;;
   loop-set) cmux set-status loop "🔄" --color "#a78bfa" ;;
