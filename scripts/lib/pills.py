@@ -23,6 +23,13 @@ if TYPE_CHECKING:
     from .git import Worktree
 
 
+def ci_glyph(ci: str) -> str:
+    """One-char glyph for a PR's CI state. Empty when state is unknown."""
+    if ci.startswith("failed"):
+        return "✗"
+    return {"passed": "✓", "pending": "•"}.get(ci, "")
+
+
 KIND_ORDER = (
     "rebase",
     "merge",

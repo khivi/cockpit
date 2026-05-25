@@ -11,10 +11,12 @@ Two cache directories, both owned by this module:
    `scripts/starship.py`'s field printers under starship. Written by:
    - `lib.claude.stash_from_stdin` (session-scoped: context, rate-limit,
      transcript-path)
+   - `write_branch_pr_cache` (`cockpit.py` daemon tick, from the PR data
+     the daemon fetched — single source of truth for PR-derived fields)
    - `refresh_pr_data` / `refresh_pr_checks` (60s stale-triggered, forked
-     from a field printer that sees its cache file is too old)
-   - `write_branch_pr_cache` (`cockpit.py` daemon tick, from PR data the
-     daemon already has)
+     from a field printer that sees its cache file is too old). Both
+     re-derive the flat-cache values from the daemon's per-PR JSON
+     snapshot, so the footer and cmux sidebar share one source.
 
 Flat layout exists because starship spawns 8 independent subprocesses per
 render and each one needs to read one cache cell in sub-millisecond time;
@@ -25,13 +27,13 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import CACHE_DIR, ensure_state_dirs
+from .pills import ci_glyph as _ci_glyph
 from .pills import decide_pills
 
 if TYPE_CHECKING:
@@ -165,31 +167,6 @@ def is_fresh(path: Path, ttl_secs: int = PR_CACHE_TTL_SECS) -> bool:
         return False
 
 
-def _gh_pr_view() -> dict | None:
-    """`gh pr view --json ...` for current branch → parsed dict or None."""
-    try:
-        res = subprocess.run(
-            [
-                "gh",
-                "pr",
-                "view",
-                "--json",
-                "state,isDraft,reviewDecision,number,title",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if res.returncode != 0 or not res.stdout.strip():
-        return None
-    try:
-        return json.loads(res.stdout)
-    except json.JSONDecodeError:
-        return None
-
-
 def _resolve_state(state: str, is_draft: bool, review: str) -> str:
     if state == "OPEN":
         if is_draft:
@@ -200,16 +177,18 @@ def _resolve_state(state: str, is_draft: bool, review: str) -> str:
 
 
 def refresh_pr_data(branch: str) -> None:
-    """Populate pr-state / pr-num / pr-title caches for `branch` from one
-    `gh pr view` round-trip. Empty (no-PR) sentinel = zero-byte file with a
-    fresh mtime; that suppresses per-render gh calls during the 60s TTL.
+    """Repopulate pr-state / pr-num / pr-title flat-cache cells for `branch`
+    from the daemon's per-PR JSON snapshot.
+
+    Empty (no-PR) sentinel = zero-byte file with a fresh mtime; suppresses
+    per-render reads during the 60s TTL.
     """
     if not branch:
         return
-    data = _gh_pr_view()
     state_path = branch_cache("pr-state", branch)
     num_path = branch_cache("pr-num", branch)
     title_path = branch_cache("pr-title", branch)
+    data = find_pr_payload(branch)
     if data is None:
         atomic_write(state_path, "")
         atomic_write(num_path, "")
@@ -218,7 +197,7 @@ def refresh_pr_data(branch: str) -> None:
     state = _resolve_state(
         str(data.get("state") or ""),
         bool(data.get("isDraft")),
-        str(data.get("reviewDecision") or ""),
+        str(data.get("review") or ""),
     )
     number = data.get("number")
     title = data.get("title") or ""
@@ -228,28 +207,20 @@ def refresh_pr_data(branch: str) -> None:
 
 
 def refresh_pr_checks(branch: str) -> None:
-    """Populate pr-checks cache for `branch` from one `gh pr checks` call.
+    """Repopulate pr-checks flat-cache cell for `branch` from the daemon's
+    per-PR JSON snapshot, derived via `ci_glyph(payload["ci"])` — the same
+    converter the cmux sidebar uses.
 
-    Exit codes (per gh): 0 → ✓, 8 → • (pending), other → ✗ (failing or no
-    runs). Empty payload when no PR is associated with the branch.
+    Empty payload when no PR snapshot exists for the branch.
     """
     if not branch:
         return
     cache = branch_cache("pr-checks", branch)
-    view = subprocess.run(
-        ["gh", "pr", "view", "--json", "number"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    if view.returncode != 0:
+    data = find_pr_payload(branch)
+    if data is None:
         atomic_write(cache, "")
         return
-    checks = subprocess.run(
-        ["gh", "pr", "checks"], capture_output=True, text=True, timeout=10
-    )
-    glyph = {0: "✓", 8: "•"}.get(checks.returncode, "✗")
-    atomic_write(cache, glyph)
+    atomic_write(cache, _ci_glyph(str(data.get("ci") or "")))
 
 
 def write_base_distance(branch: str, count: int, fetch_epoch: int) -> None:

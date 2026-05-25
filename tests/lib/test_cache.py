@@ -103,30 +103,68 @@ def test_write_branch_pr_cache_no_branch_noop(cache_dir):
     assert not any(cache_dir.iterdir())
 
 
-# ── refresh_pr_data via mocked gh (lib.cache) ──────────────────────────────
+# ── refresh_pr_data / refresh_pr_checks read the per-PR JSON snapshot ──────
 
 
 def test_refresh_pr_data_writes_no_pr_sentinel(cache_dir):
-    with patch.object(cache_mod, "_gh_pr_view", return_value=None):
+    with patch.object(cache_mod, "find_pr_payload", return_value=None):
         cache_mod.refresh_pr_data("khivi/foo")
     assert (cache_dir / "pr-state-khivi-foo").read_text() == ""
     assert (cache_dir / "pr-num-khivi-foo").read_text() == ""
     assert (cache_dir / "pr-title-khivi-foo").read_text() == ""
 
 
-def test_refresh_pr_data_populates_from_gh(cache_dir):
+def test_refresh_pr_data_populates_from_json_snapshot(cache_dir):
     payload = {
         "state": "OPEN",
         "isDraft": False,
-        "reviewDecision": "CHANGES_REQUESTED",
+        "review": "CHANGES_REQUESTED",
         "number": 99,
         "title": "Fix it",
     }
-    with patch.object(cache_mod, "_gh_pr_view", return_value=payload):
+    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
         cache_mod.refresh_pr_data("khivi/bar")
     assert (cache_dir / "pr-state-khivi-bar").read_text() == "CHANGES_REQUESTED"
     assert (cache_dir / "pr-num-khivi-bar").read_text() == "99"
     assert (cache_dir / "pr-title-khivi-bar").read_text() == "Fix it"
+
+
+def test_refresh_pr_data_resolves_draft(cache_dir):
+    payload = {
+        "state": "OPEN",
+        "isDraft": True,
+        "review": "",
+        "number": 12,
+        "title": "wip",
+    }
+    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
+        cache_mod.refresh_pr_data("khivi/draft")
+    assert (cache_dir / "pr-state-khivi-draft").read_text() == "DRAFT"
+
+
+def test_refresh_pr_checks_writes_no_pr_sentinel(cache_dir):
+    with patch.object(cache_mod, "find_pr_payload", return_value=None):
+        cache_mod.refresh_pr_checks("khivi/foo")
+    assert (cache_dir / "pr-checks-khivi-foo").read_text() == ""
+
+
+@pytest.mark.parametrize(
+    "ci,expected",
+    [
+        ("passed", "✓"),
+        ("pending", "•"),
+        ("failed:lint", "✗"),
+        ("none", ""),
+        ("", ""),
+    ],
+    ids=["passed", "pending", "failed", "no-runs", "unknown"],
+)
+def test_refresh_pr_checks_derives_glyph_from_json(cache_dir, ci, expected):
+    """Daemon-written JSON snapshot is the single source for both the cmux
+    sidebar pill and the footer's pr-checks cell — same ci → same glyph."""
+    with patch.object(cache_mod, "find_pr_payload", return_value={"ci": ci}):
+        cache_mod.refresh_pr_checks("khivi/feat")
+    assert (cache_dir / "pr-checks-khivi-feat").read_text() == expected
 
 
 # ── write_base_distance / write_base_ahead (lib.cache) ─────────────────────

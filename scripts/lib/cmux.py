@@ -396,8 +396,8 @@ def apply_pills(
     cmux ordering rule: new pills prepend; re-setting an existing key keeps its
     slot. To force a deterministic order — and push cmux's own `claude_code`
     pill (e.g. "Needs input") to the bottom — clear all our keys first, then
-    re-set in reverse display order. Also sets a default `idle=` pill if the
-    workspace has no claude_code or loop pills (indicates no active agent).
+    re-set in reverse display order. The `idle=` pill is owned by
+    `hooks/cmux-idle-pill.sh` (Stop / UserPromptSubmit) — not touched here.
     """
     desired = tuple(status_pills(pr, wt, self_user))
     # "cockpit_managed" is a one-release back-compat strip — remove next release.
@@ -407,10 +407,6 @@ def apply_pills(
             f.result()
     for key, value, color in reversed(desired):
         _set_status(ref, key, value, color)
-
-    current_status = cmux("list-status", "--workspace", ref, check=False)
-    if not _has_pill(current_status.splitlines(), "claude_code", "loop"):
-        _set_status(ref, "idle", "☕ rest", GREY)
 
     return frozenset(desired)
 

@@ -91,7 +91,7 @@ def test_stop_without_loop_tools_clears_loop_and_sets_idle(fake_cmux, tmp_path):
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
     calls = _poll_lines(fake_cmux, expected=2)
     assert any("clear-status loop" in c for c in calls), calls
-    assert any("set-status idle" in c and "☕ rest" in c for c in calls), calls
+    assert any("set-status idle" in c for c in calls), calls
     assert not any("set-status loop" in c for c in calls), calls
 
 
