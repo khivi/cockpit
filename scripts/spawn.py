@@ -219,15 +219,26 @@ def _linear_prompt(branch: str, identifier: str) -> str:
         "Linear connector is required and exit without writing a plan. Do not "
         "fall back to guessing from the ticket id alone.",
         "",
-        "**Step 2 (REQUIRED)** — Rename the branch to include the ticket title:",
+        "**Step 2 (REQUIRED)** — Derive a slug and rename the branch:",
+        "- Derive `<slug>` from the ticket title: lowercase, non-alphanumerics → `-`, "
+        "trim leading/trailing `-`, cap at 30 chars. Use the SAME `<slug>` in step 3.",
         "- Read the current branch: `CUR=$(git branch --show-current)`.",
-        "- Derive a short slug from the ticket title: lowercase, non-alphanumerics → `-`, "
-        "trim leading/trailing `-`, cap at 30 chars.",
         '- Run: `git branch -m "$CUR" "$CUR-<slug>"` (append `-<slug>` to whatever '
         "the current branch is — cockpit may have bumped it to `-2`/`-3` to avoid a collision).",
         "- Verify with `git branch --show-current` — it should now end with `-<slug>`.",
         "- If the rename fails (target already exists, etc.), keep the original "
         "branch and note it in your plan.",
+        "",
+        "**Step 3 (REQUIRED)** — Rename the cmux workspace to drop the `<id>`-style placeholder:",
+        "- The workspace was created with cockpit's placeholder name (e.g. `pe-1234`). "
+        "Replace it with the SAME `<slug>` from step 2 — no id prefix.",
+        '- Run: `cmux workspace-action --action rename --title "<slug>"`. '
+        "Defaults to the current workspace via `$CMUX_WORKSPACE_ID` (always set "
+        "inside a cmux-spawned shell).",
+        "- If `$CMUX_WORKSPACE_ID` is unset for any reason, run `cmux identify` "
+        "first to discover the workspace ref, then pass `--workspace <ref>` explicitly.",
+        "- Cockpit's next reconcile cycle reads `cmux list-workspaces`, so the renamed "
+        "workspace surfaces in `/cockpit:list` automatically.",
         "- Do not push or change anything else in this step.",
     ]
     return "\n".join(lines + _PLAN_TAIL)

@@ -408,6 +408,17 @@ def test_positional_linear_prompt_instructs_branch_rename(spawn_main):
     assert 'git branch -m "$CUR" "$CUR-<slug>"' in cmd
 
 
+def test_positional_linear_prompt_instructs_workspace_rename(spawn_main):
+    """Step 3: drop the `pe-1234`-style placeholder from the cmux workspace name
+    by renaming it to the same `<slug>` derived from the Linear title.
+    `CMUX_WORKSPACE_ID` is the default target; `cmux identify` is the fallback."""
+    spawn_main(["PE-1234", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert 'cmux workspace-action --action rename --title "<slug>"' in cmd
+    assert "CMUX_WORKSPACE_ID" in cmd
+    assert "cmux identify" in cmd
+
+
 def test_positional_slack_creates_channel_ts_branch(spawn_main):
     url = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
     code, out, _err = spawn_main([url, "--repo", "testrepo"])
