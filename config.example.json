@@ -11,5 +11,6 @@
   "auto_cleanup_on_merge": true,
   "prompt_prefix": "",
   "use_cship": false,
+  "use_linear": false,
   "tool": "auto"
 }

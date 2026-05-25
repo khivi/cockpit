@@ -26,19 +26,25 @@ Optional:
                           Defaults to a plan-only prompt when input is a PR.
                           Defaults to none (bare `claude`) for branch/cwd input.
 
-Positional detection (5 steps):
+Positional detection (6 steps):
   1. GitHub PR URL (https://github.com/.../pull/N) → PR mode
   2. #-prefixed PR number (#N)                       → PR mode
                                                        (bare N is a branch — see below)
-  3. Local branch (refs/heads/<branch> exists)           → checkout
-  4. Remote branch (ls-remote origin <branch> matches)   → fetch + checkout
-  5. New branch (neither local nor remote)               → create from default_base
+  3. Linear ID ([A-Z]{2,6}-\\d+, case-insensitive)   → linear mode
+  4. Local branch (refs/heads/<branch> exists)           → checkout
+  5. Remote branch (ls-remote origin <branch> matches)   → fetch + checkout
+  6. New branch (neither local nor remote)               → create from default_base
 
-  After branch resolution (steps 3-5), gh is queried for an open PR on
+  After branch resolution (steps 4-6), gh is queried for an open PR on
   the head ref; if found, the PR info is printed and the plan-only prompt
   is auto-generated (unless --claude-prompt overrides).
-  # TODO: Linear ID (PE-1234) → resolve via Linear API
-  # TODO: Slack URL           → resolve via Slack API
+
+  Linear mode creates a fresh branch `<branch_prefix><id-lower>` (e.g.
+  `khivi/pe-1234`). With `use_linear: true` and the Linear MCP detected
+  via `claude mcp list`, cockpit seeds a plan-only prompt that instructs
+  Claude to fetch the ticket via the Linear MCP and rename the branch +
+  workspace to include the ticket title slug. Otherwise the workspace
+  starts with the generic plan prompt.
 
 Behaviour:
   - For positional/--branch/--pr without --repo: walk up from cwd to match a
@@ -72,6 +78,7 @@ from scripts.lib.config import (
     discover_repo,
     find_repo_by_name,
     find_repo_by_nwo,
+    use_linear as cfg_use_linear,
 )  # noqa: E402
 from scripts.lib.daemon_signal import kick_running  # noqa: E402
 from scripts.lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch  # noqa: E402
@@ -83,6 +90,7 @@ from scripts.lib.git import (  # noqa: E402
     slugify,
     worktree_for_branch,
 )
+from scripts.lib.linear import LINEAR_RE_CI, linear_mcp_available  # noqa: E402
 from scripts.lib.prompts import claude_command  # noqa: E402
 from scripts.lib.repos import repo_names  # noqa: E402
 
@@ -142,17 +150,80 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
     else None. The caller uses it to route the spawn to the right
     configured repo when invoked from outside its tree.
 
-    PR mode requires a `#` prefix (`#123`) or a full GitHub PR URL. A bare
-    integer is treated as a branch name — use `#123` or `--pr 123` for PRs.
-    Steps 3-5 (local/remote/new branch) resolved by create_worktree at
-    worktree-creation time.
+    Modes:
+      - `pr`     : GitHub PR URL or `#N`. Bare integers stay `branch`.
+      - `linear` : whole positional matches `[A-Z]{2,6}-\\d+` (case-insensitive).
+                   Normalised to uppercase in `value`.
+      - `branch` : anything else; local/remote/new resolved by create_worktree.
     """
     m = re.match(r"https?://github\.com/([^/]+/[^/]+)/pull/(\d+)", value)
     if m:
         return "pr", m.group(2), m.group(1)
     if re.fullmatch(r"#\d+", value):
         return "pr", value.lstrip("#"), None
+    if LINEAR_RE_CI.fullmatch(value):
+        return "linear", value.upper(), None
     return "branch", value, None
+
+
+_PLAN_TAIL = [
+    "",
+    "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
+    "- DO NOT edit files, write code, run tests, or commit anything.",
+    "- You MAY use Read, Grep, Glob for context (re-fetch the source where relevant).",
+    "- Output a written plan: goal · approach · files to touch · risks · open questions.",
+    "- Ask clarifying questions if the task is ambiguous.",
+    "- Wait for the user to approve or refine before implementing.",
+    "",
+    "Begin by fetching the source above, then write the plan.",
+]
+
+
+def _linear_prompt(branch: str, identifier: str) -> str:
+    """First-turn prompt that delegates Linear ticket fetch to the Linear MCP
+    and then renames the branch to include the ticket title slug.
+
+    Cockpit does not call the Linear API itself: spawn creates the worktree
+    on `<prefix><id-lower>` (e.g. `khivi/pe-1234`) and Claude does both the
+    ticket fetch and the post-fetch `git branch -m` to `<prefix><id-lower>-<title-slug>`.
+    Workspace name + worktree directory stay on the original short slug;
+    cockpit's reconciliation re-reads `git worktree list` each cycle, so the
+    rename surfaces in `/cockpit:list` without further action.
+    """
+    lines = [
+        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
+        "",
+        f"**Source**: Linear ticket {identifier}",
+        "",
+        "**Step 1 (REQUIRED)** — Fetch the ticket via the Linear MCP:",
+        f"- Use the Linear MCP tool to read issue `{identifier}` (title, description, comments).",
+        "- If the Linear MCP is not connected, STOP. Report to the user that the "
+        "Linear connector is required and exit without writing a plan. Do not "
+        "fall back to guessing from the ticket id alone.",
+        "",
+        "**Step 2 (REQUIRED)** — Derive a slug and rename the branch:",
+        "- Derive `<slug>` from the ticket title: lowercase, non-alphanumerics → `-`, "
+        "trim leading/trailing `-`, cap at 30 chars. Use the SAME `<slug>` in step 3.",
+        "- Read the current branch: `CUR=$(git branch --show-current)`.",
+        '- Run: `git branch -m "$CUR" "$CUR-<slug>"` (append `-<slug>` to whatever '
+        "the current branch is — cockpit may have bumped it to `-2`/`-3` to avoid a collision).",
+        "- Verify with `git branch --show-current` — it should now end with `-<slug>`.",
+        "- If the rename fails (target already exists, etc.), keep the original "
+        "branch and note it in your plan.",
+        "",
+        "**Step 3 (REQUIRED)** — Rename the cmux workspace to drop the `<id>`-style placeholder:",
+        "- The workspace was created with cockpit's placeholder name (e.g. `pe-1234`). "
+        "Replace it with the SAME `<slug>` from step 2 — no id prefix.",
+        '- Run: `cmux workspace-action --action rename --title "<slug>"`. '
+        "Defaults to the current workspace via `$CMUX_WORKSPACE_ID` (always set "
+        "inside a cmux-spawned shell).",
+        "- If `$CMUX_WORKSPACE_ID` is unset for any reason, run `cmux identify` "
+        "first to discover the workspace ref, then pass `--workspace <ref>` explicitly.",
+        "- Cockpit's next reconcile cycle reads `cmux list-workspaces`, so the renamed "
+        "workspace surfaces in `/cockpit:list` automatically.",
+        "- Do not push or change anything else in this step.",
+    ]
+    return "\n".join(lines + _PLAN_TAIL)
 
 
 def select_repo(repo_name: str | None) -> dict:
@@ -341,10 +412,26 @@ def main() -> int:
     skill = args.skill
     from_name = False
 
+    prompt: str | None = args.claude_prompt
+    seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
+
     if args.positional:
         mode, value, nwo_hint = detect_source(args.positional)
         if mode == "pr":
             pr_num = value
+        elif mode == "linear":
+            branch = value.lower()
+            from_name = True
+            if cfg_use_linear():
+                mcp = linear_mcp_available()
+                if mcp is False:
+                    print(
+                        f"cockpit: Linear MCP not detected via 'claude mcp list'; "
+                        f"falling back to plain branch mode for {value}",
+                        file=sys.stderr,
+                    )
+                else:
+                    seeded_prompt = _linear_prompt(branch, value)
         else:
             branch = value
         if nwo_hint and not args.repo:
@@ -364,7 +451,10 @@ def main() -> int:
         branch = args.name
         from_name = True
 
-    prompt: str | None = args.claude_prompt
+    # --claude-prompt wins over the linear-seeded prompt; otherwise the
+    # seeded one wins over the generic plan-only prompt added below.
+    if prompt is None:
+        prompt = seeded_prompt
 
     if skill:
         try:

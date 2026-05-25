@@ -8,12 +8,26 @@ Three layers:
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 
 import pytest
 
 from scripts.spawn import detect_source
+
+
+def _set_config_key(cockpit_repo, key: str, value) -> None:
+    """Mutate the on-disk config.json the `cockpit_repo` fixture wrote.
+
+    `load_config()` re-reads the file on every call, so an in-place edit is
+    enough — no module reload required. Used by Linear-flow tests that need
+    `use_linear: true` (the fixture defaults `use_linear` to absent → False).
+    """
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data[key] = value
+    cfg_path.write_text(json.dumps(data))
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -54,6 +68,26 @@ def test_branch_name_returns_branch_mode():
     assert mode == "branch"
     assert value == "khivi/my-feature"
     assert nwo is None
+
+
+def test_linear_id_uppercase_returns_linear_mode():
+    mode, value, nwo = detect_source("PE-1234")
+    assert mode == "linear"
+    assert value == "PE-1234"
+    assert nwo is None
+
+
+def test_linear_id_lowercase_normalised_to_upper():
+    mode, value, nwo = detect_source("pe-1234")
+    assert mode == "linear"
+    assert value == "PE-1234"
+
+
+def test_linear_id_inside_path_stays_branch():
+    """`khivi/PE-1234-foo` is a branch name, not a Linear id (no fullmatch)."""
+    mode, value, _ = detect_source("khivi/PE-1234-foo")
+    assert mode == "branch"
+    assert value == "khivi/PE-1234-foo"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -326,6 +360,160 @@ def test_positional_branch_dispatches_to_branch_mode(spawn_main, push_branch):
     code, out, _err = spawn_main(["khivi/positional-branch", "--repo", "testrepo"])
     assert code == 0
     assert "on khivi/positional-branch" in out
+
+
+# ── linear dispatch ────────────────────────────────────────────────────────
+#
+# `/cockpit:new PE-1234` creates a worktree on `khivi/<id-lower>` and, when
+# `use_linear: true` AND the Linear MCP is detected, seeds a first-turn
+# prompt instructing Claude to fetch the ticket via the Linear MCP and
+# rename the branch + workspace. Cockpit does NOT call the Linear API
+# itself — no network surface to mock, only prompt + branch shape + gating.
+
+
+def test_positional_linear_creates_lowercased_branch(spawn_main):
+    code, out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
+    assert code == 0
+    assert "on khivi/pe-1234" in out
+    call = spawn_main.cmux_calls[0]
+    assert _cmux_kwarg(call, "name") == "pe-1234"
+
+
+def test_positional_linear_lowercase_input_normalised(spawn_main):
+    """`pe-1234` and `PE-1234` produce the same branch."""
+    code, out, _err = spawn_main(["pe-1234", "--repo", "testrepo"])
+    assert code == 0
+    assert "on khivi/pe-1234" in out
+
+
+def test_positional_linear_prompt_instructs_mcp_fetch(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    _set_config_key(cockpit_repo, "use_linear", True)
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
+    spawn_main(["PE-1234", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "PE-1234" in cmd
+    assert "Linear MCP" in cmd
+    assert "STOP" in cmd  # error path when MCP not connected
+    assert "PLAN ONLY" in cmd
+
+
+def test_positional_linear_prompt_instructs_branch_rename(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """Step 2 of the Linear prompt asks Claude to rename the branch to include
+    the ticket title slug — that's how the title gets into the branch name
+    without cockpit ever calling the Linear API. The prompt reads the current
+    branch via git so it's robust against `-2`/`-3` collision bumping."""
+    _set_config_key(cockpit_repo, "use_linear", True)
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
+    spawn_main(["PE-1234", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "git branch --show-current" in cmd
+    assert 'git branch -m "$CUR" "$CUR-<slug>"' in cmd
+
+
+def test_positional_linear_prompt_instructs_workspace_rename(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """Step 3: drop the `pe-1234`-style placeholder from the cmux workspace name
+    by renaming it to the same `<slug>` derived from the Linear title.
+    `CMUX_WORKSPACE_ID` is the default target; `cmux identify` is the fallback."""
+    _set_config_key(cockpit_repo, "use_linear", True)
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
+    spawn_main(["PE-1234", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert 'cmux workspace-action --action rename --title "<slug>"' in cmd
+    assert "CMUX_WORKSPACE_ID" in cmd
+    assert "cmux identify" in cmd
+
+
+# ── use_linear gating ─────────────────────────────────────────────────────
+#
+# With `use_linear: false` (the default), Linear-id input still classifies
+# as linear-mode (branch lower-cased, statusline pill keeps working) but
+# the MCP-instructing prompt is suppressed: the workspace starts with the
+# generic plan-only prompt, equivalent to `/cockpit:new --branch pe-1234`.
+
+
+def test_linear_default_off_skips_mcp_instructing_prompt(spawn_main, monkeypatch):
+    """Default (use_linear absent) → no 'Linear MCP', no 'STOP', no rename
+    instructions — only the generic plan-only prompt."""
+    import scripts.spawn as spawn
+
+    called: list[bool] = []
+    monkeypatch.setattr(
+        spawn, "linear_mcp_available", lambda: called.append(True) or True
+    )
+    code, out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
+    assert code == 0
+    assert "on khivi/pe-1234" in out
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Linear MCP" not in cmd
+    assert "STOP" not in cmd
+    assert 'git branch -m "$CUR" "$CUR-<slug>"' not in cmd
+    assert "cmux workspace-action" not in cmd
+    assert "PLAN ONLY" in cmd  # generic plan prompt still present
+    # MCP probe must NOT run when the flag is off — it's a wasted subprocess.
+    assert called == []
+
+
+def test_linear_on_but_mcp_missing_falls_back_with_warning(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """use_linear: true + `claude mcp list` reports no Linear entry → warn
+    on stderr and seed the generic plan prompt, not the rename prompt."""
+    _set_config_key(cockpit_repo, "use_linear", True)
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: False)
+    code, _out, err = spawn_main(["PE-1234", "--repo", "testrepo"])
+    assert code == 0
+    assert "Linear MCP not detected" in err
+    assert "PE-1234" in err
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Linear MCP" not in cmd
+    assert "STOP" not in cmd
+    assert "PLAN ONLY" in cmd  # generic plan prompt
+
+
+def test_linear_on_with_inconclusive_probe_seeds_smart_prompt(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """use_linear: true + probe returns None (claude missing / timeout) →
+    proceed with the smart flow; Claude itself STOPs on the first turn if
+    the MCP is truly missing."""
+    _set_config_key(cockpit_repo, "use_linear", True)
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
+    code, _out, err = spawn_main(["PE-1234", "--repo", "testrepo"])
+    assert code == 0
+    assert "not detected" not in err  # no fallback warning
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Linear MCP" in cmd
+    assert "STOP" in cmd
+
+
+def test_explicit_claude_prompt_overrides_linear_seeded_prompt(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """`--claude-prompt` wins over the auto-seeded MCP-instructing prompt."""
+    _set_config_key(cockpit_repo, "use_linear", True)
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
+    spawn_main(["PE-1", "--repo", "testrepo", "--claude-prompt", "OVERRIDDEN"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "OVERRIDDEN" in cmd
+    assert "Linear MCP" not in cmd
 
 
 # ── --skill semantics ──────────────────────────────────────────────────────
