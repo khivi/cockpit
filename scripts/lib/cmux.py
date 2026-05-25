@@ -357,8 +357,10 @@ _CMUX_RENDERERS = {
     "conflict": lambda _p: ("merge", "⚠️ conflict", ORANGE),
     "draft": lambda _p: ("draft", "📝 draft", GREY),
     "approved": lambda _p: ("approved", "✅ approved", GREEN),
-    # `state` is footer-only; cmux drops it since autoclose removes workspaces
-    # for non-OPEN PRs within a cycle.
+    # `state` is footer-only; cmux already surfaces MERGED/CLOSED natively in
+    # its sidebar, so the cockpit pill map drops it (None) to avoid double-
+    # rendering. Load-bearing for merged-but-dirty workspaces where autoclose
+    # is blocked and a non-OPEN PR persists in `ctx.prs` across cycles.
     "state": lambda _p: None,
 }
 

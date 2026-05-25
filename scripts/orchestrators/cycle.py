@@ -395,13 +395,12 @@ def _prepare_cycle(
             return None
         merged_branches = merged_fut.result()
 
-    coworker_branches = sorted(
-        {w.branch for w in wts if not w.branch.startswith(f"{self_user}/")}
-    )
+    # Pass every local feature branch (mine + coworker). The per-branch leg
+    # in list_relevant_prs fetches any-state PRs so the cache refreshes after
+    # OPEN→MERGED / OPEN→CLOSED — `is:open author:self` alone misses those.
+    branches = sorted({w.branch for w in wts if w.branch not in MAIN_BRANCHES})
     try:
-        prs = list_relevant_prs(
-            owner, name, self_user, coworker_branches, cache=pr_cache
-        )
+        prs = list_relevant_prs(owner, name, self_user, branches, cache=pr_cache)
     except RuntimeError as e:
         print(
             f"  {yellow('skip')} {owner}/{name}: list_relevant_prs failed: {e}",

@@ -9,9 +9,10 @@ dicts. Surfaces consume the list in order; emission order is the canonical
 display order.
 
 The `state` kind (MERGED/CLOSED) is emitted always; surfaces decide whether to
-render it. cmux drops it because autoclose tears down workspaces for non-OPEN
-PRs within one daemon cycle. Footer keeps it because the statusLine renders in
-any git dir indefinitely, including merged-but-not-cleaned-up worktrees.
+render it. cmux drops it (via a `None` renderer in cmux._CMUX_RENDERERS) because
+cmux already surfaces merge state natively in the sidebar. Footer keeps it
+because the statusLine renders in any git dir indefinitely, including
+merged-but-not-cleaned-up worktrees (e.g. dirty worktrees autoclose skips).
 """
 
 from __future__ import annotations

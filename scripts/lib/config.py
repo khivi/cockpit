@@ -162,7 +162,7 @@ def _write_statusline(settings_path: Path, statusline_command: str) -> None:
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     data["statusLine"] = {"type": "command", "command": statusline_command}
     settings_path.write_text(json.dumps(data, indent=2) + "\n")
-    print(f"wrote Claude statusLine -> {statusline_command}")
+    print(f"wrote claude statusLine -> {statusline_command}")
 
 
 def _write_if_changed(dest: Path, payload: bytes, label: str, src: Path) -> bool:
@@ -217,7 +217,7 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
     settings_path = Path.home() / ".claude" / "settings.json"
     current = _read_current_statusline(settings_path)
     if current == statusline_command:
-        print("Claude statusLine unchanged")
+        print("claude statusLine unchanged")
         return
     if current is None:
         return
