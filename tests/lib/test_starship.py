@@ -215,6 +215,20 @@ def test_print_pr_title_empty_returns_empty(cache_dir):
     assert starship.print_pr_title("khivi/foo") == ""
 
 
+def test_print_pr_muted_empty_when_not_muted(cache_dir):
+    assert starship.print_pr_muted("khivi/foo") == ""
+
+
+def test_print_pr_muted_full(cache_dir):
+    (cache_dir / "pr-muted-khivi-foo").write_text("all")
+    assert starship.print_pr_muted("khivi/foo") == yellow("🔇 muted")
+
+
+def test_print_pr_muted_partial_renders_categories(cache_dir):
+    (cache_dir / "pr-muted-khivi-foo").write_text("ci,comments")
+    assert starship.print_pr_muted("khivi/foo") == yellow("🔇 muted: ci+comments")
+
+
 @pytest.mark.parametrize(
     "glyph,expected",
     [

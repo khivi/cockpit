@@ -35,6 +35,7 @@ ${custom.linear}\
 ${custom.pr_state}\
 ${custom.pr_num}\
 ${custom.pr_checks}\
+${custom.pr_muted}\
 ${custom.pr_title}"""
 
 add_newline = false
@@ -147,3 +148,12 @@ when        = "true"
 format      = "(   [$output]($style))"
 style       = "italic fg:#1f2937"
 description = "GitHub PR title for current branch"
+
+# Nudge mute indicator. Daemon resolves mute state once per cycle and bakes it
+# into the PR JSON snapshot; this field reads the flat cell only. Hidden when
+# not muted. Yellow ANSI is emitted by the Python output.
+[custom.pr_muted]
+command     = "__COCKPIT_STARSHIP__ pr-muted"
+when        = "true"
+format      = "(   $output)"
+description = "Cockpit nudge mute state for current branch's PR"

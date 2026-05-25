@@ -102,6 +102,7 @@ _PR_STATE_ICON: dict[str, str] = {
 
 ICON_PR_NUM = "🔗"
 ICON_PR_TITLE = "📄"
+ICON_PR_MUTED = "🔇"
 
 _PR_CHECKS_COLOR: dict[str, Colorizer] = {
     "✓": green,
@@ -485,3 +486,16 @@ def print_pr_title(branch: str | None = None) -> str:
     if not raw:
         return ""
     return f"{ICON_PR_TITLE} {raw}"
+
+
+def print_pr_muted(branch: str | None = None) -> str:
+    """Render the daemon's mute snapshot. Reader-only — see write_pr_cache."""
+    branch = branch or _branch()
+    if not branch:
+        return ""
+    raw = read_text(branch_cache("pr-muted", branch))
+    if not raw:
+        return ""
+    if raw == "all":
+        return yellow(f"{ICON_PR_MUTED} muted")
+    return yellow(f"{ICON_PR_MUTED} muted: {raw.replace(',', '+')}")

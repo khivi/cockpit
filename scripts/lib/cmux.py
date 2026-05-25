@@ -19,6 +19,7 @@ from .issue_color import issue_color
 from .log_format import verb
 from .gh import PR
 from .git import Worktree, worktrees
+from .nudges import NudgePref
 from .pills import decide_pills
 from .prompts import build_orphan_prompt, build_pr_prompt, claude_command
 
@@ -27,6 +28,7 @@ RED = "#eb445a"
 ORANGE = "#ff9500"
 BLUE = "#3b82f6"
 GREY = "#6b7280"
+YELLOW = "#facc15"
 
 # Pill key kept for backward compatibility — older workspaces may have it set;
 # apply_pills clears it every cycle to clean up.
@@ -47,7 +49,19 @@ WIP_ICON = "✏️"
 STALE_KEY = "stale"
 STALE_ICON = "↻"
 
-ACTIONABLE_KEYS = ("ci", "comments", "merge", "draft", "approved", "rebase", "wip")
+MUTED_KEY = "muted"
+MUTED_ICON = "🔇"
+
+ACTIONABLE_KEYS = (
+    "ci",
+    "comments",
+    "merge",
+    "draft",
+    "approved",
+    "rebase",
+    "wip",
+    MUTED_KEY,
+)
 
 OWNER_KEY = "owner"
 OWNER_ICON = "👥"
@@ -345,7 +359,16 @@ def find_cockpit_workspaces(
     return out
 
 
+def _muted_label(p: dict) -> str:
+    """Sidebar label for the muted pill. Categories are sorted upstream."""
+    if p.get("scope") == "all":
+        return f"{MUTED_ICON} muted"
+    cats = "+".join(p.get("categories") or [])
+    return f"{MUTED_ICON} muted: {cats}" if cats else f"{MUTED_ICON} muted"
+
+
 _CMUX_RENDERERS = {
+    "muted": lambda p: (MUTED_KEY, _muted_label(p), YELLOW),
     "rebase": lambda _p: ("rebase", "🔄 rebasing", ORANGE),
     "merge": lambda _p: ("merge", "🔀 merging", ORANGE),
     "wip": lambda p: ("wip", f"✏️ {p['count']} dirty", ORANGE),
@@ -366,18 +389,24 @@ _CMUX_RENDERERS = {
 
 
 def status_pills(
-    pr: PR, wt: Worktree | None = None, self_user: str | None = None
+    pr: PR,
+    wt: Worktree | None = None,
+    self_user: str | None = None,
+    pref: NudgePref | None = None,
 ) -> list[tuple[str, str, str]]:
     """(key, value, color) tuples for cmux set-status. Maps decide_pills output.
 
     When `self_user` is given and `pr.author` differs, prepends an `owner` pill
     so coworker-owned PRs are visible in the sidebar. Prepended so reversed
     set-order in `apply_pills` places it at the bottom of the visual stack.
+
+    `pref` carries the daemon-resolved mute state; pure consumer — does not
+    load it. See cycle.py for the single-authority pref load.
     """
     out: list[tuple[str, str, str]] = []
     if self_user and pr.author and pr.author != self_user:
         out.append((OWNER_KEY, f"{OWNER_ICON} @{pr.author}", BLUE))
-    for p in decide_pills(pr, wt):
+    for p in decide_pills(pr, wt, pref):
         renderer = _CMUX_RENDERERS.get(p["kind"])
         if renderer is None:
             continue
@@ -392,6 +421,7 @@ def apply_pills(
     pr: PR,
     wt: Worktree | None = None,
     self_user: str | None = None,
+    pref: NudgePref | None = None,
 ) -> frozenset[tuple[str, str, str]]:
     """Idempotently sync cmux pills; return the desired snapshot for diffing.
 
@@ -401,7 +431,7 @@ def apply_pills(
     re-set in reverse display order. The `idle=` pill is owned by
     `hooks/cmux-idle-pill.sh` (Stop / UserPromptSubmit) — not touched here.
     """
-    desired = tuple(status_pills(pr, wt, self_user))
+    desired = tuple(status_pills(pr, wt, self_user, pref))
     # "cockpit_managed" is a one-release back-compat strip — remove next release.
     keys_to_clear = [*ACTIONABLE_KEYS, COCKPIT_KEY, OWNER_KEY, "cockpit_managed"]
     with ThreadPoolExecutor(max_workers=len(keys_to_clear)) as ex:
@@ -518,12 +548,17 @@ def spawn_workspace(name: str, cwd: Path, command: str) -> str | None:
 
 
 def spawn_pr_workspace(
-    pr: PR, wt: Worktree, *, self_user: str | None = None, dry: bool = False
+    pr: PR,
+    wt: Worktree,
+    *,
+    self_user: str | None = None,
+    pref: NudgePref | None = None,
+    dry: bool = False,
 ) -> str | None:
     """Spawn the tracked cmux workspace for a PR; apply pills, log to stdout."""
     if dry:
         print(f"  [dry] spawn {wt.short}  #{pr.number}  cwd={wt.path}", flush=True)
-        for key, value, _ in status_pills(pr, wt, self_user):
+        for key, value, _ in status_pills(pr, wt, self_user, pref):
             print(f"  [dry]   pill {key}={value}", flush=True)
         return None
     ref = spawn_workspace(wt.short, wt.path, claude_command(build_pr_prompt(pr)))
@@ -534,7 +569,7 @@ def spawn_pr_workspace(
             flush=True,
         )
         return None
-    apply_pills(ref, pr, wt, self_user)
+    apply_pills(ref, pr, wt, self_user, pref)
     print(
         f"  {verb('spawned')} {bold(wt.short)} ({ref})  #{pr.number}"
         f"  [{issue_color(pr.display_issue)(pr.display_issue)}]",

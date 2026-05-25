@@ -14,6 +14,8 @@ import pytest
 from scripts.lib.cmux import (
     ACTIONABLE_KEYS,
     COCKPIT_KEY,
+    MUTED_KEY,
+    YELLOW,
     CmuxUnavailable,
     apply_pills,
     status_pills,
@@ -23,6 +25,7 @@ from scripts.lib.cmux import (
 )
 from scripts.lib.gh import PR
 from scripts.lib.git import Worktree
+from scripts.lib.nudges import KNOWN_CATEGORIES, NudgePref
 
 
 def _pr(**overrides) -> PR:
@@ -181,3 +184,48 @@ def test_workspace_cwds_parses_ok_when_cmux_ok():
     payload = '{"workspaces":[{"ref":"workspace:1","current_directory":"/tmp/wt"}]}'
     with patch("scripts.lib.cmux.cmux", return_value=payload):
         assert workspace_cwds() == {"workspace:1": Path("/tmp/wt")}
+
+
+# ── muted pill ──────────────────────────────────────────────────────────────
+
+
+def test_status_pills_full_mute_emits_muted_tuple_at_front():
+    pref = NudgePref(disabled_categories=set(KNOWN_CATEGORIES))
+    out = status_pills(_pr(), _wt(), pref=pref)
+    # muted anchors the row; ci_passed still emits since muted doesn't suppress it.
+    assert out[0] == (MUTED_KEY, "🔇 muted", YELLOW)
+    assert any(k == "ci" for k, _, _ in out)
+
+
+def test_status_pills_partial_mute_lists_categories():
+    pref = NudgePref(disabled_categories={"ci", "comments"})
+    out = status_pills(_pr(), _wt(), pref=pref)
+    assert out[0] == (MUTED_KEY, "🔇 muted: ci+comments", YELLOW)
+
+
+def test_status_pills_no_mute_no_muted_tuple():
+    pref = NudgePref()
+    out = status_pills(_pr(), _wt(), pref=pref)
+    assert all(k != MUTED_KEY for k, _, _ in out)
+
+
+def test_status_pills_muted_with_owner_pill_for_coworker():
+    pref = NudgePref(disabled_categories={"ci"})
+    out = status_pills(_pr(author="bob"), _wt(), self_user="khivi", pref=pref)
+    # owner is prepended for reversed set-order; muted comes from decide_pills.
+    assert out[0] == ("owner", "👥 @bob", "#3b82f6")
+    assert (MUTED_KEY, "🔇 muted: ci", YELLOW) in out
+
+
+def test_apply_pills_clears_muted_key():
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        apply_pills("workspace:1", _pr(), _wt())
+
+    cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}
+    assert MUTED_KEY in cleared_keys

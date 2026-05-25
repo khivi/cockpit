@@ -13,7 +13,8 @@ import pytest
 
 from scripts.lib.gh import PR
 from scripts.lib.git import Worktree
-from scripts.lib.pills import decide_pills
+from scripts.lib.nudges import KNOWN_CATEGORIES, NudgePref
+from scripts.lib.pills import KIND_ORDER, decide_pills
 
 
 def _pr(**overrides) -> PR:
@@ -170,3 +171,56 @@ def test_full_house_canonical_order():
         "draft",
         "approved",
     ]
+
+
+# ── muted pill ──────────────────────────────────────────────────────────────
+
+
+def test_muted_first_in_kind_order():
+    assert KIND_ORDER[0] == "muted"
+
+
+def test_muted_pref_none_or_empty_emits_no_muted():
+    assert [p["kind"] for p in decide_pills(_pr(), _wt(), pref=None)] == ["ci_passed"]
+    assert [p["kind"] for p in decide_pills(_pr(), _wt(), pref=NudgePref())] == [
+        "ci_passed"
+    ]
+
+
+def test_muted_full_scope_anchors_front():
+    pref = NudgePref(disabled_categories=set(KNOWN_CATEGORIES))
+    pills = decide_pills(_pr(ci="failed:lint", unaddressed=2), _wt(), pref=pref)
+    assert pills[0] == {"kind": "muted", "scope": "all", "categories": []}
+
+
+def test_muted_partial_scope_lists_sorted_categories():
+    pref = NudgePref(disabled_categories={"comments", "ci"})
+    pills = decide_pills(_pr(), _wt(), pref=pref)
+    assert pills[0] == {
+        "kind": "muted",
+        "scope": "some",
+        "categories": ["ci", "comments"],
+    }
+
+
+def test_muted_does_not_suppress_ci_passed_sentinel():
+    pref = NudgePref(disabled_categories={"ci"})
+    kinds = [p["kind"] for p in decide_pills(_pr(), _wt(), pref=pref)]
+    assert kinds == ["muted", "ci_passed"]
+
+
+def test_muted_coexists_with_actionable_pills():
+    pref = NudgePref(disabled_categories={"ci"})
+    pills = decide_pills(_pr(ci="failed:lint", unaddressed=2), _wt(), pref=pref)
+    kinds = [p["kind"] for p in pills]
+    assert kinds[0] == "muted"
+    assert "ci_failed" in kinds
+    assert "unaddressed" in kinds
+
+
+def test_muted_with_expired_pref_clearing_via_load_pref(tmp_path, monkeypatch):
+    # An expired pref returned by load_pref already has disabled_categories
+    # cleared (see nudges.load_pref auto-expiry). Pass an explicit empty pref
+    # to mirror that contract — no muted pill should appear.
+    pref = NudgePref(disabled_categories=set(), until=None)
+    assert all(p["kind"] != "muted" for p in decide_pills(_pr(), _wt(), pref=pref))
