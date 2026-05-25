@@ -26,19 +26,25 @@ Optional:
                           Defaults to a plan-only prompt when input is a PR.
                           Defaults to none (bare `claude`) for branch/cwd input.
 
-Positional detection (5 steps):
+Positional detection (7 steps):
   1. GitHub PR URL (https://github.com/.../pull/N) → PR mode
   2. #-prefixed PR number (#N)                       → PR mode
                                                        (bare N is a branch — see below)
-  3. Local branch (refs/heads/<branch> exists)           → checkout
-  4. Remote branch (ls-remote origin <branch> matches)   → fetch + checkout
-  5. New branch (neither local nor remote)               → create from default_base
+  3. Linear ID ([A-Z]{2,6}-\\d+, case-insensitive)   → linear mode
+  4. Slack archives URL                              → slack mode
+  5. Local branch (refs/heads/<branch> exists)           → checkout
+  6. Remote branch (ls-remote origin <branch> matches)   → fetch + checkout
+  7. New branch (neither local nor remote)               → create from default_base
 
-  After branch resolution (steps 3-5), gh is queried for an open PR on
+  After branch resolution (steps 5-7), gh is queried for an open PR on
   the head ref; if found, the PR info is printed and the plan-only prompt
   is auto-generated (unless --claude-prompt overrides).
-  # TODO: Linear ID (PE-1234) → resolve via Linear API
-  # TODO: Slack URL           → resolve via Slack API
+
+  Linear/Slack modes resolve the ticket/thread via API, derive a fresh
+  branch name (`<id-lower>-<title-slug>` / `slack-<text-slug>`), and seed
+  a plan-only prompt with the ticket/thread body. Missing `LINEAR_API_KEY`
+  / `SLACK_TOKEN` (or any API error) degrades to plain branch mode — see
+  README.
 
 Behaviour:
   - For positional/--branch/--pr without --repo: walk up from cwd to match a
@@ -83,8 +89,19 @@ from scripts.lib.git import (  # noqa: E402
     slugify,
     worktree_for_branch,
 )
+from scripts.lib.linear import (  # noqa: E402
+    LINEAR_RE_CI,
+    ResolvedIssue,
+    resolve_issue,
+)
 from scripts.lib.prompts import claude_command  # noqa: E402
 from scripts.lib.repos import repo_names  # noqa: E402
+from scripts.lib.slack import (  # noqa: E402
+    SLACK_URL_RE,
+    ResolvedThread,
+    parse_url as parse_slack_url,
+    resolve_thread,
+)
 
 
 def _die(msg: str, code: int = 1) -> int:
@@ -142,17 +159,113 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
     else None. The caller uses it to route the spawn to the right
     configured repo when invoked from outside its tree.
 
-    PR mode requires a `#` prefix (`#123`) or a full GitHub PR URL. A bare
-    integer is treated as a branch name — use `#123` or `--pr 123` for PRs.
-    Steps 3-5 (local/remote/new branch) resolved by create_worktree at
-    worktree-creation time.
+    Modes:
+      - `pr`     : GitHub PR URL or `#N`. Bare integers stay `branch`.
+      - `linear` : whole positional matches `[A-Z]{2,6}-\\d+` (case-insensitive).
+                   Normalised to uppercase in `value`.
+      - `slack`  : whole positional is a Slack archives URL.
+      - `branch` : anything else; local/remote/new resolved by create_worktree.
     """
     m = re.match(r"https?://github\.com/([^/]+/[^/]+)/pull/(\d+)", value)
     if m:
         return "pr", m.group(2), m.group(1)
     if re.fullmatch(r"#\d+", value):
         return "pr", value.lstrip("#"), None
+    if SLACK_URL_RE.match(value):
+        return "slack", value, None
+    if LINEAR_RE_CI.fullmatch(value):
+        return "linear", value.upper(), None
     return "branch", value, None
+
+
+def _linear_branch_name(issue: ResolvedIssue) -> str:
+    """Derive `<id-lower>-<title-slug>`. Falls back to bare id when title is empty.
+
+    Linear's own `branchName` is ignored: it bakes in the team's Linear-side
+    prefix configuration, which doesn't necessarily match the cockpit repo's
+    `branch_prefix` (and we want the cockpit prefix applied uniformly via
+    `resolve_worktree` with `from_name=True`).
+    """
+    title_slug = slugify(issue.title)
+    if not title_slug:
+        return issue.identifier.lower()
+    return f"{issue.identifier.lower()}-{title_slug}"
+
+
+def _slack_branch_name(thread: ResolvedThread) -> str:
+    """Derive `slack-<text-slug>`, falling back to `slack-<channel>-<ts>` when
+    the first message has no text (file-only post, attachment-only, etc.)."""
+    slug = slugify(thread.text) if thread.text else ""
+    if slug:
+        return f"slack-{slug}"
+    return f"slack-{thread.channel.lower()}-{thread.ts.replace('.', '-')}"
+
+
+def _slack_degraded_branch(url: str) -> str:
+    """Branch name when SLACK_TOKEN is missing or the API call failed.
+
+    Deterministic but ugly — uses `(channel, ts)` from the URL so a re-run on
+    the same link lands on the same branch.
+    """
+    parsed = parse_slack_url(url)
+    if parsed is not None:
+        ch, ts = parsed
+        return f"slack-{ch.lower()}-{ts.replace('.', '-')}"
+    return slugify(url) or "slack-thread"
+
+
+def _linear_prompt(branch: str, issue: ResolvedIssue) -> str:
+    """Plan-only first-turn prompt seeded with the Linear ticket body."""
+    lines = [
+        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
+        "",
+        f"**Source**: Linear ticket {issue.identifier}",
+        f"**Task**: {issue.title or '(no title)'}",
+    ]
+    if issue.url:
+        lines += ["", f"**Context**: {issue.url}"]
+    if issue.description:
+        lines += ["", "**Description**:", "", issue.description]
+    lines += [
+        "",
+        "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
+        "- DO NOT edit files, write code, run tests, or commit anything.",
+        "- You MAY use Read, Grep, Glob for context (re-fetch the ticket where relevant).",
+        "- Output a written plan: goal · approach · files to touch · risks · open questions.",
+        "- Ask clarifying questions if the task is ambiguous.",
+        "- Wait for the user to approve or refine before implementing.",
+        "",
+        "Begin by writing the plan.",
+    ]
+    return "\n".join(lines)
+
+
+def _slack_prompt(branch: str, thread: ResolvedThread) -> str:
+    """Plan-only first-turn prompt seeded with the Slack thread body."""
+    lines = [
+        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
+        "",
+        f"**Source**: Slack thread (channel {thread.channel}, ts {thread.ts})",
+        f"**Context**: {thread.permalink}",
+    ]
+    if thread.reply_count:
+        lines.append(
+            f"**Replies**: {thread.reply_count} (not fetched; re-read the thread for details)"
+        )
+    if thread.text:
+        lines += ["", "**First message**:", "", thread.text]
+    lines += [
+        "",
+        "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
+        "- DO NOT edit files, write code, run tests, or commit anything.",
+        "- You MAY use Read, Grep, Glob for context (re-fetch the thread where relevant).",
+        "- Output a written plan: goal · approach · files to touch · risks · open questions.",
+        "- Ask clarifying questions if the task is ambiguous.",
+        "- Wait for the user to approve or refine before implementing.",
+        "",
+        "Begin by writing the plan.",
+    ]
+    return "\n".join(lines)
 
 
 def select_repo(repo_name: str | None) -> dict:
@@ -341,10 +454,30 @@ def main() -> int:
     skill = args.skill
     from_name = False
 
+    prompt: str | None = args.claude_prompt
+    seeded_prompt: str | None = None  # holds the linear/slack-derived prompt
+
     if args.positional:
         mode, value, nwo_hint = detect_source(args.positional)
         if mode == "pr":
             pr_num = value
+        elif mode == "linear":
+            issue = resolve_issue(value)
+            if issue is None:
+                branch = value.lower()
+            else:
+                branch = _linear_branch_name(issue)
+                from_name = True
+                seeded_prompt = _linear_prompt(branch, issue)
+        elif mode == "slack":
+            thread = resolve_thread(value)
+            if thread is None:
+                branch = _slack_degraded_branch(value)
+                from_name = True
+            else:
+                branch = _slack_branch_name(thread)
+                from_name = True
+                seeded_prompt = _slack_prompt(branch, thread)
         else:
             branch = value
         if nwo_hint and not args.repo:
@@ -364,7 +497,10 @@ def main() -> int:
         branch = args.name
         from_name = True
 
-    prompt: str | None = args.claude_prompt
+    # --claude-prompt wins over the linear/slack-seeded prompt; otherwise the
+    # seeded one wins over the generic plan-only prompt added below.
+    if prompt is None:
+        prompt = seeded_prompt
 
     if skill:
         try:

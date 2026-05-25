@@ -26,6 +26,10 @@ A background daemon polls GitHub every few minutes and caches each PR's CI / rev
 | `gh` or `git` | refuses to start |
 | `cship` or `starship` (with `use_cship: true`) | refuses to start |
 | both `cmux` and `limux` | warns once; runs in cache-only mode |
+| `cmux` only (Linux falls back to `limux`) | worktrees, workspaces, and `/cockpit:new` (including Linear/Slack positional input) all work; the nudge pills feature is disabled (limux lacks the persistent-pill API) and cockpit warns at startup |
+| `cship` (with `use_cship: false` or unset) | the statusline pills don't render; everything else, including `/cockpit:new <linear-id\|slack-url>`, still creates the workspace and seeds the plan prompt |
+| `LINEAR_API_KEY` | `/cockpit:new <linear-id>` falls back to a plain branch name (`<id-lower>`, with `branch_prefix` applied); no title/description is seeded into the plan prompt. See [Linear & Slack positional input](#linear--slack-positional-input). |
+| `SLACK_TOKEN` | `/cockpit:new <slack-url>` falls back to a deterministic `slack-<channel>-<ts>` branch; no thread text is seeded |
 
 ## Install
 
@@ -72,6 +76,22 @@ When the PR merges and the worktree is clean, cockpit tears both down automatica
 | `/cockpit:sync` | forces a poll; PR data should refresh within a few seconds |
 
 If `/cockpit:list` shows `—` everywhere, the daemon hasn't completed a cycle yet — wait for the polling interval or run `/cockpit:sync`. If pidfile exists but `/cockpit:list` is stale, tail the `--watch` terminal for the cycle error.
+
+## Linear & Slack positional input
+
+`/cockpit:new` accepts a Linear ticket id or a Slack thread URL in the same positional slot that takes a branch name or PR number. The flow:
+
+1. **Linear id** — matches `[A-Z]{2,6}-\d+` (case-insensitive). Resolves the ticket via Linear's GraphQL API, derives a fresh branch named `<id-lower>-<title-slug>` under your `branch_prefix`, and seeds Claude's first turn with a plan-only prompt containing the ticket title, URL, and description.
+2. **Slack URL** — matches `https://<workspace>.slack.com/archives/<channel>/p<ts>` (`?thread_ts=…` reply links resolve to the root). Fetches the first message via `conversations.replies`, derives a branch like `slack-<text-slug>`, and seeds the plan-only prompt with the thread text.
+
+```text
+/cockpit:new PE-1234
+/cockpit:new https://acme.slack.com/archives/C0123ABC/p1700000000123456
+```
+
+Both flows are **fail-soft**. Set `LINEAR_API_KEY` (a personal API key from Linear → Settings → API) and `SLACK_TOKEN` (a `xoxb-` or `xoxp-` token with `channels:history`/`groups:history`) in your shell rc. Either missing — or any HTTP/API error — degrades gracefully: cockpit prints a one-line warning, falls back to a branch name derived from the input alone, and proceeds without seeding the ticket/thread body into the prompt. The worktree and workspace still get created; you just lose the title/description for the first turn.
+
+Out of scope here: rendering the Linear ticket title in the cship statusline pill. That requires cship-side support (see [TODO.md](TODO.md)).
 
 ## Commands
 
