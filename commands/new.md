@@ -1,6 +1,6 @@
 ---
 description: "Create a git worktree + cmux workspace for a new branch or existing PR."
-argument-hint: "<branch|PR|url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--claude-prompt S]"
+argument-hint: "<branch|PR|url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [-- <text...>]"
 model: haiku
 allowed-tools: Bash
 ---
@@ -23,7 +23,7 @@ If the Bash result does not include a line matching `workspace <name> spawned at
 - `--cwd <path>` — arbitrary dir, no repo or worktree
 - `--skill <name>` — run a global (`~/.claude/skills/`) or repo (`<repo>/.claude/skills/`) skill; cwd defaults to `$HOME` (global) or the repo path (repo skill)
 - `--repo <name>` — universal override targeting a configured repo by name. With `--skill`, sets workspace cwd to that repo's path even when the global skill wins resolution
-- `--claude-prompt <str>` — first-turn prompt override
+- `-- <text...>` — trailing text after `--` is appended to the auto-generated first-turn prompt (plan-only / skill / Linear MCP). Useful for layering extra context onto the seeded prompt.
 
 `spawn.py` is idempotent — an existing worktree + workspace for the same branch attaches instead of erroring. Errors with exit 1 if `--repo` names a repo not in `~/.config/cockpit/config.json` (use `/cockpit:repos` to list).
 
