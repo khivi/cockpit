@@ -29,6 +29,7 @@ class Worktree:
     merging: bool = False
     dirty_count: int = 0
     unpushed: int = 0
+    is_primary: bool = False
 
     @property
     def short(self) -> str:
@@ -105,6 +106,10 @@ def _rebase_head_name(gitdir: Path) -> str | None:
 def worktrees(repo_dir: Path) -> list[Worktree]:
     out = run(["git", "-C", str(repo_dir), "worktree", "list", "--porcelain"])
     blocks = [b for b in out.split("\n\n") if b.strip()]
+    try:
+        repo_resolved = repo_dir.resolve()
+    except OSError:
+        repo_resolved = repo_dir
     wts: list[Worktree] = []
     for block in blocks:
         path = branch = None
@@ -126,8 +131,19 @@ def worktrees(repo_dir: Path) -> list[Worktree]:
         if gitdir is not None and (gitdir / "MERGE_HEAD").exists():
             merging = True
         if branch is not None:
+            try:
+                path_resolved = path.resolve()
+            except OSError:
+                path_resolved = path
+            is_primary = path_resolved == repo_resolved
             wts.append(
-                Worktree(path=path, branch=branch, rebasing=rebasing, merging=merging)
+                Worktree(
+                    path=path,
+                    branch=branch,
+                    rebasing=rebasing,
+                    merging=merging,
+                    is_primary=is_primary,
+                )
             )
 
     def _stats(w: Worktree) -> tuple[int, int]:

@@ -185,6 +185,47 @@ def _is_post_merge_stale(wt: Worktree, merged_branches: dict[str, str]) -> bool:
     return count_commits_since(wt.path, merged_head) == 0
 
 
+def _is_orphan_main_sibling(wt: Worktree) -> bool:
+    """True if `wt` is a non-trunk worktree fast-forwarded onto main with no
+    local work left.
+
+    After a feature PR squash-merges and the user pulls main, the original
+    branch name is gone — `merged_branches` can't identify the worktree. The
+    safe signal is "clean working tree AND no commits unique to HEAD vs
+    `origin/<default>`". Caller must have already established
+    `not wt.is_primary` and `wt.branch in MAIN_BRANCHES`.
+    """
+    if wt.dirty_count > 0:
+        return False
+    if wt.unpushed != 0:
+        # unpushed == -1 means git failed; treat as "unknown, don't sweep".
+        return False
+    return True
+
+
+def _teardown_worktree(
+    wt: Worktree,
+    cwds: dict[str, Path],
+    repo_path: Path,
+    repo_name: str,
+    *,
+    dry: bool,
+) -> None:
+    ref = _workspace_ref_for_path(wt.path, cwds) or wt.short
+    teardown(
+        TeardownRequest(
+            ref=ref,
+            name=wt.short,
+            worktree_path=wt.path,
+            branch=wt.branch,
+            repo_path=repo_path,
+            repo_name=repo_name,
+            forced=True,
+        ),
+        dry=dry,
+    )
+
+
 def _workspace_ref_for_path(wt_path: Path, cwds: dict[str, Path]) -> str | None:
     """Find the cmux workspace ref whose cwd matches `wt_path`.
 
@@ -233,7 +274,11 @@ def _maybe_autoclose(
         return
     pr_by_branch = {pr.branch: pr for pr in (prs or [])}
     for wt in wts:
+        if wt.is_primary:
+            continue
         if wt.branch in MAIN_BRANCHES:
+            if _is_orphan_main_sibling(wt):
+                _teardown_worktree(wt, cwds, repo_path, repo_name, dry=dry)
             continue
         if merged_branches.get(wt.branch) is None:
             continue
@@ -260,19 +305,7 @@ def _maybe_autoclose(
                     flush=True,
                 )
                 continue
-        ref = _workspace_ref_for_path(wt.path, cwds) or wt.short
-        teardown(
-            TeardownRequest(
-                ref=ref,
-                name=wt.short,
-                worktree_path=wt.path,
-                branch=wt.branch,
-                repo_path=repo_path,
-                repo_name=repo_name,
-                forced=True,
-            ),
-            dry=dry,
-        )
+        _teardown_worktree(wt, cwds, repo_path, repo_name, dry=dry)
 
 
 def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, int]:
@@ -288,7 +321,7 @@ def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, in
     `git fetch` is run with `--quiet` from the main repo path; refs are
     shared across worktrees, so fetching once per repo is sufficient.
     """
-    feature = [w for w in wts if w.branch not in MAIN_BRANCHES]
+    feature = [w for w in wts if not w.is_primary]
     distances: dict[str, int] = {}
 
     def _invalidate() -> dict[str, int]:
@@ -511,9 +544,7 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
         keep_refs.add(refs_sorted[0])
         _close_extras(refs_sorted, "keeping {first}")
 
-    feature_wt_paths = {
-        wt.path.resolve() for wt in ctx.wts if wt.branch not in MAIN_BRANCHES
-    }
+    feature_wt_paths = {wt.path.resolve() for wt in ctx.wts if not wt.is_primary}
     by_wt_path: dict[Path, list[str]] = {}
     for ref in keep_refs:
         cwd = ctx.cwds.get(ref)

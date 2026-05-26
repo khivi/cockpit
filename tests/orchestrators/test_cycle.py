@@ -283,6 +283,175 @@ def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Orphan-on-main: a non-trunk worktree FF'd onto main loses its original
+# branch name, so `merged_branches` can't identify it. Autoclose still cleans
+# it up when the working tree is clean and aligned with origin's default.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_autoclose_orphan_main_sibling_clean(tmp_path):
+    """Non-primary worktree on main with dirty=0/unpushed=0 is torn down."""
+    wt_path = tmp_path / "ex-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path,
+        branch="main",
+        dirty_count=0,
+        unpushed=0,
+        is_primary=False,
+    )
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree", return_value=(True, "")),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={},
+            cwds={"ws-ref": wt_path},
+            prs=[],
+            dry=False,
+        )
+
+    close_mock.assert_called_once()
+
+
+def test_autoclose_orphan_main_sibling_dirty_skipped(tmp_path):
+    """Same setup as orphan_main_sibling_clean but with uncommitted work — skip."""
+    wt_path = tmp_path / "ex-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path,
+        branch="main",
+        dirty_count=2,
+        unpushed=0,
+        is_primary=False,
+    )
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={},
+            cwds={"ws-ref": wt_path},
+            prs=[],
+            dry=False,
+        )
+
+    close_mock.assert_not_called()
+    remove_mock.assert_not_called()
+
+
+def test_autoclose_orphan_main_sibling_unpushed_skipped(tmp_path):
+    """Local commits not on origin/main — can't safely sweep."""
+    wt_path = tmp_path / "ex-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path,
+        branch="main",
+        dirty_count=0,
+        unpushed=3,
+        is_primary=False,
+    )
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={},
+            cwds={"ws-ref": wt_path},
+            prs=[],
+            dry=False,
+        )
+
+    close_mock.assert_not_called()
+    remove_mock.assert_not_called()
+
+
+def test_autoclose_orphan_main_sibling_unpushed_unknown_skipped(tmp_path):
+    """`unpushed == -1` means git failed; treat as unknown and don't sweep."""
+    wt_path = tmp_path / "ex-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path,
+        branch="main",
+        dirty_count=0,
+        unpushed=-1,
+        is_primary=False,
+    )
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={},
+            cwds={"ws-ref": wt_path},
+            prs=[],
+            dry=False,
+        )
+
+    close_mock.assert_not_called()
+    remove_mock.assert_not_called()
+
+
+def test_autoclose_primary_on_main_never_swept(tmp_path):
+    """The trunk worktree (is_primary=True) is always skipped, even with
+    dirty=0/unpushed=0 — we must not nuke the user's main checkout."""
+    wt_path = tmp_path / "repo"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path,
+        branch="main",
+        dirty_count=0,
+        unpushed=0,
+        is_primary=True,
+    )
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={},
+            cwds={"ws-ref": wt_path},
+            prs=[],
+            dry=False,
+        )
+
+    close_mock.assert_not_called()
+    remove_mock.assert_not_called()
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # _reap_workspace_orphans: a workspace is reap-eligible iff its cwd resolves
 # under a registered repo (main path or live worktree) AND no live worktree
 # matches by cwd or name.
