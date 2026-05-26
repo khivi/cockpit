@@ -8,9 +8,11 @@ caused the whole reconcile row to be skipped.
 
 from __future__ import annotations
 
+import json
 import re
+from unittest.mock import patch
 
-from scripts.lib.gh import _PR_LIGHT_FIELDS, _relevant_pr_query
+from scripts.lib.gh import _PR_LIGHT_FIELDS, _graphql, _relevant_pr_query
 
 
 def _referenced_vars(query: str) -> set[str]:
@@ -59,6 +61,31 @@ def test_all_declared_vars_are_referenced_many_branches():
         "o", "n", "u", ["a/b", "c/d", "e/f"], _PR_LIGHT_FIELDS
     )
     assert _declared_vars(query) == _referenced_vars(query)
+
+
+def test_graphql_passes_through_errors_field():
+    """A GitHub outage returns 200 OK with partial `data` plus an `errors`
+    array (e.g. checkSuites nulled out by a downstream timeout). _graphql must
+    pass that response through so _pr_from_node can surface ci="unknown" on
+    the affected PRs — raising here would drop the whole cycle and prevent the
+    "ci error" pill/footer indicator from rendering.
+    """
+    payload = json.dumps(
+        {
+            "data": {"mine": {"nodes": []}},
+            "errors": [{"type": "SERVICE_UNAVAILABLE", "message": "Actions down"}],
+        }
+    )
+    with patch("scripts.lib.gh.run", return_value=payload):
+        data = _graphql("query { mine }", {})
+    assert data["errors"][0]["type"] == "SERVICE_UNAVAILABLE"
+
+
+def test_graphql_returns_data_when_no_errors():
+    payload = json.dumps({"data": {"mine": {"nodes": []}}})
+    with patch("scripts.lib.gh.run", return_value=payload):
+        data = _graphql("query { mine }", {})
+    assert data == {"data": {"mine": {"nodes": []}}}
 
 
 def test_per_branch_leg_is_any_state():

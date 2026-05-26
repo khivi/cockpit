@@ -279,26 +279,38 @@ def _pr_from_node(n: dict) -> PR | None:
     if not author:
         return None
     commit = (n["commits"]["nodes"] or [{}])[0].get("commit") or {}
-    check_runs = [
-        run
-        for suite in (commit.get("checkSuites") or {}).get("nodes", [])
-        for run in (suite.get("checkRuns") or {}).get("nodes", [])
-    ]
-    legacy_contexts = (commit.get("status") or {}).get("contexts", []) or []
-    pending = sum(
-        1 for r in check_runs if r.get("status") in ("IN_PROGRESS", "QUEUED", "PENDING")
-    ) + sum(1 for c in legacy_contexts if c.get("state") == "PENDING")
-    failed = sum(1 for r in check_runs if r.get("conclusion") == "FAILURE") + sum(
-        1 for c in legacy_contexts if c.get("state") in ("FAILURE", "ERROR")
-    )
-    if not check_runs and not legacy_contexts:
-        ci = "none"
-    elif pending:
-        ci = "pending"
-    elif failed:
-        ci = f"failed:{failed}"
+    # `checkSuites` is a non-null connection type in GH's GraphQL schema, so an
+    # explicit `null` means the resolver errored (e.g. GH Actions outage) — not
+    # "no CI configured" (which returns `{"nodes": []}`). When BOTH check
+    # sources come back null, surface ci="unknown" so the sidebar/footer show
+    # an explicit error indicator instead of pretending no checks exist.
+    suites_field = commit.get("checkSuites")
+    status_field = commit.get("status")
+    if suites_field is None:
+        ci = "unknown"
     else:
-        ci = "passed"
+        check_runs = [
+            run
+            for suite in (suites_field or {}).get("nodes", [])
+            for run in (suite.get("checkRuns") or {}).get("nodes", [])
+        ]
+        legacy_contexts = (status_field or {}).get("contexts", []) or []
+        pending = sum(
+            1
+            for r in check_runs
+            if r.get("status") in ("IN_PROGRESS", "QUEUED", "PENDING")
+        ) + sum(1 for c in legacy_contexts if c.get("state") == "PENDING")
+        failed = sum(1 for r in check_runs if r.get("conclusion") == "FAILURE") + sum(
+            1 for c in legacy_contexts if c.get("state") in ("FAILURE", "ERROR")
+        )
+        if not check_runs and not legacy_contexts:
+            ci = "none"
+        elif pending:
+            ci = "pending"
+        elif failed:
+            ci = f"failed:{failed}"
+        else:
+            ci = "passed"
     unresolved, total = _unaddressed(n, author)
     return PR(
         number=n["number"],
@@ -373,6 +385,12 @@ def _graphql(query: str, variables: dict[str, str]) -> dict:
         args.extend(["-f", f"{k}={v}"])
     data = gh_json(args)
     assert isinstance(data, dict)
+    # Partial-success responses (200 OK with `data` + `errors`) are common
+    # during GH Actions outages — checkSuites resolves to null while PR
+    # identity (number, title, state) still comes through. Pass them through
+    # so `_pr_from_node` can surface ci="unknown" on the affected PRs instead
+    # of dropping the whole cycle. Errors-only responses (no data) still fail
+    # via gh's non-zero exit handled by `gh_json` → `run(check=True)`.
     return data
 
 

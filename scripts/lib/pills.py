@@ -26,10 +26,10 @@ if TYPE_CHECKING:
 
 
 def ci_glyph(ci: str) -> str:
-    """One-char glyph for a PR's CI state. Empty when state is unknown."""
+    """One-char glyph for a PR's CI state. Empty when state is missing."""
     if ci.startswith("failed"):
         return "✗"
-    return {"passed": "✓", "pending": "•"}.get(ci, "")
+    return {"passed": "✓", "pending": "•", "unknown": "?"}.get(ci, "")
 
 
 KIND_ORDER = (
@@ -40,6 +40,7 @@ KIND_ORDER = (
     "ci_failed",
     "ci_pending",
     "ci_passed",
+    "ci_unknown",
     "unaddressed",
     "changes_requested",
     "conflict",
@@ -86,6 +87,10 @@ def decide_pills(
         pills.append({"kind": "ci_failed", "phase": phase})
     elif pr.ci == "pending":
         pills.append({"kind": "ci_pending"})
+    elif pr.ci == "passed":
+        pills.append({"kind": "ci_passed"})
+    elif pr.ci == "unknown":
+        pills.append({"kind": "ci_unknown"})
     if pr.unaddressed > 0:
         pills.append({"kind": "unaddressed", "count": pr.unaddressed})
     elif pr.review_decision == "CHANGES_REQUESTED":
@@ -98,10 +103,4 @@ def decide_pills(
         pills.append({"kind": "approved"})
     if pr.state and pr.state != "OPEN":
         pills.append({"kind": "state", "state": pr.state})
-    # Sentinel "all green" pill — only when no other actionable pill would
-    # render. Muted is meta-state and doesn't suppress it; without the sentinel
-    # the sidebar collapses to empty for a passing PR, indistinguishable from
-    # "no CI" / stale.
-    if pr.ci == "passed" and not any(p["kind"] != "muted" for p in pills):
-        pills.append({"kind": "ci_passed"})
     return pills

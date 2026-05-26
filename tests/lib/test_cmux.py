@@ -97,13 +97,23 @@ def test_cmux_status_pills_matches_decisions():
 
 
 def test_cmux_drops_state_pill():
+    # cmux suppresses the `state` pill (sidebar surfaces merge state natively);
+    # ci_passed still renders so the user sees CI status alongside merge.
     out = status_pills(_pr(state="MERGED"), _wt())
-    assert out == []
+    assert out == [("ci", "✓ ci", "#16a34a")]
 
 
 def test_cmux_conflict_emits_merge_key():
     out = status_pills(_pr(mergeable="CONFLICTING"), _wt())
-    assert out == [("merge", "⚠️ conflict", "#ff9500")]
+    assert out == [
+        ("ci", "✓ ci", "#16a34a"),
+        ("merge", "⚠️ conflict", "#ff9500"),
+    ]
+
+
+def test_cmux_ci_unknown_renders_error_pill():
+    out = status_pills(_pr(ci="unknown"), _wt())
+    assert out == [("ci", "⚠️ ci error", "#eb445a")]
 
 
 def test_cmux_owner_pill_added_for_coworker():

@@ -61,33 +61,51 @@ def _wt(
     [
         ({}, {}, [{"kind": "ci_passed"}]),
         ({"ci": "none"}, {}, []),
-        ({"review_decision": "APPROVED"}, {}, [{"kind": "approved"}]),
+        (
+            {"review_decision": "APPROVED"},
+            {},
+            [{"kind": "ci_passed"}, {"kind": "approved"}],
+        ),
         ({"ci": "failed:lint"}, {}, [{"kind": "ci_failed", "phase": "lint"}]),
         ({"ci": "failed"}, {}, [{"kind": "ci_failed", "phase": ""}]),
         ({"ci": "pending"}, {}, [{"kind": "ci_pending"}]),
-        ({"review_decision": "CHANGES_REQUESTED"}, {}, [{"kind": "changes_requested"}]),
-        ({"mergeable": "CONFLICTING"}, {}, [{"kind": "conflict"}]),
+        ({"ci": "unknown"}, {}, [{"kind": "ci_unknown"}]),
+        (
+            {"review_decision": "CHANGES_REQUESTED"},
+            {},
+            [{"kind": "ci_passed"}, {"kind": "changes_requested"}],
+        ),
+        (
+            {"mergeable": "CONFLICTING"},
+            {},
+            [{"kind": "ci_passed"}, {"kind": "conflict"}],
+        ),
         (
             {"state": "MERGED"},
             {},
-            [{"kind": "state", "state": "MERGED"}],
+            [{"kind": "ci_passed"}, {"kind": "state", "state": "MERGED"}],
         ),
         (
             {},
             {"rebasing": True, "dirty": 4},
-            [{"kind": "rebase"}, {"kind": "wip", "count": 4}],
+            [
+                {"kind": "rebase"},
+                {"kind": "wip", "count": 4},
+                {"kind": "ci_passed"},
+            ],
         ),
     ],
     ids=[
         "clean_open_pr_with_passing_ci_emits_ci_passed",
         "clean_open_pr_without_ci_emits_no_pills",
-        "ci_passed_suppressed_when_other_pills_present",
+        "ci_passed_coexists_with_approved",
         "ci_failed_carries_phase",
         "ci_failed_without_phase_marker",
         "ci_pending",
+        "ci_unknown_when_gh_errored",
         "changes_requested_alone",
         "conflict_pill",
-        "ci_passed_suppressed_for_merged_pr",
+        "ci_passed_coexists_with_merged_state",
         "worktree_pills_independent_of_pr",
     ],
 )
@@ -98,7 +116,10 @@ def test_decide_pills_equality(pr_overrides, wt_kwargs, expected):
 @pytest.mark.parametrize(
     "pr_overrides,expected_kinds",
     [
-        ({"is_draft": True, "review_decision": "APPROVED"}, ["draft", "approved"]),
+        (
+            {"is_draft": True, "review_decision": "APPROVED"},
+            ["ci_passed", "draft", "approved"],
+        ),
     ],
     ids=["draft_and_approved_coexist"],
 )
@@ -110,7 +131,7 @@ def test_decide_pills_kinds(pr_overrides, expected_kinds):
 @pytest.mark.parametrize(
     "pr_overrides,must_have,must_not_have",
     [
-        ({"unaddressed": 1}, ["unaddressed"], ["ci_passed"]),
+        ({"unaddressed": 1}, ["ci_passed", "unaddressed"], []),
         (
             {"unaddressed": 3, "review_decision": "CHANGES_REQUESTED"},
             ["unaddressed"],
@@ -118,7 +139,7 @@ def test_decide_pills_kinds(pr_overrides, expected_kinds):
         ),
     ],
     ids=[
-        "ci_passed_suppressed_when_unaddressed_present",
+        "ci_passed_coexists_with_unaddressed",
         "unaddressed_supersedes_changes_requested",
     ],
 )
@@ -131,8 +152,8 @@ def test_decide_pills_membership(pr_overrides, must_have, must_not_have):
 
 
 def test_state_pill_only_for_non_open():
-    # OPEN + ci=none → no pills; MERGED/CLOSED → state pill (and ci_passed is
-    # suppressed by the state pill, see ci_passed_suppressed_for_merged_pr).
+    # OPEN + ci=none → no pills; MERGED/CLOSED + ci=none → state pill only.
+    # ci_passed is independent of state (see ci_passed_coexists_with_merged_state).
     assert decide_pills(_pr(state="OPEN", ci="none"), _wt()) == []
     assert decide_pills(_pr(state="MERGED", ci="none"), _wt()) == [
         {"kind": "state", "state": "MERGED"}

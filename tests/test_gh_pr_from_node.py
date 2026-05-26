@@ -95,3 +95,15 @@ def test_mixed_check_run_and_legacy_failures_sum():
         )
     )
     assert pr.ci == "failed:3"
+
+
+def test_null_check_suites_yields_unknown():
+    """checkSuites is a non-null connection type in GH's GraphQL schema, so an
+    explicit `null` only happens when the field resolver errored (typically a
+    GH Actions outage). Surface that as ci="unknown" — not ci="none" — so the
+    sidebar/footer render an explicit error indicator instead of silently
+    hiding the CI signal."""
+    node = _node()
+    node["commits"]["nodes"][0]["commit"]["checkSuites"] = None
+    pr = _pr_from_node(node)
+    assert pr.ci == "unknown"

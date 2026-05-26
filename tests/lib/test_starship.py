@@ -234,9 +234,10 @@ def test_print_pr_muted_partial_renders_categories(cache_dir):
     [
         ("✓", green("✓")),
         ("✗", red("✗")),
-        ("•", yellow("•")),
+        ("•", orange("•")),
+        ("?", red("?")),
     ],
-    ids=["fresh_pass", "fresh_fail", "fresh_pending"],
+    ids=["fresh_pass", "fresh_fail", "fresh_pending", "fresh_unknown"],
 )
 def test_print_pr_checks(cache_dir, glyph, expected):
     (cache_dir / "pr-checks-khivi-foo").write_text(glyph)
