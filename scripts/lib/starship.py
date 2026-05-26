@@ -107,7 +107,8 @@ ICON_PR_MUTED = "🔇"
 _PR_CHECKS_COLOR: dict[str, Colorizer] = {
     "✓": green,
     "✗": red,
-    "•": yellow,
+    "•": orange,
+    "?": red,
 }
 
 
