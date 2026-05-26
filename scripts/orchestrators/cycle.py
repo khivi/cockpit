@@ -207,29 +207,35 @@ def _maybe_autoclose(
     merged_branches: dict[str, str],
     cwds: dict[str, Path],
     *,
+    prs: list[PR] | None = None,
     dry: bool,
 ) -> None:
     """Remove worktrees + workspaces for merged branches that are clean.
 
-    Removes any merged branch (mine or coworker's) when the worktree is clean
-    and has not advanced past the head SHA recorded when its PR was merged.
+    Removes any merged branch (mine or coworker's) when the worktree is clean.
     Coworker worktrees are safe to clean since they can be re-created from the
     merged PR if needed.
 
-    The post-merge check uses `count_commits_since(wt, merged_head)` rather
-    than `wt.unpushed` because `git cherry` (which powers `wt.unpushed`) cannot
-    recognize GitHub squash-merges — see `_count_unpushed` docstring.
+    Authoritative merge signal: `gh pr list --state merged` (via
+    `merged_branches`). The commit graph cannot prove "branch work is in main"
+    for squash- or rebase-merges (the resulting SHAs differ from the branch),
+    so any `rev-list`-based gate misclassifies a worktree that pulled main on
+    top of a squash-merged branch as "advanced past merge" and never cleans up.
+    Trust GitHub's merge state instead.
+
+    Smart-skip on PR signals the author likely still wants to revisit before
+    cleanup: draft, CI not passing, or unaddressed review threads.
 
     Teardown delegates to `orchestrators.teardown.teardown` (forced=True since we've
     already validated merge-state-clean above).
     """
     if not cfg.get("auto_cleanup_on_merge", True):
         return
+    pr_by_branch = {pr.branch: pr for pr in (prs or [])}
     for wt in wts:
         if wt.branch in MAIN_BRANCHES:
             continue
-        merged_head = merged_branches.get(wt.branch)
-        if merged_head is None:
+        if merged_branches.get(wt.branch) is None:
             continue
         if wt.dirty_count > 0:
             print(
@@ -238,19 +244,22 @@ def _maybe_autoclose(
                 flush=True,
             )
             continue
-        ahead = count_commits_since(wt.path, merged_head)
-        if ahead < 0:
-            print(
-                f"  {verb('autoclose')} {dim(f'skipped (merge-head check failed) {wt.short}')}",
-                flush=True,
-            )
-            continue
-        if ahead > 0:
-            print(
-                f"  {verb('autoclose')} {dim(f'skipped ({ahead} commits after merge) {wt.short}')}",
-                flush=True,
-            )
-            continue
+        pr = pr_by_branch.get(wt.branch)
+        if pr is not None:
+            reasons: list[str] = []
+            if pr.is_draft:
+                reasons.append("draft")
+            if pr.ci not in ("passed", "none", "unknown", ""):
+                reasons.append(f"ci={pr.ci}")
+            if pr.unaddressed > 0:
+                reasons.append(f"{pr.unaddressed} unaddressed")
+            if reasons:
+                joined = ", ".join(reasons)
+                print(
+                    f"  {verb('autoclose')} {dim(f'skipped ({joined}) {wt.short}')}",
+                    flush=True,
+                )
+                continue
         ref = _workspace_ref_for_path(wt.path, cwds) or wt.short
         teardown(
             TeardownRequest(
@@ -746,7 +755,14 @@ def cycle_repo(
     if not no_spawn:
         _spawn_missing_workspaces(ctx)
     _maybe_autoclose(
-        cfg, ctx.repo_path, ctx.name, ctx.wts, ctx.merged_branches, ctx.cwds, dry=dry
+        cfg,
+        ctx.repo_path,
+        ctx.name,
+        ctx.wts,
+        ctx.merged_branches,
+        ctx.cwds,
+        prs=ctx.prs,
+        dry=dry,
     )
     log_ff_advances(
         ff_default_branch_worktrees(ctx.repo_path, ctx.wts, dry=dry), dry=dry

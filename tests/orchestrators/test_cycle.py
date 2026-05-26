@@ -15,8 +15,34 @@ from unittest.mock import patch
 import pytest
 
 import scripts.orchestrators.cycle as cycle
+from scripts.lib.gh import PR
 from scripts.lib.git import Worktree
 from scripts.orchestrators import teardown as teardown_mod
+
+
+def _pr(
+    branch: str,
+    *,
+    is_draft: bool = False,
+    ci: str = "passed",
+    unaddressed: int = 0,
+    state: str = "MERGED",
+) -> PR:
+    """Test helper: build a PR with merged defaults that pass the smart-skip gate."""
+    return PR(
+        number=1,
+        title="t",
+        branch=branch,
+        url="",
+        author="khivi",
+        is_draft=is_draft,
+        review_decision="APPROVED",
+        mergeable="MERGEABLE",
+        ci=ci,
+        unaddressed=unaddressed,
+        total_from_others=0,
+        state=state,
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -48,7 +74,6 @@ def test_cmux_close_runs_before_remove_worktree(tmp_path):
             side_effect=fake_cmux_close,
         ),
         patch.object(teardown_mod, "remove_worktree", side_effect=fake_remove),
-        patch.object(cycle, "count_commits_since", return_value=0),
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
         patch.object(teardown_mod, "worktrees", return_value=[]),
         patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
@@ -60,6 +85,7 @@ def test_cmux_close_runs_before_remove_worktree(tmp_path):
             wts=[wt],
             merged_branches={"khivi/feat": "deadbeef"},
             cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat")],
             dry=False,
         )
 
@@ -77,7 +103,6 @@ def test_autoclose_dry_run_calls_neither(tmp_path):
     with (
         patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree") as remove_mock,
-        patch.object(cycle, "count_commits_since", return_value=0),
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
     ):
         cycle._maybe_autoclose(
@@ -87,6 +112,7 @@ def test_autoclose_dry_run_calls_neither(tmp_path):
             wts=[wt],
             merged_branches={"khivi/feat": "deadbeef"},
             cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat")],
             dry=True,
         )
 
@@ -104,7 +130,6 @@ def test_autoclose_remove_failure_still_closes_cmux_and_skips_cache_delete(tmp_p
     with (
         patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree", return_value=(False, "boom")),
-        patch.object(cycle, "count_commits_since", return_value=0),
         patch.object(teardown_mod, "delete_pr_caches_for_branch") as cache_mock,
     ):
         cycle._maybe_autoclose(
@@ -114,11 +139,147 @@ def test_autoclose_remove_failure_still_closes_cmux_and_skips_cache_delete(tmp_p
             wts=[wt],
             merged_branches={"khivi/feat": "deadbeef"},
             cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat")],
             dry=False,
         )
 
     close_mock.assert_called_once()
     cache_mock.assert_not_called()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Smart-skip: don't autoclose merged worktrees whose PR signals the author
+# may still want to revisit (draft / CI not passing / unaddressed threads).
+# Authoritative merge signal is `gh pr list --state merged` — the commit graph
+# is not consulted, so squash- and rebase-merges work uniformly.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "pr_kwargs,reason",
+    [
+        ({"is_draft": True}, "draft"),
+        ({"ci": "failed:1"}, "ci=failed"),
+        ({"ci": "pending"}, "ci=pending"),
+        ({"unaddressed": 2}, "unaddressed"),
+    ],
+)
+def test_autoclose_smart_skip_on_pr_signals(tmp_path, pr_kwargs, reason):
+    """Skip teardown when the PR carries draft/CI/unaddressed signals."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat", **pr_kwargs)],
+            dry=False,
+        )
+
+    close_mock.assert_not_called(), f"expected skip on {reason}"
+    remove_mock.assert_not_called(), f"expected skip on {reason}"
+
+
+def test_autoclose_fires_when_no_pr_in_list(tmp_path):
+    """A merged branch with no PR object (e.g. coworker's merged-and-fetched
+    branch not in our self-relevant list) still autocloses."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree", return_value=(True, "")),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"ws-ref": wt_path},
+            prs=[],
+            dry=False,
+        )
+
+    close_mock.assert_called_once()
+
+
+def test_autoclose_does_not_consult_commit_graph(tmp_path):
+    """Regression: squash-merge + pull-main case.
+
+    Before the smart-skip refactor, autoclose used `count_commits_since(wt,
+    merged_head)` to gate teardown. After a squash-merge, that SHA stays
+    reachable from the worktree (the branch tip itself was preserved), but
+    pulling main on top moves HEAD forward — `count_commits_since` would
+    return > 0 and the worktree would never autoclose. The fix is to trust
+    `gh pr list --state merged` and never call into the commit graph.
+
+    This test asserts the implementation does not call `count_commits_since`.
+    """
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort"),
+        patch.object(teardown_mod, "remove_worktree", return_value=(True, "")),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+        patch.object(cycle, "count_commits_since") as count_mock,
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat")],
+            dry=False,
+        )
+
+    count_mock.assert_not_called()
+
+
+def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
+    """Uncommitted local work still wins over a clean merged PR."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=3)
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat")],
+            dry=False,
+        )
+
+    close_mock.assert_not_called()
+    remove_mock.assert_not_called()
 
 
 # ────────────────────────────────────────────────────────────────────────────
