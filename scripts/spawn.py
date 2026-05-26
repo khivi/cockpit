@@ -22,9 +22,11 @@ Sources are strictly mutex: pick exactly one of
 --cwd may not combine with positional/--branch/--pr (those need a repo).
 
 Optional:
-  --claude-prompt <str>   Prompt for claude's first message.
-                          Defaults to a plan-only prompt when input is a PR.
-                          Defaults to none (bare `claude`) for branch/cwd input.
+  -- <text...>            Trailing text after `--` is appended to claude's
+                          first-message prompt. Useful for adding extra
+                          instructions to the auto-generated plan/skill/Linear
+                          prompts (e.g. `spawn.py PE-1234 -- focus on the
+                          retry loop in fetch_pr`).
 
 Positional detection (6 steps):
   1. GitHub PR URL (https://github.com/.../pull/N) → PR mode
@@ -37,7 +39,8 @@ Positional detection (6 steps):
 
   After branch resolution (steps 4-6), gh is queried for an open PR on
   the head ref; if found, the PR info is printed and the plan-only prompt
-  is auto-generated (unless --claude-prompt overrides).
+  is auto-generated. Trailing `-- <text>` is appended to whatever prompt
+  was selected.
 
   Linear mode creates a fresh branch `<branch_prefix><id-lower>` (e.g.
   `khivi/pe-1234`). With `use_linear: true` and the Linear MCP detected
@@ -146,8 +149,16 @@ def parse_args() -> argparse.Namespace:
         "--skill",
         help="spawn workspace running a global or repo skill (no worktree, no branch)",
     )
-    p.add_argument("--claude-prompt", help="prompt for claude's first message")
-    return p.parse_args()
+    raw = sys.argv[1:]
+    if "--" in raw:
+        idx = raw.index("--")
+        pre, post = raw[:idx], raw[idx + 1 :]
+        addendum = " ".join(post).strip() or None
+    else:
+        pre, addendum = raw, None
+    args = p.parse_args(pre)
+    args.claude_addendum = addendum
+    return args
 
 
 def detect_source(value: str) -> tuple[str, str, str | None]:
@@ -419,7 +430,7 @@ def main() -> int:
     skill = args.skill
     from_name = False
 
-    prompt: str | None = args.claude_prompt
+    prompt: str | None = None
     seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
 
     if args.positional:
@@ -470,8 +481,6 @@ def main() -> int:
         branch = args.name
         from_name = True
 
-    # --claude-prompt wins over the linear-seeded prompt; otherwise the
-    # seeded one wins over the generic plan-only prompt added below.
     if prompt is None:
         prompt = seeded_prompt
 
@@ -527,6 +536,11 @@ def main() -> int:
 
         if prompt is None:
             prompt = _plan_only_prompt(branch, pr_info)
+
+    if args.claude_addendum:
+        prompt = (
+            f"{prompt}\n\n{args.claude_addendum}" if prompt else args.claude_addendum
+        )
 
     ws_name = short
     require_workspace_binary()

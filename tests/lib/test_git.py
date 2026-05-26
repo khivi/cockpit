@@ -263,6 +263,65 @@ def test_remove_worktree_force_logs_lock_reason(cockpit_repo, capsys) -> None:
     assert "preempting checkout in progress" in captured.err
 
 
+# ── worktrees(): is_primary tagging ────────────────────────────────────────
+
+
+def test_worktrees_primary_is_repo_dir(cockpit_repo) -> None:
+    """The worktree whose path equals the repo dir passed to `worktrees()`
+    is the trunk; any sibling added later must not be flagged primary."""
+    repo = cockpit_repo.repo
+    sibling = repo.parent / "sibling"
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "worktree",
+            "add",
+            "-b",
+            "khivi/feat",
+            str(sibling),
+            "main",
+        ],
+        check=True,
+    )
+
+    wts = gitlib.worktrees(repo)
+    by_branch = {w.branch: w for w in wts}
+    assert by_branch["main"].is_primary is True
+    assert by_branch["khivi/feat"].is_primary is False
+
+
+def test_worktrees_bare_repo_sibling_on_main_is_not_primary(
+    tmp_path, monkeypatch
+) -> None:
+    """Bare-repo case (the real-world Cockpit setup): the bare dir is the
+    primary, and a sibling checkout on `main` reports is_primary=False.
+
+    Stub `run()` because building a full bare repo with two worktrees on
+    `main` requires the rest of the test scaffolding; the parser is what
+    matters here."""
+    bare = tmp_path / "Cockpit"
+    sibling = tmp_path / "ex-feat"
+    bare.mkdir()
+    sibling.mkdir()
+    (sibling / ".git").write_text(f"gitdir: {bare}/worktrees/ex-feat\n")
+    porcelain = (
+        f"worktree {bare}\nbare\n\n"
+        f"worktree {sibling}\nHEAD aa10472\nbranch refs/heads/main\n"
+    )
+    monkeypatch.setattr(gitlib, "run", lambda *_a, **_kw: porcelain)
+    # Stub the per-worktree stat callouts so they don't shell out.
+    monkeypatch.setattr(gitlib, "count_dirty", lambda *_a, **_kw: 0)
+    monkeypatch.setattr(gitlib, "_count_unpushed", lambda *_a, **_kw: 0)
+
+    wts = gitlib.worktrees(bare)
+
+    assert len(wts) == 1, "bare entry has no branch and is skipped"
+    assert wts[0].branch == "main"
+    assert wts[0].is_primary is False
+
+
 def test_remove_worktree_force_no_lock_file_is_quiet(cockpit_repo, capsys) -> None:
     repo = cockpit_repo.repo
     wt = repo.parent / "wt"

@@ -502,18 +502,30 @@ def test_linear_on_with_inconclusive_probe_seeds_smart_prompt(
     assert "STOP" in cmd
 
 
-def test_explicit_claude_prompt_overrides_linear_seeded_prompt(
+def test_trailing_addendum_is_appended_to_seeded_prompt(
     spawn_main, cockpit_repo, monkeypatch
 ):
-    """`--claude-prompt` wins over the auto-seeded MCP-instructing prompt."""
+    """Trailing `-- <text>` is appended to the auto-seeded Linear/skill/plan
+    prompt rather than replacing it — preserves the plan-only safety guard."""
     _set_config_key(cockpit_repo, "use_linear", True)
     import scripts.spawn as spawn
 
     monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
-    spawn_main(["PE-1", "--repo", "testrepo", "--claude-prompt", "OVERRIDDEN"])
+    spawn_main(["PE-1", "--repo", "testrepo", "--", "EXTRA", "INSTRUCTIONS"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
-    assert "OVERRIDDEN" in cmd
-    assert "Linear MCP" not in cmd
+    assert "EXTRA INSTRUCTIONS" in cmd
+    assert "Linear MCP" in cmd, "seeded MCP prompt must survive when -- is used"
+
+
+def test_trailing_addendum_alone_becomes_prompt(spawn_main, cockpit_repo, monkeypatch):
+    """When there's no seeded prompt path (skill/Linear) and no PR, the
+    plan-only fallback still fires and `--` text appends to it."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    spawn_main(["fresh-feat", "--repo", "testrepo", "--", "do thing X"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "do thing X" in cmd
 
 
 # ── linear team-key routing ───────────────────────────────────────────────
