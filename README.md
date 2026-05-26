@@ -134,7 +134,8 @@ Edit `config.json` to register repos manually, or just run `/cockpit:new` and le
       "name": "myrepo",
       "path": "/absolute/path/to/main/repo",
       "branch_prefix": "yourusername/",
-      "default_base": "main"
+      "default_base": "main",
+      "linear_keys": ["TEAM"]
     }
   ],
   "poll_interval_seconds": 300,
@@ -159,6 +160,7 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 | Branch prefix | `<gh user>/` | `config.json` → per-repo `branch_prefix` |
 | Default base branch | repo's `defaultBranchRef` | `config.json` → per-repo `default_base` |
 | Smart Linear flow | **off** (opt-in) | `config.json` → `use_linear`. When on, `/cockpit:new PE-1234` pre-flights `claude mcp list` for a Linear connector and (if found) seeds Claude's first turn to fetch the ticket via the Linear MCP and rename branch + workspace to include the title slug. Off → behaves like `/cockpit:new --branch pe-1234`: plain branch + generic plan prompt. |
+| Linear key → repo routing | per-repo, opt-in | Per-repo `linear_keys: ["PE", ...]` paired with `use_linear: true`. `/cockpit:new PE-1234` (no `--repo`) routes the spawn to the repo whose `linear_keys` contains `PE`, regardless of cwd. Unique match wins; zero matches falls back to cwd discovery; multiple matches print a note on stderr and also fall back. `--repo <name>` always overrides. |
 
 ## Claude Code statusline (optional)
 

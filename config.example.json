@@ -4,7 +4,8 @@
       "name": "myrepo",
       "path": "/absolute/path/to/main/repo",
       "branch_prefix": "yourusername/",
-      "default_base": "main"
+      "default_base": "main",
+      "linear_keys": ["TEAM"]
     }
   ],
   "poll_interval_seconds": 300,
