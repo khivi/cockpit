@@ -516,6 +516,122 @@ def test_explicit_claude_prompt_overrides_linear_seeded_prompt(
     assert "Linear MCP" not in cmd
 
 
+# ── linear team-key routing ───────────────────────────────────────────────
+#
+# When `use_linear: true` and no `--repo`, a positional Linear key is
+# routed to the repo whose `linear_keys` list contains the prefix. Single
+# match wins; multi-match warns + falls back; no match falls back; the
+# explicit `--repo` flag always wins.
+
+
+def _add_linear_keys(cockpit_repo, keys: list[str], repo_name: str = "testrepo"):
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    for r in data["repos"]:
+        if r["name"] == repo_name:
+            r["linear_keys"] = keys
+    cfg_path.write_text(json.dumps(data))
+
+
+def test_linear_key_routes_to_matching_repo_without_repo_flag(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    _set_config_key(cockpit_repo, "use_linear", True)
+    _add_linear_keys(cockpit_repo, ["PE"])
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
+    code, out, _err = spawn_main(["PE-1234"])
+    assert code == 0
+    assert "on khivi/pe-1234" in out
+
+
+def test_linear_key_routing_case_insensitive(spawn_main, cockpit_repo, monkeypatch):
+    _set_config_key(cockpit_repo, "use_linear", True)
+    _add_linear_keys(cockpit_repo, ["pe"])
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
+    code, out, _err = spawn_main(["PE-1234"])
+    assert code == 0
+    assert "on khivi/pe-1234" in out
+
+
+def test_linear_key_routing_explicit_repo_wins(spawn_main, cockpit_repo, monkeypatch):
+    """With `--repo testrepo` set, the team-key lookup is skipped — even
+    if the lookup would otherwise route elsewhere or find nothing."""
+    _set_config_key(cockpit_repo, "use_linear", True)
+    # No linear_keys configured anywhere; --repo still drives the spawn.
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
+    code, out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
+    assert code == 0
+    assert "on khivi/pe-1234" in out
+
+
+def test_linear_key_routing_disabled_when_use_linear_false(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """With `use_linear: false`, team-key routing is a no-op: the spawn
+    falls back to cwd discovery, which fails under tests (no managed
+    repo at the test process cwd)."""
+    _add_linear_keys(cockpit_repo, ["PE"])  # would match if routing ran
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "discover_repo", lambda: None)
+    code, _out, err = spawn_main(["PE-1234"])
+    assert code != 0
+    assert "cannot determine repo" in err
+
+
+def test_linear_key_routing_multi_match_warns_and_falls_back(
+    spawn_main, cockpit_repo, monkeypatch, tmp_path
+):
+    """Two repos declaring `PE` → stderr note, fall back to cwd discovery
+    (which fails under tests)."""
+    _set_config_key(cockpit_repo, "use_linear", True)
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data["repos"][0]["linear_keys"] = ["PE"]
+    data["repos"].append(
+        {
+            "name": "second",
+            "path": str(tmp_path / "second"),
+            "branch_prefix": "khivi/",
+            "default_base": "main",
+            "linear_keys": ["PE"],
+        }
+    )
+    cfg_path.write_text(json.dumps(data))
+
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "discover_repo", lambda: None)
+    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
+    code, _out, err = spawn_main(["PE-1234"])
+    assert code != 0
+    assert "matches multiple repos" in err
+    assert "testrepo" in err
+    assert "second" in err
+
+
+def test_linear_key_routing_no_match_falls_back_to_cwd(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """No repo declares the key → no auto-routing, fall back to cwd
+    discovery (which fails under tests)."""
+    _set_config_key(cockpit_repo, "use_linear", True)
+    _add_linear_keys(cockpit_repo, ["ENG"])  # different prefix
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "discover_repo", lambda: None)
+    code, _out, err = spawn_main(["PE-1234"])
+    assert code != 0
+    assert "cannot determine repo" in err
+    assert "matches multiple repos" not in err  # silent on no-match
+
+
 # ── --skill semantics ──────────────────────────────────────────────────────
 
 

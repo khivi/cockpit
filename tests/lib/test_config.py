@@ -553,3 +553,79 @@ def test_use_linear_returns_false_when_explicitly_false(tmp_path, monkeypatch):
         tmp_path, monkeypatch, {"repos": [], "use_linear": False}
     )
     assert cockpit_config.use_linear() is False
+
+
+# ── find_repos_by_linear_key ────────────────────────────────────────────────
+
+
+def _repos_cfg(*repos):
+    return {"repos": list(repos)}
+
+
+def test_find_repos_by_linear_key_single_match(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        _repos_cfg(
+            {"name": "alpha", "path": "/a", "linear_keys": ["PE"]},
+            {"name": "beta", "path": "/b", "linear_keys": ["ENG"]},
+        ),
+    )
+    matches = cockpit_config.find_repos_by_linear_key("PE-1234")
+    assert [r["name"] for r in matches] == ["alpha"]
+
+
+def test_find_repos_by_linear_key_case_insensitive(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        _repos_cfg({"name": "alpha", "path": "/a", "linear_keys": ["pe"]}),
+    )
+    assert [r["name"] for r in cockpit_config.find_repos_by_linear_key("PE-1")] == [
+        "alpha"
+    ]
+    assert [r["name"] for r in cockpit_config.find_repos_by_linear_key("pe-1")] == [
+        "alpha"
+    ]
+
+
+def test_find_repos_by_linear_key_multiple_matches(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        _repos_cfg(
+            {"name": "alpha", "path": "/a", "linear_keys": ["PE"]},
+            {"name": "beta", "path": "/b", "linear_keys": ["PE", "ENG"]},
+        ),
+    )
+    names = [r["name"] for r in cockpit_config.find_repos_by_linear_key("PE-1234")]
+    assert names == ["alpha", "beta"]
+
+
+def test_find_repos_by_linear_key_no_match(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        _repos_cfg({"name": "alpha", "path": "/a", "linear_keys": ["ENG"]}),
+    )
+    assert cockpit_config.find_repos_by_linear_key("PE-1234") == []
+
+
+def test_find_repos_by_linear_key_missing_field(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        _repos_cfg({"name": "alpha", "path": "/a"}),
+    )
+    assert cockpit_config.find_repos_by_linear_key("PE-1234") == []
+
+
+def test_find_repos_by_linear_key_rejects_non_linear_identifier(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        _repos_cfg({"name": "alpha", "path": "/a", "linear_keys": ["PE"]}),
+    )
+    assert cockpit_config.find_repos_by_linear_key("not-a-key") == []
+    assert cockpit_config.find_repos_by_linear_key("PE-") == []
+    assert cockpit_config.find_repos_by_linear_key("HTTP-200") == []

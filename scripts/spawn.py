@@ -46,6 +46,12 @@ Positional detection (6 steps):
   workspace to include the ticket title slug. Otherwise the workspace
   starts with the generic plan prompt.
 
+  With `use_linear: true` and no `--repo`, cockpit also routes the spawn
+  to the repo whose per-repo `linear_keys` list contains the Linear key
+  prefix (e.g. `PE-1234` → the repo declaring `"linear_keys": ["PE"]`).
+  A unique match wins; zero matches falls back to cwd discovery; multiple
+  matches print a note and also fall back. `--repo <name>` always wins.
+
 Behaviour:
   - For positional/--branch/--pr without --repo: walk up from cwd to match a
     registered repo in ~/.config/cockpit/config.json (or register_cwd() if
@@ -78,6 +84,7 @@ from scripts.lib.config import (
     discover_repo,
     find_repo_by_name,
     find_repo_by_nwo,
+    find_repos_by_linear_key,
     use_linear as cfg_use_linear,
 )  # noqa: E402
 from scripts.lib.daemon_signal import kick_running  # noqa: E402
@@ -422,6 +429,18 @@ def main() -> int:
         elif mode == "linear":
             branch = value.lower()
             from_name = True
+            if cfg_use_linear() and not args.repo:
+                matches = find_repos_by_linear_key(value)
+                if len(matches) == 1:
+                    args.repo = matches[0]["name"]
+                elif len(matches) > 1:
+                    names = ", ".join(m["name"] for m in matches)
+                    print(
+                        f"note: Linear key {value!r} matches multiple repos "
+                        f"({names}); falling back to cwd-based discovery. "
+                        f"Pass --repo <name> to disambiguate.",
+                        file=sys.stderr,
+                    )
             if cfg_use_linear():
                 mcp = linear_mcp_available()
                 if mcp is False:

@@ -82,6 +82,28 @@ def find_repo_by_name(name: str) -> dict | None:
     return None
 
 
+def find_repos_by_linear_key(identifier: str) -> list[dict]:
+    """Return configured repos whose `linear_keys` list contains the prefix
+    of `identifier` (case-insensitive match on `<PREFIX>-<digits>`).
+
+    Empty list when the identifier doesn't parse as a Linear id, no repo
+    declares the prefix, or no repo has a `linear_keys` field. Callers
+    handle the empty / single / multi cases explicitly — this function
+    does not pick a winner when more than one repo matches.
+    """
+    from .linear import LINEAR_RE_CI
+
+    if not LINEAR_RE_CI.fullmatch(identifier):
+        return []
+    prefix = identifier.split("-", 1)[0].upper()
+    out: list[dict] = []
+    for r in load_config().get("repos", []):
+        keys = r.get("linear_keys") or []
+        if any(str(k).upper() == prefix for k in keys):
+            out.append(r)
+    return out
+
+
 def find_repo_by_nwo(nwo: str) -> dict | None:
     """Return the config entry whose `origin` remote matches `nwo` (owner/name).
 
