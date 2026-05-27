@@ -323,6 +323,8 @@ def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, in
     """
     feature = [w for w in wts if not w.is_primary]
     distances: dict[str, int] = {}
+    if not feature:
+        return distances
 
     def _invalidate() -> dict[str, int]:
         for wt in feature:

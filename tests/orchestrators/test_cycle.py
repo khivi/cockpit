@@ -686,6 +686,28 @@ def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, cap
     assert "backend offline" in out
 
 
+def test_refresh_base_distance_short_circuits_when_no_feature_worktrees(tmp_path):
+    from scripts.lib.git import Worktree
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    primary = Worktree(path=repo_path, branch="main", is_primary=True)
+
+    with (
+        patch.object(cycle, "origin_head_branch") as ohb,
+        patch.object(cycle.subprocess, "run") as run,
+        patch.object(cycle, "write_base_distance") as wbd,
+        patch.object(cycle, "write_base_ahead") as wba,
+    ):
+        distances = cycle._refresh_base_distance(repo_path, [primary])
+
+    assert distances == {}
+    ohb.assert_not_called()
+    run.assert_not_called()
+    wbd.assert_not_called()
+    wba.assert_not_called()
+
+
 def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
     from scripts.lib.git import Worktree
 
