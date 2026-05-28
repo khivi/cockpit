@@ -35,6 +35,7 @@ from scripts.lib.cmux import (
     spawn_pr_workspace,
     status_pills,
     workspace_is_idle,
+    workspace_names,
     workspace_state,
 )
 from scripts.lib.colors import (
@@ -77,6 +78,7 @@ from scripts.lib.git import (
     worktrees,
 )
 from scripts.orchestrators.teardown import TeardownRequest, teardown
+from scripts.lib.prompts import claude_command, shell_quote
 
 MAIN_BRANCHES = {"master", "main"}
 
@@ -752,6 +754,78 @@ def _spawn_missing_workspaces(ctx: RepoCycle) -> None:
         spawn_orphan_workspace(wt, dry=ctx.dry)
 
 
+def _resolve_skill_prompt(name: str) -> str | None:
+    """Return the slash-command prompt for a skill, or None if not found."""
+    rel = Path(".claude") / "skills" / name / "skill.md"
+    home = Path.home()
+    if (home / rel).exists():
+        return f"/{name}"
+    repo_skill = Path(__file__).resolve().parent.parent.parent / rel
+    if repo_skill.exists():
+        return f"/{name}"
+    return None
+
+
+def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
+    """Run fast_skills (blocking, non-interactive) and slow_skills (workspace spawn)
+    configured on the repo entry.
+
+    fast_skills: `claude -p /<name>` in the repo's main worktree — completes inline.
+    slow_skills: cmux new-workspace with `claude /<name>` — idempotent by workspace name.
+    """
+    repo_path = Path(repo_entry["path"]).expanduser().resolve()
+
+    for skill in repo_entry.get("fast_skills") or []:
+        prompt = _resolve_skill_prompt(skill)
+        if prompt is None:
+            print(
+                f"  {yellow('skip')} fast_skill {skill!r}: skill.md not found",
+                flush=True,
+            )
+            continue
+        if dry:
+            print(f"  dry: claude -p {shell_quote(prompt)} in {repo_path}", flush=True)
+            continue
+        subprocess.run(
+            f"claude -p {shell_quote(prompt)}",
+            shell=True,
+            cwd=repo_path,
+        )
+
+    for skill in repo_entry.get("slow_skills") or []:
+        prompt = _resolve_skill_prompt(skill)
+        if prompt is None:
+            print(
+                f"  {yellow('skip')} slow_skill {skill!r}: skill.md not found",
+                flush=True,
+            )
+            continue
+        ws_name = f"skill-{skill}"
+        try:
+            existing = set(workspace_names().values())
+        except CmuxUnavailable:
+            continue
+        if ws_name in existing:
+            continue
+        if dry:
+            print(
+                f"  dry: spawn workspace {ws_name!r} with {claude_command(prompt)!r}",
+                flush=True,
+            )
+            continue
+        cmux(
+            "new-workspace",
+            "--name",
+            ws_name,
+            "--cwd",
+            str(repo_path),
+            "--command",
+            claude_command(prompt),
+            "--focus",
+            "false",
+        )
+
+
 def cycle_repo(
     repo_entry: dict,
     self_user: str,
@@ -800,6 +874,7 @@ def cycle_repo(
     log_ff_advances(
         ff_default_branch_worktrees(ctx.repo_path, ctx.wts, dry=dry), dry=dry
     )
+    _run_repo_skills(repo_entry, dry=dry)
 
 
 def _drain_close_requests(dry: bool) -> None:

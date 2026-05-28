@@ -1,6 +1,7 @@
 """Tests for scripts/orchestrators/cycle.py.
 
-Two sections:
+Sections:
+  - _resolve_skill_prompt / _run_repo_skills: fast/slow skill dispatch.
   - _maybe_autoclose: ordering + dry/error guards (delegates to orchestrators.teardown).
   - _reap_workspace_orphans: gating logic for orphan-workspace cleanup
     (ownership derived from cwd vs registered repos).
@@ -43,6 +44,127 @@ def _pr(
         total_from_others=0,
         state=state,
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# _resolve_skill_prompt / _run_repo_skills
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_resolve_skill_prompt_global(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    skill_dir = tmp_path / ".claude" / "skills" / "my-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("# my-skill")
+    assert cycle._resolve_skill_prompt("my-skill") == "/my-skill"
+
+
+def test_resolve_skill_prompt_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cycle._resolve_skill_prompt("nonexistent") is None
+
+
+def test_run_repo_skills_fast_runs_subprocess(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    skill_dir = tmp_path / ".claude" / "skills" / "cleanup-worktrees"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("# cleanup-worktrees")
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_entry = {"path": str(repo_path), "fast_skills": ["cleanup-worktrees"]}
+
+    calls: list[tuple] = []
+    with patch.object(
+        cycle.subprocess, "run", side_effect=lambda *a, **kw: calls.append((a, kw))
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+
+    assert len(calls) == 1
+    cmd = calls[0][0][0]
+    assert "claude -p" in cmd
+    assert "/cleanup-worktrees" in cmd
+    assert calls[0][1]["cwd"] == repo_path
+
+
+def test_run_repo_skills_fast_dry_run(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    skill_dir = tmp_path / ".claude" / "skills" / "cleanup-worktrees"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("# cleanup-worktrees")
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_entry = {"path": str(repo_path), "fast_skills": ["cleanup-worktrees"]}
+
+    with patch.object(cycle.subprocess, "run") as mock_run:
+        cycle._run_repo_skills(repo_entry, dry=True)
+        mock_run.assert_not_called()
+
+    out = capsys.readouterr().out
+    assert "dry" in out and "cleanup-worktrees" in out
+
+
+def test_run_repo_skills_fast_missing_skill_skips(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo_entry = {"path": str(tmp_path), "fast_skills": ["ghost-skill"]}
+
+    with patch.object(cycle.subprocess, "run") as mock_run:
+        cycle._run_repo_skills(repo_entry, dry=False)
+        mock_run.assert_not_called()
+
+    out = capsys.readouterr().out
+    assert "skip" in out and "ghost-skill" in out
+
+
+def test_run_repo_skills_slow_spawns_workspace(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    skill_dir = tmp_path / ".claude" / "skills" / "nudge-reviewers"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("# nudge-reviewers")
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_entry = {"path": str(repo_path), "slow_skills": ["nudge-reviewers"]}
+
+    cmux_calls: list[tuple] = []
+    with (
+        patch.object(cycle, "workspace_names", return_value={}),
+        patch.object(cycle, "cmux", side_effect=lambda *a, **kw: cmux_calls.append(a)),
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+
+    assert len(cmux_calls) == 1
+    assert cmux_calls[0][0] == "new-workspace"
+    assert "--name" in cmux_calls[0]
+    assert "skill-nudge-reviewers" in cmux_calls[0]
+
+
+def test_run_repo_skills_slow_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    skill_dir = tmp_path / ".claude" / "skills" / "nudge-reviewers"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("# nudge-reviewers")
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_entry = {"path": str(repo_path), "slow_skills": ["nudge-reviewers"]}
+
+    with (
+        patch.object(
+            cycle, "workspace_names", return_value={"ws:1": "skill-nudge-reviewers"}
+        ),
+        patch.object(cycle, "cmux") as mock_cmux,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+        mock_cmux.assert_not_called()
+
+
+def test_run_repo_skills_empty_config(tmp_path):
+    repo_entry = {"path": str(tmp_path)}
+    with patch.object(cycle.subprocess, "run") as mock_run:
+        cycle._run_repo_skills(repo_entry, dry=False)
+        mock_run.assert_not_called()
 
 
 # ────────────────────────────────────────────────────────────────────────────
