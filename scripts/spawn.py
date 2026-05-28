@@ -91,7 +91,12 @@ from scripts.lib.config import (
     use_linear as cfg_use_linear,
 )  # noqa: E402
 from scripts.lib.daemon_signal import kick_running  # noqa: E402
-from scripts.lib.gh import fetch_pr_info, pr_for_branch, resolve_pr_branch  # noqa: E402
+from scripts.lib.gh import (  # noqa: E402
+    fetch_pr_info,
+    fetch_run_info,
+    pr_for_branch,
+    resolve_pr_branch,
+)
 from scripts.lib.git import (  # noqa: E402
     branch_exists,
     collision_free,
@@ -164,19 +169,29 @@ def parse_args() -> argparse.Namespace:
 def detect_source(value: str) -> tuple[str, str, str | None]:
     """Classify positional into (mode, resolved_value, nwo_hint).
 
-    `nwo_hint` is `<owner>/<repo>` when a full GitHub PR URL was parsed,
+    `nwo_hint` is `<owner>/<repo>` when a full GitHub URL was parsed,
     else None. The caller uses it to route the spawn to the right
     configured repo when invoked from outside its tree.
 
     Modes:
-      - `pr`     : GitHub PR URL or `#N`. Bare integers stay `branch`.
-      - `linear` : whole positional matches `[A-Z]{2,6}-\\d+` (case-insensitive).
-                   Normalised to uppercase in `value`.
-      - `branch` : anything else; local/remote/new resolved by create_worktree.
+      - `pr`      : GitHub PR URL or `#N`. Bare integers stay `branch`.
+      - `actions` : GitHub Actions run URL (optionally job-scoped).
+                    `value` is `<run_id>` or `<run_id>:<job_id>`.
+      - `linear`  : whole positional matches `[A-Z]{2,6}-\\d+` (case-insensitive).
+                    Normalised to uppercase in `value`.
+      - `branch`  : anything else; local/remote/new resolved by create_worktree.
     """
     m = re.match(r"https?://github\.com/([^/]+/[^/]+)/pull/(\d+)", value)
     if m:
         return "pr", m.group(2), m.group(1)
+    m = re.match(
+        r"https?://github\.com/([^/]+/[^/]+)/actions/runs/(\d+)"
+        r"(?:/attempts/\d+)?(?:/job/(\d+))?",
+        value,
+    )
+    if m:
+        run_id, job_id = m.group(2), m.group(3)
+        return "actions", f"{run_id}:{job_id}" if job_id else run_id, m.group(1)
     if re.fullmatch(r"#\d+", value):
         return "pr", value.lstrip("#"), None
     if LINEAR_RE_CI.fullmatch(value):
@@ -382,6 +397,64 @@ def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+def _actions_prompt(
+    branch: str, run_info: dict, job_id: str | None, pr_info: dict | None = None
+) -> str:
+    """First-turn prompt for a GitHub Actions run URL.
+
+    Directs Claude to fetch only the failed-step logs via `gh run view
+    --log-failed` (`--job <id>` when a specific job was linked), identify
+    the root cause, and propose a plan. Logs are not embedded in the
+    prompt — they can be huge.
+    """
+    run_id = str(run_info.get("databaseId") or "")
+    workflow = run_info.get("workflowName") or "workflow"
+    conclusion = run_info.get("conclusion") or run_info.get("status") or "unknown"
+    run_url = run_info.get("url") or ""
+    job_name: str | None = None
+    if job_id:
+        for j in run_info.get("jobs") or []:
+            if str(j.get("databaseId")) == job_id:
+                job_name = j.get("name")
+                break
+
+    if job_id:
+        source = f"Actions job `{job_name or job_id}` in run `{workflow}` #{run_id}"
+        log_cmd = f"gh run view {run_id} --log-failed --job {job_id}"
+    else:
+        source = f"Actions run `{workflow}` #{run_id}"
+        log_cmd = f"gh run view {run_id} --log-failed"
+
+    lines = [
+        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
+        "",
+        f"**Source**: {source}",
+        f"**Conclusion**: {conclusion}",
+        f"**Run URL**: {run_url}",
+    ]
+    if pr_info:
+        author = (pr_info.get("author") or {}).get("login", "unknown")
+        lines.append(
+            f"**Related PR**: #{pr_info['number']} by @{author} — "
+            f"{pr_info.get('title', '')} ({pr_info.get('url', '')})"
+        )
+    lines += [
+        "",
+        "**Step 1 (REQUIRED)** — Fetch the failed-step logs:",
+        f"- Run: `{log_cmd}`. This pulls only failing steps; full logs "
+        "(`--log`) are usually too large for context.",
+        "- If the output is still large, pipe through `tail -n 200` or `rg` "
+        "for the actual error lines.",
+        "",
+        "**Step 2 (REQUIRED)** — Identify the root cause:",
+        "- Locate the failing step and its command in the workflow YAML "
+        "under `.github/workflows/`.",
+        "- Reproduce locally where possible (run the same command against "
+        "the current branch).",
+    ]
+    return "\n".join(lines + _PLAN_TAIL)
+
+
 def main() -> int:
     args = parse_args()
 
@@ -432,11 +505,26 @@ def main() -> int:
 
     prompt: str | None = None
     seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
+    actions_run_info: dict | None = None
+    actions_job_id: str | None = None
 
     if args.positional:
         mode, value, nwo_hint = detect_source(args.positional)
         if mode == "pr":
             pr_num = value
+        elif mode == "actions":
+            run_id, _, job_id = value.partition(":")
+            actions_job_id = job_id or None
+            try:
+                actions_run_info = fetch_run_info(run_id, nwo=nwo_hint)
+            except RuntimeError as e:
+                return _die(str(e))
+            head_branch = actions_run_info.get("headBranch")
+            if not head_branch:
+                return _die(
+                    f"Actions run {run_id} has no headBranch — cannot resolve a worktree"
+                )
+            branch = head_branch
         elif mode == "linear":
             branch = value.lower()
             from_name = True
@@ -534,7 +622,9 @@ def main() -> int:
                     file=sys.stderr,
                 )
 
-        if prompt is None:
+        if actions_run_info is not None:
+            prompt = _actions_prompt(branch, actions_run_info, actions_job_id, pr_info)
+        elif prompt is None:
             prompt = _plan_only_prompt(branch, pr_info)
 
     if args.claude_addendum:
