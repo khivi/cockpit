@@ -672,7 +672,6 @@ def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, cap
         cfg={},
         pr_cache={},
         pill_state={},
-        nudge_state={},
         keep_stale=False,
         no_spawn=False,
         dry=False,
@@ -732,8 +731,8 @@ def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
         distances = cycle._refresh_base_distance(repo_path, [wt])
 
     assert distances == {}
-    wbd.assert_called_once_with("khivi/feat", -1, 0)
-    wba.assert_called_once_with("khivi/feat", -1, 0)
+    wbd.assert_called_once_with("khivi/feat", -1)
+    wba.assert_called_once_with("khivi/feat", -1)
     err = capsys.readouterr().err
     assert "skip" in err
     assert "exited 128" in err
@@ -757,7 +756,6 @@ def _stub_repo_cycle(tmp_path, *, headless: bool = False):
         cwds={},
         merged_branches={},
         pill_state={},
-        nudge_state={},
         keep_stale=False,
         no_spawn=False,
         dry=False,
@@ -811,7 +809,6 @@ def _run_cycle_repo(no_spawn=False):
         no_spawn=no_spawn,
         dry=False,
         pr_cache={},
-        nudge_state={},
         pill_state={},
         verbose=False,
         cfg={},

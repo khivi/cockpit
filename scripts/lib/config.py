@@ -48,7 +48,8 @@ def load_config() -> dict:
     if not CONFIG_PATH.exists():
         return {
             "repos": [],
-            "poll_interval_seconds": 300,
+            "slow_poll_interval_seconds": 300,
+            "fast_poll_interval_seconds": 30,
             "auto_cleanup_on_merge": True,
         }
     with CONFIG_PATH.open() as f:

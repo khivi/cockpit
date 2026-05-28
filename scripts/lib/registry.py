@@ -57,7 +57,8 @@ def register_cwd() -> dict:
     else:
         cfg = {
             "repos": [],
-            "poll_interval_seconds": 300,
+            "slow_poll_interval_seconds": 300,
+            "fast_poll_interval_seconds": 30,
             "auto_cleanup_on_merge": False,
         }
 

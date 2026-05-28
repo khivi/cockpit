@@ -19,9 +19,6 @@ Subcommands:
   pr-checks            — CI glyph (✓ / • / ✗)
   pr-title             — PR title
   pr-muted             — 🔇 muted[: cats] when nudges are silenced
-  pr-state-refresh     — internal background refresh of pr-state/num/title/muted
-  pr-checks-refresh    — internal background refresh of pr-checks
-  pr-muted-refresh     — alias of pr-state-refresh (writes pr-muted cell too)
   warm                 — synchronous prewarm (PR data + checks + transcript seed)
 
 Every subcommand exits 0 even on error and prints nothing on failure —
@@ -30,14 +27,12 @@ the statusline must never crash Claude Code.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scripts.lib.cache import refresh_pr_checks, refresh_pr_data, warm_all  # noqa: E402
-from scripts.lib.git import current_branch  # noqa: E402
+from scripts.lib.cache import warm_all  # noqa: E402
 from scripts.lib.starship import (  # noqa: E402
     print_branch_identity,
     print_context,
@@ -92,13 +87,6 @@ def main(argv: list[str]) -> int:
             return _emit(print_pr_title())
         if cmd == "pr-muted":
             return _emit(print_pr_muted())
-        if cmd in ("pr-state-refresh", "pr-muted-refresh"):
-            # Same refresher repopulates pr-state/num/title/muted from JSON.
-            refresh_pr_data(current_branch(os.getcwd()))
-            return 0
-        if cmd == "pr-checks-refresh":
-            refresh_pr_checks(current_branch(os.getcwd()))
-            return 0
         if cmd == "warm":
             warm_all()
             return 0

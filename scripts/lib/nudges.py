@@ -109,20 +109,19 @@ def should_nudge(
     pr_number: int,
     category: str,
     *,
-    interval_secs: int,
     now: float | None = None,
 ) -> bool:
     """True iff nudging this PR in this category is allowed right now.
 
-    Blocks when the user has muted the category, or when another nudge fired
-    within `interval_secs` (regardless of category — we don't want three pings
-    in a row when comments, CI, and conflicts all hit at once).
+    Blocks only when the user has muted the category. The slow tick's cadence
+    (`slow_poll_interval_seconds`, default 300s) is the implicit throttle —
+    each tick re-evaluates and re-fires if the issue persists. `last_nudge_at`
+    is still recorded so `cockpit nudge status` can display "last nudged X
+    ago," but it does not gate future nudges.
     """
     t = time.time() if now is None else now
     pref = load_pref(pr_number, now=t)
     if category in pref.disabled_categories:
-        return False
-    if pref.last_nudge_at and t - pref.last_nudge_at < interval_secs:
         return False
     return True
 

@@ -15,16 +15,13 @@ from __future__ import annotations
 import calendar
 import json
 import os
-import subprocess
-import sys
 import time
 from pathlib import Path
 
 from . import cache as _cache
 from .cache import (
-    PR_CACHE_TTL_SECS,
     branch_cache,
-    is_fresh,
+    cwd_cache,
     read_text,
     session_cache,
 )
@@ -48,11 +45,8 @@ from .colors import (
     slate,
     yellow,
 )
-from .git import ahead_of_origin, behind_of_origin, count_status, current_branch
+from .git import GitStatusCounts
 from .linear import extract_ticket
-
-BASE_DISTANCE_FRESH_SECS = 30 * 60
-BASE_DISTANCE_MAX_AGE_SECS = 6 * 60 * 60
 
 SESSION_TIME_MIN_SECS = 10
 POWERLINE_BRANCH = ""  # nf-pl-branch separator (Nerd Font powerline)
@@ -151,28 +145,56 @@ def _read_session_or_fallback(stem: str, sid: str | None) -> str:
 
 
 def _branch() -> str:
-    return current_branch(os.getcwd())
+    return _git_state(os.getcwd())[0]
 
 
-def _spawn_background_refresh(field: str) -> None:
-    """Fire-and-forget background refresh by re-invoking
-    `scripts/starship.py <field>-refresh`.
+def _git_state(cwd: str) -> tuple[str, GitStatusCounts, int, int]:
+    """Cached `(branch, status_counts, ahead_origin, behind_origin)` for `cwd`.
 
-    Mirrors the historical `(refresh) >/dev/null 2>&1 &` pattern. The
-    child is detached via start_new_session so it survives the parent's
-    exit and starship's render budget is preserved.
+    Cell layout — written exclusively by the daemon (slow tick in
+    `_write_pr_caches`, fast tick in `cockpit._fast_tick`, both via
+    `cache.write_git_state_cache`):
+      • `git-branch-<cwd-slug>` — branch name (or empty when not a repo)
+      • `git-status-<cwd-slug>` — `"<staged> <unstaged> <untracked>"`
+      • `git-sync-<cwd-slug>`   — `"<ahead_origin> <behind_origin>"`
+
+    The renderer is strictly read-only — it never spawns a git subprocess.
+    When the daemon hasn't yet populated a worktree's cells (first render
+    of a brand-new worktree before the next tick), the footer renders
+    blank for that worktree's git segments; the daemon's fast loop
+    (`fast_poll_interval_seconds`, default 30s) catches up shortly.
+
+    Empty `branch` cell means "not a repo" (daemon wrote empty after cwd
+    left a repo); counts and sync zero out so callers
+    (`print_branch_identity`, `print_worktree_status`, `print_linear`) can
+    short-circuit on `not branch`.
     """
-    starship_py = Path(__file__).resolve().parent.parent / "starship.py"
+    branch = read_text(cwd_cache("git-branch", cwd))
+    if not branch:
+        return "", GitStatusCounts(0, 0, 0), 0, 0
+    counts = _parse_status_counts(read_text(cwd_cache("git-status", cwd)))
+    ahead, behind = _parse_sync(read_text(cwd_cache("git-sync", cwd)))
+    return branch, counts, ahead, behind
+
+
+def _parse_status_counts(raw: str) -> GitStatusCounts:
+    parts = raw.split()
+    if len(parts) != 3:
+        return GitStatusCounts(0, 0, 0)
     try:
-        subprocess.Popen(
-            [sys.executable, str(starship_py), f"{field}-refresh"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except OSError:
-        pass
+        return GitStatusCounts(int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError:
+        return GitStatusCounts(0, 0, 0)
+
+
+def _parse_sync(raw: str) -> tuple[int, int]:
+    parts = raw.split()
+    if len(parts) != 2:
+        return 0, 0
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return 0, 0
 
 
 # ── field printers ─────────────────────────────────────────────────────────
@@ -324,12 +346,10 @@ def print_branch_identity() -> str:
     Empty when not in a git repo. Inter-segment spacing belongs to TOML;
     this emits only its own content.
     """
-    cwd = os.getcwd()
-    branch = current_branch(cwd)
+    branch, _, ahead, _ = _git_state(os.getcwd())
     if not branch:
         return ""
     parts = [slate(f"{ICON_BRANCH} {branch}")]
-    ahead = ahead_of_origin(cwd, branch)
     if ahead > 0:
         parts.append(azure(f"{ICON_AHEAD_ORIGIN}{ahead}"))
     ahead_base = _base_ahead_segment(branch)
@@ -346,19 +366,16 @@ def print_worktree_status() -> str:
     nothing. The leading powerline-branch separator pins this segment
     visually to the preceding `[custom.branch_identity]` segment.
     """
-    cwd = os.getcwd()
-    branch = current_branch(cwd)
+    branch, counts, _, behind = _git_state(os.getcwd())
     if not branch:
         return ""
     parts: list[str] = []
-    counts = count_status(Path(cwd))
     if counts.staged > 0:
         parts.append(leaf(f"{ICON_STAGED}{counts.staged}"))
     if counts.unstaged > 0:
         parts.append(amber(f"{ICON_UNSTAGED}{counts.unstaged}"))
     if counts.untracked > 0:
         parts.append(shadow(f"{ICON_UNTRACKED}{counts.untracked}"))
-    behind = behind_of_origin(cwd, branch)
     if behind > 0:
         parts.append(orange(f"{ICON_BEHIND_ORIGIN}{behind}"))
     stale = _base_distance_segment(branch)
@@ -369,83 +386,41 @@ def print_worktree_status() -> str:
     return slate(POWERLINE_BRANCH) + " " + " ".join(parts)
 
 
-def _read_base_cache(stem: str, branch: str) -> tuple[int, int] | None:
-    """Read a `<count> <fetch_epoch>` base-* cache. Returns None for any
-    unreadable/malformed payload or non-positive count.
-    """
-    raw = read_text(branch_cache(stem, branch))
-    if not raw:
-        return None
-    parts = raw.split()
-    if len(parts) != 2:
-        return None
-    try:
-        count = int(parts[0])
-        fetch_epoch = int(parts[1])
-    except ValueError:
-        return None
-    if count <= 0:
-        return None
-    return count, fetch_epoch
-
-
-def _render_base_segment(
-    count: int, fetch_epoch: int, glyph: str, fresh_color: Colorizer
-) -> str:
-    """Apply the shared fresh/dim/hidden staleness ladder to a base-* count.
-
-    Tiers driven by age since the daemon's last `git fetch`:
-      • <30m       → `fresh_color <glyph>N` (actionable now)
-      • 30m–6h     → dim `<glyph>N (Xh ago)` (still useful, but flagged stale)
-      • >6h        → hidden (stale counts breed false confidence)
-    """
-    age = int(time.time()) - fetch_epoch
-    if age < 0:
-        age = 0
-    if age > BASE_DISTANCE_MAX_AGE_SECS:
-        return ""
-    if age <= BASE_DISTANCE_FRESH_SECS:
-        return fresh_color(f"{glyph}{count}")
-    hours = max(1, age // 3600)
-    return shadow(f"{glyph}{count} ({hours}h ago)")
-
-
 def _base_distance_segment(branch: str) -> str:
-    cached = _read_base_cache("base-distance", branch)
-    if cached is None:
+    raw = read_text(branch_cache("base-distance", branch))
+    if not raw:
         return ""
-    count, fetch_epoch = cached
-    return _render_base_segment(count, fetch_epoch, ICON_BEHIND_BASE, orange)
+    try:
+        count = int(raw)
+    except ValueError:
+        return ""
+    if count <= 0:
+        return ""
+    return orange(f"{ICON_BEHIND_BASE}{count}")
 
 
 def _base_ahead_segment(branch: str) -> str:
-    cached = _read_base_cache("base-ahead", branch)
-    if cached is None:
+    raw = read_text(branch_cache("base-ahead", branch))
+    if not raw:
         return ""
-    count, fetch_epoch = cached
-    return _render_base_segment(count, fetch_epoch, ICON_AHEAD_BASE, azure)
+    try:
+        count = int(raw)
+    except ValueError:
+        return ""
+    if count <= 0:
+        return ""
+    return azure(f"{ICON_AHEAD_BASE}{count}")
 
 
 def print_linear() -> str:
     return extract_ticket(_branch())
 
 
-def _cached_or_refresh(branch: str, stem: str, field: str) -> str:
-    """Return cached payload if fresh, else trigger background refresh and
-    still return whatever is on disk (possibly empty / stale).
-    """
-    cache = branch_cache(stem, branch)
-    if is_fresh(cache, PR_CACHE_TTL_SECS):
-        return read_text(cache)
-    _spawn_background_refresh(field)
-    return read_text(cache)
-
-
 def print_pr_state(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = _cached_or_refresh(branch, "pr-state", "pr-state")
+    raw = read_text(branch_cache("pr-state", branch))
     if not raw:
         return ""
     icon = _PR_STATE_ICON.get(raw, "")
@@ -470,7 +445,7 @@ def print_pr_checks(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    glyph = _cached_or_refresh(branch, "pr-checks", "pr-checks")
+    glyph = read_text(branch_cache("pr-checks", branch))
     if not glyph:
         return ""
     color = _PR_CHECKS_COLOR.get(glyph)

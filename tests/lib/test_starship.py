@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import patch
 
 import pytest
 
@@ -152,15 +151,17 @@ def test_print_rate_limit_tier(cache_dir, pct, color: Colorizer):
 # ── field printer: linear ──────────────────────────────────────────────────
 
 
-def test_print_linear_extracts_ticket(_clean_git_env, tmp_path, monkeypatch):
+def test_print_linear_extracts_ticket(_clean_git_env, cache_dir, tmp_path, monkeypatch):
     repo = _make_repo(tmp_path, branch="khivi/PRO-123-fix")
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     assert starship.print_linear() == "PRO-123"
 
 
-def test_print_linear_no_ticket(_clean_git_env, tmp_path, monkeypatch):
+def test_print_linear_no_ticket(_clean_git_env, cache_dir, tmp_path, monkeypatch):
     repo = _make_repo(tmp_path, branch="khivi/cleanup")
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     assert starship.print_linear() == ""
 
 
@@ -244,18 +245,20 @@ def test_print_pr_checks(cache_dir, glyph, expected):
     assert starship.print_pr_checks("khivi/foo") == expected
 
 
-def test_print_pr_state_stale_triggers_refresh(cache_dir):
-    cache = cache_dir / "pr-state-khivi-foo"
-    cache.write_text("OPEN")
-    # Age the file past the 60s TTL.
+def test_print_pr_state_stale_cell_still_read_no_refresh_spawn(cache_dir):
+    """Daemon is the sole writer — stale PR flat cells are still read
+    (daemon's fast tick republishes from the persistent JSON), and the
+    renderer must NOT spawn a refresh. Guards against accidentally
+    re-introducing a renderer-side writer."""
     import os
 
+    cache = cache_dir / "pr-state-khivi-foo"
+    cache.write_text("OPEN")
     old = time.time() - 3600
     os.utime(cache, (old, old))
-    with patch.object(starship, "_spawn_background_refresh") as spawn:
-        out = starship.print_pr_state("khivi/foo")
-    assert "OPEN" in out  # stale payload still returned (with ANSI)
-    spawn.assert_called_once_with("pr-state")
+    assert not hasattr(starship, "_spawn_background_refresh")
+    out = starship.print_pr_state("khivi/foo")
+    assert "OPEN" in out
 
 
 # ── session-time (lib.starship) ────────────────────────────────────────────
@@ -337,41 +340,131 @@ def test_print_permission_mode(cache_dir, value, expected):
 from tests.fixtures import make_git_repo as _make_repo  # noqa: E402
 
 
-def test_branch_identity_clean(_clean_git_env, tmp_path, monkeypatch):
+def _seed_git_state(repo) -> None:
+    """Populate the git-state cache cells for `repo` so the cached read path
+    in `_git_state` returns the repo's actual state. Mirrors what the
+    daemon's slow/fast tick would do — required because the renderer no
+    longer falls back to live git when cells are missing."""
+    from scripts.lib.cache import write_git_state_cache
+
+    write_git_state_cache(repo)
+
+
+# ── git-state cache: cached read path bypasses live git ────────────────────
+
+
+def test_git_state_cache_read_skips_live_git(cache_dir, tmp_path, monkeypatch):
+    """When the git-state cells are populated and fresh, the printers read
+    them without shelling out — critical: the cached branch name wins even
+    when the cwd is NOT a git repo, proving no live `git rev-parse` happens.
+    """
+    import scripts.lib.cache as cache_mod
+
+    monkeypatch.chdir(tmp_path)
+    slug = cache_mod._cwd_key(tmp_path)
+    (cache_dir / f"git-branch-{slug}").write_text("cached-branch")
+    (cache_dir / f"git-status-{slug}").write_text("1 2 3")
+    (cache_dir / f"git-sync-{slug}").write_text("4 5")
+    out = starship.print_branch_identity()
+    assert slate("⎇ cached-branch") in out
+    assert azure("↑4") in out
+    status = starship.print_worktree_status()
+    assert leaf("●1") in status
+    assert amber("✎2") in status
+    assert shadow("✚3") in status
+    assert orange("↓5") in status
+
+
+def test_git_state_cold_start_renders_blank(
+    _clean_git_env, cache_dir, tmp_path, monkeypatch
+):
+    """Daemon is the sole writer — when the cell is absent (brand-new
+    worktree before the daemon's first tick), the renderer must render
+    blank rather than shelling out. Daemon's fast loop catches up shortly."""
     repo = _make_repo(tmp_path, branch="main")
     monkeypatch.chdir(repo)
+    assert not any(cache_dir.iterdir())
+    assert starship.print_branch_identity() == ""
+    assert starship.print_worktree_status() == ""
+
+
+def test_git_state_stale_cell_still_read_no_refresh_spawn(
+    cache_dir, tmp_path, monkeypatch
+):
+    """Daemon is the sole writer — stale cells are still read (daemon will
+    overwrite on next tick), and the renderer must NOT have a refresh
+    spawner at all. Guards against accidentally re-introducing one."""
+    import os as _os
+    import scripts.lib.cache as cache_mod
+
+    monkeypatch.chdir(tmp_path)
+    slug = cache_mod._cwd_key(tmp_path)
+    branch_path = cache_dir / f"git-branch-{slug}"
+    branch_path.write_text("cached")
+    (cache_dir / f"git-status-{slug}").write_text("0 0 0")
+    (cache_dir / f"git-sync-{slug}").write_text("0 0")
+    old = time.time() - 600
+    _os.utime(branch_path, (old, old))
+    assert not hasattr(starship, "_spawn_background_refresh")
+    out = starship.print_branch_identity()
+    assert slate("⎇ cached") in out
+
+
+def test_git_state_empty_branch_cell_treated_as_no_repo(
+    cache_dir, tmp_path, monkeypatch
+):
+    """Empty `git-branch` cell (daemon wrote it after cwd left a repo) means
+    'no branch' — printers must return empty, not fall through to live git."""
+    import scripts.lib.cache as cache_mod
+
+    monkeypatch.chdir(tmp_path)
+    slug = cache_mod._cwd_key(tmp_path)
+    (cache_dir / f"git-branch-{slug}").write_text("")
+    (cache_dir / f"git-status-{slug}").write_text("")
+    (cache_dir / f"git-sync-{slug}").write_text("")
+    assert starship.print_branch_identity() == ""
+    assert starship.print_worktree_status() == ""
+
+
+def test_branch_identity_clean(_clean_git_env, cache_dir, tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path, branch="main")
+    monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     assert starship.print_branch_identity() == slate("⎇ main")
 
 
-def test_branch_identity_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
+def test_branch_identity_not_in_repo(_clean_git_env, cache_dir, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert starship.print_branch_identity() == ""
 
 
-def test_branch_identity_ahead_origin(_clean_git_env, tmp_path, monkeypatch):
+def test_branch_identity_ahead_origin(_clean_git_env, cache_dir, tmp_path, monkeypatch):
     repo = _make_repo(tmp_path, ahead=3)
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     out = starship.print_branch_identity()
     assert slate("⎇ feature") in out
     assert azure("↑3") in out
 
 
-def test_worktree_status_clean(_clean_git_env, tmp_path, monkeypatch):
+def test_worktree_status_clean(_clean_git_env, cache_dir, tmp_path, monkeypatch):
     repo = _make_repo(tmp_path, branch="main")
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     assert starship.print_worktree_status() == ""
 
 
-def test_worktree_status_not_in_repo(_clean_git_env, tmp_path, monkeypatch):
+def test_worktree_status_not_in_repo(_clean_git_env, cache_dir, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert starship.print_worktree_status() == ""
 
 
 def test_worktree_status_leads_with_separator_when_non_empty(
-    _clean_git_env, tmp_path, monkeypatch
+    _clean_git_env, cache_dir, tmp_path, monkeypatch
 ):
     repo = _make_repo(tmp_path, status=(1, 0, 0))
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     out = starship.print_worktree_status()
     assert out.startswith(slate(starship.POWERLINE_BRANCH))
     assert leaf("●1") in out
@@ -388,28 +481,31 @@ def test_worktree_status_leads_with_separator_when_non_empty(
     ids=["behind_only", "staged_only", "unstaged_only", "untracked_only"],
 )
 def test_worktree_status_segments(
-    _clean_git_env, tmp_path, monkeypatch, behind, status, expected_fragment
+    _clean_git_env, cache_dir, tmp_path, monkeypatch, behind, status, expected_fragment
 ):
     repo = _make_repo(tmp_path, behind=behind, status=status)
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     assert expected_fragment in starship.print_worktree_status()
 
 
-def test_worktree_status_all_segments(_clean_git_env, tmp_path, monkeypatch):
+def test_worktree_status_all_segments(_clean_git_env, cache_dir, tmp_path, monkeypatch):
     repo = _make_repo(tmp_path, behind=1, status=(1, 1, 1))
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     out = starship.print_worktree_status()
     for frag in (orange("↓1"), leaf("●1"), amber("✎1"), shadow("✚1")):
         assert frag in out
 
 
 def test_worktree_status_real_repo_dirty_and_untracked(
-    _clean_git_env, tmp_path, monkeypatch
+    _clean_git_env, cache_dir, tmp_path, monkeypatch
 ):
     repo = _make_repo(tmp_path, branch="main")
     (repo / "f").write_text("y")
     (repo / "new").write_text("z")
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     out = starship.print_worktree_status()
     assert "✎1" in out
     assert "✚1" in out
@@ -422,28 +518,21 @@ def test_worktree_status_real_repo_dirty_and_untracked(
     "setup,check",
     [
         (
-            lambda p, now: p.write_text(f"7 {now}"),
-            lambda out: orange("↻7") in out and "ago" not in out,
+            lambda p, now: p.write_text("7"),
+            lambda out: orange("↻7") in out,
         ),
-        (
-            lambda p, now: p.write_text(f"4 {now - 2 * 3600}"),
-            lambda out: shadow("↻4 (2h ago)") in out,
-        ),
-        (
-            lambda p, now: p.write_text(f"4 {now - 8 * 3600}"),
-            lambda out: "↻" not in out,
-        ),
-        (lambda p, now: p.write_text(f"0 {now}"), lambda out: "↻" not in out),
+        (lambda p, now: p.write_text("0"), lambda out: "↻" not in out),
         (lambda p, now: p.write_text(""), lambda out: "↻" not in out),
         (lambda p, now: None, lambda out: "↻" not in out),
     ],
-    ids=["fresh", "aging", "too_stale", "zero", "empty_payload", "no_cache"],
+    ids=["fresh", "zero", "empty_payload", "no_cache"],
 )
 def test_worktree_status_base_distance(
     cache_dir, _clean_git_env, tmp_path, monkeypatch, setup, check
 ):
     repo = _make_repo(tmp_path)
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     setup(cache_dir / "base-distance-feature", int(time.time()))
     assert check(starship.print_worktree_status())
 
@@ -453,6 +542,7 @@ def test_worktree_status_base_distance_garbage_hidden(
 ):
     repo = _make_repo(tmp_path)
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     (cache_dir / "base-distance-feature").write_text("not numbers")
     assert "↻" not in starship.print_worktree_status()
 
@@ -463,8 +553,8 @@ def test_worktree_status_base_distance_slash_branch_key(
     """branch_cache slug-escapes `/` to `-`; verify the cache file path."""
     repo = _make_repo(tmp_path, branch="khivi/master/foo")
     monkeypatch.chdir(repo)
-    now = int(time.time())
-    (cache_dir / "base-distance-khivi-master-foo").write_text(f"3 {now}")
+    _seed_git_state(repo)
+    (cache_dir / "base-distance-khivi-master-foo").write_text("3")
     assert orange("↻3") in starship.print_worktree_status()
 
 
@@ -475,28 +565,21 @@ def test_worktree_status_base_distance_slash_branch_key(
     "setup,check",
     [
         (
-            lambda p, now: p.write_text(f"7 {now}"),
-            lambda out: azure("↗7") in out and "ago" not in out,
+            lambda p, now: p.write_text("7"),
+            lambda out: azure("↗7") in out,
         ),
-        (
-            lambda p, now: p.write_text(f"4 {now - 2 * 3600}"),
-            lambda out: shadow("↗4 (2h ago)") in out,
-        ),
-        (
-            lambda p, now: p.write_text(f"4 {now - 8 * 3600}"),
-            lambda out: "↗" not in out,
-        ),
-        (lambda p, now: p.write_text(f"0 {now}"), lambda out: "↗" not in out),
+        (lambda p, now: p.write_text("0"), lambda out: "↗" not in out),
         (lambda p, now: p.write_text(""), lambda out: "↗" not in out),
         (lambda p, now: None, lambda out: "↗" not in out),
     ],
-    ids=["fresh", "aging", "too_stale", "zero", "empty_payload", "no_cache"],
+    ids=["fresh", "zero", "empty_payload", "no_cache"],
 )
 def test_branch_identity_base_ahead(
     cache_dir, _clean_git_env, tmp_path, monkeypatch, setup, check
 ):
     repo = _make_repo(tmp_path)
     monkeypatch.chdir(repo)
+    _seed_git_state(repo)
     setup(cache_dir / "base-ahead-feature", int(time.time()))
     assert check(starship.print_branch_identity())
 
