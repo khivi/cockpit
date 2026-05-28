@@ -157,6 +157,34 @@ def test_unaddressed_named_bot_still_counted():
     assert total == 1
 
 
+def test_copilot_reviewer_failure_ignored():
+    """copilot-pull-request-reviewer crashes due to GitHub API bugs unrelated
+    to the PR's code; its failure must not count toward ci=failed."""
+    runs = [
+        {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        {
+            "name": "copilot-pull-request-reviewer",
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+        },
+    ]
+    pr = _pr_from_node(_node(runs))
+    assert pr.ci == "passed"
+
+
+def test_copilot_reviewer_excluded_but_real_failure_still_counted():
+    runs = [
+        {"name": "Tests", "status": "COMPLETED", "conclusion": "FAILURE"},
+        {
+            "name": "copilot-pull-request-reviewer",
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+        },
+    ]
+    pr = _pr_from_node(_node(runs))
+    assert pr.ci == "failed:1"
+
+
 def test_null_check_suites_yields_unknown():
     """checkSuites is a non-null connection type in GH's GraphQL schema, so an
     explicit `null` only happens when the field resolver errored (typically a

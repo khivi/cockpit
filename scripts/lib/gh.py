@@ -277,7 +277,7 @@ _PR_FIELDS = """
   commits(last: 1) {
     nodes { commit {
       checkSuites(first: 20) { nodes {
-        checkRuns(first: 100) { nodes { status conclusion } }
+        checkRuns(first: 100) { nodes { name status conclusion } }
       } }
       status { contexts { state } }
     } }
@@ -342,6 +342,7 @@ def _pr_from_node(n: dict) -> PR | None:
             run
             for suite in (suites_field or {}).get("nodes", [])
             for run in (suite.get("checkRuns") or {}).get("nodes", [])
+            if run.get("name") != "copilot-pull-request-reviewer"
         ]
         legacy_contexts = (status_field or {}).get("contexts", []) or []
         pending = sum(
