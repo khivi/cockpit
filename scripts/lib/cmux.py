@@ -249,12 +249,16 @@ def nudge_if_idle(
     if dry:
         print(f"  [dry] nudge {tag} → {ref}: {message[:70]}", flush=True)
         return False
+    try:
+        cmux("send", "--workspace", ref, message, check=True)
+        cmux("send-key", "--workspace", ref, "enter", check=True)
+    except (RuntimeError, FileNotFoundError) as e:
+        print(f"  warn: cmux send failed for {ref}: {e}", flush=True)
+        return False
     if pr_number is not None and category is not None:
         from . import nudges
 
         nudges.record_nudge(pr_number, category)
-    cmux("send", "--workspace", ref, message, check=False)
-    cmux("send-key", "--workspace", ref, "enter", check=False)
     return True
 
 

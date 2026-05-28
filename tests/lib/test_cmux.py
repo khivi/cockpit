@@ -18,6 +18,7 @@ from scripts.lib.cmux import (
     YELLOW,
     CmuxUnavailable,
     apply_pills,
+    nudge_if_idle,
     status_pills,
     workspace_cwds,
     workspace_names,
@@ -239,3 +240,118 @@ def test_apply_pills_clears_muted_key():
 
     cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}
     assert MUTED_KEY in cleared_keys
+
+
+# ── nudge_if_idle ────────────────────────────────────────────────────────────
+
+
+def _idle_status_lines(*, parked: bool = False) -> str:
+    lines = ["idle=1"]
+    if parked:
+        lines.append("parked=1")
+    return "\n".join(lines)
+
+
+def test_nudge_if_idle_returns_true_on_success(capsys):
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="feat-x")
+
+    assert result is True
+    sent = [args for args in calls if args[0] == "send"]
+    assert len(sent) == 1
+    assert sent[0][3] == "fix CI"
+    assert capsys.readouterr().out == ""
+
+
+def test_nudge_if_idle_prints_error_and_returns_false_on_send_failure(capsys):
+    def fake_cmux(*args, check=True, **_kwargs):
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        if args[0] == "send" and check:
+            raise RuntimeError("cmux send failed: socket gone")
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="feat-x")
+
+    assert result is False
+    out = capsys.readouterr().out
+    assert "warn" in out
+    assert "workspace:1" in out
+
+
+def test_nudge_if_idle_skips_when_not_idle():
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return ""  # no idle pill
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="feat-x")
+
+    assert result is False
+
+
+def test_nudge_if_idle_skips_when_parked():
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return _idle_status_lines(parked=True)
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="feat-x")
+
+    assert result is False
+
+
+def test_nudge_if_idle_does_not_record_nudge_on_send_failure():
+    """Failed send must not record the nudge — so the next tick retries."""
+    recorded: list[tuple] = []
+
+    def fake_cmux(*args, check=True, **_kwargs):
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        if args[0] == "send" and check:
+            raise RuntimeError("socket gone")
+        return ""
+
+    with (
+        patch("scripts.lib.cmux.cmux", side_effect=fake_cmux),
+        patch(
+            "scripts.lib.nudges.record_nudge", side_effect=lambda *a: recorded.append(a)
+        ),
+    ):
+        nudge_if_idle("workspace:1", "fix CI", tag="t", pr_number=42, category="ci")
+
+    assert recorded == []
+
+
+def test_nudge_if_idle_records_nudge_on_success():
+    recorded: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        return ""
+
+    with (
+        patch("scripts.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("scripts.lib.nudges.should_nudge", return_value=True),
+        patch(
+            "scripts.lib.nudges.record_nudge", side_effect=lambda *a: recorded.append(a)
+        ),
+    ):
+        result = nudge_if_idle(
+            "workspace:1", "fix CI", tag="t", pr_number=42, category="ci"
+        )
+
+    assert result is True
+    assert recorded == [(42, "ci")]
