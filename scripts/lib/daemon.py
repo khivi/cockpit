@@ -76,9 +76,9 @@ def run_watcher(
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
 
-    print(f"watch: every {watch_secs}s  pid={os.getpid()}", flush=True)
+    print(f"slow-tick: every {watch_secs:>3}s", flush=True)
     if fast_tick_fn is not None and fast_secs > 0:
-        print(f"fast-tick: every {fast_secs}s", flush=True)
+        print(f"fast-tick: every {fast_secs:>3}s", flush=True)
     if on_start:
         on_start()
 
