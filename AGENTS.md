@@ -20,6 +20,14 @@ Before committing, scan for cases gitleaks can't catch:
 - Your team's real ticket prefixes (e.g. `ENG-123`, `LIN-456`)
 - `@firstname` references that aren't GitHub handles
 
+## Worktree discipline
+
+Always use a dedicated git worktree for any code change. Never commit directly to `main`/`master` in the primary checkout, and never make in-place edits on a feature branch without a dedicated sibling worktree.
+
+**Why**: The cmux + cockpit workflow keys off the one-worktree-per-branch invariant. In-place edits on the primary checkout pollute its `master` (which must always equal `origin/master`) and break PR-tracking — cockpit derives per-branch state from `git worktree list` and misattributes or drops cells for any branch not isolated in its own worktree.
+
+**How to apply**: Before any Edit or Write, run `git branch --show-current` and `git worktree list`. If HEAD is `main`/`master`, or if the working-tree path is the primary checkout (first entry in `git worktree list`), stop and spawn a worktree via `/cockpit:new` before touching any file.
+
 ## Architecture notes
 
 **Worktree + workspace inventory is derived, not stored.** Each cycle re-reads `git worktree list` and `cmux tree` rather than maintaining its own `state.json`. PR payloads *are* cached (`~/.config/cockpit/cache/<repo>__pr-<N>.json`) because they're a network round-trip; everything else is recomputed. Don't add a `state.json` for worktree/workspace identity — drift between cached identity and the real `git`/`cmux` state was the bug class this design avoids.
