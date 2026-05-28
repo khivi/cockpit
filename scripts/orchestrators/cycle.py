@@ -117,7 +117,11 @@ def maybe_nudge(
         pr_number=pr_number,
         category=category,
     ):
-        print(f"  {verb('nudged', color=yellow)} {tag} → {ref}", flush=True)
+        snippet = message if len(message) <= 60 else message[:57] + "..."
+        print(
+            f"  {verb('nudged', color=yellow)} {tag} → {ref}  {dim(snippet)}",
+            flush=True,
+        )
 
 
 def match_worktrees(
