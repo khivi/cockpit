@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -153,7 +152,6 @@ def delete_pr_caches_for_branch(repo_name: str, branch: str) -> None:
 
 
 FLAT_CACHE_DIR = Path(tempfile.gettempdir()) / "cockpit-cache"
-PR_CACHE_TTL_SECS = 60
 
 
 def _ensure_flat_cache_dir() -> Path:
@@ -189,11 +187,19 @@ def branch_cache(stem: str, branch: str) -> Path:
     return _ensure_flat_cache_dir() / f"{stem}-{_branch_key(branch)}"
 
 
-def is_fresh(path: Path, ttl_secs: int = PR_CACHE_TTL_SECS) -> bool:
-    try:
-        return (time.time() - path.stat().st_mtime) < ttl_secs
-    except OSError:
-        return False
+def _cwd_key(cwd: "os.PathLike[str] | str") -> str:
+    """Filesystem-safe slug for an absolute cwd: `/` → `-`, leading dash stripped."""
+    return str(Path(cwd).resolve()).replace("/", "-").lstrip("-")
+
+
+def cwd_cache(stem: str, cwd: "os.PathLike[str] | str") -> Path:
+    """Per-cwd flat-cache cell (mirrors `branch_cache` but keyed by path slug).
+
+    Git-state cells are keyed by cwd rather than branch because the branch
+    name is itself one of the cached values — readers don't know the branch
+    until they've read the cache, so the key must be derivable from cwd alone.
+    """
+    return _ensure_flat_cache_dir() / f"{stem}-{_cwd_key(cwd)}"
 
 
 def _resolve_state(state: str, is_draft: bool, review: str) -> str:
@@ -259,12 +265,59 @@ def refresh_pr_checks(branch: str) -> None:
     atomic_write(cache, _ci_glyph(str(data.get("ci") or "")))
 
 
-def write_base_distance(branch: str, count: int, fetch_epoch: int) -> None:
-    """Cache rebase-staleness for `branch` as `<count> <fetch_epoch>`.
+def write_git_state_cache(cwd: "os.PathLike[str] | str") -> None:
+    """Snapshot `cwd`'s local git state (branch + status counts + ahead/behind
+    of origin) into three flat cells. Reader-side replacement for the
+    `git rev-parse` / `git status` / `git rev-list` calls that the footer's
+    branch_identity / worktree_status / linear printers otherwise make on
+    every render.
+
+    Daemon-only writer. Called from:
+      - slow tick: `_write_pr_caches` in `orchestrators.cycle` (once per
+        worktree per `slow_poll_interval_seconds`, alongside PR cache writes)
+      - fast tick: `cockpit._fast_tick` (every `fast_poll_interval_seconds`,
+        network-free; this is what keeps `git checkout` visible in the
+        footer within ~30s rather than ~300s)
+
+    The renderer never writes these cells — it reads them, with a one-shot
+    live-git fallback only when the cell is missing entirely (cold start
+    before the daemon's first tick on a new worktree).
+
+    The `git-branch` cell is the authority on "is cache populated": when
+    branch resolves empty (not a git repo, or fully detached with no
+    rebase-head-name), all three cells are written empty so a stale value
+    from a previous cwd state cannot survive.
+    """
+    from .git import (
+        ahead_of_origin,
+        behind_of_origin,
+        count_status,
+        current_branch,
+    )
+
+    branch_path = cwd_cache("git-branch", cwd)
+    status_path = cwd_cache("git-status", cwd)
+    sync_path = cwd_cache("git-sync", cwd)
+
+    branch = current_branch(cwd)
+    if not branch:
+        atomic_write(branch_path, "")
+        atomic_write(status_path, "")
+        atomic_write(sync_path, "")
+        return
+    counts = count_status(Path(cwd))
+    ahead = ahead_of_origin(cwd, branch)
+    behind = behind_of_origin(cwd, branch)
+    atomic_write(branch_path, branch)
+    atomic_write(status_path, f"{counts.staged} {counts.unstaged} {counts.untracked}")
+    atomic_write(sync_path, f"{ahead} {behind}")
+
+
+def write_base_distance(branch: str, count: int) -> None:
+    """Cache rebase-staleness for `branch` as `<count>`.
 
     Written by the cockpit daemon once per cycle, after one shared
-    `git fetch origin <base>` per repo. The fetch_epoch lets readers
-    decide whether the count is fresh enough to display.
+    `git fetch origin <base>` per repo.
 
     Empty / no-base writes the empty payload so a stale reader doesn't
     keep showing a value from a previous repo state.
@@ -272,25 +325,25 @@ def write_base_distance(branch: str, count: int, fetch_epoch: int) -> None:
     if not branch:
         return
     path = branch_cache("base-distance", branch)
-    if count < 0 or fetch_epoch <= 0:
+    if count < 0:
         atomic_write(path, "")
         return
-    atomic_write(path, f"{count} {fetch_epoch}")
+    atomic_write(path, str(count))
 
 
-def write_base_ahead(branch: str, count: int, fetch_epoch: int) -> None:
-    """Cache ahead-of-base for `branch` as `<count> <fetch_epoch>`.
+def write_base_ahead(branch: str, count: int) -> None:
+    """Cache ahead-of-base for `branch` as `<count>`.
 
-    Mirrors `write_base_distance` — same payload shape, same staleness
-    semantics, written from the same daemon tick on the same fetch.
+    Mirrors `write_base_distance` — same payload shape, written from the
+    same daemon tick on the same fetch.
     """
     if not branch:
         return
     path = branch_cache("base-ahead", branch)
-    if count < 0 or fetch_epoch <= 0:
+    if count < 0:
         atomic_write(path, "")
         return
-    atomic_write(path, f"{count} {fetch_epoch}")
+    atomic_write(path, str(count))
 
 
 def write_branch_pr_cache(
@@ -324,6 +377,45 @@ def write_branch_pr_cache(
     atomic_write(branch_cache("pr-muted", branch), muted)
     if ci_glyph:
         atomic_write(branch_cache("pr-checks", branch), ci_glyph)
+
+
+def republish_pr_caches_from_disk() -> None:
+    """Re-publish every cached PR JSON snapshot to its branch-keyed flat cells.
+
+    Daemon-side replacement for the old renderer-spawned `*-refresh`
+    pattern. Walks `$COCKPIT_HOME/cache/*__pr-*.json` and, for each
+    payload's `branch`, re-writes `pr-state`, `pr-num`, `pr-title`,
+    `pr-muted`, `pr-checks`. Pure JSON → flat-cell republish, no `gh`
+    calls — safe to run on the fast tick.
+
+    Necessary because the per-PR JSON lives under `$COCKPIT_HOME/cache/`
+    (persistent) but the flat cells live under `$TMPDIR/cockpit-cache/`
+    (subject to OS tmpdir cleanup). When the OS prunes tmpdir, the JSON
+    survives; the fast tick repopulates the flat cells from JSON within
+    one cycle. Also bounds the lag between an externally-triggered
+    `cockpit --once` (which writes JSON + cells together) and the next
+    render — without this, the renderer would have to spawn its own
+    refresher to detect tmpdir-wipe.
+    """
+    if not CACHE_DIR.is_dir():
+        return
+    for _, payload in _iter_cache("*__pr-*.json"):
+        branch = payload.get("branch")
+        if not branch:
+            continue
+        state = _resolve_state(
+            str(payload.get("state") or ""),
+            bool(payload.get("isDraft")),
+            str(payload.get("review") or ""),
+        )
+        number = payload.get("number")
+        atomic_write(branch_cache("pr-state", branch), state)
+        atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
+        atomic_write(branch_cache("pr-title", branch), str(payload.get("title") or ""))
+        atomic_write(branch_cache("pr-muted", branch), str(payload.get("muted") or ""))
+        atomic_write(
+            branch_cache("pr-checks", branch), _ci_glyph(str(payload.get("ci") or ""))
+        )
 
 
 def warm_all(branch: str | None = None) -> None:

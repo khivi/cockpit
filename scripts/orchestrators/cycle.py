@@ -11,7 +11,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -56,6 +55,7 @@ from scripts.lib.cache import (
     write_base_ahead,
     write_base_distance,
     write_branch_pr_cache,
+    write_git_state_cache,
     write_pr_cache,
 )
 from scripts.lib.gh import (
@@ -80,7 +80,6 @@ from scripts.orchestrators.teardown import TeardownRequest, teardown
 
 MAIN_BRANCHES = {"master", "main"}
 
-NUDGE_INTERVAL_SECS = 300
 ACTIONABLE_ISSUES = {"ci", "comments", "conflicts"}
 
 _NUDGE_DESC = {
@@ -104,7 +103,6 @@ def _cache_only(cfg: dict) -> bool:
 def maybe_nudge(
     ref: str,
     message: str,
-    nudge_state: dict,
     dry: bool,
     tag: str,
     *,
@@ -114,8 +112,6 @@ def maybe_nudge(
     if nudge_if_idle(
         ref,
         message,
-        nudge_state=nudge_state,
-        interval_secs=NUDGE_INTERVAL_SECS,
         dry=dry,
         tag=tag,
         pr_number=pr_number,
@@ -328,8 +324,8 @@ def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, in
 
     def _invalidate() -> dict[str, int]:
         for wt in feature:
-            write_base_distance(wt.branch, -1, 0)
-            write_base_ahead(wt.branch, -1, 0)
+            write_base_distance(wt.branch, -1)
+            write_base_ahead(wt.branch, -1)
         return distances
 
     default = origin_head_branch(repo_path)
@@ -359,19 +355,18 @@ def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, in
             flush=True,
         )
         return _invalidate()
-    now = int(time.time())
     for wt in feature:
         n = behind_of_base(wt.path, default)
         distances[wt.branch] = n
-        write_base_distance(wt.branch, n, now)
-        write_base_ahead(wt.branch, ahead_of_base(wt.path, default), now)
+        write_base_distance(wt.branch, n)
+        write_base_ahead(wt.branch, ahead_of_base(wt.path, default))
     return distances
 
 
 @dataclass
 class RepoCycle:
     """Per-repo, per-cycle context bundle. Mutable dicts (pill_state /
-    nudge_state / pr_cache) are passed by reference and persist across cycles.
+    pr_cache) are passed by reference and persist across cycles.
     """
 
     cfg: dict
@@ -386,7 +381,6 @@ class RepoCycle:
     cwds: dict[str, Path]
     merged_branches: dict[str, str]
     pill_state: dict
-    nudge_state: dict
     keep_stale: bool
     no_spawn: bool
     dry: bool
@@ -403,7 +397,6 @@ def _prepare_cycle(
     cfg: dict,
     pr_cache: dict,
     pill_state: dict,
-    nudge_state: dict,
     keep_stale: bool,
     no_spawn: bool,
     dry: bool,
@@ -484,7 +477,6 @@ def _prepare_cycle(
         cwds=cwds,
         merged_branches=merged_branches,
         pill_state=pill_state,
-        nudge_state=nudge_state,
         keep_stale=keep_stale,
         no_spawn=no_spawn,
         dry=dry,
@@ -504,6 +496,8 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     if ctx.dry:
         return
     ctx.base_distance = _refresh_base_distance(ctx.repo_path, ctx.wts)
+    for wt in ctx.wts:
+        write_git_state_cache(wt.path)
     wt_by_branch = {wt.branch: wt for wt in ctx.wts}
     for pr in ctx.prs:
         pref = ctx.prefs.get(pr.number)
@@ -613,7 +607,6 @@ def _refresh_tracked_pills(
                 maybe_nudge(
                     ref,
                     f"PR #{pr.number}: {_NUDGE_DESC[pr.display_issue](pr)}.",
-                    ctx.nudge_state,
                     ctx.dry,
                     label,
                     pr_number=pr.number,
@@ -705,7 +698,6 @@ def _refresh_orphan(ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str) -> Non
         ref,
         f"Worktree {wt.short} on {wt.branch} still has no open PR. "
         f"Push commits and open a PR, or close the worktree if abandoned.",
-        ctx.nudge_state,
         ctx.dry,
         ws_name,
     )
@@ -758,7 +750,6 @@ def cycle_repo(
     no_spawn: bool,
     dry: bool,
     pr_cache: dict,
-    nudge_state: dict,
     pill_state: dict,
     verbose: bool,
     cfg: dict,
@@ -769,7 +760,6 @@ def cycle_repo(
         cfg=cfg,
         pr_cache=pr_cache,
         pill_state=pill_state,
-        nudge_state=nudge_state,
         keep_stale=keep_stale,
         no_spawn=no_spawn,
         dry=dry,
@@ -913,7 +903,6 @@ def cycle_all(
     no_spawn: bool,
     dry: bool,
     pr_cache: dict,
-    nudge_state: dict,
     pill_state: dict,
     verbose: bool,
 ) -> None:
@@ -946,7 +935,6 @@ def cycle_all(
                 no_spawn=no_spawn,
                 dry=dry,
                 pr_cache=pr_cache,
-                nudge_state=nudge_state,
                 pill_state=pill_state,
                 verbose=verbose,
                 cfg=cfg,

@@ -53,21 +53,18 @@ def test_save_and_load_roundtrip(nudges):
 def test_should_nudge_blocked_by_category_mute(nudges):
     pref = nudges.NudgePref(disabled_categories={"comments"})
     nudges.save_pref(7, pref)
-    assert nudges.should_nudge(7, "comments", interval_secs=300) is False
-    assert nudges.should_nudge(7, "ci", interval_secs=300) is True
+    assert nudges.should_nudge(7, "comments") is False
+    assert nudges.should_nudge(7, "ci") is True
 
 
-def test_should_nudge_blocked_by_rate_limit(nudges):
+def test_should_nudge_not_blocked_by_recent_record(nudges):
+    """No more time-based throttle — slow loop cadence is the implicit rate
+    limit. `record_nudge` still updates `last_nudge_at` for `cockpit nudge
+    status` display, but should_nudge does not gate on it."""
     now = 1000.0
     nudges.record_nudge(12, "comments", now=now)
-    # Same category within interval — blocked.
-    assert (
-        nudges.should_nudge(12, "comments", interval_secs=300, now=now + 100) is False
-    )
-    # Different category within interval — still blocked (cross-category debounce).
-    assert nudges.should_nudge(12, "ci", interval_secs=300, now=now + 100) is False
-    # After interval — allowed.
-    assert nudges.should_nudge(12, "comments", interval_secs=300, now=now + 301) is True
+    assert nudges.should_nudge(12, "comments", now=now + 1) is True
+    assert nudges.should_nudge(12, "ci", now=now + 1) is True
 
 
 def test_expired_until_auto_clears_mute(nudges):
@@ -83,16 +80,22 @@ def test_expired_until_auto_clears_mute(nudges):
     assert reloaded.disabled_categories == set()
 
 
-def test_record_nudge_survives_reload(tmp_path, monkeypatch, nudges):
-    """The whole point of persistence — daemon restart must not lose state."""
+def test_record_nudge_persists_last_nudge_at_across_reload(
+    tmp_path, monkeypatch, nudges
+):
+    """`last_nudge_at` is still serialized so `cockpit nudge status` can
+    display "last nudged X ago" — it just no longer gates future nudges."""
     now = 5000.0
     nudges.record_nudge(77, "ci", now=now)
-    assert nudges.should_nudge(77, "ci", interval_secs=300, now=now + 50) is False
+    pref = nudges.load_pref(77, now=now + 50)
+    assert pref.last_nudge_at == now
+    assert pref.last_nudge_category == "ci"
 
     # Simulate full process restart by reloading the module.
     importlib.reload(nudges)
-    assert nudges.should_nudge(77, "ci", interval_secs=300, now=now + 50) is False
-    assert nudges.should_nudge(77, "ci", interval_secs=300, now=now + 301) is True
+    reloaded = nudges.load_pref(77, now=now + 50)
+    assert reloaded.last_nudge_at == now
+    assert reloaded.last_nudge_category == "ci"
 
 
 def test_list_prefs_skips_garbage_files(nudges, tmp_path):

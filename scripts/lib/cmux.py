@@ -218,8 +218,6 @@ def nudge_if_idle(
     ref: str,
     message: str,
     *,
-    nudge_state: dict,
-    interval_secs: int = 300,
     dry: bool = False,
     tag: str = "",
     pr_number: int | None = None,
@@ -227,23 +225,21 @@ def nudge_if_idle(
 ) -> bool:
     """Send `message` + enter to workspace `ref` if it's idle and not parked.
 
-    Two persistence regimes:
-      - When `pr_number` is set, gate on `lib.nudges` — file-backed prefs
-        survive daemon/cmux restarts and let the user mute via `cockpit nudge`.
-      - Otherwise (orphan worktree, no PR), gate on the in-memory `nudge_state`
-        dict only.
+    For PR-attached nudges (`pr_number` set), check the file-backed mute
+    state in `lib.nudges` so the user's `cockpit nudge mute` survives daemon
+    restarts. For orphan (no-PR) nudges, fire unconditionally when idle.
 
-    Always also gates on cmux pills: skips if `idle=` is absent or `parked=`
-    is present, so a transient runtime override still works.
+    Always gates on cmux pills: skips if `idle=` is absent or `parked=` is
+    present, so a transient runtime override still works.
+
+    There is no time-based throttle. The slow tick's cadence
+    (`slow_poll_interval_seconds`, default 300s) is the implicit rate limit
+    — each tick re-evaluates and re-fires if the underlying issue persists.
     """
     if pr_number is not None and category is not None:
         from . import nudges
 
-        if not nudges.should_nudge(pr_number, category, interval_secs=interval_secs):
-            return False
-    else:
-        now = time.monotonic()
-        if now - nudge_state.get(ref, 0.0) < interval_secs:
+        if not nudges.should_nudge(pr_number, category):
             return False
     status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
     if not _has_pill(status_lines, "idle"):
@@ -257,8 +253,6 @@ def nudge_if_idle(
         from . import nudges
 
         nudges.record_nudge(pr_number, category)
-    else:
-        nudge_state[ref] = time.monotonic()
     cmux("send", "--workspace", ref, message, check=False)
     cmux("send-key", "--workspace", ref, "enter", check=False)
     return True

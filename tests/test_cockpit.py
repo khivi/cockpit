@@ -77,9 +77,9 @@ def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
 
     importlib.reload(cockpit)
     monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
-    monkeypatch.setattr(cockpit, "_watch", lambda _s, _secs: None)
+    monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: None)
 
-    assert cockpit.main(["--watch", "60"]) == 0
+    assert cockpit.main(["--watch"]) == 0
     assert not (tmp_path / "xdg" / "cship.toml").exists()
     assert not (tmp_path / "xdg" / "starship.toml").exists()
     assert not (tmp_path / ".claude" / "settings.json").exists()

@@ -81,7 +81,7 @@ def cockpit_repo(tmp_path, monkeypatch) -> RepoFixture:
                 "default_base": "main",
             }
         ],
-        "poll_interval_seconds": 300,
+        "slow_poll_interval_seconds": 300,
         "auto_cleanup_on_merge": True,
     }
     (cockpit_home / "config.json").write_text(json.dumps(cfg))
