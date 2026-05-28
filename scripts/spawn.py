@@ -541,6 +541,7 @@ def main() -> int:
     seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
     actions_run_info: dict | None = None
     actions_job_id: str | None = None
+    actions_head_branch: str | None = None  # original headBranch from Actions run
 
     if args.positional:
         mode, value, nwo_hint = detect_source(args.positional)
@@ -553,10 +554,12 @@ def main() -> int:
                 actions_run_info = fetch_run_info(run_id, nwo=nwo_hint)
             except RuntimeError as e:
                 return _die(str(e))
-            if not actions_run_info.get("headBranch"):
+            head_branch = actions_run_info.get("headBranch") or ""
+            if not head_branch:
                 return _die(
                     f"Actions run {run_id} has no headBranch — cannot resolve a worktree"
                 )
+            actions_head_branch = head_branch
             # Always synthesize a fresh investigation branch. Reusing the
             # run's headBranch attaches to the existing worktree (often the
             # main repo checkout when CI failed on master after a merge),
@@ -652,9 +655,7 @@ def main() -> int:
         else:
             # Actions mode synthesizes a fresh `ci-...` branch, so query the
             # PR against the run's original headBranch instead.
-            pr_lookup_branch = (
-                actions_run_info.get("headBranch") if actions_run_info else branch
-            )
+            pr_lookup_branch = actions_head_branch or branch
             pr_info = pr_for_branch(pr_lookup_branch, wt)
             if pr_info is not None:
                 pr_num = str(pr_info["number"])
