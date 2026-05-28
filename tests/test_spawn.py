@@ -90,6 +90,40 @@ def test_linear_id_inside_path_stays_branch():
     assert value == "khivi/PE-1234-foo"
 
 
+def test_actions_run_url_returns_actions_mode_and_nwo():
+    mode, value, nwo = detect_source("https://github.com/owner/repo/actions/runs/12345")
+    assert mode == "actions"
+    assert value == "12345"
+    assert nwo == "owner/repo"
+
+
+def test_actions_job_url_packs_run_and_job():
+    mode, value, nwo = detect_source(
+        "https://github.com/owner/repo/actions/runs/12345/job/67890"
+    )
+    assert mode == "actions"
+    assert value == "12345:67890"
+    assert nwo == "owner/repo"
+
+
+def test_actions_attempts_url_still_parses():
+    mode, value, nwo = detect_source(
+        "https://github.com/owner/repo/actions/runs/12345/attempts/2"
+    )
+    assert mode == "actions"
+    assert value == "12345"
+    assert nwo == "owner/repo"
+
+
+def test_actions_attempts_with_job_url_parses():
+    mode, value, nwo = detect_source(
+        "https://github.com/owner/repo/actions/runs/12345/attempts/2/job/67890"
+    )
+    assert mode == "actions"
+    assert value == "12345:67890"
+    assert nwo == "owner/repo"
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # resolve_worktree (real tmp repo via cockpit_repo)
 # ────────────────────────────────────────────────────────────────────────────
@@ -360,6 +394,169 @@ def test_positional_branch_dispatches_to_branch_mode(spawn_main, push_branch):
     code, out, _err = spawn_main(["khivi/positional-branch", "--repo", "testrepo"])
     assert code == 0
     assert "on khivi/positional-branch" in out
+
+
+# ── actions URL dispatch ───────────────────────────────────────────────────
+#
+# A GitHub Actions run/job URL spawns a worktree on the run's headBranch
+# (looked up via gh) and seeds a plan-only prompt directing Claude to
+# fetch `--log-failed` first. fetch_run_info is mocked because we don't
+# want test runs to hit the real gh CLI.
+
+
+def _actions_run_info(branch: str = "khivi/positional-branch") -> dict:
+    return {
+        "databaseId": 12345,
+        "headBranch": branch,
+        "headSha": "deadbeef",
+        "workflowName": "CI",
+        "conclusion": "failure",
+        "status": "completed",
+        "event": "pull_request",
+        "url": "https://github.com/owner/repo/actions/runs/12345",
+        "jobs": [
+            {
+                "databaseId": 67890,
+                "name": "unit-tests",
+                "conclusion": "failure",
+                "status": "completed",
+                "url": "https://github.com/owner/repo/actions/runs/12345/job/67890",
+            }
+        ],
+    }
+
+
+def test_actions_url_spawns_on_head_branch(spawn_main, push_branch, monkeypatch):
+    push_branch("khivi/positional-branch")
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+
+    code, out, _err = spawn_main(
+        [
+            "https://github.com/owner/repo/actions/runs/12345",
+            "--repo",
+            "testrepo",
+        ]
+    )
+    assert code == 0
+    assert "on khivi/positional-branch" in out
+
+
+def test_actions_url_seeds_log_failed_prompt(spawn_main, push_branch, monkeypatch):
+    push_branch("khivi/positional-branch")
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+
+    spawn_main(
+        [
+            "https://github.com/owner/repo/actions/runs/12345",
+            "--repo",
+            "testrepo",
+        ]
+    )
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "gh run view 12345 --log-failed" in cmd
+    assert "--job" not in cmd  # run-scoped, not job-scoped
+    assert "PLAN ONLY" in cmd
+    assert "CI" in cmd  # workflowName
+    assert "Conclusion" in cmd
+
+
+def test_actions_job_url_scopes_log_command_to_job(
+    spawn_main, push_branch, monkeypatch
+):
+    push_branch("khivi/positional-branch")
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+
+    spawn_main(
+        [
+            "https://github.com/owner/repo/actions/runs/12345/job/67890",
+            "--repo",
+            "testrepo",
+        ]
+    )
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "gh run view 12345 --log-failed --job 67890" in cmd
+    assert "unit-tests" in cmd  # job name surfaced in prompt
+
+
+def test_actions_url_with_pr_includes_related_pr_in_prompt(
+    spawn_main, push_branch, monkeypatch
+):
+    push_branch("khivi/positional-branch")
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
+    monkeypatch.setattr(
+        spawn,
+        "pr_for_branch",
+        lambda *_a, **_kw: {
+            "number": 42,
+            "title": "fix the bug",
+            "author": {"login": "khivi"},
+            "url": "https://github.com/owner/repo/pull/42",
+        },
+    )
+
+    spawn_main(
+        [
+            "https://github.com/owner/repo/actions/runs/12345",
+            "--repo",
+            "testrepo",
+        ]
+    )
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Related PR" in cmd
+    assert "#42" in cmd
+    assert "fix the bug" in cmd
+
+
+def test_actions_url_missing_head_branch_errors(spawn_main, monkeypatch):
+    """gh returns the run JSON but headBranch is empty (detached/tag run) →
+    we can't resolve a worktree, surface a clean error."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(
+        spawn,
+        "fetch_run_info",
+        lambda *a, **kw: {"databaseId": 12345, "headBranch": ""},
+    )
+
+    code, _out, err = spawn_main(
+        [
+            "https://github.com/owner/repo/actions/runs/12345",
+            "--repo",
+            "testrepo",
+        ]
+    )
+    assert code == 1
+    assert "headBranch" in err
+
+
+def test_actions_url_gh_failure_propagates(spawn_main, monkeypatch):
+    import scripts.spawn as spawn
+
+    def boom(*a, **kw):
+        raise RuntimeError("gh run view failed: not found")
+
+    monkeypatch.setattr(spawn, "fetch_run_info", boom)
+
+    code, _out, err = spawn_main(
+        [
+            "https://github.com/owner/repo/actions/runs/12345",
+            "--repo",
+            "testrepo",
+        ]
+    )
+    assert code == 1
+    assert "gh run view failed" in err
 
 
 # ── linear dispatch ────────────────────────────────────────────────────────

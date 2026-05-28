@@ -17,7 +17,7 @@ If the Bash result does not include a line matching `workspace <name> spawned at
 
 ## Arguments (reference only — do not act on these)
 
-- Positional `<branch|PR|url>` — auto-detected (GitHub PR URL, `#123` PR ref, or branch name). Mutex with `--branch`/`--pr`/`--name`/`--skill`
+- Positional `<branch|PR|url>` — auto-detected (GitHub PR URL, GitHub Actions run/job URL, `#123` PR ref, Linear key, or branch name). Mutex with `--branch`/`--pr`/`--name`/`--skill`. Actions URLs spawn on the run's head branch with a prompt that fetches `--log-failed` first.
 - `--branch <name>` / `--pr <num>` — explicit input; combinable with each other and with `--name`
 - `--name <short>` — workspace short name; alone, also seeds a new branch name
 - `--cwd <path>` — arbitrary dir, no repo or worktree
@@ -32,6 +32,7 @@ If the Bash result does not include a line matching `workspace <name> spawned at
 ```text
 /cockpit:new fix-login                               # branch (local, remote, or new)
 /cockpit:new https://github.com/org/repo/pull/12345  # PR by URL
+/cockpit:new https://github.com/org/repo/actions/runs/123/job/456  # Actions failure by URL
 /cockpit:new --pr 12345 --branch custom-name         # PR fetched under custom local name
 /cockpit:new --cwd ~/scratch/spike                   # arbitrary dir, no repo
 /cockpit:new --skill <skill-name>                    # global skill, cwd = $HOME

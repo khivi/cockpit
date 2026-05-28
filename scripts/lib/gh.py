@@ -143,6 +143,29 @@ def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:
     return data
 
 
+def fetch_run_info(
+    run_id: str, repo_dir: Path | None = None, *, nwo: str | None = None
+) -> dict:
+    """Fetch `{databaseId, headBranch, headSha, workflowName, conclusion,
+    status, event, url, jobs[]}` for a GitHub Actions run.
+
+    Pass `nwo` (`<owner>/<repo>`) when calling from outside the repo tree —
+    the gh call is then routed with `-R <nwo>` so it works without a cwd.
+    Each entry in `jobs[]` carries `{databaseId, name, conclusion, status, url}`.
+    """
+    fields = (
+        "databaseId,headBranch,headSha,workflowName,conclusion,status,event,url,jobs"
+    )
+    args = ["run", "view", run_id, "--json", fields]
+    if nwo:
+        args = ["-R", nwo, *args]
+    cwd = str(repo_dir) if repo_dir else None
+    result = subprocess.run(["gh", *args], capture_output=True, text=True, cwd=cwd)
+    if result.returncode != 0:
+        raise RuntimeError(f"gh run view failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
 def resolve_pr_branch(pr_num: str, repo_dir: Path | None = None) -> str:
     """Resolve a PR number to its head branch name via gh CLI.
 
