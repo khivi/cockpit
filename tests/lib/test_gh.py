@@ -12,7 +12,12 @@ import json
 import re
 from unittest.mock import patch
 
-from scripts.lib.gh import _PR_LIGHT_FIELDS, _graphql, _relevant_pr_query
+from scripts.lib.gh import (
+    _PR_LIGHT_FIELDS,
+    _graphql,
+    _relevant_pr_query,
+    fetch_merged_branches,
+)
 
 
 def _referenced_vars(query: str) -> set[str]:
@@ -101,3 +106,99 @@ def test_per_branch_leg_is_any_state():
     # newest PR for the branch wins when multiple exist for the same head
     assert "orderBy: {field: CREATED_AT, direction: DESC}" in query
     assert "first: 1" in query
+
+
+def _page(nodes: list[dict], *, end: str = "", more: bool = False) -> dict:
+    return {
+        "data": {
+            "search": {
+                "pageInfo": {"endCursor": end, "hasNextPage": more},
+                "nodes": nodes,
+            }
+        }
+    }
+
+
+def _node(num: int, branch: str, oid: str) -> dict:
+    return {"number": num, "headRefName": branch, "headRefOid": oid}
+
+
+def test_fetch_merged_branches_single_page():
+    pages = [_page([_node(1, "feat/a", "sha-a"), _node(2, "feat/b", "sha-b")])]
+    with patch("scripts.lib.gh._graphql", side_effect=pages):
+        result = fetch_merged_branches("o", "n")
+    assert result == {"feat/a": "sha-a", "feat/b": "sha-b"}
+
+
+def test_fetch_merged_branches_pages_until_no_next_page():
+    """Cross-page accumulation: keep paginating while hasNextPage is True."""
+    pages = [
+        _page([_node(10, "feat/a", "sha-a1")], end="c1", more=True),
+        _page([_node(11, "feat/b", "sha-b1")], end="c2", more=True),
+        _page([_node(12, "feat/c", "sha-c1")]),  # hasNextPage=False
+    ]
+    with patch("scripts.lib.gh._graphql", side_effect=pages) as m:
+        result = fetch_merged_branches("o", "n", max_pages=10)
+    assert m.call_count == 3
+    assert result == {"feat/a": "sha-a1", "feat/b": "sha-b1", "feat/c": "sha-c1"}
+    # Second call onward must carry the previous endCursor.
+    assert m.call_args_list[1].args[1]["cursor"] == "c1"
+    assert m.call_args_list[2].args[1]["cursor"] == "c2"
+
+
+def test_fetch_merged_branches_stops_at_max_pages_cap():
+    """`max_pages` cap stops pagination even when hasNextPage is True."""
+    pages = [
+        _page([_node(1, "feat/a", "sha-a")], end="c1", more=True),
+        _page([_node(2, "feat/b", "sha-b")], end="c2", more=True),
+        _page([_node(3, "feat/c", "sha-c")], end="c3", more=True),
+    ]
+    with patch("scripts.lib.gh._graphql", side_effect=pages) as m:
+        result = fetch_merged_branches("o", "n", max_pages=2)
+    assert m.call_count == 2
+    assert result == {"feat/a": "sha-a", "feat/b": "sha-b"}
+
+
+def test_fetch_merged_branches_highest_pr_wins_across_pages():
+    """When a branch appears in multiple merged PRs, keep the highest PR
+    number. The headRefOid for the older merge is stale — autoclose must gate
+    on the most recent merge.
+    """
+    pages = [
+        _page([_node(50, "feat/a", "sha-new")], end="c1", more=True),
+        _page([_node(10, "feat/a", "sha-old")]),
+    ]
+    with patch("scripts.lib.gh._graphql", side_effect=pages):
+        result = fetch_merged_branches("o", "n")
+    assert result == {"feat/a": "sha-new"}
+
+
+def test_fetch_merged_branches_empty_search_returns_empty_map():
+    pages = [_page([])]
+    with patch("scripts.lib.gh._graphql", side_effect=pages):
+        assert fetch_merged_branches("o", "n") == {}
+
+
+def test_fetch_merged_branches_graphql_failure_returns_empty_map():
+    import subprocess as _sp
+
+    err = _sp.CalledProcessError(1, ["gh", "api", "graphql"])
+    with patch("scripts.lib.gh._graphql", side_effect=err):
+        assert fetch_merged_branches("o", "n") == {}
+
+
+def test_fetch_merged_branches_search_includes_date_window():
+    """The `merged:>=<date>` qualifier scopes the search to recent merges. The
+    date is computed from `cutoff_days` and must be present in the search var.
+    """
+    captured: dict[str, str] = {}
+
+    def _capture(_query: str, variables: dict[str, str]) -> dict:
+        captured.update(variables)
+        return _page([])
+
+    with patch("scripts.lib.gh._graphql", side_effect=_capture):
+        fetch_merged_branches("acme", "widgets", cutoff_days=7)
+    assert "repo:acme/widgets is:pr is:merged merged:>=" in captured["search"]
+    # No cursor on the first page request.
+    assert "cursor" not in captured
