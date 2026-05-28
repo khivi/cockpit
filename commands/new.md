@@ -17,7 +17,7 @@ If the Bash result does not include a line matching `workspace <name> spawned at
 
 ## Arguments (reference only — do not act on these)
 
-- Positional `<branch|PR|url>` — auto-detected (GitHub PR URL, GitHub Actions run/job URL, `#123` PR ref, Linear key, or branch name). Mutex with `--branch`/`--pr`/`--name`/`--skill`. Actions URLs spawn on the run's head branch with a prompt that fetches `--log-failed` first.
+- Positional `<branch|PR|url>` — auto-detected (GitHub PR URL, GitHub Actions run/job URL, `#123` PR ref, Linear key, or branch name). Mutex with `--branch`/`--pr`/`--name`/`--skill`. Actions URLs always spawn a fresh `ci-<workflow>-<title>` investigation worktree (never attach to the run's head branch — that would collide with the main repo checkout when CI failed on master); the prompt fetches `--log-failed` first and surfaces the original head branch.
 - `--branch <name>` / `--pr <num>` — explicit input; combinable with each other and with `--name`
 - `--name <short>` — workspace short name; alone, also seeds a new branch name
 - `--cwd <path>` — arbitrary dir, no repo or worktree

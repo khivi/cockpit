@@ -404,12 +404,18 @@ def test_positional_branch_dispatches_to_branch_mode(spawn_main, push_branch):
 # want test runs to hit the real gh CLI.
 
 
-def _actions_run_info(branch: str = "khivi/positional-branch") -> dict:
+def _actions_run_info(
+    branch: str = "khivi/positional-branch",
+    *,
+    workflow: str = "CI",
+    display_title: str = "fix login retry loop",
+) -> dict:
     return {
         "databaseId": 12345,
         "headBranch": branch,
         "headSha": "deadbeef",
-        "workflowName": "CI",
+        "workflowName": workflow,
+        "displayTitle": display_title,
         "conclusion": "failure",
         "status": "completed",
         "event": "pull_request",
@@ -426,8 +432,9 @@ def _actions_run_info(branch: str = "khivi/positional-branch") -> dict:
     }
 
 
-def test_actions_url_spawns_on_head_branch(spawn_main, push_branch, monkeypatch):
-    push_branch("khivi/positional-branch")
+def test_actions_url_creates_fresh_investigation_branch(spawn_main, monkeypatch):
+    """An Actions URL must spawn a fresh `khivi/ci-...` worktree, never attach
+    to the run's headBranch — even when the head was a feature branch."""
     import scripts.spawn as spawn
 
     monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
@@ -441,11 +448,36 @@ def test_actions_url_spawns_on_head_branch(spawn_main, push_branch, monkeypatch)
         ]
     )
     assert code == 0
-    assert "on khivi/positional-branch" in out
+    assert "on khivi/ci-" in out
+    assert "khivi/positional-branch" not in out
 
 
-def test_actions_url_seeds_log_failed_prompt(spawn_main, push_branch, monkeypatch):
-    push_branch("khivi/positional-branch")
+def test_actions_url_on_master_does_not_attach_to_main_worktree(
+    spawn_main, monkeypatch
+):
+    """The bug this branch fixes: a CI failure on `main`/`master` (after merge)
+    must NOT attach to the main repo checkout. Spawn a fresh ci-... worktree."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(
+        spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info(branch="main")
+    )
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+
+    code, out, _err = spawn_main(
+        [
+            "https://github.com/owner/repo/actions/runs/12345",
+            "--repo",
+            "testrepo",
+        ]
+    )
+    assert code == 0
+    assert "spawned" in out  # not "attached"
+    assert "on main" not in out
+    assert "on khivi/ci-" in out
+
+
+def test_actions_url_seeds_log_failed_prompt(spawn_main, monkeypatch):
     import scripts.spawn as spawn
 
     monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
@@ -464,12 +496,30 @@ def test_actions_url_seeds_log_failed_prompt(spawn_main, push_branch, monkeypatc
     assert "PLAN ONLY" in cmd
     assert "CI" in cmd  # workflowName
     assert "Conclusion" in cmd
+    assert "khivi/positional-branch" in cmd  # head branch surfaced in prompt
 
 
-def test_actions_job_url_scopes_log_command_to_job(
-    spawn_main, push_branch, monkeypatch
-):
-    push_branch("khivi/positional-branch")
+def test_actions_run_short_name_uses_workflow_and_title(spawn_main, monkeypatch):
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+
+    spawn_main(
+        [
+            "https://github.com/owner/repo/actions/runs/12345",
+            "--repo",
+            "testrepo",
+        ]
+    )
+    call = spawn_main.cmux_calls[0]
+    name = _cmux_kwarg(call, "name")
+    # `slugify("ci-CI-fix login retry loop")` → "ci-ci-fix-login-retry-loop" (capped at 30)
+    assert name.startswith("ci-")
+    assert "fix-login" in name
+
+
+def test_actions_job_url_short_name_uses_job_name(spawn_main, monkeypatch):
     import scripts.spawn as spawn
 
     monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
@@ -482,15 +532,15 @@ def test_actions_job_url_scopes_log_command_to_job(
             "testrepo",
         ]
     )
-    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    call = spawn_main.cmux_calls[0]
+    name = _cmux_kwarg(call, "name")
+    assert name == "ci-unit-tests"
+    cmd = _cmux_kwarg(call, "command")
     assert "gh run view 12345 --log-failed --job 67890" in cmd
-    assert "unit-tests" in cmd  # job name surfaced in prompt
+    assert "unit-tests" in cmd
 
 
-def test_actions_url_with_pr_includes_related_pr_in_prompt(
-    spawn_main, push_branch, monkeypatch
-):
-    push_branch("khivi/positional-branch")
+def test_actions_url_with_pr_includes_related_pr_in_prompt(spawn_main, monkeypatch):
     import scripts.spawn as spawn
 
     monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())

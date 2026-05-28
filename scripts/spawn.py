@@ -397,6 +397,38 @@ def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+def _actions_short_name(run_info: dict, job_id: str | None) -> str:
+    """Synthesize a workspace short name for an Actions investigation worktree.
+
+    Priority:
+      1. Job-scoped → `ci-<job-name>`
+      2. Run-scoped with displayTitle → `ci-<workflow>-<title>`
+      3. Fallback → `ci-<workflow>-<short-sha>` or `ci-<workflow>-<run-id>`
+
+    Always returns a non-empty slug (`slugify` caps at 30 chars).
+    """
+    workflow = run_info.get("workflowName") or "ci"
+    if job_id:
+        for j in run_info.get("jobs") or []:
+            if str(j.get("databaseId")) == job_id:
+                jname = j.get("name") or ""
+                if jname:
+                    return slugify(f"ci-{jname}") or f"ci-job-{job_id}"
+                break
+    title = (run_info.get("displayTitle") or "").strip()
+    if title:
+        slug = slugify(f"ci-{workflow}-{title}")
+        if slug:
+            return slug
+    sha = (run_info.get("headSha") or "")[:7]
+    if sha:
+        slug = slugify(f"ci-{workflow}-{sha}")
+        if slug:
+            return slug
+    run_id = run_info.get("databaseId") or "run"
+    return slugify(f"ci-{workflow}-{run_id}") or f"ci-run-{run_id}"
+
+
 def _actions_prompt(
     branch: str, run_info: dict, job_id: str | None, pr_info: dict | None = None
 ) -> str:
@@ -425,11 +457,13 @@ def _actions_prompt(
         source = f"Actions run `{workflow}` #{run_id}"
         log_cmd = f"gh run view {run_id} --log-failed"
 
+    head_branch = run_info.get("headBranch") or ""
     lines = [
         f"You are starting a fresh task in a new worktree on branch `{branch}`.",
         "",
         f"**Source**: {source}",
         f"**Conclusion**: {conclusion}",
+        f"**Head branch (where CI ran)**: `{head_branch}`",
         f"**Run URL**: {run_url}",
     ]
     if pr_info:
@@ -519,12 +553,16 @@ def main() -> int:
                 actions_run_info = fetch_run_info(run_id, nwo=nwo_hint)
             except RuntimeError as e:
                 return _die(str(e))
-            head_branch = actions_run_info.get("headBranch")
-            if not head_branch:
+            if not actions_run_info.get("headBranch"):
                 return _die(
                     f"Actions run {run_id} has no headBranch — cannot resolve a worktree"
                 )
-            branch = head_branch
+            # Always synthesize a fresh investigation branch. Reusing the
+            # run's headBranch attaches to the existing worktree (often the
+            # main repo checkout when CI failed on master after a merge),
+            # which is the bug this branch fixes.
+            branch = _actions_short_name(actions_run_info, actions_job_id)
+            from_name = True
         elif mode == "linear":
             branch = value.lower()
             from_name = True
@@ -612,13 +650,19 @@ def main() -> int:
             except Exception:
                 pr_info = None
         else:
-            pr_info = pr_for_branch(branch, wt)
+            # Actions mode synthesizes a fresh `ci-...` branch, so query the
+            # PR against the run's original headBranch instead.
+            pr_lookup_branch = (
+                actions_run_info.get("headBranch") if actions_run_info else branch
+            )
+            pr_info = pr_for_branch(pr_lookup_branch, wt)
             if pr_info is not None:
                 pr_num = str(pr_info["number"])
                 author = (pr_info.get("author") or {}).get("login", "unknown")
                 print(
-                    f"note: open PR #{pr_num} exists for branch {branch!r}: "
-                    f"{pr_info.get('title', '')} by @{author} ({pr_info.get('url', '')})",
+                    f"note: open PR #{pr_num} exists for branch "
+                    f"{pr_lookup_branch!r}: {pr_info.get('title', '')} by "
+                    f"@{author} ({pr_info.get('url', '')})",
                     file=sys.stderr,
                 )
 

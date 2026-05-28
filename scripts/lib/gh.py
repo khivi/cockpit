@@ -166,15 +166,16 @@ def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:
 def fetch_run_info(
     run_id: str, repo_dir: Path | None = None, *, nwo: str | None = None
 ) -> dict:
-    """Fetch `{databaseId, headBranch, headSha, workflowName, conclusion,
-    status, event, url, jobs[]}` for a GitHub Actions run.
+    """Fetch `{databaseId, headBranch, headSha, workflowName, displayTitle,
+    conclusion, status, event, url, jobs[]}` for a GitHub Actions run.
 
     Pass `nwo` (`<owner>/<repo>`) when calling from outside the repo tree —
     the gh call is then routed with `-R <nwo>` so it works without a cwd.
     Each entry in `jobs[]` carries `{databaseId, name, conclusion, status, url}`.
     """
     fields = (
-        "databaseId,headBranch,headSha,workflowName,conclusion,status,event,url,jobs"
+        "databaseId,headBranch,headSha,workflowName,displayTitle,"
+        "conclusion,status,event,url,jobs"
     )
     args = ["run", "view", run_id, "--json", fields]
     if nwo:
