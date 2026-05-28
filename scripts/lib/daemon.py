@@ -9,7 +9,10 @@ The watcher knows nothing about cockpit's reconcile logic. The caller passes:
   - `on_start` / `on_stop` — optional setup/teardown (e.g. status pills)
   - `on_wake`              — optional callback when SIGUSR1 interrupts the sleep
 
-SIGTERM and SIGINT both run pidfile cleanup and exit cleanly. Errors from
+SIGTERM, SIGINT, and SIGHUP all run pidfile cleanup and exit cleanly.
+SIGHUP matters because a daemon launched from a terminal session receives
+it when the controlling terminal closes; without the handler the process
+dies before `finally` runs and leaves a stale pidfile. Errors from
 `tick_fn` are caught and logged with a timestamp so a transient failure
 doesn't bring the watcher down.
 """
@@ -102,6 +105,7 @@ def run_watcher(
 
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGHUP, cleanup)
 
     print(f"slow-tick: every {watch_secs:>3}s", flush=True)
     if fast_tick_fn is not None and fast_secs > 0:
