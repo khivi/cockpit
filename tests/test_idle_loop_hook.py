@@ -8,6 +8,8 @@ then assert the recorded calls.
 from __future__ import annotations
 
 import json
+import os
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -19,9 +21,34 @@ from tests.fixtures import make_shim_on_path
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "cmux-idle-pill.sh"
 
 
+def _plant_cmux_shim(tmp_path: Path, monkeypatch, workspaces: list[str]) -> Path:
+    """Plant a cmux shim that emits a controllable workspace list for
+    `list-workspaces` and logs argv for everything else. Mirrors the format
+    of real `cmux list-workspaces` output (leading indent, then
+    `workspace:N  <name>`)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    log = tmp_path / "cmux.log"
+    listing = "\n".join(f"  {w}  name" for w in workspaces) + (
+        "\n" if workspaces else ""
+    )
+    shim = bin_dir / "cmux"
+    shim.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = "list-workspaces" ]; then\n'
+        f"  printf %s {repr(listing)}\n"
+        "  exit 0\n"
+        "fi\n"
+        f'printf "%s\\n" "$*" >> "{log}"\n'
+    )
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return log
+
+
 @pytest.fixture
 def fake_cmux(tmp_path, monkeypatch) -> Path:
-    log = make_shim_on_path(tmp_path, monkeypatch, "cmux")
+    log = _plant_cmux_shim(tmp_path, monkeypatch, ["workspace:99"])
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
     # Redirect the hook's operator-debug log into tmp_path so prune tests
     # control the file and so unrelated test runs don't pollute the real
@@ -119,6 +146,37 @@ def test_no_workspace_id_is_noop(tmp_path, monkeypatch):
     subprocess.run([str(HOOK), "loop-set"], check=True)
     time.sleep(0.1)
     assert not log.exists() or log.read_text() == ""
+
+
+def test_dead_workspace_is_noop(tmp_path, monkeypatch):
+    # Workspace was closed/recreated — its ID is no longer in
+    # `cmux list-workspaces`. Hook must exit silently so we don't hammer a
+    # dead socket and fill the err log with Broken Pipe forever.
+    log = _plant_cmux_shim(tmp_path, monkeypatch, ["workspace:1", "workspace:42"])
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    subprocess.run([str(HOOK), "loop-set"], check=True)
+    time.sleep(0.15)
+    assert not log.exists() or log.read_text() == ""
+
+
+def test_substring_workspace_id_does_not_match(tmp_path, monkeypatch):
+    # `workspace:9` must not match against `workspace:99` in the live list.
+    # Space-delimited case match guards against the substring trap.
+    log = _plant_cmux_shim(tmp_path, monkeypatch, ["workspace:99"])
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:9")
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    subprocess.run([str(HOOK), "loop-set"], check=True)
+    time.sleep(0.15)
+    assert not log.exists() or log.read_text() == ""
+
+
+def test_live_workspace_passes_through(fake_cmux):
+    # Sanity: fake_cmux registers workspace:99 as live, so loop-set must reach
+    # the set-status call. (Companion to test_dead_workspace_is_noop.)
+    subprocess.run([str(HOOK), "loop-set"], check=True)
+    calls = _poll_lines(fake_cmux, expected=1)
+    assert any("set-status loop" in c for c in calls), calls
 
 
 def test_prune_truncates_oversized_log(fake_cmux, tmp_path):

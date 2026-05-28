@@ -204,6 +204,24 @@ def test_sigterm_cleanup_removes_pidfile(tmp_path, cockpit_home):
     assert not pidfile.exists(), "pidfile should be removed on SIGTERM"
 
 
+def test_sighup_cleanup_removes_pidfile(tmp_path, cockpit_home):
+    # SIGHUP fires when the controlling terminal closes. Without a handler the
+    # default disposition kills the process before `finally` runs and leaves a
+    # stale pidfile that blocks the next daemon launch.
+    pidfile = cockpit_home / "cockpit.pid"
+    driver = _write_driver(tmp_path, watch_secs=60)
+    proc = _launch(driver, cockpit_home)
+
+    assert _wait_for(tmp_path / "ticks.log"), "no initial tick"
+    assert pidfile.exists()
+
+    proc.send_signal(signal.SIGHUP)
+    rc = _wait_for_process(proc, timeout=5.0)
+    assert rc == 0, f"expected clean exit, got {rc}"
+    assert _wait_for(tmp_path / "stop.log"), "on_stop never ran"
+    assert not pidfile.exists(), "pidfile should be removed on SIGHUP"
+
+
 def test_tick_exception_does_not_kill_loop(tmp_path, cockpit_home):
     driver = _write_driver(tmp_path, watch_secs=1, tick_raises_every=1)
     proc = _launch(driver, cockpit_home, capture_stderr=True)

@@ -43,6 +43,17 @@ set -eu
 
 [ -z "${CMUX_WORKSPACE_ID:-}" ] && exit 0
 
+# Skip silently if the workspace was closed/recreated. Without this, every
+# Stop/UserPromptSubmit writes to a dead socket and the err log fills with
+# Broken Pipe forever. If `list-workspaces` itself fails we fall through
+# (fail-open: same as pre-fix behavior, no regression).
+if live=$(command cmux list-workspaces 2>/dev/null | tr '\n' ' '); then
+  case " $live " in
+    *" $CMUX_WORKSPACE_ID "*) ;;
+    *) exit 0 ;;
+  esac
+fi
+
 # Operator-debug log for cmux stderr. Silent failure of `cmux set-status`
 # (e.g. the empty-value rejection that masked this pill being broken for weeks)
 # lands here, prefixed per-line with ISO timestamp + workspace id so multi-
