@@ -52,6 +52,7 @@ def load_config() -> dict:
             "fast_poll_interval_seconds": 30,
             "auto_cleanup_on_merge": True,
             "autoclose_age_days": 14,
+            "ci_skip_checks": ["copilot-pull-request-reviewer"],
         }
     with CONFIG_PATH.open() as f:
         return json.load(f)

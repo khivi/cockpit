@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import run
+from .config import load_config
 
 
 def gh_json(args: list[str]) -> dict | list:
@@ -323,7 +324,7 @@ def _unaddressed(pr_node: dict, pr_author: str) -> tuple[int, int]:
     return unresolved, total
 
 
-def _pr_from_node(n: dict) -> PR | None:
+def _pr_from_node(n: dict, skip_checks: set[str] | None = None) -> PR | None:
     author = (n.get("author") or {}).get("login")
     if not author:
         return None
@@ -338,11 +339,13 @@ def _pr_from_node(n: dict) -> PR | None:
     if suites_field is None:
         ci = "unknown"
     else:
+        if skip_checks is None:
+            skip_checks = set(load_config().get("ci_skip_checks", []))
         check_runs = [
-            run
+            r
             for suite in (suites_field or {}).get("nodes", [])
-            for run in (suite.get("checkRuns") or {}).get("nodes", [])
-            if run.get("name") != "copilot-pull-request-reviewer"
+            for r in (suite.get("checkRuns") or {}).get("nodes", [])
+            if r.get("name") not in skip_checks
         ]
         legacy_contexts = (status_field or {}).get("contexts", []) or []
         pending = sum(
@@ -484,6 +487,7 @@ def _hydrate_stale(
     stale: list[int],
     light_by_number: dict[int, str],
     cache: dict[int, tuple[PR, str]],
+    skip_checks: set[str] | None = None,
 ) -> None:
     # PR numbers are ints from prior GraphQL responses; safe to interpolate.
     alias_lines = [
@@ -499,7 +503,7 @@ def _hydrate_stale(
     repo = heavy_data["data"]["repository"]
     for i, num in enumerate(stale):
         node = repo.get(f"pr{i}")
-        pr = _pr_from_node(node) if node else None
+        pr = _pr_from_node(node, skip_checks) if node else None
         if pr:
             cache[num] = (pr, light_by_number.get(num, ""))
 
@@ -510,6 +514,7 @@ def list_relevant_prs(
     self_user: str,
     branches: list[str],
     cache: dict[int, tuple[PR, str]] | None = None,
+    skip_checks: set[str] | None = None,
 ) -> list[PR]:
     """My open PRs (by author search) + newest PR for each local worktree
     branch (any state — OPEN, MERGED, or CLOSED).
@@ -530,7 +535,7 @@ def list_relevant_prs(
         cache = {}
     stale = _identify_stale(light_by_number, cache)
     if stale:
-        _hydrate_stale(owner, name, stale, light_by_number, cache)
+        _hydrate_stale(owner, name, stale, light_by_number, cache, skip_checks)
     for num in list(cache):
         if num not in light_by_number:
             del cache[num]
