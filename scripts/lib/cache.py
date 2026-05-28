@@ -212,8 +212,8 @@ def _resolve_state(state: str, is_draft: bool, review: str) -> str:
 
 
 def refresh_pr_data(branch: str) -> None:
-    """Repopulate pr-state / pr-num / pr-title / pr-muted flat-cache cells
-    for `branch` from the daemon's per-PR JSON snapshot.
+    """Repopulate pr-state / pr-num / pr-title / pr-muted / pr-comments
+    flat-cache cells for `branch` from the daemon's per-PR JSON snapshot.
 
     Empty (no-PR) sentinel = zero-byte file with a fresh mtime; suppresses
     per-render reads during the 60s TTL.
@@ -228,12 +228,14 @@ def refresh_pr_data(branch: str) -> None:
     num_path = branch_cache("pr-num", branch)
     title_path = branch_cache("pr-title", branch)
     muted_path = branch_cache("pr-muted", branch)
+    comments_path = branch_cache("pr-comments", branch)
     data = find_pr_payload(branch)
     if data is None:
         atomic_write(state_path, "")
         atomic_write(num_path, "")
         atomic_write(title_path, "")
         atomic_write(muted_path, "")
+        atomic_write(comments_path, "")
         return
     state = _resolve_state(
         str(data.get("state") or ""),
@@ -242,10 +244,12 @@ def refresh_pr_data(branch: str) -> None:
     )
     number = data.get("number")
     title = data.get("title") or ""
+    unaddressed = int(data.get("unaddressed") or 0)
     atomic_write(state_path, state)
     atomic_write(num_path, str(number) if number else "")
     atomic_write(title_path, str(title))
     atomic_write(muted_path, str(data.get("muted") or ""))
+    atomic_write(comments_path, str(unaddressed) if unaddressed else "")
 
 
 def refresh_pr_checks(branch: str) -> None:
@@ -356,6 +360,7 @@ def write_branch_pr_cache(
     title: str,
     ci_glyph: str = "",
     muted: str = "",
+    comments: int = 0,
 ) -> None:
     """Daemon-tick entrypoint: write pre-resolved PR fields straight to the
     flat cache, no `gh` round-trip needed. Caller (cockpit.py::cycle_repo)
@@ -367,6 +372,8 @@ def write_branch_pr_cache(
     `muted` follows the `pr-muted` flat-cell contract: "" (not muted), "all"
     (full mute), or sorted comma-joined category list (partial). Always
     written so an unmute clears the cell same-tick.
+
+    `comments` is the unaddressed review-thread count from the PR fetch.
     """
     if not branch:
         return
@@ -375,6 +382,7 @@ def write_branch_pr_cache(
     atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
     atomic_write(branch_cache("pr-title", branch), title or "")
     atomic_write(branch_cache("pr-muted", branch), muted)
+    atomic_write(branch_cache("pr-comments", branch), str(comments) if comments else "")
     if ci_glyph:
         atomic_write(branch_cache("pr-checks", branch), ci_glyph)
 
@@ -409,12 +417,16 @@ def republish_pr_caches_from_disk() -> None:
             str(payload.get("review") or ""),
         )
         number = payload.get("number")
+        unaddressed = int(payload.get("unaddressed") or 0)
         atomic_write(branch_cache("pr-state", branch), state)
         atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
         atomic_write(branch_cache("pr-title", branch), str(payload.get("title") or ""))
         atomic_write(branch_cache("pr-muted", branch), str(payload.get("muted") or ""))
         atomic_write(
             branch_cache("pr-checks", branch), _ci_glyph(str(payload.get("ci") or ""))
+        )
+        atomic_write(
+            branch_cache("pr-comments", branch), str(unaddressed) if unaddressed else ""
         )
 
 

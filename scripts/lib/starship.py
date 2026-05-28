@@ -97,6 +97,7 @@ _PR_STATE_ICON: dict[str, str] = {
 ICON_PR_NUM = "🔗"
 ICON_PR_TITLE = "📄"
 ICON_PR_MUTED = "🔇"
+ICON_PR_COMMENTS = "💬"
 
 _PR_CHECKS_COLOR: dict[str, Colorizer] = {
     "✓": green,
@@ -439,6 +440,22 @@ def print_pr_num(branch: str | None = None) -> str:
     if not raw or raw in ("0", "null"):
         return ""
     return f"{ICON_PR_NUM} #{raw}"
+
+
+def print_pr_comments(branch: str | None = None) -> str:
+    branch = branch or _branch()
+    if not branch:
+        return ""
+    raw = read_text(branch_cache("pr-comments", branch))
+    if not raw:
+        return ""
+    try:
+        count = int(raw)
+    except ValueError:
+        return ""
+    if count <= 0:
+        return ""
+    return red(f"{ICON_PR_COMMENTS} {count}")
 
 
 def print_pr_checks(branch: str | None = None) -> str:

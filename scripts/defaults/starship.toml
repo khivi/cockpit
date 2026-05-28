@@ -34,6 +34,7 @@ ${custom.session_time}
 ${custom.linear}\
 ${custom.pr_state}\
 ${custom.pr_num}\
+${custom.pr_comments}\
 ${custom.pr_checks}\
 ${custom.pr_muted}\
 ${custom.pr_title}"""
@@ -132,6 +133,14 @@ when        = "true"
 format      = "(   [$output]($style))"
 style       = "fg:#1f2937"
 description = "GitHub PR number for current branch"
+
+# Unaddressed review-thread count for current branch's PR. Hidden when zero.
+# Red ANSI is emitted by the Python output.
+[custom.pr_comments]
+command     = "__COCKPIT_STARSHIP__ pr-comments"
+when        = "true"
+format      = "(   $output)"
+description = "Unaddressed review thread count for current branch's PR"
 
 # CI status glyph for current branch's PR: ✓ pass | ✗ fail | • pending. Cached 60s.
 # Traffic-light ANSI is emitted by the Python output.

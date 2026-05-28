@@ -92,6 +92,32 @@ def test_write_branch_pr_cache_closed_state_preserved(cache_dir):
     assert (cache_dir / "pr-state-khivi-feature").read_text() == "MERGED"
 
 
+def test_write_branch_pr_cache_writes_comments(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/feature",
+        state="OPEN",
+        is_draft=False,
+        review_decision="CHANGES_REQUESTED",
+        number=20,
+        title="Review me",
+        comments=3,
+    )
+    assert (cache_dir / "pr-comments-khivi-feature").read_text() == "3"
+
+
+def test_write_branch_pr_cache_zero_comments_writes_empty(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/feature",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=21,
+        title="Clean",
+        comments=0,
+    )
+    assert (cache_dir / "pr-comments-khivi-feature").read_text() == ""
+
+
 def test_write_branch_pr_cache_no_branch_noop(cache_dir):
     cache_mod.write_branch_pr_cache(
         "",
@@ -113,6 +139,7 @@ def test_refresh_pr_data_writes_no_pr_sentinel(cache_dir):
     assert (cache_dir / "pr-state-khivi-foo").read_text() == ""
     assert (cache_dir / "pr-num-khivi-foo").read_text() == ""
     assert (cache_dir / "pr-title-khivi-foo").read_text() == ""
+    assert (cache_dir / "pr-comments-khivi-foo").read_text() == ""
 
 
 def test_refresh_pr_data_populates_from_json_snapshot(cache_dir):
@@ -122,12 +149,27 @@ def test_refresh_pr_data_populates_from_json_snapshot(cache_dir):
         "review": "CHANGES_REQUESTED",
         "number": 99,
         "title": "Fix it",
+        "unaddressed": 2,
     }
     with patch.object(cache_mod, "find_pr_payload", return_value=payload):
         cache_mod.refresh_pr_data("khivi/bar")
     assert (cache_dir / "pr-state-khivi-bar").read_text() == "CHANGES_REQUESTED"
     assert (cache_dir / "pr-num-khivi-bar").read_text() == "99"
     assert (cache_dir / "pr-title-khivi-bar").read_text() == "Fix it"
+    assert (cache_dir / "pr-comments-khivi-bar").read_text() == "2"
+
+
+def test_refresh_pr_data_zero_unaddressed_writes_empty(cache_dir):
+    payload = {
+        "state": "OPEN",
+        "isDraft": False,
+        "review": "",
+        "number": 5,
+        "title": "t",
+    }
+    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
+        cache_mod.refresh_pr_data("khivi/clean")
+    assert (cache_dir / "pr-comments-khivi-clean").read_text() == ""
 
 
 def test_refresh_pr_data_resolves_draft(cache_dir):
@@ -277,7 +319,14 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     cache_mod.write_pr_cache("testrepo", pr, wt, pref)
 
     # Wipe the flat cells to simulate an OS tmpdir cleanup, then republish.
-    for stem in ("pr-state", "pr-num", "pr-title", "pr-muted", "pr-checks"):
+    for stem in (
+        "pr-state",
+        "pr-num",
+        "pr-title",
+        "pr-muted",
+        "pr-checks",
+        "pr-comments",
+    ):
         cache_mod.branch_cache(stem, "khivi/feature").unlink(missing_ok=True)
     cache_mod.republish_pr_caches_from_disk()
 
@@ -287,6 +336,7 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     assert (flat / "pr-title-khivi-feature").read_text() == "Fix it"
     assert (flat / "pr-muted-khivi-feature").read_text() == "ci"
     assert (flat / "pr-checks-khivi-feature").read_text() == "✗"
+    assert (flat / "pr-comments-khivi-feature").read_text() == ""
 
 
 def test_republish_pr_caches_no_cache_dir_is_noop(tmp_path, monkeypatch):
