@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -62,6 +63,15 @@ DEFAULT_SLOW_POLL_SECS = 300
 DEFAULT_FAST_POLL_SECS = 30
 MIN_POLL_SECS = 5
 
+_tick_lock = threading.Lock()
+"""Serializes the slow tick (`_once_with`) and fast tick (`_fast_tick`).
+
+The lib.daemon framework is concurrency-agnostic — it calls the tick fns
+unsynchronized from the main loop, the fast-tick background thread, and
+the SIGUSR1 wake path. Both ticks write the same cache cells (git-state +
+PR flat cells), so they serialize themselves here.
+"""
+
 
 def _build_state(args: argparse.Namespace) -> dict:
     return {
@@ -76,19 +86,20 @@ def _build_state(args: argparse.Namespace) -> dict:
 
 
 def _once_with(state: dict) -> None:
-    cfg = load_config()
-    self_user = state.get("self_user") or gh_self_user()
-    state["self_user"] = self_user
-    cycle_all(
-        cfg,
-        self_user,
-        keep_stale=state["keep_stale"],
-        no_spawn=state["no_spawn"],
-        dry=state["dry"],
-        pr_cache=state["pr_cache"],
-        pill_state=state["pill_state"],
-        verbose=state["verbose"],
-    )
+    with _tick_lock:
+        cfg = load_config()
+        self_user = state.get("self_user") or gh_self_user()
+        state["self_user"] = self_user
+        cycle_all(
+            cfg,
+            self_user,
+            keep_stale=state["keep_stale"],
+            no_spawn=state["no_spawn"],
+            dry=state["dry"],
+            pr_cache=state["pr_cache"],
+            pill_state=state["pill_state"],
+            verbose=state["verbose"],
+        )
 
 
 def _fast_tick(state: dict) -> None:
@@ -103,22 +114,24 @@ def _fast_tick(state: dict) -> None:
         (cells live under `$TMPDIR/cockpit-cache/`; JSON survives under
         `$COCKPIT_HOME/cache/`)
 
-    Shares `_tick_lock` with the slow tick (see `lib.daemon._fast_loop`) so
-    the two threads never collide.
+    Acquires module-level `_tick_lock` to serialize with the slow tick —
+    both write the same cache cells. The lib.daemon framework no longer
+    holds a shared lock; concurrency is each tick's own concern.
     """
     if state["dry"]:
         return
-    cfg = load_config()
-    for repo_entry in cfg.get("repos", []):
-        repo_path = Path(os.path.expanduser(repo_entry["path"]))
-        if not repo_path.is_dir():
-            continue
-        try:
-            for wt in worktrees(repo_path):
-                write_git_state_cache(wt.path)
-        except (RuntimeError, OSError):
-            continue
-    republish_pr_caches_from_disk()
+    with _tick_lock:
+        cfg = load_config()
+        for repo_entry in cfg.get("repos", []):
+            repo_path = Path(os.path.expanduser(repo_entry["path"]))
+            if not repo_path.is_dir():
+                continue
+            try:
+                for wt in worktrees(repo_path):
+                    write_git_state_cache(wt.path)
+            except (RuntimeError, OSError):
+                continue
+        republish_pr_caches_from_disk()
 
 
 def _watch(state: dict, watch_secs: int, fast_secs: int) -> None:
