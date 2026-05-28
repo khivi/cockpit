@@ -77,10 +77,19 @@ def _run_footer(env: dict, stdin: bytes = b"{}") -> subprocess.CompletedProcess:
 
 
 def test_footer_smoke_renders(footer_env):
-    env, _cache, _cfg = footer_env
+    """Renderer is daemon-write-only — seed the cwd-keyed git-branch cell
+    the daemon's fast tick would have written, so `branch_pill` has
+    something to render."""
+    env, cache, _cfg = footer_env
+    (cache / f"git-branch-{_cwd_slug()}").write_text("main")
     res = _run_footer(env)
     assert res.returncode == 0, res.stderr.decode()
     assert res.stdout, f"empty footer; stderr={res.stderr!r}"
+
+
+def _cwd_slug() -> str:
+    """Mirror lib.cache._cwd_key for REPO_ROOT (the subprocess's cwd)."""
+    return str(REPO_ROOT.resolve()).replace("/", "-").lstrip("-")
 
 
 def test_footer_renders_context_pill(footer_env):
@@ -203,12 +212,12 @@ def test_footer_golden_full_render(footer_env):
     """
     env, cache, _cfg = footer_env
 
-    # Force a known branch by writing branch caches keyed to one we'll
-    # set GIT_DIR/HEAD for. Simpler: write under the current cwd's
-    # branch, which is what `current_branch(os.getcwd())` returns when
-    # the subprocess runs from this repo.
+    # Renderer is daemon-write-only — seed both the cwd-keyed git-branch
+    # cell (so `branch_pill` resolves) and the branch-keyed PR cells (so
+    # line 2 PR pills render). No live git fallback exists.
     branch = _current_branch()
     branch_key = branch.replace("/", "-")
+    (cache / f"git-branch-{_cwd_slug()}").write_text(branch)
     (cache / f"pr-state-{branch_key}").write_text("APPROVED")
     (cache / f"pr-num-{branch_key}").write_text("9999")
     (cache / f"pr-checks-{branch_key}").write_text("✓")
