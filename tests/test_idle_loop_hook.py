@@ -23,7 +23,15 @@ HOOK = Path(__file__).resolve().parent.parent / "hooks" / "cmux-idle-pill.sh"
 def fake_cmux(tmp_path, monkeypatch) -> Path:
     log = make_shim_on_path(tmp_path, monkeypatch, "cmux")
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
+    # Redirect the hook's operator-debug log into tmp_path so prune tests
+    # control the file and so unrelated test runs don't pollute the real
+    # ~/.config/cockpit/cmux-idle-pill.err.
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
     return log
+
+
+def _err_log(tmp_path: Path) -> Path:
+    return tmp_path / "cmux-idle-pill.err"
 
 
 def _poll_lines(log: Path, expected: int, timeout: float = 1.5) -> list[str]:
@@ -91,7 +99,9 @@ def test_stop_without_loop_tools_clears_loop_and_sets_idle(fake_cmux, tmp_path):
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
     calls = _poll_lines(fake_cmux, expected=2)
     assert any("clear-status loop" in c for c in calls), calls
-    assert any("set-status idle" in c for c in calls), calls
+    # Value must be the literal `idle`: cmux >=0.64.10 rejects empty values,
+    # so any change away from a non-empty marker silently breaks nudge_if_idle.
+    assert any("set-status idle idle" in c for c in calls), calls
     assert not any("set-status loop" in c for c in calls), calls
 
 
@@ -99,7 +109,7 @@ def test_stop_with_missing_transcript_falls_through_to_idle(fake_cmux, tmp_path)
     payload = json.dumps({"transcript_path": str(tmp_path / "nope.jsonl")})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
     calls = _poll_lines(fake_cmux, expected=2)
-    assert any("set-status idle" in c for c in calls), calls
+    assert any("set-status idle idle" in c for c in calls), calls
     assert any("clear-status loop" in c for c in calls), calls
 
 
@@ -109,3 +119,51 @@ def test_no_workspace_id_is_noop(tmp_path, monkeypatch):
     subprocess.run([str(HOOK), "loop-set"], check=True)
     time.sleep(0.1)
     assert not log.exists() or log.read_text() == ""
+
+
+def test_prune_truncates_oversized_log(fake_cmux, tmp_path):
+    err = _err_log(tmp_path)
+    # Distinct head + tail so we can assert which slice was kept.
+    head = b"H" * 80_000
+    tail = b"T" * 8_000
+    original = head + tail
+    err.write_bytes(original)
+    assert len(original) > 65_536
+
+    subprocess.run([str(HOOK), "loop-clear"], check=True)
+    _poll_lines(fake_cmux, expected=1)  # let the hook finish its rotate
+
+    kept = err.read_bytes()
+    # Kept slice must be exactly the last 16 KB of the original — tail
+    # preserved, head dropped beyond the cutoff.
+    assert len(kept) == 16_384, len(kept)
+    assert kept == original[-16_384:]
+
+
+def test_prune_leaves_undersized_log_alone(fake_cmux, tmp_path):
+    err = _err_log(tmp_path)
+    body = b"x" * 10_000  # well under 64 KB threshold
+    err.write_bytes(body)
+
+    subprocess.run([str(HOOK), "loop-clear"], check=True)
+    _poll_lines(fake_cmux, expected=1)
+
+    assert err.read_bytes() == body
+
+
+def test_prune_skipped_when_lock_held(fake_cmux, tmp_path):
+    err = _err_log(tmp_path)
+    err.write_bytes(b"H" * 80_000)
+    original = err.read_bytes()
+    # Simulate a sibling session mid-rotate by pre-creating a fresh lock dir.
+    # The hook's stale-lock reclaim only fires for dirs older than 5 minutes,
+    # so this freshly-mkdir'd one blocks the rotate.
+    lockdir = tmp_path / "cmux-idle-pill.err.lock.d"
+    lockdir.mkdir()
+
+    subprocess.run([str(HOOK), "loop-clear"], check=True)
+    _poll_lines(fake_cmux, expected=1)
+
+    # Lock was held → rotate skipped → file untouched.
+    assert err.read_bytes() == original
+    assert lockdir.is_dir()  # hook must not remove a lock it didn't acquire

@@ -1,11 +1,13 @@
 #!/bin/bash
 # cmux idle + loop pills — owns two related cmux pills for the same workspace:
 #
-#   idle=        — agent parked at the prompt (Stop with no live loop).
-#                  Value is intentionally empty: cmux already renders its own
-#                  `Idle` workspace badge, so the pill is a marker only — read
-#                  by `nudge_if_idle` to decide whether the workspace is safe
-#                  to ping with an actionable PR signal.
+#   idle=idle    — agent parked at the prompt (Stop with no live loop).
+#                  Value is the literal string `idle`: cmux requires a non-empty
+#                  `<value>` argument, but cmux already renders its own `Idle`
+#                  workspace badge so the pill is a key-presence marker only.
+#                  `nudge_if_idle` reads it to decide whether the workspace is
+#                  safe to ping with an actionable PR signal — the value is
+#                  ignored, only the `idle=` key prefix matters.
 #   loop=🔄      — agent is mid-/loop (dynamic ScheduleWakeup or cron). Visual
 #                  only; suppresses idle gating so broadcasters skip the
 #                  workspace while a wakeup is queued.
@@ -41,14 +43,46 @@ set -eu
 
 [ -z "${CMUX_WORKSPACE_ID:-}" ] && exit 0
 
+# Operator-debug log for cmux stderr. Silent failure of `cmux set-status`
+# (e.g. the empty-value rejection that masked this pill being broken for weeks)
+# lands here, prefixed per-line with ISO timestamp + workspace id so multi-
+# session output is attributable. Path mirrors scripts/lib/config.py's
+# COCKPIT_HOME default; respects env override for tests.
+LOG="${COCKPIT_HOME:-$HOME/.config/cockpit}/cmux-idle-pill.err"
+LOCKDIR="$LOG.lock.d"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || exit 0
+
+# Bounded-size rotate. Hook may fire from multiple concurrent Claude sessions
+# in the same worktree; mkdir(2) is a POSIX-atomic CAS lock that serializes the
+# rotate without needing flock (non-portable on macOS). Stale-lock reclaim
+# handles a sibling that crashed mid-rotate.
+if [ -d "$LOCKDIR" ] && [ -n "$(find "$LOCKDIR" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then
+  rmdir "$LOCKDIR" 2>/dev/null
+fi
+if mkdir "$LOCKDIR" 2>/dev/null; then
+  if [ -f "$LOG" ] && [ "$(wc -c <"$LOG" 2>/dev/null || echo 0)" -gt 65536 ]; then
+    tmp="$LOG.tmp.$$"
+    if tail -c 16384 "$LOG" >"$tmp" 2>/dev/null; then
+      mv "$tmp" "$LOG"
+    else
+      rm -f "$tmp"
+    fi
+  fi
+  rmdir "$LOCKDIR" 2>/dev/null
+fi
+
 cmux() {
   # Fire-and-forget: the cmux daemon occasionally stalls under contention
   # (cockpit watcher + every claude session's hook all hitting the socket).
   # Claude Code's hook timeout then kills the script and surfaces a
   # "non-blocking status code" error on every prompt. Detach via subshell +
   # background + stdio redirection so the hook returns in <1ms regardless of
-  # daemon health. Pill update is best-effort by design.
-  ( command cmux "$@" --workspace "$CMUX_WORKSPACE_ID" </dev/null >/dev/null 2>&1 & )
+  # daemon health. Pill update is best-effort by design — stderr is captured
+  # into $LOG (prefixed with timestamp + workspace id) so silent CLI changes
+  # don't go unnoticed for weeks; stdout is discarded.
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  ( { command cmux "$@" --workspace "$CMUX_WORKSPACE_ID" </dev/null >/dev/null; } 2>&1 \
+    | sed "s|^|${ts} [${CMUX_WORKSPACE_ID}] |" >>"$LOG" & )
 }
 
 loop_active_in_transcript() {
@@ -96,7 +130,7 @@ case "${1:-}" in
     # No wakeup armed by the last turn — any prior dynamic /loop has ended.
     # Clear `loop=` so the visual matches reality, then mark idle.
     cmux clear-status loop
-    cmux set-status idle "" --color "#6b7280"
+    cmux set-status idle idle --color "#6b7280"
     ;;
   prompt) cmux clear-status idle ;;
   loop-set) cmux set-status loop "🔄" --color "#a78bfa" ;;
