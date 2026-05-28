@@ -277,7 +277,7 @@ _PR_FIELDS = """
   commits(last: 1) {
     nodes { commit {
       checkSuites(first: 20) { nodes {
-        checkRuns(first: 100) { nodes { status conclusion } }
+        checkRuns(first: 100) { nodes { name status conclusion } }
       } }
       status { contexts { state } }
     } }
@@ -285,6 +285,18 @@ _PR_FIELDS = """
 """
 
 _PR_LIGHT_FIELDS = "number updatedAt"
+
+
+def _is_other(author: dict | None, pr_author: str) -> bool:
+    """True when `author` is definitely not the PR author.
+
+    A null author (GitHub Copilot and some bots return author=null) is treated
+    as non-self because it clearly isn't the PR author's account.
+    """
+    if author is None:
+        return True
+    login = author.get("login")
+    return not login or login != pr_author
 
 
 def _unaddressed(pr_node: dict, pr_author: str) -> tuple[int, int]:
@@ -296,19 +308,12 @@ def _unaddressed(pr_node: dict, pr_author: str) -> tuple[int, int]:
     total = unresolved = 0
     for t in pr_node["reviewThreads"]["nodes"]:
         authors = [c.get("author") for c in t["comments"]["nodes"]]
-        non_self = [
-            a for a in authors if a and a.get("login") and a["login"] != pr_author
-        ]
+        non_self = [a for a in authors if _is_other(a, pr_author)]
         if not non_self:
             continue
         total += 1
         last = authors[-1] if authors else None
-        if (
-            not t["isResolved"]
-            and last
-            and last.get("login")
-            and last["login"] != pr_author
-        ):
+        if not t["isResolved"] and _is_other(last, pr_author):
             unresolved += 1
     for r in pr_node["reviews"]["nodes"]:
         a = r.get("author") or {}
@@ -337,6 +342,7 @@ def _pr_from_node(n: dict) -> PR | None:
             run
             for suite in (suites_field or {}).get("nodes", [])
             for run in (suite.get("checkRuns") or {}).get("nodes", [])
+            if run.get("name") != "copilot-pull-request-reviewer"
         ]
         legacy_contexts = (status_field or {}).get("contexts", []) or []
         pending = sum(

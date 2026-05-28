@@ -9,7 +9,7 @@ the legacy `status.contexts` array — together they cover every signal.
 
 from __future__ import annotations
 
-from scripts.lib.gh import _pr_from_node
+from scripts.lib.gh import _pr_from_node, _unaddressed
 
 
 def _node(check_runs=None, legacy_contexts=None):
@@ -95,6 +95,94 @@ def test_mixed_check_run_and_legacy_failures_sum():
         )
     )
     assert pr.ci == "failed:3"
+
+
+def _thread(*, resolved: bool, authors: list) -> dict:
+    return {
+        "isResolved": resolved,
+        "comments": {"nodes": [{"author": a} for a in authors]},
+    }
+
+
+def _pr_node_with_threads(threads: list, *, author: str = "khivi") -> dict:
+    return {
+        "author": {"login": author, "__typename": "User"},
+        "reviewThreads": {"nodes": threads},
+        "reviews": {"nodes": []},
+    }
+
+
+def test_unaddressed_copilot_null_author_counts_as_reviewer():
+    """GitHub Copilot returns author=null in GraphQL; must still count as
+    an unaddressed thread, not be silently dropped."""
+    node = _pr_node_with_threads([_thread(resolved=False, authors=[None])])
+    unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 1
+    assert total == 1
+
+
+def test_unaddressed_copilot_null_author_resolved_not_counted():
+    node = _pr_node_with_threads([_thread(resolved=True, authors=[None])])
+    unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 0
+    assert total == 1
+
+
+def test_unaddressed_author_replied_after_copilot_not_unresolved():
+    """PR author replying last (after null-author Copilot) resolves the thread."""
+    node = _pr_node_with_threads(
+        [
+            _thread(
+                resolved=False, authors=[None, {"login": "khivi", "__typename": "User"}]
+            )
+        ]
+    )
+    unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 0
+    assert total == 1
+
+
+def test_unaddressed_named_bot_still_counted():
+    """Bots with an explicit login (dependabot, etc.) continue to count."""
+    node = _pr_node_with_threads(
+        [
+            _thread(
+                resolved=False,
+                authors=[{"login": "dependabot[bot]", "__typename": "Bot"}],
+            )
+        ]
+    )
+    unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 1
+    assert total == 1
+
+
+def test_copilot_reviewer_failure_ignored():
+    """copilot-pull-request-reviewer crashes due to GitHub API bugs unrelated
+    to the PR's code; its failure must not count toward ci=failed."""
+    runs = [
+        {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        {
+            "name": "copilot-pull-request-reviewer",
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+        },
+    ]
+    pr = _pr_from_node(_node(runs))
+    assert pr.ci == "passed"
+
+
+def test_copilot_reviewer_excluded_but_real_failure_still_counted():
+    runs = [
+        {"name": "Tests", "status": "COMPLETED", "conclusion": "FAILURE"},
+        {
+            "name": "copilot-pull-request-reviewer",
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+        },
+    ]
+    pr = _pr_from_node(_node(runs))
+    assert pr.ci == "failed:1"
 
 
 def test_null_check_suites_yields_unknown():
