@@ -43,15 +43,18 @@ def _write_driver(
     *,
     watch_secs: int = 1,
     tick_raises_every: int | None = None,
+    fast_secs: int = 0,
 ) -> Path:
     tick_marker = tmp_path / "ticks.log"
     wake_marker = tmp_path / "wake.log"
     stop_marker = tmp_path / "stop.log"
+    fast_marker = tmp_path / "fast.log"
     raise_line = (
         f"if count % {tick_raises_every} == 0: raise RuntimeError('boom-' + str(count))"
         if tick_raises_every
         else "pass"
     )
+    fast_kwarg = f", fast_tick_fn=fast, fast_secs={fast_secs}" if fast_secs > 0 else ""
     body = textwrap.dedent(
         f"""
         import sys
@@ -59,6 +62,7 @@ def _write_driver(
         from scripts.lib.daemon import run_watcher
 
         _count = {{'n': 0}}
+        _fast = {{'n': 0}}
 
         def tick():
             _count['n'] += 1
@@ -66,6 +70,11 @@ def _write_driver(
             with open({str(tick_marker)!r}, 'a') as fh:
                 fh.write(f't{{count}}\\n')
             {raise_line}
+
+        def fast():
+            _fast['n'] += 1
+            with open({str(fast_marker)!r}, 'a') as fh:
+                fh.write(f'f{{_fast["n"]}}\\n')
 
         def wake():
             with open({str(wake_marker)!r}, 'w') as fh:
@@ -75,7 +84,7 @@ def _write_driver(
             with open({str(stop_marker)!r}, 'w') as fh:
                 fh.write('stopped\\n')
 
-        run_watcher(tick, {watch_secs}, on_wake=wake, on_stop=stop)
+        run_watcher(tick, {watch_secs}, on_wake=wake, on_stop=stop{fast_kwarg})
         """
     )
     driver = tmp_path / "driver.py"
@@ -142,6 +151,39 @@ def test_sigusr1_triggers_wake(tmp_path, cockpit_home):
         time.sleep(0.3)
         os.kill(proc.pid, signal.SIGUSR1)
         assert _wait_for(tmp_path / "wake.log"), "wake marker never appeared"
+    finally:
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=5.0)
+
+
+def test_sigusr1_also_triggers_fast_tick(tmp_path, cockpit_home):
+    """SIGUSR1 kicks the slow tick AND runs an immediate fast tick so
+    local-only cells refresh alongside the gh-driven slow pass instead of
+    waiting up to `fast_secs` for the next scheduled fast pass.
+    """
+    fast_marker = tmp_path / "fast.log"
+    driver = _write_driver(tmp_path, watch_secs=60, fast_secs=60)
+    proc = _launch(driver, cockpit_home)
+    try:
+        assert _wait_for(tmp_path / "ticks.log"), "no initial slow tick"
+        # The background fast loop fires at startup too — wait for that
+        # initial line so we can count subsequent kicks separately.
+        assert _wait_for(fast_marker), "no initial fast tick"
+        baseline = len(fast_marker.read_text().splitlines())
+
+        os.kill(proc.pid, signal.SIGUSR1)
+        assert _wait_for(tmp_path / "wake.log"), "wake marker never appeared"
+
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            n = len(fast_marker.read_text().splitlines())
+            if n > baseline:
+                break
+            time.sleep(0.05)
+        n = len(fast_marker.read_text().splitlines())
+        assert (
+            n > baseline
+        ), f"fast tick did not fire on SIGUSR1 (baseline={baseline}, after={n})"
     finally:
         proc.send_signal(signal.SIGTERM)
         proc.wait(timeout=5.0)

@@ -28,12 +28,32 @@ from .config import PID_FILE, ensure_state_dirs
 
 _wake = False
 _stop = threading.Event()
-_tick_lock = threading.Lock()
 
 
 def _on_usr1(_signum, _frame):
     global _wake
     _wake = True
+
+
+def _handle_wake(
+    on_wake: Callable[[], None] | None,
+    fast_tick_fn: Callable[[], None] | None,
+) -> None:
+    """Run on-wake side effects: caller's `on_wake` callback, then an
+    immediate `fast_tick_fn()` so local-only cells refresh alongside the
+    slow tick that the main loop is about to run.
+
+    Errors in `fast_tick_fn` are caught and logged so a transient failure
+    doesn't take down the loop.
+    """
+    if on_wake:
+        on_wake()
+    if fast_tick_fn is not None:
+        try:
+            fast_tick_fn()
+        except Exception as e:
+            ts = datetime.now().isoformat(timespec="seconds")
+            print(f"[{ts}] wake fast-tick error: {e}", file=sys.stderr, flush=True)
 
 
 def run_watcher(
@@ -46,7 +66,10 @@ def run_watcher(
     fast_tick_fn: Callable[[], None] | None = None,
     fast_secs: int = 0,
 ) -> None:
-    """Run `tick_fn()` every `watch_secs`. SIGUSR1 interrupts the sleep to tick now.
+    """Run `tick_fn()` every `watch_secs`. SIGUSR1 interrupts the sleep to
+    tick now AND triggers an immediate `fast_tick_fn()` so local-only cells
+    refresh alongside the kicked slow tick instead of waiting up to
+    `fast_secs` for the next scheduled fast pass.
 
     Refuses to start if a live pidfile exists; stale pidfiles are cleaned up.
 
@@ -56,6 +79,10 @@ def run_watcher(
     refresh more often than the expensive main loop's `gh`-driven cadence.
     Failures in the fast tick are caught and logged but never kill the
     thread — the next fast tick retries.
+
+    Concurrency between slow and fast ticks is each tick fn's own concern —
+    this module no longer holds a shared lock. Tick fns that share writable
+    state should serialize themselves.
     """
     ensure_state_dirs()
     if PID_FILE.exists():
@@ -97,8 +124,7 @@ def run_watcher(
     try:
         while True:
             try:
-                with _tick_lock:
-                    tick_fn()
+                tick_fn()
             except Exception as e:
                 ts = datetime.now().isoformat(timespec="seconds")
                 print(f"[{ts}] watch cycle error: {e}", file=sys.stderr, flush=True)
@@ -108,8 +134,7 @@ def run_watcher(
                 slept += 1
             if _wake:
                 _wake = False
-                if on_wake:
-                    on_wake()
+                _handle_wake(on_wake, fast_tick_fn)
     finally:
         _stop.set()
         if fast_thread is not None:
@@ -122,16 +147,14 @@ def run_watcher(
 def _fast_loop(tick_fn: Callable[[], None], secs: int) -> None:
     """Background fast-tick loop. Exits when `_stop` is set.
 
-    Shares `_tick_lock` with the slow tick — if the slow tick is mid-cycle
-    when the fast tick fires, this thread blocks on the lock until the slow
-    tick releases. Prevents redundant git-state writes (the slow tick already
-    writes those cells in `_write_pr_caches`) and CPU collisions when the
-    fast/slow cadences line up (every 10th fast tick at 30s/300s).
+    No cross-tick lock here — the daemon framework is concurrency-agnostic.
+    If `tick_fn` shares writable state with the slow tick, it must serialize
+    itself (cockpit's `_fast_tick` + `_once_with` share a module-level lock
+    for exactly this).
     """
     while not _stop.is_set():
         try:
-            with _tick_lock:
-                tick_fn()
+            tick_fn()
         except Exception as e:
             ts = datetime.now().isoformat(timespec="seconds")
             print(
