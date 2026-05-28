@@ -245,6 +245,22 @@ def test_print_pr_checks(cache_dir, glyph, expected):
     assert starship.print_pr_checks("khivi/foo") == expected
 
 
+def test_print_pr_comments_with_count(cache_dir):
+    from scripts.lib.colors import red
+
+    (cache_dir / "pr-comments-khivi-foo").write_text("3")
+    assert starship.print_pr_comments("khivi/foo") == red("💬 3")
+
+
+def test_print_pr_comments_zero_is_empty(cache_dir):
+    (cache_dir / "pr-comments-khivi-foo").write_text("0")
+    assert starship.print_pr_comments("khivi/foo") == ""
+
+
+def test_print_pr_comments_empty_cache_is_empty(cache_dir):
+    assert starship.print_pr_comments("khivi/foo") == ""
+
+
 def test_print_pr_state_stale_cell_still_read_no_refresh_spawn(cache_dir):
     """Daemon is the sole writer — stale PR flat cells are still read
     (daemon's fast tick republishes from the persistent JSON), and the

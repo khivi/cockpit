@@ -26,10 +26,10 @@ LINEAR_RE_CI = re.compile(r"[A-Za-z]{2,6}-[0-9]+")
 
 
 def extract_ticket(branch: str) -> str:
-    """Return the first uppercase Linear ticket id in `branch`, or "" if none."""
+    """Return the first Linear ticket id in `branch` (uppercased), or "" if none."""
     if not branch:
         return ""
-    m = LINEAR_RE.search(branch)
+    m = LINEAR_RE.search(branch.upper())
     return m.group(0) if m else ""
 
 

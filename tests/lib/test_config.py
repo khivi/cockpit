@@ -59,6 +59,7 @@ def test_starship_toml_declares_expected_pills():
         "[custom.linear]",
         "[custom.pr_state]",
         "[custom.pr_num]",
+        "[custom.pr_comments]",
         "[custom.pr_checks]",
         "[custom.pr_title]",
     ):
@@ -102,6 +103,7 @@ def test_starship_toml_pr_identity_on_line_two():
         "${custom.linear}",
         "${custom.pr_state}",
         "${custom.pr_num}",
+        "${custom.pr_comments}",
         "${custom.pr_checks}",
         "${custom.pr_title}",
     ):

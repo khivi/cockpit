@@ -520,6 +520,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             title=pr.title,
             ci_glyph=ci_glyph(pr.ci),
             muted=muted_payload(pref),
+            comments=pr.unaddressed,
         )
 
 

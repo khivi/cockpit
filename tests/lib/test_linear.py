@@ -38,6 +38,16 @@ def test_extract_ticket_returns_first_match():
     assert extract_ticket("khivi/PE-1234-add-foo") == "PE-1234"
 
 
+def test_extract_ticket_handles_lowercase_prefix():
+    # Linear generates branch names with lowercase prefixes (e.g. pe-1234)
+    assert extract_ticket("khivi/pe-1234-add-foo") == "PE-1234"
+
+
+def test_extract_ticket_double_ticket_returns_first():
+    # Branch names like pe-4547-pe-4176-foo contain two ticket ids; return the first
+    assert extract_ticket("khivi/pe-4547-pe-4176-async-lifecycle-follow") == "PE-4547"
+
+
 def test_extract_ticket_empty_returns_empty():
     assert extract_ticket("") == ""
     assert extract_ticket("khivi/no-ticket") == ""

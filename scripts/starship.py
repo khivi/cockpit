@@ -16,6 +16,7 @@ Subcommands:
   linear               — Linear ticket ID from branch name
   pr-state             — PR state (OPEN / DRAFT / APPROVED / ...)
   pr-num               — "#<n>" for the current branch's PR
+  pr-comments          — 💬 N unaddressed review threads
   pr-checks            — CI glyph (✓ / • / ✗)
   pr-title             — PR title
   pr-muted             — 🔇 muted[: cats] when nudges are silenced
@@ -40,6 +41,7 @@ from scripts.lib.starship import (  # noqa: E402
     print_model,
     print_permission_mode,
     print_pr_checks,
+    print_pr_comments,
     print_pr_muted,
     print_pr_num,
     print_pr_state,
@@ -81,6 +83,8 @@ def main(argv: list[str]) -> int:
             return _emit(print_pr_state())
         if cmd == "pr-num":
             return _emit(print_pr_num())
+        if cmd == "pr-comments":
+            return _emit(print_pr_comments())
         if cmd == "pr-checks":
             return _emit(print_pr_checks())
         if cmd == "pr-title":
