@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import run
+from .config import load_config
 
 
 def gh_json(args: list[str]) -> dict | list:
@@ -277,7 +278,7 @@ _PR_FIELDS = """
   commits(last: 1) {
     nodes { commit {
       checkSuites(first: 20) { nodes {
-        checkRuns(first: 100) { nodes { status conclusion } }
+        checkRuns(first: 100) { nodes { name status conclusion } }
       } }
       status { contexts { state } }
     } }
@@ -333,10 +334,12 @@ def _pr_from_node(n: dict) -> PR | None:
     if suites_field is None:
         ci = "unknown"
     else:
+        skip_checks = set(load_config().get("ci_skip_checks", []))
         check_runs = [
-            run
+            r
             for suite in (suites_field or {}).get("nodes", [])
-            for run in (suite.get("checkRuns") or {}).get("nodes", [])
+            for r in (suite.get("checkRuns") or {}).get("nodes", [])
+            if r.get("name") not in skip_checks
         ]
         legacy_contexts = (status_field or {}).get("contexts", []) or []
         pending = sum(
