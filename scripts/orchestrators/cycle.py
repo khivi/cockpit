@@ -423,7 +423,12 @@ def _prepare_cycle(
     with ThreadPoolExecutor(max_workers=3) as ex:
         wts_fut = ex.submit(worktrees, repo_path)
         state_fut = None if headless else ex.submit(workspace_state)
-        merged_fut = ex.submit(fetch_merged_branches, repo_path)
+        merged_fut = ex.submit(
+            fetch_merged_branches,
+            owner,
+            name,
+            cutoff_days=int(cfg.get("autoclose_age_days", 14)),
+        )
         wts = wts_fut.result()
         try:
             names, cwds = ({}, {}) if state_fut is None else state_fut.result()

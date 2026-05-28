@@ -10,6 +10,7 @@
   ],
   "poll_interval_seconds": 300,
   "auto_cleanup_on_merge": true,
+  "autoclose_age_days": 14,
   "prompt_prefix": "",
   "use_cship": false,
   "use_linear": false,

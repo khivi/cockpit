@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import run
@@ -48,8 +49,24 @@ def gh_self_user() -> str:
     return run(["gh", "api", "user", "--jq", ".login"]).strip()
 
 
-def fetch_merged_branches(repo_path: Path, limit: int = 100) -> dict[str, str]:
-    """Map branch → head SHA at merge for recently merged PRs in `repo_path`.
+_MERGED_BRANCHES_QUERY = (
+    "query ($search: String!, $cursor: String) {\n"
+    "  search(query: $search, type: ISSUE, first: 100, after: $cursor) {\n"
+    "    pageInfo { endCursor hasNextPage }\n"
+    "    nodes { ... on PullRequest { number headRefName headRefOid } }\n"
+    "  }\n"
+    "}"
+)
+
+
+def fetch_merged_branches(
+    owner: str,
+    name: str,
+    *,
+    cutoff_days: int = 14,
+    max_pages: int = 10,
+) -> dict[str, str]:
+    """Map branch → head SHA at merge for PRs merged in the last `cutoff_days`.
 
     Empty dict on gh failure. `headRefOid` is the commit the PR pointed at when
     it merged; callers use it to distinguish "branch unchanged since merge"
@@ -57,42 +74,45 @@ def fetch_merged_branches(repo_path: Path, limit: int = 100) -> dict[str, str]:
     squash-merged PRs (the squash collapses N commits into 1 with a combined
     patch-id that matches none of the originals).
 
+    Paginated server-side via the `merged:>=<date>` search qualifier so the
+    window scales with merge cadence — a fixed limit dropped the user's own
+    freshly-merged PRs out of the autoclose set on high-cadence repos. The
+    `max_pages` cap (10 × 100 = 1 000 PRs) keeps a runaway repo from
+    monopolizing the tick.
+
     When a branch has been reused across multiple merged PRs (e.g. a branch was
     deleted post-merge then re-created for follow-up work), keep the highest PR
     number — that is the most recent merge, and its headRefOid is the only one
     that should gate autoclose.
     """
-    r = subprocess.run(
-        [
-            "gh",
-            "pr",
-            "list",
-            "--state",
-            "merged",
-            "--limit",
-            str(limit),
-            "--json",
-            "number,headRefName,headRefOid",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=str(repo_path),
-    )
-    if r.returncode != 0:
-        return {}
-    try:
-        rows = json.loads(r.stdout)
-    except json.JSONDecodeError:
-        return {}
+    cutoff = (datetime.now(UTC) - timedelta(days=cutoff_days)).strftime("%Y-%m-%d")
+    search = f"repo:{owner}/{name} is:pr is:merged merged:>={cutoff}"
     latest: dict[str, tuple[int, str]] = {}
-    try:
-        for row in rows:
-            branch = row["headRefName"]
-            num = row["number"]
-            if branch not in latest or num > latest[branch][0]:
-                latest[branch] = (num, row["headRefOid"])
-    except KeyError:
-        return {}
+    cursor: str | None = None
+    for _ in range(max_pages):
+        variables: dict[str, str] = {"search": search}
+        if cursor:
+            variables["cursor"] = cursor
+        try:
+            data = _graphql(_MERGED_BRANCHES_QUERY, variables)
+        except subprocess.CalledProcessError:
+            return {}
+        try:
+            page = data["data"]["search"]
+            for node in page["nodes"]:
+                if not node:
+                    continue
+                branch = node["headRefName"]
+                num = node["number"]
+                oid = node["headRefOid"]
+                if branch not in latest or num > latest[branch][0]:
+                    latest[branch] = (num, oid)
+            info = page["pageInfo"]
+            if not info["hasNextPage"]:
+                break
+            cursor = info["endCursor"]
+        except (KeyError, TypeError):
+            return {}
     return {branch: oid for branch, (_, oid) in latest.items()}
 
 

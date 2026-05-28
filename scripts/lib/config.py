@@ -51,6 +51,7 @@ def load_config() -> dict:
             "slow_poll_interval_seconds": 300,
             "fast_poll_interval_seconds": 30,
             "auto_cleanup_on_merge": True,
+            "autoclose_age_days": 14,
         }
     with CONFIG_PATH.open() as f:
         return json.load(f)
