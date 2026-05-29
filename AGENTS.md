@@ -39,7 +39,7 @@ Always use a dedicated git worktree for any code change. Never commit directly t
 
 When introducing a new cell, the writer goes in `scripts/lib/cache.py` and the call site goes in the daemon's slow tick (decision + snapshot) and/or the fast tick (republish from snapshot). Never let a renderer path consult source state directly — that produces same-render disagreement between fields (one segment reads the snapshot, another reads live state) and was the bug class this design eliminates.
 
-**The single exception is session-scoped cells.** `lib.claude.stash_from_stdin` writes `context-<sid>`, `rate-limit-5h-<sid>`, `model-<sid>`, `permission-mode-<sid>`, and `transcript-path-<sid>` from Claude Code's statusLine stdin in the statusline path (not the daemon). These cannot route through the daemon because the data only exists in the real-time statusLine stream. They are session-scoped and never read by the daemon, so the rule "renderer reads, daemon writes" is preserved for everything the daemon owns. Do not extend this exception to any new cell.
+**The single exception is session-scoped cells.** `lib.claude.stash_from_stdin` writes `context-<sid>`, `rate-limit-5h-<sid>`, `model-<sid>`, `permission-mode-<sid>`, `transcript-path-<sid>`, and `cost-<sid>` from Claude Code's statusLine stdin in the statusline path (not the daemon). These cannot route through the daemon because the data only exists in the real-time statusLine stream. They are session-scoped and never read by the daemon, so the rule "renderer reads, daemon writes" is preserved for everything the daemon owns. Do not extend this exception to any new cell.
 
 ## Release versioning
 

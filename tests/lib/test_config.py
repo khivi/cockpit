@@ -120,6 +120,27 @@ def test_starship_toml_uses_placeholder_for_dispatcher_path():
     assert "/home/" not in body, "starship.toml has a hardcoded linux home path"
 
 
+def test_starship_toml_declares_theme_palettes():
+    """The themed neutral-grey styles must reference the `palette` roles, and
+    both palettes must define every role used. A bare `fg:243` creeping back in
+    silently un-themes that pill; a missing palette entry makes starship drop
+    the style entirely."""
+    body = (DEFAULTS / "starship.toml").read_text()
+    assert 'palette = "__COCKPIT_THEME__"' in body
+    for pal in ("[palettes.dark]", "[palettes.light]"):
+        assert pal in body, f"starship.toml missing {pal}"
+        block = body[body.index(pal) :]
+        block = block[: block.index("\n[", 1)]
+        assert "text_primary" in block, f"{pal} missing text_primary"
+        assert "text_muted" in block, f"{pal} missing text_muted"
+    # The four themed pills point at palette roles, not hardcoded indices.
+    for role in ("fg:text_primary", "fg:text_muted"):
+        assert role in body, f"no style references {role}"
+    # Saturated styles stay literal — they are legible on both backgrounds.
+    assert "bold fg:172" in body, "permission_mode style must stay literal fg:172"
+    assert "bold fg:91" in body, "linear style must stay literal fg:91"
+
+
 def test_footer_install_roundtrip_overwrites_stale_user_config(tmp_path, monkeypatch):
     """Plug-and-play: when the user reinstalls the plugin and runs
     `cockpit --footer`, the bundled defaults MUST clobber whatever's
@@ -223,6 +244,31 @@ def test_footer_install_is_idempotent_and_announces_state(
     assert starship_path.stat().st_mtime_ns == starship_mtime
     assert cship_path.read_bytes() == cship_bytes
     assert starship_path.read_bytes() == starship_bytes
+
+
+def test_theme_substituted_at_install(tmp_path, monkeypatch):
+    """`theme: light` in config seeds `palette = "light"` into the installed
+    starship.toml; the default config seeds `palette = "dark"`. The placeholder
+    must never survive into the installed file."""
+    for theme, expected in (("light", "light"), (None, "dark"), ("bogus", "dark")):
+        cfg = {"repos": [], "use_cship": True}
+        if theme is not None:
+            cfg["theme"] = theme
+        cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, cfg)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        cockpit_config.install_starship_default_config()
+        installed = (tmp_path / "xdg" / "starship.toml").read_text()
+        assert f'palette = "{expected}"' in installed, f"theme={theme!r}"
+        assert "__COCKPIT_THEME__" not in installed
+
+
+def test_resolve_theme_validates():
+    """resolve_theme accepts only dark|light, defaulting everything else to
+    dark so a typo can never blank out the palette."""
+    assert config_mod.resolve_theme({"theme": "dark"}) == "dark"
+    assert config_mod.resolve_theme({"theme": "light"}) == "light"
+    assert config_mod.resolve_theme({"theme": "neon"}) == "dark"
+    assert config_mod.resolve_theme({}) == "dark"
 
 
 from tests.asserts import expected_starship as _expected_starship  # noqa: E402

@@ -331,6 +331,59 @@ def test_print_model_missing_empty(cache_dir):
     assert starship.print_model() == ""
 
 
+# ── field printer: cost ────────────────────────────────────────────────────
+
+
+def test_print_cost_formats_dollars(cache_dir):
+    (cache_dir / "cost").write_text("0.4237")
+    assert starship.print_cost() == slate("💰 $0.42")
+
+
+def test_print_cost_missing_cache_empty(cache_dir):
+    assert starship.print_cost() == ""
+
+
+def test_print_cost_zero_empty(cache_dir):
+    """Zero spend → no pill. Sessions start at $0.00 from Claude Code and we
+    don't want a $0.00 pill flashing at session start."""
+    (cache_dir / "cost").write_text("0.0000")
+    assert starship.print_cost() == ""
+
+
+def test_print_cost_malformed_cache_empty(cache_dir):
+    (cache_dir / "cost").write_text("not-a-number")
+    assert starship.print_cost() == ""
+
+
+def test_print_cost_no_cross_session_fallback(cache_dir, monkeypatch):
+    """Unlike context/rate-limit, cost does NOT fall back to another
+    session's cache — a borrowed dollar amount would misreport this
+    session's spend. The pill stays hidden until this session reports."""
+    (cache_dir / "cost-OTHER").write_text("3.2100")
+    monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH-SID-NO-CACHE-YET")
+    assert starship.print_cost() == ""
+
+
+@pytest.mark.parametrize(
+    "usd,color",
+    [
+        (0.50, slate),
+        (3.21, orange),
+        (7.10, crimson),
+        (15.00, bold_crimson),
+    ],
+    ids=[
+        "tier_slate_under_2",
+        "tier_orange_2_to_4_99",
+        "tier_crimson_5_to_9_99",
+        "tier_bold_crimson_10_plus",
+    ],
+)
+def test_print_cost_tier(cache_dir, usd: float, color: Colorizer):
+    (cache_dir / "cost").write_text(f"{usd:.4f}")
+    assert starship.print_cost() == color(f"💰 ${usd:.2f}")
+
+
 # ── field printer: permission_mode ─────────────────────────────────────────
 
 

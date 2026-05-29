@@ -10,6 +10,7 @@ Subcommands:
   session-time         — current session duration
   rate-limit           — rolling 5h usage %
   model                — Claude model display name
+  cost                 — running session spend in USD
   permission-mode      — current permission mode (hidden when default)
   branch-identity      — current branch + ahead-of-origin + ahead-of-base
   worktree-status      — staged/unstaged/untracked + behind-origin + base-staleness
@@ -37,6 +38,7 @@ from scripts.lib.cache import warm_all  # noqa: E402
 from scripts.lib.starship import (  # noqa: E402
     print_branch_identity,
     print_context,
+    print_cost,
     print_linear,
     print_model,
     print_permission_mode,
@@ -71,6 +73,8 @@ def main(argv: list[str]) -> int:
             return _emit(print_rate_limit())
         if cmd == "model":
             return _emit(print_model())
+        if cmd == "cost":
+            return _emit(print_cost())
         if cmd == "permission-mode":
             return _emit(print_permission_mode())
         if cmd == "branch-identity":

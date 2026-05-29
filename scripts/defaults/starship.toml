@@ -30,6 +30,7 @@ ${custom.ratelimit}\
 ${custom.branch_identity}\
 ${custom.worktree_status}\
 ${custom.permission_mode}\
+${custom.cost}\
 ${custom.session_time}
 ${custom.linear}\
 ${custom.pr_state}\
@@ -40,6 +41,29 @@ ${custom.pr_muted}\
 ${custom.pr_title}"""
 
 add_newline = false
+
+# Theme palette. The literal `__COCKPIT_THEME__` token is replaced with the
+# `theme` value from ~/.config/cockpit/config.json ("dark" | "light") at install
+# time by `install_starship_default_config()` in scripts/lib/config.py. Only the
+# two neutral-grey roles are themed — the near-black greys were the only values
+# with a real contrast problem (see fix d42a1d2). The saturated styles
+# (permission-mode fg:172, linear fg:91) are legible on both backgrounds and stay
+# literal, mirroring the same decision in scripts/lib/colors.py.
+#
+# Palette values are BARE NUMERIC ("243"), not `color_NNN`: starship 1.25.1
+# silently drops `color_NNN` styles inside [custom.*] modules.
+#
+# Changing `theme` takes effect on the next `cockpit --footer` (the only command
+# that re-seeds this file), exactly like any other edit to starship.toml.
+palette = "__COCKPIT_THEME__"
+
+[palettes.dark]
+text_primary = "243"  # model, pr_num — neutral gray on dark bg
+text_muted   = "240"  # session_time, pr_title — dim gray on dark bg
+
+[palettes.light]
+text_primary = "236"  # ≈ original #1f2937, readable on light bg
+text_muted   = "238"  # ≈ original #475569, readable on light bg
 
 # Disable starship's default modules so the format above is authoritative:
 # `format` listing only `${custom.*}` would normally still render the prefix
@@ -58,8 +82,17 @@ disabled = true
 command     = "__COCKPIT_STARSHIP__ model"
 when        = "true"
 format      = "(   [🤖 $output]($style))"
-style       = "fg:#1f2937"
+style       = "fg:text_primary"
 description = "Claude model display name"
+
+# Running Claude Code session spend (e.g. "💰 $0.42"); cached from cost.total_cost_usd
+# in statusLine JSON. Tiered ANSI (slate / orange / crimson / bold_crimson) emitted
+# by the Python output. Hidden until first cost reading arrives.
+[custom.cost]
+command     = "__COCKPIT_STARSHIP__ cost"
+when        = "true"
+format      = "(   $output)"
+description = "Claude Code session spend in USD"
 
 # Claude Code context usage (e.g. "4%/1M"); ceiling cached by cship.py wrapper from display_name.
 # The 🧠 prefix is emitted by the Python output so tiered ANSI can color the whole pill.
@@ -99,7 +132,7 @@ description = "staged/unstaged/untracked + behind + base-staleness"
 command     = "__COCKPIT_STARSHIP__ permission-mode"
 when        = "true"
 format      = "(   [$output]($style))"
-style       = "bold fg:#b45309"
+style       = "bold fg:172"
 description = "Claude Code permission mode"
 
 # Claude Code session duration (e.g. "1h 23m"); cship.py wrapper stashes transcript path each render.
@@ -107,7 +140,7 @@ description = "Claude Code permission mode"
 command     = "__COCKPIT_STARSHIP__ session-time"
 when        = "true"
 format      = "(   [⏱ $output]($style))"
-style       = "fg:#475569"
+style       = "fg:text_muted"
 description = "Claude Code session duration"
 
 # Linear ticket extracted from current branch (e.g. "PRO-123"). Hidden if branch has none.
@@ -115,7 +148,7 @@ description = "Claude Code session duration"
 command     = "__COCKPIT_STARSHIP__ linear"
 when        = "true"
 format      = "(   [◫ $output]($style))"
-style       = "bold fg:#6d28d9"
+style       = "bold fg:91"
 description = "Linear ticket ID from git branch"
 
 # PR state for current branch: OPEN | DRAFT | MERGED | CLOSED | APPROVED | CHANGES_REQUESTED.
@@ -131,7 +164,7 @@ description = "GitHub PR state for current branch"
 command     = "__COCKPIT_STARSHIP__ pr-num"
 when        = "true"
 format      = "(   [$output]($style))"
-style       = "fg:#1f2937"
+style       = "fg:text_primary"
 description = "GitHub PR number for current branch"
 
 # Unaddressed review-thread count for current branch's PR. Hidden when zero.
@@ -155,7 +188,7 @@ description = "GitHub PR CI status for current branch"
 command     = "__COCKPIT_STARSHIP__ pr-title"
 when        = "true"
 format      = "(   [$output]($style))"
-style       = "italic fg:#1f2937"
+style       = "italic fg:text_muted"
 description = "GitHub PR title for current branch"
 
 # Nudge mute indicator. Daemon resolves mute state once per cycle and bakes it
