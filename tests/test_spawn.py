@@ -775,6 +775,78 @@ def test_trailing_addendum_alone_becomes_prompt(spawn_main, cockpit_repo, monkey
     assert "do thing X" in cmd
 
 
+# ── --context-text injection ──────────────────────────────────────────────
+
+
+def test_context_text_injected_into_seeded_prompt(spawn_main, monkeypatch):
+    """`--context-text` is folded into the seeded prompt under a labeled
+    heading, without clobbering the plan-only guard."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    spawn_main(["ctx-feat", "--repo", "testrepo", "--context-text", "goal: fix X"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Caller session context" in cmd
+    assert "goal: fix X" in cmd
+    assert "PLAN ONLY" in cmd  # seeded prompt preserved
+
+
+# ── attach-path prompt delivery (cmux send) ───────────────────────────────
+
+
+def _send_calls(calls):
+    return [c for c in calls if c and c[0] == "send"]
+
+
+def test_attach_delivers_prompt_via_cmux_send(spawn_main, monkeypatch):
+    """Re-spawning onto an EXISTING workspace must deliver the seeded prompt
+    into the running Claude via `cmux send` + Enter — not silently drop it,
+    and not create a second workspace."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        spawn, "workspace_names", lambda: {"workspace:7": "attach-only"}
+    )
+    code, _out, err = spawn_main(["attach-only", "--repo", "testrepo"])
+    assert code == 0
+    sends = _send_calls(spawn_main.cmux_calls)
+    assert sends, "expected a cmux send on attach"
+    assert sends[0][1] == "--workspace" and sends[0][2] == "workspace:7"
+    assert "PLAN ONLY" in sends[0][3]
+    assert any(
+        c[0] == "send-key" and c[1] == "--workspace" and c[-1] == "enter"
+        for c in spawn_main.cmux_calls
+    ), "prompt must be submitted with Enter"
+    assert not any("new-workspace" in c for c in spawn_main.cmux_calls)
+    assert "delivered prompt to existing workspace attach-only" in err
+
+
+def test_attach_delivers_addendum_and_context(spawn_main, monkeypatch):
+    """On attach, the `-- <text>` addendum and `--context-text` both ride into
+    the running session via cmux send, same as a fresh spawn's --command."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    monkeypatch.setattr(spawn, "workspace_names", lambda: {"workspace:9": "ctx-attach"})
+    spawn_main(
+        [
+            "ctx-attach",
+            "--repo",
+            "testrepo",
+            "--context-text",
+            "prior: Y",
+            "--",
+            "next Z",
+        ]
+    )
+    sends = _send_calls(spawn_main.cmux_calls)
+    assert sends
+    sent = sends[0][3]
+    assert "next Z" in sent
+    assert "Caller session context" in sent and "prior: Y" in sent
+
+
 # ── linear team-key routing ───────────────────────────────────────────────
 #
 # When `use_linear: true` and no `--repo`, a positional Linear key is
