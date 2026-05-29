@@ -114,18 +114,42 @@ def _iter_cache(pattern: str):
         yield path, payload
 
 
+def _pr_payload_rank(payload: dict) -> tuple[int, str, int]:
+    """Sort key for choosing among PR snapshots that share a branch; higher
+    wins. Prefer OPEN (incl. draft — draft is state=OPEN) over MERGED/CLOSED,
+    then newer `updatedAt` (ISO-8601 sorts lexically), then higher number.
+
+    `_iter_cache` walks `Path.glob`, whose order is undefined. A branch reused
+    across PRs (an old PR merged, then a new PR opened from the same head)
+    leaves two `{repo}__pr-{N}.json` files carrying the same `branch`; without
+    a deterministic key the flat cells — keyed by branch only — would resolve
+    to whichever snapshot the filesystem happened to yield first.
+    """
+    is_open = 1 if str(payload.get("state") or "").upper() == "OPEN" else 0
+    updated = str(payload.get("updatedAt") or "")
+    try:
+        number = int(payload.get("number") or 0)
+    except (TypeError, ValueError):
+        number = 0
+    return (is_open, updated, number)
+
+
 def find_pr_payload(branch: str, repo_name: str | None = None) -> dict | None:
     """Return the cached PR snapshot whose payload matches `branch`, or None.
 
     If `repo_name` is given, restrict the search to that repo's cache files
-    (prefix-glob). Otherwise scan every cache file.
+    (prefix-glob). Otherwise scan every cache file. When several snapshots
+    share `branch` (reused branch, old PR's JSON still cached), the
+    highest-ranked one wins — see `_pr_payload_rank`.
     """
     pattern = f"{repo_name.replace('/', '_')}__pr-*.json" if repo_name else "*.json"
+    best: dict | None = None
     for _, payload in _iter_cache(pattern):
-        data: dict = payload
-        if data.get("branch") == branch:
-            return data
-    return None
+        if payload.get("branch") != branch:
+            continue
+        if best is None or _pr_payload_rank(payload) > _pr_payload_rank(best):
+            best = payload
+    return best
 
 
 def find_pr_payload_by_number(pr_num: str, repo_name: str | None = None) -> dict | None:
@@ -148,6 +172,41 @@ def delete_pr_caches_for_branch(repo_name: str, branch: str) -> None:
     for path, data in _iter_cache(f"{prefix}__pr-*.json"):
         if data.get("branch") == branch:
             path.unlink(missing_ok=True)
+
+
+def prune_superseded_pr_caches(repo_name: str) -> list[Path]:
+    """Unlink per-PR JSON snapshots that lost to a higher-ranked snapshot on
+    the same branch, returning the paths removed.
+
+    A reused branch (old PR merged, new PR opened from the same head) leaves
+    two `{repo}__pr-{N}.json` files carrying the same `branch`. The read paths
+    (`find_pr_payload`, `republish_pr_caches_from_disk`) already pick the
+    winner deterministically (`_pr_payload_rank`), but the loser lingers until
+    the worktree tears down — and teardown only fires when the worktree is
+    closed, which never happens while the branch is still in use. Dropping the
+    loser here removes the collision at the source.
+
+    Daemon-only writer (slow tick, after the authoritative PR fetch has
+    rewritten current snapshots). Keyed by `repo_name` so one repo's cycle
+    never touches another's snapshots.
+    """
+    prefix = repo_name.replace("/", "_")
+    by_branch: dict[str, list[tuple[Path, dict]]] = {}
+    for path, payload in _iter_cache(f"{prefix}__pr-*.json"):
+        branch = payload.get("branch")
+        if not branch:
+            continue
+        by_branch.setdefault(branch, []).append((path, payload))
+    pruned: list[Path] = []
+    for entries in by_branch.values():
+        if len(entries) < 2:
+            continue
+        winner, _ = max(entries, key=lambda e: _pr_payload_rank(e[1]))
+        for path, _ in entries:
+            if path != winner:
+                path.unlink(missing_ok=True)
+                pruned.append(path)
+    return pruned
 
 
 # ── flat-file render cache (read by starship field printers) ───────────────
@@ -409,10 +468,15 @@ def republish_pr_caches_from_disk() -> None:
     """
     if not CACHE_DIR.is_dir():
         return
+    best_by_branch: dict[str, dict] = {}
     for _, payload in _iter_cache("*__pr-*.json"):
         branch = payload.get("branch")
         if not branch:
             continue
+        cur = best_by_branch.get(branch)
+        if cur is None or _pr_payload_rank(payload) > _pr_payload_rank(cur):
+            best_by_branch[branch] = payload
+    for branch, payload in best_by_branch.items():
         state = _resolve_state(
             str(payload.get("state") or ""),
             bool(payload.get("isDraft")),

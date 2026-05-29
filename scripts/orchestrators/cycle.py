@@ -57,6 +57,7 @@ from scripts.lib.config import ensure_state_dirs
 import scripts.lib.daemon_signal as daemon_signal
 from scripts.lib.cache import (
     muted_payload,
+    prune_superseded_pr_caches,
     write_base_ahead,
     write_base_distance,
     write_branch_pr_cache,
@@ -539,6 +540,10 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             muted=muted_payload(pref),
             comments=pr.unaddressed,
         )
+    # After the live snapshots are on disk, drop any superseded snapshot
+    # sharing a branch (reused branch: old merged PR alongside the live one)
+    # so branch-keyed flat cells resolve deterministically.
+    prune_superseded_pr_caches(ctx.name)
 
 
 def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
