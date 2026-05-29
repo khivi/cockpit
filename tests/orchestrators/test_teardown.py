@@ -279,3 +279,59 @@ def test_teardown_dry_run(tmp_path):
     close_mock.assert_not_called()
     rm_mock.assert_not_called()
     cache_mock.assert_not_called()
+
+
+# ── ownership-aware unpushed baseline ────────────────────────────────────────
+
+
+def test_state_blockers_others_pushed_pr_not_blocked(tmp_path):
+    """A teammate's pushed-but-unmerged PR (commits on its own remote) is clean."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "commits_only_local", return_value=0) as col,
+        patch.object(teardown_mod, "_count_unpushed") as default_baseline,
+    ):
+        blockers = worktree_state_blockers(wt, branch="alice/feat", is_mine=False)
+    assert blockers == []
+    col.assert_called_once_with(wt, "alice/feat")
+    default_baseline.assert_not_called()
+
+
+def test_state_blockers_others_local_commits_still_block(tmp_path):
+    """Commits that exist only locally block even on someone else's branch."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "commits_only_local", return_value=2),
+    ):
+        blockers = worktree_state_blockers(wt, branch="alice/feat", is_mine=False)
+    assert blockers == ["2 unpushed commit(s)"]
+
+
+def test_state_blockers_mine_uses_default_baseline(tmp_path):
+    """Our own pushed-but-unmerged branch still blocks (default-branch baseline)."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=3),
+        patch.object(teardown_mod, "commits_only_local") as remote_baseline,
+    ):
+        blockers = worktree_state_blockers(wt, branch="khivi/feat", is_mine=True)
+    assert blockers == ["3 unpushed commit(s)"]
+    remote_baseline.assert_not_called()
+
+
+def test_state_blockers_others_dirty_still_hard(tmp_path):
+    """Dirty is always hard, independent of ownership."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=1),
+        patch.object(teardown_mod, "commits_only_local", return_value=0),
+    ):
+        blockers = worktree_state_blockers(wt, branch="alice/feat", is_mine=False)
+    assert blockers == ["1 uncommitted file(s)"]

@@ -3,10 +3,14 @@
 
 Workflow:
   1. Resolve target (from query arg, or from `cwd` when no arg).
-  2. Hard refuse on dirty / unpushed (these protect unsaved work and are
-     never `--force`-overridable — only autoclose, which pre-validates
-     cleanliness, can tear down such worktrees).
-  3. Refuse on open-PR unless `--force` is given.
+  2. Hard refuse on dirty, or on commits that exist only locally (these
+     protect unsaved/unpushed work and are never `--force`-overridable). For
+     our own branches, "unpushed" also means "not yet merged to the default
+     branch"; for someone else's PR worktree (checked out for review) it means
+     only "not on that PR's remote branch", so a teammate's pushed-but-unmerged
+     PR does not hard-block.
+  3. Refuse on open-PR unless `--force` is given. Combined with (2), `--force`
+     can tear down a teammate's open-PR worktree once their commits are pushed.
   4. Require a running daemon: write a close-request marker under
      `$COCKPIT_HOME/state/close-requests/` and SIGUSR1-kick it — the daemon
      drains and runs `teardown` outside this shell, so we don't yank the
@@ -50,7 +54,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--force",
         action="store_true",
-        help="override open-PR refusal (does not override dirty/unpushed)",
+        help=(
+            "override open-PR refusal (and lets you close a teammate's pushed "
+            "PR worktree); does not override dirty or local-only commits"
+        ),
     )
     return p.parse_args()
 
@@ -121,7 +128,10 @@ def main() -> int:
     branch = wt.branch if wt is not None else None
     wt_path = wt.path if wt is not None else None
 
-    hard = worktree_state_blockers(wt_path)
+    prefix = (repo_cfg or {}).get("branch_prefix", "")
+    is_mine = branch.startswith(prefix) if (prefix and branch is not None) else True
+
+    hard = worktree_state_blockers(wt_path, branch=branch, is_mine=is_mine)
     if hard:
         print(
             f"ERROR: refusing to close {label}: "
@@ -131,7 +141,7 @@ def main() -> int:
         )
         return 1
 
-    blockers = probe_blockers(wt_path, branch, repo_name)
+    blockers = probe_blockers(wt_path, branch, repo_name, is_mine=is_mine)
     if blockers and not args.force:
         print(
             f"ERROR: refusing to close {label}: "
