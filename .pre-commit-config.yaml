@@ -19,6 +19,16 @@ repos:
       - id: check-executables-have-shebangs
       - id: check-shebang-scripts-are-executable
       - id: detect-private-key
+      - id: check-toml
+      - id: debug-statements
+      - id: no-commit-to-branch
+        args: ['--branch', 'main', '--branch', 'master']
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        exclude: ^\.envrc$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.8.6
@@ -26,12 +36,7 @@ repos:
       - id: ruff
         args: ['--fix']
         types_or: [python, pyi]
-
-  - repo: https://github.com/psf/black
-    rev: 25.12.0
-    hooks:
-      - id: black
-        args: ['--quiet']
+      - id: ruff-format
         types_or: [python, pyi]
 
   - repo: https://github.com/rhysd/actionlint
@@ -50,6 +55,11 @@ repos:
     hooks:
       - id: codespell
         args: ['--config', '.codespellrc']
+
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: v0.25
+    hooks:
+      - id: validate-pyproject
 
   - repo: local
     hooks:

@@ -11,7 +11,7 @@ import argparse
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .nudges import (
     KNOWN_CATEGORIES,
@@ -64,7 +64,7 @@ def _resolve_pr(arg_pr: int | None) -> int:
 def _fmt_until(until: float | None) -> str:
     if until is None:
         return "forever"
-    dt = datetime.fromtimestamp(until, tz=timezone.utc).astimezone()
+    dt = datetime.fromtimestamp(until, tz=UTC).astimezone()
     return dt.strftime("%Y-%m-%d %H:%M %Z")
 
 

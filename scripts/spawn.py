@@ -96,8 +96,10 @@ from scripts.lib.config import (
     find_repo_by_name,
     find_repo_by_nwo,
     find_repos_by_linear_key,
-    use_linear as cfg_use_linear,
 )  # noqa: E402
+from scripts.lib.config import (
+    use_linear as cfg_use_linear,
+)
 from scripts.lib.daemon_signal import kick_running  # noqa: E402
 from scripts.lib.gh import (  # noqa: E402
     fetch_pr_info,

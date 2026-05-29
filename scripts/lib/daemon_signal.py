@@ -23,8 +23,8 @@ import os
 import signal
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .config import COCKPIT_HOME, PID_FILE
 from .teardown_types import TeardownRequest

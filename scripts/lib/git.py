@@ -173,7 +173,7 @@ def worktrees(repo_dir: Path) -> list[Worktree]:
         return count_dirty(w.path), _count_unpushed(w.path)
 
     with ThreadPoolExecutor(max_workers=max(1, len(wts))) as ex:
-        for wt, (d, u) in zip(wts, ex.map(_stats, wts)):
+        for wt, (d, u) in zip(wts, ex.map(_stats, wts), strict=False):
             wt.dirty_count, wt.unpushed = d, u
     return wts
 

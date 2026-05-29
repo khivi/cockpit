@@ -12,6 +12,8 @@ import json as _json
 from tests.asserts import expected_starship as _expected_starship
 from tests.fixtures import (
     make_bin_on_path as _make_bin_on_path,
+)
+from tests.fixtures import (
     setup_cockpit_config as _setup_cockpit_config,
 )
 

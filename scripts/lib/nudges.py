@@ -41,7 +41,7 @@ class NudgePref:
         }
 
     @classmethod
-    def from_json(cls, data: dict) -> "NudgePref":
+    def from_json(cls, data: dict) -> NudgePref:
         return cls(
             disabled_categories=set(data.get("disabled_categories") or []),
             until=data.get("until"),
@@ -121,9 +121,7 @@ def should_nudge(
     """
     t = time.time() if now is None else now
     pref = load_pref(pr_number, now=t)
-    if category in pref.disabled_categories:
-        return False
-    return True
+    return category not in pref.disabled_categories
 
 
 def record_nudge(pr_number: int, category: str, *, now: float | None = None) -> None:

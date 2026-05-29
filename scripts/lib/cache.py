@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from .nudges import NudgePref
 
 
-def muted_payload(pref: "NudgePref | None") -> str:
+def muted_payload(pref: NudgePref | None) -> str:
     """Serialize a NudgePref into the `pr-muted` flat-cell contract.
 
     Returns "" when not muted, "all" for full mute, or a sorted comma-joined
@@ -64,9 +64,9 @@ def muted_payload(pref: "NudgePref | None") -> str:
 
 def write_pr_cache(
     repo_name: str,
-    pr: "PR",
-    wt: "Worktree | None" = None,
-    pref: "NudgePref | None" = None,
+    pr: PR,
+    wt: Worktree | None = None,
+    pref: NudgePref | None = None,
 ) -> dict:
     """Write a JSON snapshot of `pr` to the cache dir and return the payload.
 
@@ -248,12 +248,12 @@ def branch_cache(stem: str, branch: str) -> Path:
     return _ensure_flat_cache_dir() / f"{stem}-{_branch_key(branch)}"
 
 
-def _cwd_key(cwd: "os.PathLike[str] | str") -> str:
+def _cwd_key(cwd: os.PathLike[str] | str) -> str:
     """Filesystem-safe slug for an absolute cwd: `/` → `-`, leading dash stripped."""
     return str(Path(cwd).resolve()).replace("/", "-").lstrip("-")
 
 
-def cwd_cache(stem: str, cwd: "os.PathLike[str] | str") -> Path:
+def cwd_cache(stem: str, cwd: os.PathLike[str] | str) -> Path:
     """Per-cwd flat-cache cell (mirrors `branch_cache` but keyed by path slug).
 
     Git-state cells are keyed by cwd rather than branch because the branch
@@ -330,7 +330,7 @@ def refresh_pr_checks(branch: str) -> None:
     atomic_write(cache, _ci_glyph(str(data.get("ci") or "")))
 
 
-def write_git_state_cache(cwd: "os.PathLike[str] | str") -> None:
+def write_git_state_cache(cwd: os.PathLike[str] | str) -> None:
     """Snapshot `cwd`'s local git state (branch + status counts + ahead/behind
     of origin) into three flat cells. Reader-side replacement for the
     `git rev-parse` / `git status` / `git rev-list` calls that the footer's

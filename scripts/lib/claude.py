@@ -78,13 +78,13 @@ def stash_from_stdin(blob: bytes) -> tuple[bytes, str | None]:
     if isinstance(ctx, dict):
         pct = ctx.get("used_percentage")
         limit = ctx.get("context_window_size")
-        if isinstance(pct, (int, float)) and isinstance(limit, int) and limit > 0:
+        if isinstance(pct, int | float) and isinstance(limit, int) and limit > 0:
             atomic_write(session_cache("context", sid), f"{int(pct)} {int(limit)}")
 
     cost = data.get("cost")
     if isinstance(cost, dict):
         usd = cost.get("total_cost_usd")
-        if isinstance(usd, (int, float)) and usd >= 0:
+        if isinstance(usd, int | float) and usd >= 0:
             atomic_write(session_cache("cost", sid), f"{float(usd):.4f}")
 
     rate_limits = data.get("rate_limits")
@@ -93,7 +93,7 @@ def stash_from_stdin(blob: bytes) -> tuple[bytes, str | None]:
         if isinstance(five, dict):
             pct = five.get("used_percentage")
             resets = five.get("resets_at")
-            if isinstance(pct, (int, float)) and resets not in (None, ""):
+            if isinstance(pct, int | float) and resets not in (None, ""):
                 atomic_write(
                     session_cache("rate-limit-5h", sid),
                     f"{int(round(pct))} {resets}",

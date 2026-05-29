@@ -35,9 +35,9 @@ from scripts.lib.cmux import (  # noqa: E402
     workspace_names,
 )
 from scripts.lib.config import discover_repo  # noqa: E402
-from scripts.lib.tool import resolve_tool  # noqa: E402
 from scripts.lib.daemon_signal import enqueue, kick_running  # noqa: E402
 from scripts.lib.git import worktrees  # noqa: E402
+from scripts.lib.tool import resolve_tool  # noqa: E402
 from scripts.orchestrators.teardown import (  # noqa: E402
     TeardownRequest,
     probe_blockers,

@@ -19,18 +19,17 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import run
+from . import run, tool
 from .cache import find_pr_payload_by_number
 from .colors import CMUX_COLOR_ANSI, bold, dim
 from .config import discover_repo
-from .issue_color import issue_color
-from .log_format import verb
 from .gh import PR
 from .git import Worktree, worktrees
+from .issue_color import issue_color
+from .log_format import verb
 from .nudges import NudgePref
 from .pills import decide_pills
 from .prompts import build_orphan_prompt, build_pr_prompt, claude_command
-from . import tool
 
 GREEN = "#16a34a"
 RED = "#eb445a"
