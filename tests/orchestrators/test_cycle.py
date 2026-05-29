@@ -203,6 +203,7 @@ def test_cmux_close_runs_before_remove_worktree(tmp_path):
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
         patch.object(teardown_mod, "worktrees", return_value=[]),
         patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+        patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -230,6 +231,7 @@ def test_autoclose_dry_run_calls_neither(tmp_path):
         patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree") as remove_mock,
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -257,6 +259,7 @@ def test_autoclose_remove_failure_still_closes_cmux_and_skips_cache_delete(tmp_p
         patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree", return_value=(False, "boom")),
         patch.object(teardown_mod, "delete_pr_caches_for_branch") as cache_mock,
+        patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -276,8 +279,9 @@ def test_autoclose_remove_failure_still_closes_cmux_and_skips_cache_delete(tmp_p
 # ────────────────────────────────────────────────────────────────────────────
 # Smart-skip: don't autoclose merged worktrees whose PR signals the author
 # may still want to revisit (draft / CI not passing / unaddressed threads).
-# Authoritative merge signal is `gh pr list --state merged` — the commit graph
-# is not consulted, so squash- and rebase-merges work uniformly.
+# Authoritative merge signal is `gh pr list --state merged`; teardown is then
+# gated by `is_ancestor` (merge head still reachable from HEAD) so a reused
+# branch name is kept while a squash-merge + pull-main worktree still reaps.
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -300,6 +304,7 @@ def test_autoclose_smart_skip_on_pr_signals(tmp_path, pr_kwargs, reason):
         patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree") as remove_mock,
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -329,6 +334,7 @@ def test_autoclose_fires_when_no_pr_in_list(tmp_path):
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
         patch.object(teardown_mod, "worktrees", return_value=[]),
         patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+        patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -344,29 +350,26 @@ def test_autoclose_fires_when_no_pr_in_list(tmp_path):
     close_mock.assert_called_once()
 
 
-def test_autoclose_does_not_consult_commit_graph(tmp_path):
-    """Regression: squash-merge + pull-main case.
+def test_autoclose_reaps_when_merge_head_still_reachable(tmp_path):
+    """Squash-merge + pull-main case (#98 invariant, stated correctly).
 
-    Before the smart-skip refactor, autoclose used `count_commits_since(wt,
-    merged_head)` to gate teardown. After a squash-merge, that SHA stays
-    reachable from the worktree (the branch tip itself was preserved), but
-    pulling main on top moves HEAD forward — `count_commits_since` would
-    return > 0 and the worktree would never autoclose. The fix is to trust
-    `gh pr list --state merged` and never call into the commit graph.
-
-    This test asserts the implementation does not call `count_commits_since`.
+    A worktree that squash-merged then pulled main on top has a HEAD that
+    advanced past the merge head — so a `count_commits_since == 0` gate would
+    wrongly skip it forever. But the merge head is still an *ancestor* of HEAD,
+    so the reachability gate (`is_ancestor`) keeps reaping it. The gate consults
+    the commit graph; what it must not do is require HEAD == merge head.
     """
     wt_path = tmp_path / "repo-feat"
     wt_path.mkdir()
     wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
 
     with (
-        patch.object(teardown_mod, "cmux_close_workspace_best_effort"),
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree", return_value=(True, "")),
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
         patch.object(teardown_mod, "worktrees", return_value=[]),
         patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
-        patch.object(cycle, "count_commits_since") as count_mock,
+        patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -379,7 +382,40 @@ def test_autoclose_does_not_consult_commit_graph(tmp_path):
             dry=False,
         )
 
-    count_mock.assert_not_called()
+    close_mock.assert_called_once()
+
+
+def test_autoclose_keeps_reused_branch_name(tmp_path):
+    """Regression for the #81 nuke: a branch name reused after its old PR merged.
+
+    `merged_branches` still lists the branch (the old merge's headRefOid), but
+    the freshly re-created worktree's HEAD is on a different lineage, so the
+    merge head is NOT an ancestor of HEAD. The worktree must survive — tearing
+    it down nukes a workspace the user created moments earlier.
+    """
+    wt_path = tmp_path / "repo-todo"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/todo", dirty_count=0)
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(cycle, "is_ancestor", return_value=False),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/todo": "979e571"},
+            cwds={"ws-ref": wt_path},
+            prs=[],
+            dry=False,
+        )
+
+    close_mock.assert_not_called()
+    remove_mock.assert_not_called()
 
 
 def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
@@ -392,6 +428,7 @@ def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
         patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree") as remove_mock,
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},

@@ -74,8 +74,8 @@ from scripts.lib.git import (
     Worktree,
     ahead_of_base,
     behind_of_base,
-    count_commits_since,
     ff_default_branch_worktrees,
+    is_ancestor,
     log_ff_advances,
     origin_head_branch,
     worktrees,
@@ -189,11 +189,20 @@ def _orphan_snapshot(
 
 
 def _is_post_merge_stale(wt: Worktree, merged_branches: dict[str, str]) -> bool:
-    """True if `wt`'s branch matches a merged PR and HEAD has not advanced past it."""
+    """True if `wt`'s branch matches a merged PR whose head is still contained
+    in HEAD — i.e. the merged work lives here and nothing has diverged onto a
+    fresh lineage.
+
+    Gated by reachability (`is_ancestor`), not commit count, so it stays True
+    when the worktree pulled main on top of a squash-merge (the merge head
+    remains an ancestor) yet flips False when the branch name was reused for new
+    work after the old PR merged (the new HEAD no longer descends from the merge
+    head). See `is_ancestor` for the full case table.
+    """
     merged_head = merged_branches.get(wt.branch)
     if merged_head is None:
         return False
-    return count_commits_since(wt.path, merged_head) == 0
+    return is_ancestor(wt.path, merged_head)
 
 
 def _is_orphan_main_sibling(wt: Worktree) -> bool:
@@ -267,11 +276,19 @@ def _maybe_autoclose(
     merged PR if needed.
 
     Authoritative merge signal: `gh pr list --state merged` (via
-    `merged_branches`). The commit graph cannot prove "branch work is in main"
-    for squash- or rebase-merges (the resulting SHAs differ from the branch),
-    so any `rev-list`-based gate misclassifies a worktree that pulled main on
-    top of a squash-merged branch as "advanced past merge" and never cleans up.
-    Trust GitHub's merge state instead.
+    `merged_branches`), which maps each branch to the `headRefOid` it pointed at
+    when merged. A branch being *present* in that map is not enough — a branch
+    name reused for new work after its old PR merged (delete-and-recreate, or a
+    reset onto a different lineage) is still listed, and tearing it down nukes a
+    worktree the user just created. Gate on `_is_post_merge_stale` instead: keep
+    only worktrees whose HEAD still descends from the recorded merge head.
+
+    That reachability gate cannot prove "branch work is in main" for squash- or
+    rebase-merges (the resulting SHAs differ) — but it does not need to. It asks
+    the answerable question, "is the merge head still in this worktree's
+    history", which stays True after a squash-merge + `git pull` main (the merge
+    head remains an ancestor) and only goes False when the branch diverged onto
+    a fresh lineage. So the squash-then-pull-main worktree still cleans up.
 
     Smart-skip on PR signals the author likely still wants to revisit before
     cleanup: draft, CI not passing, or unaddressed review threads.
@@ -289,7 +306,7 @@ def _maybe_autoclose(
             if _is_orphan_main_sibling(wt):
                 _teardown_worktree(wt, cwds, repo_path, repo_name, dry=dry)
             continue
-        if merged_branches.get(wt.branch) is None:
+        if not _is_post_merge_stale(wt, merged_branches):
             continue
         if wt.dirty_count > 0:
             print(
