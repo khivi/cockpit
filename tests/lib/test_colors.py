@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+from typing import Callable
 
 import pytest
 
@@ -45,7 +46,7 @@ def _reload_with(tmp_path, monkeypatch, cfg: dict | None):
     return importlib.reload(colors_mod)
 
 
-def _code(colorizer) -> str:
+def _code(colorizer: Callable[[str], str]) -> str:
     """Extract the SGR parameter string from a colorizer's output."""
     wrapped = colorizer("X")
     return wrapped[wrapped.index("[") + 1 : wrapped.index("m")]
