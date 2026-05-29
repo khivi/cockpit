@@ -204,7 +204,9 @@ def test_workspace_names_parses_limux_uuid_refs():
     with patch("scripts.lib.cmux.cmux", return_value=output):
         result = workspace_names()
         assert result["workspace:850fee36-6efb-48b1-91cc-27225bb45c44"] == "needl-ai"
-        assert result["workspace:65160839-6664-4325-9d3c-bf272aa7d13a"] == "feature-branch"
+        assert (
+            result["workspace:65160839-6664-4325-9d3c-bf272aa7d13a"] == "feature-branch"
+        )
 
 
 def test_workspace_cwds_parses_ok_when_cmux_ok():
@@ -287,9 +289,9 @@ def test_close_workspace_best_effort_passes_workspace_flag():
         cmux_close_workspace_best_effort("workspace:abc-123-def")
 
     close_call = next(c for c in calls if c[0] == "close-workspace")
-    assert "--workspace" in close_call, (
-        f"close-workspace must use --workspace flag, got {close_call}"
-    )
+    assert (
+        "--workspace" in close_call
+    ), f"close-workspace must use --workspace flag, got {close_call}"
     assert "workspace:abc-123-def" in close_call
 
 
