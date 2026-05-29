@@ -331,6 +331,61 @@ def test_print_model_missing_empty(cache_dir):
     assert starship.print_model() == ""
 
 
+# ── field printer: cost ────────────────────────────────────────────────────
+
+
+def test_print_cost_formats_dollars(cache_dir):
+    (cache_dir / "cost").write_text("0.4237")
+    assert starship.print_cost() == slate("💰 $0.42")
+
+
+def test_print_cost_missing_cache_empty(cache_dir):
+    assert starship.print_cost() == ""
+
+
+def test_print_cost_zero_empty(cache_dir):
+    """Zero spend → no pill. Sessions start at $0.00 from Claude Code and we
+    don't want a $0.00 pill flashing at session start."""
+    (cache_dir / "cost").write_text("0.0000")
+    assert starship.print_cost() == ""
+
+
+def test_print_cost_malformed_cache_empty(cache_dir):
+    (cache_dir / "cost").write_text("not-a-number")
+    assert starship.print_cost() == ""
+
+
+def test_print_cost_fresh_session_falls_back_to_latest(cache_dir, monkeypatch):
+    """Fresh-session regression — same as context/rate-limit: cost may be
+    absent in the first ping, fall back to the most recent cache."""
+    (cache_dir / "cost-OLD").write_text("0.1000")
+    time.sleep(0.01)
+    (cache_dir / "cost-NEWER").write_text("3.2100")
+    monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH-SID-NO-CACHE-YET")
+    out = starship.print_cost()
+    assert "$3.21" in out
+
+
+@pytest.mark.parametrize(
+    "usd,color",
+    [
+        (0.50, slate),
+        (3.21, orange),
+        (7.10, crimson),
+        (15.00, bold_crimson),
+    ],
+    ids=[
+        "tier_slate_under_2",
+        "tier_orange_2_to_4_99",
+        "tier_crimson_5_to_9_99",
+        "tier_bold_crimson_10_plus",
+    ],
+)
+def test_print_cost_tier(cache_dir, usd: float, color: Colorizer):
+    (cache_dir / "cost").write_text(f"{usd:.4f}")
+    assert starship.print_cost() == color(f"💰 ${usd:.2f}")
+
+
 # ── field printer: permission_mode ─────────────────────────────────────────
 
 

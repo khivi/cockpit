@@ -144,3 +144,49 @@ def test_stash_skips_empty_permission_mode(cache_dir):
     blob = json.dumps({"session_id": "S", "permission_mode": ""}).encode()
     claude_mod.stash_from_stdin(blob)
     assert not (cache_dir / "permission-mode-S").exists()
+
+
+# ── stash: cost cache ──────────────────────────────────────────────────────
+
+
+def test_stash_writes_cost_cache(cache_dir):
+    blob = json.dumps(
+        {
+            "session_id": "S",
+            "cost": {"total_cost_usd": 0.4237},
+        }
+    ).encode()
+    claude_mod.stash_from_stdin(blob)
+    assert (cache_dir / "cost-S").read_text() == "0.4237"
+
+
+def test_stash_writes_zero_cost(cache_dir):
+    """Zero is a valid cost (session just started). The emitter hides
+    the pill at $0.00, but the cache write itself must not skip — that
+    way a refresh from a non-zero back to zero (rare, but possible if
+    Claude Code reports per-message cost) keeps the cache in sync."""
+    blob = json.dumps({"session_id": "S", "cost": {"total_cost_usd": 0}}).encode()
+    claude_mod.stash_from_stdin(blob)
+    assert (cache_dir / "cost-S").read_text() == "0.0000"
+
+
+def test_stash_skips_missing_cost(cache_dir):
+    blob = json.dumps({"session_id": "S"}).encode()
+    claude_mod.stash_from_stdin(blob)
+    assert not (cache_dir / "cost-S").exists()
+
+
+def test_stash_skips_non_numeric_cost(cache_dir):
+    blob = json.dumps(
+        {"session_id": "S", "cost": {"total_cost_usd": "not-a-number"}}
+    ).encode()
+    claude_mod.stash_from_stdin(blob)
+    assert not (cache_dir / "cost-S").exists()
+
+
+def test_stash_skips_negative_cost(cache_dir):
+    """Defensive: negative cost shouldn't be possible, but if Claude Code
+    ever ships a bug that sends one, don't poison the cache."""
+    blob = json.dumps({"session_id": "S", "cost": {"total_cost_usd": -1.5}}).encode()
+    claude_mod.stash_from_stdin(blob)
+    assert not (cache_dir / "cost-S").exists()
