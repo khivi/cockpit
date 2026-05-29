@@ -14,5 +14,6 @@
   "prompt_prefix": "",
   "use_cship": false,
   "use_linear": false,
-  "tool": "auto"
+  "tool": "auto",
+  "theme": "dark"
 }

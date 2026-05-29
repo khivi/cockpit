@@ -42,6 +42,19 @@ STARSHIP_DEFAULT_TOML = (
 )
 STARSHIP_PY = Path(__file__).resolve().parent.parent / "starship.py"
 STARSHIP_PLACEHOLDER = "__COCKPIT_STARSHIP__"
+STARSHIP_THEME_PLACEHOLDER = "__COCKPIT_THEME__"
+VALID_THEMES = ("dark", "light")
+
+
+def resolve_theme(cfg: dict | None = None) -> str:
+    """Return the validated `theme` from config ("dark" | "light").
+
+    Anything missing or unrecognized falls back to "dark" — the palette tuned
+    for dark terminal backgrounds (see scripts/defaults/starship.toml). `cfg`
+    is accepted so callers that already hold a loaded config avoid a second read.
+    """
+    theme = (cfg if cfg is not None else load_config()).get("theme", "dark")
+    return theme if theme in VALID_THEMES else "dark"
 
 
 def load_config() -> dict:
@@ -53,6 +66,7 @@ def load_config() -> dict:
             "auto_cleanup_on_merge": True,
             "autoclose_age_days": 14,
             "ci_skip_checks": ["copilot-pull-request-reviewer"],
+            "theme": "dark",
         }
     with CONFIG_PATH.open() as f:
         return json.load(f)
@@ -319,14 +333,21 @@ def install_starship_default_config() -> None:
     starship spawns commands without changing cwd, so paths in the seeded
     file must be absolute. Re-running `cockpit --footer` after the plugin
     moves on disk re-substitutes with the new location.
+
+    Also substitutes `__COCKPIT_THEME__` with the validated `theme` from
+    config ("dark" | "light") so starship's `palette` selector picks the
+    background-appropriate neutral greys. Because this is baked at seed time,
+    changing `theme` takes effect on the next `cockpit --footer`.
     """
     if not load_config().get("use_cship"):
         return
     if not STARSHIP_DEFAULT_TOML.exists():
         return
     dest = _starship_user_config_path()
-    payload = STARSHIP_DEFAULT_TOML.read_text().replace(
-        STARSHIP_PLACEHOLDER, str(STARSHIP_PY)
+    payload = (
+        STARSHIP_DEFAULT_TOML.read_text()
+        .replace(STARSHIP_PLACEHOLDER, str(STARSHIP_PY))
+        .replace(STARSHIP_THEME_PLACEHOLDER, resolve_theme())
     )
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.is_symlink():
