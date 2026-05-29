@@ -62,9 +62,9 @@ def _count_unpushed(wt_path: Path) -> int:
     GitHub squash-merges are NOT recognized by `git cherry`: N commits are
     collapsed into a single upstream commit with a combined patch-id that
     matches none of the originals. Autoclose handles that case separately via
-    `count_commits_since(wt, headRefOid)` from `fetch_merged_branches`; this
-    function intentionally over-counts there so `/cockpit:list` and
-    `/cockpit:close` still surface "this branch hasn't been pushed" honestly.
+    `is_ancestor(wt, headRefOid)` from `fetch_merged_branches`; this function
+    intentionally over-counts there so `/cockpit:list` and `/cockpit:close`
+    still surface "this branch hasn't been pushed" honestly.
 
     Returns 0 if the default branch (whatever `origin/HEAD` points at) cannot
     be resolved. Returns -1 if git fails outright so callers can distinguish
@@ -187,14 +187,30 @@ def _rev_list_count(cwd: str | os.PathLike, rev_range: str, *, fail: int = 0) ->
     return int(out) if out.isdigit() else fail
 
 
-def count_commits_since(wt_path: Path, sha: str) -> int:
-    """Commits on HEAD after `sha`. Returns -1 if git fails or `sha` is unknown.
+def is_ancestor(wt_path: Path, sha: str) -> bool:
+    """True if `sha` is reachable from the worktree's current HEAD.
 
-    Used by autoclose to decide whether a worktree has advanced past the head
-    SHA recorded when its PR was merged. 0 means "branch tip == merge head"
-    (safe to remove); >0 means new local work after merge.
+    Used by autoclose to decide whether a merged PR's head (the `headRefOid`
+    recorded by `fetch_merged_branches`) is still contained in the worktree.
+    This is the right signal for "is the merged work done here", and it
+    distinguishes the three lifecycle states a `rev-list`-count gate cannot:
+
+    - HEAD == merge head (merged, untouched) → ancestor (reflexive) → reap.
+    - merge head is a parent of HEAD (squash-merge then `git pull` main on top)
+      → ancestor → reap. This is the case `count_commits_since(..) == 0` got
+      wrong: pulling main advances HEAD, so the count is > 0 and the worktree
+      would never autoclose.
+    - merge head NOT reachable from HEAD (the branch name was reused — reset or
+      re-created on a different lineage for new work after the old PR merged)
+      → not an ancestor → keep. This is the case the presence-only check got
+      wrong: it nuked a freshly re-created worktree minutes after creation.
+
+    `git merge-base --is-ancestor A B` exits 0 when A is an ancestor of (or
+    equal to) B, 1 when it is not, and >1 on error (e.g. `sha` unknown locally).
+    Returns False on anything but a clean exit-0 so an unresolvable SHA never
+    triggers a teardown.
     """
-    return _rev_list_count(wt_path, f"{sha}..HEAD", fail=-1)
+    return _git(wt_path, "merge-base", "--is-ancestor", sha, "HEAD").returncode == 0
 
 
 def has_unique_commits(wt_path: Path, base: str) -> bool:

@@ -19,7 +19,20 @@ from scripts.lib.git import (
     behind_of_base,
     branch_exists,
     create_worktree,
+    is_ancestor,
 )
+
+
+def _committer_env():
+    import os
+
+    return {
+        **os.environ,
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+    }
 
 
 def test_has_remote_branch_exact_match(cockpit_repo, push_branch):
@@ -336,3 +349,64 @@ def test_remove_worktree_force_no_lock_file_is_quiet(cockpit_repo, capsys) -> No
     assert not wt.exists()
     captured = capsys.readouterr()
     assert "preempting" not in captured.err
+
+
+# ── is_ancestor: reachability gate for autoclose ───────────────────────────
+
+
+def test_is_ancestor_true_for_head_itself(cockpit_repo) -> None:
+    """A commit is reachable from itself — the merged-and-untouched case."""
+    repo = cockpit_repo.repo
+    head = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    assert is_ancestor(repo, head) is True
+
+
+def test_is_ancestor_true_for_older_commit(cockpit_repo) -> None:
+    """The merge head stays reachable after the branch advances on top of it —
+    the squash-merge + pull-main case that must still reap."""
+    repo = cockpit_repo.repo
+    old_head = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    env = _committer_env()
+    (repo / "more").write_text("more")
+    subprocess.run(["git", "-C", str(repo), "add", "more"], check=True, env=env)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "more"], check=True, env=env
+    )
+    assert is_ancestor(repo, old_head) is True
+
+
+def test_is_ancestor_false_for_divergent_lineage(cockpit_repo) -> None:
+    """The reused-branch nuke (#81 → todo): the old merge head lives on a
+    lineage HEAD no longer descends from, so it is NOT an ancestor."""
+    repo = cockpit_repo.repo
+    env = _committer_env()
+    # Commit on a side branch carved at seed, capture its SHA, then discard it
+    # from HEAD's history by returning to main and advancing separately.
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-q", "-b", "side"], check=True, env=env
+    )
+    (repo / "side").write_text("side")
+    subprocess.run(["git", "-C", str(repo), "add", "side"], check=True, env=env)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "side"], check=True, env=env
+    )
+    side_head = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-q", "main"], check=True, env=env
+    )
+    assert is_ancestor(repo, side_head) is False
+
+
+def test_is_ancestor_false_for_unknown_sha(cockpit_repo) -> None:
+    """An unresolvable SHA (e.g. a coworker's merge head never fetched) returns
+    False so it never triggers a teardown."""
+    assert (
+        is_ancestor(cockpit_repo.repo, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+        is False
+    )
