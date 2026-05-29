@@ -20,14 +20,15 @@ from scripts.lib.cmux import (
     apply_pills,
     cmux_close_workspace_best_effort,
     nudge_if_idle,
+    spawn_workspace,
     status_pills,
+    workspace_cwds,
     workspace_names,
     workspace_state,
 )
 from scripts.lib.gh import PR
 from scripts.lib.git import Worktree
 from scripts.lib.nudges import KNOWN_CATEGORIES, NudgePref
-from scripts.lib.tool import spawn_workspace, workspace_cwds
 
 
 def _pr(**overrides) -> PR:
@@ -220,7 +221,7 @@ def test_workspace_cwds_parses_limux_json():
     # limux path bypasses the cmux() wrapper because --json is a global flag
     # that must come before the command.
     with patch("scripts.lib.tool.resolve_tool", return_value="limux"):
-        with patch("scripts.lib.tool.run", return_value=payload):
+        with patch("scripts.lib.cmux.run", return_value=payload):
             assert workspace_cwds() == {"workspace:abc-def": Path("/home/user/wt")}
 
 

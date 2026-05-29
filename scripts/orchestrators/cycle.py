@@ -32,12 +32,13 @@ from scripts.lib.cmux import (
     nudge_if_idle,
     spawn_orphan_workspace,
     spawn_pr_workspace,
+    spawn_workspace,
     status_pills,
     workspace_is_idle,
     workspace_names,
     workspace_state,
 )
-from scripts.lib.tool import is_cmux, spawn_workspace
+from scripts.lib.tool import is_cmux
 from scripts.lib.colors import (
     bold,
     blue,
