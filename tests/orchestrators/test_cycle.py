@@ -914,6 +914,11 @@ def _cycle_patches(tmp_path, calls, *, headless=False):
         ),
         patch.object(
             cycle,
+            "_apply_repo_colors",
+            side_effect=lambda *_a, **_kw: calls.append("apply_colors"),
+        ),
+        patch.object(
+            cycle,
             "_spawn_missing_workspaces",
             side_effect=lambda *_a, **_kw: calls.append("spawn_missing"),
         ),
@@ -958,6 +963,7 @@ def test_cycle_repo_phase_order(tmp_path):
         "dedupe",
         "refresh_pills",
         "handle_orphans",
+        "apply_colors",
         "spawn_missing",
         "autoclose",
     ]
@@ -977,7 +983,136 @@ def test_cycle_repo_no_spawn_skips_spawn_phase(tmp_path):
     with _enter_all(_cycle_patches(tmp_path, calls)):
         _run_cycle_repo(no_spawn=True)
     assert "spawn_missing" not in calls
-    assert calls == ["dedupe", "refresh_pills", "handle_orphans", "autoclose"]
+    assert calls == [
+        "dedupe",
+        "refresh_pills",
+        "handle_orphans",
+        "apply_colors",
+        "autoclose",
+    ]
+
+
+# ── _apply_repo_colors / _repo_owned_refs ───────────────────────────────────
+
+
+def _color_ctx(
+    tmp_path, *, wts, cwds, pill_state=None, dry=False, name="n", repo_path=None
+):
+    return cycle.RepoCycle(
+        cfg={},
+        repo_path=tmp_path if repo_path is None else repo_path,
+        owner="o",
+        name=name,
+        self_user="khivi",
+        wts=wts,
+        prs=[],
+        tracked={},
+        names={},
+        cwds=cwds,
+        merged_branches={},
+        pill_state={} if pill_state is None else pill_state,
+        keep_stale=False,
+        no_spawn=False,
+        dry=dry,
+        verbose=False,
+        headless=False,
+    )
+
+
+def test_repo_owned_refs_scopes_to_repo(tmp_path):
+    repo = tmp_path / "repo"
+    wt = repo / "wt-feat"
+    other = tmp_path / "other-repo"
+    ctx = _color_ctx(
+        tmp_path,
+        repo_path=repo,
+        wts=[Worktree(path=wt, branch="khivi/feat")],
+        cwds={
+            "workspace:1": repo,  # main worktree
+            "workspace:2": wt / "subdir",  # under a feature worktree
+            "workspace:3": other,  # different repo — excluded
+            "workspace:4": repo,  # in repo but absent from keep_refs
+        },
+    )
+    keep = {"workspace:1", "workspace:2", "workspace:3"}
+    owned = cycle._repo_owned_refs(ctx, keep)
+    assert set(owned) == {"workspace:1", "workspace:2"}
+
+
+def test_apply_repo_colors_no_field_noops(tmp_path):
+    ctx = _color_ctx(tmp_path, wts=[], cwds={"workspace:1": tmp_path})
+    with patch.object(cycle, "set_workspace_color") as swc:
+        cycle._apply_repo_colors(ctx, {"name": "n"}, {"workspace:1"})
+    swc.assert_not_called()
+
+
+def test_apply_repo_colors_dry_noops(tmp_path):
+    ctx = _color_ctx(tmp_path, wts=[], cwds={"workspace:1": tmp_path}, dry=True)
+    with patch.object(cycle, "set_workspace_color") as swc:
+        cycle._apply_repo_colors(
+            ctx, {"name": "n", "sidebar_color": "Blue"}, {"workspace:1"}
+        )
+    swc.assert_not_called()
+
+
+def test_repo_name_color_falls_back_to_bold_when_unset():
+    from scripts.lib.colors import bold
+
+    assert cycle._repo_name_color({"name": "n"}) is bold
+    assert cycle._repo_name_color({"name": "n", "sidebar_color": None}) is bold
+
+
+def test_repo_name_color_uses_configured_sidebar_color():
+    from scripts.lib.colors import CMUX_COLOR_ANSI
+
+    assert (
+        cycle._repo_name_color({"name": "n", "sidebar_color": "Teal"})
+        is CMUX_COLOR_ANSI["Teal"]
+    )
+
+
+def test_apply_repo_colors_tints_owned_refs_and_records(tmp_path):
+    repo = tmp_path / "repo"
+    pill_state: dict = {}
+    ctx = _color_ctx(
+        tmp_path,
+        repo_path=repo,
+        wts=[],
+        cwds={"workspace:1": repo, "workspace:2": tmp_path / "elsewhere"},
+        pill_state=pill_state,
+    )
+    with patch.object(cycle, "set_workspace_color") as swc:
+        cycle._apply_repo_colors(
+            ctx, {"name": "n", "sidebar_color": "Teal"}, {"workspace:1", "workspace:2"}
+        )
+    # only workspace:1 sits under repo_path; workspace:2 is outside it
+    swc.assert_called_once_with("workspace:1", "Teal")
+    assert pill_state["color:workspace:1"] == "Teal"
+
+
+def test_apply_repo_colors_dedupes_unchanged(tmp_path):
+    pill_state = {"color:workspace:1": "Teal"}
+    ctx = _color_ctx(
+        tmp_path, wts=[], cwds={"workspace:1": tmp_path}, pill_state=pill_state
+    )
+    with patch.object(cycle, "set_workspace_color") as swc:
+        cycle._apply_repo_colors(
+            ctx, {"name": "n", "sidebar_color": "Teal"}, {"workspace:1"}
+        )
+    swc.assert_not_called()
+
+
+def test_apply_repo_colors_reapplies_on_change(tmp_path):
+    pill_state = {"color:workspace:1": "Blue"}
+    ctx = _color_ctx(
+        tmp_path, wts=[], cwds={"workspace:1": tmp_path}, pill_state=pill_state
+    )
+    with patch.object(cycle, "set_workspace_color") as swc:
+        cycle._apply_repo_colors(
+            ctx, {"name": "n", "sidebar_color": "Teal"}, {"workspace:1"}
+        )
+    swc.assert_called_once_with("workspace:1", "Teal")
+    assert pill_state["color:workspace:1"] == "Teal"
 
 
 # ── _drain_close_requests composition: real queue + mocked teardown ──────────

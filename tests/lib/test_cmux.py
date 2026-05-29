@@ -15,11 +15,13 @@ from scripts.lib.cmux import (
     ACTIONABLE_KEYS,
     COCKPIT_KEY,
     MUTED_KEY,
+    WORKSPACE_COLORS,
     YELLOW,
     CmuxUnavailable,
     apply_pills,
     cmux_close_workspace_best_effort,
     nudge_if_idle,
+    set_workspace_color,
     spawn_workspace,
     status_pills,
     workspace_cwds,
@@ -338,6 +340,58 @@ def test_apply_pills_clears_muted_key():
 
     cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}
     assert MUTED_KEY in cleared_keys
+
+
+# ── set_workspace_color ──────────────────────────────────────────────────────
+
+
+def test_set_workspace_color_builds_workspace_action_argv():
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        set_workspace_color("workspace:7", "Teal")
+
+    assert calls == [
+        (
+            "workspace-action",
+            "--action",
+            "set-color",
+            "--color",
+            "Teal",
+            "--workspace",
+            "workspace:7",
+        )
+    ]
+
+
+def test_set_workspace_color_noops_on_limux():
+    """workspace-action is gated cmux-only (in _PILL_VERBS) — on limux it must
+    resolve to no binary and never shell out, so limux users silently skip the
+    sidebar tint rather than erroring."""
+    with (
+        patch("scripts.lib.tool.resolve_tool", return_value="limux"),
+        patch("scripts.lib.cmux.run") as run_mock,
+    ):
+        set_workspace_color("workspace:7", "Teal")
+
+    run_mock.assert_not_called()
+
+
+def test_workspace_colors_include_cockpit_defaults():
+    # Defaults seeded in config.example.json must be valid cmux color names.
+    assert {"Blue", "Teal", "Purple"} <= WORKSPACE_COLORS
+
+
+def test_workspace_colors_derived_from_color_ansi_map():
+    # Single source of truth: the valid set is exactly the log-echo map's keys,
+    # so a name added to one can't be missing from the other.
+    from scripts.lib.colors import CMUX_COLOR_ANSI
+
+    assert WORKSPACE_COLORS == frozenset(CMUX_COLOR_ANSI)
 
 
 # ── nudge_if_idle ────────────────────────────────────────────────────────────

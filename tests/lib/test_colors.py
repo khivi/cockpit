@@ -101,3 +101,52 @@ def test_corrupt_config_defaults_to_dark(tmp_path, monkeypatch):
     (tmp_path / "config.json").write_text("{ not json")
     c = importlib.reload(colors_mod)
     assert _code(c.slate) == "38;5;243"
+
+
+# ── CMUX_COLOR_ANSI (sidebar_color → log-echo colorizers) ────────────────────
+
+_CMUX_COLOR_NAMES = {
+    "Red",
+    "Crimson",
+    "Orange",
+    "Amber",
+    "Olive",
+    "Green",
+    "Teal",
+    "Aqua",
+    "Blue",
+    "Navy",
+    "Indigo",
+    "Purple",
+    "Magenta",
+    "Rose",
+    "Brown",
+    "Charcoal",
+}
+
+
+def test_cmux_color_ansi_covers_all_cmux_names(tmp_path, monkeypatch):
+    c = _reload_with(tmp_path, monkeypatch, {"theme": "dark"})
+    assert set(c.CMUX_COLOR_ANSI) == _CMUX_COLOR_NAMES
+
+
+def test_cmux_color_ansi_values_are_bold_256(tmp_path, monkeypatch):
+    c = _reload_with(tmp_path, monkeypatch, {"theme": "dark"})
+    for name, colorizer in c.CMUX_COLOR_ANSI.items():
+        assert _code(colorizer).startswith("1;38;5;"), name
+
+
+def test_cmux_color_ansi_is_theme_invariant(tmp_path, monkeypatch):
+    dark = _reload_with(tmp_path, monkeypatch, {"theme": "dark"})
+    codes_dark = {n: _code(f) for n, f in dark.CMUX_COLOR_ANSI.items()}
+    light = _reload_with(tmp_path, monkeypatch, {"theme": "light"})
+    for name, code in codes_dark.items():
+        assert _code(light.CMUX_COLOR_ANSI[name]) == code, f"{name} changed with theme"
+
+
+def test_cmux_color_ansi_respects_no_color(tmp_path, monkeypatch):
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    c = importlib.reload(colors_mod)
+    # NO_COLOR makes every colorizer the identity — no escape codes emitted.
+    assert c.CMUX_COLOR_ANSI["Teal"]("repo") == "repo"

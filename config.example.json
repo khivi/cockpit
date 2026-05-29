@@ -6,7 +6,8 @@
       "branch_prefix": "yourusername/",
       "default_base": "main",
       "linear_keys": ["TEAM"],
-      "ci_skip_checks": ["copilot-pull-request-reviewer"]
+      "ci_skip_checks": ["copilot-pull-request-reviewer"],
+      "sidebar_color": "Blue"
     }
   ],
   "slow_poll_interval_seconds": 300,
