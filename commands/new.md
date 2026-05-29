@@ -1,5 +1,5 @@
 ---
-description: "Create a git worktree + cmux workspace for a new branch or existing PR."
+description: "Create a git worktree + workspace for a new branch or existing PR."
 argument-hint: "<branch|PR|url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--context] [-- <text...>]"
 model: haiku
 allowed-tools: Bash
@@ -35,7 +35,7 @@ After you report the spawn result, STOP — end your turn. The task runs in the 
 - `--context` — capture the current session's context. The skill summarizes the live session and forwards it as `--context-text` (see the **`--context` handling** section above). Combine with any source.
 - `-- <text...>` — trailing text after `--` is appended to the auto-generated first-turn prompt (plan-only / skill / Linear MCP). Useful for layering extra context onto the seeded prompt.
 
-`spawn.py` is idempotent — an existing worktree + workspace for the same branch attaches instead of erroring. When attaching to an **existing** workspace, the seeded prompt (PR-action / plan / `-- <text>` / `--context-text`) is delivered into the already-running Claude via `cmux send` + Enter — so re-spawning with new instructions actually reaches the session instead of being silently dropped. Errors with exit 1 if `--repo` names a repo not in `~/.config/cockpit/config.json` (use `/cockpit:repos` to list).
+`spawn.py` is idempotent — an existing worktree + workspace for the same branch attaches instead of erroring. When attaching to an **existing** workspace, the seeded prompt (PR-action / plan / `-- <text>` / `--context-text`) is delivered into the already-running Claude via the active workspace backend's `send` + Enter (`cmux send` / `limux send`) — so re-spawning with new instructions actually reaches the session instead of being silently dropped. Errors with exit 1 if `--repo` names a repo not in `~/.config/cockpit/config.json` (use `/cockpit:repos` to list).
 
 ## Examples
 

@@ -24,7 +24,7 @@ otherrepo     experiment/baz                  —       —         —         
 
 Drift markers appended where they apply:
 
-- `(no workspace)` — worktree exists, no matching cmux workspace
+- `(no workspace)` — worktree exists, no matching workspace
 
-`list.py` is read-only: it renders the current cache + git + cmux state
+`list.py` is read-only: it renders the current cache + git + workspace state
 without polling GitHub.
