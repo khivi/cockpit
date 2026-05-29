@@ -112,7 +112,7 @@ def _resolve_tool() -> str:
     """
     from .config import load_config
 
-    explicit = load_config().get("tool", "auto")
+    explicit: str = str(load_config().get("tool", "auto"))
     if explicit not in _VALID_TOOLS:
         print(
             f"cockpit: invalid 'tool' value {explicit!r} "
@@ -455,7 +455,7 @@ def _pr_num_to_branch(pr_num: str) -> str:
     payload = find_pr_payload_by_number(pr_num, repo_name=repo_name)
     if payload is None:
         raise LookupError(f"PR #{pr_num} not in cockpit cache")
-    branch = payload.get("branch")
+    branch: str = payload.get("branch") or ""
     if not branch:
         raise LookupError(f"PR #{pr_num} has no branch in cockpit cache")
     return branch

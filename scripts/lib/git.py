@@ -217,7 +217,7 @@ def current_branch(cwd: str | os.PathLike) -> str:
         return ""
     branch = res.stdout.strip()
     if branch and branch != "HEAD":
-        return branch
+        return str(branch)
     gitdir = _gitdir(Path(cwd))
     return _rebase_head_name(gitdir) or "" if gitdir else ""
 

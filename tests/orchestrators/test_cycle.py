@@ -1020,18 +1020,24 @@ def test_drain_refused_marker_is_popped_not_requeued(drain_isolated):
     order: list[str] = []
     real_iter_pending = ds.iter_pending
 
+    def _prune(*_a, **_kw):
+        order.append("prune")
+        return []
+
+    def _iter(*_a, **_kw):
+        order.append("iter")
+        return real_iter_pending(*_a, **_kw)
+
     with (
         patch.object(
             cycle_mod.daemon_signal,
             "prune_stale",
-            side_effect=lambda *_a, **_kw: order.append("prune") or [],
+            side_effect=_prune,
         ),
         patch.object(
             cycle_mod.daemon_signal,
             "iter_pending",
-            side_effect=lambda *_a, **_kw: (
-                order.append("iter") or real_iter_pending(*_a, **_kw)
-            ),
+            side_effect=_iter,
         ),
         patch.object(
             cycle_mod,

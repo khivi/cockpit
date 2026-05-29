@@ -55,7 +55,8 @@ def load_config() -> dict:
             "ci_skip_checks": ["copilot-pull-request-reviewer"],
         }
     with CONFIG_PATH.open() as f:
-        return json.load(f)
+        data: dict = json.load(f)
+        return data
 
 
 def ensure_state_dirs() -> None:
@@ -72,16 +73,18 @@ def discover_repo() -> dict | None:
         return None
     cfg = load_config()
     for r in cfg.get("repos", []):
-        if Path(r["path"]).expanduser().resolve() == main:
-            return r
+        repo: dict = r
+        if Path(repo["path"]).expanduser().resolve() == main:
+            return repo
     return None
 
 
 def find_repo_by_name(name: str) -> dict | None:
     """Return the config entry whose `name` matches, else None."""
     for r in load_config().get("repos", []):
-        if r.get("name") == name:
-            return r
+        repo: dict = r
+        if repo.get("name") == name:
+            return repo
     return None
 
 
@@ -129,7 +132,8 @@ def find_repo_by_nwo(nwo: str) -> dict | None:
             continue
         m = pat.search(res.stdout.strip())
         if m and m.group(1).lower() == target:
-            return r
+            found: dict = r
+            return found
     return None
 
 
@@ -163,11 +167,9 @@ def _read_current_statusline(settings_path: Path) -> str | None:
     if not settings_path.exists():
         return ""
     try:
-        return (
-            json.loads(settings_path.read_text())
-            .get("statusLine", {})
-            .get("command", "")
-        )
+        data: dict = json.loads(settings_path.read_text())
+        command: str = data.get("statusLine", {}).get("command", "")
+        return command
     except (OSError, json.JSONDecodeError):
         return None
 
