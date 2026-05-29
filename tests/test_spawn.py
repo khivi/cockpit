@@ -696,7 +696,9 @@ def test_positional_linear_prompt_instructs_workspace_rename(
 # With `use_linear: false` (the default), Linear-id input still classifies
 # as linear-mode (branch lower-cased, statusline pill keeps working) but
 # the MCP-instructing prompt is suppressed: the workspace starts with the
-# generic plan-only prompt, equivalent to `/cockpit:new --branch pe-1234`.
+# generic plan-only prompt. The Linear key still counts as context, so
+# plan-only IS seeded (unlike a bare `--branch pe-1234`, which seeds none);
+# only the MCP fetch + branch/workspace rename are skipped.
 
 
 def test_linear_default_off_skips_mcp_instructing_prompt(spawn_main, monkeypatch):
@@ -777,14 +779,66 @@ def test_trailing_addendum_is_appended_to_seeded_prompt(
 
 
 def test_trailing_addendum_alone_becomes_prompt(spawn_main, cockpit_repo, monkeypatch):
-    """When there's no seeded prompt path (skill/Linear) and no PR, the
-    plan-only fallback still fires and `--` text appends to it."""
+    """`-- <text>` on an otherwise-blank spawn is context, so it flips the
+    spawn into plan-only and the text appends to the plan prompt."""
     import scripts.spawn as spawn
 
     monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     spawn_main(["fresh-feat", "--repo", "testrepo", "--", "do thing X"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "do thing X" in cmd
+    assert "PLAN ONLY" in cmd  # addendum is context → plan prompt fires
+
+
+def test_blank_spawn_seeds_no_plan_prompt(spawn_main, monkeypatch):
+    """A blank `<name> --repo <repo>` spawn (no PR / Linear / Actions, no
+    --context, no `-- text`) is ready to work on — no plan-only guidance is
+    seeded; the workspace just starts `claude`."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    code, out, _err = spawn_main(["fresh-feat", "--repo", "testrepo"])
+    assert code == 0
+    assert "spawned" in out
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "PLAN ONLY" not in cmd
+    assert "fresh task" not in cmd
+    assert cmd == "claude"  # no prompt_prefix configured → bare claude
+
+
+def test_blank_spawn_still_applies_prompt_prefix(spawn_main, cockpit_repo, monkeypatch):
+    """Dropping the plan prompt for a blank spawn must NOT drop a configured
+    `prompt_prefix` (e.g. a session-setup slash command) — it rides via
+    claude_command()."""
+    import scripts.spawn as spawn
+
+    _set_config_key(cockpit_repo, "prompt_prefix", "/session-coordination")
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    spawn_main(["fresh-feat", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "/session-coordination" in cmd
+    assert "PLAN ONLY" not in cmd  # prefix only, no plan guidance
+
+
+def test_pr_spawn_still_seeds_plan_prompt(spawn_main, monkeypatch):
+    """A spawn that auto-detects an open PR is a sourced spawn → plan-only
+    still fires (regression guard for the blank-spawn carve-out)."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(
+        spawn,
+        "pr_for_branch",
+        lambda *_a, **_kw: {
+            "number": 99,
+            "title": "fix the thing",
+            "author": {"login": "someone"},
+            "url": "https://github.com/owner/repo/pull/99",
+        },
+    )
+    spawn_main(["has-a-pr", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "PLAN ONLY" in cmd
+    assert "#99" in cmd
 
 
 # ── --context-text injection ──────────────────────────────────────────────
@@ -820,18 +874,38 @@ def test_attach_delivers_prompt_via_cmux_send(spawn_main, monkeypatch):
     monkeypatch.setattr(
         spawn, "workspace_names", lambda: {"workspace:7": "attach-only"}
     )
-    code, _out, err = spawn_main(["attach-only", "--repo", "testrepo"])
+    # `-- text` makes this a sourced spawn → a plan prompt exists to deliver.
+    code, _out, err = spawn_main(["attach-only", "--repo", "testrepo", "--", "do X"])
     assert code == 0
     sends = _send_calls(spawn_main.cmux_calls)
     assert sends, "expected a cmux send on attach"
     assert sends[0][1] == "--workspace" and sends[0][2] == "workspace:7"
     assert "PLAN ONLY" in sends[0][3]
+    assert "do X" in sends[0][3]
     assert any(
         c[0] == "send-key" and c[1] == "--workspace" and c[-1] == "enter"
         for c in spawn_main.cmux_calls
     ), "prompt must be submitted with Enter"
     assert not any("new-workspace" in c for c in spawn_main.cmux_calls)
     assert "delivered prompt to existing workspace attach-only" in err
+
+
+def test_blank_attach_delivers_nothing(spawn_main, monkeypatch):
+    """Re-spawning a blank `<name> --repo` onto an existing workspace has no
+    seeded prompt to deliver — the running session is left untouched (no
+    cmux send), and spawn just reports the attach."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        spawn, "workspace_names", lambda: {"workspace:7": "attach-only"}
+    )
+    code, _out, err = spawn_main(["attach-only", "--repo", "testrepo"])
+    assert code == 0
+    assert not _send_calls(spawn_main.cmux_calls), "blank attach must not send"
+    # existing workspace → no new workspace created, and nothing delivered.
+    assert not any("new-workspace" in c for c in spawn_main.cmux_calls)
+    assert "delivered prompt" not in err
 
 
 def test_attach_delivers_addendum_and_context(spawn_main, monkeypatch):

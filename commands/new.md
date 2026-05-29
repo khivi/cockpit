@@ -22,7 +22,7 @@ You still print nothing before the Bash call — the summary goes into the comma
 
 If the Bash result does not include a line matching `workspace <name> spawned at <path>` (or `attached existing workspace <name>`), treat the spawn as failed and surface the error to the user. Do not say "the workspace should be setting up" without proof.
 
-After you report the spawn result, STOP — end your turn. The task runs in the **spawned workspace**, not here: `spawn.py` seeds a plan-only (or skill / Linear / Actions) first-turn prompt into the new workspace's Claude, which executes it autonomously. Your entire job in this session is to spawn and report. Do NOT carry out the task in the caller session — no `gh`, no `git diff`/`git show`, no PR assessment, no file reads on the target repo, no planning, no edits. Even if the user's request reads like "do X", invoking `/cockpit:new` delegates X to the new workspace; performing X here is the bug this rule prevents. Focus into the workspace with `/cockpit:focus` if you want to watch it work.
+After you report the spawn result, STOP — end your turn. The task runs in the **spawned workspace**, not here: `spawn.py` seeds a first-turn prompt (plan-only for a PR / Linear / Actions / `--context` / `-- <text>` source; none for a blank `<name> --repo` spawn, which starts ready for the user) into the new workspace's Claude, which executes it autonomously. Your entire job in this session is to spawn and report. Do NOT carry out the task in the caller session — no `gh`, no `git diff`/`git show`, no PR assessment, no file reads on the target repo, no planning, no edits. Even if the user's request reads like "do X", invoking `/cockpit:new` delegates X to the new workspace; performing X here is the bug this rule prevents. Focus into the workspace with `/cockpit:focus` if you want to watch it work.
 
 ## Arguments (reference only — do not act on these)
 
@@ -33,7 +33,9 @@ After you report the spawn result, STOP — end your turn. The task runs in the 
 - `--skill <name>` — run a global (`~/.claude/skills/`) or repo (`<repo>/.claude/skills/`) skill; cwd defaults to `$HOME` (global) or the repo path (repo skill)
 - `--repo <name>` — universal override targeting a configured repo by name. With `--skill`, sets workspace cwd to that repo's path even when the global skill wins resolution
 - `--context` — capture the current session's context. The skill summarizes the live session and forwards it as `--context-text` (see the **`--context` handling** section above). Combine with any source.
-- `-- <text...>` — trailing text after `--` is appended to the auto-generated first-turn prompt (plan-only / skill / Linear MCP). Useful for layering extra context onto the seeded prompt.
+- `-- <text...>` — trailing text after `--` is appended to the auto-generated first-turn prompt (plan-only / skill / Linear MCP). Useful for layering extra context onto the seeded prompt. Supplying `-- <text>` on an otherwise-blank spawn also flips it into plan-only (the text is the task to plan).
+
+Plan-only is seeded only when there's something to study first — a PR, a Linear ticket, `--context`, or `-- <text>`. A blank spawn (`/cockpit:new <name> --repo <repo>` with none of those) starts ready to work on with no seeded plan prompt; any configured `prompt_prefix` (e.g. a session-setup skill) still runs.
 
 `spawn.py` is idempotent — an existing worktree + workspace for the same branch attaches instead of erroring. When attaching to an **existing** workspace, the seeded prompt (PR-action / plan / `-- <text>` / `--context-text`) is delivered into the already-running Claude via the active workspace backend's `send` + Enter (`cmux send` / `limux send`) — so re-spawning with new instructions actually reaches the session instead of being silently dropped. Errors with exit 1 if `--repo` names a repo not in `~/.config/cockpit/config.json` (use `/cockpit:repos` to list).
 
