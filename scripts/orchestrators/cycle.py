@@ -30,6 +30,7 @@ from scripts.lib.cmux import (
     cmux_close_workspace_best_effort,
     find_cockpit_workspaces,
     nudge_if_idle,
+    set_workspace_color,
     spawn_orphan_workspace,
     spawn_pr_workspace,
     spawn_workspace,
@@ -40,6 +41,8 @@ from scripts.lib.cmux import (
 )
 from scripts.lib.tool import is_cmux
 from scripts.lib.colors import (
+    CMUX_COLOR_ANSI,
+    Colorizer,
     bold,
     blue,
     cyan,
@@ -397,6 +400,14 @@ class RepoCycle:
     base_distance: dict[str, int] = field(default_factory=dict)
 
 
+def _repo_name_color(repo_entry: dict) -> Colorizer:
+    """Colorizer for this repo's name in the cycle log — its `sidebar_color`
+    (echoing the cmux sidebar tint) when set, else plain `bold`. The value is
+    preflight-validated, so an unset/missing key is the only fallback case.
+    """
+    return CMUX_COLOR_ANSI.get(repo_entry.get("sidebar_color") or "", bold)
+
+
 def _prepare_cycle(
     repo_entry: dict,
     self_user: str,
@@ -474,9 +485,9 @@ def _prepare_cycle(
     wip_count = sum(1 for w in feature_wts if w.dirty)
     ts = datetime.now().isoformat(timespec="seconds")
     print(
-        f"{green(f'[{ts}]')} {bold(f'{owner}/{name}')}  mine: {mine}  "
-        f"coworker-with-wt: {coworker_relevant}  worktrees: {len(feature_wts)}  "
-        f"tracked: {len(tracked)}  wip: {wip_count}",
+        f"{green(f'[{ts}]')} {_repo_name_color(repo_entry)(f'{owner}/{name}')}  "
+        f"mine: {mine}  coworker-with-wt: {coworker_relevant}  "
+        f"worktrees: {len(feature_wts)}  tracked: {len(tracked)}  wip: {wip_count}",
         flush=True,
     )
     return RepoCycle(
@@ -820,6 +831,46 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
         spawn_workspace(ws_name, repo_path, claude_command(prompt))
 
 
+def _repo_owned_refs(ctx: RepoCycle, keep_refs: set[str]) -> list[str]:
+    """Surviving workspace refs whose cwd sits inside this repo (its main
+    worktree or any feature worktree). Scopes the global workspace list down
+    to the repo being cycled — `ctx.cwds` spans every repo's workspaces.
+    """
+    roots = {ctx.repo_path.resolve()} | {wt.path.resolve() for wt in ctx.wts}
+    owned: list[str] = []
+    for ref in keep_refs:
+        cwd = ctx.cwds.get(ref)
+        if cwd is None:
+            continue
+        resolved = cwd.resolve()
+        if any(parent in roots for parent in (resolved, *resolved.parents)):
+            owned.append(ref)
+    return owned
+
+
+def _apply_repo_colors(ctx: RepoCycle, repo_entry: dict, keep_refs: set[str]) -> None:
+    """Tint this repo's workspace sidebar entries with its `sidebar_color`.
+
+    Optional per-repo `sidebar_color` (a cmux `WORKSPACE_COLORS` name); unset
+    → no-op, so repos that don't set it keep cmux's default. Deduped via
+    `pill_state` under a `color:<ref>` key so cmux is only touched when a
+    workspace's color actually changes, and re-applied once after a daemon
+    restart (when `pill_state` is empty). cmux-only — the wrapper no-ops on
+    limux. A manual `clear-color` won't be re-tinted until the next restart.
+
+    `sidebar_color` is validated at preflight (`_validate_sidebar_colors`), so
+    a value reaching here is already a known cmux color.
+    """
+    color = repo_entry.get("sidebar_color")
+    if not color or ctx.dry:
+        return
+    for ref in _repo_owned_refs(ctx, keep_refs):
+        if ctx.pill_state.get(f"color:{ref}") == color:
+            continue
+        set_workspace_color(ref, color)
+        ctx.pill_state[f"color:{ref}"] = color
+
+
 def cycle_repo(
     repo_entry: dict,
     self_user: str,
@@ -853,6 +904,7 @@ def cycle_repo(
     if ctx.tracked and not printed_refresh:
         _print_tracked_summary(ctx, mine_items, others_items)
     _handle_orphans_and_close_stale(ctx, keep_refs)
+    _apply_repo_colors(ctx, repo_entry, keep_refs)
     if not no_spawn:
         _spawn_missing_workspaces(ctx)
     _maybe_autoclose(

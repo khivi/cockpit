@@ -82,3 +82,30 @@ bold_crimson = _ansi("1;38;5;160")  # PR CHANGES_REQUESTED, tier-100
 bold_violet = _ansi("1;38;5;91")  # PR MERGED
 bold_ruby = _ansi("1;38;5;88")  # PR CLOSED
 bold_shadow = _ansi("1;38;5;238" if _LIGHT else "1;38;5;240")  # PR DRAFT
+
+# cmux workspace-color names → bold 256-color colorizers, so a repo's
+# configured `sidebar_color` can also tint its name in cockpit's own cycle
+# log. These approximate cmux's rendered hues (cmux maps each name to its
+# theme); they read as the same colour family, not a pixel match. Saturated
+# hues stay background-agnostic, so the map is the same in dark and light.
+#
+# This dict is the single source of truth for the valid `sidebar_color` set:
+# `cmux.WORKSPACE_COLORS` is `frozenset(CMUX_COLOR_ANSI)`, so the two can't drift.
+CMUX_COLOR_ANSI: dict[str, Colorizer] = {
+    "Red": _ansi("1;38;5;196"),
+    "Crimson": _ansi("1;38;5;160"),
+    "Orange": _ansi("1;38;5;172"),
+    "Amber": _ansi("1;38;5;214"),
+    "Olive": _ansi("1;38;5;142"),
+    "Green": _ansi("1;38;5;34"),
+    "Teal": _ansi("1;38;5;37"),
+    "Aqua": _ansi("1;38;5;44"),
+    "Blue": _ansi("1;38;5;33"),
+    "Navy": _ansi("1;38;5;25"),
+    "Indigo": _ansi("1;38;5;61"),
+    "Purple": _ansi("1;38;5;91"),
+    "Magenta": _ansi("1;38;5;165"),
+    "Rose": _ansi("1;38;5;211"),
+    "Brown": _ansi("1;38;5;130"),
+    "Charcoal": _ansi("1;38;5;240"),
+}

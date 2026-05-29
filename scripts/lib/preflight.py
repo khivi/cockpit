@@ -29,6 +29,28 @@ def _die(msg: str) -> None:
     sys.exit(2)
 
 
+def _validate_sidebar_colors(cfg: dict) -> None:
+    """Hard-fail on a repo `sidebar_color` that isn't a cmux color name.
+
+    The field is cosmetic, but a typo is caught here (like the use_cship gate)
+    so it surfaces at daemon start with the valid set listed — rather than as a
+    silent no-tint discovered cycles later. cmux is imported lazily to keep
+    preflight's import graph to the stdlib + leaf colors/tool modules.
+    """
+    from .cmux import WORKSPACE_COLORS
+
+    for repo in cfg.get("repos", []):
+        color = repo.get("sidebar_color")
+        if color is None:
+            continue
+        if color not in WORKSPACE_COLORS:
+            name = repo.get("name") or repo.get("path", "?")
+            _die(
+                f"repo {name!r}: sidebar_color {color!r} is not a cmux color. "
+                f"Choose one of: {', '.join(sorted(WORKSPACE_COLORS))}."
+            )
+
+
 def preflight(cfg: dict) -> None:
     for binary in REQUIRED_BINARIES:
         if shutil.which(binary) is None:
@@ -41,6 +63,8 @@ def preflight(cfg: dict) -> None:
                     f"use_cship=true but `{binary}` is not on PATH. "
                     f"Install {binary} or set use_cship=false in your config."
                 )
+
+    _validate_sidebar_colors(cfg)
 
     if cfg.get("tool", "auto") == "auto":
         resolved = resolve_tool()

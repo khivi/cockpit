@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import run
 from .cache import find_pr_payload_by_number
-from .colors import bold, dim
+from .colors import CMUX_COLOR_ANSI, bold, dim
 from .config import discover_repo
 from .issue_color import issue_color
 from .log_format import verb
@@ -38,6 +38,14 @@ ORANGE = "#ff9500"
 BLUE = "#3b82f6"
 GREY = "#6b7280"
 YELLOW = "#facc15"
+
+# cmux's named workspace-entry colors (`workspace-action --action set-color`).
+# These tint the whole sidebar row, distinct from the per-state pill colors
+# above. cmux also accepts #RRGGBB, but cockpit only exposes the names so a
+# repo's `sidebar_color` stays theme-agnostic (cmux maps the name per theme).
+# Sourced from `colors.CMUX_COLOR_ANSI` so the valid set and the log-echo
+# colorizers can't drift apart.
+WORKSPACE_COLORS = frozenset(CMUX_COLOR_ANSI)
 
 # Pill key kept for backward compatibility — older workspaces may have it set;
 # apply_pills clears it every cycle to clean up.
@@ -75,8 +83,10 @@ ACTIONABLE_KEYS = (
 OWNER_KEY = "owner"
 OWNER_ICON = "👥"
 
-# Verbs that need cmux specifically — limux fork lacks the persistent-pill API.
-_PILL_VERBS = frozenset({"set-status", "clear-status"})
+# Verbs that need cmux specifically — limux fork lacks the persistent-pill
+# and workspace-action (set-color) APIs. Gated here so they no-op on limux
+# instead of erroring; repo sidebar colors are an additive cmux-only nicety.
+_PILL_VERBS = frozenset({"set-status", "clear-status", "workspace-action"})
 
 
 class CmuxUnavailable(RuntimeError):
@@ -109,6 +119,24 @@ def _apply_count_pill(
         _set_status(ref, key, f"{icon} {count}", color)
     else:
         _clear_status(ref, key)
+
+
+def set_workspace_color(ref: str, color: str) -> None:
+    """Tint workspace `ref`'s sidebar entry to `color` (a `WORKSPACE_COLORS`
+    name). Best-effort and cmux-only — no-ops on limux (workspace-action is
+    gated in `_PILL_VERBS`) and never raises, so a missed tint can't stall a
+    reconcile. Callers validate `color` against `WORKSPACE_COLORS` first.
+    """
+    cmux(
+        "workspace-action",
+        "--action",
+        "set-color",
+        "--color",
+        color,
+        "--workspace",
+        ref,
+        check=False,
+    )
 
 
 def _resolve_binary(verb: str) -> str | None:

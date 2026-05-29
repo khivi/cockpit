@@ -96,3 +96,28 @@ def test_preflight_silent_when_tool_explicitly_set(tmp_path, monkeypatch, capsys
     monkeypatch.setenv("PATH", str(bin_dir))
     preflight({"tool": "none"})
     assert capsys.readouterr().err == ""
+
+
+def test_preflight_exits_on_invalid_sidebar_color(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {"tool": "cmux", "repos": [{"name": "r", "sidebar_color": "Turquoise"}]}
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "sidebar_color" in err
+    assert "Turquoise" in err
+    assert "Teal" in err  # the valid set is listed
+
+
+def test_preflight_passes_on_valid_sidebar_color(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "repos": [{"name": "r", "sidebar_color": "Teal"}]})
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_ignores_repo_without_sidebar_color(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "repos": [{"name": "r", "path": "/x"}]})
+    assert capsys.readouterr().err == ""
