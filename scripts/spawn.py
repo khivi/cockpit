@@ -154,6 +154,13 @@ def parse_args() -> argparse.Namespace:
         "--skill",
         help="spawn workspace running a global or repo skill (no worktree, no branch)",
     )
+    p.add_argument(
+        "--context-text",
+        help="caller-supplied summary of the current session, injected into the "
+        "seeded first-turn prompt under a 'Caller session context' heading. The "
+        "/cockpit:new skill fills this from `--context` by summarizing the live "
+        "session before invoking spawn.py.",
+    )
     raw = sys.argv[1:]
     if "--" in raw:
         idx = raw.index("--")
@@ -677,10 +684,16 @@ def main() -> int:
             f"{prompt}\n\n{args.claude_addendum}" if prompt else args.claude_addendum
         )
 
+    if args.context_text:
+        ctx = f"## Caller session context\n\n{args.context_text}"
+        prompt = f"{prompt}\n\n{ctx}" if prompt else ctx
+
     ws_name = short
     require_workspace_binary()
-    attached_ws = ws_name in set(workspace_names().values())
-    if not attached_ws:
+    ws_refs = workspace_names()  # {ref: name}
+    existing_ref = next((ref for ref, n in ws_refs.items() if n == ws_name), None)
+    attached_ws = existing_ref is not None
+    if existing_ref is None:
         cmux(
             "new-workspace",
             "--name",
@@ -691,6 +704,18 @@ def main() -> int:
             claude_command(prompt),
             "--focus",
             "false",
+        )
+    elif prompt:
+        # The worktree's Claude is already running, so the prompt can't ride in
+        # on `--command`. Deliver it into the live session: type the text into
+        # the workspace's terminal surface, then submit with Enter. Without
+        # this, re-spawning onto an existing workspace silently drops the
+        # PR-action / plan / `-- <text>` / context prompt.
+        cmux("send", "--workspace", existing_ref, prompt)
+        cmux("send-key", "--workspace", existing_ref, "enter")
+        print(
+            f"note: delivered prompt to existing workspace {ws_name}",
+            file=sys.stderr,
         )
 
     if attached_wt and attached_ws:

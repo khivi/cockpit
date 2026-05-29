@@ -1,6 +1,6 @@
 ---
 description: "Create a git worktree + cmux workspace for a new branch or existing PR."
-argument-hint: "<branch|PR|url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [-- <text...>]"
+argument-hint: "<branch|PR|url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--context] [-- <text...>]"
 model: haiku
 allowed-tools: Bash
 ---
@@ -13,7 +13,16 @@ YOU MUST immediately invoke the Bash tool with the exact command below. Do not p
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/spawn.py "$@"
 ```
 
+**`--context` handling — the one exception to "invoke verbatim".** If `--context` is among the arguments, before calling Bash you must:
+
+1. Write a concise summary (≈5–12 lines) of the CURRENT session: the goal, key decisions already made, files touched, open questions, and any relevant URLs/IDs. This is what the spawned workspace should inherit so it doesn't start cold.
+2. Invoke spawn.py with `--context` **removed** and `--context-text '<your summary>'` added in its place. Single-quote the value and escape embedded single quotes as `'\''`. `spawn.py` does not understand a bare `--context` flag, so you must perform this substitution — passing `--context` through verbatim will error.
+
+You still print nothing before the Bash call — the summary goes into the command's `--context-text` argument, not into a message to the user. `--context-text` is injected into the new (or attached) workspace's first-turn prompt under a "Caller session context" heading.
+
 If the Bash result does not include a line matching `workspace <name> spawned at <path>` (or `attached existing workspace <name>`), treat the spawn as failed and surface the error to the user. Do not say "the workspace should be setting up" without proof.
+
+After you report the spawn result, STOP — end your turn. The task runs in the **spawned workspace**, not here: `spawn.py` seeds a plan-only (or skill / Linear / Actions) first-turn prompt into the new workspace's Claude, which executes it autonomously. Your entire job in this session is to spawn and report. Do NOT carry out the task in the caller session — no `gh`, no `git diff`/`git show`, no PR assessment, no file reads on the target repo, no planning, no edits. Even if the user's request reads like "do X", invoking `/cockpit:new` delegates X to the new workspace; performing X here is the bug this rule prevents. Focus into the workspace with `/cockpit:focus` if you want to watch it work.
 
 ## Arguments (reference only — do not act on these)
 
@@ -23,9 +32,10 @@ If the Bash result does not include a line matching `workspace <name> spawned at
 - `--cwd <path>` — arbitrary dir, no repo or worktree
 - `--skill <name>` — run a global (`~/.claude/skills/`) or repo (`<repo>/.claude/skills/`) skill; cwd defaults to `$HOME` (global) or the repo path (repo skill)
 - `--repo <name>` — universal override targeting a configured repo by name. With `--skill`, sets workspace cwd to that repo's path even when the global skill wins resolution
+- `--context` — capture the current session's context. The skill summarizes the live session and forwards it as `--context-text` (see the **`--context` handling** section above). Combine with any source.
 - `-- <text...>` — trailing text after `--` is appended to the auto-generated first-turn prompt (plan-only / skill / Linear MCP). Useful for layering extra context onto the seeded prompt.
 
-`spawn.py` is idempotent — an existing worktree + workspace for the same branch attaches instead of erroring. Errors with exit 1 if `--repo` names a repo not in `~/.config/cockpit/config.json` (use `/cockpit:repos` to list).
+`spawn.py` is idempotent — an existing worktree + workspace for the same branch attaches instead of erroring. When attaching to an **existing** workspace, the seeded prompt (PR-action / plan / `-- <text>` / `--context-text`) is delivered into the already-running Claude via `cmux send` + Enter — so re-spawning with new instructions actually reaches the session instead of being silently dropped. Errors with exit 1 if `--repo` names a repo not in `~/.config/cockpit/config.json` (use `/cockpit:repos` to list).
 
 ## Examples
 
