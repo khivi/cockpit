@@ -1,6 +1,6 @@
 # Cockpit
 
-A Claude Code plugin that keeps **one git worktree, one cmux workspace, and one GitHub PR** in lockstep. Open a worktree, get a workspace with `claude` already running, and watch its PR status surface in your statusline. Merge the PR, the worktree and workspace go with it.
+A Claude Code plugin that keeps **one git worktree, one workspace (cmux/limux), and one GitHub PR** in lockstep. Open a worktree, get a workspace with `claude` already running, and watch its PR status surface in your statusline. Merge the PR, the worktree and workspace go with it.
 
 ## Why
 
@@ -60,7 +60,7 @@ Inside any git repo:
 /cockpit:new fix-login
 ```
 
-Cockpit auto-registers the GitHub repo, creates a worktree at `<parent>/fix-login` (sibling to your repo — e.g. `/code/myrepo` → `/code/fix-login`), spawns a cmux workspace named `fix-login`, and starts `claude` in it. Re-running the same command attaches to the existing setup; it's safe to re-run.
+Cockpit auto-registers the GitHub repo, creates a worktree at `<parent>/fix-login` (sibling to your repo — e.g. `/code/myrepo` → `/code/fix-login`), spawns a workspace named `fix-login` (via cmux on macOS, limux on Linux), and starts `claude` in it. Re-running the same command attaches to the existing setup; it's safe to re-run.
 
 Open the PR however you normally do. Once it exists, cockpit picks it up on the next daemon cycle (default 5 minutes; force it with `/cockpit:sync`).
 
@@ -84,7 +84,7 @@ If `/cockpit:list` shows `—` everywhere, the daemon hasn't completed a cycle y
 /cockpit:new PE-1234
 ```
 
-Matches `[A-Z]{2,6}-\d+` (case-insensitive). Creates a worktree on `<branch_prefix><id-lower>` (e.g. `khivi/pe-1234`) and a cmux workspace named `pe-1234`.
+Matches `[A-Z]{2,6}-\d+` (case-insensitive). Creates a worktree on `<branch_prefix><id-lower>` (e.g. `khivi/pe-1234`) and a workspace named `pe-1234`.
 
 With `use_linear: true` AND the Linear MCP detected via `claude mcp list`, Claude's first turn reads the ticket via the Linear MCP, derives a `<slug>` from the title, then renames both the branch (`khivi/pe-1234-add-login-flow`) and the workspace (`add-login-flow` — no id prefix). Cockpit's next reconcile cycle picks both up automatically.
 
@@ -159,7 +159,7 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 | Slow poll interval | 300 s | `config.json` → `slow_poll_interval_seconds` |
 | Fast poll interval | 30 s | `config.json` → `fast_poll_interval_seconds` |
 | Workspace backend | `auto` (cmux, fall back to limux) | `config.json` → `tool` (`cmux` \| `limux` \| `none` \| `auto`) |
-| Auto-cleanup on merge | **on** | `config.json` → `auto_cleanup_on_merge`. When on, cockpit removes the worktree and closes the cmux workspace on any cycle where the PR is MERGED, the worktree is clean, and there are no unpushed commits. |
+| Auto-cleanup on merge | **on** | `config.json` → `auto_cleanup_on_merge`. When on, cockpit removes the worktree and closes the workspace on any cycle where the PR is MERGED, the worktree is clean, and there are no unpushed commits. |
 | Auto-close age | 14 days | `config.json` → `autoclose_age_days`. Worktrees older than this threshold with no open PR are eligible for auto-close. |
 | Prompt prefix | _(empty)_ | `config.json` → `prompt_prefix`. Prepended to the plan prompt injected into every new workspace. |
 | Theme | `dark` | `config.json` → `theme` (`dark` \| `light`). Themes the neutral-grey statusline text; saturated hues stay background-agnostic. |

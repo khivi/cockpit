@@ -304,7 +304,7 @@ def nudge_if_idle(
         cmux("send", "--workspace", ref, message, check=True)
         cmux("send-key", "--workspace", ref, "enter", check=True)
     except (RuntimeError, FileNotFoundError) as e:
-        print(f"  warn: cmux send failed for {ref}: {e}", flush=True)
+        print(f"  warn: {tool.resolve_tool()} send failed for {ref}: {e}", flush=True)
         return False
     if pr_number is not None and category is not None:
         from . import nudges

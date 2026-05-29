@@ -29,4 +29,4 @@ You can pass an explicit PR number as the first positional after the subcommand 
 
 ## Where state lives
 
-`~/.config/cockpit/cache/nudges/<pr-number>.json`. Survives cockpit daemon and cmux restarts. The daemon auto-expires mutes once `until` passes.
+`~/.config/cockpit/cache/nudges/<pr-number>.json`. Survives cockpit daemon and workspace-backend restarts. The daemon auto-expires mutes once `until` passes.

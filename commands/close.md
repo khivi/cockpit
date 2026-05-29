@@ -1,5 +1,5 @@
 ---
-description: "Queue a cockpit worktree + cmux workspace teardown for the daemon."
+description: "Queue a cockpit worktree + workspace teardown for the daemon."
 argument-hint: "[pr|branch|slug] [--force]"
 model: haiku
 allowed-tools: Bash
@@ -26,4 +26,4 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/close.py "$@"
 4. SIGUSR1-kick the running daemon. The daemon's next cycle drains the queue through `orchestrators.teardown` — one code path for `/cockpit:close`, autoclose-on-merge, and orphan reaping.
 5. If no daemon is running, run teardown inline against the same request (and pop the marker on success) so the user always sees results immediately.
 
-Teardown order is invariant: cmux close → `git worktree remove` → cache delete. Pulling the cwd out from under a live Claude session breaks every Stop/PreToolUse hook with ENOENT.
+Teardown order is invariant: workspace close (`cmux`/`limux`) → `git worktree remove` → cache delete. Pulling the cwd out from under a live Claude session breaks every Stop/PreToolUse hook with ENOENT.
