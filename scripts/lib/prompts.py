@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from .config import prompt_prefix
 
@@ -36,7 +37,7 @@ _AUTHORITY = (
     "idle for follow-up unless a y/n is genuinely pending."
 )
 
-_ISSUE_ACTIONS: dict[str | None, tuple[Union[str, Callable[["PR"], str]], bool]] = {
+_ISSUE_ACTIONS: dict[str | None, tuple[str | Callable[[PR], str], bool]] = {
     "comments": (
         lambda pr: (
             f"Action: address {pr.unaddressed} unresolved review thread(s). Draft replies; "
@@ -75,7 +76,7 @@ _ISSUE_ACTIONS: dict[str | None, tuple[Union[str, Callable[["PR"], str]], bool]]
 }
 
 
-def build_pr_prompt(pr: "PR") -> str:
+def build_pr_prompt(pr: PR) -> str:
     """Per-PR Claude prompt in author-mode. A local worktree on a PR's branch
     implies the user intends to author/collaborate.
     """
@@ -90,7 +91,7 @@ def build_pr_prompt(pr: "PR") -> str:
     return base + text + (f"\n\n{_AUTHORITY}" if with_authority else "")
 
 
-def build_orphan_prompt(wt: "Worktree") -> str:
+def build_orphan_prompt(wt: Worktree) -> str:
     return (
         f"This worktree ({wt.short}, branch {wt.branch}) has no open PR. "
         "Resume work and push a PR when ready, or close the worktree if abandoned."

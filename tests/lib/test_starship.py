@@ -30,7 +30,6 @@ from scripts.lib.colors import (
     yellow,
 )
 
-
 # ── field printer: context (lib.starship) ──────────────────────────────────
 
 
@@ -464,6 +463,7 @@ def test_git_state_stale_cell_still_read_no_refresh_spawn(
     overwrite on next tick), and the renderer must NOT have a refresh
     spawner at all. Guards against accidentally re-introducing one."""
     import os as _os
+
     import scripts.lib.cache as cache_mod
 
     monkeypatch.chdir(tmp_path)

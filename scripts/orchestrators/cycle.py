@@ -19,14 +19,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO
 
+import scripts.lib.daemon_signal as daemon_signal
+from scripts.lib.cache import (
+    muted_payload,
+    prune_superseded_pr_caches,
+    write_base_ahead,
+    write_base_distance,
+    write_branch_pr_cache,
+    write_git_state_cache,
+    write_pr_cache,
+)
 from scripts.lib.cmux import (
     ORANGE,
     ORPHAN_ICON,
     ORPHAN_KEY,
+    CmuxUnavailable,
     apply_pills,
     apply_stale_pill,
     apply_wip_pill,
-    CmuxUnavailable,
     close_gone_cwd_workspaces,
     cmux,
     cmux_close_workspace_best_effort,
@@ -41,30 +51,17 @@ from scripts.lib.cmux import (
     workspace_names,
     workspace_state,
 )
-from scripts.lib.tool import is_cmux
 from scripts.lib.colors import (
     CMUX_COLOR_ANSI,
     Colorizer,
-    bold,
     blue,
+    bold,
     cyan,
     dim,
     green,
     yellow,
 )
-from scripts.lib.issue_color import issue_color
-from scripts.lib.log_format import verb
 from scripts.lib.config import COCKPIT_HOME, ensure_state_dirs
-import scripts.lib.daemon_signal as daemon_signal
-from scripts.lib.cache import (
-    muted_payload,
-    prune_superseded_pr_caches,
-    write_base_ahead,
-    write_base_distance,
-    write_branch_pr_cache,
-    write_git_state_cache,
-    write_pr_cache,
-)
 from scripts.lib.gh import (
     PR,
     OpenPRHead,
@@ -73,8 +70,6 @@ from scripts.lib.gh import (
     list_relevant_prs,
     repo_nwo,
 )
-from scripts.lib.nudges import NudgePref, load_pref as _load_nudge_pref
-from scripts.lib.pills import ci_glyph
 from scripts.lib.git import (
     Worktree,
     ahead_of_base,
@@ -85,8 +80,14 @@ from scripts.lib.git import (
     origin_head_branch,
     worktrees,
 )
-from scripts.orchestrators.teardown import TeardownRequest, teardown
+from scripts.lib.issue_color import issue_color
+from scripts.lib.log_format import verb
+from scripts.lib.nudges import NudgePref
+from scripts.lib.nudges import load_pref as _load_nudge_pref
+from scripts.lib.pills import ci_glyph
 from scripts.lib.prompts import claude_command, shell_quote
+from scripts.lib.tool import is_cmux
+from scripts.orchestrators.teardown import TeardownRequest, teardown
 
 MAIN_BRANCHES = {"master", "main"}
 
@@ -207,10 +208,8 @@ def _is_orphan_main_sibling(wt: Worktree) -> bool:
     """
     if wt.dirty_count > 0:
         return False
-    if wt.unpushed != 0:
-        # unpushed == -1 means git failed; treat as "unknown, don't sweep".
-        return False
-    return True
+    # unpushed == -1 means git failed; treat as "unknown, don't sweep".
+    return wt.unpushed == 0
 
 
 def _teardown_worktree(
@@ -794,7 +793,7 @@ def _bg_spawn_pr(
         cmd.append("--review")
     logfile: IO[bytes] | None = None
     try:
-        logfile = open(_SPAWN_LOG, "ab")
+        logfile = open(_SPAWN_LOG, "ab")  # noqa: SIM115 — handle is passed to a detached Popen and must outlive this scope
     except OSError:
         logfile = None
     sink: IO[bytes] | int = logfile if logfile is not None else subprocess.DEVNULL

@@ -24,8 +24,8 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 from .config import PID_FILE, ensure_state_dirs
 

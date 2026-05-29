@@ -35,6 +35,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from scripts.lib.cache import (  # noqa: E402
+    republish_pr_caches_from_disk,
+    write_git_state_cache,
+)
 from scripts.lib.cmux import (  # noqa: E402
     BLUE,
     LOOP_ICON,
@@ -44,14 +48,10 @@ from scripts.lib.cmux import (  # noqa: E402
 from scripts.lib.colors import green  # noqa: E402
 from scripts.lib.config import (  # noqa: E402
     ensure_state_dirs,
-    load_config,
     install_cship_default_config,
     install_cship_statusline_if_configured,
     install_starship_default_config,
-)
-from scripts.lib.cache import (  # noqa: E402
-    republish_pr_caches_from_disk,
-    write_git_state_cache,
+    load_config,
 )
 from scripts.lib.daemon import run_watcher  # noqa: E402
 from scripts.lib.gh import gh_self_user  # noqa: E402

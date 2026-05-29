@@ -274,6 +274,8 @@ def test_resolve_theme_validates():
 from tests.asserts import expected_starship as _expected_starship  # noqa: E402
 from tests.fixtures import (  # noqa: E402
     make_bin_on_path as _make_bin_on_path,
+)
+from tests.fixtures import (  # noqa: E402
     setup_cockpit_config as _setup_cockpit_config,
 )
 

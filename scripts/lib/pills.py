@@ -50,7 +50,7 @@ KIND_ORDER = (
 )
 
 
-def _muted_pill(pref: "NudgePref | None") -> dict | None:
+def _muted_pill(pref: NudgePref | None) -> dict | None:
     if pref is None or not pref.disabled_categories:
         return None
     from .nudges import KNOWN_CATEGORIES
@@ -62,7 +62,7 @@ def _muted_pill(pref: "NudgePref | None") -> dict | None:
 
 
 def decide_pills(
-    pr: "PR", wt: "Worktree | None", pref: "NudgePref | None" = None
+    pr: PR, wt: Worktree | None, pref: NudgePref | None = None
 ) -> list[dict]:
     """Ordered semantic pill list for `pr` (and its local `wt` if known).
 

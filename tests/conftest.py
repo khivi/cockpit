@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 _GIT_ENV_LEAKS = (
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -91,6 +90,7 @@ def cockpit_repo(tmp_path, monkeypatch) -> RepoFixture:
     # COCKPIT_HOME is read at module-import time in lib.config; reload so the
     # env override actually takes effect.
     import importlib
+
     import scripts.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
