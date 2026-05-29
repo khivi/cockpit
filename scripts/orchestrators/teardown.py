@@ -23,6 +23,7 @@ from scripts.lib.cmux import cmux_close_workspace_best_effort
 from scripts.lib.colors import dim
 from scripts.lib.git import (
     _count_unpushed,
+    commits_only_local,
     count_dirty,
     ff_default_branch_worktrees,
     log_ff_advances,
@@ -40,15 +41,34 @@ __all__ = [
 ]
 
 
-def worktree_state_blockers(worktree_path: Path | None) -> list[str]:
-    """Dirty + unpushed checks. Hard blockers — `--force` never overrides these."""
+def worktree_state_blockers(
+    worktree_path: Path | None,
+    *,
+    branch: str | None = None,
+    is_mine: bool = True,
+) -> list[str]:
+    """Dirty + unpushed checks.
+
+    `dirty` is always a hard blocker — `--force` never overrides it. The
+    `unpushed` baseline depends on ownership: for our own branches (the default,
+    `is_mine=True`) we keep the conservative default-branch baseline
+    (`_count_unpushed`), so a branch whose commits haven't merged still blocks.
+    For someone else's branch (a PR checked out for review, `is_mine=False`) we
+    baseline against the branch's own remote (`commits_only_local`): a
+    teammate's pushed-but-unmerged PR is therefore not flagged, leaving only the
+    soft open-PR blocker that `--force` can override. Commits that exist only
+    locally still block, regardless of ownership.
+    """
     blockers: list[str] = []
     if worktree_path is None or not worktree_path.is_dir():
         return blockers
     dirty = count_dirty(worktree_path)
     if dirty > 0:
         blockers.append(f"{dirty} uncommitted file(s)")
-    unpushed = _count_unpushed(worktree_path)
+    if not is_mine and branch:
+        unpushed = commits_only_local(worktree_path, branch)
+    else:
+        unpushed = _count_unpushed(worktree_path)
     if unpushed > 0:
         blockers.append(f"{unpushed} unpushed commit(s)")
     elif unpushed == -1:
@@ -57,14 +77,19 @@ def worktree_state_blockers(worktree_path: Path | None) -> list[str]:
 
 
 def probe_blockers(
-    worktree_path: Path | None, branch: str | None, repo_name: str | None
+    worktree_path: Path | None,
+    branch: str | None,
+    repo_name: str | None,
+    *,
+    is_mine: bool = True,
 ) -> list[str]:
     """Read-only check: reasons to refuse close. Empty list = safe to close.
 
-    Combines `worktree_state_blockers` (hard — not `--force`-overridable) and
-    the open-PR check (soft — `--force` overrides).
+    Combines `worktree_state_blockers` (dirty is hard; unpushed is hard only for
+    our own branches — see that function) and the open-PR check (soft — `--force`
+    overrides).
     """
-    blockers = worktree_state_blockers(worktree_path)
+    blockers = worktree_state_blockers(worktree_path, branch=branch, is_mine=is_mine)
     if branch is not None and repo_name is not None:
         payload = find_pr_payload(branch, repo_name=repo_name)
         if payload and str(payload.get("state", "")).upper() == "OPEN":
