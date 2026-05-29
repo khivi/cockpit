@@ -785,7 +785,7 @@ def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, cap
     monkeypatch.setattr(cycle, "repo_nwo", lambda _p: ("ai-needl", "repo"))
     monkeypatch.setattr(cycle, "worktrees", lambda _p: [])
     monkeypatch.setattr(cycle, "fetch_merged_branches", lambda *_a, **_k: {})
-    monkeypatch.setattr(cycle, "_resolve_tool", lambda: "cmux")
+    monkeypatch.setattr(cycle, "is_cmux", lambda: True)
 
     def _boom() -> tuple[dict, dict]:
         raise CmuxUnavailable("backend offline")

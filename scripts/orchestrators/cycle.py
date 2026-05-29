@@ -21,7 +21,6 @@ from scripts.lib.cmux import (
     ORANGE,
     ORPHAN_ICON,
     ORPHAN_KEY,
-    _resolve_tool,
     apply_pills,
     apply_stale_pill,
     apply_wip_pill,
@@ -33,12 +32,12 @@ from scripts.lib.cmux import (
     nudge_if_idle,
     spawn_orphan_workspace,
     spawn_pr_workspace,
-    spawn_workspace,
     status_pills,
     workspace_is_idle,
     workspace_names,
     workspace_state,
 )
+from scripts.lib.tool import is_cmux, spawn_workspace
 from scripts.lib.colors import (
     bold,
     blue,
@@ -100,7 +99,7 @@ def _cache_only(cfg: dict) -> bool:
     """Skip pill / cmux-only verbs this cycle? True whenever the resolved
     workspace backend isn't cmux (limux can't do pills; 'none' = headless).
     """
-    return _resolve_tool() != "cmux"
+    return not is_cmux()
 
 
 def maybe_nudge(

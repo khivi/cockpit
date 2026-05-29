@@ -20,15 +20,14 @@ from scripts.lib.cmux import (
     apply_pills,
     cmux_close_workspace_best_effort,
     nudge_if_idle,
-    spawn_workspace,
     status_pills,
-    workspace_cwds,
     workspace_names,
     workspace_state,
 )
 from scripts.lib.gh import PR
 from scripts.lib.git import Worktree
 from scripts.lib.nudges import KNOWN_CATEGORIES, NudgePref
+from scripts.lib.tool import spawn_workspace, workspace_cwds
 
 
 def _pr(**overrides) -> PR:
@@ -165,14 +164,14 @@ def test_workspace_cwds_raises_on_nonzero_rc():
     def fake_cmux(*_args, **_kwargs):
         raise RuntimeError("cmux rpc workspace.list failed: daemon down")
 
-    with patch("scripts.lib.cmux._resolve_tool", return_value="cmux"):
+    with patch("scripts.lib.tool.resolve_tool", return_value="cmux"):
         with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
             with pytest.raises(CmuxUnavailable, match="rpc workspace.list failed"):
                 workspace_cwds()
 
 
 def test_workspace_cwds_raises_on_non_json():
-    with patch("scripts.lib.cmux._resolve_tool", return_value="cmux"):
+    with patch("scripts.lib.tool.resolve_tool", return_value="cmux"):
         with patch("scripts.lib.cmux.cmux", return_value="not json"):
             with pytest.raises(CmuxUnavailable, match="non-JSON"):
                 workspace_cwds()
@@ -182,7 +181,7 @@ def test_workspace_state_propagates_cmux_unavailable():
     def fake_cmux(*_args, **_kwargs):
         raise RuntimeError("backend offline")
 
-    with patch("scripts.lib.cmux._resolve_tool", return_value="cmux"):
+    with patch("scripts.lib.tool.resolve_tool", return_value="cmux"):
         with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
             with pytest.raises(CmuxUnavailable):
                 workspace_state()
@@ -211,7 +210,7 @@ def test_workspace_names_parses_limux_uuid_refs():
 
 def test_workspace_cwds_parses_ok_when_cmux_ok():
     payload = '{"workspaces":[{"ref":"workspace:1","current_directory":"/tmp/wt"}]}'
-    with patch("scripts.lib.cmux._resolve_tool", return_value="cmux"):
+    with patch("scripts.lib.tool.resolve_tool", return_value="cmux"):
         with patch("scripts.lib.cmux.cmux", return_value=payload):
             assert workspace_cwds() == {"workspace:1": Path("/tmp/wt")}
 
@@ -220,8 +219,8 @@ def test_workspace_cwds_parses_limux_json():
     payload = '{"workspace_id":"123","workspaces":[{"ref":"workspace:abc-def","cwd":"/home/user/wt"}]}'
     # limux path bypasses the cmux() wrapper because --json is a global flag
     # that must come before the command.
-    with patch("scripts.lib.cmux._resolve_tool", return_value="limux"):
-        with patch("scripts.lib.cmux.run", return_value=payload):
+    with patch("scripts.lib.tool.resolve_tool", return_value="limux"):
+        with patch("scripts.lib.tool.run", return_value=payload):
             assert workspace_cwds() == {"workspace:abc-def": Path("/home/user/wt")}
 
 
@@ -236,7 +235,7 @@ def test_spawn_workspace_limux_parses_ref_and_renames():
             return "OK workspace:abc-123-def\n"
         return ""
 
-    with patch("scripts.lib.cmux._resolve_tool", return_value="limux"):
+    with patch("scripts.lib.tool.resolve_tool", return_value="limux"):
         with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
             ref = spawn_workspace("my-short", Path("/tmp/wt"), "claude --help")
 
@@ -265,7 +264,7 @@ def test_spawn_workspace_cmux_polls_for_new_ref():
             return ""
         return ""
 
-    with patch("scripts.lib.cmux._resolve_tool", return_value="cmux"):
+    with patch("scripts.lib.tool.resolve_tool", return_value="cmux"):
         with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
             ref = spawn_workspace("feat", Path("/tmp/wt"), "claude")
 

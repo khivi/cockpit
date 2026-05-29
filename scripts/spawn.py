@@ -81,9 +81,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from scripts.lib.cmux import (
     cmux,
     require_workspace_binary,
-    spawn_workspace,
     workspace_names,
 )  # noqa: E402
+from scripts.lib.tool import spawn_workspace  # noqa: E402
 from scripts.lib.config import (
     discover_repo,
     find_repo_by_name,
