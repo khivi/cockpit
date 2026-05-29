@@ -79,11 +79,11 @@ def cockpit_repo(tmp_path, monkeypatch) -> RepoFixture:
                 "path": str(repo),
                 "branch_prefix": "khivi/",
                 "default_base": "main",
+                "ci_skip_checks": ["copilot-pull-request-reviewer"],
             }
         ],
         "slow_poll_interval_seconds": 300,
         "auto_cleanup_on_merge": True,
-        "ci_skip_checks": ["copilot-pull-request-reviewer"],
     }
     (cockpit_home / "config.json").write_text(json.dumps(cfg))
     monkeypatch.setenv("COCKPIT_HOME", str(cockpit_home))
@@ -115,18 +115,3 @@ def push_branch(cockpit_repo):
         _git(cockpit_repo.repo, "branch", "-D", name)
 
     return _push
-
-
-@pytest.fixture(autouse=True)
-def mock_load_config(monkeypatch):
-    """Ensure load_config always includes default ci_skip_checks."""
-    from scripts.lib.config import load_config as original_load_config
-
-    def patched_load_config():
-        cfg = original_load_config()
-        if "ci_skip_checks" not in cfg:
-            cfg["ci_skip_checks"] = ["copilot-pull-request-reviewer"]
-        return cfg
-
-    monkeypatch.setattr("scripts.lib.config.load_config", patched_load_config)
-    monkeypatch.setattr("scripts.lib.gh.load_config", patched_load_config)

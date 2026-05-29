@@ -450,9 +450,7 @@ def _prepare_cycle(
     # in list_relevant_prs fetches any-state PRs so the cache refreshes after
     # OPEN→MERGED / OPEN→CLOSED — `is:open author:self` alone misses those.
     branches = sorted({w.branch for w in wts if w.branch not in MAIN_BRANCHES})
-    skip_checks = set(
-        repo_entry.get("ci_skip_checks") or cfg.get("ci_skip_checks") or []
-    )
+    skip_checks = set(repo_entry.get("ci_skip_checks") or [])
     try:
         prs = list_relevant_prs(
             owner, name, self_user, branches, cache=pr_cache, skip_checks=skip_checks

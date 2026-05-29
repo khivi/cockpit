@@ -5,10 +5,12 @@
       "path": "/absolute/path/to/main/repo",
       "branch_prefix": "yourusername/",
       "default_base": "main",
-      "linear_keys": ["TEAM"]
+      "linear_keys": ["TEAM"],
+      "ci_skip_checks": ["copilot-pull-request-reviewer"]
     }
   ],
-  "poll_interval_seconds": 300,
+  "slow_poll_interval_seconds": 300,
+  "fast_poll_interval_seconds": 30,
   "auto_cleanup_on_merge": true,
   "autoclose_age_days": 14,
   "prompt_prefix": "",
