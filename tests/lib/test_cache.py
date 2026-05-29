@@ -500,3 +500,118 @@ def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
     kinds = [p["kind"] for p in payload["pills"]]
     assert "wip" not in kinds
     assert "ci_failed" in kinds
+
+
+# ── reused-branch dedup (find_pr_payload / republish / prune) ──────────────
+#
+# A branch reused across PRs (old PR merged, new PR opened from the same head)
+# leaves two `{repo}__pr-{N}.json` files carrying the same `branch`. The flat
+# render cells are keyed by branch only, and `_iter_cache` glob order is
+# undefined — so the footer would otherwise show whichever number the
+# filesystem yielded first. These tests pin the deterministic winner.
+
+
+@pytest.fixture
+def json_cache(tmp_path, monkeypatch):
+    """Redirect both the per-PR JSON cache (COCKPIT_HOME/cache) and the flat
+    cache to tmpdirs; yield the JSON cache dir. Mirrors the reload pattern the
+    other COCKPIT_HOME tests use."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    import scripts.lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    importlib.reload(cache_mod)
+    cache_mod.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    flat = tmp_path / "flat"
+    flat.mkdir()
+    monkeypatch.setattr(cache_mod, "FLAT_CACHE_DIR", flat)
+    return cache_mod.CACHE_DIR
+
+
+def _snapshot(json_dir: Path, repo: str, number: int, branch: str, **fields) -> Path:
+    import json
+
+    payload = {
+        "number": number,
+        "branch": branch,
+        "state": "OPEN",
+        "isDraft": False,
+        "review": "",
+        "ci": "passed",
+        "title": "t",
+        "updatedAt": "",
+        "unaddressed": 0,
+        "muted": "",
+    }
+    payload.update(fields)
+    path = json_dir / f"{repo.replace('/', '_')}__pr-{number}.json"
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def test_pr_payload_rank_orders_open_then_recency_then_number():
+    open_old = {"state": "OPEN", "updatedAt": "2024-01-01", "number": 5}
+    open_new = {"state": "OPEN", "updatedAt": "2024-06-01", "number": 3}
+    merged_new = {"state": "MERGED", "updatedAt": "2025-01-01", "number": 99}
+    rank = cache_mod._pr_payload_rank
+    # OPEN beats MERGED even when MERGED is newer / higher-numbered.
+    assert rank(open_old) > rank(merged_new)
+    # Among OPEN, newer updatedAt wins.
+    assert rank(open_new) > rank(open_old)
+
+
+def test_find_pr_payload_prefers_open_over_merged(json_cache):
+    # MERGED #91 and OPEN #126 share the branch; OPEN must win regardless of
+    # which file the glob yields first.
+    _snapshot(json_cache, "cockpit", 91, "khivi/side", state="MERGED")
+    _snapshot(json_cache, "cockpit", 126, "khivi/side", state="OPEN")
+    payload = cache_mod.find_pr_payload("khivi/side", repo_name="cockpit")
+    assert payload is not None
+    assert payload["number"] == 126
+
+
+def test_find_pr_payload_prefers_newer_when_same_state(json_cache):
+    _snapshot(json_cache, "cockpit", 5, "khivi/side", updatedAt="2025-03-01")
+    _snapshot(json_cache, "cockpit", 6, "khivi/side", updatedAt="2025-05-01")
+    _snapshot(json_cache, "cockpit", 7, "khivi/side", updatedAt="2025-01-01")
+    payload = cache_mod.find_pr_payload("khivi/side", repo_name="cockpit")
+    assert payload is not None
+    assert payload["number"] == 6  # newest updatedAt
+
+
+def test_republish_picks_winner_for_reused_branch(json_cache):
+    _snapshot(json_cache, "cockpit", 91, "khivi/side", state="MERGED")
+    _snapshot(json_cache, "cockpit", 126, "khivi/side", state="OPEN", review="APPROVED")
+    cache_mod.republish_pr_caches_from_disk()
+    flat = cache_mod.FLAT_CACHE_DIR
+    assert (flat / "pr-num-khivi-side").read_text() == "126"
+    assert (flat / "pr-state-khivi-side").read_text() == "APPROVED"
+
+
+def test_prune_superseded_drops_loser_keeps_winner(json_cache):
+    merged = _snapshot(json_cache, "cockpit", 91, "khivi/side", state="MERGED")
+    live = _snapshot(json_cache, "cockpit", 126, "khivi/side", state="OPEN")
+    pruned = cache_mod.prune_superseded_pr_caches("cockpit")
+    assert pruned == [merged]
+    assert not merged.exists()
+    assert live.exists()
+
+
+def test_prune_superseded_keeps_lone_snapshot(json_cache):
+    # A merged PR with no reused-branch sibling must survive — find_pr_payload
+    # still serves it until the worktree tears down.
+    only = _snapshot(json_cache, "cockpit", 91, "khivi/side", state="MERGED")
+    assert cache_mod.prune_superseded_pr_caches("cockpit") == []
+    assert only.exists()
+
+
+def test_prune_superseded_scoped_to_repo(json_cache):
+    # Two repos with the same branch name must not cross-prune.
+    a = _snapshot(json_cache, "repoA", 1, "khivi/side", state="MERGED")
+    _snapshot(json_cache, "repoA", 2, "khivi/side", state="OPEN")
+    b = _snapshot(json_cache, "repoB", 1, "khivi/side", state="MERGED")
+    cache_mod.prune_superseded_pr_caches("repoA")
+    assert not a.exists()  # superseded within repoA
+    assert b.exists()  # repoB untouched (lone snapshot there)
