@@ -268,6 +268,7 @@ class PR:
 _PR_FIELDS = """
   number title url isDraft headRefName mergeable reviewDecision updatedAt state
   author { login __typename }
+  baseRef { branchProtectionRule { requiredStatusChecks { context } } }
   reviewThreads(first: 100) {
     nodes {
       isResolved
@@ -280,7 +281,7 @@ _PR_FIELDS = """
       checkSuites(first: 20) { nodes {
         checkRuns(first: 100) { nodes { name status conclusion } }
       } }
-      status { contexts { state } }
+      status { contexts { context state } }
     } }
   }
 """
@@ -339,15 +340,34 @@ def _pr_from_node(n: dict, skip_checks: set[str] | None = None) -> PR | None:
     if suites_field is None:
         ci = "unknown"
     else:
-        if skip_checks is None:
-            skip_checks = set(load_config().get("ci_skip_checks", []))
-        check_runs = [
+        # When branch protection declares required checks, that set is the
+        # authoritative filter — anything else is noise (lint bots, optional
+        # workflows, the copilot reviewer). The `ci_skip_checks` allowlist is
+        # only a fallback for repos without branch protection (or when the
+        # current token can't see the rule — `branchProtectionRule` requires
+        # admin/write and returns null otherwise).
+        bpr = (n.get("baseRef") or {}).get("branchProtectionRule") or {}
+        required_names = {
+            c["context"]
+            for c in (bpr.get("requiredStatusChecks") or [])
+            if c.get("context")
+        }
+        all_runs = [
             r
             for suite in (suites_field or {}).get("nodes", [])
             for r in (suite.get("checkRuns") or {}).get("nodes", [])
-            if r.get("name") not in skip_checks
         ]
-        legacy_contexts = (status_field or {}).get("contexts", []) or []
+        raw_contexts = (status_field or {}).get("contexts", []) or []
+        if required_names:
+            check_runs = [r for r in all_runs if r.get("name") in required_names]
+            legacy_contexts = [
+                c for c in raw_contexts if c.get("context") in required_names
+            ]
+        else:
+            if skip_checks is None:
+                skip_checks = set(load_config().get("ci_skip_checks", []))
+            check_runs = [r for r in all_runs if r.get("name") not in skip_checks]
+            legacy_contexts = raw_contexts
         pending = sum(
             1
             for r in check_runs
