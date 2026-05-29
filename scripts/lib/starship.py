@@ -343,7 +343,10 @@ def print_model(sid: str | None = None) -> str:
 
 def print_cost(sid: str | None = None) -> str:
     sid = sid or os.environ.get("CSHIP_SESSION_ID") or None
-    raw = _read_session_or_fallback("cost", sid)
+    # No cross-session fallback (unlike context/rate-limit): a dollar amount
+    # borrowed from an unrelated session would misreport *this* session's
+    # spend. Stay hidden until this session reports its own cost.
+    raw = read_text(session_cache("cost", sid))
     if not raw:
         return ""
     try:

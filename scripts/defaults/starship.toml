@@ -25,12 +25,12 @@
 # pin the line break between session_time and linear.
 format = """\
 ${custom.model}\
-${custom.cost}\
 ${custom.context}\
 ${custom.ratelimit}\
 ${custom.branch_identity}\
 ${custom.worktree_status}\
 ${custom.permission_mode}\
+${custom.cost}\
 ${custom.session_time}
 ${custom.linear}\
 ${custom.pr_state}\

@@ -355,15 +355,13 @@ def test_print_cost_malformed_cache_empty(cache_dir):
     assert starship.print_cost() == ""
 
 
-def test_print_cost_fresh_session_falls_back_to_latest(cache_dir, monkeypatch):
-    """Fresh-session regression — same as context/rate-limit: cost may be
-    absent in the first ping, fall back to the most recent cache."""
-    (cache_dir / "cost-OLD").write_text("0.1000")
-    time.sleep(0.01)
-    (cache_dir / "cost-NEWER").write_text("3.2100")
+def test_print_cost_no_cross_session_fallback(cache_dir, monkeypatch):
+    """Unlike context/rate-limit, cost does NOT fall back to another
+    session's cache — a borrowed dollar amount would misreport this
+    session's spend. The pill stays hidden until this session reports."""
+    (cache_dir / "cost-OTHER").write_text("3.2100")
     monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH-SID-NO-CACHE-YET")
-    out = starship.print_cost()
-    assert "$3.21" in out
+    assert starship.print_cost() == ""
 
 
 @pytest.mark.parametrize(
