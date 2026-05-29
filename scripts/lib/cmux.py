@@ -1,14 +1,16 @@
 """cmux CLI wrapper, workspace queries, and cockpit pill management.
 
-Backend dispatch (cmux vs limux) lives in `scripts.lib.tool`; this module
-focuses on the shared surface — the `cmux()` CLI wrapper, ref parsing, pill
-and workspace orchestration. Callers that need the per-backend actions
-(`workspace_cwds`, `spawn_workspace`, `is_cmux`, `is_limux`, `resolve_tool`)
-import them from `scripts.lib.tool` directly.
+Backend *policy* (which of cmux/limux is in effect) lives in
+`scripts.lib.tool`; this module owns the *implementation* — the `cmux()` CLI
+wrapper, ref parsing, pill management, and the per-backend actions
+(`workspace_cwds`, `spawn_workspace`) that branch on `tool.is_limux()`.
+Callers needing the policy predicates import `resolve_tool` / `is_cmux` /
+`is_limux` from `scripts.lib.tool`; everything else comes from here.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import sys
@@ -194,6 +196,47 @@ def wait_for_new_workspace_ref(
     return None
 
 
+def spawn_workspace(name: str, cwd: Path, command: str) -> str | None:
+    """Spawn a new workspace and return its ref, or None on failure.
+
+    cmux: passes --name/--focus, polls list-workspaces for the new ref since
+    `cmux new-workspace` does not echo it on stdout.
+
+    limux: passes --cwd/--command only (limux's new-workspace lacks --name
+    and --focus). Parses the ref from stdout ("OK workspace:<uuid>") and
+    follows up with `rename-workspace` so cockpit's name conventions match.
+    """
+    if tool.is_limux():
+        out = cmux(
+            "new-workspace",
+            "--cwd",
+            str(cwd),
+            "--command",
+            command,
+            check=False,
+        )
+        m = re.search(r"(workspace:[\w-]+)", out)
+        if m is None:
+            return None
+        ref = m.group(1)
+        cmux("rename-workspace", "--workspace", ref, name, check=False)
+        return ref
+
+    before = set(list_workspaces())
+    cmux(
+        "new-workspace",
+        "--name",
+        name,
+        "--cwd",
+        str(cwd),
+        "--command",
+        command,
+        "--focus",
+        "false",
+    )
+    return wait_for_new_workspace_ref(before)
+
+
 def nudge_if_idle(
     ref: str,
     message: str,
@@ -260,11 +303,49 @@ def workspace_names() -> dict[str, str]:
     return names
 
 
+def workspace_cwds() -> dict[str, Path]:
+    """{ref: current_directory} via `cmux rpc workspace.list` (cmux) or `limux --json list-workspaces` (limux).
+
+    Raises `CmuxUnavailable` on nonzero rc or unparsable output, so a backend
+    hiccup is not misread as an empty workspace set.
+
+    limux uses `--json` as a global flag (before the command), so the limux
+    path bypasses the `cmux()` wrapper — `cmux("--json", ...)` would still
+    work, but the global flag is clearer as a direct `run([...])` invocation.
+    """
+    if tool.is_limux():
+        cwd_key = "cwd"
+        label = "limux --json list-workspaces"
+        try:
+            out = run(["limux", "--json", "list-workspaces"], check=True)
+        except RuntimeError as e:
+            raise CmuxUnavailable(f"{label} failed: {e}") from e
+    else:
+        cwd_key = "current_directory"
+        label = "rpc workspace.list"
+        try:
+            out = cmux("rpc", "workspace.list", "{}", check=True)
+        except RuntimeError as e:
+            raise CmuxUnavailable(f"{label} failed: {e}") from e
+
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as e:
+        raise CmuxUnavailable(f"{label} returned non-JSON: {e}") from e
+    cwds: dict[str, Path] = {}
+    for ws in data.get("workspaces", []):
+        ref = ws.get("ref")
+        cwd = ws.get(cwd_key)
+        if ref and cwd:
+            cwds[ref] = Path(cwd)
+    return cwds
+
+
 def workspace_state() -> tuple[dict[str, str], dict[str, Path]]:
     """Fetch names and cwds in parallel."""
     with ThreadPoolExecutor(max_workers=2) as ex:
         names_fut = ex.submit(workspace_names)
-        cwds_fut = ex.submit(tool.workspace_cwds)
+        cwds_fut = ex.submit(workspace_cwds)
         return names_fut.result(), cwds_fut.result()
 
 
@@ -297,7 +378,7 @@ def find_cockpit_workspaces(
     wt_by_name = {wt.short: wt for wt in wts}
     pr_by_branch = {pr.branch: pr for pr in prs}
     if cwds is None:
-        cwds = tool.workspace_cwds()
+        cwds = workspace_cwds()
     if names is None:
         names = workspace_names()
     out: dict[str, tuple[PR, Worktree]] = {}
@@ -425,7 +506,7 @@ def resolve_workspace(query: str, repo_dir: Path) -> WorkspaceMatch:
     Raises LookupError on no match or ambiguity.
     """
     names = workspace_names()
-    cwds = tool.workspace_cwds()
+    cwds = workspace_cwds()
     wts = worktrees(repo_dir)
     wt_by_path = {wt.path.resolve(): wt for wt in wts}
     wt_by_branch = {wt.branch: wt for wt in wts}
@@ -496,7 +577,7 @@ def spawn_pr_workspace(
         for key, value, _ in status_pills(pr, wt, self_user, pref):
             print(f"  [dry]   pill {key}={value}", flush=True)
         return None
-    ref = tool.spawn_workspace(wt.short, wt.path, claude_command(build_pr_prompt(pr)))
+    ref = spawn_workspace(wt.short, wt.path, claude_command(build_pr_prompt(pr)))
     if ref is None:
         print(
             f"  warn: could not resolve new workspace ref for {wt.short}",
@@ -518,9 +599,7 @@ def spawn_orphan_workspace(wt: Worktree, *, dry: bool = False) -> str | None:
     if dry:
         print(f"  [dry] orphan spawn {wt.short}  cwd={wt.path}", flush=True)
         return None
-    ref = tool.spawn_workspace(
-        wt.short, wt.path, claude_command(build_orphan_prompt(wt))
-    )
+    ref = spawn_workspace(wt.short, wt.path, claude_command(build_orphan_prompt(wt)))
     if ref is None:
         print(
             f"  warn: could not resolve orphan workspace ref for {wt.short}",
