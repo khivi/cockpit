@@ -110,7 +110,7 @@ def _launch(
 def cockpit_home(tmp_path) -> Path:
     home = tmp_path / "cockpit-home"
     home.mkdir()
-    return home
+    return Path(home)
 
 
 def test_pidfile_race_refuses_to_start(tmp_path, cockpit_home):

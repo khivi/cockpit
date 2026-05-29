@@ -191,4 +191,4 @@ def main(argv: list[str] | None = None) -> int:
     forget.set_defaults(func=_cmd_forget)
 
     args = p.parse_args(argv)
-    return args.func(args)
+    return int(args.func(args))

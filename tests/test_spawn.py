@@ -270,7 +270,7 @@ def _cmux_kwarg(call_args: tuple, key: str) -> str:
     flag = f"--{key}"
     for i, a in enumerate(call_args):
         if a == flag and i + 1 < len(call_args):
-            return call_args[i + 1]
+            return str(call_args[i + 1])
     raise AssertionError(f"flag {flag} not in {call_args}")
 
 
@@ -696,9 +696,12 @@ def test_linear_default_off_skips_mcp_instructing_prompt(spawn_main, monkeypatch
     import scripts.spawn as spawn
 
     called: list[bool] = []
-    monkeypatch.setattr(
-        spawn, "linear_mcp_available", lambda: called.append(True) or True
-    )
+
+    def _available():
+        called.append(True)
+        return True
+
+    monkeypatch.setattr(spawn, "linear_mcp_available", _available)
     code, out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
     assert code == 0
     assert "on khivi/pe-1234" in out

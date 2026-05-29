@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 from .config import CONFIG_PATH, ensure_state_dirs
 from .gh import default_branch, gh_self_user
@@ -66,7 +67,7 @@ def register_cwd() -> dict:
     for r in repos:
         if Path(r["path"]).expanduser().resolve() == repo:
             print(f"already managed: {repo}")
-            return r
+            return cast(dict, r)
 
     default_prefix = f"{gh_user}/" if gh_user else ""
     branch_prefix = _prompt_branch_prefix(default_prefix)
