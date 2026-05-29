@@ -21,7 +21,6 @@ from scripts.lib.cmux import (
     ORANGE,
     ORPHAN_ICON,
     ORPHAN_KEY,
-    _resolve_tool,
     apply_pills,
     apply_stale_pill,
     apply_wip_pill,
@@ -38,6 +37,7 @@ from scripts.lib.cmux import (
     workspace_names,
     workspace_state,
 )
+from scripts.lib.tool import is_cmux, spawn_workspace
 from scripts.lib.colors import (
     bold,
     blue,
@@ -99,7 +99,7 @@ def _cache_only(cfg: dict) -> bool:
     """Skip pill / cmux-only verbs this cycle? True whenever the resolved
     workspace backend isn't cmux (limux can't do pills; 'none' = headless).
     """
-    return _resolve_tool() != "cmux"
+    return not is_cmux()
 
 
 def maybe_nudge(
@@ -816,17 +816,7 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
                 flush=True,
             )
             continue
-        cmux(
-            "new-workspace",
-            "--name",
-            ws_name,
-            "--cwd",
-            str(repo_path),
-            "--command",
-            claude_command(prompt),
-            "--focus",
-            "false",
-        )
+        spawn_workspace(ws_name, repo_path, claude_command(prompt))
 
 
 def cycle_repo(

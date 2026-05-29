@@ -1,8 +1,14 @@
-"""cmux CLI wrapper, workspace queries, and cockpit pill management."""
+"""cmux CLI wrapper, workspace queries, and cockpit pill management.
+
+Backend dispatch (cmux vs limux) lives in `scripts.lib.tool`; this module
+focuses on the shared surface — the `cmux()` CLI wrapper, ref parsing, pill
+and workspace orchestration. Callers that need the per-backend actions
+(`workspace_cwds`, `spawn_workspace`, `is_cmux`, `is_limux`, `resolve_tool`)
+import them from `scripts.lib.tool` directly.
+"""
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import sys
@@ -22,6 +28,7 @@ from .git import Worktree, worktrees
 from .nudges import NudgePref
 from .pills import decide_pills
 from .prompts import build_orphan_prompt, build_pr_prompt, claude_command
+from . import tool
 
 GREEN = "#16a34a"
 RED = "#eb445a"
@@ -68,7 +75,6 @@ OWNER_ICON = "👥"
 
 # Verbs that need cmux specifically — limux fork lacks the persistent-pill API.
 _PILL_VERBS = frozenset({"set-status", "clear-status"})
-_VALID_TOOLS = frozenset({"cmux", "limux", "none", "auto"})
 
 
 class CmuxUnavailable(RuntimeError):
@@ -103,42 +109,16 @@ def _apply_count_pill(
         _clear_status(ref, key)
 
 
-def _resolve_tool() -> str:
-    """Pick the workspace backend: 'cmux', 'limux', or 'none'.
-
-    Reads cfg['tool'] (cmux|limux|none|auto, default auto). 'auto' detects:
-    prefers cmux, falls back to limux, else 'none'. Resolved fresh each call
-    so tests can vary PATH / config across cases without cache leakage.
-    """
-    from .config import load_config
-
-    explicit: str = str(load_config().get("tool", "auto"))
-    if explicit not in _VALID_TOOLS:
-        print(
-            f"cockpit: invalid 'tool' value {explicit!r} "
-            f"(expected one of {sorted(_VALID_TOOLS)}); falling back to 'auto'",
-            file=sys.stderr,
-        )
-        explicit = "auto"
-    if explicit in {"cmux", "limux", "none"}:
-        return explicit
-    if shutil.which("cmux"):
-        return "cmux"
-    if shutil.which("limux"):
-        return "limux"
-    return "none"
-
-
 def _resolve_binary(verb: str) -> str | None:
     """Pick a workspace-CLI binary for `verb`. Pills require cmux; everything
     else accepts cmux or its limux fork. Honours cfg['tool'].
     """
-    tool = _resolve_tool()
-    if tool == "none":
+    backend = tool.resolve_tool()
+    if backend == "none":
         return None
-    if verb in _PILL_VERBS and tool != "cmux":
+    if verb in _PILL_VERBS and backend != "cmux":
         return None  # limux can't do pills
-    return tool if shutil.which(tool) else None
+    return backend if shutil.which(backend) else None
 
 
 def require_workspace_binary() -> None:
@@ -146,13 +126,13 @@ def require_workspace_binary() -> None:
     Use at the top of slash-command entry scripts so the user gets a useful
     message instead of a Python traceback.
     """
-    tool = _resolve_tool()
-    if tool != "none" and shutil.which(tool):
+    backend = tool.resolve_tool()
+    if backend != "none" and shutil.which(backend):
         return
     msg = (
         "cockpit: tool=none in config — workspace commands disabled"
-        if tool == "none"
-        else f"cockpit: '{tool}' not found on PATH"
+        if backend == "none"
+        else f"cockpit: '{backend}' not found on PATH"
     )
     print(msg, file=sys.stderr)
     sys.exit(2)
@@ -163,11 +143,11 @@ def cmux(*args: str, check: bool = True) -> str:
     binary = _resolve_binary(verb)
     if binary is None:
         if check:
-            tool = _resolve_tool()
+            backend = tool.resolve_tool()
             hint = (
                 " (pills require cmux; current tool is limux)"
-                if verb in _PILL_VERBS and tool == "limux"
-                else f" (current tool: {tool})"
+                if verb in _PILL_VERBS and backend == "limux"
+                else f" (current tool: {backend})"
             )
             raise FileNotFoundError(f"cockpit: '{verb}' unavailable{hint}")
         return ""
@@ -194,7 +174,7 @@ def list_workspaces() -> list[str]:
     out = cmux("list-workspaces", check=False)
     refs: list[str] = []
     for line in out.splitlines():
-        m = re.search(r"(workspace:\d+)", line)
+        m = re.search(r"(workspace:[\w-]+)", line)
         if m:
             refs.append(m.group(1))
     return refs
@@ -263,10 +243,10 @@ def nudge_if_idle(
 
 
 def workspace_names() -> dict[str, str]:
-    """{ref: name} from `cmux list-workspaces`.
+    """{ref: name} from `cmux list-workspaces` or `limux --json list-workspaces`.
 
-    Raises `CmuxUnavailable` if cmux exits nonzero — callers must not treat
-    an empty dict as "no workspaces" when cmux itself failed.
+    Raises `CmuxUnavailable` if the query exits nonzero — callers must not treat
+    an empty dict as "no workspaces" when the backend itself failed.
     """
     try:
         out = cmux("list-workspaces", check=True)
@@ -274,40 +254,17 @@ def workspace_names() -> dict[str, str]:
         raise CmuxUnavailable(f"list-workspaces failed: {e}") from e
     names: dict[str, str] = {}
     for line in out.splitlines():
-        m = re.search(r"(workspace:\d+)\s+(\S+)", line)
+        m = re.search(r"(workspace:[\w-]+)\s+(\S+)", line)
         if m:
             names[m.group(1)] = m.group(2)
     return names
-
-
-def workspace_cwds() -> dict[str, Path]:
-    """{ref: current_directory} via `cmux rpc workspace.list`.
-
-    Raises `CmuxUnavailable` on nonzero rc or unparsable output, so a cmux
-    hiccup is not misread as an empty workspace set.
-    """
-    try:
-        out = cmux("rpc", "workspace.list", "{}", check=True)
-    except RuntimeError as e:
-        raise CmuxUnavailable(f"rpc workspace.list failed: {e}") from e
-    try:
-        data = json.loads(out)
-    except json.JSONDecodeError as e:
-        raise CmuxUnavailable(f"rpc workspace.list returned non-JSON: {e}") from e
-    cwds: dict[str, Path] = {}
-    for ws in data.get("workspaces", []):
-        ref = ws.get("ref")
-        cwd = ws.get("current_directory")
-        if ref and cwd:
-            cwds[ref] = Path(cwd)
-    return cwds
 
 
 def workspace_state() -> tuple[dict[str, str], dict[str, Path]]:
     """Fetch names and cwds in parallel."""
     with ThreadPoolExecutor(max_workers=2) as ex:
         names_fut = ex.submit(workspace_names)
-        cwds_fut = ex.submit(workspace_cwds)
+        cwds_fut = ex.submit(tool.workspace_cwds)
         return names_fut.result(), cwds_fut.result()
 
 
@@ -340,7 +297,7 @@ def find_cockpit_workspaces(
     wt_by_name = {wt.short: wt for wt in wts}
     pr_by_branch = {pr.branch: pr for pr in prs}
     if cwds is None:
-        cwds = workspace_cwds()
+        cwds = tool.workspace_cwds()
     if names is None:
         names = workspace_names()
     out: dict[str, tuple[PR, Worktree]] = {}
@@ -468,7 +425,7 @@ def resolve_workspace(query: str, repo_dir: Path) -> WorkspaceMatch:
     Raises LookupError on no match or ambiguity.
     """
     names = workspace_names()
-    cwds = workspace_cwds()
+    cwds = tool.workspace_cwds()
     wts = worktrees(repo_dir)
     wt_by_path = {wt.path.resolve(): wt for wt in wts}
     wt_by_branch = {wt.branch: wt for wt in wts}
@@ -525,27 +482,6 @@ def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:
     return short_or_ref not in after
 
 
-def spawn_workspace(name: str, cwd: Path, command: str) -> str | None:
-    """Spawn a new cmux workspace and return its ref, or None on failure.
-
-    Works around `cmux new-workspace` not returning the ref on stdout: snapshots
-    existing refs, spawns, then polls `list-workspaces` for a new one.
-    """
-    before = set(list_workspaces())
-    cmux(
-        "new-workspace",
-        "--name",
-        name,
-        "--cwd",
-        str(cwd),
-        "--command",
-        command,
-        "--focus",
-        "false",
-    )
-    return wait_for_new_workspace_ref(before)
-
-
 def spawn_pr_workspace(
     pr: PR,
     wt: Worktree,
@@ -560,7 +496,7 @@ def spawn_pr_workspace(
         for key, value, _ in status_pills(pr, wt, self_user, pref):
             print(f"  [dry]   pill {key}={value}", flush=True)
         return None
-    ref = spawn_workspace(wt.short, wt.path, claude_command(build_pr_prompt(pr)))
+    ref = tool.spawn_workspace(wt.short, wt.path, claude_command(build_pr_prompt(pr)))
     if ref is None:
         print(
             f"  warn: could not resolve new workspace ref for {wt.short}",
@@ -582,7 +518,9 @@ def spawn_orphan_workspace(wt: Worktree, *, dry: bool = False) -> str | None:
     if dry:
         print(f"  [dry] orphan spawn {wt.short}  cwd={wt.path}", flush=True)
         return None
-    ref = spawn_workspace(wt.short, wt.path, claude_command(build_orphan_prompt(wt)))
+    ref = tool.spawn_workspace(
+        wt.short, wt.path, claude_command(build_orphan_prompt(wt))
+    )
     if ref is None:
         print(
             f"  warn: could not resolve orphan workspace ref for {wt.short}",

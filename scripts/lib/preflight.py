@@ -17,8 +17,8 @@ from __future__ import annotations
 import shutil
 import sys
 
-from .cmux import _resolve_tool
 from .colors import yellow
+from .tool import resolve_tool
 
 REQUIRED_BINARIES = ("gh", "git")
 CSHIP_BINARIES = ("cship", "starship")
@@ -43,7 +43,7 @@ def preflight(cfg: dict) -> None:
                 )
 
     if cfg.get("tool", "auto") == "auto":
-        resolved = _resolve_tool()
+        resolved = resolve_tool()
         if resolved == "limux":
             print(
                 f"{yellow('cockpit:')} cmux not found — using limux. "

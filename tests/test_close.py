@@ -52,7 +52,7 @@ def test_match_from_cwd_rejects_when_no_workspace(cockpit_repo, monkeypatch):
     with (
         patch.object(close_script, "workspace_cwds", return_value={}),
         patch.object(close_script, "workspace_names", return_value={}),
-        pytest.raises(LookupError, match="no cmux workspace rooted at"),
+        pytest.raises(LookupError, match=r"no \w+ workspace rooted at"),
     ):
         close_script._match_from_cwd(cockpit_repo.repo)
 

@@ -31,10 +31,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from scripts.lib.cmux import (  # noqa: E402
     require_workspace_binary,
     resolve_workspace,
-    workspace_cwds,
     workspace_names,
 )
 from scripts.lib.config import discover_repo  # noqa: E402
+from scripts.lib.tool import resolve_tool, workspace_cwds  # noqa: E402
 from scripts.lib.daemon_signal import enqueue, kick_running  # noqa: E402
 from scripts.lib.git import worktrees  # noqa: E402
 from scripts.orchestrators.teardown import (  # noqa: E402
@@ -78,7 +78,7 @@ def _match_from_cwd(repo_dir: Path):
     """Resolve the workspace + worktree at the user's current directory.
 
     Used when `cockpit:close` is invoked with no query: pick the worktree
-    rooted at `git rev-parse --show-toplevel`, then find the cmux workspace
+    rooted at `git rev-parse --show-toplevel`, then find the workspace
     whose cwd resolves there. Refuses on ambiguity.
     """
     cwd = Path.cwd().resolve()
@@ -94,7 +94,8 @@ def _match_from_cwd(repo_dir: Path):
     names = workspace_names()
     refs = [ref for ref, path in cwds.items() if path.resolve() == toplevel]
     if not refs:
-        raise LookupError(f"no cmux workspace rooted at {toplevel}")
+        tool = resolve_tool()
+        raise LookupError(f"no {tool} workspace rooted at {toplevel}")
     if len(refs) > 1:
         raise LookupError(
             f"multiple workspaces rooted at {toplevel}: {sorted(refs)} — "

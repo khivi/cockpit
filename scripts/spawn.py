@@ -83,6 +83,7 @@ from scripts.lib.cmux import (
     require_workspace_binary,
     workspace_names,
 )  # noqa: E402
+from scripts.lib.tool import spawn_workspace  # noqa: E402
 from scripts.lib.config import (
     discover_repo,
     find_repo_by_name,
@@ -694,17 +695,7 @@ def main() -> int:
     existing_ref = next((ref for ref, n in ws_refs.items() if n == ws_name), None)
     attached_ws = existing_ref is not None
     if existing_ref is None:
-        cmux(
-            "new-workspace",
-            "--name",
-            ws_name,
-            "--cwd",
-            str(wt),
-            "--command",
-            claude_command(prompt),
-            "--focus",
-            "false",
-        )
+        spawn_workspace(ws_name, wt, claude_command(prompt))
     elif prompt:
         # The worktree's Claude is already running, so the prompt can't ride in
         # on `--command`. Deliver it into the live session: type the text into

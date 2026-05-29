@@ -14,10 +14,18 @@ from scripts.lib.cmux import (
     resolve_workspace,
 )  # noqa: E402
 from scripts.lib.config import discover_repo  # noqa: E402
+from scripts.lib.tool import is_cmux, resolve_tool  # noqa: E402
 
 
 def main() -> int:
     require_workspace_binary()
+
+    if not is_cmux():
+        print(
+            f"ERROR: focus requires cmux; current tool is {resolve_tool()}",
+            file=sys.stderr,
+        )
+        return 1
 
     if len(sys.argv) != 2:
         print("usage: focus.py <pr|branch|slug>", file=sys.stderr)

@@ -238,7 +238,9 @@ def test_non_from_name_attaches_to_existing_remote_branch(cockpit_repo, push_bra
 def spawn_main(cockpit_repo, monkeypatch, capsys):
     """Returns `run(argv) -> (exit_code, stdout, stderr)`.
 
-    Captures cmux call args on `spawn_main.cmux_calls` for assertions.
+    Captures call args on `spawn_main.cmux_calls`: direct `cmux(...)` calls
+    (send/send-key on attach) and `spawn_workspace(...)` calls (synthesized
+    into cmux-style new-workspace tuples so `_cmux_kwarg` works unchanged).
     """
     import scripts.spawn as spawn
 
@@ -248,7 +250,14 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
         cmux_calls.append(args)
         return None
 
+    def fake_spawn_workspace(name, cwd, command):
+        cmux_calls.append(
+            ("new-workspace", "--name", name, "--cwd", str(cwd), "--command", command)
+        )
+        return None
+
     monkeypatch.setattr(spawn, "cmux", fake_cmux)
+    monkeypatch.setattr(spawn, "spawn_workspace", fake_spawn_workspace)
     monkeypatch.setattr(spawn, "workspace_names", lambda: {})
     monkeypatch.setattr(spawn, "kick_running", lambda *a, **kw: None)
     monkeypatch.setattr(spawn, "require_workspace_binary", lambda: None)
