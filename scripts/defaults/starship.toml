@@ -58,7 +58,7 @@ disabled = true
 command     = "__COCKPIT_STARSHIP__ model"
 when        = "true"
 format      = "(   [🤖 $output]($style))"
-style       = "fg:#1f2937"
+style       = "fg:243"
 description = "Claude model display name"
 
 # Claude Code context usage (e.g. "4%/1M"); ceiling cached by cship.py wrapper from display_name.
@@ -99,7 +99,7 @@ description = "staged/unstaged/untracked + behind + base-staleness"
 command     = "__COCKPIT_STARSHIP__ permission-mode"
 when        = "true"
 format      = "(   [$output]($style))"
-style       = "bold fg:#b45309"
+style       = "bold fg:172"
 description = "Claude Code permission mode"
 
 # Claude Code session duration (e.g. "1h 23m"); cship.py wrapper stashes transcript path each render.
@@ -107,7 +107,7 @@ description = "Claude Code permission mode"
 command     = "__COCKPIT_STARSHIP__ session-time"
 when        = "true"
 format      = "(   [⏱ $output]($style))"
-style       = "fg:#475569"
+style       = "fg:240"
 description = "Claude Code session duration"
 
 # Linear ticket extracted from current branch (e.g. "PRO-123"). Hidden if branch has none.
@@ -115,7 +115,7 @@ description = "Claude Code session duration"
 command     = "__COCKPIT_STARSHIP__ linear"
 when        = "true"
 format      = "(   [◫ $output]($style))"
-style       = "bold fg:#6d28d9"
+style       = "bold fg:91"
 description = "Linear ticket ID from git branch"
 
 # PR state for current branch: OPEN | DRAFT | MERGED | CLOSED | APPROVED | CHANGES_REQUESTED.
@@ -131,7 +131,7 @@ description = "GitHub PR state for current branch"
 command     = "__COCKPIT_STARSHIP__ pr-num"
 when        = "true"
 format      = "(   [$output]($style))"
-style       = "fg:#1f2937"
+style       = "fg:243"
 description = "GitHub PR number for current branch"
 
 # Unaddressed review-thread count for current branch's PR. Hidden when zero.
@@ -155,7 +155,7 @@ description = "GitHub PR CI status for current branch"
 command     = "__COCKPIT_STARSHIP__ pr-title"
 when        = "true"
 format      = "(   [$output]($style))"
-style       = "italic fg:#1f2937"
+style       = "italic fg:240"
 description = "GitHub PR title for current branch"
 
 # Nudge mute indicator. Daemon resolves mute state once per cycle and bakes it
