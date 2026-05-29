@@ -18,6 +18,7 @@ from scripts.lib.cmux import (
     YELLOW,
     CmuxUnavailable,
     apply_pills,
+    cmux_close_workspace_best_effort,
     nudge_if_idle,
     spawn_workspace,
     status_pills,
@@ -267,6 +268,29 @@ def test_spawn_workspace_cmux_polls_for_new_ref():
             ref = spawn_workspace("feat", Path("/tmp/wt"), "claude")
 
     assert ref == "workspace:2"
+
+
+def test_close_workspace_best_effort_passes_workspace_flag():
+    """`limux close-workspace <ref>` (positional) is silently misinterpreted as
+    "close the focused workspace" — closing the wrong one. The call must pass
+    `--workspace <ref>` explicitly. This test locks that in.
+    """
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-workspaces":
+            return ""
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        cmux_close_workspace_best_effort("workspace:abc-123-def")
+
+    close_call = next(c for c in calls if c[0] == "close-workspace")
+    assert "--workspace" in close_call, (
+        f"close-workspace must use --workspace flag, got {close_call}"
+    )
+    assert "workspace:abc-123-def" in close_call
 
 
 # ── muted pill ──────────────────────────────────────────────────────────────
