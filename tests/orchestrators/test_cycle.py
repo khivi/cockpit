@@ -127,17 +127,21 @@ def test_run_repo_skills_slow_spawns_workspace(tmp_path, monkeypatch):
     repo_path.mkdir()
     repo_entry = {"path": str(repo_path), "slow_skills": ["nudge-reviewers"]}
 
-    cmux_calls: list[tuple] = []
+    spawn_calls: list[tuple] = []
     with (
         patch.object(cycle, "workspace_names", return_value={}),
-        patch.object(cycle, "cmux", side_effect=lambda *a, **kw: cmux_calls.append(a)),
+        patch.object(
+            cycle,
+            "spawn_workspace",
+            side_effect=lambda *a, **kw: spawn_calls.append(a),
+        ),
     ):
         cycle._run_repo_skills(repo_entry, dry=False)
 
-    assert len(cmux_calls) == 1
-    assert cmux_calls[0][0] == "new-workspace"
-    assert "--name" in cmux_calls[0]
-    assert "skill-nudge-reviewers" in cmux_calls[0]
+    assert len(spawn_calls) == 1
+    name, cwd, _command = spawn_calls[0]
+    assert name == "skill-nudge-reviewers"
+    assert cwd == repo_path
 
 
 def test_run_repo_skills_slow_idempotent(tmp_path, monkeypatch):
@@ -154,10 +158,10 @@ def test_run_repo_skills_slow_idempotent(tmp_path, monkeypatch):
         patch.object(
             cycle, "workspace_names", return_value={"ws:1": "skill-nudge-reviewers"}
         ),
-        patch.object(cycle, "cmux") as mock_cmux,
+        patch.object(cycle, "spawn_workspace") as mock_spawn,
     ):
         cycle._run_repo_skills(repo_entry, dry=False)
-        mock_cmux.assert_not_called()
+        mock_spawn.assert_not_called()
 
 
 def test_run_repo_skills_empty_config(tmp_path):

@@ -19,6 +19,7 @@ from scripts.lib.cmux import (
     CmuxUnavailable,
     apply_pills,
     nudge_if_idle,
+    spawn_workspace,
     status_pills,
     workspace_cwds,
     workspace_names,
@@ -214,9 +215,58 @@ def test_workspace_cwds_parses_ok_when_cmux_ok():
 
 def test_workspace_cwds_parses_limux_json():
     payload = '{"workspace_id":"123","workspaces":[{"ref":"workspace:abc-def","cwd":"/home/user/wt"}]}'
+    # limux path bypasses the cmux() wrapper because --json is a global flag
+    # that must come before the command.
     with patch("scripts.lib.cmux._resolve_tool", return_value="limux"):
-        with patch("scripts.lib.cmux.cmux", return_value=payload):
+        with patch("scripts.lib.cmux.run", return_value=payload):
             assert workspace_cwds() == {"workspace:abc-def": Path("/home/user/wt")}
+
+
+def test_spawn_workspace_limux_parses_ref_and_renames():
+    """limux returns 'OK workspace:<uuid>' on stdout; spawn_workspace must
+    parse the ref directly and follow up with rename-workspace."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "new-workspace":
+            return "OK workspace:abc-123-def\n"
+        return ""
+
+    with patch("scripts.lib.cmux._resolve_tool", return_value="limux"):
+        with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+            ref = spawn_workspace("my-short", Path("/tmp/wt"), "claude --help")
+
+    assert ref == "workspace:abc-123-def"
+    # new-workspace call must omit --name / --focus on limux
+    new_call = next(c for c in calls if c[0] == "new-workspace")
+    assert "--name" not in new_call
+    assert "--focus" not in new_call
+    assert "--cwd" in new_call and "/tmp/wt" in new_call
+    # rename follow-up applies the desired short name
+    rename_call = next(c for c in calls if c[0] == "rename-workspace")
+    assert "--workspace" in rename_call
+    assert "workspace:abc-123-def" in rename_call
+    assert "my-short" in rename_call
+
+
+def test_spawn_workspace_cmux_polls_for_new_ref():
+    """cmux path still uses --name/--focus and polls list-workspaces."""
+    list_outputs = iter(["workspace:1 old\n", "workspace:1 old\nworkspace:2 new\n"])
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-workspaces":
+            return next(list_outputs)
+        if args[0] == "new-workspace":
+            # cmux's new-workspace returns nothing useful on stdout
+            return ""
+        return ""
+
+    with patch("scripts.lib.cmux._resolve_tool", return_value="cmux"):
+        with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+            ref = spawn_workspace("feat", Path("/tmp/wt"), "claude")
+
+    assert ref == "workspace:2"
 
 
 # ── muted pill ──────────────────────────────────────────────────────────────

@@ -285,25 +285,31 @@ def workspace_cwds() -> dict[str, Path]:
 
     Raises `CmuxUnavailable` on nonzero rc or unparsable output, so a backend
     hiccup is not misread as an empty workspace set.
+
+    limux uses `--json` as a global flag (before the command), so the limux
+    path bypasses the `cmux()` wrapper — `cmux("--json", ...)` would still
+    work, but the global flag is clearer as a direct `run([...])` invocation.
     """
     tool = _resolve_tool()
     if tool == "limux":
-        verb = "list-workspaces"
-        args = ["--json"]
         cwd_key = "cwd"
+        label = "limux --json list-workspaces"
+        try:
+            out = run(["limux", "--json", "list-workspaces"], check=True)
+        except RuntimeError as e:
+            raise CmuxUnavailable(f"{label} failed: {e}") from e
     else:
-        verb = "rpc"
-        args = ["workspace.list", "{}"]
         cwd_key = "current_directory"
+        label = "rpc workspace.list"
+        try:
+            out = cmux("rpc", "workspace.list", "{}", check=True)
+        except RuntimeError as e:
+            raise CmuxUnavailable(f"{label} failed: {e}") from e
 
-    try:
-        out = cmux(verb, *args, check=True)
-    except RuntimeError as e:
-        raise CmuxUnavailable(f"{verb} failed: {e}") from e
     try:
         data = json.loads(out)
     except json.JSONDecodeError as e:
-        raise CmuxUnavailable(f"{verb} returned non-JSON: {e}") from e
+        raise CmuxUnavailable(f"{label} returned non-JSON: {e}") from e
     cwds: dict[str, Path] = {}
     for ws in data.get("workspaces", []):
         ref = ws.get("ref")
@@ -536,11 +542,32 @@ def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:
 
 
 def spawn_workspace(name: str, cwd: Path, command: str) -> str | None:
-    """Spawn a new cmux workspace and return its ref, or None on failure.
+    """Spawn a new workspace and return its ref, or None on failure.
 
-    Works around `cmux new-workspace` not returning the ref on stdout: snapshots
-    existing refs, spawns, then polls `list-workspaces` for a new one.
+    cmux: passes --name/--focus, polls list-workspaces for the new ref since
+    `cmux new-workspace` does not echo it on stdout.
+
+    limux: passes --cwd/--command only (limux's new-workspace lacks --name
+    and --focus). Parses the ref from stdout ("OK workspace:<uuid>") and
+    follows up with `rename-workspace` so cockpit's name conventions match.
     """
+    tool = _resolve_tool()
+    if tool == "limux":
+        out = cmux(
+            "new-workspace",
+            "--cwd",
+            str(cwd),
+            "--command",
+            command,
+            check=False,
+        )
+        m = re.search(r"(workspace:[\w-]+)", out)
+        if m is None:
+            return None
+        ref = m.group(1)
+        cmux("rename-workspace", "--workspace", ref, name, check=False)
+        return ref
+
     before = set(list_workspaces())
     cmux(
         "new-workspace",

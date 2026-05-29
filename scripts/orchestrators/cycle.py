@@ -33,6 +33,7 @@ from scripts.lib.cmux import (
     nudge_if_idle,
     spawn_orphan_workspace,
     spawn_pr_workspace,
+    spawn_workspace,
     status_pills,
     workspace_is_idle,
     workspace_names,
@@ -816,17 +817,7 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
                 flush=True,
             )
             continue
-        cmux(
-            "new-workspace",
-            "--name",
-            ws_name,
-            "--cwd",
-            str(repo_path),
-            "--command",
-            claude_command(prompt),
-            "--focus",
-            "false",
-        )
+        spawn_workspace(ws_name, repo_path, claude_command(prompt))
 
 
 def cycle_repo(
