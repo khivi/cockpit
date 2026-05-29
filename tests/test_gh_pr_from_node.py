@@ -173,7 +173,8 @@ def test_unaddressed_named_bot_still_counted():
 
 def test_copilot_reviewer_failure_ignored():
     """copilot-pull-request-reviewer crashes due to GitHub API bugs unrelated
-    to the PR's code; its failure must not count toward ci=failed."""
+    to the PR's code; its failure must not count toward ci=failed when the
+    repo's per-repo ci_skip_checks lists it."""
     runs = [
         {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
         {
@@ -182,13 +183,29 @@ def test_copilot_reviewer_failure_ignored():
             "conclusion": "FAILURE",
         },
     ]
-    pr = _pr_from_node(_node(runs))
+    pr = _pr_from_node(_node(runs), skip_checks={"copilot-pull-request-reviewer"})
     assert pr.ci == "passed"
 
 
 def test_copilot_reviewer_excluded_but_real_failure_still_counted():
     runs = [
         {"name": "Tests", "status": "COMPLETED", "conclusion": "FAILURE"},
+        {
+            "name": "copilot-pull-request-reviewer",
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+        },
+    ]
+    pr = _pr_from_node(_node(runs), skip_checks={"copilot-pull-request-reviewer"})
+    assert pr.ci == "failed:1"
+
+
+def test_no_skip_checks_counts_all_failures():
+    """ci_skip_checks is per-repo only — there is no implicit global default.
+    With no skip_checks passed, every failing check counts, including the
+    copilot reviewer."""
+    runs = [
+        {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
         {
             "name": "copilot-pull-request-reviewer",
             "status": "COMPLETED",

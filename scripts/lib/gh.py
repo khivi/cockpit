@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import run
-from .config import load_config
 
 
 def gh_json(args: list[str]) -> dict | list:
@@ -365,7 +364,7 @@ def _pr_from_node(n: dict, skip_checks: set[str] | None = None) -> PR | None:
             ]
         else:
             if skip_checks is None:
-                skip_checks = set(load_config().get("ci_skip_checks", []))
+                skip_checks = set()
             check_runs = [r for r in all_runs if r.get("name") not in skip_checks]
             legacy_contexts = raw_contexts
         pending = sum(
