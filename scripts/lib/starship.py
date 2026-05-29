@@ -98,6 +98,7 @@ ICON_PR_NUM = "🔗"
 ICON_PR_TITLE = "📄"
 ICON_PR_MUTED = "🔇"
 ICON_PR_COMMENTS = "💬"
+ICON_COST = "💰"  # 💰 running session spend in USD
 
 _PR_CHECKS_COLOR: dict[str, Colorizer] = {
     "✓": green,
@@ -113,6 +114,16 @@ def _pct_tier(pct: int) -> Colorizer:
     if pct >= 90:
         return crimson
     if pct >= 70:
+        return orange
+    return slate
+
+
+def _cost_tier(usd: float) -> Colorizer:
+    if usd >= 10.0:
+        return bold_crimson
+    if usd >= 5.0:
+        return crimson
+    if usd >= 2.0:
         return orange
     return slate
 
@@ -328,6 +339,20 @@ def print_rate_limit(sid: str | None = None) -> str:
 def print_model(sid: str | None = None) -> str:
     sid = sid or os.environ.get("CSHIP_SESSION_ID") or None
     return _read_session_or_fallback("model", sid)
+
+
+def print_cost(sid: str | None = None) -> str:
+    sid = sid or os.environ.get("CSHIP_SESSION_ID") or None
+    raw = _read_session_or_fallback("cost", sid)
+    if not raw:
+        return ""
+    try:
+        usd = float(raw)
+    except ValueError:
+        return ""
+    if usd <= 0:
+        return ""
+    return _cost_tier(usd)(f"{ICON_COST} ${usd:.2f}")
 
 
 def print_permission_mode(sid: str | None = None) -> str:

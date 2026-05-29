@@ -25,6 +25,7 @@
 # pin the line break between session_time and linear.
 format = """\
 ${custom.model}\
+${custom.cost}\
 ${custom.context}\
 ${custom.ratelimit}\
 ${custom.branch_identity}\
@@ -60,6 +61,15 @@ when        = "true"
 format      = "(   [🤖 $output]($style))"
 style       = "fg:243"
 description = "Claude model display name"
+
+# Running Claude Code session spend (e.g. "💰 $0.42"); cached from cost.total_cost_usd
+# in statusLine JSON. Tiered ANSI (slate / orange / crimson / bold_crimson) emitted
+# by the Python output. Hidden until first cost reading arrives.
+[custom.cost]
+command     = "__COCKPIT_STARSHIP__ cost"
+when        = "true"
+format      = "(   $output)"
+description = "Claude Code session spend in USD"
 
 # Claude Code context usage (e.g. "4%/1M"); ceiling cached by cship.py wrapper from display_name.
 # The 🧠 prefix is emitted by the Python output so tiered ANSI can color the whole pill.
