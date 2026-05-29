@@ -19,6 +19,7 @@ def _node(check_runs=None, legacy_contexts=None, required_contexts=None):
     requiredStatusChecks — when present, _pr_from_node uses it as the
     authoritative filter and ignores the skip-list.
     """
+    base_ref: dict
     if required_contexts is None:
         base_ref = {"branchProtectionRule": None}
     else:
@@ -62,11 +63,13 @@ def _node(check_runs=None, legacy_contexts=None, required_contexts=None):
 
 def test_no_checks_yields_none():
     pr = _pr_from_node(_node())
+    assert pr is not None
     assert pr.ci == "none"
 
 
 def test_all_passing():
     pr = _pr_from_node(_node([{"status": "COMPLETED", "conclusion": "SUCCESS"}] * 3))
+    assert pr is not None
     assert pr.ci == "passed"
 
 
@@ -79,6 +82,7 @@ def test_pending_overrides_failure():
             ]
         )
     )
+    assert pr is not None
     assert pr.ci == "pending"
 
 
@@ -88,16 +92,19 @@ def test_failure_detected_past_thirty_runs():
     runs = [{"status": "COMPLETED", "conclusion": "SUCCESS"}] * 64
     runs.append({"status": "COMPLETED", "conclusion": "FAILURE"})
     pr = _pr_from_node(_node(runs))
+    assert pr is not None
     assert pr.ci == "failed:1"
 
 
 def test_legacy_status_context_failure():
     pr = _pr_from_node(_node([], legacy_contexts=[{"state": "FAILURE"}]))
+    assert pr is not None
     assert pr.ci == "failed:1"
 
 
 def test_legacy_status_context_pending():
     pr = _pr_from_node(_node([], legacy_contexts=[{"state": "PENDING"}]))
+    assert pr is not None
     assert pr.ci == "pending"
 
 
@@ -108,6 +115,7 @@ def test_mixed_check_run_and_legacy_failures_sum():
             legacy_contexts=[{"state": "FAILURE"}, {"state": "ERROR"}],
         )
     )
+    assert pr is not None
     assert pr.ci == "failed:3"
 
 
@@ -173,7 +181,8 @@ def test_unaddressed_named_bot_still_counted():
 
 def test_copilot_reviewer_failure_ignored():
     """copilot-pull-request-reviewer crashes due to GitHub API bugs unrelated
-    to the PR's code; its failure must not count toward ci=failed."""
+    to the PR's code; its failure must not count toward ci=failed when the
+    repo's per-repo ci_skip_checks lists it."""
     runs = [
         {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
         {
@@ -182,7 +191,8 @@ def test_copilot_reviewer_failure_ignored():
             "conclusion": "FAILURE",
         },
     ]
-    pr = _pr_from_node(_node(runs))
+    pr = _pr_from_node(_node(runs), skip_checks={"copilot-pull-request-reviewer"})
+    assert pr is not None
     assert pr.ci == "passed"
 
 
@@ -195,7 +205,25 @@ def test_copilot_reviewer_excluded_but_real_failure_still_counted():
             "conclusion": "FAILURE",
         },
     ]
+    pr = _pr_from_node(_node(runs), skip_checks={"copilot-pull-request-reviewer"})
+    assert pr is not None
+    assert pr.ci == "failed:1"
+
+
+def test_no_skip_checks_counts_all_failures():
+    """ci_skip_checks is per-repo only — there is no implicit global default.
+    With no skip_checks passed, every failing check counts, including the
+    copilot reviewer."""
+    runs = [
+        {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        {
+            "name": "copilot-pull-request-reviewer",
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+        },
+    ]
     pr = _pr_from_node(_node(runs))
+    assert pr is not None
     assert pr.ci == "failed:1"
 
 
@@ -209,6 +237,7 @@ def test_required_checks_filter_overrides_skip_list():
         {"name": "optional-flake", "status": "IN_PROGRESS", "conclusion": None},
     ]
     pr = _pr_from_node(_node(runs, required_contexts=["Tests"]))
+    assert pr is not None
     assert pr.ci == "passed"
 
 
@@ -220,6 +249,7 @@ def test_required_checks_failure_still_counts():
         {"name": "lint-bot", "status": "COMPLETED", "conclusion": "SUCCESS"},
     ]
     pr = _pr_from_node(_node(runs, required_contexts=["Tests"]))
+    assert pr is not None
     assert pr.ci == "failed:1"
 
 
@@ -237,6 +267,7 @@ def test_required_checks_overrides_skip_list_for_required_failure():
         _node(runs, required_contexts=["copilot-pull-request-reviewer"]),
         skip_checks={"copilot-pull-request-reviewer"},
     )
+    assert pr is not None
     assert pr.ci == "failed:1"
 
 
@@ -252,6 +283,7 @@ def test_no_required_checks_falls_back_to_skip_list():
         },
     ]
     pr = _pr_from_node(_node(runs), skip_checks={"copilot-pull-request-reviewer"})
+    assert pr is not None
     assert pr.ci == "passed"
 
 
@@ -270,6 +302,7 @@ def test_empty_required_checks_falls_back_to_skip_list():
         _node(runs, required_contexts=[]),
         skip_checks={"copilot-pull-request-reviewer"},
     )
+    assert pr is not None
     assert pr.ci == "passed"
 
 
@@ -286,6 +319,7 @@ def test_required_checks_filter_legacy_contexts():
             required_contexts=["ci/required"],
         )
     )
+    assert pr is not None
     assert pr.ci == "failed:1"
 
 
@@ -298,4 +332,5 @@ def test_null_check_suites_yields_unknown():
     node = _node()
     node["commits"]["nodes"][0]["commit"]["checkSuites"] = None
     pr = _pr_from_node(node)
+    assert pr is not None
     assert pr.ci == "unknown"

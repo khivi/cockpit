@@ -9,11 +9,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import run
-from .config import load_config
 
 
 def gh_json(args: list[str]) -> dict | list:
-    return json.loads(run(["gh", *args]))
+    data: dict | list = json.loads(run(["gh", *args]))
+    return data
 
 
 def default_branch(repo: Path) -> str:
@@ -158,7 +158,8 @@ def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:
         )
         if result.returncode != 0:
             raise RuntimeError(f"gh pr view failed: {result.stderr.strip()}")
-        return json.loads(result.stdout)
+        pr_data: dict = json.loads(result.stdout)
+        return pr_data
     data = gh_json(["pr", "view", pr_num, "--json", fields])
     assert isinstance(data, dict)
     return data
@@ -185,7 +186,8 @@ def fetch_run_info(
     result = subprocess.run(["gh", *args], capture_output=True, text=True, cwd=cwd)
     if result.returncode != 0:
         raise RuntimeError(f"gh run view failed: {result.stderr.strip()}")
-    return json.loads(result.stdout)
+    run_data: dict = json.loads(result.stdout)
+    return run_data
 
 
 def resolve_pr_branch(pr_num: str, repo_dir: Path | None = None) -> str:
@@ -365,7 +367,7 @@ def _pr_from_node(n: dict, skip_checks: set[str] | None = None) -> PR | None:
             ]
         else:
             if skip_checks is None:
-                skip_checks = set(load_config().get("ci_skip_checks", []))
+                skip_checks = set()
             check_runs = [r for r in all_runs if r.get("name") not in skip_checks]
             legacy_contexts = raw_contexts
         pending = sum(

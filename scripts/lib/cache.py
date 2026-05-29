@@ -122,8 +122,9 @@ def find_pr_payload(branch: str, repo_name: str | None = None) -> dict | None:
     """
     pattern = f"{repo_name.replace('/', '_')}__pr-*.json" if repo_name else "*.json"
     for _, payload in _iter_cache(pattern):
-        if payload.get("branch") == branch:
-            return payload
+        data: dict = payload
+        if data.get("branch") == branch:
+            return data
     return None
 
 
@@ -135,8 +136,9 @@ def find_pr_payload_by_number(pr_num: str, repo_name: str | None = None) -> dict
         else f"*__pr-{pr_num}.json"
     )
     for _, payload in _iter_cache(pattern):
-        if str(payload.get("number")) == str(pr_num):
-            return payload
+        data: dict = payload
+        if str(data.get("number")) == str(pr_num):
+            return data
     return None
 
 

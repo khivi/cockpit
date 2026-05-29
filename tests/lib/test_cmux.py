@@ -18,7 +18,9 @@ from scripts.lib.cmux import (
     YELLOW,
     CmuxUnavailable,
     apply_pills,
+    cmux_close_workspace_best_effort,
     nudge_if_idle,
+    spawn_workspace,
     status_pills,
     workspace_cwds,
     workspace_names,
@@ -163,24 +165,27 @@ def test_workspace_cwds_raises_on_nonzero_rc():
     def fake_cmux(*_args, **_kwargs):
         raise RuntimeError("cmux rpc workspace.list failed: daemon down")
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
-        with pytest.raises(CmuxUnavailable, match="rpc workspace.list failed"):
-            workspace_cwds()
+    with patch("scripts.lib.tool.resolve_tool", return_value="cmux"):
+        with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+            with pytest.raises(CmuxUnavailable, match="rpc workspace.list failed"):
+                workspace_cwds()
 
 
 def test_workspace_cwds_raises_on_non_json():
-    with patch("scripts.lib.cmux.cmux", return_value="not json"):
-        with pytest.raises(CmuxUnavailable, match="non-JSON"):
-            workspace_cwds()
+    with patch("scripts.lib.tool.resolve_tool", return_value="cmux"):
+        with patch("scripts.lib.cmux.cmux", return_value="not json"):
+            with pytest.raises(CmuxUnavailable, match="non-JSON"):
+                workspace_cwds()
 
 
 def test_workspace_state_propagates_cmux_unavailable():
     def fake_cmux(*_args, **_kwargs):
         raise RuntimeError("backend offline")
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
-        with pytest.raises(CmuxUnavailable):
-            workspace_state()
+    with patch("scripts.lib.tool.resolve_tool", return_value="cmux"):
+        with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+            with pytest.raises(CmuxUnavailable):
+                workspace_state()
 
 
 def test_workspace_names_parses_ok_when_cmux_ok():
@@ -191,10 +196,103 @@ def test_workspace_names_parses_ok_when_cmux_ok():
         assert workspace_names() == {"workspace:1": "feat-x", "workspace:2": "other"}
 
 
+def test_workspace_names_parses_limux_uuid_refs():
+    output = (
+        "  workspace:850fee36-6efb-48b1-91cc-27225bb45c44 needl-ai\n"
+        "* workspace:65160839-6664-4325-9d3c-bf272aa7d13a feature-branch\n"
+    )
+    with patch("scripts.lib.cmux.cmux", return_value=output):
+        result = workspace_names()
+        assert result["workspace:850fee36-6efb-48b1-91cc-27225bb45c44"] == "needl-ai"
+        assert (
+            result["workspace:65160839-6664-4325-9d3c-bf272aa7d13a"] == "feature-branch"
+        )
+
+
 def test_workspace_cwds_parses_ok_when_cmux_ok():
     payload = '{"workspaces":[{"ref":"workspace:1","current_directory":"/tmp/wt"}]}'
-    with patch("scripts.lib.cmux.cmux", return_value=payload):
-        assert workspace_cwds() == {"workspace:1": Path("/tmp/wt")}
+    with patch("scripts.lib.tool.resolve_tool", return_value="cmux"):
+        with patch("scripts.lib.cmux.cmux", return_value=payload):
+            assert workspace_cwds() == {"workspace:1": Path("/tmp/wt")}
+
+
+def test_workspace_cwds_parses_limux_json():
+    payload = '{"workspace_id":"123","workspaces":[{"ref":"workspace:abc-def","cwd":"/home/user/wt"}]}'
+    # limux path bypasses the cmux() wrapper because --json is a global flag
+    # that must come before the command.
+    with patch("scripts.lib.tool.resolve_tool", return_value="limux"):
+        with patch("scripts.lib.cmux.run", return_value=payload):
+            assert workspace_cwds() == {"workspace:abc-def": Path("/home/user/wt")}
+
+
+def test_spawn_workspace_limux_parses_ref_and_renames():
+    """limux returns 'OK workspace:<uuid>' on stdout; spawn_workspace must
+    parse the ref directly and follow up with rename-workspace."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "new-workspace":
+            return "OK workspace:abc-123-def\n"
+        return ""
+
+    with patch("scripts.lib.tool.resolve_tool", return_value="limux"):
+        with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+            ref = spawn_workspace("my-short", Path("/tmp/wt"), "claude --help")
+
+    assert ref == "workspace:abc-123-def"
+    # new-workspace call must omit --name / --focus on limux
+    new_call = next(c for c in calls if c[0] == "new-workspace")
+    assert "--name" not in new_call
+    assert "--focus" not in new_call
+    assert "--cwd" in new_call and "/tmp/wt" in new_call
+    # rename follow-up applies the desired short name
+    rename_call = next(c for c in calls if c[0] == "rename-workspace")
+    assert "--workspace" in rename_call
+    assert "workspace:abc-123-def" in rename_call
+    assert "my-short" in rename_call
+
+
+def test_spawn_workspace_cmux_polls_for_new_ref():
+    """cmux path still uses --name/--focus and polls list-workspaces."""
+    list_outputs = iter(["workspace:1 old\n", "workspace:1 old\nworkspace:2 new\n"])
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-workspaces":
+            return next(list_outputs)
+        if args[0] == "new-workspace":
+            # cmux's new-workspace returns nothing useful on stdout
+            return ""
+        return ""
+
+    with patch("scripts.lib.tool.resolve_tool", return_value="cmux"):
+        with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+            ref = spawn_workspace("feat", Path("/tmp/wt"), "claude")
+
+    assert ref == "workspace:2"
+
+
+def test_close_workspace_best_effort_passes_workspace_flag():
+    """`limux close-workspace <ref>` (positional) is silently misinterpreted as
+    "close the focused workspace" — closing the wrong one. The call must pass
+    `--workspace <ref>` explicitly. This test locks that in.
+    """
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-workspaces":
+            return ""
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        cmux_close_workspace_best_effort("workspace:abc-123-def")
+
+    close_call = next(c for c in calls if c[0] == "close-workspace")
+    assert (
+        "--workspace" in close_call
+    ), f"close-workspace must use --workspace flag, got {close_call}"
+    assert "workspace:abc-123-def" in close_call
 
 
 # ── muted pill ──────────────────────────────────────────────────────────────

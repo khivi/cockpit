@@ -21,7 +21,6 @@ from scripts.lib.cmux import (
     ORANGE,
     ORPHAN_ICON,
     ORPHAN_KEY,
-    _resolve_tool,
     apply_pills,
     apply_stale_pill,
     apply_wip_pill,
@@ -33,11 +32,13 @@ from scripts.lib.cmux import (
     nudge_if_idle,
     spawn_orphan_workspace,
     spawn_pr_workspace,
+    spawn_workspace,
     status_pills,
     workspace_is_idle,
     workspace_names,
     workspace_state,
 )
+from scripts.lib.tool import is_cmux
 from scripts.lib.colors import (
     bold,
     blue,
@@ -99,7 +100,7 @@ def _cache_only(cfg: dict) -> bool:
     """Skip pill / cmux-only verbs this cycle? True whenever the resolved
     workspace backend isn't cmux (limux can't do pills; 'none' = headless).
     """
-    return _resolve_tool() != "cmux"
+    return not is_cmux()
 
 
 def maybe_nudge(
@@ -450,9 +451,7 @@ def _prepare_cycle(
     # in list_relevant_prs fetches any-state PRs so the cache refreshes after
     # OPEN→MERGED / OPEN→CLOSED — `is:open author:self` alone misses those.
     branches = sorted({w.branch for w in wts if w.branch not in MAIN_BRANCHES})
-    skip_checks = set(
-        repo_entry.get("ci_skip_checks") or cfg.get("ci_skip_checks") or []
-    )
+    skip_checks = set(repo_entry.get("ci_skip_checks") or [])
     try:
         prs = list_relevant_prs(
             owner, name, self_user, branches, cache=pr_cache, skip_checks=skip_checks
@@ -818,17 +817,7 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
                 flush=True,
             )
             continue
-        cmux(
-            "new-workspace",
-            "--name",
-            ws_name,
-            "--cwd",
-            str(repo_path),
-            "--command",
-            claude_command(prompt),
-            "--focus",
-            "false",
-        )
+        spawn_workspace(ws_name, repo_path, claude_command(prompt))
 
 
 def cycle_repo(

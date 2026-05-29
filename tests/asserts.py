@@ -10,7 +10,7 @@ def expected_starship(cockpit_config) -> str:
     from config. Assertions about installed content must match that substituted
     output, not the in-repo source.
     """
-    return (
+    return str(
         cockpit_config.STARSHIP_DEFAULT_TOML.read_text()
         .replace(cockpit_config.STARSHIP_PLACEHOLDER, str(cockpit_config.STARSHIP_PY))
         .replace(

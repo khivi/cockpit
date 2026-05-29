@@ -79,6 +79,29 @@ def _count_unpushed(wt_path: Path) -> int:
     return sum(1 for line in res.stdout.splitlines() if line.startswith("+ "))
 
 
+def commits_only_local(wt_path: Path, branch: str) -> int:
+    """Commits on HEAD whose patch is not present on the branch's own remote.
+
+    Where `_count_unpushed` baselines against origin's *default* branch, this
+    baselines against `origin/<branch>` — so a pushed-but-unmerged branch reads
+    as fully pushed. Used to decide whether tearing down someone else's PR
+    worktree would lose anything: if every commit is already on
+    `origin/<branch>`, nothing exists only locally and removal is safe (teardown
+    is local-only and never touches the remote branch).
+
+    Falls back to `_count_unpushed` when `origin/<branch>` cannot be resolved,
+    so a never-pushed branch still counts as having unpushed work. Returns -1
+    if git fails outright.
+    """
+    ref = f"origin/{branch}"
+    if _git(wt_path, "rev-parse", "--verify", "--quiet", ref).returncode != 0:
+        return _count_unpushed(wt_path)
+    res = _git(wt_path, "cherry", ref, "HEAD")
+    if res.returncode != 0:
+        return -1
+    return sum(1 for line in res.stdout.splitlines() if line.startswith("+ "))
+
+
 def _gitdir(wt_path: Path) -> Path | None:
     res = _git(wt_path, "rev-parse", "--git-dir")
     if res.returncode != 0:
@@ -194,7 +217,7 @@ def current_branch(cwd: str | os.PathLike) -> str:
         return ""
     branch = res.stdout.strip()
     if branch and branch != "HEAD":
-        return branch
+        return str(branch)
     gitdir = _gitdir(Path(cwd))
     return _rebase_head_name(gitdir) or "" if gitdir else ""
 

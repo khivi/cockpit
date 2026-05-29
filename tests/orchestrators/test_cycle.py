@@ -127,17 +127,21 @@ def test_run_repo_skills_slow_spawns_workspace(tmp_path, monkeypatch):
     repo_path.mkdir()
     repo_entry = {"path": str(repo_path), "slow_skills": ["nudge-reviewers"]}
 
-    cmux_calls: list[tuple] = []
+    spawn_calls: list[tuple] = []
     with (
         patch.object(cycle, "workspace_names", return_value={}),
-        patch.object(cycle, "cmux", side_effect=lambda *a, **kw: cmux_calls.append(a)),
+        patch.object(
+            cycle,
+            "spawn_workspace",
+            side_effect=lambda *a, **kw: spawn_calls.append(a),
+        ),
     ):
         cycle._run_repo_skills(repo_entry, dry=False)
 
-    assert len(cmux_calls) == 1
-    assert cmux_calls[0][0] == "new-workspace"
-    assert "--name" in cmux_calls[0]
-    assert "skill-nudge-reviewers" in cmux_calls[0]
+    assert len(spawn_calls) == 1
+    name, cwd, _command = spawn_calls[0]
+    assert name == "skill-nudge-reviewers"
+    assert cwd == repo_path
 
 
 def test_run_repo_skills_slow_idempotent(tmp_path, monkeypatch):
@@ -154,10 +158,10 @@ def test_run_repo_skills_slow_idempotent(tmp_path, monkeypatch):
         patch.object(
             cycle, "workspace_names", return_value={"ws:1": "skill-nudge-reviewers"}
         ),
-        patch.object(cycle, "cmux") as mock_cmux,
+        patch.object(cycle, "spawn_workspace") as mock_spawn,
     ):
         cycle._run_repo_skills(repo_entry, dry=False)
-        mock_cmux.assert_not_called()
+        mock_spawn.assert_not_called()
 
 
 def test_run_repo_skills_empty_config(tmp_path):
@@ -781,7 +785,7 @@ def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, cap
     monkeypatch.setattr(cycle, "repo_nwo", lambda _p: ("ai-needl", "repo"))
     monkeypatch.setattr(cycle, "worktrees", lambda _p: [])
     monkeypatch.setattr(cycle, "fetch_merged_branches", lambda *_a, **_k: {})
-    monkeypatch.setattr(cycle, "_resolve_tool", lambda: "cmux")
+    monkeypatch.setattr(cycle, "is_cmux", lambda: True)
 
     def _boom() -> tuple[dict, dict]:
         raise CmuxUnavailable("backend offline")
@@ -1020,18 +1024,24 @@ def test_drain_refused_marker_is_popped_not_requeued(drain_isolated):
     order: list[str] = []
     real_iter_pending = ds.iter_pending
 
+    def _prune(*_a, **_kw):
+        order.append("prune")
+        return []
+
+    def _iter(*_a, **_kw):
+        order.append("iter")
+        return real_iter_pending(*_a, **_kw)
+
     with (
         patch.object(
             cycle_mod.daemon_signal,
             "prune_stale",
-            side_effect=lambda *_a, **_kw: order.append("prune") or [],
+            side_effect=_prune,
         ),
         patch.object(
             cycle_mod.daemon_signal,
             "iter_pending",
-            side_effect=lambda *_a, **_kw: (
-                order.append("iter") or real_iter_pending(*_a, **_kw)
-            ),
+            side_effect=_iter,
         ),
         patch.object(
             cycle_mod,
