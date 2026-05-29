@@ -163,24 +163,27 @@ def test_workspace_cwds_raises_on_nonzero_rc():
     def fake_cmux(*_args, **_kwargs):
         raise RuntimeError("cmux rpc workspace.list failed: daemon down")
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
-        with pytest.raises(CmuxUnavailable, match="rpc workspace.list failed"):
-            workspace_cwds()
+    with patch("scripts.lib.cmux._resolve_tool", return_value="cmux"):
+        with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+            with pytest.raises(CmuxUnavailable, match="rpc workspace.list failed"):
+                workspace_cwds()
 
 
 def test_workspace_cwds_raises_on_non_json():
-    with patch("scripts.lib.cmux.cmux", return_value="not json"):
-        with pytest.raises(CmuxUnavailable, match="non-JSON"):
-            workspace_cwds()
+    with patch("scripts.lib.cmux._resolve_tool", return_value="cmux"):
+        with patch("scripts.lib.cmux.cmux", return_value="not json"):
+            with pytest.raises(CmuxUnavailable, match="non-JSON"):
+                workspace_cwds()
 
 
 def test_workspace_state_propagates_cmux_unavailable():
     def fake_cmux(*_args, **_kwargs):
         raise RuntimeError("backend offline")
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
-        with pytest.raises(CmuxUnavailable):
-            workspace_state()
+    with patch("scripts.lib.cmux._resolve_tool", return_value="cmux"):
+        with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+            with pytest.raises(CmuxUnavailable):
+                workspace_state()
 
 
 def test_workspace_names_parses_ok_when_cmux_ok():
@@ -191,10 +194,29 @@ def test_workspace_names_parses_ok_when_cmux_ok():
         assert workspace_names() == {"workspace:1": "feat-x", "workspace:2": "other"}
 
 
+def test_workspace_names_parses_limux_uuid_refs():
+    output = (
+        "  workspace:850fee36-6efb-48b1-91cc-27225bb45c44 needl-ai\n"
+        "* workspace:65160839-6664-4325-9d3c-bf272aa7d13a feature-branch\n"
+    )
+    with patch("scripts.lib.cmux.cmux", return_value=output):
+        result = workspace_names()
+        assert result["workspace:850fee36-6efb-48b1-91cc-27225bb45c44"] == "needl-ai"
+        assert result["workspace:65160839-6664-4325-9d3c-bf272aa7d13a"] == "feature-branch"
+
+
 def test_workspace_cwds_parses_ok_when_cmux_ok():
     payload = '{"workspaces":[{"ref":"workspace:1","current_directory":"/tmp/wt"}]}'
-    with patch("scripts.lib.cmux.cmux", return_value=payload):
-        assert workspace_cwds() == {"workspace:1": Path("/tmp/wt")}
+    with patch("scripts.lib.cmux._resolve_tool", return_value="cmux"):
+        with patch("scripts.lib.cmux.cmux", return_value=payload):
+            assert workspace_cwds() == {"workspace:1": Path("/tmp/wt")}
+
+
+def test_workspace_cwds_parses_limux_json():
+    payload = '{"workspace_id":"123","workspaces":[{"ref":"workspace:abc-def","cwd":"/home/user/wt"}]}'
+    with patch("scripts.lib.cmux._resolve_tool", return_value="limux"):
+        with patch("scripts.lib.cmux.cmux", return_value=payload):
+            assert workspace_cwds() == {"workspace:abc-def": Path("/home/user/wt")}
 
 
 # ── muted pill ──────────────────────────────────────────────────────────────

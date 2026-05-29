@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scripts.lib.cmux import (
+    _resolve_tool,
     cmux,
     require_workspace_binary,
     resolve_workspace,
@@ -18,6 +19,14 @@ from scripts.lib.config import discover_repo  # noqa: E402
 
 def main() -> int:
     require_workspace_binary()
+
+    tool = _resolve_tool()
+    if tool != "cmux":
+        print(
+            f"ERROR: focus requires cmux; current tool is {tool}",
+            file=sys.stderr,
+        )
+        return 1
 
     if len(sys.argv) != 2:
         print("usage: focus.py <pr|branch|slug>", file=sys.stderr)

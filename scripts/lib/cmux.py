@@ -194,7 +194,7 @@ def list_workspaces() -> list[str]:
     out = cmux("list-workspaces", check=False)
     refs: list[str] = []
     for line in out.splitlines():
-        m = re.search(r"(workspace:\d+)", line)
+        m = re.search(r"(workspace:[\w-]+)", line)
         if m:
             refs.append(m.group(1))
     return refs
@@ -263,10 +263,10 @@ def nudge_if_idle(
 
 
 def workspace_names() -> dict[str, str]:
-    """{ref: name} from `cmux list-workspaces`.
+    """{ref: name} from `cmux list-workspaces` or `limux --json list-workspaces`.
 
-    Raises `CmuxUnavailable` if cmux exits nonzero — callers must not treat
-    an empty dict as "no workspaces" when cmux itself failed.
+    Raises `CmuxUnavailable` if the query exits nonzero — callers must not treat
+    an empty dict as "no workspaces" when the backend itself failed.
     """
     try:
         out = cmux("list-workspaces", check=True)
@@ -274,30 +274,40 @@ def workspace_names() -> dict[str, str]:
         raise CmuxUnavailable(f"list-workspaces failed: {e}") from e
     names: dict[str, str] = {}
     for line in out.splitlines():
-        m = re.search(r"(workspace:\d+)\s+(\S+)", line)
+        m = re.search(r"(workspace:[\w-]+)\s+(\S+)", line)
         if m:
             names[m.group(1)] = m.group(2)
     return names
 
 
 def workspace_cwds() -> dict[str, Path]:
-    """{ref: current_directory} via `cmux rpc workspace.list`.
+    """{ref: current_directory} via `cmux rpc workspace.list` (cmux) or `limux --json list-workspaces` (limux).
 
-    Raises `CmuxUnavailable` on nonzero rc or unparsable output, so a cmux
+    Raises `CmuxUnavailable` on nonzero rc or unparsable output, so a backend
     hiccup is not misread as an empty workspace set.
     """
+    tool = _resolve_tool()
+    if tool == "limux":
+        verb = "list-workspaces"
+        args = ["--json"]
+        cwd_key = "cwd"
+    else:
+        verb = "rpc"
+        args = ["workspace.list", "{}"]
+        cwd_key = "current_directory"
+
     try:
-        out = cmux("rpc", "workspace.list", "{}", check=True)
+        out = cmux(verb, *args, check=True)
     except RuntimeError as e:
-        raise CmuxUnavailable(f"rpc workspace.list failed: {e}") from e
+        raise CmuxUnavailable(f"{verb} failed: {e}") from e
     try:
         data = json.loads(out)
     except json.JSONDecodeError as e:
-        raise CmuxUnavailable(f"rpc workspace.list returned non-JSON: {e}") from e
+        raise CmuxUnavailable(f"{verb} returned non-JSON: {e}") from e
     cwds: dict[str, Path] = {}
     for ws in data.get("workspaces", []):
         ref = ws.get("ref")
-        cwd = ws.get("current_directory")
+        cwd = ws.get(cwd_key)
         if ref and cwd:
             cwds[ref] = Path(cwd)
     return cwds
