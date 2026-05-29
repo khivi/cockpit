@@ -992,6 +992,151 @@ def test_cycle_repo_no_spawn_skips_spawn_phase(tmp_path):
     ]
 
 
+# ── _spawn_missing_workspaces background creation + _bg_spawn_pr ─────────────
+
+
+def _pr_n(number: int, branch: str, *, author: str = "khivi") -> PR:
+    return PR(
+        number=number,
+        title="t",
+        branch=branch,
+        url="",
+        author=author,
+        is_draft=False,
+        review_decision="APPROVED",
+        mergeable="MERGEABLE",
+        ci="passed",
+        unaddressed=0,
+        total_from_others=0,
+        state="OPEN",
+    )
+
+
+def _spawn_ctx(
+    tmp_path,
+    *,
+    prs=None,
+    wts=None,
+    tracked=None,
+    review_candidates=None,
+    pill_state=None,
+    dry=False,
+):
+    return cycle.RepoCycle(
+        cfg={},
+        repo_path=tmp_path,
+        owner="o",
+        name="n",
+        self_user="khivi",
+        wts=wts or [],
+        prs=prs or [],
+        tracked=tracked or {},
+        names={},
+        cwds={},
+        merged_branches={},
+        pill_state={} if pill_state is None else pill_state,
+        keep_stale=False,
+        no_spawn=False,
+        dry=dry,
+        verbose=False,
+        headless=False,
+        review_candidates=review_candidates or [],
+    )
+
+
+def test_spawn_missing_bg_spawns_my_pr_without_worktree(tmp_path):
+    """My open PR with no worktree → background create (not a WARN)."""
+    ctx = _spawn_ctx(tmp_path, prs=[_pr_n(7, "khivi/feat")], wts=[])
+    with (
+        patch.object(cycle, "_bg_spawn_pr") as bg,
+        patch.object(cycle, "spawn_pr_workspace") as sp,
+        patch.object(cycle, "spawn_orphan_workspace"),
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    bg.assert_called_once_with(ctx, "n", 7, "khivi/feat", review=False)
+    sp.assert_not_called()
+
+
+def test_spawn_missing_review_candidates_filtered(tmp_path):
+    """review_prs: spawn a review worktree for each other-authored open PR
+    without a worktree; skip mine and skip ones already checked out."""
+    from scripts.lib.gh import OpenPRHead
+
+    ctx = _spawn_ctx(
+        tmp_path,
+        prs=[],
+        wts=[Worktree(path=tmp_path / "wt", branch="coworker/has-wt")],
+        review_candidates=[
+            OpenPRHead(20, "coworker/new", "coworker"),  # → review spawn
+            OpenPRHead(21, "khivi/mine", "khivi"),  # skip: mine
+            OpenPRHead(22, "coworker/has-wt", "coworker"),  # skip: worktree exists
+        ],
+    )
+    with (
+        patch.object(cycle, "_bg_spawn_pr") as bg,
+        patch.object(cycle, "spawn_pr_workspace"),
+        patch.object(cycle, "spawn_orphan_workspace"),
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    review_calls = [c for c in bg.call_args_list if c.kwargs.get("review")]
+    assert len(review_calls) == 1
+    assert review_calls[0].args == (ctx, "n", 20, "coworker/new")
+
+
+def test_bg_spawn_pr_dry_run_does_not_launch(tmp_path, capsys):
+    ctx = _spawn_ctx(tmp_path, dry=True)
+    with patch.object(cycle.subprocess, "Popen") as popen:
+        cycle._bg_spawn_pr(ctx, "n", 9, "khivi/x", review=False)
+    popen.assert_not_called()
+    assert "bg-spawn #9" in capsys.readouterr().out
+    assert "spawn:o/n:khivi/x" not in ctx.pill_state
+
+
+def test_bg_spawn_pr_launches_records_and_guards(tmp_path, monkeypatch):
+    monkeypatch.setattr(cycle, "_SPAWN_LOG", tmp_path / "spawn.log")
+    ctx = _spawn_ctx(tmp_path)
+    with (
+        patch.object(cycle.subprocess, "Popen") as popen,
+        patch.object(cycle.time, "monotonic", return_value=100.0),
+    ):
+        cycle._bg_spawn_pr(ctx, "n", 9, "coworker/x", review=True)
+        # Second call within the in-flight TTL is suppressed.
+        cycle._bg_spawn_pr(ctx, "n", 9, "coworker/x", review=True)
+    assert popen.call_count == 1
+    argv = popen.call_args.args[0]
+    assert argv[2:] == ["--pr", "9", "--repo", "n", "--review"]
+    assert ctx.pill_state["spawn:o/n:coworker/x"] == 100.0
+
+
+def test_bg_spawn_pr_retries_after_ttl(tmp_path, monkeypatch):
+    monkeypatch.setattr(cycle, "_SPAWN_LOG", tmp_path / "spawn.log")
+    ctx = _spawn_ctx(tmp_path, pill_state={"spawn:o/n:khivi/x": 10.0})
+    with (
+        patch.object(cycle.subprocess, "Popen") as popen,
+        patch.object(
+            cycle.time,
+            "monotonic",
+            return_value=10.0 + cycle._SPAWN_INFLIGHT_TTL_SECONDS + 1,
+        ),
+    ):
+        cycle._bg_spawn_pr(ctx, "n", 9, "khivi/x", review=False)
+    popen.assert_called_once()
+
+
+def test_bg_spawn_pr_omits_repo_flag_without_name(tmp_path, monkeypatch):
+    """No config name → omit --repo and let the child discover by cwd."""
+    monkeypatch.setattr(cycle, "_SPAWN_LOG", tmp_path / "spawn.log")
+    ctx = _spawn_ctx(tmp_path)
+    with (
+        patch.object(cycle.subprocess, "Popen") as popen,
+        patch.object(cycle.time, "monotonic", return_value=1.0),
+    ):
+        cycle._bg_spawn_pr(ctx, None, 9, "khivi/x", review=False)
+    argv = popen.call_args.args[0]
+    assert "--repo" not in argv
+    assert argv[2:] == ["--pr", "9"]
+
+
 # ── _apply_repo_colors / _repo_owned_refs ───────────────────────────────────
 
 

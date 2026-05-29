@@ -51,6 +51,24 @@ def _validate_sidebar_colors(cfg: dict) -> None:
             )
 
 
+def _validate_review_prs(cfg: dict) -> None:
+    """Hard-fail on a repo `review_prs` that isn't a bool.
+
+    `review_prs: true` makes the daemon create a review worktree for every
+    other-authored open PR in the repo — a non-bool (e.g. a stray string) would
+    be silently truthy, so it's rejected at start like `sidebar_color`.
+    """
+    for repo in cfg.get("repos", []):
+        if "review_prs" not in repo:
+            continue
+        if not isinstance(repo["review_prs"], bool):
+            name = repo.get("name") or repo.get("path", "?")
+            _die(
+                f"repo {name!r}: review_prs must be true or false, "
+                f"got {repo['review_prs']!r}."
+            )
+
+
 def preflight(cfg: dict) -> None:
     for binary in REQUIRED_BINARIES:
         if shutil.which(binary) is None:
@@ -65,6 +83,7 @@ def preflight(cfg: dict) -> None:
                 )
 
     _validate_sidebar_colors(cfg)
+    _validate_review_prs(cfg)
 
     if cfg.get("tool", "auto") == "auto":
         resolved = resolve_tool()

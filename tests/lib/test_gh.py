@@ -14,9 +14,11 @@ from unittest.mock import patch
 
 from scripts.lib.gh import (
     _PR_LIGHT_FIELDS,
+    OpenPRHead,
     _graphql,
     _relevant_pr_query,
     fetch_merged_branches,
+    list_open_pr_heads,
 )
 
 
@@ -177,6 +179,69 @@ def test_fetch_merged_branches_empty_search_returns_empty_map():
     pages = [_page([])]
     with patch("scripts.lib.gh._graphql", side_effect=pages):
         assert fetch_merged_branches("o", "n") == {}
+
+
+# ── list_open_pr_heads ───────────────────────────────────────────────────────
+
+
+def _pr_head_node(num: int, branch: str, author: str | None) -> dict:
+    return {
+        "number": num,
+        "headRefName": branch,
+        "author": {"login": author} if author is not None else None,
+    }
+
+
+def test_list_open_pr_heads_single_page():
+    pages = [
+        _page(
+            [
+                _pr_head_node(1, "coworker/a", "coworker"),
+                _pr_head_node(2, "khivi/b", "khivi"),
+            ]
+        )
+    ]
+    with patch("scripts.lib.gh._graphql", side_effect=pages) as m:
+        result = list_open_pr_heads("o", "n")
+    assert result == [
+        OpenPRHead(1, "coworker/a", "coworker"),
+        OpenPRHead(2, "khivi/b", "khivi"),
+    ]
+    # The search must drop the author filter — review_prs wants ALL open PRs.
+    assert m.call_args_list[0].args[1]["search"] == "repo:o/n is:pr is:open"
+
+
+def test_list_open_pr_heads_paginates_until_no_next_page():
+    pages = [
+        _page([_pr_head_node(10, "feat/a", "a")], end="c1", more=True),
+        _page([_pr_head_node(11, "feat/b", "b")], end="c2", more=True),
+        _page([_pr_head_node(12, "feat/c", "c")]),
+    ]
+    with patch("scripts.lib.gh._graphql", side_effect=pages) as m:
+        result = list_open_pr_heads("o", "n")
+    assert m.call_count == 3
+    assert [h.number for h in result] == [10, 11, 12]
+    assert m.call_args_list[1].args[1]["cursor"] == "c1"
+    assert m.call_args_list[2].args[1]["cursor"] == "c2"
+
+
+def test_list_open_pr_heads_null_author_becomes_empty_string():
+    """Bots (Copilot/dependabot) return author=null — reported as "" so the
+    caller can decide to skip or include them explicitly."""
+    pages = [_page([_pr_head_node(5, "dependabot/x", None)])]
+    with patch("scripts.lib.gh._graphql", side_effect=pages):
+        result = list_open_pr_heads("o", "n")
+    assert result == [OpenPRHead(5, "dependabot/x", "")]
+
+
+def test_list_open_pr_heads_empty_on_graphql_failure():
+    import subprocess
+
+    with patch(
+        "scripts.lib.gh._graphql",
+        side_effect=subprocess.CalledProcessError(1, "gh"),
+    ):
+        assert list_open_pr_heads("o", "n") == []
 
 
 def test_fetch_merged_branches_graphql_failure_returns_empty_map():

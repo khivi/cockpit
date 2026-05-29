@@ -11,11 +11,13 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import IO
 
 from scripts.lib.cmux import (
     ORANGE,
@@ -48,12 +50,11 @@ from scripts.lib.colors import (
     cyan,
     dim,
     green,
-    red,
     yellow,
 )
 from scripts.lib.issue_color import issue_color
 from scripts.lib.log_format import verb
-from scripts.lib.config import ensure_state_dirs
+from scripts.lib.config import COCKPIT_HOME, ensure_state_dirs
 import scripts.lib.daemon_signal as daemon_signal
 from scripts.lib.cache import (
     muted_payload,
@@ -66,7 +67,9 @@ from scripts.lib.cache import (
 )
 from scripts.lib.gh import (
     PR,
+    OpenPRHead,
     fetch_merged_branches,
+    list_open_pr_heads,
     list_relevant_prs,
     repo_nwo,
 )
@@ -399,6 +402,7 @@ class RepoCycle:
     headless: bool
     prefs: dict[int, NudgePref] = field(default_factory=dict)
     base_distance: dict[str, int] = field(default_factory=dict)
+    review_candidates: list[OpenPRHead] = field(default_factory=list)
 
 
 def _repo_name_color(repo_entry: dict) -> Colorizer:
@@ -475,6 +479,22 @@ def _prepare_cycle(
         )
         return None
 
+    # When `review_prs` is set, also pull every other-authored open PR so the
+    # spawn phase can create review worktrees for ones we don't track yet. The
+    # daemon's normal query is `author:self` + per-worktree aliases, so without
+    # this the daemon never sees a coworker's PR until a local worktree exists.
+    review_candidates: list[OpenPRHead] = []
+    if repo_entry.get("review_prs") and not headless:
+        try:
+            review_candidates = list_open_pr_heads(owner, name)
+        except RuntimeError as e:
+            print(
+                f"  {yellow('warn')} {owner}/{name}: review_prs open-PR fetch "
+                f"failed: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
+
     tracked = find_cockpit_workspaces(prs, wts, names=names, cwds=cwds)
     # Resolve nudge prefs once per cycle — the single point of mute-state I/O.
     # Everything downstream (write_pr_cache, write_branch_pr_cache, apply_pills,
@@ -510,6 +530,7 @@ def _prepare_cycle(
         verbose=verbose,
         headless=headless,
         prefs=prefs,
+        review_candidates=review_candidates,
     )
 
 
@@ -735,18 +756,89 @@ def _refresh_orphan(ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str) -> Non
     )
 
 
-def _spawn_missing_workspaces(ctx: RepoCycle) -> None:
-    """Spawn cmux workspaces for PR-matched worktrees that lack one, and for
-    my-prefix orphan worktrees not yet covered by any workspace cwd.
+_SPAWN_SCRIPT = Path(__file__).resolve().parent.parent / "spawn.py"
+_SPAWN_LOG = COCKPIT_HOME / "spawn.log"
+# Suppress a re-spawn of the same branch for two slow ticks (default 300s each)
+# so a manual `/cockpit:sync` kick can't double-launch while a `git fetch` +
+# worktree add is still in flight. Expires so a failed creation is retried.
+_SPAWN_INFLIGHT_TTL_SECONDS = 600
+
+
+def _bg_spawn_pr(
+    ctx: RepoCycle, repo_name: str | None, number: int, branch: str, *, review: bool
+) -> None:
+    """Fire `spawn.py --pr <n> [--repo <name>] [--review]` detached so the slow
+    tick never blocks on `git fetch` + worktree add.
+
+    The child reuses the exact path `/cockpit:new` walks (create_worktree +
+    spawn_pr_workspace), then the new worktree surfaces as cells on a later
+    cycle — inventory is derived, not stored (see AGENTS.md). `--repo` is passed
+    when the config entry has a name; otherwise the child's cwd-based discovery
+    resolves the repo from `ctx.repo_path`. An in-flight guard keyed by branch
+    in `pill_state` keeps back-to-back ticks from double-spawning; stderr/stdout
+    land in `spawn.log` so detached failures are not silent.
     """
-    matched, skipped_self = match_worktrees(ctx.prs, ctx.wts, ctx.self_user)
-    for pr in skipped_self:
+    key = f"spawn:{ctx.owner}/{ctx.name}:{branch}"
+    last = ctx.pill_state.get(key)
+    now = time.monotonic()
+    if isinstance(last, float) and (now - last) < _SPAWN_INFLIGHT_TTL_SECONDS:
+        return
+    label = "bg-review" if review else "bg-spawn"
+    if ctx.dry:
+        print(f"  [dry] {label} #{number} branch={branch}", flush=True)
+        return
+    cmd = [sys.executable, str(_SPAWN_SCRIPT), "--pr", str(number)]
+    if repo_name:
+        cmd += ["--repo", repo_name]
+    if review:
+        cmd.append("--review")
+    logfile: IO[bytes] | None = None
+    try:
+        logfile = open(_SPAWN_LOG, "ab")
+    except OSError:
+        logfile = None
+    sink: IO[bytes] | int = logfile if logfile is not None else subprocess.DEVNULL
+    try:
+        subprocess.Popen(
+            cmd,
+            cwd=str(ctx.repo_path),
+            stdout=sink,
+            stderr=sink,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as e:
         print(
-            f"  {bold(red('WARN:'))} my PR #{pr.number} has no worktree for "
-            f"branch {pr.branch} — create one with /cockpit:new",
+            f"  {yellow('warn')} {label} #{number}: failed to launch spawn.py: {e}",
             file=sys.stderr,
             flush=True,
         )
+        return
+    finally:
+        if logfile is not None:
+            logfile.close()
+    ctx.pill_state[key] = now
+    print(
+        f"  {verb(label)} {bold(branch)}  #{number}"
+        + (f"  {dim('(review)')}" if review else ""),
+        flush=True,
+    )
+
+
+def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
+    """Spawn/create the workspaces and worktrees a cycle is missing:
+
+    1. PR-matched worktrees that lack a cmux workspace → spawn one.
+    2. My open PRs with no local worktree → create worktree + workspace in the
+       background (replaces the old "create one with /cockpit:new" warning).
+    3. `review_prs`: every other-authored open PR without a worktree → create a
+       review worktree (`spawn.py --review`) in the background. Uncapped.
+    4. My-prefix orphan worktrees not yet covered by any workspace → spawn one.
+    """
+    repo_name = repo_entry.get("name")
+    matched, skipped_self = match_worktrees(ctx.prs, ctx.wts, ctx.self_user)
+    for pr in skipped_self:
+        _bg_spawn_pr(ctx, repo_name, pr.number, pr.branch, review=False)
     tracked_pr_numbers = {pr.number for pr, _ in ctx.tracked.values()}
     for pr, wt in matched:
         if pr.number not in tracked_pr_numbers:
@@ -757,6 +849,14 @@ def _spawn_missing_workspaces(ctx: RepoCycle) -> None:
                 pref=ctx.prefs.get(pr.number),
                 dry=ctx.dry,
             )
+    if ctx.review_candidates:
+        existing_branches = {w.branch for w in ctx.wts}
+        for cand in ctx.review_candidates:
+            if cand.author == ctx.self_user:
+                continue  # mine — handled by skipped_self above
+            if cand.branch in existing_branches:
+                continue  # already have a worktree — tracked via the matched path
+            _bg_spawn_pr(ctx, repo_name, cand.number, cand.branch, review=True)
     pr_branches = {pr.branch for pr in ctx.prs}
     my_prefix = f"{ctx.self_user}/"
     covered_paths = {p.resolve() for p in ctx.cwds.values()}
@@ -911,7 +1011,7 @@ def cycle_repo(
     _handle_orphans_and_close_stale(ctx, keep_refs)
     _apply_repo_colors(ctx, repo_entry, keep_refs)
     if not no_spawn:
-        _spawn_missing_workspaces(ctx)
+        _spawn_missing_workspaces(ctx, repo_entry)
     _maybe_autoclose(
         cfg,
         ctx.repo_path,

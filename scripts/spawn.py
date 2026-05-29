@@ -163,6 +163,12 @@ def parse_args() -> argparse.Namespace:
         help="spawn workspace running a global or repo skill (no worktree, no branch)",
     )
     p.add_argument(
+        "--review",
+        action="store_true",
+        help="seed the worktree's first turn with `/review` instead of the "
+        "plan-only prompt (used by the daemon's per-repo `review_prs`)",
+    )
+    p.add_argument(
         "--context-text",
         help="caller-supplied summary of the current session, injected into the "
         "seeded first-turn prompt under a 'Caller session context' heading. The "
@@ -412,6 +418,34 @@ def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+def _review_prompt(branch: str, pr_info: dict | None = None) -> str:
+    """First-turn prompt for an auto-spawned review worktree (per-repo
+    `review_prs`).
+
+    Leads with the literal `/review` slash command so Claude Code runs the
+    built-in PR review against the PR checked out on this branch; the PR
+    context block follows for the human reading the transcript. Mirrors the
+    `--skill` path, which also delivers a bare slash command as the first turn.
+    """
+    lines = ["/review", ""]
+    if pr_info:
+        author = (pr_info.get("author") or {}).get("login", "unknown")
+        number = pr_info["number"]
+        title = pr_info.get("title") or f"PR #{number}"
+        lines += [
+            f"Reviewing PR #{number} by @{author} — {title}",
+            f"branch: {branch}",
+            pr_info.get("url", ""),
+        ]
+    else:
+        lines.append(f"Reviewing the open PR on branch `{branch}`.")
+    lines += [
+        "",
+        "Report findings. Do not post review comments unless explicitly authorized.",
+    ]
+    return "\n".join(lines)
+
+
 def _actions_short_name(run_info: dict, job_id: str | None) -> str:
     """Synthesize a workspace short name for an Actions investigation worktree.
 
@@ -541,6 +575,11 @@ def main() -> int:
         )
     if (args.name or args.skill) and not (args.repo or cwd):
         return _die("--name and --skill require --repo <name> or --cwd <path>")
+    if args.review and (args.skill or (cwd and not chosen)):
+        return _die(
+            "--review needs a PR or branch source (positional/--branch/--pr); "
+            "it cannot combine with --skill or a bare --cwd"
+        )
     if cwd:
         cwd_path = Path(cwd).expanduser().resolve()
         if not cwd_path.exists():
@@ -686,6 +725,8 @@ def main() -> int:
 
         if actions_run_info is not None:
             prompt = _actions_prompt(branch, actions_run_info, actions_job_id, pr_info)
+        elif args.review:
+            prompt = _review_prompt(branch, pr_info)
         elif prompt is None and (
             pr_info or is_linear or args.context_text or args.claude_addendum
         ):
