@@ -401,7 +401,7 @@ def test_autoclose_keeps_reused_branch_name(tmp_path):
         patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree") as remove_mock,
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
-        patch.object(cycle, "is_ancestor", return_value=False),
+        patch.object(cycle, "is_ancestor", return_value=False) as ancestor_mock,
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -414,6 +414,9 @@ def test_autoclose_keeps_reused_branch_name(tmp_path):
             dry=False,
         )
 
+    # The reachability gate must actually be consulted — otherwise the no-teardown
+    # assertions could pass vacuously if the branch never reached the gate.
+    ancestor_mock.assert_called_once_with(wt_path, "979e571")
     close_mock.assert_not_called()
     remove_mock.assert_not_called()
 

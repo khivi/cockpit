@@ -280,8 +280,9 @@ def _maybe_autoclose(
     when merged. A branch being *present* in that map is not enough — a branch
     name reused for new work after its old PR merged (delete-and-recreate, or a
     reset onto a different lineage) is still listed, and tearing it down nukes a
-    worktree the user just created. Gate on `_is_post_merge_stale` instead: keep
-    only worktrees whose HEAD still descends from the recorded merge head.
+    worktree the user just created. Gate on `_is_post_merge_stale` instead: tear
+    down only worktrees whose HEAD still descends from the recorded merge head;
+    a reused branch on a fresh lineage does not, so it survives.
 
     That reachability gate cannot prove "branch work is in main" for squash- or
     rebase-merges (the resulting SHAs differ) — but it does not need to. It asks
