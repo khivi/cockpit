@@ -7,7 +7,8 @@
       "default_base": "main",
       "linear_keys": ["TEAM"],
       "ci_skip_checks": ["copilot-pull-request-reviewer"],
-      "sidebar_color": "Blue"
+      "sidebar_color": "Blue",
+      "review_prs": false
     }
   ],
   "slow_poll_interval_seconds": 300,

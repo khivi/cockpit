@@ -405,6 +405,64 @@ def test_positional_branch_dispatches_to_branch_mode(spawn_main, push_branch):
     assert "on khivi/positional-branch" in out
 
 
+# ── --review (per-repo review_prs) ─────────────────────────────────────────
+
+
+def test_review_prompt_leads_with_slash_review():
+    import scripts.spawn as spawn
+
+    p = spawn._review_prompt(
+        "coworker/x",
+        {
+            "number": 7,
+            "title": "fix the thing",
+            "author": {"login": "coworker"},
+            "url": "https://github.com/o/n/pull/7",
+        },
+    )
+    assert p.startswith("/review")
+    assert "#7" in p and "coworker" in p and "fix the thing" in p
+    assert "Do not post" in p
+
+
+def test_review_prompt_without_pr_info_mentions_branch():
+    import scripts.spawn as spawn
+
+    p = spawn._review_prompt("coworker/x", None)
+    assert p.startswith("/review")
+    assert "coworker/x" in p
+
+
+def test_review_branch_mode_seeds_review_command(spawn_main, push_branch, monkeypatch):
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    push_branch("khivi/reviewme")
+    code, _out, _err = spawn_main(
+        ["--branch", "khivi/reviewme", "--repo", "testrepo", "--review"]
+    )
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "/review" in cmd
+    assert "PLAN ONLY" not in cmd
+
+
+def test_review_with_skill_is_error(spawn_main):
+    code, _out, err = spawn_main(
+        ["--skill", "review", "--review", "--repo", "testrepo"]
+    )
+    assert code == 1
+    assert "--review" in err
+
+
+def test_review_with_bare_cwd_is_error(spawn_main, tmp_path):
+    target = tmp_path / "d"
+    target.mkdir()
+    code, _out, err = spawn_main(["--cwd", str(target), "--review"])
+    assert code == 1
+    assert "--review" in err
+
+
 # ── actions URL dispatch ───────────────────────────────────────────────────
 #
 # A GitHub Actions run/job URL spawns a worktree on the run's headBranch

@@ -117,6 +117,69 @@ def fetch_merged_branches(
     return {branch: oid for branch, (_, oid) in latest.items()}
 
 
+_OPEN_PR_HEADS_QUERY = (
+    "query ($search: String!, $cursor: String) {\n"
+    "  search(query: $search, type: ISSUE, first: 100, after: $cursor) {\n"
+    "    pageInfo { endCursor hasNextPage }\n"
+    "    nodes { ... on PullRequest { number headRefName author { login } } }\n"
+    "  }\n"
+    "}"
+)
+
+
+@dataclass(frozen=True)
+class OpenPRHead:
+    """Minimal identity for an open PR: enough to fetch its head and decide
+    whether a review worktree already exists. Deliberately lighter than `PR` —
+    the `review_prs` spawn decision only needs (number, branch, author).
+    """
+
+    number: int
+    branch: str
+    author: str
+
+
+def list_open_pr_heads(owner: str, name: str) -> list[OpenPRHead]:
+    """Every open PR in the repo as (number, head branch, author login).
+
+    Used only by the per-repo `review_prs` spawn decision in the daemon's slow
+    tick — the daemon's normal PR query is `author:self` plus per-worktree
+    aliases, so other-authored PRs without a local worktree are invisible to it
+    without this. Truly uncapped by intent: the pagination loop runs until
+    `hasNextPage` is false. GitHub's search API itself caps a single query at
+    1 000 results, so the loop always terminates without a page ceiling.
+
+    A null author (bot/Copilot) is reported as "" so the caller can skip or
+    include it explicitly. Empty list on gh failure — review-spawn does nothing
+    that cycle rather than aborting the whole reconcile.
+    """
+    search = f"repo:{owner}/{name} is:pr is:open"
+    out: list[OpenPRHead] = []
+    cursor: str | None = None
+    while True:
+        variables: dict[str, str] = {"search": search}
+        if cursor:
+            variables["cursor"] = cursor
+        try:
+            data = _graphql(_OPEN_PR_HEADS_QUERY, variables)
+        except subprocess.CalledProcessError:
+            return []
+        try:
+            page = data["data"]["search"]
+            for node in page["nodes"]:
+                if not node:
+                    continue
+                author = (node.get("author") or {}).get("login") or ""
+                out.append(OpenPRHead(node["number"], node["headRefName"], author))
+            info = page["pageInfo"]
+            if not info["hasNextPage"]:
+                break
+            cursor = info["endCursor"]
+        except (KeyError, TypeError):
+            return []
+    return out
+
+
 def pr_for_branch(branch: str, repo_dir: Path) -> dict | None:
     """Return {number,title,author,url} for an open PR on `branch`, else None."""
     res = subprocess.run(
