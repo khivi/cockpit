@@ -62,6 +62,8 @@ Inside any git repo:
 
 Cockpit auto-registers the GitHub repo, creates a worktree at `<parent>/fix-login` (sibling to your repo — e.g. `/code/myrepo` → `/code/fix-login`), spawns a workspace named `fix-login` (via cmux on macOS, limux on Linux), and starts `claude` in it. Re-running the same command attaches to the existing setup; it's safe to re-run.
 
+A blank spawn like this — a new branch with no PR, ticket, or extra context — starts ready for you to state the task; no plan-only prompt is seeded. Cockpit seeds a plan-only first turn only when there's something to study first: a PR, a Linear ticket, inherited `--context`, or an explicit `-- <text>` task. Either way, a configured [`prompt_prefix`](#defaults) still runs.
+
 Open the PR however you normally do. Once it exists, cockpit picks it up on the next daemon cycle (default 5 minutes; force it with `/cockpit:sync`).
 
 When the PR merges and the worktree is clean, cockpit tears both down automatically (configurable — see [Defaults](#defaults)).
@@ -88,7 +90,7 @@ Matches `[A-Z]{2,6}-\d+` (case-insensitive). Creates a worktree on `<branch_pref
 
 With `use_linear: true` AND the Linear MCP detected via `claude mcp list`, Claude's first turn reads the ticket via the Linear MCP, derives a `<slug>` from the title, then renames both the branch (`khivi/pe-1234-add-login-flow`) and the workspace (`add-login-flow` — no id prefix). Cockpit's next reconcile cycle picks both up automatically.
 
-With `use_linear: false` (default) or no Linear MCP detected, the workspace just starts on `khivi/pe-1234` with the generic plan prompt — same as `/cockpit:new --branch pe-1234`. Auth lives in your Claude MCP config, never in cockpit.
+With `use_linear: false` (default) or no Linear MCP detected, the workspace just starts on `khivi/pe-1234` with the generic plan prompt — a positional Linear key still seeds plan-only because it names a ticket to look at, but the branch/workspace stay plain (no MCP fetch or rename). Auth lives in your Claude MCP config, never in cockpit.
 
 Out of scope here: rendering the Linear ticket title in the cship statusline pill. That requires cship-side support (see [TODO.md](TODO.md)).
 
@@ -161,13 +163,13 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 | Workspace backend | `auto` (cmux, fall back to limux) | `config.json` → `tool` (`cmux` \| `limux` \| `none` \| `auto`) |
 | Auto-cleanup on merge | **on** | `config.json` → `auto_cleanup_on_merge`. When on, cockpit removes the worktree and closes the workspace on any cycle where the PR is MERGED, the worktree is clean, and there are no unpushed commits. |
 | Auto-close age | 14 days | `config.json` → `autoclose_age_days`. Worktrees older than this threshold with no open PR are eligible for auto-close. |
-| Prompt prefix | _(empty)_ | `config.json` → `prompt_prefix`. Prepended to the plan prompt injected into every new workspace. |
+| Prompt prefix | _(empty)_ | `config.json` → `prompt_prefix`. Prepended to the first-turn prompt of every new workspace — and is the entire first turn for a blank spawn that seeds no plan prompt. |
 | Theme | `dark` | `config.json` → `theme` (`dark` \| `light`). Themes the neutral-grey statusline text; saturated hues stay background-agnostic. |
 | Branch prefix | `<gh user>/` | `config.json` → per-repo `branch_prefix` |
 | Default base branch | repo's `defaultBranchRef` | `config.json` → per-repo `default_base` |
 | CI checks to skip | _(none)_ | `config.json` → per-repo `ci_skip_checks`. List of check names excluded from the CI pass/fail roll-up (e.g. bot reviewers that always show as pending). |
 | Sidebar color | _(unset)_ | `config.json` → per-repo `sidebar_color`. A cmux color name that tints that repo's workspace entries in the cmux sidebar (and its name in cockpit's `--watch` log). Valid names: `Red`, `Crimson`, `Orange`, `Amber`, `Olive`, `Green`, `Teal`, `Aqua`, `Blue`, `Navy`, `Indigo`, `Purple`, `Magenta`, `Rose`, `Brown`, `Charcoal`. Unset = no tint. No effect on limux. An invalid name causes cockpit to refuse to start. |
-| Smart Linear flow | **off** (opt-in) | `config.json` → `use_linear`. When on, `/cockpit:new PE-1234` pre-flights `claude mcp list` for a Linear connector and (if found) seeds Claude's first turn to fetch the ticket via the Linear MCP and rename branch + workspace to include the title slug. Off → behaves like `/cockpit:new --branch pe-1234`: plain branch + generic plan prompt. |
+| Smart Linear flow | **off** (opt-in) | `config.json` → `use_linear`. When on, `/cockpit:new PE-1234` pre-flights `claude mcp list` for a Linear connector and (if found) seeds Claude's first turn to fetch the ticket via the Linear MCP and rename branch + workspace to include the title slug. Off → plain branch `khivi/pe-1234` + generic plan prompt (the positional Linear key still counts as context, so plan-only is seeded; only the MCP fetch + rename are skipped). |
 | Linear key → repo routing | per-repo, opt-in | Per-repo `linear_keys: ["PE", ...]` paired with `use_linear: true`. `/cockpit:new PE-1234` (no `--repo`) routes the spawn to the repo whose `linear_keys` contains `PE`, regardless of cwd. Unique match wins; zero matches falls back to cwd discovery; multiple matches print a note on stderr and also fall back. `--repo <name>` always overrides. |
 
 ## Claude Code statusline (optional)

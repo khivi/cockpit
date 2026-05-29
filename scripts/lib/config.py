@@ -166,8 +166,10 @@ def use_linear() -> bool:
     When False (default), `/cockpit:new PE-1234` still classifies as Linear
     mode (so the statusline pill keeps working), but spawn skips the
     MCP-instructing prompt — the workspace starts on `<prefix>pe-1234` with
-    the generic plan-only prompt, equivalent to `/cockpit:new --branch pe-1234`.
-    Safer default for users without the Linear MCP configured.
+    the generic plan-only prompt. The positional Linear key still counts as
+    context, so plan-only is seeded (unlike a bare `--branch pe-1234`, which
+    has no source and seeds nothing); only the MCP fetch + branch/workspace
+    rename are skipped. Safer default for users without the Linear MCP configured.
 
     When True, spawn pre-flights `claude mcp list` to confirm the Linear MCP
     is connected and only then seeds the 3-step rename prompt. If the

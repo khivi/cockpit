@@ -42,6 +42,13 @@ Positional detection (6 steps):
   is auto-generated. Trailing `-- <text>` is appended to whatever prompt
   was selected.
 
+  Plan-only is seeded only when there is something to study first: a PR, a
+  Linear ticket, inherited `--context`, or an explicit `-- <text>` task. A
+  blank worktree (`--name <name> --repo <repo>` / a bare new branch with no
+  open PR and none of the above) is ready to work on and gets NO seeded
+  prompt — any configured `prompt_prefix` still rides via `claude_command`,
+  and the user states the task in the live session.
+
   Linear mode creates a fresh branch `<branch_prefix><id-lower>` (e.g.
   `khivi/pe-1234`). With `use_linear: true` and the Linear MCP detected
   via `claude mcp list`, cockpit seeds a plan-only prompt that instructs
@@ -544,6 +551,7 @@ def main() -> int:
     short = args.name
     skill = args.skill
     from_name = False
+    is_linear = False  # positional classified as a Linear key (any context → plan)
 
     prompt: str | None = None
     seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
@@ -577,6 +585,7 @@ def main() -> int:
         elif mode == "linear":
             branch = value.lower()
             from_name = True
+            is_linear = True
             if cfg_use_linear() and not args.repo:
                 matches = find_repos_by_linear_key(value)
                 if len(matches) == 1:
@@ -677,7 +686,15 @@ def main() -> int:
 
         if actions_run_info is not None:
             prompt = _actions_prompt(branch, actions_run_info, actions_job_id, pr_info)
-        elif prompt is None:
+        elif prompt is None and (
+            pr_info or is_linear or args.context_text or args.claude_addendum
+        ):
+            # Plan-only fires only when there's something to study first: a PR,
+            # a Linear ticket, inherited `--context`, or an explicit `-- <text>`
+            # task. A blank worktree (`/cockpit:new <name> --repo <repo>` with
+            # none of those) is ready to work on, so it gets no seeded guidance —
+            # any configured `prompt_prefix` (e.g. a session-setup skill) still
+            # rides via `claude_command()`, and the user states the task live.
             prompt = _plan_only_prompt(branch, pr_info)
 
     if args.claude_addendum:
