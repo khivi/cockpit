@@ -521,7 +521,8 @@ def test_autoclose_orphan_main_sibling_clean(tmp_path):
 
 
 def test_autoclose_orphan_main_sibling_dirty_skipped(tmp_path):
-    """Same setup as orphan_main_sibling_clean but with uncommitted work — skip."""
+    """Same setup as orphan_main_sibling_clean but with uncommitted work — skip
+    teardown, and surface a WIP pill so the cell explains why it's kept."""
     wt_path = tmp_path / "ex-feat"
     wt_path.mkdir()
     wt = Worktree(
@@ -536,6 +537,7 @@ def test_autoclose_orphan_main_sibling_dirty_skipped(tmp_path):
         patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree") as remove_mock,
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(cycle, "apply_wip_pill") as wip_mock,
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -550,6 +552,65 @@ def test_autoclose_orphan_main_sibling_dirty_skipped(tmp_path):
 
     close_mock.assert_not_called()
     remove_mock.assert_not_called()
+    wip_mock.assert_called_once_with("ws-ref", 2)
+
+
+def test_autoclose_orphan_main_sibling_clean_no_wip_pill(tmp_path):
+    """A clean main sibling is torn down, not annotated with a WIP pill."""
+    wt_path = tmp_path / "ex-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path, branch="main", dirty_count=0, unpushed=0, is_primary=False
+    )
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort"),
+        patch.object(teardown_mod, "remove_worktree", return_value=(True, "")),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+        patch.object(cycle, "apply_wip_pill") as wip_mock,
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={},
+            cwds={"ws-ref": wt_path},
+            prs=[],
+            dry=False,
+        )
+
+    wip_mock.assert_not_called()
+
+
+def test_autoclose_dirty_main_sibling_dry_run_no_wip_pill(tmp_path):
+    """Dry run never writes — no WIP pill applied even when held back dirty."""
+    wt_path = tmp_path / "ex-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path, branch="main", dirty_count=2, unpushed=0, is_primary=False
+    )
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort"),
+        patch.object(teardown_mod, "remove_worktree"),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(cycle, "apply_wip_pill") as wip_mock,
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={},
+            cwds={"ws-ref": wt_path},
+            prs=[],
+            dry=True,
+        )
+
+    wip_mock.assert_not_called()
 
 
 def test_autoclose_orphan_main_sibling_unpushed_skipped(tmp_path):
@@ -881,6 +942,49 @@ def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, cap
     assert "skip" in out
     assert "cmux unavailable" in out
     assert "backend offline" in out
+
+
+def test_prepare_cycle_prunes_worktrees_before_listing(tmp_path, monkeypatch):
+    """Stale `.git/worktrees` entries are pruned before the list is read, so
+    downstream teardown never sees a path that no longer exists."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_entry = {"path": str(repo_path), "name": "repo"}
+
+    calls: list[str] = []
+
+    def _record_prune(_p):
+        calls.append("prune")
+
+    def _record_list(_p):
+        calls.append("list")
+        return []
+
+    monkeypatch.setattr(cycle, "repo_nwo", lambda _p: ("ai-needl", "repo"))
+    monkeypatch.setattr(cycle, "prune_worktrees", _record_prune)
+    monkeypatch.setattr(cycle, "worktrees", _record_list)
+    monkeypatch.setattr(cycle, "workspace_state", lambda: ({}, {}))
+    monkeypatch.setattr(cycle, "fetch_merged_branches", lambda *_a, **_k: {})
+    monkeypatch.setattr(cycle, "is_cmux", lambda: True)
+
+    def _stop(*_a, **_k):  # short-circuit after prune+list already ran
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(cycle, "list_relevant_prs", _stop)
+
+    cycle._prepare_cycle(
+        repo_entry,
+        "khivi",
+        cfg={},
+        pr_cache={},
+        pill_state={},
+        keep_stale=False,
+        no_spawn=False,
+        dry=False,
+        verbose=False,
+    )
+
+    assert calls[:2] == ["prune", "list"], f"prune must precede list; got {calls}"
 
 
 def test_refresh_base_distance_short_circuits_when_no_feature_worktrees(tmp_path):
