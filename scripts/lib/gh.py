@@ -373,21 +373,23 @@ _PR_LIGHT_FIELDS = "number updatedAt"
 
 
 def _is_other(author: dict | None, pr_author: str) -> bool:
-    """True when `author` is definitely not the PR author.
+    """True when `author` is a human reviewer other than the PR author.
 
-    A null author (GitHub Copilot and some bots return author=null) is treated
-    as non-self because it clearly isn't the PR author's account.
+    Bot accounts (__typename == "Bot") are excluded — their unresolved threads
+    are informational (Copilot review summaries, dependabot notices) and don't
+    require a human reply. Null authors are also treated as bots/non-actionable.
     """
     if author is None:
-        return True
+        return False
+    if author.get("__typename") == "Bot":
+        return False
     login = author.get("login")
     return not login or login != pr_author
 
 
 def _unaddressed(pr_node: dict, pr_author: str) -> tuple[int, int]:
-    """Threads + standalone reviews awaiting the PR author's response.
+    """Threads awaiting the PR author's response (human reviewers only).
 
-    Bots (copilot, dependabot, etc.) count as reviewers.
     Returns (unresolved, total).
     """
     total = unresolved = 0

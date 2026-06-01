@@ -134,24 +134,25 @@ def _pr_node_with_threads(threads: list, *, author: str = "khivi") -> dict:
     }
 
 
-def test_unaddressed_copilot_null_author_counts_as_reviewer():
-    """GitHub Copilot returns author=null in GraphQL; must still count as
-    an unaddressed thread, not be silently dropped."""
+def test_unaddressed_copilot_null_author_not_counted():
+    """GitHub Copilot returns author=null in GraphQL; null authors are treated
+    as bots/non-actionable and excluded from unaddressed counts."""
     node = _pr_node_with_threads([_thread(resolved=False, authors=[None])])
     unresolved, total = _unaddressed(node, "khivi")
-    assert unresolved == 1
-    assert total == 1
+    assert unresolved == 0
+    assert total == 0
 
 
 def test_unaddressed_copilot_null_author_resolved_not_counted():
     node = _pr_node_with_threads([_thread(resolved=True, authors=[None])])
     unresolved, total = _unaddressed(node, "khivi")
     assert unresolved == 0
-    assert total == 1
+    assert total == 0
 
 
 def test_unaddressed_author_replied_after_copilot_not_unresolved():
-    """PR author replying last (after null-author Copilot) resolves the thread."""
+    """PR author replying last (after null-author Copilot) — thread has no
+    human reviewers, so it doesn't count at all."""
     node = _pr_node_with_threads(
         [
             _thread(
@@ -161,11 +162,12 @@ def test_unaddressed_author_replied_after_copilot_not_unresolved():
     )
     unresolved, total = _unaddressed(node, "khivi")
     assert unresolved == 0
-    assert total == 1
+    assert total == 0
 
 
-def test_unaddressed_named_bot_still_counted():
-    """Bots with an explicit login (dependabot, etc.) continue to count."""
+def test_unaddressed_named_bot_not_counted():
+    """Bot accounts (__typename == "Bot") are excluded — their threads are
+    informational and don't require a human reply."""
     node = _pr_node_with_threads(
         [
             _thread(
@@ -175,8 +177,8 @@ def test_unaddressed_named_bot_still_counted():
         ]
     )
     unresolved, total = _unaddressed(node, "khivi")
-    assert unresolved == 1
-    assert total == 1
+    assert unresolved == 0
+    assert total == 0
 
 
 def test_copilot_reviewer_failure_ignored():
