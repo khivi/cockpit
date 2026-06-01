@@ -54,8 +54,8 @@ from scripts.lib.config import (  # noqa: E402
     load_config,
 )
 from scripts.lib.daemon import run_watcher  # noqa: E402
-from scripts.lib.gh import gh_self_user  # noqa: E402
-from scripts.lib.git import worktrees  # noqa: E402
+from scripts.lib.gh import gh_self_user, require_gh  # noqa: E402
+from scripts.lib.git import require_git, worktrees  # noqa: E402
 from scripts.lib.preflight import preflight  # noqa: E402
 from scripts.orchestrators.cycle import cycle_all  # noqa: E402
 
@@ -193,6 +193,9 @@ def main(argv=None):
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--verbose", "-v", action="store_true")
     args = p.parse_args(argv)
+
+    require_git()
+    require_gh()
 
     ensure_state_dirs()
     preflight(load_config())

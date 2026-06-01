@@ -12,6 +12,8 @@ import json
 import re
 from unittest.mock import patch
 
+import pytest
+
 from scripts.lib.gh import (
     _PR_LIGHT_FIELDS,
     OpenPRHead,
@@ -19,6 +21,7 @@ from scripts.lib.gh import (
     _relevant_pr_query,
     fetch_merged_branches,
     list_open_pr_heads,
+    require_gh,
 )
 
 
@@ -267,3 +270,25 @@ def test_fetch_merged_branches_search_includes_date_window():
     assert "repo:acme/widgets is:pr is:merged merged:>=" in captured["search"]
     # No cursor on the first page request.
     assert "cursor" not in captured
+
+
+def test_require_gh_exits_when_missing(monkeypatch, capsys):
+    """A missing `gh` binary surfaces a structured install hint and exit code 2,
+    not a bare FileNotFoundError deep inside a daemon cycle.
+    """
+
+    def _raise_fnf(*_args, **_kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr("scripts.lib.gh.subprocess.run", _raise_fnf)
+    with pytest.raises(SystemExit) as excinfo:
+        require_gh()
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "gh" in err
+    assert "https://cli.github.com" in err
+
+
+def test_require_gh_returns_when_present(monkeypatch):
+    monkeypatch.setattr("scripts.lib.gh.subprocess.run", lambda *_a, **_kw: None)
+    require_gh()
