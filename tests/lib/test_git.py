@@ -478,8 +478,14 @@ def test_prune_worktrees_keeps_live_worktree(cockpit_repo) -> None:
     assert "wtbr" in _branch_names(repo)
 
 
-def test_prune_worktrees_warns_not_raises_on_failure(tmp_path, capsys) -> None:
-    """A non-repo path makes git exit non-zero; prune warns, never raises."""
+def test_prune_worktrees_warns_not_raises_on_failure(
+    tmp_path, capsys, _clean_git_env
+) -> None:
+    """A non-repo path makes git exit non-zero; prune warns, never raises.
+
+    `_clean_git_env` strips ambient GIT_DIR (pre-commit exports it), so git
+    targets the tmpdir and fails cleanly instead of finding the host repo.
+    """
     not_a_repo = tmp_path / "plain"
     not_a_repo.mkdir()
 

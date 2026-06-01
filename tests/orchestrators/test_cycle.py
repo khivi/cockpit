@@ -952,9 +952,17 @@ def test_prepare_cycle_prunes_worktrees_before_listing(tmp_path, monkeypatch):
     repo_entry = {"path": str(repo_path), "name": "repo"}
 
     calls: list[str] = []
+
+    def _record_prune(_p):
+        calls.append("prune")
+
+    def _record_list(_p):
+        calls.append("list")
+        return []
+
     monkeypatch.setattr(cycle, "repo_nwo", lambda _p: ("ai-needl", "repo"))
-    monkeypatch.setattr(cycle, "prune_worktrees", lambda _p: calls.append("prune"))
-    monkeypatch.setattr(cycle, "worktrees", lambda _p: calls.append("list") or [])
+    monkeypatch.setattr(cycle, "prune_worktrees", _record_prune)
+    monkeypatch.setattr(cycle, "worktrees", _record_list)
     monkeypatch.setattr(cycle, "workspace_state", lambda: ({}, {}))
     monkeypatch.setattr(cycle, "fetch_merged_branches", lambda *_a, **_k: {})
     monkeypatch.setattr(cycle, "is_cmux", lambda: True)
