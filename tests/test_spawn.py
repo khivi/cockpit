@@ -713,6 +713,12 @@ def test_positional_linear_prompt_instructs_mcp_fetch(
     assert "Linear MCP" in cmd
     assert "STOP" in cmd  # error path when MCP not connected
     assert "PLAN ONLY" in cmd
+    # Connection-lag retry is a backoff loop, not a single attempt — a lone
+    # 8s wait is too short when several worktrees spawn at once.
+    assert "sleep 8" in cmd
+    assert "sleep 15" in cmd
+    assert "sleep 30" in cmd
+    assert "/mcp" in cmd  # STOP message points the user at the reconnect fix
 
 
 def test_positional_linear_prompt_instructs_branch_rename(
