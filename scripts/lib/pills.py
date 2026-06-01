@@ -34,6 +34,7 @@ def ci_glyph(ci: str) -> str:
 
 KIND_ORDER = (
     "muted",
+    "keep",
     "rebase",
     "merge",
     "wip",
@@ -62,7 +63,11 @@ def _muted_pill(pref: NudgePref | None) -> dict | None:
 
 
 def decide_pills(
-    pr: PR, wt: Worktree | None, pref: NudgePref | None = None
+    pr: PR,
+    wt: Worktree | None,
+    pref: NudgePref | None = None,
+    *,
+    keep: bool = False,
 ) -> list[dict]:
     """Ordered semantic pill list for `pr` (and its local `wt` if known).
 
@@ -71,11 +76,15 @@ def decide_pills(
 
     `pref` is the persisted nudge pref (mute state). When non-empty, a
     `muted` pill anchors the front of the list.
+
+    `keep` marks user-spawned worktrees protected from auto-reap on merge.
     """
     pills: list[dict] = []
     muted = _muted_pill(pref)
     if muted is not None:
         pills.append(muted)
+    if keep:
+        pills.append({"kind": "keep"})
     if wt is not None and wt.rebasing:
         pills.append({"kind": "rebase"})
     if wt is not None and wt.merging:

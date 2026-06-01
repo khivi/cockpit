@@ -502,6 +502,88 @@ def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
     assert "ci_failed" in kinds
 
 
+# ── keep flag (write_pr_cache preserves, set_pr_keep writes) ─────────────────
+
+
+def test_write_pr_cache_preserves_existing_keep(tmp_path, monkeypatch):
+    """Once `keep: true` is on disk, daemon rewrites must not clear it."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    import scripts.lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    importlib.reload(cache_mod)
+
+    pr = _pr()
+    cache_mod.write_pr_cache("testrepo", pr)
+    # Simulate spawn.py marking the PR as kept.
+    cache_mod.set_pr_keep("testrepo", pr.number)
+
+    # Daemon rewrite (no keep param) must preserve the flag.
+    payload = cache_mod.write_pr_cache("testrepo", pr)
+    assert payload["keep"] is True
+
+    on_disk = cache_mod.find_pr_payload("khivi/feature", repo_name="testrepo")
+    assert on_disk is not None
+    assert on_disk["keep"] is True
+
+
+def test_write_pr_cache_keep_defaults_false(tmp_path, monkeypatch):
+    """New PR cache without a prior keep marker has keep=False."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    import scripts.lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    importlib.reload(cache_mod)
+
+    pr = _pr()
+    payload = cache_mod.write_pr_cache("testrepo", pr)
+    assert payload["keep"] is False
+
+
+def test_set_pr_keep_creates_stub_when_no_cache(tmp_path, monkeypatch):
+    """set_pr_keep creates a stub file when the PR cache doesn't exist yet."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    import scripts.lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    importlib.reload(cache_mod)
+
+    cache_mod.set_pr_keep("owner/repo", 42)
+
+    path = cache_mod.CACHE_DIR / "owner_repo__pr-42.json"
+    assert path.exists()
+    import json
+
+    data = json.loads(path.read_text())
+    assert data["keep"] is True
+
+
+def test_set_pr_keep_merges_into_existing_cache(tmp_path, monkeypatch):
+    """set_pr_keep preserves existing fields when updating an existing snapshot."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    import scripts.lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    importlib.reload(cache_mod)
+
+    pr = _pr()
+    cache_mod.write_pr_cache("testrepo", pr)
+    cache_mod.set_pr_keep("testrepo", pr.number)
+
+    on_disk = cache_mod.find_pr_payload("khivi/feature", repo_name="testrepo")
+    assert on_disk is not None
+    assert on_disk["keep"] is True
+    assert on_disk["title"] == "t"
+
+
 # ── reused-branch dedup (find_pr_payload / republish / prune) ──────────────
 #
 # A branch reused across PRs (old PR merged, new PR opened from the same head)

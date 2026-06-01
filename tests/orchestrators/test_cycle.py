@@ -421,6 +421,38 @@ def test_autoclose_keeps_reused_branch_name(tmp_path):
     remove_mock.assert_not_called()
 
 
+def test_autoclose_skips_kept_worktree(tmp_path):
+    """A worktree with `keep: true` in its PR cache survives autoclose."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(
+            cycle,
+            "find_pr_payload",
+            return_value={"branch": "khivi/feat", "keep": True},
+        ),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat")],
+            dry=False,
+        )
+
+    close_mock.assert_not_called()
+    remove_mock.assert_not_called()
+
+
 def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
     """Uncommitted local work still wins over a clean merged PR."""
     wt_path = tmp_path / "repo-feat"
@@ -1144,6 +1176,7 @@ def test_bg_spawn_pr_launches_records_and_guards(tmp_path, monkeypatch):
         cycle._bg_spawn_pr(ctx, "n", 9, "coworker/x", review=True)
     assert popen.call_count == 1
     argv = popen.call_args.args[0]
+    assert "--auto" not in argv
     assert argv[2:] == ["--pr", "9", "--repo", "n", "--review"]
     assert ctx.pill_state["spawn:o/n:coworker/x"] == 100.0
 
@@ -1174,6 +1207,7 @@ def test_bg_spawn_pr_omits_repo_flag_without_name(tmp_path, monkeypatch):
         cycle._bg_spawn_pr(ctx, None, 9, "khivi/x", review=False)
     argv = popen.call_args.args[0]
     assert "--repo" not in argv
+    assert "--auto" not in argv
     assert argv[2:] == ["--pr", "9"]
 
 

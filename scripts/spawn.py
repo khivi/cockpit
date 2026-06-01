@@ -85,6 +85,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from scripts.lib.cache import set_pr_keep  # noqa: E402
 from scripts.lib.cmux import (
     cmux,
     require_workspace_binary,
@@ -105,6 +106,7 @@ from scripts.lib.gh import (  # noqa: E402
     fetch_pr_info,
     fetch_run_info,
     pr_for_branch,
+    repo_nwo,
     resolve_pr_branch,
 )
 from scripts.lib.git import (  # noqa: E402
@@ -164,6 +166,7 @@ def parse_args() -> argparse.Namespace:
         "--skill",
         help="spawn workspace running a global or repo skill (no worktree, no branch)",
     )
+    p.add_argument("--keep", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
         "--review",
         action="store_true",
@@ -593,6 +596,9 @@ def main() -> int:
     skill = args.skill
     from_name = False
     is_linear = False  # positional classified as a Linear key (any context → plan)
+    pr_explicit = (
+        False  # set True only when PR is the explicit input (not branch auto-detect)
+    )
 
     prompt: str | None = None
     seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
@@ -704,6 +710,7 @@ def main() -> int:
             short = slugify(branch.rsplit("/", 1)[-1])
         branch_display = branch
 
+        pr_explicit = bool(pr_num)  # True when PR was the input, not auto-detected
         pr_info: dict | None = None
         if pr_num:
             try:
@@ -775,6 +782,14 @@ def main() -> int:
         prefix = f"workspace {ws_name} spawned at {wt}"
     suffix = f" on {branch_display}" if branch_display else " (no worktree)"
     print(f"{prefix}{suffix}")
+
+    if args.keep and pr_explicit and pr_num:
+        try:
+            owner, name = repo_nwo(wt)
+            set_pr_keep(f"{owner}/{name}", pr_num)
+        except Exception:
+            pass
+
     kick_running(quiet=True)
     return 0
 

@@ -137,6 +137,24 @@ def test_cmux_owner_pill_absent_when_self_user_none():
     assert all(k != "owner" for k, _, _ in out)
 
 
+def test_status_pills_keep_flag_emits_keep_pill():
+    out = status_pills(_pr(), _wt(), keep=True)
+    keys = [k for k, _, _ in out]
+    assert "keep" in keys
+
+
+def test_status_pills_no_keep_flag_omits_keep_pill():
+    out = status_pills(_pr(), _wt(), keep=False)
+    keys = [k for k, _, _ in out]
+    assert "keep" not in keys
+
+
+def test_status_pills_keep_pill_before_ci():
+    out = status_pills(_pr(ci="failed:lint"), _wt(), keep=True)
+    keys = [k for k, _, _ in out]
+    assert keys.index("keep") < keys.index("ci")
+
+
 def test_apply_pills_clears_owner_key():
     calls: list[tuple] = []
 

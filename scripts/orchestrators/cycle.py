@@ -21,6 +21,7 @@ from typing import IO
 
 import scripts.lib.daemon_signal as daemon_signal
 from scripts.lib.cache import (
+    find_pr_payload,
     muted_payload,
     prune_superseded_pr_caches,
     write_base_ahead,
@@ -308,6 +309,13 @@ def _maybe_autoclose(
                 _teardown_worktree(wt, cwds, repo_path, repo_name, dry=dry)
             continue
         if not _is_post_merge_stale(wt, merged_branches):
+            continue
+        pr_payload = find_pr_payload(wt.branch, repo_name)
+        if pr_payload and pr_payload.get("keep"):
+            print(
+                f"  {verb('autoclose')} {dim(f'skipped (keep) {wt.short}')}",
+                flush=True,
+            )
             continue
         if wt.dirty_count > 0:
             print(
@@ -655,10 +663,12 @@ def _refresh_tracked_pills(
         for ref, pr, wt in group:
             label = ctx.names.get(ref, ref)
             pref = ctx.prefs.get(pr.number)
-            desired = frozenset(status_pills(pr, wt, ctx.self_user, pref))
+            pr_payload = find_pr_payload(pr.branch, ctx.name)
+            keep = bool(pr_payload and pr_payload.get("keep"))
+            desired = frozenset(status_pills(pr, wt, ctx.self_user, pref, keep=keep))
             changed = ctx.pill_state.get(ref) != desired
             if changed and not ctx.dry:
-                apply_pills(ref, pr, wt, ctx.self_user, pref)
+                apply_pills(ref, pr, wt, ctx.self_user, pref, keep=keep)
             if changed or ctx.verbose:
                 if not group_header_printed:
                     print(f"  {dim(group_label)}", flush=True)
@@ -859,11 +869,13 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
     tracked_pr_numbers = {pr.number for pr, _ in ctx.tracked.values()}
     for pr, wt in matched:
         if pr.number not in tracked_pr_numbers:
+            pr_payload = find_pr_payload(pr.branch, ctx.name)
             spawn_pr_workspace(
                 pr,
                 wt,
                 self_user=ctx.self_user,
                 pref=ctx.prefs.get(pr.number),
+                keep=bool(pr_payload and pr_payload.get("keep")),
                 dry=ctx.dry,
             )
     if ctx.review_candidates:
