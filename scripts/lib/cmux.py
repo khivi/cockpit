@@ -68,6 +68,9 @@ STALE_ICON = "↻"
 MUTED_KEY = "muted"
 MUTED_ICON = "🔇"
 
+KEEP_KEY = "keep"
+KEEP_ICON = "📌"
+
 ACTIONABLE_KEYS = (
     "ci",
     "comments",
@@ -77,6 +80,7 @@ ACTIONABLE_KEYS = (
     "rebase",
     "wip",
     MUTED_KEY,
+    KEEP_KEY,
 )
 
 OWNER_KEY = "owner"
@@ -444,6 +448,7 @@ _CMUX_RENDERERS = {
     "conflict": lambda _p: ("merge", "⚠️ conflict", ORANGE),
     "draft": lambda _p: ("draft", "📝 draft", GREY),
     "approved": lambda _p: ("approved", "✅ approved", GREEN),
+    "keep": lambda _p: (KEEP_KEY, f"{KEEP_ICON} keep", BLUE),
     # `state` is footer-only; cmux already surfaces MERGED/CLOSED natively in
     # its sidebar, so the cockpit pill map drops it (None) to avoid double-
     # rendering. Load-bearing for merged-but-dirty workspaces where autoclose
@@ -457,6 +462,8 @@ def status_pills(
     wt: Worktree | None = None,
     self_user: str | None = None,
     pref: NudgePref | None = None,
+    *,
+    keep: bool = False,
 ) -> list[tuple[str, str, str]]:
     """(key, value, color) tuples for cmux set-status. Maps decide_pills output.
 
@@ -466,11 +473,13 @@ def status_pills(
 
     `pref` carries the daemon-resolved mute state; pure consumer — does not
     load it. See cycle.py for the single-authority pref load.
+
+    `keep` marks user-spawned worktrees protected from auto-reap on merge.
     """
     out: list[tuple[str, str, str]] = []
     if self_user and pr.author and pr.author != self_user:
         out.append((OWNER_KEY, f"{OWNER_ICON} @{pr.author}", BLUE))
-    for p in decide_pills(pr, wt, pref):
+    for p in decide_pills(pr, wt, pref, keep=keep):
         renderer = _CMUX_RENDERERS.get(p["kind"])
         if renderer is None:
             continue
@@ -486,6 +495,8 @@ def apply_pills(
     wt: Worktree | None = None,
     self_user: str | None = None,
     pref: NudgePref | None = None,
+    *,
+    keep: bool = False,
 ) -> frozenset[tuple[str, str, str]]:
     """Idempotently sync cmux pills; return the desired snapshot for diffing.
 
@@ -495,7 +506,7 @@ def apply_pills(
     re-set in reverse display order. The `idle=` pill is owned by
     `hooks/cmux-idle-pill.sh` (Stop / UserPromptSubmit) — not touched here.
     """
-    desired = tuple(status_pills(pr, wt, self_user, pref))
+    desired = tuple(status_pills(pr, wt, self_user, pref, keep=keep))
     # "cockpit_managed" is a one-release back-compat strip — remove next release.
     keys_to_clear = [*ACTIONABLE_KEYS, COCKPIT_KEY, OWNER_KEY, "cockpit_managed"]
     with ThreadPoolExecutor(max_workers=len(keys_to_clear)) as ex:
@@ -596,12 +607,13 @@ def spawn_pr_workspace(
     *,
     self_user: str | None = None,
     pref: NudgePref | None = None,
+    keep: bool = False,
     dry: bool = False,
 ) -> str | None:
     """Spawn the tracked cmux workspace for a PR; apply pills, log to stdout."""
     if dry:
         print(f"  [dry] spawn {wt.short}  #{pr.number}  cwd={wt.path}", flush=True)
-        for key, value, _ in status_pills(pr, wt, self_user, pref):
+        for key, value, _ in status_pills(pr, wt, self_user, pref, keep=keep):
             print(f"  [dry]   pill {key}={value}", flush=True)
         return None
     ref = spawn_workspace(wt.short, wt.path, claude_command(build_pr_prompt(pr)))
@@ -612,7 +624,7 @@ def spawn_pr_workspace(
             flush=True,
         )
         return None
-    apply_pills(ref, pr, wt, self_user, pref)
+    apply_pills(ref, pr, wt, self_user, pref, keep=keep)
     print(
         f"  {verb('spawned')} {bold(wt.short)} ({ref})  #{pr.number}"
         f"  [{issue_color(pr.display_issue)(pr.display_issue)}]",

@@ -25,6 +25,7 @@ parsing JSON in every subprocess is too expensive.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -77,10 +78,18 @@ def write_pr_cache(
     `pref` is the daemon-resolved nudge mute state. Baked in as `muted` so the
     renderer-spawned `refresh_pr_data` can republish the same snapshot into
     the `pr-muted` flat cell without re-reading `nudges`.
+
+    `keep` is preserved from the existing cache if already True — once a
+    worktree is marked kept (user-spawned via `/cockpit:new`), daemon rewrites
+    never clear the flag.
     """
     ensure_state_dirs()
     safe = repo_name.replace("/", "_")
     path = CACHE_DIR / f"{safe}__pr-{pr.number}.json"
+    keep = False
+    if path.exists():
+        with contextlib.suppress(OSError, json.JSONDecodeError):
+            keep = bool(json.loads(path.read_text()).get("keep"))
     payload = {
         "number": pr.number,
         "title": pr.title,
@@ -94,12 +103,36 @@ def write_pr_cache(
         "unaddressed": pr.unaddressed,
         "mergeable": pr.mergeable,
         "muted": muted_payload(pref),
-        "pills": decide_pills(pr, wt, pref),
+        "pills": decide_pills(pr, wt, pref, keep=keep),
+        "keep": keep,
     }
     tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(json.dumps(payload, indent=2))
     tmp.replace(path)
     return payload
+
+
+def set_pr_keep(repo_name: str, pr_num: int | str) -> None:
+    """Mark a PR's cache entry with `keep: true` so `_maybe_autoclose` skips it.
+
+    Reads the existing snapshot (if any) and merges in `"keep": true` before
+    writing back atomically. Creates a stub when no snapshot exists yet (the
+    daemon will fill in the full payload on its next cycle and `write_pr_cache`
+    will preserve the flag).
+    """
+    ensure_state_dirs()
+    safe = repo_name.replace("/", "_")
+    path = CACHE_DIR / f"{safe}__pr-{pr_num}.json"
+    payload: dict = {}
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+    payload["keep"] = True
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(path)
 
 
 def _iter_cache(pattern: str):

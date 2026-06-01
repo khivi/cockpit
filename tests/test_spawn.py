@@ -1165,3 +1165,80 @@ def test_unknown_repo_exits_one(spawn_main):
     assert code == 1
     assert "nonexistent" in err
     assert "no configured repo" in err
+
+
+# ── --auto flag (keep-marker) ──────────────────────────────────────────────
+
+_FAKE_PR = {
+    "number": 9,
+    "title": "fix the thing",
+    "author": {"login": "khivi"},
+    "url": "https://github.com/owner/repo/pull/9",
+}
+
+
+def test_no_keep_flag_skips_set_pr_keep(spawn_main, monkeypatch, cockpit_repo):
+    """Spawn without --keep (e.g. daemon bg-spawn) must NOT call set_pr_keep."""
+    import scripts.spawn as spawn
+
+    keep_calls: list = []
+    wt_path = cockpit_repo.repo.parent / "feat"
+    wt_path.mkdir(exist_ok=True)
+
+    monkeypatch.setattr(spawn, "set_pr_keep", lambda *a, **kw: keep_calls.append(a))
+    monkeypatch.setattr(spawn, "repo_nwo", lambda _p: ("owner", "repo"))
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: _FAKE_PR)
+    monkeypatch.setattr(
+        spawn,
+        "resolve_worktree",
+        lambda *a, **kw: (wt_path, "khivi/feat", False),
+    )
+
+    code, _out, _err = spawn_main(["khivi/feat", "--repo", "testrepo"])
+    assert code == 0
+    assert keep_calls == []
+
+
+def test_keep_flag_calls_set_pr_keep(spawn_main, monkeypatch, cockpit_repo):
+    """--keep with explicit --pr writes the keep marker (PR was the input)."""
+    import scripts.spawn as spawn
+
+    keep_calls: list = []
+    wt_path = cockpit_repo.repo.parent / "feat2"
+    wt_path.mkdir(exist_ok=True)
+
+    monkeypatch.setattr(spawn, "set_pr_keep", lambda *a, **kw: keep_calls.append(a))
+    monkeypatch.setattr(spawn, "repo_nwo", lambda _p: ("owner", "repo"))
+    monkeypatch.setattr(spawn, "fetch_pr_info", lambda *_a, **_kw: _FAKE_PR)
+    monkeypatch.setattr(
+        spawn,
+        "resolve_worktree",
+        lambda *a, **kw: (wt_path, "khivi/feat2", False),
+    )
+
+    code, _out, _err = spawn_main(["--pr", "9", "--repo", "testrepo", "--keep"])
+    assert code == 0
+    assert len(keep_calls) == 1
+    assert keep_calls[0] == ("owner/repo", "9")
+
+
+def test_keep_flag_no_effect_for_branch_with_pr(spawn_main, monkeypatch, cockpit_repo):
+    """--keep on a branch spawn whose PR is auto-detected must NOT write keep."""
+    import scripts.spawn as spawn
+
+    keep_calls: list = []
+    wt_path = cockpit_repo.repo.parent / "feat3"
+    wt_path.mkdir(exist_ok=True)
+
+    monkeypatch.setattr(spawn, "set_pr_keep", lambda *a, **kw: keep_calls.append(a))
+    monkeypatch.setattr(spawn, "repo_nwo", lambda _p: ("owner", "repo"))
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: _FAKE_PR)
+    monkeypatch.setattr(
+        spawn,
+        "resolve_worktree",
+        lambda *a, **kw: (wt_path, "khivi/feat3", False),
+    )
+
+    code, _out, _err = spawn_main(["khivi/feat3", "--repo", "testrepo", "--keep"])
+    assert code == 0
+    assert keep_calls == []
