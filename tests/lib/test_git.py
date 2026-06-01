@@ -22,7 +22,9 @@ from scripts.lib.git import (
     branch_exists,
     create_worktree,
     is_ancestor,
+    prune_worktrees,
     require_git,
+    worktrees,
 )
 
 
@@ -435,3 +437,52 @@ def test_require_git_exits_when_missing(monkeypatch, capsys):
 def test_require_git_returns_when_present(monkeypatch):
     monkeypatch.setattr("scripts.lib.git.subprocess.run", lambda *_a, **_kw: None)
     require_git()
+
+
+# ── prune_worktrees: drop admin entries for deleted dirs ───────────────────
+
+
+def _branch_names(repo) -> set[str]:
+    return {wt.branch for wt in worktrees(repo)}
+
+
+def test_prune_worktrees_removes_stale_entry(cockpit_repo) -> None:
+    """A worktree dir deleted on disk is still listed until prune runs."""
+    import shutil
+
+    repo = cockpit_repo.repo
+    wt = repo.parent / "wt"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-b", "wtbr", str(wt), "main"],
+        check=True,
+    )
+    shutil.rmtree(wt)  # delete out-of-band, leaving stale .git/worktrees entry
+
+    assert "wtbr" in _branch_names(repo), "stale entry should linger pre-prune"
+    prune_worktrees(repo)
+    assert "wtbr" not in _branch_names(repo), "prune should drop the stale entry"
+
+
+def test_prune_worktrees_keeps_live_worktree(cockpit_repo) -> None:
+    """Prune only removes entries whose dir is gone — never a live worktree."""
+    repo = cockpit_repo.repo
+    wt = repo.parent / "wt"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-b", "wtbr", str(wt), "main"],
+        check=True,
+    )
+
+    prune_worktrees(repo)
+
+    assert wt.is_dir()
+    assert "wtbr" in _branch_names(repo)
+
+
+def test_prune_worktrees_warns_not_raises_on_failure(tmp_path, capsys) -> None:
+    """A non-repo path makes git exit non-zero; prune warns, never raises."""
+    not_a_repo = tmp_path / "plain"
+    not_a_repo.mkdir()
+
+    prune_worktrees(not_a_repo)  # must not raise
+
+    assert "worktree prune failed" in capsys.readouterr().err

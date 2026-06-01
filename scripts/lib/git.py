@@ -483,6 +483,29 @@ def remove_worktree(
     return res.returncode == 0, res.stderr.strip()
 
 
+def prune_worktrees(repo: Path) -> None:
+    """Run `git worktree prune` — drop admin entries for deleted directories.
+
+    A worktree directory removed on disk out-of-band (manual `rm`, an OS
+    tmpdir wipe) leaves a stale entry in `.git/worktrees/` that `worktrees()`
+    still reports. Pruning before each cycle reads the list keeps downstream
+    teardown/autoclose from acting on a path that no longer exists.
+
+    Non-raising: a failed prune leaves the stale entry in place (the pre-fix
+    behaviour) and logs a warning rather than aborting the cycle. Prune only
+    removes entries whose directory is gone, so it can never drop a live
+    worktree.
+    """
+    res = _git(repo, "worktree", "prune")
+    if res.returncode != 0:
+        print(
+            f"  warn: git worktree prune failed for {repo.name}: "
+            f"{res.stderr.strip()}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def ahead_of_origin(cwd: str | os.PathLike, branch: str) -> int:
     """Commits HEAD is ahead of `origin/{branch}`. Returns 0 on any failure
     (no remote ref, branch never pushed, git error). The footer pill

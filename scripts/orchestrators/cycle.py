@@ -79,6 +79,7 @@ from scripts.lib.git import (
     is_ancestor,
     log_ff_advances,
     origin_head_branch,
+    prune_worktrees,
     worktrees,
 )
 from scripts.lib.issue_color import issue_color
@@ -307,6 +308,14 @@ def _maybe_autoclose(
         if wt.branch in MAIN_BRANCHES:
             if _is_orphan_main_sibling(wt):
                 _teardown_worktree(wt, cwds, repo_path, repo_name, dry=dry)
+            elif wt.dirty_count > 0 and not dry:
+                # Held back by uncommitted work — new changes started on `main`
+                # inside a merged worktree. No other refresh path covers main-
+                # branch siblings (both pill loops skip MAIN_BRANCHES), so surface
+                # a WIP pill here to explain why the workspace is being kept.
+                ref = _workspace_ref_for_path(wt.path, cwds)
+                if ref is not None:
+                    apply_wip_pill(ref, wt.dirty_count)
             continue
         if not _is_post_merge_stale(wt, merged_branches):
             continue
@@ -466,6 +475,10 @@ def _prepare_cycle(
     except RuntimeError as e:
         print(f"  {yellow('skip')} {repo_path}: {e}", flush=True)
         return None
+
+    # Drop admin entries for worktree dirs deleted out-of-band before we read
+    # the list, so teardown/autoclose never act on a path that no longer exists.
+    prune_worktrees(repo_path)
 
     headless = _cache_only(cfg)
     with ThreadPoolExecutor(max_workers=3) as ex:
