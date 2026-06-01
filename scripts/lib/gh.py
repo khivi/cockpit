@@ -4,11 +4,29 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import run
+
+
+def require_gh() -> None:
+    """Exit cleanly with a one-liner if the gh CLI is not on PATH.
+
+    Mirrors `lib.cmux.require_workspace_binary`: surfaces a structured
+    install hint at startup instead of letting a cryptic FileNotFoundError
+    surface deep inside a daemon cycle.
+    """
+    try:
+        subprocess.run(["gh", "--version"], capture_output=True, check=False)
+    except FileNotFoundError:
+        print(
+            "cockpit: `gh` CLI not found on PATH — install from https://cli.github.com",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 def gh_json(args: list[str]) -> dict | list:

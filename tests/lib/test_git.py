@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
 import scripts.lib.git as gitlib
 from scripts.lib.git import (
     _fetch_remote_branch,
@@ -20,6 +22,7 @@ from scripts.lib.git import (
     branch_exists,
     create_worktree,
     is_ancestor,
+    require_git,
 )
 
 
@@ -410,3 +413,25 @@ def test_is_ancestor_false_for_unknown_sha(cockpit_repo) -> None:
         is_ancestor(cockpit_repo.repo, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
         is False
     )
+
+
+def test_require_git_exits_when_missing(monkeypatch, capsys):
+    """A missing `git` binary surfaces a structured install hint and exit code 2,
+    not a bare FileNotFoundError deep inside a daemon cycle.
+    """
+
+    def _raise_fnf(*_args, **_kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr("scripts.lib.git.subprocess.run", _raise_fnf)
+    with pytest.raises(SystemExit) as excinfo:
+        require_git()
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "git" in err
+    assert "https://git-scm.com" in err
+
+
+def test_require_git_returns_when_present(monkeypatch):
+    monkeypatch.setattr("scripts.lib.git.subprocess.run", lambda *_a, **_kw: None)
+    require_git()
