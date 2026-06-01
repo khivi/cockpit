@@ -257,12 +257,16 @@ def _linear_prompt(branch: str, identifier: str) -> str:
         "**Step 1 (REQUIRED)** — Fetch the ticket via the Linear MCP:",
         f"- Use the Linear MCP tool to read issue `{identifier}` (title, description, comments).",
         "- If the tool call fails because the MCP server is still connecting (tools "
-        "show as unavailable or return a connection error), run `sleep 8` via Bash "
-        "and retry the MCP call once. MCP servers connect asynchronously at session "
-        "start and are usually ready within a few seconds.",
-        "- If the MCP is still unavailable after the retry, STOP. Report to the user "
-        "that the Linear connector is required and exit without writing a plan. Do not "
-        "fall back to guessing from the ticket id alone.",
+        "show as unavailable or return a connection error), the in-session connector "
+        "is still completing its handshake — this is common when several worktrees "
+        "spawn at once and the connection can take 30s+ under that load. Retry on a "
+        "backoff: `sleep 8` then retry, and if it still fails `sleep 15` then retry, "
+        "and if it still fails `sleep 30` then retry (up to three retries total). "
+        "Re-attempt the SAME MCP tool call each time — do not switch tools.",
+        "- If the MCP is still unavailable after all retries, STOP. Report to the user "
+        "that the Linear connector did not finish connecting and that running `/mcp` "
+        "to reconnect, then re-invoking this session, will resolve it. Exit without "
+        "writing a plan; do not fall back to guessing from the ticket id alone.",
         "",
         "**Step 2 (REQUIRED)** — Derive a slug and rename the branch:",
         "- Derive `<slug>` from the ticket title: lowercase, non-alphanumerics → `-`, "
