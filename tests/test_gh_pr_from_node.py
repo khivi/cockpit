@@ -126,33 +126,36 @@ def _thread(*, resolved: bool, authors: list) -> dict:
     }
 
 
-def _pr_node_with_threads(threads: list, *, author: str = "khivi") -> dict:
+def _pr_node_with_threads(
+    threads: list, *, author: str = "khivi", reviews: list | None = None
+) -> dict:
     return {
         "author": {"login": author, "__typename": "User"},
         "reviewThreads": {"nodes": threads},
-        "reviews": {"nodes": []},
+        "reviews": {"nodes": reviews if reviews is not None else []},
     }
 
 
-def test_unaddressed_copilot_null_author_not_counted():
-    """GitHub Copilot returns author=null in GraphQL; null authors are treated
-    as bots/non-actionable and excluded from unaddressed counts."""
+def test_unaddressed_copilot_null_author_counted():
+    """GitHub Copilot inline review threads have author=null; null authors are
+    actionable and count toward the unaddressed total."""
     node = _pr_node_with_threads([_thread(resolved=False, authors=[None])])
     unresolved, total = _unaddressed(node, "khivi")
-    assert unresolved == 0
-    assert total == 0
+    assert unresolved == 1
+    assert total == 1
 
 
 def test_unaddressed_copilot_null_author_resolved_not_counted():
+    """Resolved null-author thread counts toward total but not unresolved."""
     node = _pr_node_with_threads([_thread(resolved=True, authors=[None])])
     unresolved, total = _unaddressed(node, "khivi")
     assert unresolved == 0
-    assert total == 0
+    assert total == 1
 
 
 def test_unaddressed_author_replied_after_copilot_not_unresolved():
-    """PR author replying last (after null-author Copilot) — thread has no
-    human reviewers, so it doesn't count at all."""
+    """Thread started by null-author Copilot counts (total==1) but is addressed
+    because the PR author replied last (unresolved==0)."""
     node = _pr_node_with_threads(
         [
             _thread(
@@ -162,12 +165,11 @@ def test_unaddressed_author_replied_after_copilot_not_unresolved():
     )
     unresolved, total = _unaddressed(node, "khivi")
     assert unresolved == 0
-    assert total == 0
+    assert total == 1
 
 
-def test_unaddressed_named_bot_not_counted():
-    """Bot accounts (__typename == "Bot") are excluded — their threads are
-    informational and don't require a human reply."""
+def test_unaddressed_named_bot_inline_thread_counted():
+    """Bot inline code-review threads are actionable and count toward unaddressed."""
     node = _pr_node_with_threads(
         [
             _thread(
@@ -177,8 +179,36 @@ def test_unaddressed_named_bot_not_counted():
         ]
     )
     unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 1
+    assert total == 1
+
+
+def test_unaddressed_bot_summary_review_not_counted():
+    """Bot summary reviews (e.g. Copilot "I reviewed N files") are excluded
+    from total — only inline threads from bots count."""
+    reviews = [
+        {
+            "author": {"login": "copilot[bot]", "__typename": "Bot"},
+            "body": "I reviewed 5 files.",
+        }
+    ]
+    node = _pr_node_with_threads([], reviews=reviews)
+    unresolved, total = _unaddressed(node, "khivi")
     assert unresolved == 0
     assert total == 0
+
+
+def test_unaddressed_human_summary_review_counted():
+    """Human reviewer summary body still counts toward total."""
+    reviews = [
+        {
+            "author": {"login": "alice", "__typename": "User"},
+            "body": "Looks good overall.",
+        }
+    ]
+    node = _pr_node_with_threads([], reviews=reviews)
+    unresolved, total = _unaddressed(node, "khivi")
+    assert total == 1
 
 
 def test_copilot_reviewer_failure_ignored():
