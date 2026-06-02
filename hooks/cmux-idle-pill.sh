@@ -96,6 +96,58 @@ cmux() {
     | sed "s|^|${ts} [${CMUX_WORKSPACE_ID}] |" >>"$LOG" & )
 }
 
+# How hard to retry the `idle=` write before giving up. Overridable so tests
+# don't sleep. Five tries × 1s self-heals a transient daemon stall (the
+# "Broken pipe" drops seen in $LOG) within a few seconds.
+CMUX_VERIFY_TRIES="${CMUX_VERIFY_TRIES:-5}"
+CMUX_VERIFY_SLEEP="${CMUX_VERIFY_SLEEP:-1}"
+
+cmux_set_verify() {
+  # Reliable, still-detached pill SET: set `<key>=<value>` then read it back via
+  # list-status, retrying until present or tries exhausted. The plain fire-and-
+  # forget cmux() silently dropped this write under daemon contention, leaving a
+  # genuinely-parked workspace with no `idle=` pill — so nudge_if_idle could not
+  # tell it was safe to ping and the actionable nudge never fired. The whole
+  # loop runs in a backgrounded subshell, so the hook still returns in <1ms.
+  key="$1"; value="$2"; color="$3"
+  (
+    i=0
+    while [ "$i" -lt "$CMUX_VERIFY_TRIES" ]; do
+      command cmux set-status "$key" "$value" --workspace "$CMUX_WORKSPACE_ID" \
+        --color "$color" </dev/null >/dev/null 2>>"$LOG" || true
+      if command cmux list-status --workspace "$CMUX_WORKSPACE_ID" 2>/dev/null \
+           | grep -qE "^[[:space:]]*${key}="; then
+        exit 0
+      fi
+      i=$((i + 1))
+      [ "$i" -lt "$CMUX_VERIFY_TRIES" ] && sleep "$CMUX_VERIFY_SLEEP"
+    done
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [${CMUX_WORKSPACE_ID}] WARN: ${key}= not confirmed after ${CMUX_VERIFY_TRIES} tries" >>"$LOG"
+  ) &
+}
+
+cmux_clear_verify() {
+  # Reliable, still-detached pill CLEAR: clear `<key>` then confirm it is absent,
+  # retrying as above. Mirrors cmux_set_verify so a dropped UserPromptSubmit
+  # clear can't leave a stale `idle=` on a now-running session (nudge_if_idle's
+  # native-Running guard is the second line of defense for that case).
+  key="$1"
+  (
+    i=0
+    while [ "$i" -lt "$CMUX_VERIFY_TRIES" ]; do
+      command cmux clear-status "$key" --workspace "$CMUX_WORKSPACE_ID" \
+        </dev/null >/dev/null 2>>"$LOG" || true
+      if ! command cmux list-status --workspace "$CMUX_WORKSPACE_ID" 2>/dev/null \
+             | grep -qE "^[[:space:]]*${key}="; then
+        exit 0
+      fi
+      i=$((i + 1))
+      [ "$i" -lt "$CMUX_VERIFY_TRIES" ] && sleep "$CMUX_VERIFY_SLEEP"
+    done
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [${CMUX_WORKSPACE_ID}] WARN: ${key}= still present after ${CMUX_VERIFY_TRIES} tries" >>"$LOG"
+  ) &
+}
+
 loop_active_in_transcript() {
   # Exits 0 iff the most recent assistant turn in the transcript referenced by
   # the Stop-hook JSON payload (passed as $1) contains a ScheduleWakeup or
@@ -134,16 +186,18 @@ case "${1:-}" in
     if [ -n "$hook_input" ] && loop_active_in_transcript "$hook_input"; then
       # /loop iteration just scheduled another wakeup — keep `idle=` cleared
       # (we are *not* at rest) and reflect the live loop in `loop=`.
-      cmux clear-status idle
+      cmux_clear_verify idle
       cmux set-status loop "🔄" --color "#a78bfa"
       exit 0
     fi
     # No wakeup armed by the last turn — any prior dynamic /loop has ended.
-    # Clear `loop=` so the visual matches reality, then mark idle.
+    # Clear `loop=` so the visual matches reality, then mark idle. The idle
+    # write is verified+retried because its silent loss is the bug this hook
+    # exists to prevent (a parked workspace that never gets nudged).
     cmux clear-status loop
-    cmux set-status idle idle --color "#6b7280"
+    cmux_set_verify idle idle "#6b7280"
     ;;
-  prompt) cmux clear-status idle ;;
+  prompt) cmux_clear_verify idle ;;
   loop-set) cmux set-status loop "🔄" --color "#a78bfa" ;;
   loop-clear) cmux clear-status loop ;;
 esac

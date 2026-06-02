@@ -50,6 +50,20 @@ def test_save_and_load_roundtrip(nudges):
     assert loaded.last_nudge_category == "comments"
 
 
+def test_first_seen_at_roundtrip(nudges):
+    pref = nudges.NudgePref(first_seen_at={"ci": 1234.5, "comments": 6789.0})
+    nudges.save_pref(7, pref)
+    loaded = nudges.load_pref(7)
+    assert loaded.first_seen_at == {"ci": 1234.5, "comments": 6789.0}
+
+
+def test_first_seen_at_defaults_empty_and_coerces_types(nudges):
+    # Missing key → empty dict; legacy files without the field load cleanly.
+    assert nudges.NudgePref().first_seen_at == {}
+    loaded = nudges.NudgePref.from_json({"first_seen_at": {"ci": "10"}})
+    assert loaded.first_seen_at == {"ci": 10.0}
+
+
 def test_should_nudge_blocked_by_category_mute(nudges):
     pref = nudges.NudgePref(disabled_categories={"comments"})
     nudges.save_pref(7, pref)

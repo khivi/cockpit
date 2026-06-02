@@ -12,6 +12,7 @@ import os
 import stat
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,13 @@ def fake_cmux(tmp_path, monkeypatch) -> Path:
     # control the file and so unrelated test runs don't pollute the real
     # ~/.config/cockpit/cmux-idle-pill.err.
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    # The verified idle writes (cmux_set_verify / cmux_clear_verify) retry until
+    # list-status confirms. The plain shim never reflects state, so cap retries
+    # at one with no sleep — otherwise each call leaves a ~5s background subshell
+    # polling a torn-down tmp_path. Multi-try behaviour is covered explicitly by
+    # the stateful-shim tests below.
+    monkeypatch.setenv("CMUX_VERIFY_TRIES", "1")
+    monkeypatch.setenv("CMUX_VERIFY_SLEEP", "0")
     return log
 
 
@@ -99,6 +107,90 @@ def test_prompt_clears_idle_pill(fake_cmux):
     subprocess.run([str(HOOK), "prompt"], check=True)
     calls = _poll_lines(fake_cmux, expected=1)
     assert any("clear-status idle" in c for c in calls), calls
+
+
+def _plant_verify_shim(tmp_path: Path, monkeypatch, *, set_succeeds_on: int) -> Path:
+    """Stateful cmux shim: `list-status` reports `idle=idle` only on/after the
+    `set_succeeds_on`-th `set-status idle` call. Models a daemon that drops the
+    first writes (Broken pipe) then accepts one, so we can assert the hook's
+    set→verify→retry loop keeps going until the write lands.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    log = tmp_path / "cmux.log"
+    counter = tmp_path / "set_count"
+    shim = bin_dir / "cmux"
+    shim.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = "list-workspaces" ]; then\n'
+        '  printf "  workspace:99  name\\n"\n'
+        "  exit 0\n"
+        "fi\n"
+        f'printf "%s\\n" "$*" >> "{log}"\n'
+        'if [ "$1" = "set-status" ] && [ "$2" = "idle" ]; then\n'
+        f'  n=$(cat "{counter}" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "{counter}"\n'
+        "fi\n"
+        'if [ "$1" = "list-status" ]; then\n'
+        f'  n=$(cat "{counter}" 2>/dev/null || echo 0)\n'
+        f'  if [ "$n" -ge {set_succeeds_on} ]; then printf "idle=idle\\n"; fi\n'
+        "fi\n"
+    )
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    monkeypatch.setenv("CMUX_VERIFY_TRIES", "5")
+    monkeypatch.setenv("CMUX_VERIFY_SLEEP", "0")
+    return log
+
+
+def _poll_until(predicate: Callable[[], bool], timeout: float = 6.0) -> bool:
+    """Poll a background-effect predicate until True or timeout. The verified
+    writes run in detached subshells, so assertions must wait on the effect."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def test_stop_idle_write_retries_until_confirmed(tmp_path, monkeypatch):
+    # Daemon drops the first two set-status writes; the third lands. The hook
+    # must keep retrying past the drops rather than fire-and-forget once.
+    log = _plant_verify_shim(tmp_path, monkeypatch, set_succeeds_on=3)
+    transcript = _transcript_with(tmp_path, ["Edit"])
+    payload = json.dumps({"transcript_path": str(transcript)})
+    subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
+
+    def _three_idle_sets() -> bool:
+        if not log.exists():
+            return False
+        return (
+            sum("set-status idle idle" in c for c in log.read_text().splitlines()) >= 3
+        )
+
+    assert _poll_until(_three_idle_sets), log.read_text() if log.exists() else "no log"
+    # Once confirmed, no WARN is logged to the err file.
+    err = _err_log(tmp_path)
+    err_text = err.read_text() if err.exists() else ""
+    assert "not confirmed" not in err_text, err_text
+
+
+def test_stop_idle_write_warns_when_never_confirmed(tmp_path, monkeypatch):
+    # set_succeeds_on far above the retry budget: every verify fails, so after
+    # exhausting tries the hook logs a WARN instead of silently giving up.
+    _plant_verify_shim(tmp_path, monkeypatch, set_succeeds_on=99)
+    transcript = _transcript_with(tmp_path, ["Edit"])
+    payload = json.dumps({"transcript_path": str(transcript)})
+    subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
+    err = _err_log(tmp_path)
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if err.exists() and "not confirmed" in err.read_text():
+            break
+        time.sleep(0.02)
+    assert err.exists() and "idle= not confirmed" in err.read_text()
 
 
 def test_stop_with_schedulewakeup_sets_loop_and_clears_idle(fake_cmux, tmp_path):
