@@ -373,16 +373,15 @@ _PR_LIGHT_FIELDS = "number updatedAt"
 
 
 def _is_other(author: dict | None, pr_author: str) -> bool:
-    """True when `author` is a human reviewer other than the PR author.
+    """True when `author` is a reviewer other than the PR author.
 
-    Bot accounts (__typename == "Bot") are excluded — their unresolved threads
-    are informational (Copilot review summaries, dependabot notices) and don't
-    require a human reply. Null authors are also treated as bots/non-actionable.
+    Null authors (e.g. Copilot inline review comments) and bot accounts count
+    as "other" — their inline code-review threads are actionable. Bot summary
+    reviews (the "I reviewed N files" noise) are filtered out separately in
+    the reviews loop of _unaddressed, not here.
     """
     if author is None:
-        return False
-    if author.get("__typename") == "Bot":
-        return False
+        return True
     login = author.get("login")
     return not login or login != pr_author
 
@@ -404,6 +403,8 @@ def _unaddressed(pr_node: dict, pr_author: str) -> tuple[int, int]:
             unresolved += 1
     for r in pr_node["reviews"]["nodes"]:
         a = r.get("author") or {}
+        if a.get("__typename") == "Bot":
+            continue
         login = a.get("login")
         if login and login != pr_author and (r.get("body") or "").strip():
             total += 1
