@@ -483,6 +483,23 @@ def remove_worktree(
     return res.returncode == 0, res.stderr.strip()
 
 
+def delete_local_branch(repo: Path, branch: str) -> tuple[bool, str]:
+    """Delete `branch` from the local repo with `git branch -D`. Returns
+    (ok, stderr) — non-raising, mirroring `remove_worktree`'s contract.
+
+    Uses `-D` (force) rather than `-d` deliberately. `-d` only deletes a branch
+    git considers merged into the *current* HEAD or its upstream; teardown runs
+    from the main checkout (HEAD = the default branch), and a squash- or rebase-
+    merged feature branch has different SHAs than the default branch, so `-d`
+    would refuse for the common merge case (this is the same patch-id blind spot
+    `_count_unpushed` documents). Callers establish the merge via the
+    authoritative `gh pr list --state merged` signal and gate on there being no
+    post-merge local commits before reaching here, so `-D` is the right tool.
+    """
+    res = _git(repo, "branch", "-D", branch)
+    return res.returncode == 0, res.stderr.strip()
+
+
 def prune_worktrees(repo: Path) -> None:
     """Run `git worktree prune` — drop admin entries for deleted directories.
 

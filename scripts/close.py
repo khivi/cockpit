@@ -28,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from scripts.lib.cache import find_pr_payload  # noqa: E402
 from scripts.lib.cmux import (  # noqa: E402
     require_workspace_binary,
     resolve_workspace,
@@ -153,6 +154,17 @@ def main() -> int:
         )
         return 1
 
+    # Delete the local branch when the PR has merged. The hard-blocker check
+    # above already refused on dirty or local-only/unpushed commits (not even
+    # --force overrides those), so by here a merged branch carries no work the
+    # ref is protecting. A --force close of a still-OPEN PR leaves the branch
+    # alone — that work is not merged.
+    delete_branch = False
+    if branch is not None and repo_name is not None:
+        payload = find_pr_payload(branch, repo_name=repo_name)
+        if payload and str(payload.get("state", "")).upper() == "MERGED":
+            delete_branch = True
+
     req = TeardownRequest(
         ref=match.ref,
         name=match.name or "",
@@ -161,6 +173,7 @@ def main() -> int:
         repo_path=repo_dir if wt is not None else None,
         repo_name=repo_name,
         forced=args.force,
+        delete_branch=delete_branch,
     )
     if not kick_running(quiet=True):
         print(

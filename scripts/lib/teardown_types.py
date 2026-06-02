@@ -18,6 +18,12 @@ class TeardownRequest:
 
     `worktree_path` / `branch` / `repo_path` / `repo_name` are all optional
     because the `close_gone_cwd_workspaces` path has only `ref` to work with.
+
+    `delete_branch` opts the request into deleting the local branch ref (via
+    `git branch -D`) after the worktree is removed. Off by default; callers set
+    it only once they've confirmed the branch is merged and carries no
+    post-merge local commits. `teardown` still refuses to delete the default
+    branch regardless of this flag.
     """
 
     ref: str
@@ -27,3 +33,4 @@ class TeardownRequest:
     repo_path: Path | None = None
     repo_name: str | None = None
     forced: bool = False
+    delete_branch: bool = False

@@ -21,6 +21,7 @@ from scripts.lib.git import (
     behind_of_base,
     branch_exists,
     create_worktree,
+    delete_local_branch,
     is_ancestor,
     prune_worktrees,
     require_git,
@@ -461,6 +462,61 @@ def test_prune_worktrees_removes_stale_entry(cockpit_repo) -> None:
     assert "wtbr" in _branch_names(repo), "stale entry should linger pre-prune"
     prune_worktrees(repo)
     assert "wtbr" not in _branch_names(repo), "prune should drop the stale entry"
+
+
+# ── delete_local_branch: -D force-delete ───────────────────────────────────
+
+
+def _local_branches(repo) -> set[str]:
+    res = subprocess.run(
+        ["git", "-C", str(repo), "branch", "--format=%(refname:short)"],
+        capture_output=True,
+        text=True,
+    )
+    return {ln.strip() for ln in res.stdout.splitlines() if ln.strip()}
+
+
+def test_delete_local_branch_success(cockpit_repo) -> None:
+    repo = cockpit_repo.repo
+    subprocess.run(["git", "-C", str(repo), "branch", "feature"], check=True)
+    assert "feature" in _local_branches(repo)
+
+    ok, err = delete_local_branch(repo, "feature")
+
+    assert ok is True
+    assert err == ""
+    assert "feature" not in _local_branches(repo)
+
+
+def test_delete_local_branch_force_deletes_unmerged(cockpit_repo) -> None:
+    """`-D` removes a branch with commits not on the default branch — the
+    squash-merge case `-d` would refuse. Proven here with genuinely unmerged
+    work, which is the strongest form of "not merged into HEAD"."""
+    repo = cockpit_repo.repo
+    env = _committer_env()
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-b", "feature"], check=True, env=env
+    )
+    (repo / "f.txt").write_text("work\n")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, env=env)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "unmerged work"], check=True, env=env
+    )
+    subprocess.run(["git", "-C", str(repo), "checkout", "main"], check=True, env=env)
+
+    ok, _ = delete_local_branch(repo, "feature")
+
+    assert ok is True
+    assert "feature" not in _local_branches(repo)
+
+
+def test_delete_local_branch_failure_on_missing(cockpit_repo) -> None:
+    repo = cockpit_repo.repo
+
+    ok, err = delete_local_branch(repo, "no-such-branch")
+
+    assert ok is False
+    assert err != ""
 
 
 def test_prune_worktrees_keeps_live_worktree(cockpit_repo) -> None:

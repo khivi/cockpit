@@ -240,3 +240,71 @@ def test_main_marks_own_branch_mine(cockpit_repo, monkeypatch):
     assert rc == 0
     assert seen.get("branch") == "khivi/mine-feat"
     assert seen.get("is_mine") is True
+
+
+# ── delete_branch on a merged PR ─────────────────────────────────────────────
+
+
+def _run_main_capturing_request(cockpit_repo, monkeypatch, branch, pr_payload, *argv):
+    """Run main() and return the enqueued TeardownRequest. Hard/soft blockers
+    are mocked away so the run always reaches enqueue; `pr_payload` is what
+    close.py's own merged-state lookup sees."""
+    wt_path = cockpit_repo.repo.parent / "del-feat"
+    _make_wt(cockpit_repo.repo, wt_path, branch)
+    monkeypatch.chdir(wt_path)
+
+    enqueued: list = []
+
+    with (
+        patch.object(close_script, "require_workspace_binary"),
+        patch.object(close_script, "workspace_cwds", return_value={"ws:7": wt_path}),
+        patch.object(close_script, "workspace_names", return_value={"ws:7": "del"}),
+        patch.object(
+            close_script,
+            "discover_repo",
+            return_value={
+                "path": str(cockpit_repo.repo),
+                "name": "testrepo",
+                "branch_prefix": "khivi/",
+            },
+        ),
+        patch.object(close_script, "worktree_state_blockers", return_value=[]),
+        patch.object(close_script, "probe_blockers", return_value=[]),
+        patch.object(close_script, "find_pr_payload", return_value=pr_payload),
+        patch.object(close_script, "kick_running", return_value=True),
+        patch.object(close_script, "enqueue", side_effect=enqueued.append),
+        patch("sys.argv", ["close", *argv]),
+    ):
+        rc = close_script.main()
+    assert rc == 0
+    assert len(enqueued) == 1
+    return enqueued[0]
+
+
+def test_main_deletes_branch_when_pr_merged(cockpit_repo, monkeypatch):
+    req = _run_main_capturing_request(
+        cockpit_repo,
+        monkeypatch,
+        "khivi/merged-feat",
+        {"state": "MERGED", "number": 5, "branch": "khivi/merged-feat"},
+    )
+    assert req.delete_branch is True
+
+
+def test_main_keeps_branch_when_pr_open(cockpit_repo, monkeypatch):
+    """A --force close of a still-OPEN PR must not delete the branch."""
+    req = _run_main_capturing_request(
+        cockpit_repo,
+        monkeypatch,
+        "khivi/open-feat",
+        {"state": "OPEN", "number": 6, "branch": "khivi/open-feat"},
+        "--force",
+    )
+    assert req.delete_branch is False
+
+
+def test_main_keeps_branch_when_no_pr(cockpit_repo, monkeypatch):
+    req = _run_main_capturing_request(
+        cockpit_repo, monkeypatch, "khivi/no-pr-feat", None
+    )
+    assert req.delete_branch is False

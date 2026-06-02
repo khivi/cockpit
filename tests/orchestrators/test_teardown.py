@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -335,3 +336,103 @@ def test_state_blockers_others_dirty_still_hard(tmp_path):
     ):
         blockers = worktree_state_blockers(wt, branch="alice/feat", is_mine=False)
     assert blockers == ["1 uncommitted file(s)"]
+
+
+# ── delete_branch: local branch deletion after worktree removal ──────────────
+
+
+def _forced_req(tmp_path, *, delete_branch=False, branch="khivi/x"):
+    wt = tmp_path / "wt"
+    wt.mkdir(exist_ok=True)
+    return TeardownRequest(
+        ref="ws:1",
+        worktree_path=wt,
+        branch=branch,
+        repo_path=tmp_path,
+        repo_name="repo",
+        forced=True,
+        delete_branch=delete_branch,
+    )
+
+
+def _enter_success_patches(stack, *, default="main"):
+    """Patch the post-remove collaborators so teardown reaches its happy path."""
+    for cm in (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort"),
+        patch.object(teardown_mod, "remove_worktree", return_value=(True, "")),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+        patch.object(teardown_mod, "origin_head_branch", return_value=default),
+    ):
+        stack.enter_context(cm)
+
+
+def test_teardown_deletes_branch_when_flag_set(tmp_path):
+    req = _forced_req(tmp_path, delete_branch=True, branch="khivi/x")
+    with ExitStack() as stack:
+        _enter_success_patches(stack, default="main")
+        del_mock = stack.enter_context(
+            patch.object(teardown_mod, "delete_local_branch", return_value=(True, ""))
+        )
+        ok, _ = teardown(req)
+    assert ok
+    del_mock.assert_called_once_with(tmp_path, "khivi/x")
+
+
+def test_teardown_skips_branch_delete_when_flag_false(tmp_path):
+    req = _forced_req(tmp_path, delete_branch=False, branch="khivi/x")
+    with ExitStack() as stack:
+        _enter_success_patches(stack, default="main")
+        del_mock = stack.enter_context(
+            patch.object(teardown_mod, "delete_local_branch")
+        )
+        ok, _ = teardown(req)
+    assert ok
+    del_mock.assert_not_called()
+
+
+def test_teardown_never_deletes_default_branch(tmp_path):
+    """Even with the flag set, the repo's default branch is never deleted."""
+    req = _forced_req(tmp_path, delete_branch=True, branch="main")
+    with ExitStack() as stack:
+        _enter_success_patches(stack, default="main")
+        del_mock = stack.enter_context(
+            patch.object(teardown_mod, "delete_local_branch")
+        )
+        ok, _ = teardown(req)
+    assert ok
+    del_mock.assert_not_called()
+
+
+def test_teardown_skips_branch_delete_when_default_unknown(tmp_path):
+    """origin/HEAD unresolvable → can't prove the branch isn't default → skip."""
+    req = _forced_req(tmp_path, delete_branch=True, branch="khivi/x")
+    with ExitStack() as stack:
+        _enter_success_patches(stack, default=None)
+        del_mock = stack.enter_context(
+            patch.object(teardown_mod, "delete_local_branch")
+        )
+        ok, _ = teardown(req)
+    assert ok
+    del_mock.assert_not_called()
+
+
+def test_teardown_branch_delete_failure_is_nonfatal(tmp_path, capsys):
+    """A failed `git branch -D` warns but doesn't fail the teardown, and the
+    cache delete still runs."""
+    req = _forced_req(tmp_path, delete_branch=True, branch="khivi/x")
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort"),
+        patch.object(teardown_mod, "remove_worktree", return_value=(True, "")),
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+        patch.object(teardown_mod, "origin_head_branch", return_value="main"),
+        patch.object(teardown_mod, "delete_local_branch", return_value=(False, "boom")),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch") as cache_mock,
+    ):
+        ok, blockers = teardown(req)
+    assert ok
+    assert blockers == []
+    cache_mock.assert_called_once_with("repo", "khivi/x")
+    assert "git branch -D khivi/x failed: boom" in capsys.readouterr().err

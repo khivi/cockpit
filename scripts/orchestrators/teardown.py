@@ -6,7 +6,9 @@ One callable replaces three duplicate sequences (`scripts/close.py` inline,
   1. Re-check blockers (dirty / unpushed / open PR) unless `forced`.
   2. Close the cmux workspace.
   3. Remove the worktree if `worktree_path` exists on disk.
-  4. Delete the PR cache rows for `branch` if `repo_name` is known.
+  4. Delete the local branch ref if `delete_branch` is set (and the branch is
+     not the repo's default branch).
+  5. Delete the PR cache rows for `branch` if `repo_name` is known.
 
 Step ordering matters: yanking the cwd out from under a live Claude session
 breaks every Stop/PreToolUse hook with ENOENT. Workspace close must precede
@@ -25,8 +27,10 @@ from scripts.lib.git import (
     _count_unpushed,
     commits_only_local,
     count_dirty,
+    delete_local_branch,
     ff_default_branch_worktrees,
     log_ff_advances,
+    origin_head_branch,
     remove_worktree,
     worktrees,
 )
@@ -131,6 +135,20 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
                 flush=True,
             )
             return False, [f"git worktree remove failed: {err}"]
+
+    if req.delete_branch and req.branch is not None and req.repo_path is not None:
+        default = origin_head_branch(req.repo_path)
+        if default is not None and req.branch != default:
+            ok_b, err_b = delete_local_branch(req.repo_path, req.branch)
+            if not ok_b:
+                # Non-fatal: a dangling local ref is cosmetic, and the worktree
+                # is already gone. Match the soft-fail posture of the post-close
+                # ff chore below rather than failing the whole teardown.
+                print(
+                    f"  warn: git branch -D {req.branch} failed: {err_b}",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
     if req.branch is not None and req.repo_name is not None:
         delete_pr_caches_for_branch(req.repo_name, req.branch)
