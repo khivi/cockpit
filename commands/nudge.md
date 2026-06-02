@@ -10,7 +10,7 @@ allowed-tools: Bash
 YOU MUST immediately invoke the Bash tool with the exact command below, passing through all skill arguments verbatim. Do not paraphrase, reorder, or skip. After Bash returns, paste its stdout verbatim.
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/nudge.py "$@"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/nudge.py $ARGUMENTS
 ```
 
 ## When to use
