@@ -438,6 +438,16 @@ def _idle_status_lines(*, parked: bool = False) -> str:
     return "\n".join(lines)
 
 
+def _native_line(state: str) -> str:
+    """A realistic `claude_code=` list-status line for a given native state."""
+    icon = {
+        "Running": "bolt.fill",
+        "Idle": "pause.circle.fill",
+        "Needs input": "bell.fill",
+    }[state]
+    return f"claude_code={state} icon={icon} color=#4C8DFF"
+
+
 def test_nudge_if_idle_returns_true_on_success(capsys):
     calls: list[tuple] = []
 
@@ -541,3 +551,97 @@ def test_nudge_if_idle_records_nudge_on_success():
 
     assert result is True
     assert recorded == [(42, "ci")]
+
+
+# ── native-state gate (the stale-pill regression + permission safety) ────────
+
+
+def test_nudge_fires_on_native_idle_without_pill_and_self_heals():
+    """cmux reports the unambiguous native `Idle` but the Stop-hook `idle=` pill
+    was dropped. Nudge must still fire AND re-assert the pill (self-heal)."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-status":
+            return _native_line("Idle")  # no idle= pill present
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="t")
+
+    assert result is True
+    assert any(a[0] == "send" for a in calls)
+    set_idle = [a for a in calls if a[0] == "set-status" and a[1] == "idle"]
+    assert len(set_idle) == 1, calls  # self-healed the dropped pill
+
+
+def test_nudge_suppressed_on_bare_needs_input():
+    """`Needs input` is ambiguous (idle-at-prompt OR a pending y/n permission).
+    With no `idle=` pill it must NOT nudge — the regression-fix must not become a
+    new hazard of typing into a confirmation prompt."""
+    sends: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "send":
+            sends.append(args)
+        if args[0] == "list-status":
+            return _native_line("Needs input")
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="t")
+
+    assert result is False
+    assert sends == []
+
+
+def test_nudge_fires_when_idle_pill_present_even_if_native_needs_input():
+    """The persistent `idle=` pill (set only at Stop, never mid-permission) is a
+    trusted safe signal. `Needs input` alongside it is genuine idle-at-prompt."""
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return _idle_status_lines() + "\n" + _native_line("Needs input")
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="t")
+
+    assert result is True
+
+
+def test_nudge_suppressed_when_native_running_even_with_idle_pill():
+    """Native `Running` always blocks — catches a dropped `idle=` clear that
+    left a stale pill on a now-active session."""
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return _idle_status_lines() + "\n" + _native_line("Running")
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="t")
+
+    assert result is False
+
+
+def test_nudge_suppressed_when_parked_even_on_native_idle():
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return _native_line("Idle") + "\nparked=1"
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="t")
+
+    assert result is False
+
+
+def test_native_claude_state_parsing():
+    from scripts.lib.cmux import _native_claude_state
+
+    assert _native_claude_state([_native_line("Needs input")]) == "Needs input"
+    assert _native_claude_state([_native_line("Running")]) == "Running"
+    assert _native_claude_state(["  claude_code=Idle"]) == "Idle"
+    assert _native_claude_state(["idle=1", "ci=✓ ci"]) is None

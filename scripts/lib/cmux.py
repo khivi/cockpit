@@ -65,6 +65,15 @@ WIP_ICON = "✏️"
 STALE_KEY = "stale"
 STALE_ICON = "↻"
 
+# Stale-running escape hatch: set when an actionable PR issue has persisted past
+# the stale threshold without the workspace ever becoming nudgeable (e.g. the
+# agent is wedged mid-turn, or its `idle=` pill write was lost and never
+# re-asserted). A passive, out-of-session visual marker — never a `send`, so it
+# can't type into a pending y/n permission prompt. Managed in the cycle's slow
+# tick, not via apply_pills, so it is deliberately absent from ACTIONABLE_KEYS.
+STUCK_KEY = "stuck"
+STUCK_ICON = "🚨"
+
 MUTED_KEY = "muted"
 MUTED_ICON = "🔇"
 
@@ -104,6 +113,30 @@ class CmuxUnavailable(RuntimeError):
 def _has_pill(lines: list[str], *keys: str) -> bool:
     """True if any `KEY=` line is present (KEY ∈ keys)."""
     return any(line.lstrip().startswith(k + "=") for line in lines for k in keys)
+
+
+def _native_claude_state(lines: list[str]) -> str | None:
+    """cmux's own `claude_code=` agent state from a `list-status` dump, or None.
+
+    cmux's Claude wrapper drives three values (verified against the live event
+    stream): `Running` (mid-turn), `Idle` (Stop fired, parked at the prompt),
+    and `Needs input`. `Needs input` is AMBIGUOUS — it fires both for an
+    idle-at-prompt session aged past Claude's ~60s Notification *and* for a
+    pending y/n permission request mid-turn (which never fires Stop). So it is
+    not a safe at-rest signal on its own; only `Idle` is unambiguous. A line
+    looks like `claude_code=Needs input icon=bell.fill color=#4C8DFF`.
+    """
+    for line in lines:
+        s = line.strip()
+        if not s.startswith("claude_code="):
+            continue
+        rest = s[len("claude_code=") :]
+        for sep in (" icon=", " color="):
+            idx = rest.find(sep)
+            if idx != -1:
+                rest = rest[:idx]
+        return rest.strip() or None
+    return None
 
 
 def _set_status(ref: str, key: str, value: str, color: str) -> None:
@@ -203,6 +236,16 @@ def apply_stale_pill(ref: str, behind_base: int) -> None:
     _apply_count_pill(ref, STALE_KEY, STALE_ICON, behind_base)
 
 
+def apply_stuck_pill(ref: str, label: str | None) -> None:
+    """Set the stale-running escape-hatch pill on `ref` to `label`, or clear it
+    when `label` is falsy. See `STUCK_KEY` for the design rationale.
+    """
+    if label:
+        _set_status(ref, STUCK_KEY, f"{STUCK_ICON} {label}", RED)
+    else:
+        _clear_status(ref, STUCK_KEY)
+
+
 def list_workspaces() -> list[str]:
     out = cmux("list-workspaces", check=False)
     refs: list[str] = []
@@ -283,8 +326,23 @@ def nudge_if_idle(
     state in `lib.nudges` so the user's `cockpit nudge mute` survives daemon
     restarts. For orphan (no-PR) nudges, fire unconditionally when idle.
 
-    Always gates on cmux pills: skips if `idle=` is absent or `parked=` is
-    present, so a transient runtime override still works.
+    Gates on two independent at-rest signals so a dropped Stop-hook write can't
+    silently suppress nudges forever:
+
+    - cmux's native `claude_code=Running` always blocks — an active turn is
+      never safe, and this also catches a dropped `idle=` clear (a stale pill
+      left on a now-running session).
+    - Otherwise the workspace is "at rest and safe" iff the persistent `idle=`
+      pill is present OR cmux reports the unambiguous native `Idle` state. The
+      `idle=` pill is set only at Stop (permission prompts are mid-turn and
+      never fire Stop), so it never coincides with a pending y/n. Native
+      `Needs input` is deliberately NOT trusted: it is the same value cmux
+      shows for a pending permission request, and nudging there would type into
+      the confirmation.
+    - When native `Idle` holds but the `idle=` pill is missing, re-assert it —
+      self-healing a Stop-hook write that the daemon never landed.
+
+    Still skips when `parked=` is present (user's done-waiting marker).
 
     There is no time-based throttle. The slow tick's cadence
     (`slow_poll_interval_seconds`, default 300s) is the implicit rate limit
@@ -296,10 +354,16 @@ def nudge_if_idle(
         if not nudges.should_nudge(pr_number, category):
             return False
     status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
-    if not _has_pill(status_lines, "idle"):
+    native = _native_claude_state(status_lines)
+    if native == "Running":
+        return False
+    has_idle_pill = _has_pill(status_lines, "idle")
+    if not (has_idle_pill or native == "Idle"):
         return False
     if _has_pill(status_lines, PARKED_KEY):
         return False
+    if native == "Idle" and not has_idle_pill and not dry:
+        _set_status(ref, "idle", "idle", GREY)
     if dry:
         print(f"  [dry] nudge {tag} → {ref}: {message[:70]}", flush=True)
         return False

@@ -1540,3 +1540,171 @@ def test_drain_successful_teardown_pops_marker(drain_isolated):
 
     assert not marker.exists()
     assert ds.iter_pending() == []
+
+
+# ── stale-running escape hatch (stuck= pill) ─────────────────────────────────
+
+
+def _stale_pr(*, ci: str = "failed") -> PR:
+    """An OPEN PR whose display_issue is the actionable `ci` category."""
+    return PR(
+        number=1,
+        title="t",
+        branch="khivi/feat",
+        url="",
+        author="khivi",
+        is_draft=False,
+        review_decision="",
+        mergeable="MERGEABLE",
+        ci=ci,
+        unaddressed=0,
+        total_from_others=0,
+        state="OPEN",
+    )
+
+
+def _stale_ctx(tmp_path, pref, *, dry: bool = False, cfg: dict | None = None):
+    ctx = _stub_repo_cycle(tmp_path, headless=False)
+    ctx.dry = dry
+    ctx.cfg = cfg if cfg is not None else {"nudge_stale_seconds": 900}
+    ctx.prefs = {1: pref}
+    return ctx
+
+
+def test_stale_threshold_default_is_three_slow_cycles():
+    assert cycle._stale_threshold_seconds({}) == 900.0
+    assert cycle._stale_threshold_seconds({"slow_poll_interval_seconds": 100}) == 300.0
+    assert cycle._stale_threshold_seconds({"nudge_stale_seconds": 42}) == 42.0
+
+
+def test_track_stale_first_sighting_records_timer_no_pill(tmp_path):
+    from scripts.lib.nudges import NudgePref
+
+    pref = NudgePref()
+    ctx = _stale_ctx(tmp_path, pref)
+    stuck: list = []
+    with (
+        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
+        patch.object(cycle.nudges, "should_nudge", return_value=True),
+        patch.object(cycle.nudges, "save_pref"),
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
+
+    assert pref.first_seen_at == {"ci": 1000.0}
+    assert stuck == [("workspace:1", None)]  # timer started, not yet stuck
+
+
+def test_track_stale_past_threshold_raises_stuck_pill(tmp_path):
+    from scripts.lib.nudges import NudgePref
+
+    pref = NudgePref(first_seen_at={"ci": 1000.0})
+    ctx = _stale_ctx(tmp_path, pref)
+    stuck: list = []
+    with (
+        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
+        patch.object(cycle.nudges, "should_nudge", return_value=True),
+        patch.object(cycle.nudges, "save_pref"),
+        patch.object(cycle.time, "time", return_value=1000.0 + 1000.0),
+    ):
+        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
+
+    assert len(stuck) == 1
+    ref, label = stuck[0]
+    assert ref == "workspace:1"
+    assert label is not None and label.startswith("stuck:ci")
+
+
+def test_track_stale_successful_nudge_clears_timer_and_pill(tmp_path):
+    from scripts.lib.nudges import NudgePref
+
+    pref = NudgePref(first_seen_at={"ci": 1000.0})
+    ctx = _stale_ctx(tmp_path, pref)
+    stuck: list = []
+    with (
+        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
+        patch.object(cycle.nudges, "should_nudge", return_value=True),
+        patch.object(cycle.nudges, "save_pref"),
+        patch.object(cycle.time, "time", return_value=9999.0),
+    ):
+        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=True)
+
+    assert pref.first_seen_at == {}
+    assert stuck == [("workspace:1", None)]
+
+
+def test_track_stale_mute_wins_even_past_threshold(tmp_path):
+    from scripts.lib.nudges import NudgePref
+
+    pref = NudgePref(first_seen_at={"ci": 1000.0})
+    ctx = _stale_ctx(tmp_path, pref)
+    stuck: list = []
+    with (
+        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
+        patch.object(cycle.nudges, "should_nudge", return_value=False),  # muted
+        patch.object(cycle.nudges, "save_pref"),
+        patch.object(cycle.time, "time", return_value=1000.0 + 10_000.0),
+    ):
+        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
+
+    assert pref.first_seen_at == {}
+    assert stuck == [("workspace:1", None)]
+
+
+def test_track_stale_resolved_issue_clears_everything(tmp_path):
+    from scripts.lib.nudges import NudgePref
+
+    pref = NudgePref(first_seen_at={"ci": 1000.0})
+    ctx = _stale_ctx(tmp_path, pref)
+    stuck: list = []
+    with (
+        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
+        patch.object(cycle.nudges, "should_nudge", return_value=True),
+        patch.object(cycle.nudges, "save_pref"),
+        patch.object(cycle.time, "time", return_value=2000.0),
+    ):
+        # category=None → the actionable issue resolved this cycle.
+        cycle._track_stale_issue(
+            ctx, "workspace:1", _stale_pr(ci="passed"), None, nudged=False
+        )
+
+    assert pref.first_seen_at == {}
+    assert stuck == [("workspace:1", None)]
+
+
+def test_track_stale_category_switch_drops_old_timer(tmp_path):
+    from scripts.lib.nudges import NudgePref
+
+    # Was stuck on ci; now the live issue is comments — the ci timer must drop
+    # so a resolved category can't keep escalating.
+    pref = NudgePref(first_seen_at={"ci": 1000.0})
+    ctx = _stale_ctx(tmp_path, pref)
+    with (
+        patch.object(cycle, "apply_stuck_pill"),
+        patch.object(cycle.nudges, "should_nudge", return_value=True),
+        patch.object(cycle.nudges, "save_pref"),
+        patch.object(cycle.time, "time", return_value=5000.0),
+    ):
+        cycle._track_stale_issue(
+            ctx, "workspace:1", _stale_pr(), "comments", nudged=False
+        )
+
+    assert pref.first_seen_at == {"comments": 5000.0}
+
+
+def test_track_stale_dry_run_is_noop(tmp_path):
+    from scripts.lib.nudges import NudgePref
+
+    pref = NudgePref(first_seen_at={"ci": 1000.0})
+    ctx = _stale_ctx(tmp_path, pref, dry=True)
+    stuck: list = []
+    with (
+        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
+        patch.object(cycle.nudges, "save_pref") as save,
+        patch.object(cycle.time, "time", return_value=99_999.0),
+    ):
+        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
+
+    assert pref.first_seen_at == {"ci": 1000.0}  # untouched
+    assert stuck == []
+    save.assert_not_called()

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import IO
 
 import scripts.lib.daemon_signal as daemon_signal
+from scripts.lib import nudges
 from scripts.lib.cache import (
     find_pr_payload,
     muted_payload,
@@ -37,6 +38,7 @@ from scripts.lib.cmux import (
     CmuxUnavailable,
     apply_pills,
     apply_stale_pill,
+    apply_stuck_pill,
     apply_wip_pill,
     close_gone_cwd_workspaces,
     cmux,
@@ -121,7 +123,8 @@ def maybe_nudge(
     *,
     pr_number: int | None = None,
     category: str | None = None,
-) -> None:
+) -> bool:
+    """Nudge `ref` if idle; return True iff the nudge actually fired."""
     if nudge_if_idle(
         ref,
         message,
@@ -135,6 +138,70 @@ def maybe_nudge(
             f"  {verb('nudged', color=yellow)} {tag} → {ref}  {dim(snippet)}",
             flush=True,
         )
+        return True
+    return False
+
+
+def _stale_threshold_seconds(cfg: dict) -> float:
+    """Seconds an actionable issue may persist without a successful nudge before
+    the stale-running escape hatch (`stuck=` pill) fires. Defaults to three slow
+    cycles so it tracks the poll cadence; override with `nudge_stale_seconds`.
+    """
+    explicit = cfg.get("nudge_stale_seconds")
+    if explicit is not None:
+        return float(explicit)
+    return 3 * float(cfg.get("slow_poll_interval_seconds", 300))
+
+
+def _track_stale_issue(
+    ctx: RepoCycle,
+    ref: str,
+    pr: PR,
+    category: str | None,
+    *,
+    nudged: bool,
+) -> None:
+    """Advance / reset the per-category stale timer and toggle the `stuck=` pill.
+
+    `category` is the PR's current actionable category (`None` once it resolves).
+    The timer starts the first cycle the issue is seen while the workspace is
+    NOT nudgeable; if the issue persists past the threshold still un-nudged, the
+    out-of-session `stuck=` pill is raised. A successful nudge, a resolved issue,
+    or a user mute all reset it. No-op in dry runs — never mutates pref/pills.
+    """
+    if ctx.dry:
+        return
+    pref = ctx.prefs.get(pr.number)
+    if pref is None:
+        pref = NudgePref()
+        ctx.prefs[pr.number] = pref
+
+    muted = category is not None and not nudges.should_nudge(pr.number, category)
+    # Drop timers for any category that is no longer the live actionable one
+    # (issue changed, e.g. ci→comments, or resolved entirely).
+    stale_keys = [c for c in pref.first_seen_at if c != category]
+    changed = bool(stale_keys)
+    for c in stale_keys:
+        del pref.first_seen_at[c]
+
+    label: str | None = None
+    if category is None or nudged or muted:
+        if category in pref.first_seen_at:
+            del pref.first_seen_at[category]
+            changed = True
+    else:
+        now = time.time()
+        first = pref.first_seen_at.get(category)
+        if first is None:
+            pref.first_seen_at[category] = now
+            changed = True
+        elif now - first >= _stale_threshold_seconds(ctx.cfg):
+            age_min = int((now - first) // 60)
+            label = f"stuck:{category} {age_min}m"
+
+    apply_stuck_pill(ref, label)
+    if changed:
+        nudges.save_pref(pr.number, pref)
 
 
 def match_worktrees(
@@ -696,8 +763,10 @@ def _refresh_tracked_pills(
                 printed_refresh = True
             if changed and not ctx.dry:
                 ctx.pill_state[ref] = desired
-            if pr.display_issue in ACTIONABLE_ISSUES:
-                maybe_nudge(
+            actionable = pr.display_issue in ACTIONABLE_ISSUES
+            nudged = False
+            if actionable:
+                nudged = maybe_nudge(
                     ref,
                     f"PR #{pr.number}: {_NUDGE_DESC[pr.display_issue](pr)}.",
                     ctx.dry,
@@ -705,6 +774,13 @@ def _refresh_tracked_pills(
                     pr_number=pr.number,
                     category=pr.display_issue,
                 )
+            _track_stale_issue(
+                ctx,
+                ref,
+                pr,
+                pr.display_issue if actionable else None,
+                nudged=nudged,
+            )
     return printed_refresh, mine_items, others_items
 
 
