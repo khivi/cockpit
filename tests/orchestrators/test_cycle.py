@@ -385,6 +385,96 @@ def test_autoclose_reaps_when_merge_head_still_reachable(tmp_path):
     close_mock.assert_called_once()
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# delete_branch gating: the merged-feature path also deletes the local branch
+# ref, but only when HEAD sits exactly at the merge head (no post-merge local
+# commits the ref is the last copy of). The main-sibling path never deletes.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_autoclose_sets_delete_branch_when_head_at_merge_head(tmp_path):
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+
+    with (
+        patch.object(cycle, "teardown") as td_mock,
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "has_unique_commits", return_value=False) as huc_mock,
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat")],
+            dry=False,
+        )
+
+    huc_mock.assert_called_once_with(wt_path, "deadbeef")
+    req = td_mock.call_args[0][0]
+    assert req.delete_branch is True
+    assert req.branch == "khivi/feat"
+
+
+def test_autoclose_keeps_branch_when_post_merge_commits_exist(tmp_path):
+    """HEAD advanced past the merge head with new local commits — the worktree
+    still reaps (merge head is an ancestor) but the branch ref is preserved so
+    the unpushed work stays recoverable."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+
+    with (
+        patch.object(cycle, "teardown") as td_mock,
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "has_unique_commits", return_value=True),
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat")],
+            dry=False,
+        )
+
+    req = td_mock.call_args[0][0]
+    assert req.delete_branch is False
+
+
+def test_autoclose_main_sibling_never_deletes_branch(tmp_path):
+    """The orphan main-sibling teardown path must never delete `main`."""
+    wt_path = tmp_path / "ex-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path, branch="main", dirty_count=0, unpushed=0, is_primary=False
+    )
+
+    with (
+        patch.object(cycle, "teardown") as td_mock,
+        patch.object(cycle, "has_unique_commits") as huc_mock,
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={},
+            cwds={"ws-ref": wt_path},
+            prs=[],
+            dry=False,
+        )
+
+    req = td_mock.call_args[0][0]
+    assert req.delete_branch is False
+    huc_mock.assert_not_called()
+
+
 def test_autoclose_keeps_reused_branch_name(tmp_path):
     """Regression for the #81 nuke: a branch name reused after its old PR merged.
 

@@ -78,6 +78,7 @@ from scripts.lib.git import (
     ahead_of_base,
     behind_of_base,
     ff_default_branch_worktrees,
+    has_unique_commits,
     is_ancestor,
     log_ff_advances,
     origin_head_branch,
@@ -297,6 +298,7 @@ def _teardown_worktree(
     repo_name: str,
     *,
     dry: bool,
+    delete_branch: bool = False,
 ) -> None:
     ref = _workspace_ref_for_path(wt.path, cwds) or wt.short
     teardown(
@@ -308,6 +310,7 @@ def _teardown_worktree(
             repo_path=repo_path,
             repo_name=repo_name,
             forced=True,
+            delete_branch=delete_branch,
         ),
         dry=dry,
     )
@@ -416,7 +419,19 @@ def _maybe_autoclose(
                     flush=True,
                 )
                 continue
-        _teardown_worktree(wt, cwds, repo_path, repo_name, dry=dry)
+        # Delete the local branch ref too, but only when HEAD sits at the merged
+        # head with nothing on top. `_is_post_merge_stale` permits teardown when
+        # the merge head is *any* ancestor of HEAD — that includes a branch the
+        # user committed new (clean, unpushed) work onto after the merge. The
+        # worktree removal alone leaves that work recoverable via the branch ref;
+        # `git branch -D` would not, so keep the ref in that case.
+        merged_head = merged_branches.get(wt.branch)
+        delete_branch = merged_head is not None and not has_unique_commits(
+            wt.path, merged_head
+        )
+        _teardown_worktree(
+            wt, cwds, repo_path, repo_name, dry=dry, delete_branch=delete_branch
+        )
 
 
 def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, int]:
