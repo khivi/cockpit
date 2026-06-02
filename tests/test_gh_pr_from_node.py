@@ -198,17 +198,85 @@ def test_unaddressed_bot_summary_review_not_counted():
     assert total == 0
 
 
-def test_unaddressed_human_summary_review_counted():
-    """Human reviewer summary body still counts toward total."""
+def test_unaddressed_human_comment_review_counted():
+    """A human reviewer's COMMENTED summary body is unaddressed even when the
+    PR's reviewDecision stays REVIEW_REQUIRED (COMMENT reviews don't flip it)."""
     reviews = [
         {
             "author": {"login": "alice", "__typename": "User"},
-            "body": "Looks good overall.",
+            "state": "COMMENTED",
+            "body": "Missing permissions block; daily-summary is broken.",
         }
     ]
     node = _pr_node_with_threads([], reviews=reviews)
     unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 1
     assert total == 1
+
+
+def test_unaddressed_human_changes_requested_review_counted():
+    reviews = [
+        {
+            "author": {"login": "alice", "__typename": "User"},
+            "state": "CHANGES_REQUESTED",
+            "body": "Please fix the SARIF upload.",
+        }
+    ]
+    node = _pr_node_with_threads([], reviews=reviews)
+    unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 1
+    assert total == 1
+
+
+def test_unaddressed_human_approved_review_not_unresolved():
+    """An APPROVED summary review carries no pending feedback."""
+    reviews = [
+        {
+            "author": {"login": "alice", "__typename": "User"},
+            "state": "APPROVED",
+            "body": "LGTM, nice work.",
+        }
+    ]
+    node = _pr_node_with_threads([], reviews=reviews)
+    unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 0
+    assert total == 1
+
+
+def test_unaddressed_later_approval_clears_earlier_comment():
+    """A reviewer who COMMENTED then later APPROVED has signed off — their
+    most recent review wins, so the earlier feedback no longer counts."""
+    reviews = [
+        {
+            "author": {"login": "alice", "__typename": "User"},
+            "state": "COMMENTED",
+            "body": "A few concerns here.",
+        },
+        {
+            "author": {"login": "alice", "__typename": "User"},
+            "state": "APPROVED",
+            "body": "Resolved, approving.",
+        },
+    ]
+    node = _pr_node_with_threads([], reviews=reviews)
+    unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 0
+    assert total == 2
+
+
+def test_unaddressed_empty_body_comment_not_unresolved():
+    """A COMMENTED review with no body carries no actionable text."""
+    reviews = [
+        {
+            "author": {"login": "alice", "__typename": "User"},
+            "state": "COMMENTED",
+            "body": "",
+        }
+    ]
+    node = _pr_node_with_threads([], reviews=reviews)
+    unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 0
+    assert total == 0
 
 
 def test_copilot_reviewer_failure_ignored():
