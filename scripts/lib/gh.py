@@ -358,7 +358,7 @@ _PR_FIELDS = """
       comments(first: 100) { nodes { author { login __typename } } }
     }
   }
-  reviews(first: 100) { nodes { author { login __typename } body } }
+  reviews(first: 100) { nodes { author { login __typename } state body } }
   commits(last: 1) {
     nodes { commit {
       checkSuites(first: 20) { nodes {
@@ -387,9 +387,24 @@ def _is_other(author: dict | None, pr_author: str) -> bool:
 
 
 def _unaddressed(pr_node: dict, pr_author: str) -> tuple[int, int]:
-    """Threads awaiting the PR author's response (human reviewers only).
+    """Threads and summary reviews awaiting the PR author's response.
 
     Returns (unresolved, total).
+
+    An inline review thread is unresolved when it isn't resolved and the last
+    comment is from someone other than the author. A reviewer's *summary review*
+    (feedback in the review body, no inline thread) is unresolved when their
+    most recent review is COMMENTED or CHANGES_REQUESTED with a non-empty body —
+    a substantive human review like that should light the comments pill even
+    when GitHub's reviewDecision stays REVIEW_REQUIRED (COMMENT-type reviews
+    don't flip it to CHANGES_REQUESTED).
+
+    GitHub has no "resolve" button for summary reviews, and commit timestamps
+    are unreliable as an addressed-signal (rebases rewrite committedDate;
+    pushedDate is frequently null), so the only signal we trust is the
+    reviewer's own later review: an APPROVED/DISMISSED most-recent review clears
+    their earlier feedback. Bot summary reviews are always excluded — only their
+    inline threads (counted above) are actionable.
     """
     total = unresolved = 0
     for t in pr_node["reviewThreads"]["nodes"]:
@@ -401,13 +416,23 @@ def _unaddressed(pr_node: dict, pr_author: str) -> tuple[int, int]:
         last = authors[-1] if authors else None
         if not t["isResolved"] and _is_other(last, pr_author):
             unresolved += 1
+    latest_review: dict[str, dict] = {}
     for r in pr_node["reviews"]["nodes"]:
         a = r.get("author") or {}
         if a.get("__typename") == "Bot":
             continue
         login = a.get("login")
-        if login and login != pr_author and (r.get("body") or "").strip():
+        if not login or login == pr_author:
+            continue
+        if (r.get("body") or "").strip():
             total += 1
+        latest_review[login] = r  # API order is chronological → last wins
+    for r in latest_review.values():
+        if (
+            r.get("state") in ("COMMENTED", "CHANGES_REQUESTED")
+            and (r.get("body") or "").strip()
+        ):
+            unresolved += 1
     return unresolved, total
 
 
