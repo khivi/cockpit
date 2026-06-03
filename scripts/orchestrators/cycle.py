@@ -77,9 +77,13 @@ from scripts.lib.git import (
     Worktree,
     ahead_of_base,
     behind_of_base,
+    branch_commits_ahead,
+    delete_local_branch,
     ff_default_branch_worktrees,
+    has_remote_branch,
     has_unique_commits,
     is_ancestor,
+    list_local_branches,
     log_ff_advances,
     origin_head_branch,
     prune_worktrees,
@@ -97,6 +101,13 @@ from scripts.orchestrators.teardown import TeardownRequest, teardown
 MAIN_BRANCHES = {"master", "main"}
 
 ACTIONABLE_ISSUES = {"ci", "comments", "conflicts"}
+
+# Cutoff for the *deep* merged-branches fetch that feeds the branch-ref reaper.
+# Effectively unbounded (≈100 years) so a branch whose worktree was removed long
+# ago is still recognized as merged — the reaper has no 14-day autoclose window
+# to lean on. The `fetch_merged_branches` page cap (1 000 PRs) still bounds the
+# query; the oldest merges beyond that simply reap on a later tick.
+_DEEP_MERGED_CUTOFF_DAYS = 36500
 
 _NUDGE_DESC = {
     "comments": lambda pr: (
@@ -442,6 +453,85 @@ def _maybe_autoclose(
         )
 
 
+def _branch_reap_reason(ctx: RepoCycle, branch: str, default: str | None) -> str | None:
+    """Why `branch` is safe to delete, or None to keep it.
+
+    Two safe cases, checked merged-first so a squash-merged branch whose remote
+    was already deleted is still recognized (it would fail the "contained in
+    default" test the no-remote path uses):
+
+      - merged PR (all-time, via `merged_branches_deep`) with no commits on top
+        of the recorded merge head. Mirrors the `has_unique_commits(wt.path,
+        merged_head)` guard `_maybe_autoclose` applies before `git branch -D`: a
+        branch reset/recreated onto a fresh lineage (commits not reachable from
+        the merge head) reads > 0 and is kept.
+      - no remote tracking ref AND no commits unique vs `origin/<default>` — the
+        branch was never pushed and is fully contained in the default branch, so
+        nothing is lost. A never-pushed branch WITH unique commits is work the
+        user may not have backed up anywhere; it is kept (the "block" decision).
+
+    Returns None on any git failure: `branch_commits_ahead` yields -1 (≠ 0) for
+    an unknown merge-head SHA or bad ref, so an unverifiable branch is kept.
+    """
+    merged_head = ctx.merged_branches_deep.get(branch)
+    if merged_head is not None:
+        if branch_commits_ahead(ctx.repo_path, merged_head, branch) == 0:
+            return "merged PR"
+        return None
+    if (
+        not has_remote_branch(ctx.repo_path, branch)
+        and default is not None
+        and branch_commits_ahead(ctx.repo_path, f"origin/{default}", branch) == 0
+    ):
+        return "no remote, contained in default"
+    return None
+
+
+def _reap_branch_refs(ctx: RepoCycle) -> None:
+    """Delete stale local branch refs that have no worktree and are provably safe.
+
+    Closes the gap `_maybe_autoclose` leaves: it only iterates *existing*
+    worktrees, so a branch whose worktree was already removed (manual `rm`, a
+    prior teardown, an OS tmpdir wipe) keeps its dangling local ref forever. This
+    pass enumerates every local branch (mine or coworker's — branch identity, not
+    prefix, decides safety) and deletes the ones `_branch_reap_reason` clears.
+
+    Always kept: `MAIN_BRANCHES` / the repo's default branch, any branch with a
+    live worktree, any branch with an open PR, and anything whose safety can't be
+    verified. Worktree branches are read from `ctx.wts`, the start-of-cycle
+    snapshot — a branch whose worktree `_maybe_autoclose` just removed still
+    appears here, so it is conservatively skipped this tick and reaped on the
+    next (when the snapshot no longer lists it). No double-delete, no error.
+
+    Gated on the shared `auto_cleanup_on_merge` flag, the same lever
+    `_maybe_autoclose` uses, so one switch governs all cleanup.
+    """
+    if not ctx.cfg.get("auto_cleanup_on_merge", True):
+        return
+    default = origin_head_branch(ctx.repo_path)
+    wt_branches = {wt.branch for wt in ctx.wts}
+    open_pr_branches = {pr.branch for pr in ctx.prs if pr.state == "OPEN"}
+    for branch in list_local_branches(ctx.repo_path):
+        if branch in MAIN_BRANCHES or branch == default:
+            continue
+        if branch in wt_branches or branch in open_pr_branches:
+            continue
+        reason = _branch_reap_reason(ctx, branch, default)
+        if reason is None:
+            continue
+        action = "[dry] reap-branch" if ctx.dry else "reap-branch"
+        print(f"  {verb(action)} {bold(branch)}  {dim(reason)}", flush=True)
+        if ctx.dry:
+            continue
+        ok, err = delete_local_branch(ctx.repo_path, branch)
+        if not ok:
+            print(
+                f"  warn: git branch -D {branch} failed: {err}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+
 def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, int]:
     """Fetch `origin/<default>` once per repo, then compute and cache both
     rebase-staleness (`HEAD..origin/<default>`) and ahead-of-base
@@ -518,6 +608,7 @@ class RepoCycle:
     names: dict[str, str]
     cwds: dict[str, Path]
     merged_branches: dict[str, str]
+    merged_branches_deep: dict[str, str]
     pill_state: dict
     keep_stale: bool
     no_spawn: bool
@@ -571,7 +662,7 @@ def _prepare_cycle(
     prune_worktrees(repo_path)
 
     headless = _cache_only(cfg)
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         wts_fut = ex.submit(worktrees, repo_path)
         state_fut = None if headless else ex.submit(workspace_state)
         merged_fut = ex.submit(
@@ -579,6 +670,12 @@ def _prepare_cycle(
             owner,
             name,
             cutoff_days=int(cfg.get("autoclose_age_days", 14)),
+        )
+        # Unbounded merged map for the branch-ref reaper (`_reap_branch_refs`),
+        # which sees branches whose worktrees were removed long before the
+        # 14-day autoclose window. Fetched in parallel so it adds no latency.
+        merged_deep_fut = ex.submit(
+            fetch_merged_branches, owner, name, cutoff_days=_DEEP_MERGED_CUTOFF_DAYS
         )
         wts = wts_fut.result()
         try:
@@ -590,6 +687,7 @@ def _prepare_cycle(
             )
             return None
         merged_branches = merged_fut.result()
+        merged_branches_deep = merged_deep_fut.result()
 
     # Pass every local feature branch (mine + coworker). The per-branch leg
     # in list_relevant_prs fetches any-state PRs so the cache refreshes after
@@ -651,6 +749,7 @@ def _prepare_cycle(
         names=names,
         cwds=cwds,
         merged_branches=merged_branches,
+        merged_branches_deep=merged_branches_deep,
         pill_state=pill_state,
         keep_stale=keep_stale,
         no_spawn=no_spawn,
@@ -1176,6 +1275,7 @@ def cycle_repo(
         prs=ctx.prs,
         dry=dry,
     )
+    _reap_branch_refs(ctx)
     log_ff_advances(
         ff_default_branch_worktrees(ctx.repo_path, ctx.wts, dry=dry), dry=dry
     )
