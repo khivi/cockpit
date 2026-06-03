@@ -5,9 +5,9 @@ spawns `scripts/starship.py <field>` once per module per render. Each
 subprocess calls one `print_<field>()` here, which reads a single cache
 file from `lib.cache.FLAT_CACHE_DIR` and prints a short string.
 
-Cache layout + writers live in `lib.cache`. This module is reader-only,
-plus the background-refresh fork that re-invokes `scripts/starship.py
-<field>-refresh` when a PR-side cache is stale.
+Cache layout + writers live in `lib.cache`. This module is reader-only —
+the daemon owns every cell (its fast tick republishes the PR cells from
+the per-PR JSON snapshots), so no renderer-side refresh fork exists.
 """
 
 from __future__ import annotations

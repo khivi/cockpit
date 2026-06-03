@@ -93,12 +93,12 @@ from scripts.lib.cmux import (
     workspace_cwds,
     workspace_names,
 )  # noqa: E402
-from scripts.lib.config import (
+from scripts.lib.config import (  # noqa: E402
     discover_repo,
     find_repo_by_name,
     find_repo_by_nwo,
     find_repos_by_linear_key,
-)  # noqa: E402
+)
 from scripts.lib.config import (
     use_linear as cfg_use_linear,
 )
@@ -245,6 +245,15 @@ _PLAN_TAIL = [
     "",
     "Begin by fetching the source above, then write the plan.",
 ]
+
+
+def _pr_author(pr_info: dict) -> str:
+    """Login of a PR's author, or "unknown" when the author object is null/absent.
+
+    `gh`'s PR JSON can carry `author: null` (deleted account), so guard the
+    nested lookup rather than assuming a dict.
+    """
+    return str((pr_info.get("author") or {}).get("login", "unknown"))
 
 
 def _linear_prompt(branch: str, identifier: str) -> str:
@@ -416,7 +425,7 @@ def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
     """Plan-only first-turn prompt. PR context block is included when `pr_info` is set."""
     lines = [f"You are starting a fresh task in a new worktree on branch `{branch}`."]
     if pr_info:
-        author = (pr_info.get("author") or {}).get("login", "unknown")
+        author = _pr_author(pr_info)
         number = pr_info["number"]
         title = pr_info.get("title") or f"PR #{number}"
         lines += [
@@ -451,7 +460,7 @@ def _review_prompt(branch: str, pr_info: dict | None = None) -> str:
     """
     lines = ["/review", ""]
     if pr_info:
-        author = (pr_info.get("author") or {}).get("login", "unknown")
+        author = _pr_author(pr_info)
         number = pr_info["number"]
         title = pr_info.get("title") or f"PR #{number}"
         lines += [
@@ -538,7 +547,7 @@ def _actions_prompt(
         f"**Run URL**: {run_url}",
     ]
     if pr_info:
-        author = (pr_info.get("author") or {}).get("login", "unknown")
+        author = _pr_author(pr_info)
         lines.append(
             f"**Related PR**: #{pr_info['number']} by @{author} — "
             f"{pr_info.get('title', '')} ({pr_info.get('url', '')})"
@@ -741,7 +750,7 @@ def main() -> int:
             pr_info = pr_for_branch(pr_lookup_branch, wt)
             if pr_info is not None:
                 pr_num = str(pr_info["number"])
-                author = (pr_info.get("author") or {}).get("login", "unknown")
+                author = _pr_author(pr_info)
                 print(
                     f"note: open PR #{pr_num} exists for branch "
                     f"{pr_lookup_branch!r}: {pr_info.get('title', '')} by "
@@ -820,8 +829,13 @@ def main() -> int:
         try:
             owner, name = repo_nwo(wt)
             set_pr_keep(f"{owner}/{name}", pr_num)
-        except Exception:
-            pass
+        except Exception as e:
+            # Surface rather than silently drop --keep: a missed keep flag means
+            # the daemon may autoclose this worktree on the next merge cycle.
+            print(
+                f"warn: could not set keep flag for PR #{pr_num}: {e}",
+                file=sys.stderr,
+            )
 
     kick_running(quiet=True)
     return 0

@@ -663,6 +663,25 @@ def test_find_pr_payload_prefers_newer_when_same_state(json_cache):
     assert payload["number"] == 6  # newest updatedAt
 
 
+def test_load_pr_payloads_by_branch_matches_find_pr_payload(json_cache):
+    """The one-pass map must pick the same per-branch winner find_pr_payload
+    does — OPEN over MERGED on a reused branch — across multiple branches, and
+    must scope to the requested repo only."""
+    _snapshot(json_cache, "cockpit", 91, "khivi/side", state="MERGED")
+    _snapshot(json_cache, "cockpit", 126, "khivi/side", state="OPEN")
+    _snapshot(json_cache, "cockpit", 200, "khivi/other", state="OPEN")
+    _snapshot(json_cache, "elsewhere", 1, "khivi/side", state="OPEN")
+
+    by_branch = cache_mod.load_pr_payloads_by_branch("cockpit")
+
+    assert set(by_branch) == {"khivi/side", "khivi/other"}
+    assert by_branch["khivi/side"]["number"] == 126  # OPEN beats MERGED #91
+    assert by_branch["khivi/other"]["number"] == 200
+    # Per-branch winners agree with the per-call lookup.
+    for branch, payload in by_branch.items():
+        assert payload == cache_mod.find_pr_payload(branch, repo_name="cockpit")
+
+
 def test_republish_picks_winner_for_reused_branch(json_cache):
     _snapshot(json_cache, "cockpit", 91, "khivi/side", state="MERGED")
     _snapshot(json_cache, "cockpit", 126, "khivi/side", state="OPEN", review="APPROVED")

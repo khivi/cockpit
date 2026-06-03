@@ -29,6 +29,7 @@ from scripts.lib.git import (
     prune_worktrees,
     require_git,
     worktrees,
+    worktrees_basic,
 )
 
 
@@ -441,6 +442,26 @@ def test_remove_worktree_force_no_lock_file_is_quiet(cockpit_repo, capsys) -> No
     assert not wt.exists()
     captured = capsys.readouterr()
     assert "preempting" not in captured.err
+
+
+def test_worktrees_basic_skips_dirty_unpushed_stats(cockpit_repo) -> None:
+    """`worktrees_basic` reports identity but never runs the per-worktree
+    `count_dirty` / `_count_unpushed` forks — even a dirty worktree reads
+    dirty_count==0, where `worktrees()` would report the real count."""
+    repo = cockpit_repo.repo
+    wt = repo.parent / "wt-dirty"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-b", "feat", str(wt), "main"],
+        check=True,
+    )
+    (wt / "scratch.txt").write_text("uncommitted\n")  # untracked → dirty
+
+    basic = {w.short: w for w in worktrees_basic(repo)}
+    full = {w.short: w for w in worktrees(repo)}
+
+    assert basic["wt-dirty"].branch == "feat"
+    assert basic["wt-dirty"].dirty_count == 0, "basic must not stat the worktree"
+    assert full["wt-dirty"].dirty_count > 0, "full listing does stat it"
 
 
 # ── is_ancestor: reachability gate for autoclose ───────────────────────────

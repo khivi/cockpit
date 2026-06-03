@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""starship dispatcher: field printers + background refreshers + warm.
+"""starship dispatcher: field printers + warm.
 
 Invoked from `scripts/defaults/starship.toml`'s `[custom.*]` blocks for
-each render (one subprocess per module per render), and self-spawned for
-background refreshes when a PR-side cache is stale.
+each render (one subprocess per module per render). The `warm` subcommand
+prewarms the PR-side flat cells synchronously (see `warm_all`).
 
 Subcommands:
   context              — Claude Code context window usage

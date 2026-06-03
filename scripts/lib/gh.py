@@ -475,9 +475,8 @@ def _pr_from_node(n: dict, skip_checks: set[str] | None = None) -> PR | None:
                 c for c in raw_contexts if c.get("context") in required_names
             ]
         else:
-            if skip_checks is None:
-                skip_checks = set()
-            check_runs = [r for r in all_runs if r.get("name") not in skip_checks]
+            skip = skip_checks or set()
+            check_runs = [r for r in all_runs if r.get("name") not in skip]
             legacy_contexts = raw_contexts
         pending = sum(
             1

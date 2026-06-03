@@ -1,7 +1,8 @@
 """Centralized workspace + worktree teardown.
 
-One callable replaces three duplicate sequences (`scripts/close.py` inline,
-`cockpit._maybe_autoclose`, `close_gone_cwd_workspaces`). Order, every time:
+One callable is the single teardown sequence, driven by the daemon for both
+enqueued `/cockpit:close` requests (`cycle._drain_close_requests`) and
+autoclose-on-merge (`cycle._maybe_autoclose`). Order, every time:
 
   1. Re-check blockers (dirty / unpushed / open PR) unless `forced`.
   2. Close the cmux workspace.

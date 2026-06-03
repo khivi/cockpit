@@ -56,12 +56,25 @@ def test_resolve_skill_prompt_global(tmp_path, monkeypatch):
     skill_dir = tmp_path / ".claude" / "skills" / "my-skill"
     skill_dir.mkdir(parents=True)
     (skill_dir / "skill.md").write_text("# my-skill")
-    assert cycle._resolve_skill_prompt("my-skill") == "/my-skill"
+    assert cycle._resolve_skill_prompt("my-skill", tmp_path / "repo") == "/my-skill"
+
+
+def test_resolve_skill_prompt_repo_local(tmp_path, monkeypatch):
+    """A bare-name skill living only in the managed repo's `.claude/skills/`
+    resolves against `repo_path` — not cockpit's own plugin tree."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    repo_path = tmp_path / "managed-repo"
+    skill_dir = repo_path / ".claude" / "skills" / "repo-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("# repo-skill")
+    assert cycle._resolve_skill_prompt("repo-skill", repo_path) == "/repo-skill"
 
 
 def test_resolve_skill_prompt_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    assert cycle._resolve_skill_prompt("nonexistent") is None
+    assert cycle._resolve_skill_prompt("nonexistent", tmp_path / "repo") is None
 
 
 def test_run_repo_skills_fast_runs_subprocess(tmp_path, monkeypatch):
@@ -898,7 +911,7 @@ def test_reap_skips_tracked_workspace(reap_isolated, tmp_path):
     repos = [{"path": str(repo_path), "name": "repo"}]
 
     with (
-        patch.object(cycle_mod, "worktrees", return_value=[wt]),
+        patch.object(cycle_mod, "worktrees_basic", return_value=[wt]),
         patch.object(
             cycle_mod,
             "workspace_state",
@@ -922,7 +935,7 @@ def test_reap_enqueues_stranded_workspace_in_registered_repo(reap_isolated, tmp_
     ghost_cwd.mkdir()
 
     with (
-        patch.object(cycle_mod, "worktrees", return_value=[wt]),
+        patch.object(cycle_mod, "worktrees_basic", return_value=[wt]),
         patch.object(
             cycle_mod,
             "workspace_state",
@@ -956,7 +969,7 @@ def test_reap_defers_when_workspace_not_idle(reap_isolated, tmp_path, capsys):
     ghost_cwd.mkdir()
 
     with (
-        patch.object(cycle_mod, "worktrees", return_value=[wt]),
+        patch.object(cycle_mod, "worktrees_basic", return_value=[wt]),
         patch.object(
             cycle_mod,
             "workspace_state",
@@ -989,7 +1002,7 @@ def test_reap_ignores_workspace_outside_registered_repos(reap_isolated, tmp_path
     elsewhere.mkdir()
 
     with (
-        patch.object(cycle_mod, "worktrees", return_value=[wt]),
+        patch.object(cycle_mod, "worktrees_basic", return_value=[wt]),
         patch.object(
             cycle_mod,
             "workspace_state",
@@ -1015,7 +1028,7 @@ def test_reap_dry_run_does_not_enqueue(reap_isolated, tmp_path):
     ghost_cwd.mkdir()
 
     with (
-        patch.object(cycle_mod, "worktrees", return_value=[wt]),
+        patch.object(cycle_mod, "worktrees_basic", return_value=[wt]),
         patch.object(
             cycle_mod,
             "workspace_state",
@@ -1043,7 +1056,7 @@ def test_reap_skips_workspace_matched_by_name(reap_isolated, tmp_path):
     repos = [{"path": str(repo_path), "name": "repo"}]
 
     with (
-        patch.object(cycle_mod, "worktrees", return_value=[wt]),
+        patch.object(cycle_mod, "worktrees_basic", return_value=[wt]),
         patch.object(
             cycle_mod,
             "workspace_state",
@@ -1150,7 +1163,7 @@ def test_refresh_base_distance_short_circuits_when_no_feature_worktrees(tmp_path
         patch.object(cycle, "write_base_distance") as wbd,
         patch.object(cycle, "write_base_ahead") as wba,
     ):
-        distances = cycle._refresh_base_distance(repo_path, [primary])
+        distances = cycle._refresh_base_distance(repo_path, [primary], "main")
 
     assert distances == {}
     ohb.assert_not_called()
@@ -1180,7 +1193,7 @@ def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
         patch.object(cycle, "write_base_distance") as wbd,
         patch.object(cycle, "write_base_ahead") as wba,
     ):
-        distances = cycle._refresh_base_distance(repo_path, [wt])
+        distances = cycle._refresh_base_distance(repo_path, [wt], "main")
 
     assert distances == {}
     wbd.assert_called_once_with("khivi/feat", -1)

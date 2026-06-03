@@ -23,6 +23,7 @@ import scripts.lib.daemon_signal as daemon_signal
 from scripts.lib import nudges
 from scripts.lib.cache import (
     find_pr_payload,
+    load_pr_payloads_by_branch,
     muted_payload,
     prune_superseded_pr_caches,
     write_base_ahead,
@@ -88,6 +89,7 @@ from scripts.lib.git import (
     origin_head_branch,
     prune_worktrees,
     worktrees,
+    worktrees_basic,
 )
 from scripts.lib.issue_color import issue_color
 from scripts.lib.log_format import verb
@@ -350,6 +352,7 @@ def _maybe_autoclose(
     cwds: dict[str, Path],
     *,
     prs: list[PR] | None = None,
+    pr_payloads: dict[str, dict] | None = None,
     dry: bool,
 ) -> None:
     """Remove worktrees + workspaces for merged branches that are clean.
@@ -379,6 +382,10 @@ def _maybe_autoclose(
 
     Teardown delegates to `orchestrators.teardown.teardown` (forced=True since we've
     already validated merge-state-clean above).
+
+    `pr_payloads` is the cycle's prebuilt `{branch: payload}` map (the daemon
+    passes `ctx.pr_payloads` to skip a per-worktree `find_pr_payload` scan); when
+    None — direct callers/tests — each branch's `keep` is looked up on demand.
     """
     if not cfg.get("auto_cleanup_on_merge", True):
         return
@@ -408,7 +415,11 @@ def _maybe_autoclose(
         merged_ref = _workspace_ref_for_path(wt.path, cwds)
         if merged_ref is not None and not dry:
             apply_stuck_pill(merged_ref, None)
-        pr_payload = find_pr_payload(wt.branch, repo_name)
+        pr_payload = (
+            pr_payloads.get(wt.branch)
+            if pr_payloads is not None
+            else find_pr_payload(wt.branch, repo_name)
+        )
         if pr_payload and pr_payload.get("keep"):
             print(
                 f"  {verb('autoclose')} {dim(f'skipped (keep) {wt.short}')}",
@@ -532,7 +543,9 @@ def _reap_branch_refs(ctx: RepoCycle) -> None:
             )
 
 
-def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, int]:
+def _refresh_base_distance(
+    repo_path: Path, wts: list[Worktree], default: str | None
+) -> dict[str, int]:
     """Fetch `origin/<default>` once per repo, then compute and cache both
     rebase-staleness (`HEAD..origin/<default>`) and ahead-of-base
     (`origin/<default>..HEAD`) for each feature worktree.
@@ -556,7 +569,6 @@ def _refresh_base_distance(repo_path: Path, wts: list[Worktree]) -> dict[str, in
             write_base_ahead(wt.branch, -1)
         return distances
 
-    default = origin_head_branch(repo_path)
     if not default:
         return _invalidate()
     try:
@@ -615,8 +627,10 @@ class RepoCycle:
     dry: bool
     verbose: bool
     headless: bool
+    default_branch: str | None = None
     prefs: dict[int, NudgePref] = field(default_factory=dict)
     base_distance: dict[str, int] = field(default_factory=dict)
+    pr_payloads: dict[str, dict] = field(default_factory=dict)
     review_candidates: list[OpenPRHead] = field(default_factory=list)
 
 
@@ -756,6 +770,7 @@ def _prepare_cycle(
         dry=dry,
         verbose=verbose,
         headless=headless,
+        default_branch=origin_head_branch(repo_path),
         prefs=prefs,
         review_candidates=review_candidates,
     )
@@ -768,9 +783,17 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     modules render fresh on the first session render without each field
     having to spawn its own `gh pr view` from cold.
     """
+    # Build the branch→payload map once for the cycle's downstream consumers
+    # (_refresh_tracked_pills / _spawn_missing_workspaces / _maybe_autoclose),
+    # replacing their per-PR find_pr_payload scans. `keep` survives write_pr_cache
+    # rewrites and the loader applies the same rank dedup, so this pre-write
+    # snapshot matches what a post-write per-call lookup would return.
+    ctx.pr_payloads = load_pr_payloads_by_branch(ctx.name)
     if ctx.dry:
         return
-    ctx.base_distance = _refresh_base_distance(ctx.repo_path, ctx.wts)
+    ctx.base_distance = _refresh_base_distance(
+        ctx.repo_path, ctx.wts, ctx.default_branch
+    )
     for wt in ctx.wts:
         write_git_state_cache(wt.path)
     wt_by_branch = {wt.branch: wt for wt in ctx.wts}
@@ -792,6 +815,11 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     # sharing a branch (reused branch: old merged PR alongside the live one)
     # so branch-keyed flat cells resolve deterministically.
     prune_superseded_pr_caches(ctx.name)
+
+
+def _ref_pid(ref: str) -> int:
+    """PID embedded in a cmux `workspace:<pid>` ref (the sort key for dedup)."""
+    return int(ref.split(":")[1])
 
 
 def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
@@ -816,7 +844,7 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
         by_name.setdefault(ws_name, []).append(ref)
     keep_refs: set[str] = set()
     for refs in by_name.values():
-        refs_sorted = sorted(refs, key=lambda r: int(r.split(":")[1]))
+        refs_sorted = sorted(refs, key=_ref_pid)
         keep_refs.add(refs_sorted[0])
         _close_extras(refs_sorted, "keeping {first}")
 
@@ -832,7 +860,7 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
     for refs in by_wt_path.values():
         if len(refs) <= 1:
             continue
-        refs_sorted = sorted(refs, key=lambda r: int(r.split(":")[1]))
+        refs_sorted = sorted(refs, key=_ref_pid)
         for extra in refs_sorted[1:]:
             keep_refs.discard(extra)
         _close_extras(refs_sorted, "same worktree as {keep}")
@@ -865,7 +893,7 @@ def _refresh_tracked_pills(
         for ref, pr, wt in group:
             label = ctx.names.get(ref, ref)
             pref = ctx.prefs.get(pr.number)
-            pr_payload = find_pr_payload(pr.branch, ctx.name)
+            pr_payload = ctx.pr_payloads.get(pr.branch)
             keep = bool(pr_payload and pr_payload.get("keep"))
             desired = frozenset(status_pills(pr, wt, ctx.self_user, pref, keep=keep))
             changed = ctx.pill_state.get(ref) != desired
@@ -1093,7 +1121,7 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
     tracked_pr_numbers = {pr.number for pr, _ in ctx.tracked.values()}
     for pr, wt in matched:
         if pr.number not in tracked_pr_numbers:
-            pr_payload = find_pr_payload(pr.branch, ctx.name)
+            pr_payload = ctx.pr_payloads.get(pr.branch)
             spawn_pr_workspace(
                 pr,
                 wt,
@@ -1127,14 +1155,21 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
         spawn_orphan_workspace(wt, dry=ctx.dry)
 
 
-def _resolve_skill_prompt(name: str) -> str | None:
-    """Return the slash-command prompt for a skill, or None if not found."""
+def _resolve_skill_prompt(name: str, repo_path: Path) -> str | None:
+    """Return the slash-command prompt for a skill, or None if not found.
+
+    Lookup order mirrors `spawn.resolve_skill` (global always wins):
+      1. ~/.claude/skills/<name>/skill.md
+      2. <repo_path>/.claude/skills/<name>/skill.md
+
+    `repo_path` is the managed repo running the skill — its `.claude/skills/`,
+    NOT cockpit's own plugin tree (skills are configured per managed repo and
+    run in that repo's worktree).
+    """
     rel = Path(".claude") / "skills" / name / "skill.md"
-    home = Path.home()
-    if (home / rel).exists():
+    if (Path.home() / rel).exists():
         return f"/{name}"
-    repo_skill = Path(__file__).resolve().parent.parent.parent / rel
-    if repo_skill.exists():
+    if (repo_path / rel).exists():
         return f"/{name}"
     return None
 
@@ -1149,7 +1184,7 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
     repo_path = Path(repo_entry["path"]).expanduser().resolve()
 
     for skill in repo_entry.get("fast_skills") or []:
-        prompt = _resolve_skill_prompt(skill)
+        prompt = _resolve_skill_prompt(skill, repo_path)
         if prompt is None:
             print(
                 f"  {yellow('skip')} fast_skill {skill!r}: skill.md not found",
@@ -1165,8 +1200,14 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
             cwd=repo_path,
         )
 
-    for skill in repo_entry.get("slow_skills") or []:
-        prompt = _resolve_skill_prompt(skill)
+    slow_skills = repo_entry.get("slow_skills") or []
+    if slow_skills:
+        try:
+            existing = set(workspace_names().values())
+        except CmuxUnavailable:
+            return
+    for skill in slow_skills:
+        prompt = _resolve_skill_prompt(skill, repo_path)
         if prompt is None:
             print(
                 f"  {yellow('skip')} slow_skill {skill!r}: skill.md not found",
@@ -1174,10 +1215,6 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
             )
             continue
         ws_name = f"skill-{skill}"
-        try:
-            existing = set(workspace_names().values())
-        except CmuxUnavailable:
-            continue
         if ws_name in existing:
             continue
         if dry:
@@ -1273,11 +1310,15 @@ def cycle_repo(
         ctx.merged_branches,
         ctx.cwds,
         prs=ctx.prs,
+        pr_payloads=ctx.pr_payloads,
         dry=dry,
     )
     _reap_branch_refs(ctx)
     log_ff_advances(
-        ff_default_branch_worktrees(ctx.repo_path, ctx.wts, dry=dry), dry=dry
+        ff_default_branch_worktrees(
+            ctx.repo_path, ctx.wts, default=ctx.default_branch, dry=dry
+        ),
+        dry=dry,
     )
     _run_repo_skills(repo_entry, dry=dry)
 
@@ -1328,7 +1369,8 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
         repo_name = entry.get("name") or repo_path.name
         registered_roots[repo_path.resolve()] = (repo_name, repo_path)
         try:
-            for wt in worktrees(repo_path):
+            # Identity only (path/branch) — skip the dirty/unpushed stat forks.
+            for wt in worktrees_basic(repo_path):
                 all_wts.append(wt)
                 repo_lookup[wt.path.resolve()] = (repo_name, repo_path)
         except RuntimeError:

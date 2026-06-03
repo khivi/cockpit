@@ -8,7 +8,7 @@ than one of these belong in `orchestrators/` instead.
   - lib.cache     — JSON per-PR cache + flat cockpit-cache layout & writers
   - lib.claude    — parse Claude Code statusLine JSON, write session caches
   - lib.cship     — invoke_cship: exec the cship binary
-  - lib.starship  — starship field-printers + background refresh fork
+  - lib.starship  — starship field-printers (read-only flat-cache readers)
   - lib.colors    — ANSI terminal colors
   - lib.prompts   — Claude prompt builders + shell quoting
   - lib.registry  — register cwd's repo into config.json

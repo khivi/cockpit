@@ -450,12 +450,6 @@ def workspace_is_idle(ref: str) -> bool:
     return _has_pill(out.splitlines(), "idle")
 
 
-def workspace_is_parked(ref: str) -> bool:
-    """True if the user manually set the `parked=` pill (done-waiting marker)."""
-    out = cmux("list-status", "--workspace", ref, check=False)
-    return _has_pill(out.splitlines(), PARKED_KEY)
-
-
 def find_cockpit_workspaces(
     prs: list[PR],
     wts: list[Worktree],
