@@ -187,8 +187,21 @@ def test_list_local_branches_lists_heads(cockpit_repo):
     assert sorted(list_local_branches(repo)) == ["khivi/one", "khivi/two", "main"]
 
 
-def test_list_local_branches_empty_on_non_repo(tmp_path):
-    assert list_local_branches(tmp_path) == []
+def test_list_local_branches_empty_on_non_repo(tmp_path, monkeypatch):
+    # Strip leaked GIT_* env (a pre-push hook sets GIT_DIR) so git can't resolve
+    # the enclosing repo and genuinely fails on the non-repo path → [].
+    for var in (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_COMMON_DIR",
+        "GIT_CONFIG",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    non_repo = tmp_path / "not-a-repo"
+    non_repo.mkdir()
+    assert list_local_branches(non_repo) == []
 
 
 def test_has_remote_branch_public_matches_private(cockpit_repo, push_branch):
