@@ -1228,6 +1228,32 @@ def test_keep_flag_calls_set_pr_keep(spawn_main, monkeypatch, cockpit_repo):
     assert keep_calls[0] == ("owner/repo", "9")
 
 
+def test_keep_after_separator_is_promoted(monkeypatch):
+    """`--keep` appended after a `-- <context>` separator (the shape
+    `/cockpit:new <branch> -- text` produces) must still be parsed as the
+    flag, not leak into the addendum."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(
+        sys, "argv", ["spawn.py", "feat", "--", "do", "thing", "X", "--keep"]
+    )
+    args = spawn.parse_args()
+    assert args.keep is True
+    assert args.claude_addendum == "do thing X"
+
+
+def test_keep_before_separator_still_parses(monkeypatch):
+    """`--keep` ahead of the `--` separator is unaffected by the promotion."""
+    import scripts.spawn as spawn
+
+    monkeypatch.setattr(
+        sys, "argv", ["spawn.py", "feat", "--keep", "--", "context text"]
+    )
+    args = spawn.parse_args()
+    assert args.keep is True
+    assert args.claude_addendum == "context text"
+
+
 def test_keep_flag_no_effect_for_branch_with_pr(spawn_main, monkeypatch, cockpit_repo):
     """--keep on a branch spawn whose PR is auto-detected must NOT write keep."""
     import scripts.spawn as spawn
