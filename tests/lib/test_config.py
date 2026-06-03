@@ -605,6 +605,32 @@ def test_use_linear_returns_false_when_explicitly_false(tmp_path, monkeypatch):
     assert cockpit_config.use_linear() is False
 
 
+# ── linear_dev_done_state reader ─────────────────────────────────────────────
+
+
+def test_linear_dev_done_state_defaults(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.linear_dev_done_state() == "Dev Done"
+
+
+def test_linear_dev_done_state_override(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "linear_dev_done_state": "In Review"}
+    )
+    assert cockpit_config.linear_dev_done_state() == "In Review"
+
+
+def test_linear_dev_done_state_uses_passed_cfg_without_disk_read():
+    # Passing cfg avoids load_config(); blank/whitespace falls back to default.
+    from scripts.lib import config as cockpit_config
+
+    assert cockpit_config.linear_dev_done_state({"linear_dev_done_state": "QA"}) == "QA"
+    assert (
+        cockpit_config.linear_dev_done_state({"linear_dev_done_state": "  "})
+        == "Dev Done"
+    )
+
+
 # ── find_repos_by_linear_key ────────────────────────────────────────────────
 
 

@@ -14,10 +14,13 @@ import pytest
 from scripts.lib.cmux import (
     ACTIONABLE_KEYS,
     COCKPIT_KEY,
+    DEVDONE_KEY,
+    GREEN,
     MUTED_KEY,
     WORKSPACE_COLORS,
     YELLOW,
     CmuxUnavailable,
+    apply_devdone_pill,
     apply_pills,
     cmux_close_workspace_best_effort,
     nudge_if_idle,
@@ -332,6 +335,42 @@ def test_close_workspace_best_effort_passes_workspace_flag():
 
 
 # ── muted pill ──────────────────────────────────────────────────────────────
+
+
+def test_apply_devdone_pill_sets_label_when_ticket():
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        apply_devdone_pill("workspace:1", "PE-1234")
+
+    set_call = next(c for c in calls if c[0] == "set-status")
+    assert set_call[1] == DEVDONE_KEY
+    assert set_call[2] == "📋 dev-done PE-1234"
+    assert "--color" in set_call and GREEN in set_call
+
+
+def test_apply_devdone_pill_clears_when_none():
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return ""
+
+    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+        apply_devdone_pill("workspace:1", None)
+
+    clear_call = next(c for c in calls if c[0] == "clear-status")
+    assert clear_call[1] == DEVDONE_KEY
+    assert all(c[0] != "set-status" for c in calls)
+
+
+def test_devdone_not_in_actionable_keys():
+    # Passive slow-tick visual — must never be swept by apply_pills.
+    assert DEVDONE_KEY not in ACTIONABLE_KEYS
 
 
 def test_status_pills_full_mute_emits_muted_tuple_at_front():

@@ -207,6 +207,19 @@ def use_linear() -> bool:
     return bool(load_config().get("use_linear", False))
 
 
+def linear_dev_done_state(cfg: dict | None = None) -> str:
+    """Name of the Linear workflow state that the `devdone=` pill keys off
+    (default: "Dev Done"). Matched case-insensitively against the ticket's live
+    `state.name`. Override with `linear_dev_done_state` in config.json when your
+    team's "development complete" column is named differently (e.g. "In Review").
+
+    Accepts the already-loaded global `cfg` to avoid a redundant disk read in the
+    slow tick; falls back to `load_config()` when called standalone.
+    """
+    cfg = cfg if cfg is not None else load_config()
+    return str(cfg.get("linear_dev_done_state") or "Dev Done").strip() or "Dev Done"
+
+
 def _read_current_statusline(settings_path: Path) -> str | None:
     if not settings_path.exists():
         return ""

@@ -37,6 +37,7 @@ from scripts.lib.cmux import (
     ORPHAN_ICON,
     ORPHAN_KEY,
     CmuxUnavailable,
+    apply_devdone_pill,
     apply_pills,
     apply_stale_pill,
     apply_stuck_pill,
@@ -65,7 +66,11 @@ from scripts.lib.colors import (
     green,
     yellow,
 )
-from scripts.lib.config import COCKPIT_HOME, ensure_state_dirs
+from scripts.lib.config import (
+    COCKPIT_HOME,
+    ensure_state_dirs,
+    linear_dev_done_state,
+)
 from scripts.lib.gh import (
     PR,
     OpenPRHead,
@@ -92,6 +97,7 @@ from scripts.lib.git import (
     worktrees_basic,
 )
 from scripts.lib.issue_color import issue_color
+from scripts.lib.linear import fetch_ticket_state, parse_linear_footers
 from scripts.lib.log_format import verb
 from scripts.lib.nudges import NudgePref
 from scripts.lib.nudges import load_pref as _load_nudge_pref
@@ -216,6 +222,76 @@ def _track_stale_issue(
     apply_stuck_pill(ref, label)
     if changed:
         nudges.save_pref(pr.number, pref)
+
+
+def _linear_state_ttl_seconds(cfg: dict) -> float:
+    """Backstop staleness for the cached Linear delivery block. A ticket can move
+    into the dev-done state without its PR's `Linear:` footer changing, so the
+    cache is refetched when the footer id-set changes OR when it ages past this.
+    Defaults to three slow cycles; override with `linear_state_ttl_seconds`.
+    """
+    explicit = cfg.get("linear_state_ttl_seconds")
+    if explicit is not None:
+        return float(explicit)
+    return 3 * float(cfg.get("slow_poll_interval_seconds", 300))
+
+
+def _resolve_linear_block(ctx: RepoCycle, pr: PR) -> dict | None:
+    """Resolve (and cache) the Linear-delivery block for `pr` — the tickets it
+    delivers (via the `Linear:` PR-body footer) and their workflow states.
+
+    Returns `{"tickets": [{"id", "state"}], "fetched_at": ts}`, or None when the
+    repo isn't Linear-configured (so `write_pr_cache` leaves the field untouched).
+
+    Refetches ticket states from Linear only when the footer's id-set differs
+    from the prior snapshot OR the prior snapshot has aged past the TTL backstop;
+    otherwise it carries the prior states forward. So a re-link refreshes
+    immediately and an independent state transition is caught within the TTL,
+    without a per-tick Linear call for every PR. Caller gates `ctx.dry`.
+    """
+    if not ctx.repo_entry.get("linear_keys"):
+        return None
+    ids = parse_linear_footers(pr.body)
+    prior = find_pr_payload(pr.branch, ctx.name)
+    prior_block: dict | None = (prior or {}).get("linear") if prior else None
+    now = time.time()
+    if prior_block:
+        prior_ids = [t.get("id") for t in prior_block.get("tickets", [])]
+        fresh = now - float(
+            prior_block.get("fetched_at", 0)
+        ) < _linear_state_ttl_seconds(ctx.cfg)
+        if prior_ids == ids and fresh:
+            return prior_block
+    tickets = [{"id": tid, "state": fetch_ticket_state(tid)} for tid in ids]
+    return {"tickets": tickets, "fetched_at": now}
+
+
+def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
+    """Toggle the `devdone=` pill from the resolved Linear-delivery `block`
+    (`{"tickets": [{"id", "state"}], ...}` or None — stashed in
+    `ctx.linear_blocks` by `_resolve_linear_block`; no network here).
+
+    The pill is raised — green — only when the PR delivers at least one ticket
+    AND *every* delivered ticket is in the `linear_dev_done_state` workflow state
+    (default "Dev Done"); the whole PR's scope is dev-complete. Shows the id when
+    a single ticket, the `done/total` count when several. Cleared otherwise, so a
+    ticket slipping back out of dev-done drops the pill. No-op in dry runs.
+    """
+    if ctx.dry:
+        return
+    if not ctx.repo_entry.get("linear_keys"):
+        return
+    tickets = (block or {}).get("tickets") or []
+    if not tickets:
+        apply_devdone_pill(ref, None)
+        return
+    target = linear_dev_done_state(ctx.cfg).casefold()
+    done = [t for t in tickets if (t.get("state") or "").casefold() == target]
+    if len(done) != len(tickets):
+        apply_devdone_pill(ref, None)
+        return
+    label = tickets[0]["id"] if len(tickets) == 1 else f"{len(done)}/{len(tickets)}"
+    apply_devdone_pill(ref, label)
 
 
 def match_worktrees(
@@ -415,6 +491,11 @@ def _maybe_autoclose(
         merged_ref = _workspace_ref_for_path(wt.path, cwds)
         if merged_ref is not None and not dry:
             apply_stuck_pill(merged_ref, None)
+            # Same reasoning for the Linear dev-done pill: a merged PR leaves the
+            # tracked open-PR set, so `_track_dev_done` won't run again to clear
+            # it on a kept workspace. (Live, the ticket has usually moved to
+            # "Done" anyway, but don't depend on that to drop the pill.)
+            apply_devdone_pill(merged_ref, None)
         pr_payload = (
             pr_payloads.get(wt.branch)
             if pr_payloads is not None
@@ -632,6 +713,14 @@ class RepoCycle:
     base_distance: dict[str, int] = field(default_factory=dict)
     pr_payloads: dict[str, dict] = field(default_factory=dict)
     review_candidates: list[OpenPRHead] = field(default_factory=list)
+    # The repo's config.json entry — carries `linear_keys` for the devdone gate.
+    # Defaulted so existing RepoCycle(...) call sites and test stubs need no change.
+    repo_entry: dict = field(default_factory=dict)
+    # branch → resolved Linear-delivery block (or None) for this cycle, stashed by
+    # _write_pr_caches. Read by _track_dev_done — NOT via ctx.pr_payloads, whose
+    # pre-write snapshot wouldn't carry the freshly-resolved block (it'd lag a
+    # cycle and miss the pill the cycle a footer first appears).
+    linear_blocks: dict[str, dict | None] = field(default_factory=dict)
 
 
 def _repo_name_color(repo_entry: dict) -> Colorizer:
@@ -753,6 +842,7 @@ def _prepare_cycle(
     )
     return RepoCycle(
         cfg=cfg,
+        repo_entry=repo_entry,
         repo_path=repo_path,
         owner=owner,
         name=name,
@@ -799,7 +889,12 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     wt_by_branch = {wt.branch: wt for wt in ctx.wts}
     for pr in ctx.prs:
         pref = ctx.prefs.get(pr.number)
-        write_pr_cache(ctx.name, pr, wt_by_branch.get(pr.branch), pref)
+        # Resolve the Linear-delivery block BEFORE write_pr_cache (it reads the
+        # prior snapshot to decide refetch-vs-carry-forward, so it must run
+        # against the old file). None for non-Linear repos → field untouched.
+        linear = _resolve_linear_block(ctx, pr)
+        ctx.linear_blocks[pr.branch] = linear
+        write_pr_cache(ctx.name, pr, wt_by_branch.get(pr.branch), pref, linear=linear)
         write_branch_pr_cache(
             pr.branch,
             state=pr.state,
@@ -939,6 +1034,7 @@ def _refresh_tracked_pills(
                 pr.display_issue if actionable else None,
                 nudged=nudged,
             )
+            _track_dev_done(ctx, ref, ctx.linear_blocks.get(pr.branch))
     return printed_refresh, mine_items, others_items
 
 

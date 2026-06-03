@@ -143,3 +143,39 @@ def test_preflight_ignores_repo_without_review_prs(tmp_path, monkeypatch, capsys
     _all_required(tmp_path, monkeypatch)
     preflight({"tool": "cmux", "repos": [{"name": "r", "path": "/x"}]})
     assert capsys.readouterr().err == ""
+
+
+def test_preflight_exits_on_non_string_dev_done_state(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [], "linear_dev_done_state": 5})
+    assert exc.value.code == 2
+    assert "linear_dev_done_state" in capsys.readouterr().err
+
+
+def test_preflight_warns_when_linear_repo_but_no_api_key(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    preflight({"tool": "cmux", "repos": [{"name": "r", "linear_keys": ["PE"]}]})
+    err = capsys.readouterr().err
+    assert "LINEAR_API_KEY" in err
+    assert "dev-done pill" in err
+
+
+def test_preflight_silent_when_linear_repo_and_api_key_set(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("LINEAR_API_KEY", "lin_xxx")
+    preflight({"tool": "cmux", "repos": [{"name": "r", "linear_keys": ["PE"]}]})
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_silent_when_no_linear_repo_even_without_key(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    preflight({"tool": "cmux", "repos": [{"name": "r", "path": "/x"}]})
+    assert capsys.readouterr().err == ""

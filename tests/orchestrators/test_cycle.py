@@ -1899,6 +1899,190 @@ def test_track_stale_dry_run_is_noop(tmp_path):
     save.assert_not_called()
 
 
+# ── devdone pill: Linear-delivery resolution + decision ──────────────────────
+
+
+def _devdone_pr(body: str = "", *, branch: str = "khivi/pe-1") -> PR:
+    return PR(
+        number=7,
+        title="t",
+        branch=branch,
+        url="",
+        author="khivi",
+        is_draft=False,
+        review_decision="",
+        mergeable="MERGEABLE",
+        ci="passed",
+        unaddressed=0,
+        total_from_others=0,
+        state="OPEN",
+        body=body,
+    )
+
+
+def _devdone_ctx(tmp_path, *, linear_keys=("PE",), dry=False, cfg=None):
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.dry = dry
+    ctx.repo_entry = {"linear_keys": list(linear_keys)} if linear_keys else {}
+    ctx.cfg = cfg if cfg is not None else {}
+    return ctx
+
+
+FOOTER = "desc\n\n---\nLinear: [PE-1234](https://linear.app/x/PE-1234)"
+
+
+def test_resolve_linear_block_none_when_not_configured(tmp_path):
+    ctx = _devdone_ctx(tmp_path, linear_keys=None)
+    assert cycle._resolve_linear_block(ctx, _devdone_pr(FOOTER)) is None
+
+
+def test_resolve_linear_block_fetches_when_no_prior(tmp_path):
+    ctx = _devdone_ctx(tmp_path)
+    with (
+        patch.object(cycle, "find_pr_payload", return_value=None),
+        patch.object(cycle, "fetch_ticket_state", return_value="Dev Done") as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        block = cycle._resolve_linear_block(ctx, _devdone_pr(FOOTER))
+
+    assert block == {
+        "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
+        "fetched_at": 1000.0,
+    }
+    fetch.assert_called_once_with("PE-1234")
+
+
+def test_resolve_linear_block_carries_forward_when_unchanged_and_fresh(tmp_path):
+    ctx = _devdone_ctx(tmp_path, cfg={"slow_poll_interval_seconds": 300})
+    prior = {
+        "linear": {
+            "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
+            "fetched_at": 900.0,
+        }
+    }
+    with (
+        patch.object(cycle, "find_pr_payload", return_value=prior),
+        patch.object(cycle, "fetch_ticket_state") as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),  # 100s < 900s TTL
+    ):
+        block = cycle._resolve_linear_block(ctx, _devdone_pr(FOOTER))
+
+    assert block is prior["linear"]
+    fetch.assert_not_called()
+
+
+def test_resolve_linear_block_refetches_when_footer_changed(tmp_path):
+    ctx = _devdone_ctx(tmp_path, cfg={"slow_poll_interval_seconds": 300})
+    prior = {
+        "linear": {
+            "tickets": [{"id": "PE-9", "state": "Dev Done"}],
+            "fetched_at": 990.0,
+        }
+    }
+    with (
+        patch.object(cycle, "find_pr_payload", return_value=prior),
+        patch.object(cycle, "fetch_ticket_state", return_value="In Progress") as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),  # fresh, but ids differ
+    ):
+        block = cycle._resolve_linear_block(ctx, _devdone_pr(FOOTER))
+
+    assert block is not None
+    assert block["tickets"] == [{"id": "PE-1234", "state": "In Progress"}]
+    fetch.assert_called_once_with("PE-1234")
+
+
+def test_resolve_linear_block_refetches_when_stale(tmp_path):
+    ctx = _devdone_ctx(tmp_path, cfg={"slow_poll_interval_seconds": 300})  # TTL 900s
+    prior = {
+        "linear": {
+            "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
+            "fetched_at": 0.0,
+        }
+    }
+    with (
+        patch.object(cycle, "find_pr_payload", return_value=prior),
+        patch.object(cycle, "fetch_ticket_state", return_value="Dev Done") as fetch,
+        patch.object(cycle.time, "time", return_value=10_000.0),  # way past TTL
+    ):
+        cycle._resolve_linear_block(ctx, _devdone_pr(FOOTER))
+
+    fetch.assert_called_once_with("PE-1234")
+
+
+def test_track_dev_done_dry_run_noop(tmp_path):
+    ctx = _devdone_ctx(tmp_path, dry=True)
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(
+            ctx, "workspace:1", {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}
+        )
+    pill.assert_not_called()
+
+
+def test_track_dev_done_not_configured_noop(tmp_path):
+    ctx = _devdone_ctx(tmp_path, linear_keys=None)
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(
+            ctx, "workspace:1", {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}
+        )
+    pill.assert_not_called()
+
+
+def test_track_dev_done_none_block_clears(tmp_path):
+    ctx = _devdone_ctx(tmp_path)
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "workspace:1", None)
+    pill.assert_called_once_with("workspace:1", None)
+
+
+def test_track_dev_done_no_tickets_clears(tmp_path):
+    ctx = _devdone_ctx(tmp_path)
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "workspace:1", {"tickets": []})
+    pill.assert_called_once_with("workspace:1", None)
+
+
+def test_track_dev_done_single_ticket_shows_id(tmp_path):
+    ctx = _devdone_ctx(tmp_path, cfg={"linear_dev_done_state": "Dev Done"})
+    block = {"tickets": [{"id": "PE-1234", "state": "Dev Done"}]}
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "workspace:1", block)
+    pill.assert_called_once_with("workspace:1", "PE-1234")
+
+
+def test_track_dev_done_all_done_multiple_shows_count(tmp_path):
+    ctx = _devdone_ctx(tmp_path)
+    block = {
+        "tickets": [
+            {"id": "PE-1", "state": "Dev Done"},
+            {"id": "PE-2", "state": "dev done"},  # case-insensitive
+        ]
+    }
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "workspace:1", block)
+    pill.assert_called_once_with("workspace:1", "2/2")
+
+
+def test_track_dev_done_partial_clears(tmp_path):
+    ctx = _devdone_ctx(tmp_path)
+    block = {
+        "tickets": [
+            {"id": "PE-1", "state": "Dev Done"},
+            {"id": "PE-2", "state": "In Progress"},
+        ]
+    }
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "workspace:1", block)
+    pill.assert_called_once_with("workspace:1", None)
+
+
+def test_track_dev_done_custom_state_name(tmp_path):
+    ctx = _devdone_ctx(tmp_path, cfg={"linear_dev_done_state": "In Review"})
+    block = {"tickets": [{"id": "PE-1", "state": "In Review"}]}
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "workspace:1", block)
+    pill.assert_called_once_with("workspace:1", "PE-1")
+
+
 # ── merged/closed PRs are never actionable (no nudge loop) ───────────────────
 
 

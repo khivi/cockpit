@@ -1,20 +1,27 @@
-"""Tests for scripts/lib/linear.py — regex + extract_ticket.
+"""Tests for scripts/lib/linear.py — regex, extract_ticket, footer parsing,
+and the one network surface (`fetch_ticket_state`).
 
-No network surface here: Linear ticket bodies are fetched by Claude via the
-Linear MCP from the spawned workspace, not by cockpit. See `test_spawn.py`
-for the spawn-side dispatch (which only inspects the id).
+The Linear ticket *body* (title, description) is still fetched by Claude via the
+Linear MCP from the spawned workspace; see `test_spawn.py` for the spawn-side
+dispatch. The daemon's only direct Linear call is `fetch_ticket_state`, exercised
+below with a mocked `urlopen`.
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
+import urllib.error
+from io import BytesIO
 from unittest.mock import patch
 
 from scripts.lib.linear import (
     LINEAR_RE,
     LINEAR_RE_CI,
     extract_ticket,
+    fetch_ticket_state,
     linear_mcp_available,
+    parse_linear_footers,
 )
 
 
@@ -141,3 +148,119 @@ def test_linear_mcp_available_uses_bumped_timeout():
     ) as run:
         linear_mcp_available()
     assert run.call_args.kwargs["timeout"] >= 15
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# parse_linear_footers — strict delivery signal (PR-body footer only)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_parse_footers_single():
+    body = "Some description.\n\n---\nLinear: [PE-1234](https://linear.app/x/PE-1234)"
+    assert parse_linear_footers(body) == ["PE-1234"]
+
+
+def test_parse_footers_multiple_preserves_order_and_dedups():
+    body = (
+        "Linear: [PE-100](u)\n" "Linear: [ENG-5](u)\n" "Linear: [PE-100](u)\n"  # dup
+    )
+    assert parse_linear_footers(body) == ["PE-100", "ENG-5"]
+
+
+def test_parse_footers_ignores_inline_mentions():
+    # Only a line-anchored `Linear:` footer counts — a prose mention of a
+    # predecessor / follow-up ticket is NOT a delivery signal.
+    body = "Reapplies PE-9999 and supersedes PE-8888. See Linear ticket PE-7777."
+    assert parse_linear_footers(body) == []
+
+
+def test_parse_footers_empty_and_none():
+    assert parse_linear_footers("") == []
+    assert parse_linear_footers(None) == []  # type: ignore[arg-type]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# fetch_ticket_state — Linear GraphQL (mocked urlopen)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class _FakeResp:
+    """Minimal context-manager stand-in for urlopen's return."""
+
+    def __init__(self, payload: dict):
+        self._body = json.dumps(payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return self._body
+
+
+def _state_payload(state_name: str) -> dict:
+    return {
+        "data": {
+            "issues": {"nodes": [{"identifier": "PE-1", "state": {"name": state_name}}]}
+        }
+    }
+
+
+def test_fetch_ticket_state_no_key_skips_network():
+    """No LINEAR_API_KEY (and no override) → None, and urlopen is never called."""
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("scripts.lib.linear.urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_ticket_state("PE-1") is None
+    urlopen.assert_not_called()
+
+
+def test_fetch_ticket_state_happy_path():
+    with patch(
+        "scripts.lib.linear.urllib.request.urlopen",
+        return_value=_FakeResp(_state_payload("Dev Done")),
+    ):
+        assert fetch_ticket_state("PE-1234", api_key="lin_xxx") == "Dev Done"
+
+
+def test_fetch_ticket_state_rejects_non_ticket():
+    with patch("scripts.lib.linear.urllib.request.urlopen") as urlopen:
+        assert fetch_ticket_state("not-a-ticket", api_key="k") is None
+    urlopen.assert_not_called()
+
+
+def test_fetch_ticket_state_no_matching_issue_is_none():
+    with patch(
+        "scripts.lib.linear.urllib.request.urlopen",
+        return_value=_FakeResp({"data": {"issues": {"nodes": []}}}),
+    ):
+        assert fetch_ticket_state("PE-9", api_key="k") is None
+
+
+def test_fetch_ticket_state_http_error_is_none():
+    err = urllib.error.HTTPError("u", 401, "unauthorized", {}, BytesIO(b""))  # type: ignore[arg-type]
+    with patch("scripts.lib.linear.urllib.request.urlopen", side_effect=err):
+        assert fetch_ticket_state("PE-1", api_key="k") is None
+
+
+def test_fetch_ticket_state_timeout_is_none():
+    with patch("scripts.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
+        assert fetch_ticket_state("PE-1", api_key="k") is None
+
+
+def test_fetch_ticket_state_sends_team_and_number_variables():
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data.decode())
+        captured["auth"] = req.headers.get("Authorization")
+        return _FakeResp(_state_payload("In Progress"))
+
+    with patch("scripts.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        fetch_ticket_state("eng-42", api_key="secret-key")
+
+    assert captured["auth"] == "secret-key"  # raw key, no Bearer prefix
+    assert captured["body"]["variables"] == {"team": "ENG", "number": 42.0}

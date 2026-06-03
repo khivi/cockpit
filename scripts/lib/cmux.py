@@ -74,6 +74,15 @@ STALE_ICON = "↻"
 STUCK_KEY = "stuck"
 STUCK_ICON = "🚨"
 
+# Linear "dev done" marker: set when a tracked PR's linked Linear ticket sits in
+# the configured dev-done workflow state (see config.linear_dev_done_state). Like
+# `stuck=`, it is a passive sidebar visual managed directly in the slow tick (not
+# via apply_pills) and so is deliberately absent from ACTIONABLE_KEYS — it is
+# never a `send`. Gated on the repo being Linear-configured AND the branch
+# carrying a ticket id (the same branch→ticket alignment the footer renders).
+DEVDONE_KEY = "devdone"
+DEVDONE_ICON = "📋"
+
 MUTED_KEY = "muted"
 MUTED_ICON = "🔇"
 
@@ -244,6 +253,17 @@ def apply_stuck_pill(ref: str, label: str | None) -> None:
         _set_status(ref, STUCK_KEY, f"{STUCK_ICON} {label}", RED)
     else:
         _clear_status(ref, STUCK_KEY)
+
+
+def apply_devdone_pill(ref: str, ticket: str | None) -> None:
+    """Set the Linear "dev done" pill on `ref` to `ticket`, or clear it when
+    `ticket` is falsy. See `DEVDONE_KEY` for the design rationale. Green because
+    "development complete" is a positive milestone, not an action item.
+    """
+    if ticket:
+        _set_status(ref, DEVDONE_KEY, f"{DEVDONE_ICON} dev-done {ticket}", GREEN)
+    else:
+        _clear_status(ref, DEVDONE_KEY)
 
 
 def list_workspaces() -> list[str]:
