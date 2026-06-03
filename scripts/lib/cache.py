@@ -63,6 +63,22 @@ def muted_payload(pref: NudgePref | None) -> str:
 # ── JSON per-PR cache (cockpit's primary state) ────────────────────────────
 
 
+def _repo_slug(repo_name: str) -> str:
+    """Filesystem-safe prefix for a repo's per-PR cache files (`owner/name`)."""
+    return repo_name.replace("/", "_")
+
+
+def _atomic_write_json(path: Path, payload: dict) -> None:
+    """Write `payload` as indented JSON to `path` via a PID-suffixed tmp + rename.
+
+    The PID suffix keeps concurrent writers (daemon + a renderer-spawned
+    refresher) from racing on the same tmp name.
+    """
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(path)
+
+
 def write_pr_cache(
     repo_name: str,
     pr: PR,
@@ -84,8 +100,7 @@ def write_pr_cache(
     never clear the flag.
     """
     ensure_state_dirs()
-    safe = repo_name.replace("/", "_")
-    path = CACHE_DIR / f"{safe}__pr-{pr.number}.json"
+    path = CACHE_DIR / f"{_repo_slug(repo_name)}__pr-{pr.number}.json"
     keep = False
     if path.exists():
         with contextlib.suppress(OSError, json.JSONDecodeError):
@@ -106,9 +121,7 @@ def write_pr_cache(
         "pills": decide_pills(pr, wt, pref, keep=keep),
         "keep": keep,
     }
-    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
-    tmp.write_text(json.dumps(payload, indent=2))
-    tmp.replace(path)
+    _atomic_write_json(path, payload)
     return payload
 
 
@@ -121,8 +134,7 @@ def set_pr_keep(repo_name: str, pr_num: int | str) -> None:
     will preserve the flag).
     """
     ensure_state_dirs()
-    safe = repo_name.replace("/", "_")
-    path = CACHE_DIR / f"{safe}__pr-{pr_num}.json"
+    path = CACHE_DIR / f"{_repo_slug(repo_name)}__pr-{pr_num}.json"
     payload: dict = {}
     if path.exists():
         try:
@@ -130,9 +142,7 @@ def set_pr_keep(repo_name: str, pr_num: int | str) -> None:
         except (OSError, json.JSONDecodeError):
             payload = {}
     payload["keep"] = True
-    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
-    tmp.write_text(json.dumps(payload, indent=2))
-    tmp.replace(path)
+    _atomic_write_json(path, payload)
 
 
 def _iter_cache(pattern: str):
@@ -175,7 +185,7 @@ def find_pr_payload(branch: str, repo_name: str | None = None) -> dict | None:
     share `branch` (reused branch, old PR's JSON still cached), the
     highest-ranked one wins — see `_pr_payload_rank`.
     """
-    pattern = f"{repo_name.replace('/', '_')}__pr-*.json" if repo_name else "*.json"
+    pattern = f"{_repo_slug(repo_name)}__pr-*.json" if repo_name else "*.json"
     best: dict | None = None
     for _, payload in _iter_cache(pattern):
         if payload.get("branch") != branch:
@@ -188,7 +198,7 @@ def find_pr_payload(branch: str, repo_name: str | None = None) -> dict | None:
 def find_pr_payload_by_number(pr_num: str, repo_name: str | None = None) -> dict | None:
     """Return the cached PR snapshot whose `number` matches `pr_num`, or None."""
     pattern = (
-        f"{repo_name.replace('/', '_')}__pr-{pr_num}.json"
+        f"{_repo_slug(repo_name)}__pr-{pr_num}.json"
         if repo_name
         else f"*__pr-{pr_num}.json"
     )
@@ -201,7 +211,7 @@ def find_pr_payload_by_number(pr_num: str, repo_name: str | None = None) -> dict
 
 def delete_pr_caches_for_branch(repo_name: str, branch: str) -> None:
     """Remove cached PR snapshots for `repo_name` whose payload `branch` matches."""
-    prefix = repo_name.replace("/", "_")
+    prefix = _repo_slug(repo_name)
     for path, data in _iter_cache(f"{prefix}__pr-*.json"):
         if data.get("branch") == branch:
             path.unlink(missing_ok=True)
@@ -223,7 +233,7 @@ def prune_superseded_pr_caches(repo_name: str) -> list[Path]:
     rewritten current snapshots). Keyed by `repo_name` so one repo's cycle
     never touches another's snapshots.
     """
-    prefix = repo_name.replace("/", "_")
+    prefix = _repo_slug(repo_name)
     by_branch: dict[str, list[tuple[Path, dict]]] = {}
     for path, payload in _iter_cache(f"{prefix}__pr-*.json"):
         branch = payload.get("branch")
@@ -305,6 +315,29 @@ def _resolve_state(state: str, is_draft: bool, review: str) -> str:
     return state
 
 
+def _write_pr_flat_cells(
+    branch: str,
+    *,
+    state: str,
+    number: int | None,
+    title: str,
+    muted: str,
+    comments: int,
+) -> None:
+    """Write the five branch-keyed PR flat cells that every PR writer shares.
+
+    `state` is already resolved (see `_resolve_state`). The `pr-checks` cell is
+    deliberately NOT written here — its three writers disagree on purpose
+    (slow tick only when non-empty, fast-tick republish always, the renderer
+    refresher via `refresh_pr_checks`), so each handles it itself.
+    """
+    atomic_write(branch_cache("pr-state", branch), state)
+    atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
+    atomic_write(branch_cache("pr-title", branch), str(title or ""))
+    atomic_write(branch_cache("pr-muted", branch), str(muted or ""))
+    atomic_write(branch_cache("pr-comments", branch), str(comments) if comments else "")
+
+
 def refresh_pr_data(branch: str) -> None:
     """Repopulate pr-state / pr-num / pr-title / pr-muted / pr-comments
     flat-cache cells for `branch` from the daemon's per-PR JSON snapshot.
@@ -318,32 +351,24 @@ def refresh_pr_data(branch: str) -> None:
     """
     if not branch:
         return
-    state_path = branch_cache("pr-state", branch)
-    num_path = branch_cache("pr-num", branch)
-    title_path = branch_cache("pr-title", branch)
-    muted_path = branch_cache("pr-muted", branch)
-    comments_path = branch_cache("pr-comments", branch)
     data = find_pr_payload(branch)
     if data is None:
-        atomic_write(state_path, "")
-        atomic_write(num_path, "")
-        atomic_write(title_path, "")
-        atomic_write(muted_path, "")
-        atomic_write(comments_path, "")
+        _write_pr_flat_cells(
+            branch, state="", number=None, title="", muted="", comments=0
+        )
         return
-    state = _resolve_state(
-        str(data.get("state") or ""),
-        bool(data.get("isDraft")),
-        str(data.get("review") or ""),
+    _write_pr_flat_cells(
+        branch,
+        state=_resolve_state(
+            str(data.get("state") or ""),
+            bool(data.get("isDraft")),
+            str(data.get("review") or ""),
+        ),
+        number=data.get("number"),
+        title=str(data.get("title") or ""),
+        muted=str(data.get("muted") or ""),
+        comments=int(data.get("unaddressed") or 0),
     )
-    number = data.get("number")
-    title = data.get("title") or ""
-    unaddressed = int(data.get("unaddressed") or 0)
-    atomic_write(state_path, state)
-    atomic_write(num_path, str(number) if number else "")
-    atomic_write(title_path, str(title))
-    atomic_write(muted_path, str(data.get("muted") or ""))
-    atomic_write(comments_path, str(unaddressed) if unaddressed else "")
 
 
 def refresh_pr_checks(branch: str) -> None:
@@ -411,37 +436,27 @@ def write_git_state_cache(cwd: os.PathLike[str] | str) -> None:
     atomic_write(sync_path, f"{ahead} {behind}")
 
 
-def write_base_distance(branch: str, count: int) -> None:
-    """Cache rebase-staleness for `branch` as `<count>`.
+def _write_base_count(stem: str, branch: str, count: int) -> None:
+    """Cache a base-relative commit count for `branch` in the `stem` cell.
 
     Written by the cockpit daemon once per cycle, after one shared
-    `git fetch origin <base>` per repo.
-
-    Empty / no-base writes the empty payload so a stale reader doesn't
-    keep showing a value from a previous repo state.
+    `git fetch origin <base>` per repo. A negative `count` (no base) writes
+    the empty payload so a stale reader doesn't keep showing a value from a
+    previous repo state.
     """
     if not branch:
         return
-    path = branch_cache("base-distance", branch)
-    if count < 0:
-        atomic_write(path, "")
-        return
-    atomic_write(path, str(count))
+    atomic_write(branch_cache(stem, branch), "" if count < 0 else str(count))
+
+
+def write_base_distance(branch: str, count: int) -> None:
+    """Cache rebase-staleness for `branch` (commits on base not in branch)."""
+    _write_base_count("base-distance", branch, count)
 
 
 def write_base_ahead(branch: str, count: int) -> None:
-    """Cache ahead-of-base for `branch` as `<count>`.
-
-    Mirrors `write_base_distance` — same payload shape, written from the
-    same daemon tick on the same fetch.
-    """
-    if not branch:
-        return
-    path = branch_cache("base-ahead", branch)
-    if count < 0:
-        atomic_write(path, "")
-        return
-    atomic_write(path, str(count))
+    """Cache ahead-of-base for `branch` (commits on branch not in base)."""
+    _write_base_count("base-ahead", branch, count)
 
 
 def write_branch_pr_cache(
@@ -471,12 +486,14 @@ def write_branch_pr_cache(
     """
     if not branch:
         return
-    resolved = _resolve_state(state, is_draft, review_decision)
-    atomic_write(branch_cache("pr-state", branch), resolved)
-    atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
-    atomic_write(branch_cache("pr-title", branch), title or "")
-    atomic_write(branch_cache("pr-muted", branch), muted)
-    atomic_write(branch_cache("pr-comments", branch), str(comments) if comments else "")
+    _write_pr_flat_cells(
+        branch,
+        state=_resolve_state(state, is_draft, review_decision),
+        number=number,
+        title=title,
+        muted=muted,
+        comments=comments,
+    )
     if ci_glyph:
         atomic_write(branch_cache("pr-checks", branch), ci_glyph)
 
@@ -510,22 +527,20 @@ def republish_pr_caches_from_disk() -> None:
         if cur is None or _pr_payload_rank(payload) > _pr_payload_rank(cur):
             best_by_branch[branch] = payload
     for branch, payload in best_by_branch.items():
-        state = _resolve_state(
-            str(payload.get("state") or ""),
-            bool(payload.get("isDraft")),
-            str(payload.get("review") or ""),
+        _write_pr_flat_cells(
+            branch,
+            state=_resolve_state(
+                str(payload.get("state") or ""),
+                bool(payload.get("isDraft")),
+                str(payload.get("review") or ""),
+            ),
+            number=payload.get("number"),
+            title=str(payload.get("title") or ""),
+            muted=str(payload.get("muted") or ""),
+            comments=int(payload.get("unaddressed") or 0),
         )
-        number = payload.get("number")
-        unaddressed = int(payload.get("unaddressed") or 0)
-        atomic_write(branch_cache("pr-state", branch), state)
-        atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
-        atomic_write(branch_cache("pr-title", branch), str(payload.get("title") or ""))
-        atomic_write(branch_cache("pr-muted", branch), str(payload.get("muted") or ""))
         atomic_write(
             branch_cache("pr-checks", branch), _ci_glyph(str(payload.get("ci") or ""))
-        )
-        atomic_write(
-            branch_cache("pr-comments", branch), str(unaddressed) if unaddressed else ""
         )
 
 

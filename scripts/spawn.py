@@ -93,12 +93,12 @@ from scripts.lib.cmux import (
     workspace_cwds,
     workspace_names,
 )  # noqa: E402
-from scripts.lib.config import (
+from scripts.lib.config import (  # noqa: E402
     discover_repo,
     find_repo_by_name,
     find_repo_by_nwo,
     find_repos_by_linear_key,
-)  # noqa: E402
+)
 from scripts.lib.config import (
     use_linear as cfg_use_linear,
 )

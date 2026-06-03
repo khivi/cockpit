@@ -794,6 +794,11 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     prune_superseded_pr_caches(ctx.name)
 
 
+def _ref_pid(ref: str) -> int:
+    """PID embedded in a cmux `workspace:<pid>` ref (the sort key for dedup)."""
+    return int(ref.split(":")[1])
+
+
 def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
     """Close duplicate cmux workspaces (same name, or same feature-worktree
     path), keeping the lowest-PID per group. Returns the surviving refs.
@@ -816,7 +821,7 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
         by_name.setdefault(ws_name, []).append(ref)
     keep_refs: set[str] = set()
     for refs in by_name.values():
-        refs_sorted = sorted(refs, key=lambda r: int(r.split(":")[1]))
+        refs_sorted = sorted(refs, key=_ref_pid)
         keep_refs.add(refs_sorted[0])
         _close_extras(refs_sorted, "keeping {first}")
 
@@ -832,7 +837,7 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
     for refs in by_wt_path.values():
         if len(refs) <= 1:
             continue
-        refs_sorted = sorted(refs, key=lambda r: int(r.split(":")[1]))
+        refs_sorted = sorted(refs, key=_ref_pid)
         for extra in refs_sorted[1:]:
             keep_refs.discard(extra)
         _close_extras(refs_sorted, "same worktree as {keep}")
@@ -1165,7 +1170,13 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
             cwd=repo_path,
         )
 
-    for skill in repo_entry.get("slow_skills") or []:
+    slow_skills = repo_entry.get("slow_skills") or []
+    if slow_skills:
+        try:
+            existing = set(workspace_names().values())
+        except CmuxUnavailable:
+            return
+    for skill in slow_skills:
         prompt = _resolve_skill_prompt(skill)
         if prompt is None:
             print(
@@ -1174,10 +1185,6 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
             )
             continue
         ws_name = f"skill-{skill}"
-        try:
-            existing = set(workspace_names().values())
-        except CmuxUnavailable:
-            continue
         if ws_name in existing:
             continue
         if dry:
