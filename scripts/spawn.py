@@ -184,6 +184,14 @@ def parse_args() -> argparse.Namespace:
     if "--" in raw:
         idx = raw.index("--")
         pre, post = raw[:idx], raw[idx + 1 :]
+        # `--keep` is a daemon/cockpit:new flag appended after the user's
+        # `$ARGUMENTS`. When the user typed a `--` separator (free-text
+        # context), the trailing `--keep` lands in `post` and would leak into
+        # the addendum instead of being parsed by argparse. Promote any such
+        # flag back into `pre` so position relative to `--` never matters.
+        post = [tok for tok in post if tok != "--keep"]
+        if len(post) != len(raw) - idx - 1:
+            pre = pre + ["--keep"]
         addendum = " ".join(post).strip() or None
     else:
         pre, addendum = raw, None
