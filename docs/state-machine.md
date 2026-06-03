@@ -30,11 +30,12 @@ flowchart LR
   end
 
   subgraph DEC["Decision functions"]
-    MW["match_worktrees<br/>cycle.py:208"]
-    SM["_spawn_missing_workspaces<br/>cycle.py:959"]
+    MW["match_worktrees<br/>cycle.py:219"]
+    SM["_spawn_missing_workspaces<br/>cycle.py:1079"]
     NI["nudge_if_idle<br/>cmux.py:314"]
-    TS["_track_stale_issue<br/>cycle.py:157"]
-    AC["_maybe_autoclose<br/>cycle.py:333"]
+    TS["_track_stale_issue<br/>cycle.py:168"]
+    AC["_maybe_autoclose<br/>cycle.py:344"]
+    BR["_reap_branch_refs<br/>cycle.py:490"]
   end
 
   subgraph ACT["Actions"]
@@ -43,9 +44,10 @@ flowchart LR
     A3["stuck= pill"]
     A4["teardown (worktree+workspace+branch)"]
     A5["refresh pills + colors"]
+    A6["git branch -D (ref only)"]
   end
 
-  GH --> MW & SM & TS & AC
+  GH --> MW & SM & TS & AC & BR
   CM --> MW & NI & TS
   CL --> NI
 
@@ -55,6 +57,7 @@ flowchart LR
   TS --> A3
   AC --> A4
   MW --> A5
+  BR --> A6
 ```
 
 The renderer (`starship.py`) is **not** in this picture by design: it only reads
@@ -110,6 +113,11 @@ flowchart TD
   K -->|"workspace, no worktree"| RP{"idle?"}
   RP -->|"yes & mine-prefix"| EN["enqueue forced teardown"]
   RP -->|"no (mid-turn)"| DF["defer to next cycle"]
+
+  K -->|"local branch, no worktree"| BR{"_branch_reap_reason"}
+  BR -->|"merged PR, no post-merge commits"| BD["git branch -D"]
+  BR -->|"no remote & contained in default"| BD
+  BR -->|"unique local commits ·<br/>open PR · main/default · has worktree"| BK["keep ref"]
 ```
 
 Key gates (all from `cycle.py`):
@@ -130,6 +138,12 @@ Key gates (all from `cycle.py`):
   can't double-launch mid-creation.
 - **Orphan auto-spawn is `<self_user>/`-prefix gated**: review worktrees are
   never orphan-spawned.
+- **Branch-ref reap** (`_reap_branch_refs`): autoclose only iterates existing
+  worktrees, so a branch whose worktree is gone keeps its dangling ref. The reap
+  `git branch -D`s any worktree-less local branch that is either merged (unbounded
+  `merged_branches_deep`) with no post-merge commits, or has no remote and is
+  contained in `origin/<default>`. Keeps unique-commit, open-PR, main/default, and
+  unverifiable branches. Same `auto_cleanup_on_merge` gate.
 
 ---
 

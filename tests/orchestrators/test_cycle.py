@@ -1207,6 +1207,7 @@ def _stub_repo_cycle(tmp_path, *, headless: bool = False):
         names={},
         cwds={},
         merged_branches={},
+        merged_branches_deep={},
         pill_state={},
         keep_stale=False,
         no_spawn=False,
@@ -1360,6 +1361,7 @@ def _spawn_ctx(
         names={},
         cwds={},
         merged_branches={},
+        merged_branches_deep={},
         pill_state={} if pill_state is None else pill_state,
         keep_stale=False,
         no_spawn=False,
@@ -1483,6 +1485,7 @@ def _color_ctx(
         names={},
         cwds=cwds,
         merged_branches={},
+        merged_branches_deep={},
         pill_state={} if pill_state is None else pill_state,
         keep_stale=False,
         no_spawn=False,
@@ -1932,3 +1935,133 @@ def test_refresh_nudges_open_pr_with_failing_ci(tmp_path):
 
     nudge_mock.assert_called_once()
     assert track_mock.call_args.args[3] == "ci"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# _reap_branch_refs / _branch_reap_reason: delete stale local branch refs with
+# no worktree. Leaves (list_local_branches, has_remote_branch,
+# branch_commits_ahead, delete_local_branch) are validated in tests/lib;
+# here we mock them to assert gating and the merged-first decision order.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _reap_ctx(
+    tmp_path,
+    *,
+    merged_deep=None,
+    wts=None,
+    prs=None,
+    dry=False,
+    cfg=None,
+):
+    return cycle.RepoCycle(
+        cfg={"auto_cleanup_on_merge": True} if cfg is None else cfg,
+        repo_path=tmp_path,
+        owner="o",
+        name="n",
+        self_user="khivi",
+        wts=wts or [],
+        prs=prs or [],
+        tracked={},
+        names={},
+        cwds={},
+        merged_branches={},
+        merged_branches_deep=merged_deep or {},
+        pill_state={},
+        keep_stale=False,
+        no_spawn=False,
+        dry=dry,
+        verbose=False,
+        headless=False,
+    )
+
+
+def _run_reap(ctx, *, local_branches, has_remote=False, ahead=0, delete_ok=True):
+    """Enter the git-leaf patches _reap_branch_refs consults, run it, and return
+    the delete_local_branch mock for assertion. `ahead` is the return of
+    branch_commits_ahead for every call (merged-head or origin/default baseline).
+    """
+    patches = [
+        patch.object(cycle, "origin_head_branch", return_value="main"),
+        patch.object(cycle, "list_local_branches", return_value=local_branches),
+        patch.object(cycle, "has_remote_branch", return_value=has_remote),
+        patch.object(cycle, "branch_commits_ahead", return_value=ahead),
+    ]
+    with (
+        _enter_all(patches),
+        patch.object(
+            cycle, "delete_local_branch", return_value=(delete_ok, "")
+        ) as dele,
+    ):
+        cycle._reap_branch_refs(ctx)
+    return dele
+
+
+def test_reap_deletes_merged_branch_with_no_post_merge_commits(tmp_path):
+    ctx = _reap_ctx(tmp_path, merged_deep={"khivi/done": "abc123"})
+    dele = _run_reap(ctx, local_branches=["khivi/done"], ahead=0)
+    dele.assert_called_once_with(tmp_path, "khivi/done")
+
+
+def test_reap_keeps_merged_branch_with_post_merge_commits(tmp_path):
+    """Branch reset/recreated onto a fresh lineage (commits past the merge head)
+    is kept — mirrors _maybe_autoclose's has_unique_commits guard."""
+    ctx = _reap_ctx(tmp_path, merged_deep={"khivi/reused": "abc123"})
+    dele = _run_reap(ctx, local_branches=["khivi/reused"], ahead=3)
+    dele.assert_not_called()
+
+
+def test_reap_deletes_no_remote_branch_contained_in_default(tmp_path):
+    ctx = _reap_ctx(tmp_path)  # not in merged map
+    dele = _run_reap(ctx, local_branches=["khivi/scratch"], has_remote=False, ahead=0)
+    dele.assert_called_once_with(tmp_path, "khivi/scratch")
+
+
+def test_reap_keeps_no_remote_branch_with_unique_commits(tmp_path):
+    """The 'block' decision: a never-pushed branch with local-only commits is
+    unrecoverable work — keep it."""
+    ctx = _reap_ctx(tmp_path)
+    dele = _run_reap(ctx, local_branches=["khivi/unpushed"], has_remote=False, ahead=2)
+    dele.assert_not_called()
+
+
+def test_reap_keeps_branch_with_remote_but_no_merged_pr(tmp_path):
+    """Has a remote ref, not in the merged map (open elsewhere / pushed work) →
+    keep."""
+    ctx = _reap_ctx(tmp_path)
+    dele = _run_reap(ctx, local_branches=["khivi/live"], has_remote=True)
+    dele.assert_not_called()
+
+
+def test_reap_skips_main_default_worktree_and_open_pr_branches(tmp_path):
+    ctx = _reap_ctx(
+        tmp_path,
+        merged_deep={"main": "x", "khivi/has-wt": "x", "khivi/open": "x"},
+        wts=[Worktree(path=tmp_path / "wt", branch="khivi/has-wt")],
+        prs=[_pr("khivi/open", state="OPEN")],
+    )
+    dele = _run_reap(
+        ctx, local_branches=["main", "khivi/has-wt", "khivi/open"], ahead=0
+    )
+    dele.assert_not_called()
+
+
+def test_reap_dry_run_does_not_delete(tmp_path):
+    ctx = _reap_ctx(tmp_path, merged_deep={"khivi/done": "abc123"}, dry=True)
+    dele = _run_reap(ctx, local_branches=["khivi/done"], ahead=0)
+    dele.assert_not_called()
+
+
+def test_reap_gated_off_when_auto_cleanup_disabled(tmp_path):
+    ctx = _reap_ctx(
+        tmp_path,
+        merged_deep={"khivi/done": "abc123"},
+        cfg={"auto_cleanup_on_merge": False},
+    )
+    with (
+        patch.object(cycle, "list_local_branches") as lst,
+        patch.object(cycle, "delete_local_branch") as dele,
+    ):
+        cycle._reap_branch_refs(ctx)
+    lst.assert_not_called()
+    dele.assert_not_called()

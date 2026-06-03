@@ -239,6 +239,19 @@ def has_unique_commits(wt_path: Path, base: str) -> bool:
     return _rev_list_count(wt_path, f"{base}..HEAD") > 0
 
 
+def branch_commits_ahead(repo: Path, base: str, branch: str) -> int:
+    """Commits on `branch` not contained in `base`, via
+    `git rev-list --count {base}..{branch}`.
+
+    Operates on a branch ref directly (not the worktree's HEAD, unlike
+    `has_unique_commits`) so it works for branches that have no checked-out
+    worktree — the case the daemon's branch-ref reaper handles. Returns -1 on
+    git failure (unknown `base` SHA, bad ref) so a caller can refuse to delete
+    on an unverifiable result rather than treating it as "0 commits, safe".
+    """
+    return _rev_list_count(repo, f"{base}..{branch}", fail=-1)
+
+
 def current_branch(cwd: str | os.PathLike) -> str:
     """Branch name, or "" if not in a git repo or fully detached.
 
@@ -345,6 +358,27 @@ def _has_remote_branch(repo: Path, branch: str) -> bool:
         ).returncode
         == 0
     )
+
+
+def has_remote_branch(repo: Path, branch: str) -> bool:
+    """True if `refs/heads/{branch}` exists on origin (exact match).
+
+    Public surface for the daemon's branch-ref reaper; thin pass-through over
+    the internal check `branch_exists` also shares.
+    """
+    return _has_remote_branch(repo, branch)
+
+
+def list_local_branches(repo: Path) -> list[str]:
+    """All local branch short names (`refs/heads/*`). Empty list on git failure.
+
+    `for-each-ref` rather than `git branch` so the output is plain ref names with
+    no current-branch `*` marker or column padding to strip.
+    """
+    res = _git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
+    if res.returncode != 0:
+        return []
+    return [line.strip() for line in res.stdout.splitlines() if line.strip()]
 
 
 def create_worktree(

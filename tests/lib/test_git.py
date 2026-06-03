@@ -19,10 +19,13 @@ from scripts.lib.git import (
     _has_remote_branch,
     ahead_of_base,
     behind_of_base,
+    branch_commits_ahead,
     branch_exists,
     create_worktree,
     delete_local_branch,
+    has_remote_branch,
     is_ancestor,
+    list_local_branches,
     prune_worktrees,
     require_git,
     worktrees,
@@ -161,6 +164,76 @@ def test_ahead_of_base_zero_when_no_base(cockpit_repo):
 
 def test_ahead_of_base_zero_when_base_unknown(cockpit_repo):
     assert ahead_of_base(cockpit_repo.repo, "no-such-base") == 0
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Branch-ref reaper leaves: list_local_branches / has_remote_branch /
+# branch_commits_ahead (operate on branch refs, no checked-out worktree).
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_list_local_branches_lists_heads(cockpit_repo):
+    repo = cockpit_repo.repo
+    subprocess.run(
+        ["git", "-C", str(repo), "branch", "khivi/one", "main"],
+        check=True,
+        env=_committer_env(),
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "branch", "khivi/two", "main"],
+        check=True,
+        env=_committer_env(),
+    )
+    assert sorted(list_local_branches(repo)) == ["khivi/one", "khivi/two", "main"]
+
+
+def test_list_local_branches_empty_on_non_repo(tmp_path):
+    assert list_local_branches(tmp_path) == []
+
+
+def test_has_remote_branch_public_matches_private(cockpit_repo, push_branch):
+    push_branch("khivi/pushed")
+    assert has_remote_branch(cockpit_repo.repo, "khivi/pushed") is True
+    assert has_remote_branch(cockpit_repo.repo, "khivi/never-pushed") is False
+
+
+def test_branch_commits_ahead_counts_unique_commits(cockpit_repo):
+    """A branch carved off main with 2 extra commits reports 2 commits ahead of
+    origin/main — computed against the branch ref, with no worktree checkout."""
+    repo = cockpit_repo.repo
+
+    def _git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(repo), *args], check=True, env=_committer_env()
+        )
+
+    _git("branch", "khivi/work", "main")
+    _git("checkout", "-q", "khivi/work")
+    (repo / "x").write_text("x")
+    _git("add", "x")
+    _git("commit", "-q", "-m", "x")
+    (repo / "y").write_text("y")
+    _git("add", "y")
+    _git("commit", "-q", "-m", "y")
+    # Switch off the branch so the count is purely ref-based, not HEAD-based.
+    _git("checkout", "-q", "main")
+    assert branch_commits_ahead(repo, "origin/main", "khivi/work") == 2
+
+
+def test_branch_commits_ahead_zero_when_contained(cockpit_repo):
+    """A branch pointing at the same commit as its base has nothing ahead."""
+    repo = cockpit_repo.repo
+    subprocess.run(
+        ["git", "-C", str(repo), "branch", "khivi/at-base", "main"],
+        check=True,
+        env=_committer_env(),
+    )
+    assert branch_commits_ahead(repo, "origin/main", "khivi/at-base") == 0
+
+
+def test_branch_commits_ahead_minus_one_on_unknown_ref(cockpit_repo):
+    """Unknown base SHA / bad ref → -1 so callers refuse to delete."""
+    assert branch_commits_ahead(cockpit_repo.repo, "deadbeef", "main") == -1
 
 
 # ── create_worktree: attach existing prefixed branch (option A) ────────────
