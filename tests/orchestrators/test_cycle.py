@@ -570,6 +570,66 @@ def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
     remove_mock.assert_not_called()
 
 
+def test_autoclose_clears_stuck_pill_when_skipped_dirty(tmp_path):
+    """A merged worktree whose teardown is skipped (dirty/mid-turn) must still
+    clear any `stuck=` pill — the PR has left the tracked open-PR set, so
+    `_track_stale_issue` will never run again to clear it. Regression: a
+    `stuck:comments` pill stranded forever on a merged-but-running workspace.
+    """
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=3)
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "apply_stuck_pill") as stuck_mock,
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat")],
+            dry=False,
+        )
+
+    close_mock.assert_not_called()
+    remove_mock.assert_not_called()
+    stuck_mock.assert_called_once_with("ws-ref", None)
+
+
+def test_autoclose_dry_run_does_not_clear_stuck_pill(tmp_path):
+    """Dry runs never mutate pills — the stuck= clear is gated on `not dry`."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=3)
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort"),
+        patch.object(teardown_mod, "remove_worktree"),
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "apply_stuck_pill") as stuck_mock,
+    ):
+        cycle._maybe_autoclose(
+            cfg={"auto_cleanup_on_merge": True},
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat")],
+            dry=True,
+        )
+
+    stuck_mock.assert_not_called()
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Orphan-on-main: a non-trunk worktree FF'd onto main loses its original
 # branch name, so `merged_branches` can't identify it. Autoclose still cleans
@@ -1164,7 +1224,7 @@ def _cycle_patches(tmp_path, calls, *, headless=False):
         patch.object(
             cycle,
             "_dedupe_workspaces",
-            side_effect=lambda *_a, **_kw: (calls.append("dedupe") or set()),
+            side_effect=lambda *_a, **_kw: calls.append("dedupe") or set(),
         ),
         patch.object(
             cycle,
@@ -1659,6 +1719,29 @@ def _stale_ctx(tmp_path, pref, *, dry: bool = False, cfg: dict | None = None):
     ctx.cfg = cfg if cfg is not None else {"nudge_stale_seconds": 900}
     ctx.prefs = {1: pref}
     return ctx
+
+
+def test_refresh_orphan_clears_stuck_pill(tmp_path):
+    """An orphan workspace (branch with no open PR) has no actionable category,
+    so any `stuck=` pill left over from when its PR was open and actionable must
+    be cleared — _track_stale_issue no longer runs for it.
+    """
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.base_distance = {}
+
+    with (
+        patch.object(cycle, "cmux"),
+        patch.object(cycle, "apply_wip_pill"),
+        patch.object(cycle, "apply_stale_pill"),
+        patch.object(cycle, "maybe_nudge"),
+        patch.object(cycle, "apply_stuck_pill") as stuck_mock,
+    ):
+        cycle._refresh_orphan(ctx, "workspace:7", wt, "repo-feat")
+
+    stuck_mock.assert_called_once_with("workspace:7", None)
 
 
 def test_stale_threshold_default_is_three_slow_cycles():
