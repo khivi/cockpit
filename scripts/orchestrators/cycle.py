@@ -22,6 +22,7 @@ from typing import IO
 import scripts.lib.daemon_signal as daemon_signal
 from scripts.lib import nudges
 from scripts.lib.cache import (
+    clear_branch_pr_cache,
     find_pr_payload,
     load_pr_payloads_by_branch,
     muted_payload,
@@ -42,6 +43,7 @@ from scripts.lib.cmux import (
     apply_stale_pill,
     apply_stuck_pill,
     apply_wip_pill,
+    clear_pr_pills,
     close_gone_cwd_workspaces,
     cmux,
     cmux_close_workspace_best_effort,
@@ -362,6 +364,28 @@ def _is_post_merge_stale(wt: Worktree, merged_branches: dict[str, str]) -> bool:
     if merged_head is None:
         return False
     return is_ancestor(wt.path, merged_head)
+
+
+def _is_reused_branch_merge(wt: Worktree | None, pr: PR) -> bool:
+    """True when `pr` is merged/closed but the worktree's HEAD has advanced past
+    the PR's recorded head — the branch was reused for new local work, so the
+    cached merged snapshot no longer describes this worktree.
+
+    The display inverse of `_is_post_merge_stale`: that gate (keyed on the
+    `merged_branches` map) decides autoclose; this one is keyed on the PR's own
+    `head_oid`, so it also covers CLOSED-not-merged PRs, which never enter
+    `merged_branches`. When the head SHA is unknown locally `is_ancestor`
+    returns False — the same cold-repo false-negative autoclose accepts, here
+    blanking a card that should briefly show the merged PR until the next fetch.
+
+    Returns False when the head is unknown (`pr.head_oid` absent, e.g. an old
+    cached PR pre-dating the field) so a real PR is never hidden.
+    """
+    if wt is None or not pr.head_oid:
+        return False
+    if str(pr.state).upper() not in ("MERGED", "CLOSED"):
+        return False
+    return not is_ancestor(wt.path, pr.head_oid)
 
 
 def _is_orphan_main_sibling(wt: Worktree) -> bool:
@@ -887,14 +911,25 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     for wt in ctx.wts:
         write_git_state_cache(wt.path)
     wt_by_branch = {wt.branch: wt for wt in ctx.wts}
+    open_branches = {p.branch for p in ctx.prs if p.state == "OPEN"}
     for pr in ctx.prs:
         pref = ctx.prefs.get(pr.number)
+        wt_opt = wt_by_branch.get(pr.branch)
         # Resolve the Linear-delivery block BEFORE write_pr_cache (it reads the
         # prior snapshot to decide refetch-vs-carry-forward, so it must run
         # against the old file). None for non-Linear repos → field untouched.
         linear = _resolve_linear_block(ctx, pr)
         ctx.linear_blocks[pr.branch] = linear
-        write_pr_cache(ctx.name, pr, wt_by_branch.get(pr.branch), pref, linear=linear)
+        reused = _is_reused_branch_merge(wt_opt, pr)
+        write_pr_cache(ctx.name, pr, wt_opt, pref, linear=linear, reused_branch=reused)
+        if reused:
+            # Branch reused for new local work after this PR merged/closed —
+            # show no PR. Only clear the branch-keyed cells when no live open PR
+            # shares the branch; otherwise that PR's own iteration writes them
+            # (and `_pr_payload_rank` resolves the card to the open PR).
+            if pr.branch not in open_branches:
+                clear_branch_pr_cache(pr.branch)
+            continue
         write_branch_pr_cache(
             pr.branch,
             state=pr.state,
@@ -910,6 +945,10 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     # sharing a branch (reused branch: old merged PR alongside the live one)
     # so branch-keyed flat cells resolve deterministically.
     prune_superseded_pr_caches(ctx.name)
+    # Reload after the writes so downstream consumers see this tick's freshly
+    # computed `reusedBranch` flags and the post-prune winners (the pre-write
+    # snapshot at the top still serves the dry-run early return above).
+    ctx.pr_payloads = load_pr_payloads_by_branch(ctx.name)
 
 
 def _ref_pid(ref: str) -> int:
@@ -989,6 +1028,31 @@ def _refresh_tracked_pills(
             label = ctx.names.get(ref, ref)
             pref = ctx.prefs.get(pr.number)
             pr_payload = ctx.pr_payloads.get(pr.branch)
+            if pr_payload and pr_payload.get("reusedBranch"):
+                # Branch reused for new local work after its PR merged/closed —
+                # clear the stale merged pills so the card shows no PR, and skip
+                # nudging (a merged PR is never actionable). The persisted flag
+                # is the daemon's single reused-branch decision (see
+                # `_write_pr_caches` / `write_pr_cache`).
+                blank: frozenset = frozenset()
+                changed = ctx.pill_state.get(ref) != blank
+                if changed and not ctx.dry:
+                    clear_pr_pills(ref)
+                if changed or ctx.verbose:
+                    if not group_header_printed:
+                        print(f"  {dim(group_label)}", flush=True)
+                        group_header_printed = True
+                    print(
+                        f"    {verb('suppressed')} {blue(f'#{pr.number}')} → "
+                        f"{cyan(label)}  {dim('(branch reused — merged PR hidden)')}",
+                        flush=True,
+                    )
+                    printed_refresh = True
+                if changed and not ctx.dry:
+                    ctx.pill_state[ref] = blank
+                # Drop any stale-issue timer; the PR is no longer tracked here.
+                _track_stale_issue(ctx, ref, pr, None, nudged=False)
+                continue
             keep = bool(pr_payload and pr_payload.get("keep"))
             desired = frozenset(status_pills(pr, wt, ctx.self_user, pref, keep=keep))
             changed = ctx.pill_state.get(ref) != desired

@@ -87,9 +87,11 @@ Leads on "does a worktree exist?" so the two PR×author dimensions don't fan out
 
 ```mermaid
 flowchart TD
-  P["Open PR"] --> WT{"worktree<br/>exists?"}
+  P["PR (any state)"] --> WT{"worktree<br/>exists?"}
 
-  WT -->|yes| TRACK["Track: refresh pills + caches"]
+  WT -->|yes| REUSE{"merged/closed PR but<br/>HEAD past head_oid?<br/>(branch reused)"}
+  REUSE -->|yes| SUP["suppress: clear pills +<br/>blank PR cells (show no PR)"]
+  REUSE -->|no| TRACK["Track: refresh pills + caches"]
   TRACK --> ACT{"actionable issue?<br/>ci / comments / conflicts<br/>AND state == OPEN"}
   ACT -->|yes| NUDGE["nudge_if_idle → diagram 3"]
   ACT -->|"no / merged · closed"| CLR["clear stuck timer → diagram 4"]
@@ -136,6 +138,15 @@ Key gates (all from `cycle.py`):
   resolved, so `actionable` is gated on `state == "OPEN"`; otherwise the nudge
   would loop forever (the issue never clears). The footer pill still shows the
   state; only the nudge + stuck timer are suppressed.
+- **Reused-branch suppression** (`_is_reused_branch_merge`): a merged/closed PR
+  whose `headRefOid` is no longer an ancestor of the worktree's HEAD means the
+  branch was reused for new local work. The card shows no PR until a new one is
+  opened — the slow tick clears the pills, blanks the branch-keyed flat cells,
+  and persists `reusedBranch: true` in the PR JSON so the git-free read paths
+  (fast-tick republish, renderer refresh) stay blank without re-running `git`.
+  An absent `headRefOid` (old cached PR) never suppresses, so a real PR is never
+  hidden. The persistent JSON snapshot is kept — autoclose/teardown still read
+  it; only the *display* is suppressed.
 - **Autoclose hard blocker** (never overridden): uncommitted files.
 - **Autoclose soft blockers** (`forced=True` overrides): unpushed commits, open PR.
 - **Autoclose smart-skip**: even when merged & clean, skip if draft, CI not green,

@@ -85,6 +85,8 @@ def write_pr_cache(
     wt: Worktree | None = None,
     pref: NudgePref | None = None,
     linear: dict | None = None,
+    *,
+    reused_branch: bool = False,
 ) -> dict:
     """Write a JSON snapshot of `pr` to the cache dir and return the payload.
 
@@ -105,6 +107,15 @@ def write_pr_cache(
     `keep` is preserved from the existing cache if already True — once a
     worktree is marked kept (user-spawned via `/cockpit:new`), daemon rewrites
     never clear the flag.
+
+    `reused_branch` records the daemon's reused-branch decision (a merged/closed
+    PR whose head the worktree's HEAD has advanced past — see
+    `cycle._is_reused_branch_merge`). It is the one place that signal is
+    computed (the slow tick holds the worktree); every read path
+    (`find_pr_payload` consumers, `republish_pr_caches_from_disk`,
+    `refresh_pr_data`/`refresh_pr_checks`) trusts the persisted boolean rather
+    than re-running `git`, so the fast tick and renderer paths stay
+    `git`-free. `headRefOid` is stored alongside for debuggability.
     """
     ensure_state_dirs()
     path = CACHE_DIR / f"{_repo_slug(repo_name)}__pr-{pr.number}.json"
@@ -127,6 +138,8 @@ def write_pr_cache(
         "muted": muted_payload(pref),
         "pills": decide_pills(pr, wt, pref, keep=keep),
         "keep": keep,
+        "headRefOid": pr.head_oid,
+        "reusedBranch": reused_branch,
     }
     if linear is not None:
         payload["linear"] = linear
@@ -380,7 +393,9 @@ def refresh_pr_data(branch: str) -> None:
     if not branch:
         return
     data = find_pr_payload(branch)
-    if data is None:
+    # A reused-branch merged/closed snapshot (see write_pr_cache) is treated
+    # like "no PR" — its cells stay empty so the card shows `—`.
+    if data is None or data.get("reusedBranch"):
         _write_pr_flat_cells(
             branch, state="", number=None, title="", muted="", comments=0
         )
@@ -410,7 +425,7 @@ def refresh_pr_checks(branch: str) -> None:
         return
     cache = branch_cache("pr-checks", branch)
     data = find_pr_payload(branch)
-    if data is None:
+    if data is None or data.get("reusedBranch"):
         atomic_write(cache, "")
         return
     atomic_write(cache, _ci_glyph(str(data.get("ci") or "")))
@@ -526,6 +541,32 @@ def write_branch_pr_cache(
         atomic_write(branch_cache("pr-checks", branch), ci_glyph)
 
 
+_BRANCH_PR_CELLS = (
+    "pr-state",
+    "pr-num",
+    "pr-title",
+    "pr-muted",
+    "pr-comments",
+    "pr-checks",
+)
+
+
+def clear_branch_pr_cache(branch: str) -> None:
+    """Empty every branch-keyed PR flat cell for `branch`.
+
+    The daemon writes this when a branch's only PR snapshot is a merged/closed
+    PR whose head the worktree has advanced past (branch reused — see
+    `cycle._is_reused_branch_merge`). The persistent JSON snapshot is kept
+    (autoclose/teardown still read it), but the statusline must show no PR, so
+    all six flat cells are zeroed — the same empty shape the no-PR path in
+    `refresh_pr_data` / `refresh_pr_checks` writes.
+    """
+    if not branch:
+        return
+    for stem in _BRANCH_PR_CELLS:
+        atomic_write(branch_cache(stem, branch), "")
+
+
 def republish_pr_caches_from_disk() -> None:
     """Re-publish every cached PR JSON snapshot to its branch-keyed flat cells.
 
@@ -555,6 +596,12 @@ def republish_pr_caches_from_disk() -> None:
         if cur is None or _pr_payload_rank(payload) > _pr_payload_rank(cur):
             best_by_branch[branch] = payload
     for branch, payload in best_by_branch.items():
+        if payload.get("reusedBranch"):
+            # Branch reused after its PR merged/closed — no PR to show. Clear
+            # the flat cells so the OS-tmpdir-wipe recovery path doesn't
+            # republish a stale merged state.
+            clear_branch_pr_cache(branch)
+            continue
         _write_pr_flat_cells(
             branch,
             state=_resolve_state(

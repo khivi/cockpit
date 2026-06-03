@@ -292,3 +292,55 @@ def test_require_gh_exits_when_missing(monkeypatch, capsys):
 def test_require_gh_returns_when_present(monkeypatch):
     monkeypatch.setattr("scripts.lib.gh.subprocess.run", lambda *_a, **_kw: None)
     require_gh()
+
+
+# ── _pr_from_node head_oid parsing (reused-branch suppression signal) ───────
+
+
+def _full_pr_node(**over: object) -> dict:
+    node: dict = {
+        "number": 7,
+        "title": "t",
+        "url": "u",
+        "isDraft": False,
+        "headRefName": "khivi/feat",
+        "headRefOid": "cafef00d",
+        "mergeable": "MERGEABLE",
+        "reviewDecision": "APPROVED",
+        "updatedAt": "2025-01-01",
+        "state": "MERGED",
+        "author": {"login": "khivi"},
+        "baseRef": {"branchProtectionRule": None},
+        "reviewThreads": {"nodes": []},
+        "reviews": {"nodes": []},
+        "commits": {
+            "nodes": [{"commit": {"checkSuites": {"nodes": []}, "status": None}}]
+        },
+    }
+    node.update(over)
+    return node
+
+
+def test_pr_from_node_parses_head_oid():
+    from scripts.lib.gh import _pr_from_node
+
+    pr = _pr_from_node(_full_pr_node())
+    assert pr is not None
+    assert pr.head_oid == "cafef00d"
+
+
+def test_pr_from_node_head_oid_absent_is_none():
+    """An old PR node lacking headRefOid yields head_oid=None — the suppression
+    gate then falls through (never hides a real PR)."""
+    from scripts.lib.gh import _pr_from_node
+
+    node = _full_pr_node()
+    del node["headRefOid"]
+    pr = _pr_from_node(node)
+    assert pr is not None and pr.head_oid is None
+
+
+def test_pr_fields_query_includes_head_ref_oid():
+    from scripts.lib.gh import _PR_FIELDS
+
+    assert "headRefOid" in _PR_FIELDS

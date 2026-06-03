@@ -716,3 +716,91 @@ def test_prune_superseded_scoped_to_repo(json_cache):
     cache_mod.prune_superseded_pr_caches("repoA")
     assert not a.exists()  # superseded within repoA
     assert b.exists()  # repoB untouched (lone snapshot there)
+
+
+# ── reused-branch suppression (reusedBranch flag → blank PR cells) ─────────
+#
+# When a merged/closed PR's branch is reused for new local work, the daemon's
+# slow tick stamps `reusedBranch: true` on the snapshot (the one place that
+# holds the worktree — see cycle._is_reused_branch_merge). Every git-free read
+# path trusts the persisted flag and shows no PR.
+
+
+def test_write_pr_cache_persists_reused_branch_and_head_oid(json_cache):
+    pr = _pr(state="MERGED", head_oid="deadbeef")
+    payload = cache_mod.write_pr_cache("testrepo", pr, reused_branch=True)
+    assert payload["reusedBranch"] is True
+    assert payload["headRefOid"] == "deadbeef"
+    on_disk = cache_mod.find_pr_payload("khivi/feature", repo_name="testrepo")
+    assert on_disk is not None and on_disk["reusedBranch"] is True
+
+
+def test_write_pr_cache_defaults_reused_branch_false(json_cache):
+    payload = cache_mod.write_pr_cache("testrepo", _pr(head_oid="abc"))
+    assert payload["reusedBranch"] is False
+    assert payload["headRefOid"] == "abc"
+
+
+def test_clear_branch_pr_cache_empties_all_cells(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/feature",
+        state="OPEN",
+        is_draft=False,
+        review_decision="APPROVED",
+        number=17,
+        title="Hello",
+        ci_glyph="✓",
+        comments=3,
+    )
+    cache_mod.clear_branch_pr_cache("khivi/feature")
+    for stem in cache_mod._BRANCH_PR_CELLS:
+        assert (cache_dir / f"{stem}-khivi-feature").read_text() == ""
+
+
+def test_refresh_pr_data_blanks_reused_branch(json_cache):
+    _snapshot(
+        json_cache, "cockpit", 86, "khivi/side", state="MERGED", reusedBranch=True
+    )
+    cache_mod.refresh_pr_data("khivi/side")
+    flat = cache_mod.FLAT_CACHE_DIR
+    assert (flat / "pr-state-khivi-side").read_text() == ""
+    assert (flat / "pr-num-khivi-side").read_text() == ""
+
+
+def test_refresh_pr_checks_blanks_reused_branch(json_cache):
+    _snapshot(
+        json_cache,
+        "cockpit",
+        86,
+        "khivi/side",
+        state="MERGED",
+        ci="failed:1",
+        reusedBranch=True,
+    )
+    cache_mod.refresh_pr_checks("khivi/side")
+    assert (cache_mod.FLAT_CACHE_DIR / "pr-checks-khivi-side").read_text() == ""
+
+
+def test_republish_blanks_reused_branch(json_cache):
+    # The lone snapshot for the branch is a reused-branch merge → all cells blank,
+    # so an OS-tmpdir-wipe recovery never resurrects the merged state.
+    _snapshot(
+        json_cache, "cockpit", 86, "khivi/side", state="MERGED", reusedBranch=True
+    )
+    cache_mod.republish_pr_caches_from_disk()
+    flat = cache_mod.FLAT_CACHE_DIR
+    assert (flat / "pr-num-khivi-side").read_text() == ""
+    assert (flat / "pr-state-khivi-side").read_text() == ""
+
+
+def test_republish_open_pr_wins_over_reused_merged_sibling(json_cache):
+    # Reused merged #86 alongside a live OPEN #99 on the same branch: the OPEN
+    # snapshot outranks the merged one, so the card shows the open PR, not blank.
+    _snapshot(
+        json_cache, "cockpit", 86, "khivi/side", state="MERGED", reusedBranch=True
+    )
+    _snapshot(json_cache, "cockpit", 99, "khivi/side", state="OPEN", review="APPROVED")
+    cache_mod.republish_pr_caches_from_disk()
+    flat = cache_mod.FLAT_CACHE_DIR
+    assert (flat / "pr-num-khivi-side").read_text() == "99"
+    assert (flat / "pr-state-khivi-side").read_text() == "APPROVED"

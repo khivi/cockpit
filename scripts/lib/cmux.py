@@ -585,15 +585,33 @@ def apply_pills(
     `hooks/cmux-idle-pill.sh` (Stop / UserPromptSubmit) — not touched here.
     """
     desired = tuple(status_pills(pr, wt, self_user, pref, keep=keep))
-    # "cockpit_managed" is a one-release back-compat strip — remove next release.
-    keys_to_clear = [*ACTIONABLE_KEYS, COCKPIT_KEY, OWNER_KEY, "cockpit_managed"]
-    with ThreadPoolExecutor(max_workers=len(keys_to_clear)) as ex:
-        for f in [ex.submit(_clear_status, ref, k) for k in keys_to_clear]:
-            f.result()
+    _clear_pr_pill_keys(ref)
     for key, value, color in reversed(desired):
         _set_status(ref, key, value, color)
 
     return frozenset(desired)
+
+
+# "cockpit_managed" is a one-release back-compat strip — remove next release.
+_PR_PILL_CLEAR_KEYS = [*ACTIONABLE_KEYS, COCKPIT_KEY, OWNER_KEY, "cockpit_managed"]
+
+
+def _clear_pr_pill_keys(ref: str) -> None:
+    """Clear every PR-derived pill key from workspace `ref` in parallel."""
+    with ThreadPoolExecutor(max_workers=len(_PR_PILL_CLEAR_KEYS)) as ex:
+        for f in [ex.submit(_clear_status, ref, k) for k in _PR_PILL_CLEAR_KEYS]:
+            f.result()
+
+
+def clear_pr_pills(ref: str) -> None:
+    """Remove all PR pills from workspace `ref`, leaving no PR marker on the card.
+
+    Used when a merged/closed PR's branch has been reused for new local work
+    (`cycle._is_reused_branch_merge`): the stale merged pill is cleared so the
+    card shows no PR until a new one is opened. Same key set `apply_pills`
+    clears, with nothing re-set.
+    """
+    _clear_pr_pill_keys(ref)
 
 
 @dataclass

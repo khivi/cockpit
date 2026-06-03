@@ -328,6 +328,7 @@ class PR:
     # ticket(s) it delivers (see lib.linear.parse_linear_footers / the devdone
     # pill). Empty when unfetched — only the relevant-PR query selects it.
     body: str = ""
+    head_oid: str | None = None
 
     @property
     def primary_issue(self) -> str:
@@ -353,7 +354,7 @@ class PR:
 
 
 _PR_FIELDS = """
-  number title body url isDraft headRefName mergeable reviewDecision updatedAt state
+  number title body url isDraft headRefName headRefOid mergeable reviewDecision updatedAt state
   author { login __typename }
   baseRef { branchProtectionRule { requiredStatusChecks { context } } }
   reviewThreads(first: 100) {
@@ -514,6 +515,7 @@ def _pr_from_node(n: dict, skip_checks: set[str] | None = None) -> PR | None:
         state=n.get("state") or "OPEN",
         updated_at=n.get("updatedAt") or "",
         body=n.get("body") or "",
+        head_oid=n.get("headRefOid"),
     )
 
 
@@ -551,8 +553,7 @@ def _relevant_pr_query(
         variables["owner"] = owner
         variables["name"] = name
         repo_block = (
-            f"repo: repository(owner: $owner, name: $name) "
-            f"{{ {' '.join(aliases)} }}"
+            f"repo: repository(owner: $owner, name: $name) {{ {' '.join(aliases)} }}"
         )
     else:
         repo_block = ""
