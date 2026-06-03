@@ -820,8 +820,13 @@ def main() -> int:
         try:
             owner, name = repo_nwo(wt)
             set_pr_keep(f"{owner}/{name}", pr_num)
-        except Exception:
-            pass
+        except Exception as e:
+            # Surface rather than silently drop --keep: a missed keep flag means
+            # the daemon may autoclose this worktree on the next merge cycle.
+            print(
+                f"warn: could not set keep flag for PR #{pr_num}: {e}",
+                file=sys.stderr,
+            )
 
     kick_running(quiet=True)
     return 0

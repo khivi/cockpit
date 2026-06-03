@@ -13,10 +13,10 @@ Two cache directories, both owned by this module:
      transcript-path)
    - `write_branch_pr_cache` (`cockpit.py` daemon tick, from the PR data
      the daemon fetched — single source of truth for PR-derived fields)
-   - `refresh_pr_data` / `refresh_pr_checks` (60s stale-triggered, forked
-     from a field printer that sees its cache file is too old). Both
-     re-derive the flat-cache values from the daemon's per-PR JSON
-     snapshot, so the footer and cmux sidebar share one source.
+   - `refresh_pr_data` / `refresh_pr_checks` (the synchronous `warm`
+     prewarm: `scripts/starship.py warm` → `warm_all`). Both re-derive
+     the flat-cache values from the daemon's per-PR JSON snapshot, so the
+     footer and cmux sidebar share one source.
 
 Flat layout exists because starship spawns 8 independent subprocesses per
 render and each one needs to read one cache cell in sub-millisecond time;
@@ -91,9 +91,9 @@ def write_pr_cache(
     worktree-dependent pill decisions (rebase/merge/wip) into the cached
     `pills` array so both cmux and footer read the same source of truth.
 
-    `pref` is the daemon-resolved nudge mute state. Baked in as `muted` so the
-    renderer-spawned `refresh_pr_data` can republish the same snapshot into
-    the `pr-muted` flat cell without re-reading `nudges`.
+    `pref` is the daemon-resolved nudge mute state. Baked in as `muted` so
+    `refresh_pr_data` (the `warm` prewarm) can republish the same snapshot
+    into the `pr-muted` flat cell without re-reading `nudges`.
 
     `keep` is preserved from the existing cache if already True — once a
     worktree is marked kept (user-spawned via `/cockpit:new`), daemon rewrites
@@ -328,8 +328,8 @@ def _write_pr_flat_cells(
 
     `state` is already resolved (see `_resolve_state`). The `pr-checks` cell is
     deliberately NOT written here — its three writers disagree on purpose
-    (slow tick only when non-empty, fast-tick republish always, the renderer
-    refresher via `refresh_pr_checks`), so each handles it itself.
+    (slow tick only when non-empty, fast-tick republish always, the `warm`
+    prewarm via `refresh_pr_checks`), so each handles it itself.
     """
     atomic_write(branch_cache("pr-state", branch), state)
     atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
