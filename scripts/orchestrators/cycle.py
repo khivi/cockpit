@@ -786,7 +786,15 @@ def _refresh_tracked_pills(
                 printed_refresh = True
             if changed and not ctx.dry:
                 ctx.pill_state[ref] = desired
-            actionable = pr.display_issue in ACTIONABLE_ISSUES
+            # A merged/closed PR is never actionable: its CI, comments, and
+            # conflicts can no longer be resolved, so nudging an idle session to
+            # "fix CI" on it loops forever (the nudge never stops because the
+            # state never changes). A merged PR can still be tracked here when
+            # _maybe_autoclose kept its worktree (e.g. merged with red CI) — the
+            # per-branch query refreshes any-state PRs into the cache. Gate on
+            # OPEN so the footer pill still shows the merged-with-red-CI state
+            # for inspection, but no nudge or stuck timer fires.
+            actionable = pr.display_issue in ACTIONABLE_ISSUES and pr.state == "OPEN"
             nudged = False
             if actionable:
                 nudged = maybe_nudge(

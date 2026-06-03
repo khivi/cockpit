@@ -79,9 +79,9 @@ flowchart TD
   P["Open PR"] --> WT{"worktree<br/>exists?"}
 
   WT -->|yes| TRACK["Track: refresh pills + caches"]
-  TRACK --> ACT{"actionable issue?<br/>ci / comments / conflicts"}
+  TRACK --> ACT{"actionable issue?<br/>ci / comments / conflicts<br/>AND state == OPEN"}
   ACT -->|yes| NUDGE["nudge_if_idle → diagram 3"]
-  ACT -->|no| CLR["clear stuck timer → diagram 4"]
+  ACT -->|"no / merged · closed"| CLR["clear stuck timer → diagram 4"]
   NUDGE --> ST["_track_stale_issue → diagram 4"]
 
   WT -->|no| WHO{"author?"}
@@ -114,6 +114,12 @@ flowchart TD
 
 Key gates (all from `cycle.py`):
 
+- **Merged/closed PRs are never actionable**: a tracked worktree can map to a
+  non-OPEN PR (autoclose keeps a merged-with-red-CI worktree for inspection —
+  the smart-skip below). Its `ci`/`comments`/`conflicts` can no longer be
+  resolved, so `actionable` is gated on `state == "OPEN"`; otherwise the nudge
+  would loop forever (the issue never clears). The footer pill still shows the
+  state; only the nudge + stuck timer are suppressed.
 - **Autoclose hard blocker** (never overridden): uncommitted files.
 - **Autoclose soft blockers** (`forced=True` overrides): unpushed commits, open PR.
 - **Autoclose smart-skip**: even when merged & clean, skip if draft, CI not green,
