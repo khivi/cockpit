@@ -50,18 +50,29 @@ def worktree_state_blockers(
     *,
     branch: str | None = None,
     is_mine: bool = True,
+    pr_merged: bool = False,
 ) -> list[str]:
     """Dirty + unpushed checks.
 
-    `dirty` is always a hard blocker — `--force` never overrides it. The
-    `unpushed` baseline depends on ownership: for our own branches (the default,
-    `is_mine=True`) we keep the conservative default-branch baseline
-    (`_count_unpushed`), so a branch whose commits haven't merged still blocks.
-    For someone else's branch (a PR checked out for review, `is_mine=False`) we
-    baseline against the branch's own remote (`commits_only_local`): a
-    teammate's pushed-but-unmerged PR is therefore not flagged, leaving only the
-    soft open-PR blocker that `--force` can override. Commits that exist only
-    locally still block, regardless of ownership.
+    `dirty` is always a hard blocker — `--force` never overrides it, and
+    `pr_merged` does not relax it either (uncommitted edits exist only locally
+    regardless of whether the PR merged). The `unpushed` baseline depends on
+    ownership: for our own branches (the default, `is_mine=True`) we keep the
+    conservative default-branch baseline (`_count_unpushed`), so a branch whose
+    commits haven't merged still blocks. For someone else's branch (a PR checked
+    out for review, `is_mine=False`) we baseline against the branch's own remote
+    (`commits_only_local`): a teammate's pushed-but-unmerged PR is therefore not
+    flagged, leaving only the soft open-PR blocker that `--force` can override.
+    Commits that exist only locally still block, regardless of ownership.
+
+    `pr_merged=True` (the cached PR payload reports state MERGED) skips the
+    unpushed check entirely: `_count_unpushed` over-counts both squash-merges
+    (N commits collapse to one upstream patch-id matching none of the originals)
+    and non-default-base merges (it baselines on `origin/<default>`, but the PR
+    landed on e.g. `origin/stage`). A merged PR's work is safe on the remote, so
+    only the dirty check needs to stand. Callers establish the merge via the
+    cache (see `probe_blockers`), mirroring how autoclose uses
+    `is_ancestor(wt, headRefOid)` instead of the commit count.
     """
     blockers: list[str] = []
     if worktree_path is None or not worktree_path.is_dir():
@@ -69,6 +80,8 @@ def worktree_state_blockers(
     dirty = count_dirty(worktree_path)
     if dirty > 0:
         blockers.append(f"{dirty} uncommitted file(s)")
+    if pr_merged:
+        return blockers
     if not is_mine and branch:
         unpushed = commits_only_local(worktree_path, branch)
     else:
@@ -90,14 +103,20 @@ def probe_blockers(
     """Read-only check: reasons to refuse close. Empty list = safe to close.
 
     Combines `worktree_state_blockers` (dirty is hard; unpushed is hard only for
-    our own branches — see that function) and the open-PR check (soft — `--force`
-    overrides).
+    our own branches, and is skipped once the PR is MERGED — see that function)
+    and the open-PR check (soft — `--force` overrides).
     """
-    blockers = worktree_state_blockers(worktree_path, branch=branch, is_mine=is_mine)
-    if branch is not None and repo_name is not None:
-        payload = find_pr_payload(branch, repo_name=repo_name)
-        if payload and str(payload.get("state", "")).upper() == "OPEN":
-            blockers.append(f"PR #{payload['number']} is OPEN")
+    payload = (
+        find_pr_payload(branch, repo_name=repo_name)
+        if branch is not None and repo_name is not None
+        else None
+    )
+    state = str(payload.get("state", "")).upper() if payload else ""
+    blockers = worktree_state_blockers(
+        worktree_path, branch=branch, is_mine=is_mine, pr_merged=state == "MERGED"
+    )
+    if payload and state == "OPEN":
+        blockers.append(f"PR #{payload['number']} is OPEN")
     return blockers
 
 
