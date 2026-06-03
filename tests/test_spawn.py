@@ -406,6 +406,23 @@ def test_positional_branch_dispatches_to_branch_mode(spawn_main, push_branch):
     assert "on khivi/positional-branch" in out
 
 
+# ── _pr_author ─────────────────────────────────────────────────────────────
+
+
+def test_pr_author_extracts_login():
+    import scripts.spawn as spawn
+
+    assert spawn._pr_author({"author": {"login": "coworker"}}) == "coworker"
+
+
+def test_pr_author_falls_back_when_author_null_or_absent():
+    """`gh` can emit `author: null` (deleted account) or omit it entirely."""
+    import scripts.spawn as spawn
+
+    assert spawn._pr_author({"author": None}) == "unknown"
+    assert spawn._pr_author({}) == "unknown"
+
+
 # ── --review (per-repo review_prs) ─────────────────────────────────────────
 
 

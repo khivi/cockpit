@@ -195,6 +195,25 @@ def find_pr_payload(branch: str, repo_name: str | None = None) -> dict | None:
     return best
 
 
+def load_pr_payloads_by_branch(repo_name: str) -> dict[str, dict]:
+    """One disk pass → `{branch: best_payload}` for all of `repo_name`'s PRs.
+
+    Same selection as `find_pr_payload` (rank dedup via `_pr_payload_rank` when
+    a branch is reused across PRs), but built once so a caller resolving many
+    branches in a cycle avoids re-globbing + re-parsing every cache file per
+    branch (the per-call cost is O(P); calling it per-PR is O(P^2)).
+    """
+    best: dict[str, dict] = {}
+    for _, payload in _iter_cache(f"{_repo_slug(repo_name)}__pr-*.json"):
+        branch = payload.get("branch")
+        if not branch:
+            continue
+        cur = best.get(branch)
+        if cur is None or _pr_payload_rank(payload) > _pr_payload_rank(cur):
+            best[branch] = payload
+    return best
+
+
 def find_pr_payload_by_number(pr_num: str, repo_name: str | None = None) -> dict | None:
     """Return the cached PR snapshot whose `number` matches `pr_num`, or None."""
     pattern = (

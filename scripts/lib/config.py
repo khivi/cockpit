@@ -57,7 +57,10 @@ def resolve_theme(cfg: dict | None = None) -> str:
     return theme if theme in VALID_THEMES else "dark"
 
 
-def load_config() -> dict:
+_CONFIG_CACHE: dict | None = None
+
+
+def _read_config() -> dict:
     if not CONFIG_PATH.exists():
         return {
             "repos": [],
@@ -71,6 +74,31 @@ def load_config() -> dict:
     with CONFIG_PATH.open() as f:
         data: dict = json.load(f)
         return data
+
+
+def load_config() -> dict:
+    """Return the cockpit config, read from disk once per process.
+
+    The config file is parsed on the first call and the result is reused for
+    the process lifetime — `resolve_tool`/`is_cmux` and the per-tick reconcile
+    would otherwise re-read + re-parse `config.json` dozens of times per tick.
+    The workspace backend and repo set are stable within a daemon run, so an
+    edit to `config.json` is picked up on the next daemon start, not mid-run.
+
+    Tests that vary config across cases call `reset_config_cache()` (an autouse
+    fixture does this between tests) so each starts like a fresh process; the
+    `COCKPIT_HOME`-reloading fixtures also reset it by re-importing the module.
+    """
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is None:
+        _CONFIG_CACHE = _read_config()
+    return _CONFIG_CACHE
+
+
+def reset_config_cache() -> None:
+    """Drop the cached config so the next `load_config()` re-reads from disk."""
+    global _CONFIG_CACHE
+    _CONFIG_CACHE = None
 
 
 def ensure_state_dirs() -> None:

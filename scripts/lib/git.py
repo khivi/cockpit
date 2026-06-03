@@ -143,7 +143,13 @@ def _rebase_head_name(gitdir: Path) -> str | None:
     return None
 
 
-def worktrees(repo_dir: Path) -> list[Worktree]:
+def worktrees_basic(repo_dir: Path) -> list[Worktree]:
+    """List worktrees by structure only — path/branch/rebasing/merging/is_primary.
+
+    `dirty_count` and `unpushed` are left at 0; this skips the per-worktree
+    `git status` + `git cherry` forks that `worktrees()` runs. Use it when the
+    caller only needs identity (path/branch), e.g. the orphan-workspace reap.
+    """
     out = run(["git", "-C", str(repo_dir), "worktree", "list", "--porcelain"])
     blocks = [b for b in out.split("\n\n") if b.strip()]
     try:
@@ -185,6 +191,17 @@ def worktrees(repo_dir: Path) -> list[Worktree]:
                     is_primary=is_primary,
                 )
             )
+    return wts
+
+
+def worktrees(repo_dir: Path) -> list[Worktree]:
+    """Full worktree listing with dirty/unpushed counts filled in.
+
+    Layers the per-worktree `count_dirty` + `_count_unpushed` stats (run in
+    parallel) onto `worktrees_basic`. Callers that don't need the counts
+    should use `worktrees_basic` to skip those forks.
+    """
+    wts = worktrees_basic(repo_dir)
 
     def _stats(w: Worktree) -> tuple[int, int]:
         return count_dirty(w.path), _count_unpushed(w.path)
@@ -550,8 +567,7 @@ def prune_worktrees(repo: Path) -> None:
     res = _git(repo, "worktree", "prune")
     if res.returncode != 0:
         print(
-            f"  warn: git worktree prune failed for {repo.name}: "
-            f"{res.stderr.strip()}",
+            f"  warn: git worktree prune failed for {repo.name}: {res.stderr.strip()}",
             file=sys.stderr,
             flush=True,
         )
@@ -635,15 +651,19 @@ def origin_head_branch(repo: Path) -> str | None:
 
 
 def ff_default_branch_worktrees(
-    repo: Path, wts: list[Worktree], *, dry: bool = False
+    repo: Path, wts: list[Worktree], *, default: str | None = None, dry: bool = False
 ) -> list[tuple[Worktree, int]]:
     """Fast-forward each clean worktree on the repo's `origin/HEAD` branch.
 
     Returns the (worktree, behind_count) entries that were fast-forwarded — or
     would be, when `dry=True`. Skips dirty worktrees and non-default branches.
     Uses `--ff-only` so non-fast-forward histories no-op silently.
+
+    `default` lets a caller that already resolved `origin/HEAD` (the slow cycle)
+    pass it in to avoid a redundant `symbolic-ref`; left None it resolves here.
     """
-    default = origin_head_branch(repo)
+    if default is None:
+        default = origin_head_branch(repo)
     if default is None:
         return []
     advanced: list[tuple[Worktree, int]] = []

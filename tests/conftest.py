@@ -20,6 +20,19 @@ _GIT_ENV_LEAKS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_config_cache():
+    """`load_config()` caches the parsed config for the process lifetime. Reset
+    it around every test so each starts like a fresh process and one test's
+    config can't leak into the next. Imported inside the body to pick up the
+    live module object (some fixtures `importlib.reload` the config module)."""
+    import scripts.lib.config as cockpit_config
+
+    cockpit_config.reset_config_cache()
+    yield
+    cockpit_config.reset_config_cache()
+
+
 def _git(cwd: Path, *args: str) -> str:
     env = {
         **os.environ,
