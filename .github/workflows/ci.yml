@@ -39,7 +39,11 @@ jobs:
 
       - uses: pre-commit/action@v3.0.1
         env:
-          SKIP: ""
+          # no-commit-to-branch is a local-dev guard against committing straight
+          # to main/master. On a push-to-main CI run the runner checks out main
+          # directly, so the hook fails every time (pull_request runs sit on a
+          # detached HEAD and pass). Skip it in CI — it has no meaning here.
+          SKIP: "no-commit-to-branch"
           PRE_COMMIT_USE_UV: "1"
 
       - name: Run pre-push stage hooks (pytest)
