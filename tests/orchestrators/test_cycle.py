@@ -1881,3 +1881,54 @@ def test_track_stale_dry_run_is_noop(tmp_path):
     assert pref.first_seen_at == {"ci": 1000.0}  # untouched
     assert stuck == []
     save.assert_not_called()
+
+
+# ── merged/closed PRs are never actionable (no nudge loop) ───────────────────
+
+
+def _tracked_ctx(tmp_path, pr, wt):
+    ctx = _stub_repo_cycle(tmp_path, headless=False)
+    ctx.prefs = {}
+    ctx.tracked = {"workspace:1": (pr, wt)}
+    ctx.names = {"workspace:1": "repo-feat"}
+    ctx.pill_state = {}
+    return ctx
+
+
+def _refresh_with_mocks(ctx):
+    with (
+        patch.object(cycle, "status_pills", return_value=[]),
+        patch.object(cycle, "apply_pills"),
+        patch.object(cycle, "find_pr_payload", return_value=None),
+        patch.object(cycle, "_track_stale_issue") as track_mock,
+        patch.object(cycle, "maybe_nudge", return_value=True) as nudge_mock,
+    ):
+        cycle._refresh_tracked_pills(ctx, {"workspace:1"})
+    return nudge_mock, track_mock
+
+
+def test_refresh_does_not_nudge_merged_pr_with_failing_ci(tmp_path):
+    """A merged PR kept by _maybe_autoclose (merged with red CI) must not be
+    nudged: its CI can never be fixed, so the nudge would loop forever. The
+    category handed to _track_stale_issue is None, so no stuck timer fires
+    either."""
+    wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
+    pr = _stale_pr(ci="failed:2")
+    pr.state = "MERGED"
+    nudge_mock, track_mock = _refresh_with_mocks(_tracked_ctx(tmp_path, pr, wt))
+
+    nudge_mock.assert_not_called()
+    track_mock.assert_called_once()
+    assert track_mock.call_args.args[3] is None
+
+
+def test_refresh_nudges_open_pr_with_failing_ci(tmp_path):
+    """Companion: an OPEN PR with the same failing CI still nudges and starts
+    the `ci` stale timer."""
+    wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
+    nudge_mock, track_mock = _refresh_with_mocks(
+        _tracked_ctx(tmp_path, _stale_pr(ci="failed:2"), wt)
+    )
+
+    nudge_mock.assert_called_once()
+    assert track_mock.call_args.args[3] == "ci"
