@@ -90,6 +90,7 @@ from scripts.lib.cmux import (
     cmux,
     require_workspace_binary,
     spawn_workspace,
+    workspace_cwds,
     workspace_names,
 )  # noqa: E402
 from scripts.lib.config import (
@@ -775,7 +776,23 @@ def main() -> int:
     ws_name = short
     require_workspace_binary()
     ws_refs = workspace_names()  # {ref: name}
+    # Match by name first, then fall back to worktree path. The path check
+    # catches the case where the daemon already spawned a workspace for this
+    # worktree under a different slug (e.g. cockpit auto-spawned before the
+    # user ran /cockpit:new), preventing a duplicate workspace.
     existing_ref = next((ref for ref, n in ws_refs.items() if n == ws_name), None)
+    if existing_ref is None and wt is not None:
+        try:
+            cwds = workspace_cwds()
+            resolved_wt = wt.resolve()
+            existing_ref = next(
+                (ref for ref, cwd in cwds.items() if cwd.resolve() == resolved_wt),
+                None,
+            )
+            if existing_ref is not None:
+                ws_name = ws_refs.get(existing_ref, ws_name)
+        except Exception:
+            pass
     attached_ws = existing_ref is not None
     if existing_ref is None:
         spawn_workspace(ws_name, wt, claude_command(prompt))

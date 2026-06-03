@@ -259,6 +259,7 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
     monkeypatch.setattr(spawn, "cmux", fake_cmux)
     monkeypatch.setattr(spawn, "spawn_workspace", fake_spawn_workspace)
     monkeypatch.setattr(spawn, "workspace_names", lambda: {})
+    monkeypatch.setattr(spawn, "workspace_cwds", lambda: {})
     monkeypatch.setattr(spawn, "kick_running", lambda *a, **kw: None)
     monkeypatch.setattr(spawn, "require_workspace_binary", lambda: None)
 
@@ -1274,3 +1275,124 @@ def test_keep_flag_no_effect_for_branch_with_pr(spawn_main, monkeypatch, cockpit
     code, _out, _err = spawn_main(["khivi/feat3", "--repo", "testrepo", "--keep"])
     assert code == 0
     assert keep_calls == []
+
+
+# ── workspace path-fallback deduplication ────────────────────────────────────
+#
+# When the daemon auto-spawned a workspace for a worktree under a different
+# slug, a name-only lookup misses it. The path-fallback in main() consults
+# workspace_cwds() to catch the match and prevent a duplicate workspace.
+
+
+def test_path_fallback_attaches_when_name_mismatches(
+    spawn_main, monkeypatch, cockpit_repo, tmp_path
+):
+    """workspace_cwds() matches the worktree path even when workspace name differs.
+
+    Simulates: daemon spawned `wt:1` pointing at the worktree directory before
+    the user ran /cockpit:new with slug `my-slug`. Name lookup misses; path
+    lookup catches it; spawn attaches (no new-workspace) and delivers prompt.
+    """
+    import scripts.spawn as spawn
+
+    wt_path = cockpit_repo.repo.parent / "path-fallback"
+    wt_path.mkdir(exist_ok=True)
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        spawn,
+        "resolve_worktree",
+        lambda *a, **kw: (wt_path, "khivi/path-fallback", False),
+    )
+    # Name "my-slug" is not in ws_refs — name match misses.
+    monkeypatch.setattr(spawn, "workspace_names", lambda: {"wt:1": "daemon-slug"})
+    # Path match hits.
+    monkeypatch.setattr(spawn, "workspace_cwds", lambda: {"wt:1": wt_path})
+
+    code, _out, err = spawn_main(
+        ["khivi/path-fallback", "--repo", "testrepo", "--", "do Y"]
+    )
+    assert code == 0
+    # Must not create a second workspace.
+    assert not any("new-workspace" in str(c) for c in spawn_main.cmux_calls)
+    # Must deliver prompt into the existing workspace via send.
+    sends = _send_calls(spawn_main.cmux_calls)
+    assert sends, "expected cmux send on path-matched attach"
+    assert sends[0][2] == "wt:1"
+    assert "do Y" in sends[0][3]
+    assert "delivered prompt to existing workspace daemon-slug" in err
+
+
+def test_path_fallback_not_triggered_when_name_matches(
+    spawn_main, monkeypatch, cockpit_repo, tmp_path
+):
+    """When name lookup already hits, workspace_cwds() is never consulted."""
+    import scripts.spawn as spawn
+
+    wt_path = cockpit_repo.repo.parent / "named-match"
+    wt_path.mkdir(exist_ok=True)
+
+    cwds_called = []
+
+    def fake_cwds():
+        cwds_called.append(1)
+        return {}
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        spawn,
+        "resolve_worktree",
+        lambda *a, **kw: (wt_path, "khivi/named-match", False),
+    )
+    monkeypatch.setattr(spawn, "workspace_names", lambda: {"ws:5": "named-match"})
+    monkeypatch.setattr(spawn, "workspace_cwds", fake_cwds)
+
+    code, _out, _err = spawn_main(["khivi/named-match", "--repo", "testrepo"])
+    assert code == 0
+    assert (
+        not cwds_called
+    ), "workspace_cwds must not be called when name already matched"
+    assert not any("new-workspace" in str(c) for c in spawn_main.cmux_calls)
+
+
+def test_path_fallback_deduplicates_cwd_spawn(spawn_main, monkeypatch, tmp_path):
+    """--cwd pointing at an existing workspace's directory must attach, not spawn."""
+    import scripts.spawn as spawn
+
+    target = tmp_path / "cwd-dedup"
+    target.mkdir()
+
+    monkeypatch.setattr(spawn, "workspace_names", lambda: {"ws:cwd": "cwd-dedup"})
+    monkeypatch.setattr(spawn, "workspace_cwds", lambda: {"ws:cwd": target})
+
+    code, _out, _err = spawn_main(["--cwd", str(target)])
+    assert code == 0
+    # Must not create a second workspace — path matched.
+    assert not any("new-workspace" in str(c) for c in spawn_main.cmux_calls)
+
+
+def test_path_fallback_exception_is_swallowed(spawn_main, monkeypatch, cockpit_repo):
+    """If workspace_cwds() raises, the exception is silently caught and spawn
+    falls through to creating a new workspace — no crash."""
+    import scripts.spawn as spawn
+
+    wt_path = cockpit_repo.repo.parent / "cwds-error"
+    wt_path.mkdir(exist_ok=True)
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        spawn,
+        "resolve_worktree",
+        lambda *a, **kw: (wt_path, "khivi/cwds-error", False),
+    )
+    monkeypatch.setattr(spawn, "workspace_names", lambda: {})
+    monkeypatch.setattr(
+        spawn,
+        "workspace_cwds",
+        lambda: (_ for _ in ()).throw(RuntimeError("cmux down")),
+    )
+
+    code, _out, _err = spawn_main(["khivi/cwds-error", "--repo", "testrepo"])
+    assert code == 0
+    # Falls through to creating a new workspace.
+    assert any("new-workspace" in str(c) for c in spawn_main.cmux_calls)
