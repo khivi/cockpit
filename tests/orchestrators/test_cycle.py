@@ -2134,6 +2134,166 @@ def test_refresh_nudges_open_pr_with_failing_ci(tmp_path):
     assert track_mock.call_args.args[3] == "ci"
 
 
+# ── reused-branch merged-PR suppression ──────────────────────────────────────
+#
+# A merged/closed PR whose branch has been reused for new local work (HEAD
+# advanced past the PR's head_oid) must show no PR on the card. The signal is
+# computed once in the slow tick (`_is_reused_branch_merge`), persisted as
+# `reusedBranch` in the snapshot, and read back wherever the card is rendered.
+
+
+def _reused_pr(
+    branch: str = "khivi/feat", *, state: str = "MERGED", head_oid="deadbeef"
+):
+    pr = _pr(branch, state=state)
+    pr.head_oid = head_oid
+    return pr
+
+
+def test_is_reused_branch_merge_head_still_reachable(tmp_path):
+    """Case A: merged, HEAD == merge head (ancestor) → not reused, card stays."""
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat", dirty_count=0)
+    with patch.object(cycle, "is_ancestor", return_value=True) as anc:
+        assert cycle._is_reused_branch_merge(wt, _reused_pr()) is False
+    anc.assert_called_once_with(wt.path, "deadbeef")
+
+
+def test_is_reused_branch_merge_head_diverged(tmp_path):
+    """Case B: merged, HEAD advanced past merge head → reused, suppress."""
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat", dirty_count=0)
+    with patch.object(cycle, "is_ancestor", return_value=False):
+        assert cycle._is_reused_branch_merge(wt, _reused_pr()) is True
+
+
+def test_is_reused_branch_merge_missing_head_oid(tmp_path):
+    """Case C: old cached PR with no head_oid → never suppressed (no regression);
+    is_ancestor is not even consulted."""
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat", dirty_count=0)
+    with patch.object(cycle, "is_ancestor", return_value=False) as anc:
+        assert cycle._is_reused_branch_merge(wt, _reused_pr(head_oid=None)) is False
+    anc.assert_not_called()
+
+
+def test_is_reused_branch_merge_open_pr_unaffected(tmp_path):
+    """Case D: an OPEN PR is never a reused-branch merge, regardless of HEAD."""
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat", dirty_count=0)
+    with patch.object(cycle, "is_ancestor", return_value=False) as anc:
+        assert cycle._is_reused_branch_merge(wt, _reused_pr(state="OPEN")) is False
+    anc.assert_not_called()
+
+
+def test_is_reused_branch_merge_closed_pr_diverged(tmp_path):
+    """A CLOSED-not-merged PR whose branch diverged is also suppressed — CLOSED
+    PRs never enter merged_branches, so head_oid is the only signal."""
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat", dirty_count=0)
+    with patch.object(cycle, "is_ancestor", return_value=False):
+        assert cycle._is_reused_branch_merge(wt, _reused_pr(state="CLOSED")) is True
+
+
+def test_is_reused_branch_merge_no_worktree():
+    """A PR with no local worktree can't be a reused branch."""
+    assert cycle._is_reused_branch_merge(None, _reused_pr()) is False
+
+
+def test_refresh_suppresses_reused_branch_card(tmp_path):
+    """Winning payload reusedBranch=True → clear the card pills, show no PR, and
+    never nudge. The stale timer is reset (category None)."""
+    wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
+    ctx = _tracked_ctx(tmp_path, _pr("khivi/feat", state="MERGED"), wt)
+    ctx.pr_payloads = {"khivi/feat": {"reusedBranch": True}}
+    with (
+        patch.object(cycle, "clear_pr_pills") as clear_mock,
+        patch.object(cycle, "apply_pills") as apply_mock,
+        patch.object(cycle, "maybe_nudge", return_value=True) as nudge_mock,
+        patch.object(cycle, "_track_stale_issue") as track_mock,
+    ):
+        cycle._refresh_tracked_pills(ctx, {"workspace:1"})
+
+    clear_mock.assert_called_once_with("workspace:1")
+    apply_mock.assert_not_called()
+    nudge_mock.assert_not_called()
+    track_mock.assert_called_once()
+    assert track_mock.call_args.args[3] is None
+    assert ctx.pill_state["workspace:1"] == frozenset()
+
+
+def _write_caches_ctx(tmp_path, prs, wt):
+    ctx = _stub_repo_cycle(tmp_path, headless=False)
+    ctx.name = "n"
+    ctx.prs = prs
+    ctx.wts = [wt]
+    ctx.prefs = {}
+    return ctx
+
+
+def test_write_pr_caches_clears_cells_for_reused_branch(tmp_path):
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat", dirty_count=0)
+    ctx = _write_caches_ctx(tmp_path, [_reused_pr()], wt)
+    with (
+        patch.object(cycle, "_refresh_base_distance", return_value={}),
+        patch.object(cycle, "load_pr_payloads_by_branch", return_value={}),
+        patch.object(cycle, "_resolve_linear_block", return_value=None),
+        patch.object(cycle, "write_git_state_cache"),
+        patch.object(cycle, "is_ancestor", return_value=False),  # diverged → reused
+        patch.object(cycle, "write_pr_cache") as wpc,
+        patch.object(cycle, "write_branch_pr_cache") as wbpc,
+        patch.object(cycle, "clear_branch_pr_cache") as cbpc,
+        patch.object(cycle, "prune_superseded_pr_caches"),
+    ):
+        cycle._write_pr_caches(ctx)
+
+    assert wpc.call_args.kwargs["reused_branch"] is True
+    cbpc.assert_called_once_with("khivi/feat")
+    wbpc.assert_not_called()
+
+
+def test_write_pr_caches_writes_cells_when_not_reused(tmp_path):
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat", dirty_count=0)
+    ctx = _write_caches_ctx(tmp_path, [_reused_pr()], wt)
+    with (
+        patch.object(cycle, "_refresh_base_distance", return_value={}),
+        patch.object(cycle, "load_pr_payloads_by_branch", return_value={}),
+        patch.object(cycle, "_resolve_linear_block", return_value=None),
+        patch.object(cycle, "write_git_state_cache"),
+        patch.object(cycle, "is_ancestor", return_value=True),  # reachable → not reused
+        patch.object(cycle, "write_pr_cache") as wpc,
+        patch.object(cycle, "write_branch_pr_cache") as wbpc,
+        patch.object(cycle, "clear_branch_pr_cache") as cbpc,
+        patch.object(cycle, "prune_superseded_pr_caches"),
+    ):
+        cycle._write_pr_caches(ctx)
+
+    assert wpc.call_args.kwargs["reused_branch"] is False
+    cbpc.assert_not_called()
+    wbpc.assert_called_once()
+
+
+def test_write_pr_caches_keeps_cells_when_open_pr_shares_branch(tmp_path):
+    """Reused merged PR + a live OPEN PR on the same branch: don't clear the
+    cells — the open PR's own iteration writes them and rank resolves the card."""
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat", dirty_count=0)
+    merged = _reused_pr(head_oid="old")
+    merged.number = 86
+    opened = _reused_pr(state="OPEN", head_oid="new")
+    opened.number = 99
+    ctx = _write_caches_ctx(tmp_path, [merged, opened], wt)
+    with (
+        patch.object(cycle, "_refresh_base_distance", return_value={}),
+        patch.object(cycle, "load_pr_payloads_by_branch", return_value={}),
+        patch.object(cycle, "_resolve_linear_block", return_value=None),
+        patch.object(cycle, "write_git_state_cache"),
+        patch.object(cycle, "is_ancestor", return_value=False),
+        patch.object(cycle, "write_pr_cache"),
+        patch.object(cycle, "write_branch_pr_cache") as wbpc,
+        patch.object(cycle, "clear_branch_pr_cache") as cbpc,
+        patch.object(cycle, "prune_superseded_pr_caches"),
+    ):
+        cycle._write_pr_caches(ctx)
+
+    cbpc.assert_not_called()  # open PR shares branch → no clear
+    wbpc.assert_called_once()  # only the open PR writes cells
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # _reap_branch_refs / _branch_reap_reason: delete stale local branch refs with
 # no worktree. Leaves (list_local_branches, has_remote_branch,
