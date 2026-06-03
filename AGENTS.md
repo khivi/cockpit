@@ -30,6 +30,8 @@ Always use a dedicated git worktree for any code change. Never commit directly t
 
 ## Architecture notes
 
+**`docs/state-machine.md` visualizes this section — keep it in sync.** Five Mermaid diagrams map the three state sources (GitHub PR, Claude session, cmux workspace) onto the decision logic: orientation map, reconcile decision tree (slow tick), nudge idle-gate, stuck-pill timer, and cell data-flow/ownership. Any code change that alters that logic — the five decision functions (`match_worktrees`, `_spawn_missing_workspaces`, `nudge_if_idle`, `_track_stale_issue`, `_maybe_autoclose`), the cell writers in `cache.py`, tick cadence/ownership, or the spawn/teardown/nudge/stuck/color rules — MUST update the matching diagram in the same PR. Treat a stale diagram like a stale comment: it is worse than none. The diagrams render on GitHub from the blob view.
+
 **Worktree + workspace inventory is derived, not stored.** Each cycle re-reads `git worktree list` and `cmux tree` rather than maintaining its own `state.json`. PR payloads *are* cached (`~/.config/cockpit/cache/<repo>__pr-<N>.json`) because they're a network round-trip; everything else is recomputed. Don't add a `state.json` for worktree/workspace identity — drift between cached identity and the real `git`/`cmux` state was the bug class this design avoids.
 
 **Only the daemon writes to the cache.** Renderer field printers in `scripts/lib/starship.py` are strictly read-only — no `gh`, no `git`, no subprocess forks, no atomic_write calls. The daemon owns every cell:
