@@ -242,6 +242,79 @@ def test_main_marks_own_branch_mine(cockpit_repo, monkeypatch):
     assert seen.get("is_mine") is True
 
 
+# ── pr_merged forwarding (squash-merge / non-default-base unpushed skip) ─────
+
+
+def _run_main_capturing_blocker_kwargs_with_pr(
+    cockpit_repo, monkeypatch, branch, pr_payload
+):
+    """Like `_run_main_capturing_blocker_kwargs` but wires repo name + a cached
+    PR payload, so close.py's merged-state lookup runs and forwards `pr_merged`."""
+    wt_path = cockpit_repo.repo.parent / "pm-feat"
+    _make_wt(cockpit_repo.repo, wt_path, branch)
+    monkeypatch.chdir(wt_path)
+
+    seen: dict = {}
+
+    def _capture(_path, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    with (
+        patch.object(close_script, "require_workspace_binary"),
+        patch.object(close_script, "workspace_cwds", return_value={"ws:7": wt_path}),
+        patch.object(close_script, "workspace_names", return_value={"ws:7": "pm"}),
+        patch.object(
+            close_script,
+            "discover_repo",
+            return_value={
+                "path": str(cockpit_repo.repo),
+                "name": "testrepo",
+                "branch_prefix": "khivi/",
+            },
+        ),
+        patch.object(close_script, "worktree_state_blockers", side_effect=_capture),
+        patch.object(close_script, "probe_blockers", return_value=[]),
+        patch.object(close_script, "find_pr_payload", return_value=pr_payload),
+        patch.object(close_script, "kick_running", return_value=True),
+        patch.object(close_script, "enqueue"),
+        patch("sys.argv", ["close"]),
+    ):
+        rc = close_script.main()
+    return rc, seen
+
+
+def test_main_forwards_pr_merged_when_merged(cockpit_repo, monkeypatch):
+    """A MERGED cached PR → close.py passes pr_merged=True to the hard gate."""
+    rc, seen = _run_main_capturing_blocker_kwargs_with_pr(
+        cockpit_repo,
+        monkeypatch,
+        "khivi/merged-feat",
+        {"state": "MERGED", "number": 5, "branch": "khivi/merged-feat"},
+    )
+    assert rc == 0
+    assert seen.get("pr_merged") is True
+
+
+def test_main_forwards_pr_merged_false_when_open(cockpit_repo, monkeypatch):
+    rc, seen = _run_main_capturing_blocker_kwargs_with_pr(
+        cockpit_repo,
+        monkeypatch,
+        "khivi/open-feat",
+        {"state": "OPEN", "number": 6, "branch": "khivi/open-feat"},
+    )
+    assert rc == 0
+    assert seen.get("pr_merged") is False
+
+
+def test_main_forwards_pr_merged_false_when_no_pr(cockpit_repo, monkeypatch):
+    rc, seen = _run_main_capturing_blocker_kwargs_with_pr(
+        cockpit_repo, monkeypatch, "khivi/no-pr-feat", None
+    )
+    assert rc == 0
+    assert seen.get("pr_merged") is False
+
+
 # ── delete_branch on a merged PR ─────────────────────────────────────────────
 
 

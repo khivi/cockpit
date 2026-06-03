@@ -338,6 +338,59 @@ def test_state_blockers_others_dirty_still_hard(tmp_path):
     assert blockers == ["1 uncommitted file(s)"]
 
 
+# ── merge-aware unpushed skip (squash-merge / non-default base) ──────────────
+
+
+def test_state_blockers_merged_skips_unpushed(tmp_path):
+    """A MERGED PR's over-counted unpushed commits don't block (squash-merge)."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=5) as baseline,
+        patch.object(teardown_mod, "commits_only_local") as remote_baseline,
+    ):
+        blockers = worktree_state_blockers(
+            wt, branch="khivi/feat", is_mine=True, pr_merged=True
+        )
+    assert blockers == []
+    baseline.assert_not_called()
+    remote_baseline.assert_not_called()
+
+
+def test_state_blockers_merged_dirty_still_hard(tmp_path):
+    """Dirty stays a hard blocker even when the PR is MERGED."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=2),
+        patch.object(teardown_mod, "_count_unpushed", return_value=5),
+    ):
+        blockers = worktree_state_blockers(
+            wt, branch="khivi/feat", is_mine=True, pr_merged=True
+        )
+    assert blockers == ["2 uncommitted file(s)"]
+
+
+def test_probe_blockers_merged_pr_clean_despite_unpushed(tmp_path):
+    """probe_blockers derives pr_merged from the cache: MERGED + unpushed = clean."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    p1, p2, p3 = _patch_all(dirty=0, unpushed=4, pr_state="MERGED")
+    with p1, p2, p3:
+        assert probe_blockers(wt, "khivi/x", "repo") == []
+
+
+def test_probe_blockers_merged_pr_dirty_still_blocks(tmp_path):
+    """A MERGED PR with uncommitted edits is still refused by the re-check."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    p1, p2, p3 = _patch_all(dirty=1, unpushed=4, pr_state="MERGED")
+    with p1, p2, p3:
+        blockers = probe_blockers(wt, "khivi/x", "repo")
+    assert blockers == ["1 uncommitted file(s)"]
+
+
 # ── delete_branch: local branch deletion after worktree removal ──────────────
 
 

@@ -8,7 +8,10 @@ Workflow:
      our own branches, "unpushed" also means "not yet merged to the default
      branch"; for someone else's PR worktree (checked out for review) it means
      only "not on that PR's remote branch", so a teammate's pushed-but-unmerged
-     PR does not hard-block.
+     PR does not hard-block. Once the cached PR payload reports state MERGED the
+     unpushed half is skipped (`git cherry` over-counts squash-merges and
+     non-default-base merges) — but dirty still hard-blocks, since uncommitted
+     edits exist only locally regardless of the merge.
   3. Refuse on open-PR unless `--force` is given. Combined with (2), `--force`
      can tear down a teammate's open-PR worktree once their commits are pushed.
   4. Require a running daemon: write a close-request marker under
@@ -134,7 +137,23 @@ def main() -> int:
     prefix = (repo_cfg or {}).get("branch_prefix", "")
     is_mine = branch.startswith(prefix) if (prefix and branch is not None) else True
 
-    hard = worktree_state_blockers(wt_path, branch=branch, is_mine=is_mine)
+    # The cached PR payload drives both the merged-aware hard-blocker gate below
+    # and the post-merge branch deletion further down — read it once.
+    payload = (
+        find_pr_payload(branch, repo_name=repo_name)
+        if branch is not None and repo_name is not None
+        else None
+    )
+    pr_is_merged = (
+        payload is not None and str(payload.get("state", "")).upper() == "MERGED"
+    )
+
+    # A merged PR's commits are safe on the remote, so `_count_unpushed`'s
+    # over-count (squash-merge or non-default base) must not hard-block. Dirty
+    # uncommitted files still block — that work exists only locally.
+    hard = worktree_state_blockers(
+        wt_path, branch=branch, is_mine=is_mine, pr_merged=pr_is_merged
+    )
     if hard:
         print(
             f"ERROR: refusing to close {label}: "
@@ -155,15 +174,10 @@ def main() -> int:
         return 1
 
     # Delete the local branch when the PR has merged. The hard-blocker check
-    # above already refused on dirty or local-only/unpushed commits (not even
-    # --force overrides those), so by here a merged branch carries no work the
-    # ref is protecting. A --force close of a still-OPEN PR leaves the branch
-    # alone — that work is not merged.
-    delete_branch = False
-    if branch is not None and repo_name is not None:
-        payload = find_pr_payload(branch, repo_name=repo_name)
-        if payload and str(payload.get("state", "")).upper() == "MERGED":
-            delete_branch = True
+    # above already refused on dirty files (not even --force overrides those),
+    # so by here a merged branch carries no work the ref is protecting. A --force
+    # close of a still-OPEN PR leaves the branch alone — that work is not merged.
+    delete_branch = pr_is_merged
 
     req = TeardownRequest(
         ref=match.ref,
