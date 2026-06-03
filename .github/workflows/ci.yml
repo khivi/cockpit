@@ -8,6 +8,16 @@ on:
 permissions:
   contents: read
 
+# no-commit-to-branch is a local-dev guard against committing straight to
+# main/master. On a push-to-main CI run the runner checks out main directly, so
+# the hook fails on every run (pull_request runs sit on a detached HEAD and
+# pass). It runs in both pre-commit steps below — the default-stage
+# pre-commit/action and the explicit pre-push invocation — so skip it
+# workflow-wide. SKIP is honoured by both `pre-commit/action` and bare
+# `pre-commit run`.
+env:
+  SKIP: "no-commit-to-branch"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -39,11 +49,6 @@ jobs:
 
       - uses: pre-commit/action@v3.0.1
         env:
-          # no-commit-to-branch is a local-dev guard against committing straight
-          # to main/master. On a push-to-main CI run the runner checks out main
-          # directly, so the hook fails every time (pull_request runs sit on a
-          # detached HEAD and pass). Skip it in CI — it has no meaning here.
-          SKIP: "no-commit-to-branch"
           PRE_COMMIT_USE_UV: "1"
 
       - name: Run pre-push stage hooks (pytest)
