@@ -197,7 +197,10 @@ def test_stop_with_schedulewakeup_sets_loop_and_clears_idle(fake_cmux, tmp_path)
     transcript = _transcript_with(tmp_path, ["ScheduleWakeup"])
     payload = json.dumps({"transcript_path": str(transcript)})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    calls = _poll_lines(fake_cmux, expected=2)
+    # Three async lines on this path: the verified idle clear emits both
+    # `clear-status idle` and its `list-status` readback, then `set-status loop`
+    # lands separately. Poll for all three so the loop pill isn't raced out.
+    calls = _poll_lines(fake_cmux, expected=3)
     assert any("clear-status idle" in c for c in calls), calls
     assert any("set-status loop" in c and "🔄" in c for c in calls), calls
     assert not any("set-status idle" in c for c in calls), calls
@@ -207,7 +210,8 @@ def test_stop_with_croncreate_sets_loop_and_clears_idle(fake_cmux, tmp_path):
     transcript = _transcript_with(tmp_path, ["Edit", "CronCreate"])
     payload = json.dumps({"transcript_path": str(transcript)})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    calls = _poll_lines(fake_cmux, expected=2)
+    # clear-status idle + its list-status readback + set-status loop = 3 lines.
+    calls = _poll_lines(fake_cmux, expected=3)
     assert any("set-status loop" in c for c in calls), calls
     assert not any("set-status idle" in c for c in calls), calls
 
@@ -216,7 +220,9 @@ def test_stop_without_loop_tools_clears_loop_and_sets_idle(fake_cmux, tmp_path):
     transcript = _transcript_with(tmp_path, ["Edit", "Read"])
     payload = json.dumps({"transcript_path": str(transcript)})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    calls = _poll_lines(fake_cmux, expected=2)
+    # clear-status loop + the verified idle set (set-status idle + its
+    # list-status readback) = 3 lines.
+    calls = _poll_lines(fake_cmux, expected=3)
     assert any("clear-status loop" in c for c in calls), calls
     # Value must be the literal `idle`: cmux >=0.64.10 rejects empty values,
     # so any change away from a non-empty marker silently breaks nudge_if_idle.
@@ -227,7 +233,9 @@ def test_stop_without_loop_tools_clears_loop_and_sets_idle(fake_cmux, tmp_path):
 def test_stop_with_missing_transcript_falls_through_to_idle(fake_cmux, tmp_path):
     payload = json.dumps({"transcript_path": str(tmp_path / "nope.jsonl")})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    calls = _poll_lines(fake_cmux, expected=2)
+    # clear-status loop + the verified idle set (set-status idle + its
+    # list-status readback) = 3 lines.
+    calls = _poll_lines(fake_cmux, expected=3)
     assert any("set-status idle idle" in c for c in calls), calls
     assert any("clear-status loop" in c for c in calls), calls
 
