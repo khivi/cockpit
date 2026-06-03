@@ -389,6 +389,14 @@ def _maybe_autoclose(
             continue
         if not _is_post_merge_stale(wt, merged_branches):
             continue
+        # Merged: any `stuck=` pill raised while the PR was open and actionable
+        # is now moot. The PR has left the tracked open-PR set, so
+        # `_track_stale_issue` will never run again to clear it — clear it here
+        # so a skipped teardown (uncommitted/keep/draft/CI/unaddressed below)
+        # doesn't strand the pill on a kept workspace. See AGENTS.md `stuck=`.
+        merged_ref = _workspace_ref_for_path(wt.path, cwds)
+        if merged_ref is not None and not dry:
+            apply_stuck_pill(merged_ref, None)
         pr_payload = find_pr_payload(wt.branch, repo_name)
         if pr_payload and pr_payload.get("keep"):
             print(
@@ -869,6 +877,11 @@ def _refresh_orphan(ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str) -> Non
         )
         apply_wip_pill(ref, wt.dirty_count)
         apply_stale_pill(ref, behind_base)
+        # An orphan has no open PR, so no actionable category and no stuck
+        # state. Clear any `stuck=` pill left over from when this branch still
+        # had an open, actionable PR (closed-without-merge, branch reused) —
+        # _track_stale_issue no longer runs for it to clear it itself.
+        apply_stuck_pill(ref, None)
     orphan_snap, tag = _orphan_snapshot(wt, behind_base)
     changed = ctx.pill_state.get(ref) != orphan_snap
     if changed or ctx.verbose:
