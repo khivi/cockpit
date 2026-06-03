@@ -24,6 +24,16 @@ import subprocess
 LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
 LINEAR_RE_CI = re.compile(r"[A-Za-z]{2,6}-[0-9]+")
 
+# `claude mcp list` health-checks each server by connecting to it, not just
+# dumping config. A managed connector (claude.ai) handshakes asynchronously —
+# ~6s typically, 30s+ when several worktrees spawn at once. A 3s budget timed
+# out before the Linear connector reported, so the pre-flight returned None
+# (proceed-anyway) instead of a definitive True/False. 15s lets the typical
+# handshake finish and yield a real answer while still capping a hung `claude`.
+# A heavily-loaded connector that exceeds this still degrades safely: timeout →
+# None → seeded prompt, whose in-session retry loop covers the late connect.
+_MCP_LIST_TIMEOUT_SECONDS = 15
+
 
 def extract_ticket(branch: str) -> str:
     """Return the first Linear ticket id in `branch` (uppercased), or "" if none."""
@@ -36,7 +46,7 @@ def extract_ticket(branch: str) -> str:
 def linear_mcp_available() -> bool | None:
     """Return True/False if `claude mcp list` definitively says, else None.
 
-    Runs `claude mcp list` with a short timeout. Returns:
+    Runs `claude mcp list` with a bounded timeout. Returns:
       * True  — stdout contains a case-insensitive `linear` substring.
       * False — command ran cleanly with no Linear entry in stdout.
       * None  — the `claude` binary is missing, the command failed/timed out,
@@ -51,7 +61,7 @@ def linear_mcp_available() -> bool | None:
             ["claude", "mcp", "list"],
             capture_output=True,
             text=True,
-            timeout=3,
+            timeout=_MCP_LIST_TIMEOUT_SECONDS,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None

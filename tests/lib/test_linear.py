@@ -129,3 +129,15 @@ def test_linear_mcp_available_returns_none_on_oserror():
         side_effect=OSError("permission denied"),
     ):
         assert linear_mcp_available() is None
+
+
+def test_linear_mcp_available_uses_bumped_timeout():
+    """The pre-flight budget must outlast a managed-connector handshake
+    (~6s typical, 30s+ under load) so a slow-but-connecting Linear MCP yields
+    a definitive answer instead of timing out at the old 3s budget."""
+    with patch(
+        "scripts.lib.linear.subprocess.run",
+        return_value=_fake_completed(stdout="linear: ...\n"),
+    ) as run:
+        linear_mcp_available()
+    assert run.call_args.kwargs["timeout"] >= 15
