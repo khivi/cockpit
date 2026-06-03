@@ -1,25 +1,27 @@
 # Cockpit state machine
 
-Cockpit combines **three independent state vocabularies** into per-workspace
-decisions. No single source file shows the combination layer — this document
-does. Diagrams are [Mermaid](https://mermaid.js.org/) and render on GitHub.
+Cockpit combines **three independent state vocabularies** (plus an auxiliary
+Linear read) into per-workspace decisions. No single source file shows the
+combination layer — this document does. Diagrams are
+[Mermaid](https://mermaid.js.org/) and render on GitHub.
 
-## The three state sources
+## The state sources
 
 | Source | Lives in | Values |
 |---|---|---|
 | **GitHub PR** | `gh` API → PR cache JSON (`cache.py`) | `state` ∈ {`OPEN`,`MERGED`,`CLOSED`} × `ci` × `unaddressed` × `review_decision` × `isDraft` × `mergeable` |
 | **Claude session** | cmux native `claude_code=` + statusline stdin (`claude.py`) | `Running` / `Idle` / `Needs input`; context %, rate-limit, model, cost |
-| **cmux workspace** | cmux pills + in-memory `pill_state` dict | `idle=` `stuck=` `parked=` `ci=` `comments=` `merge=` `wip=` `draft=` `approved=` `keep=` `stale=` `loop=` + *does a worktree exist?* |
+| **cmux workspace** | cmux pills + in-memory `pill_state` dict | `idle=` `stuck=` `devdone=` `parked=` `ci=` `comments=` `merge=` `wip=` `draft=` `approved=` `keep=` `stale=` `loop=` + *does a worktree exist?* |
+| **Linear** (aux) | `gh`-style GraphQL via `LINEAR_API_KEY` (`linear.py`) | ticket workflow `state.name` (e.g. `Dev Done`) — read-only, only for the `devdone=` pill |
 
-Five decision functions consume these and emit actions. Everything below is a
+The decision functions consume these and emit actions. Everything below is a
 drill-down of one node in the orientation map.
 
 ---
 
 ## 1. Orientation map (L0)
 
-How the three state sources feed the five decision functions, and what each emits.
+How the state sources feed the decision functions, and what each emits.
 
 ```mermaid
 flowchart LR
@@ -27,6 +29,7 @@ flowchart LR
     GH["GitHub PR state<br/>gh API → PR cache JSON"]
     CL["Claude session<br/>cmux native + statusline"]
     CM["cmux workspace<br/>pills + worktree-exists?"]
+    LIN["Linear (aux)<br/>ticket state via GraphQL"]
   end
 
   subgraph DEC["Decision functions"]
@@ -34,6 +37,7 @@ flowchart LR
     SM["_spawn_missing_workspaces<br/>cycle.py:1079"]
     NI["nudge_if_idle<br/>cmux.py:314"]
     TS["_track_stale_issue<br/>cycle.py:168"]
+    DD["_track_dev_done<br/>cycle.py:219"]
     AC["_maybe_autoclose<br/>cycle.py:344"]
     BR["_reap_branch_refs<br/>cycle.py:490"]
   end
@@ -45,11 +49,14 @@ flowchart LR
     A4["teardown (worktree+workspace+branch)"]
     A5["refresh pills + colors"]
     A6["git branch -D (ref only)"]
+    A7["devdone= pill"]
   end
 
   GH --> MW & SM & TS & AC & BR
+  GH --> DD
   CM --> MW & NI & TS
   CL --> NI
+  LIN --> DD
 
   MW --> SM
   SM --> A1
@@ -58,6 +65,7 @@ flowchart LR
   AC --> A4
   MW --> A5
   BR --> A6
+  DD --> A7
 ```
 
 The renderer (`starship.py`) is **not** in this picture by design: it only reads
@@ -266,8 +274,8 @@ a cell — it never touches a source directly.
 
 Why two ticks:
 
-- **Slow tick** owns every decision (spawn, nudge, stuck, teardown, colors) and
-  the expensive `gh` fetch + per-PR JSON snapshot.
+- **Slow tick** owns every decision (spawn, nudge, stuck, devdone, teardown,
+  colors) and the expensive `gh` (+ optional Linear) fetch + per-PR JSON snapshot.
 - **Fast tick** is network-free: it re-derives git-state cells for every
   worktree and republishes PR flat cells from the persistent JSON, so a
   `git checkout` or an OS tmpdir wipe recovers within ~30s instead of ~300s.

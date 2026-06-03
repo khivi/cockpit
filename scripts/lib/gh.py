@@ -324,6 +324,10 @@ class PR:
     state: str = "OPEN"
     merged_at: str | None = None
     updated_at: str = ""
+    # PR description. Carried for the `Linear:` footer that maps a PR to the
+    # ticket(s) it delivers (see lib.linear.parse_linear_footers / the devdone
+    # pill). Empty when unfetched — only the relevant-PR query selects it.
+    body: str = ""
 
     @property
     def primary_issue(self) -> str:
@@ -349,7 +353,7 @@ class PR:
 
 
 _PR_FIELDS = """
-  number title url isDraft headRefName mergeable reviewDecision updatedAt state
+  number title body url isDraft headRefName mergeable reviewDecision updatedAt state
   author { login __typename }
   baseRef { branchProtectionRule { requiredStatusChecks { context } } }
   reviewThreads(first: 100) {
@@ -509,6 +513,7 @@ def _pr_from_node(n: dict, skip_checks: set[str] | None = None) -> PR | None:
         total_from_others=total,
         state=n.get("state") or "OPEN",
         updated_at=n.get("updatedAt") or "",
+        body=n.get("body") or "",
     )
 
 

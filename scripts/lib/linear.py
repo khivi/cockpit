@@ -11,18 +11,52 @@ Both accept any 2–6 letter prefix joined to digits by `-` (`PE-1234`,
 `ENG-4012`). The upper bound on prefix length is the main guard against
 unrelated ids (`HTTP-200`, `UTF-8`).
 
-No API calls live here. The Linear ticket body (title, description) is
-fetched by Claude itself via the Linear MCP on the first turn of a
-spawned workspace.
+The Linear ticket *body* (title, description) is still fetched by Claude
+itself via the Linear MCP on the first turn of a spawned workspace — the
+daemon can't reach the MCP. But the daemon *does* make one direct,
+read-only GraphQL call (`fetch_ticket_state`) to learn a ticket's current
+workflow state for the `devdone=` sidebar pill. That is the only network
+surface in this module, gated on the `LINEAR_API_KEY` env var.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import subprocess
+import urllib.error
+import urllib.request
 
 LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
 LINEAR_RE_CI = re.compile(r"[A-Za-z]{2,6}-[0-9]+")
+
+# A PR *delivers* a ticket only via the explicit `Linear: [PE-1234](url)` footer
+# that `start-linear-ticket` / the morning-align cross-link step append to the PR
+# body — NOT via the branch-slug regex above (which catches predecessor /
+# follow-up / "reapply X" mentions the PR doesn't actually deliver). This mirrors
+# the strict delivery signal in the morning-align `linear_delivery.py` helper.
+# Anchored to line start so a mention buried in prose isn't a footer.
+LINEAR_FOOTER_RE = re.compile(r"^Linear:\s*\[([A-Z]+-[0-9]+)\]", re.MULTILINE)
+
+# Linear's public GraphQL endpoint. A *personal API key* authenticates with the
+# raw key in the `Authorization` header (no `Bearer` prefix — that form is for
+# OAuth access tokens). The daemon never logs the key.
+LINEAR_API_URL = "https://api.linear.app/graphql"
+LINEAR_API_KEY_ENV = "LINEAR_API_KEY"
+
+# One slow-tick fetch per gated PR. A bounded budget keeps a hung Linear from
+# stalling the reconcile; a timeout degrades to None (pill stays off) like any
+# other failure.
+_TICKET_STATE_TIMEOUT_SECONDS = 10
+
+# Filter by team key + issue number rather than the opaque UUID `issue(id:)`
+# wants — we only have the human identifier (`PE-1234`) from the branch name.
+_TICKET_STATE_QUERY = (
+    "query($team:String!,$number:Float!){"
+    "issues(filter:{team:{key:{eq:$team}},number:{eq:$number}}){"
+    "nodes{identifier state{name}}}}"
+)
 
 # `claude mcp list` health-checks each server by connecting to it, not just
 # dumping config. A managed connector (claude.ai) handshakes asynchronously —
@@ -36,11 +70,32 @@ _MCP_LIST_TIMEOUT_SECONDS = 15
 
 
 def extract_ticket(branch: str) -> str:
-    """Return the first Linear ticket id in `branch` (uppercased), or "" if none."""
+    """Return the first Linear ticket id in `branch` (uppercased), or "" if none.
+
+    Branch-slug heuristic — fine for the statusline footer's id pill, but NOT a
+    *delivery* signal. Use `parse_linear_footers` for "which tickets does this PR
+    deliver".
+    """
     if not branch:
         return ""
     m = LINEAR_RE.search(branch.upper())
     return m.group(0) if m else ""
+
+
+def parse_linear_footers(body: str) -> list[str]:
+    """Return the de-duplicated, order-preserving list of ticket ids declared in
+    `body`'s `Linear: [PE-1234](url)` footer line(s) — the strict set of tickets
+    the PR delivers. Empty when `body` is falsy or has no footer.
+    """
+    if not body:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for tid in LINEAR_FOOTER_RE.findall(body):
+        if tid not in seen:
+            seen.add(tid)
+            out.append(tid)
+    return out
 
 
 def linear_mcp_available() -> bool | None:
@@ -68,3 +123,52 @@ def linear_mcp_available() -> bool | None:
     if res.returncode != 0:
         return None
     return "linear" in res.stdout.lower()
+
+
+def fetch_ticket_state(ticket_id: str, *, api_key: str | None = None) -> str | None:
+    """Return the Linear workflow-state *name* for `ticket_id` (e.g. "Dev Done",
+    "In Progress"), or None when it can't be determined.
+
+    Returns None — never raises — when:
+      * `LINEAR_API_KEY` is unset (and no `api_key` override given): the feature
+        is simply off, so no network call is made.
+      * `ticket_id` doesn't parse as a Linear id.
+      * the GraphQL request fails, times out, or returns no matching issue.
+
+    Callers treat None as "not in the dev-done state" → no pill. The raw key is
+    sent in the `Authorization` header and never logged.
+    """
+    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    if not key:
+        return None
+    if not LINEAR_RE_CI.fullmatch(ticket_id or ""):
+        return None
+    team, _, num = ticket_id.partition("-")
+    try:
+        number = float(int(num))
+    except ValueError:
+        return None
+
+    body = json.dumps(
+        {
+            "query": _TICKET_STATE_QUERY,
+            "variables": {"team": team.upper(), "number": number},
+        }
+    ).encode()
+    req = urllib.request.Request(
+        LINEAR_API_URL,
+        data=body,
+        headers={"Authorization": key, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_TICKET_STATE_TIMEOUT_SECONDS) as resp:
+            payload = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        return None
+
+    nodes = (((payload or {}).get("data") or {}).get("issues") or {}).get("nodes")
+    if not nodes:
+        return None
+    state = (nodes[0].get("state") or {}).get("name")
+    return state or None

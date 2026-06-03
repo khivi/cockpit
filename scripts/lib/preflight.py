@@ -14,10 +14,12 @@ gate; that's a stricter policy than the daemon needs.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 
 from .colors import yellow
+from .linear import LINEAR_API_KEY_ENV
 from .tool import resolve_tool
 
 REQUIRED_BINARIES = ("gh", "git")
@@ -69,6 +71,32 @@ def _validate_review_prs(cfg: dict) -> None:
             )
 
 
+def _validate_linear_dev_done(cfg: dict) -> None:
+    """Validate the dev-done pill config and warn on a missing API key.
+
+    `linear_dev_done_state`, when present, must be a string (a non-string would
+    silently never match a Linear state name) — rejected like `sidebar_color`.
+
+    Then, if any repo is Linear-configured (`linear_keys`) but `LINEAR_API_KEY`
+    is unset, the daemon can't query Linear, so the `devdone=` pill silently
+    stays off. That's a soft degrade, not a config error — warn once at start so
+    it isn't a mystery cycles later.
+    """
+    state = cfg.get("linear_dev_done_state")
+    if state is not None and not isinstance(state, str):
+        _die(f"linear_dev_done_state must be a string, got {state!r}.")
+
+    has_linear_repo = any(r.get("linear_keys") for r in cfg.get("repos", []))
+    if has_linear_repo and not os.environ.get(LINEAR_API_KEY_ENV):
+        print(
+            f"{yellow('cockpit:')} a repo sets linear_keys but "
+            f"{LINEAR_API_KEY_ENV} is unset — the Linear dev-done pill stays "
+            f"off. Export {LINEAR_API_KEY_ENV} to enable it.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def preflight(cfg: dict) -> None:
     for binary in REQUIRED_BINARIES:
         if shutil.which(binary) is None:
@@ -84,6 +112,7 @@ def preflight(cfg: dict) -> None:
 
     _validate_sidebar_colors(cfg)
     _validate_review_prs(cfg)
+    _validate_linear_dev_done(cfg)
 
     if cfg.get("tool", "auto") == "auto":
         resolved = resolve_tool()

@@ -84,6 +84,7 @@ def write_pr_cache(
     pr: PR,
     wt: Worktree | None = None,
     pref: NudgePref | None = None,
+    linear: dict | None = None,
 ) -> dict:
     """Write a JSON snapshot of `pr` to the cache dir and return the payload.
 
@@ -94,6 +95,12 @@ def write_pr_cache(
     `pref` is the daemon-resolved nudge mute state. Baked in as `muted` so
     `refresh_pr_data` (the `warm` prewarm) can republish the same snapshot
     into the `pr-muted` flat cell without re-reading `nudges`.
+
+    `linear` is the resolved Linear-delivery block — `{"tickets": [{"id",
+    "state"}], "fetched_at": ts}` — for the tickets this PR delivers (from its
+    `Linear:` footer). Network-fetched like the PR itself, so it is cached here
+    rather than recomputed every render. The daemon (cycle.py) decides when to
+    refetch vs. carry forward; this writer just persists what it's handed.
 
     `keep` is preserved from the existing cache if already True — once a
     worktree is marked kept (user-spawned via `/cockpit:new`), daemon rewrites
@@ -121,6 +128,8 @@ def write_pr_cache(
         "pills": decide_pills(pr, wt, pref, keep=keep),
         "keep": keep,
     }
+    if linear is not None:
+        payload["linear"] = linear
     _atomic_write_json(path, payload)
     return payload
 
