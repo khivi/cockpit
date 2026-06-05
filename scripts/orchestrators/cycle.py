@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import IO
 
 import scripts.lib.daemon_signal as daemon_signal
-from scripts.lib import nudges
+from scripts.lib import nudges, version
 from scripts.lib.cache import (
     clear_branch_pr_cache,
     find_pr_payload,
@@ -1587,6 +1587,42 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
             daemon_signal.enqueue(req)
 
 
+# Re-query the install repo for a newer version at most hourly — the running
+# version can't change mid-daemon-run, so checking every slow tick (300s) just
+# spends a `gh api` call. The per-version log guard below caps noise further.
+_UPDATE_CHECK_TTL_SECONDS = 3600
+
+
+def _check_plugin_update(cfg: dict, pill_state: dict) -> None:
+    """Log once when a newer cockpit is published on the install repo's default
+    branch. Gated on `check_update` (default true), throttled to one `gh` query
+    per `_UPDATE_CHECK_TTL_SECONDS` and one log line per newer version — both
+    keyed in `pill_state` like the spawn in-flight guard. Daemon-wide (not
+    per-repo), so it runs before the repo loop. Any fetch failure logs nothing
+    (see lib.version).
+    """
+    if not cfg.get("check_update", True):
+        return
+    now = time.monotonic()
+    last = pill_state.get("update-check:ts")
+    if isinstance(last, float) and (now - last) < _UPDATE_CHECK_TTL_SECONDS:
+        return
+    pill_state["update-check:ts"] = now
+    running = version.running_version()
+    latest = version.latest_version()
+    if not latest or not version.is_newer(latest, running):
+        return
+    if pill_state.get("update-check:warned") == latest:
+        return
+    pill_state["update-check:warned"] = latest
+    ts = datetime.now().isoformat(timespec="seconds")
+    print(
+        f"[{ts}] {yellow('cockpit:')} update available\n"
+        f"  {running} -> {latest} (run /plugin update cockpit)",
+        flush=True,
+    )
+
+
 def cycle_all(
     cfg: dict,
     self_user: str,
@@ -1599,6 +1635,7 @@ def cycle_all(
     verbose: bool,
 ) -> None:
     ensure_state_dirs()
+    _check_plugin_update(cfg, pill_state)
     repos = cfg.get("repos", [])
     if not repos:
         print(

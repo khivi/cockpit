@@ -146,6 +146,7 @@ Edit `config.json` to register repos manually, or just run `/cockpit:new` and le
   "auto_cleanup_on_merge": true,
   "use_cship": false,
   "use_linear": false,
+  "check_update": true,
   "tool": "auto"
 }
 ```
@@ -165,6 +166,7 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 | Auto-close age | 14 days | `config.json` → `autoclose_age_days`. Worktrees older than this threshold with no open PR are eligible for auto-close. |
 | Prompt prefix | _(empty)_ | `config.json` → `prompt_prefix`. Prepended to the first-turn prompt of every new workspace — and is the entire first turn for a blank spawn that seeds no plan prompt. |
 | Theme | `dark` | `config.json` → `theme` (`dark` \| `light`). Themes the neutral-grey statusline text; saturated hues stay background-agnostic. |
+| Update check | **on** | `config.json` → `check_update`. When on, the slow tick reads `plugin.json` on the install repo's default branch (via `gh api`, at most hourly) and logs a one-line notice to the `--watch` terminal when a newer version is published. Set `false` to skip the check. |
 | Branch prefix | `<gh user>/` | `config.json` → per-repo `branch_prefix` |
 | Default base branch | repo's `defaultBranchRef` | `config.json` → per-repo `default_base` |
 | CI checks to skip | _(none)_ | `config.json` → per-repo `ci_skip_checks`. List of check names excluded from the CI pass/fail roll-up (e.g. bot reviewers that always show as pending). |
