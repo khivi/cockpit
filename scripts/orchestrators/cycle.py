@@ -1318,6 +1318,21 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
     pr_branches = {pr.branch for pr in ctx.prs}
     my_prefix = f"{ctx.self_user}/"
     covered_paths = {p.resolve() for p in ctx.cwds.values()}
+    # Live workspace names → the existing cwd(s) using each. A same-named
+    # workspace rooted at a DIFFERENT, still-existing path is a cross-repo clash
+    # (two repos each with a `foo` branch): spawning here would create a
+    # duplicate-named workspace that churns every cycle, since cmux allows
+    # duplicate names and the path-keyed dedup above never covers this path.
+    # Dead-cwd workspaces are excluded — `close_gone_cwd_workspaces` reaps them,
+    # so they must not suppress a legitimate spawn.
+    name_to_paths: dict[str, set[Path]] = {}
+    for ref, ws_name in ctx.names.items():
+        cwd = ctx.cwds.get(ref)
+        if cwd is None:
+            continue
+        resolved = cwd.resolve()
+        if resolved.exists():
+            name_to_paths.setdefault(ws_name, set()).add(resolved)
     for wt in ctx.wts:
         if not wt.branch.startswith(my_prefix) or wt.branch in pr_branches:
             continue
@@ -1326,6 +1341,14 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
         if _is_post_merge_stale(wt, ctx.merged_branches):
             print(
                 f"  {verb('skip')} {dim(f'orphan-spawn {wt.short} — branch {wt.branch} has merged PR')}",
+                flush=True,
+            )
+            continue
+        clash = name_to_paths.get(wt.short, set()) - {wt.path.resolve()}
+        if clash:
+            other = sorted(str(p) for p in clash)[0]
+            print(
+                f"  {verb('skip')} {dim(f'orphan-spawn {wt.short} — workspace name already used by {other}')}",
                 flush=True,
             )
             continue

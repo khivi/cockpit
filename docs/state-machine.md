@@ -156,7 +156,14 @@ Key gates (all from `cycle.py`):
   `_SPAWN_INFLIGHT_TTL_SECONDS` (600s) is skipped, so a `/cockpit:sync` kick
   can't double-launch mid-creation.
 - **Orphan auto-spawn is `<self_user>/`-prefix gated**: review worktrees are
-  never orphan-spawned.
+  never orphan-spawned. It is deduped by **path** (skip if the worktree's path
+  is already a workspace cwd) and additionally **name-clash gated**: skip + log
+  if a workspace with the same short name already exists at a different,
+  still-existing path. Without the name gate, two repos each holding a `foo`
+  branch with no PR would churn — cmux allows duplicate names and the path
+  dedup never covers the second repo's path, so a duplicate-named workspace
+  would respawn every cycle. Dead-cwd workspaces don't suppress (they're reaped
+  by `close_gone_cwd_workspaces`).
 - **Branch-ref reap** (`_reap_branch_refs`): autoclose only iterates existing
   worktrees, so a branch whose worktree is gone keeps its dangling ref. The reap
   `git branch -D`s any worktree-less local branch that is either merged (unbounded
