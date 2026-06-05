@@ -59,9 +59,15 @@ def _committer_env():
         ("khivi/123-fix-login-bug", "khivi/", "fix-login-bug"),
         # Bare ticket with no description keeps its id (never collapses to "").
         ("khivi/pe-4516", "khivi/", "pe-4516"),
-        # Multi-segment branch keeps every segment (no strip-to-last-`/`); the
-        # `master` segment is NOT a ticket so it survives.
-        ("khivi/master/fnox-age", "khivi/", "master-fnox-age"),
+        # A leading base-branch segment (`master/`) is dropped — it marks the
+        # base, not identity.
+        ("khivi/master/fnox-age", "khivi/", "fnox-age"),
+        ("khivi/main/some-thing", "khivi/", "some-thing"),
+        # A branch literally named after a main branch is NOT blanked (no
+        # trailing `/` → not a base segment).
+        ("khivi/master", "khivi/", "master"),
+        # `main` must not false-match a longer word.
+        ("khivi/mainframe-port", "khivi/", "mainframe-port"),
         # No configured prefix → slugified branch, user prefix left on.
         ("feature/thing", "", "feature-thing"),
         # Detached worktree (no branch) → empty label.

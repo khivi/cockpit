@@ -323,6 +323,13 @@ def slugify(s: str, max_len: int = 30) -> str:
     return s[:max_len]
 
 
+# A leading base-branch segment (`master/`, `main/`) — it denotes the branch's
+# base, not anything identifying, so it is dropped from the label. The trailing
+# `/` is required so `mainframe-thing` / a branch literally named `master` are
+# never touched. Kept in sync with `cycle.MAIN_BRANCHES` (a leaf can't import the
+# orchestrator).
+_BASE_BRANCH_SEG_RE = re.compile(r"^(?:master|main)/")
+
 # A leading Linear-ticket (`pe-4608-`) or bare PR/issue number (`123-`) token
 # at the head of a slugified branch. The `(?=.)` lookahead refuses to strip when
 # nothing descriptive follows, so a bare-ticket branch (`pe-4516`) keeps its id
@@ -333,20 +340,21 @@ _LEADING_TICKET_RE = re.compile(r"^(?:[a-z]+-\d+|\d+)-(?=.)")
 def branch_label(branch: str, branch_prefix: str = "") -> str:
     """Sidebar/workspace label derived from a branch name.
 
-    Three steps:
+    Four steps:
       1. Strip the repo's configured `branch_prefix` (e.g. `khivi/`) when the
-         branch carries it. Stripping the *configured* prefix (not a
-         strip-to-last-`/` heuristic) preserves a `master` mid-segment below.
-      2. Slugify the remainder — collapsing any surviving `/` to `-` so a
-         multi-segment branch keeps its full identity.
-      3. Drop a leading ticket/PR token (`pe-4608-`, `123-`) so the label reads
+         branch carries it.
+      2. Drop a leading base-branch segment (`master/`, `main/`) — it marks the
+         branch's base, not anything identifying.
+      3. Slugify the remainder — collapsing any surviving `/` to `-` so a
+         multi-segment branch keeps its remaining identity.
+      4. Drop a leading ticket/PR token (`pe-4608-`, `123-`) so the label reads
          as the human description, NOT the tracker id — but only when something
          descriptive follows (a bare-ticket branch keeps its id).
 
         khivi/pe-4608-understand-dag-builder  →  understand-dag-builder
         khivi/123-fix-login-bug               →  fix-login-bug
         khivi/pe-4516            (no desc)     →  pe-4516
-        khivi/master/fnox-age                 →  master-fnox-age
+        khivi/master/fnox-age                 →  fnox-age
         feature/thing            (no prefix)  →  feature-thing
         ""                       (detached)   →  ""
 
@@ -355,6 +363,7 @@ def branch_label(branch: str, branch_prefix: str = "") -> str:
     """
     if branch_prefix and branch.startswith(branch_prefix):
         branch = branch[len(branch_prefix) :]
+    branch = _BASE_BRANCH_SEG_RE.sub("", branch)
     # Normalize without meaningful truncation, strip the leading ticket, then
     # apply the real 30-char cap so truncation never eats the description tail.
     slug = slugify(branch, max_len=200)
