@@ -81,7 +81,7 @@ STUCK_ICON = "🚨"
 # never a `send`. Gated on the repo being Linear-configured AND the branch
 # carrying a ticket id (the same branch→ticket alignment the footer renders).
 DEVDONE_KEY = "devdone"
-DEVDONE_ICON = "📋"
+DEVDONE_ICON = "🏁"
 
 MUTED_KEY = "muted"
 MUTED_ICON = "🔇"
