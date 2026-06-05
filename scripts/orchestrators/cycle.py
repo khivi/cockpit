@@ -49,6 +49,7 @@ from scripts.lib.cmux import (
     cmux_close_workspace_best_effort,
     find_cockpit_workspaces,
     nudge_if_idle,
+    rename_workspace_if_needed,
     set_workspace_color,
     spawn_orphan_workspace,
     spawn_pr_workspace,
@@ -1026,6 +1027,16 @@ def _refresh_tracked_pills(
         group_header_printed = False
         for ref, pr, wt in group:
             label = ctx.names.get(ref, ref)
+            if rename_workspace_if_needed(ref, wt.short, label, dry=ctx.dry):
+                if not group_header_printed:
+                    print(f"  {dim(group_label)}", flush=True)
+                    group_header_printed = True
+                print(
+                    f"    {verb('renamed')} {cyan(label)} → {cyan(wt.short)}",
+                    flush=True,
+                )
+                printed_refresh = True
+                label = wt.short  # corrected name for this cycle's log lines
             pref = ctx.prefs.get(pr.number)
             pr_payload = ctx.pr_payloads.get(pr.branch)
             if pr_payload and pr_payload.get("reusedBranch"):
@@ -1158,6 +1169,12 @@ def _refresh_orphan(ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str) -> Non
             flush=True,
         )
         return
+    if rename_workspace_if_needed(ref, wt.short, ws_name, dry=ctx.dry):
+        print(
+            f"  {verb('renamed')} {cyan(ws_name)} → {cyan(wt.short)}",
+            flush=True,
+        )
+        ws_name = wt.short
     behind_base = ctx.base_distance.get(wt.branch, 0)
     if not ctx.dry:
         cmux(

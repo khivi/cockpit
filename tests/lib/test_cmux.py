@@ -24,6 +24,8 @@ from scripts.lib.cmux import (
     apply_pills,
     cmux_close_workspace_best_effort,
     nudge_if_idle,
+    reconcile_workspace_names,
+    rename_workspace_if_needed,
     set_workspace_color,
     spawn_workspace,
     status_pills,
@@ -309,6 +311,79 @@ def test_spawn_workspace_cmux_polls_for_new_ref():
         ref = spawn_workspace("feat", Path("/tmp/wt"), "claude")
 
     assert ref == "workspace:2"
+
+
+# ── rename_workspace_if_needed / reconcile_workspace_names ───────────────────
+
+
+def test_rename_workspace_if_needed_noop_when_matching():
+    calls: list[tuple] = []
+    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+        assert rename_workspace_if_needed("workspace:1", "feat", "feat") is False
+    assert calls == []
+
+
+def test_rename_workspace_if_needed_noop_when_expected_empty():
+    """An empty expected name (ref not in the names dict) must never rename to ""."""
+    calls: list[tuple] = []
+    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+        assert rename_workspace_if_needed("workspace:1", "", "whatever") is False
+    assert calls == []
+
+
+def test_rename_workspace_if_needed_renames_when_diverged():
+    calls: list[tuple] = []
+    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+        assert rename_workspace_if_needed("workspace:1", "feat", "old-name") is True
+    assert calls == [("rename-workspace", "--workspace", "workspace:1", "feat")]
+
+
+def test_rename_workspace_if_needed_dry_reports_without_calling():
+    calls: list[tuple] = []
+    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+        assert (
+            rename_workspace_if_needed("workspace:1", "feat", "old", dry=True) is True
+        )
+    assert calls == []
+
+
+def test_reconcile_workspace_names_renames_cwd_matched_diverged(tmp_path):
+    """Only cwd-matched, name-drifted workspaces rename; name-matched and
+    cwd-unmatched refs are left alone."""
+    wt_a = tmp_path / "feat-a"
+    wt_a.mkdir()
+    wt_b = tmp_path / "feat-b"
+    wt_b.mkdir()
+    wts = [
+        Worktree(path=wt_a, branch="khivi/a"),
+        Worktree(path=wt_b, branch="khivi/b"),
+    ]
+    names = {"workspace:1": "stale-name", "workspace:2": "feat-b"}
+    cwds = {
+        "workspace:1": wt_a,  # name drifted → rename to feat-a
+        "workspace:2": wt_b,  # already matches → skip
+        "workspace:3": tmp_path / "elsewhere",  # no wt at this cwd → skip
+    }
+    calls: list[tuple] = []
+    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+        renamed = reconcile_workspace_names(names, cwds, wts)
+
+    assert renamed == [("workspace:1", "stale-name", "feat-a")]
+    assert calls == [("rename-workspace", "--workspace", "workspace:1", "feat-a")]
+
+
+def test_reconcile_workspace_names_dry_reports_without_calling(tmp_path):
+    wt_a = tmp_path / "feat-a"
+    wt_a.mkdir()
+    wts = [Worktree(path=wt_a, branch="khivi/a")]
+    names = {"workspace:1": "old"}
+    cwds = {"workspace:1": wt_a}
+    calls: list[tuple] = []
+    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+        renamed = reconcile_workspace_names(names, cwds, wts, dry=True)
+
+    assert renamed == [("workspace:1", "old", "feat-a")]
+    assert calls == []
 
 
 def test_close_workspace_best_effort_passes_workspace_flag():

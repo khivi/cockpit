@@ -43,7 +43,10 @@ from scripts.lib.cmux import (  # noqa: E402
     BLUE,
     LOOP_ICON,
     LOOP_KEY,
+    CmuxUnavailable,
     cmux,
+    reconcile_workspace_names,
+    workspace_state,
 )
 from scripts.lib.colors import green  # noqa: E402
 from scripts.lib.config import (  # noqa: E402
@@ -104,12 +107,14 @@ def _once_with(state: dict) -> None:
 
 def _fast_tick(state: dict) -> None:
     """Cheap, local-only refresh: write git-state cells for every worktree
-    of every registered repo, then re-publish PR flat cells from the
-    persistent JSON snapshots. Network-free; safe to run at a tight cadence.
+    of every registered repo, reconcile workspace names to their worktree dir,
+    then re-publish PR flat cells from the persistent JSON snapshots.
+    Network-free (cmux/git are local); safe to run at a tight cadence.
 
-    The slow tick already does both in `_write_pr_caches` after fetching `gh`
-    data; the fast tick fills the 300s gap between slow ticks so:
+    The slow tick already does all three after fetching `gh` data; the fast
+    tick fills the 300s gap between slow ticks so:
       • `git checkout` reflects in the footer within ~30s instead of ~300s
+      • a workspace whose name drifted recovers within ~30s
       • PR flat cells repopulate within ~30s after an OS tmpdir wipe
         (cells live under `$TMPDIR/cockpit-cache/`; JSON survives under
         `$COCKPIT_HOME/cache/`)
@@ -122,15 +127,24 @@ def _fast_tick(state: dict) -> None:
         return
     with _tick_lock:
         cfg = load_config()
+        # Names/cwds are a local (non-network) cmux query; fetch once and reuse
+        # across repos. A backend hiccup degrades to no rename, never a crash.
+        try:
+            names, cwds = workspace_state()
+        except CmuxUnavailable:
+            names, cwds = {}, {}
         for repo_entry in cfg.get("repos", []):
             repo_path = Path(os.path.expanduser(repo_entry["path"]))
             if not repo_path.is_dir():
                 continue
             try:
-                for wt in worktrees(repo_path):
-                    write_git_state_cache(wt.path)
+                wts = worktrees(repo_path)
             except (RuntimeError, OSError):
                 continue
+            for wt in wts:
+                write_git_state_cache(wt.path)
+            if cwds:
+                reconcile_workspace_names(names, cwds, wts)
         republish_pr_caches_from_disk()
 
 

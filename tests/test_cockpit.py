@@ -108,3 +108,74 @@ def test_cli_once_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, 
         cockpit.main(["--once"])
     assert exc.value.code == 2
     assert "`cship`" in capsys.readouterr().err
+
+
+def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
+    """The fast tick fetches names/cwds once and reconciles workspace names
+    against each repo's worktrees."""
+    import scripts.cockpit as cockpit
+    from scripts.lib.git import Worktree
+
+    importlib.reload(cockpit)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = Worktree(path=repo / "feat", branch="khivi/feat")
+    names = {"workspace:1": "stale"}
+    cwds = {"workspace:1": repo / "feat"}
+
+    reconcile_calls: list = []
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
+    )
+    monkeypatch.setattr(cockpit, "worktrees", lambda _p: [wt])
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "workspace_state", lambda: (names, cwds))
+    monkeypatch.setattr(
+        cockpit,
+        "reconcile_workspace_names",
+        lambda n, c, w: reconcile_calls.append((n, c, w)),
+    )
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+
+    cockpit._fast_tick({"dry": False})
+
+    assert reconcile_calls == [(names, cwds, [wt])]
+
+
+def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
+    """A cmux backend hiccup degrades to no rename, never a crash, and the rest
+    of the fast tick still runs."""
+    import scripts.cockpit as cockpit
+    from scripts.lib.git import Worktree
+
+    importlib.reload(cockpit)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = Worktree(path=repo / "feat", branch="khivi/feat")
+
+    def _boom():
+        raise cockpit.CmuxUnavailable("list-workspaces failed")
+
+    reconcile_calls: list = []
+    republished: list = []
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
+    )
+    monkeypatch.setattr(cockpit, "worktrees", lambda _p: [wt])
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "workspace_state", _boom)
+    monkeypatch.setattr(
+        cockpit,
+        "reconcile_workspace_names",
+        lambda *a: reconcile_calls.append(a),
+    )
+    monkeypatch.setattr(
+        cockpit, "republish_pr_caches_from_disk", lambda: republished.append(True)
+    )
+
+    cockpit._fast_tick({"dry": False})
+
+    assert reconcile_calls == []  # empty cwds → no reconcile attempted
+    assert republished == [True]  # tick completed

@@ -47,7 +47,7 @@ flowchart LR
     A2["nudge (send + enter)"]
     A3["stuck= pill"]
     A4["teardown (worktree+workspace+branch)"]
-    A5["refresh pills + colors"]
+    A5["refresh pills + colors + names"]
     A6["git branch -D (ref only)"]
     A7["devdone= pill"]
   end
@@ -286,10 +286,13 @@ a cell — it never touches a source directly.
 Why two ticks:
 
 - **Slow tick** owns every decision (spawn, nudge, stuck, devdone, teardown,
-  colors) and the expensive `gh` (+ optional Linear) fetch + per-PR JSON snapshot.
+  colors, names) and the expensive `gh` (+ optional Linear) fetch + per-PR JSON
+  snapshot.
 - **Fast tick** is network-free: it re-derives git-state cells for every
-  worktree and republishes PR flat cells from the persistent JSON, so a
-  `git checkout` or an OS tmpdir wipe recovers within ~30s instead of ~300s.
+  worktree, reconciles each workspace's name to its worktree dir
+  (`reconcile_workspace_names`), and republishes PR flat cells from the
+  persistent JSON, so a `git checkout`, a drifted workspace name, or an OS
+  tmpdir wipe recovers within ~30s instead of ~300s.
 
 Both hold `_tick_lock` (`daemon.py`) so they never collide on the same cells.
 
