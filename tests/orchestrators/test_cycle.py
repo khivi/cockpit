@@ -1079,7 +1079,7 @@ def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, cap
     repo_entry = {"path": str(repo_path), "name": "repo"}
 
     monkeypatch.setattr(cycle, "repo_nwo", lambda _p: ("ai-needl", "repo"))
-    monkeypatch.setattr(cycle, "worktrees", lambda _p: [])
+    monkeypatch.setattr(cycle, "worktrees", lambda _p, _prefix="": [])
     monkeypatch.setattr(cycle, "fetch_merged_branches", lambda *_a, **_k: {})
     monkeypatch.setattr(cycle, "is_cmux", lambda: True)
 
@@ -1119,7 +1119,7 @@ def test_prepare_cycle_prunes_worktrees_before_listing(tmp_path, monkeypatch):
     def _record_prune(_p):
         calls.append("prune")
 
-    def _record_list(_p):
+    def _record_list(_p, _prefix=""):
         calls.append("list")
         return []
 
@@ -1401,7 +1401,7 @@ def test_spawn_missing_bg_spawns_my_pr_without_worktree(tmp_path):
 
 
 def test_spawn_missing_orphan_skips_name_clash_different_path(tmp_path, capsys):
-    """A PR-less orphan whose short name is already used by a workspace rooted
+    """A PR-less orphan whose branch label is already used by a workspace rooted
     at a different, existing path is a cross-repo clash → skip + log, never
     spawn a duplicate-named workspace that would churn every cycle."""
     orphan_wt = tmp_path / "fonx-groups"
@@ -1410,7 +1410,9 @@ def test_spawn_missing_orphan_skips_name_clash_different_path(tmp_path, capsys):
     other_repo_ws.mkdir(parents=True)
     ctx = _spawn_ctx(
         tmp_path,
-        wts=[Worktree(path=orphan_wt, branch="khivi/fonx-groups")],
+        wts=[
+            Worktree(path=orphan_wt, branch="khivi/fonx-groups", branch_prefix="khivi/")
+        ],
         names={"workspace:1": "fonx-groups"},
         cwds={"workspace:1": other_repo_ws},
     )
@@ -1812,11 +1814,13 @@ def test_refresh_orphan_clears_stuck_pill(tmp_path):
 
 
 def test_refresh_orphan_renames_drifted_workspace(tmp_path):
-    """An orphan workspace whose name drifted from its worktree dir is
-    re-asserted to `wt.short` in the slow tick."""
+    """An orphan workspace whose name drifted from its branch label is
+    re-asserted to `wt.label` in the slow tick."""
     wt_path = tmp_path / "repo-feat"
     wt_path.mkdir()
-    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+    wt = Worktree(
+        path=wt_path, branch="khivi/feat", dirty_count=0, branch_prefix="khivi/"
+    )
     ctx = _stub_repo_cycle(tmp_path)
     ctx.base_distance = {}
 
@@ -1830,15 +1834,17 @@ def test_refresh_orphan_renames_drifted_workspace(tmp_path):
     ):
         cycle._refresh_orphan(ctx, "workspace:7", wt, "stale-name")
 
-    rn.assert_called_once_with("workspace:7", "repo-feat", "stale-name", dry=False)
+    rn.assert_called_once_with("workspace:7", "feat", "stale-name", dry=False)
 
 
 def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
-    """A tracked workspace whose name drifted from its worktree dir is
-    re-asserted to `wt.short` in the slow tick."""
+    """A tracked workspace whose name drifted from its branch label is
+    re-asserted to `wt.label` in the slow tick."""
     wt_path = tmp_path / "repo-feat"
     wt_path.mkdir()
-    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+    wt = Worktree(
+        path=wt_path, branch="khivi/feat", dirty_count=0, branch_prefix="khivi/"
+    )
     pr = _pr("khivi/feat", state="OPEN")
     ctx = _stub_repo_cycle(tmp_path)
     ctx.tracked = {"workspace:7": (pr, wt)}
@@ -1854,7 +1860,7 @@ def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
     ):
         cycle._refresh_tracked_pills(ctx, {"workspace:7"})
 
-    rn.assert_called_once_with("workspace:7", "repo-feat", "stale-name", dry=False)
+    rn.assert_called_once_with("workspace:7", "feat", "stale-name", dry=False)
 
 
 def test_stale_threshold_default_is_three_slow_cycles():

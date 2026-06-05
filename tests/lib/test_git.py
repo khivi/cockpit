@@ -14,6 +14,7 @@ import pytest
 
 import scripts.lib.git as gitlib
 from scripts.lib.git import (
+    Worktree,
     _fetch_remote_branch,
     _has_local_branch,
     _has_remote_branch,
@@ -21,6 +22,7 @@ from scripts.lib.git import (
     behind_of_base,
     branch_commits_ahead,
     branch_exists,
+    branch_label,
     create_worktree,
     delete_local_branch,
     has_remote_branch,
@@ -43,6 +45,75 @@ def _committer_env():
         "GIT_COMMITTER_EMAIL": "t@t",
         "GIT_COMMITTER_NAME": "t",
     }
+
+
+# ── branch_label / Worktree.label ────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "branch, prefix, expected",
+    [
+        # Prefix stripped, then leading ticket dropped → human description.
+        ("khivi/pe-4608-understand-dag-builder", "khivi/", "understand-dag-builder"),
+        # Bare PR/issue number prefix is stripped too.
+        ("khivi/123-fix-login-bug", "khivi/", "fix-login-bug"),
+        # Bare ticket with no description keeps its id (never collapses to "").
+        ("khivi/pe-4516", "khivi/", "pe-4516"),
+        # Multi-segment branch keeps every segment (no strip-to-last-`/`); the
+        # `master` segment is NOT a ticket so it survives.
+        ("khivi/master/fnox-age", "khivi/", "master-fnox-age"),
+        # No configured prefix → slugified branch, user prefix left on.
+        ("feature/thing", "", "feature-thing"),
+        # Detached worktree (no branch) → empty label.
+        ("", "khivi/", ""),
+        # Prefix absent from the branch → not stripped; the surviving leading
+        # `other` token isn't a `letters-digits` ticket, so it stays too.
+        ("other/pe-9-do-x", "khivi/", "other-pe-9-do-x"),
+        # A leading word that merely contains a digit (no `letters-digits`
+        # boundary) is not a ticket and is preserved.
+        ("khivi/v2-refactor", "khivi/", "v2-refactor"),
+    ],
+)
+def test_branch_label_transforms(branch, prefix, expected):
+    assert branch_label(branch, prefix) == expected
+
+
+def test_branch_label_truncates_after_ticket_strip(tmp_path):
+    """The 30-char cap is applied AFTER stripping the ticket, so a long
+    description is not pre-truncated by the ticket token's width."""
+    branch = "khivi/pe-4608-" + "a" * 40
+    assert branch_label(branch, "khivi/") == "a" * 30
+
+
+def test_worktree_label_uses_stored_prefix(tmp_path):
+    """`Worktree.label` strips the prefix threaded in at construction; `short`
+    stays the dir basename."""
+    wt = Worktree(
+        path=tmp_path / "pe-4516",
+        branch="khivi/pe-4608-understand-dag-builder",
+        branch_prefix="khivi/",
+    )
+    assert wt.short == "pe-4516"
+    assert wt.label == "understand-dag-builder"
+
+
+def test_worktree_label_primary_main_branch(tmp_path):
+    """A primary checkout on `master` (no prefix match) labels as the branch
+    slug; callers exempt it from renaming, but the property itself is pure."""
+    wt = Worktree(
+        path=tmp_path / "needl-ai",
+        branch="master",
+        is_primary=True,
+        branch_prefix="khivi/",
+    )
+    assert wt.label == "master"
+
+
+def test_worktrees_basic_threads_branch_prefix(cockpit_repo):
+    """`worktrees_basic` stamps the passed prefix onto each Worktree so `label`
+    strips it."""
+    wts = worktrees_basic(cockpit_repo.repo, "khivi/")
+    assert all(wt.branch_prefix == "khivi/" for wt in wts)
 
 
 def test_has_remote_branch_exact_match(cockpit_repo, push_branch):

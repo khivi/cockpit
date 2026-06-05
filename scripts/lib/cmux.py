@@ -335,14 +335,14 @@ def rename_workspace_if_needed(
     ref: str, expected_name: str, current_name: str, *, dry: bool = False
 ) -> bool:
     """Re-assert workspace `ref`'s name to `expected_name` (its worktree's
-    `short` dir name) when the live cmux name has drifted.
+    branch-derived `label`) when the live cmux name has drifted.
 
-    cockpit names a workspace `wt.short` at spawn, but the name can diverge —
+    cockpit names a workspace `wt.label` at spawn, but the name can diverge —
     the user renames it by hand, a closed-then-reopened PR reuses the branch, or
     a limux spawn lands a uuid name. cockpit resolves workspaces by cwd→path,
     never by name, so drift is otherwise silently tolerated; this keeps the
-    sidebar label tracking the worktree dir. `rename-workspace` is not a pill
-    verb, so it works on both cmux and limux.
+    sidebar label tracking the branch. `rename-workspace` is not a pill verb, so
+    it works on both cmux and limux.
 
     No-op (returns False) when `expected_name` is empty or already current.
     Returns True iff a rename was issued (or, under `dry`, would have been).
@@ -362,20 +362,21 @@ def reconcile_workspace_names(
     dry: bool = False,
 ) -> list[tuple[str, str, str]]:
     """Rename every workspace whose cmux name has drifted from its worktree's
-    `short` (dir) name. Used by the fast tick to recover divergence within ~30s.
+    branch-derived `label`. Used by the fast tick to recover divergence within
+    ~30s.
 
     Resolution is cwd→path only, mirroring `find_cockpit_workspaces`'s primary
     match: a workspace is bound to a worktree by its current directory, and its
-    expected name is that worktree's `short`. A workspace that would only match
-    by name already equals `short`, so it never needs a rename and is skipped.
+    expected name is that worktree's `label`. A workspace that would only match
+    by name already equals `label`, so it never needs a rename and is skipped.
 
     The **primary checkout** (`wt.is_primary` — the canonical clone, on a main
     branch) is exempt: a workspace parked there to run skills (morning-align,
     etc.) is a deliberate utility the user names by hand, and the documented
-    escape hatch ("rename the worktree dir") can't apply — the primary dir is
-    the repo's canonical name and can't be renamed. The slow-tick rename paths
-    already skip it (no PR → never `tracked`; `master` ∈ `MAIN_BRANCHES`); this
-    keeps the fast tick from clobbering it back to the repo dir name.
+    escape hatch ("rename the branch") can't apply — the primary is on a main
+    branch the user won't rename. The slow-tick rename paths already skip it (no
+    PR → never `tracked`; `master` ∈ `MAIN_BRANCHES`); this keeps the fast tick
+    from clobbering it back to the branch label.
 
     Returns `[(ref, old_name, new_name)]` for the renames issued (or, under
     `dry`, that would be issued).
@@ -387,8 +388,8 @@ def reconcile_workspace_names(
         if wt is None or wt.is_primary:
             continue
         current = names.get(ref, "")
-        if rename_workspace_if_needed(ref, wt.short, current, dry=dry):
-            renamed.append((ref, current, wt.short))
+        if rename_workspace_if_needed(ref, wt.label, current, dry=dry):
+            renamed.append((ref, current, wt.label))
     return renamed
 
 
@@ -545,7 +546,7 @@ def find_cockpit_workspaces(
     to name match. Returns {ref: (PR, Worktree)}.
     """
     wt_by_path = {wt.path.resolve(): wt for wt in wts}
-    wt_by_name = {wt.short: wt for wt in wts}
+    wt_by_name = {wt.label: wt for wt in wts}
     pr_by_branch = {pr.branch: pr for pr in prs}
     if cwds is None:
         cwds = workspace_cwds()
@@ -773,7 +774,7 @@ def spawn_pr_workspace(
         for key, value, _ in status_pills(pr, wt, self_user, pref, keep=keep):
             print(f"  [dry]   pill {key}={value}", flush=True)
         return None
-    ref = spawn_workspace(wt.short, wt.path, claude_command(build_pr_prompt(pr)))
+    ref = spawn_workspace(wt.label, wt.path, claude_command(build_pr_prompt(pr)))
     if ref is None:
         print(
             f"  warn: could not resolve new workspace ref for {wt.short}",
@@ -795,7 +796,7 @@ def spawn_orphan_workspace(wt: Worktree, *, dry: bool = False) -> str | None:
     if dry:
         print(f"  [dry] orphan spawn {wt.short}  cwd={wt.path}", flush=True)
         return None
-    ref = spawn_workspace(wt.short, wt.path, claude_command(build_orphan_prompt(wt)))
+    ref = spawn_workspace(wt.label, wt.path, claude_command(build_orphan_prompt(wt)))
     if ref is None:
         print(
             f"  warn: could not resolve orphan workspace ref for {wt.short}",

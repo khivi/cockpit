@@ -26,13 +26,13 @@ def render_list() -> int:
             print(f"{name:<14}(repo path missing)")
             continue
         try:
-            wts = worktrees(path)
+            wts = worktrees(path, r.get("branch_prefix", ""))
         except RuntimeError:
             continue
         for wt in wts:
             branch = wt.branch or "(detached)"
             pr_payload = find_pr_payload(branch, repo_name=name)
-            drift = "" if wt.short in cmux_set else " (no workspace)"
+            drift = "" if wt.label in cmux_set else " (no workspace)"
             if pr_payload:
                 review = str(pr_payload["review"]).lower()
                 unaddressed = pr_payload.get("unaddressed") or 0

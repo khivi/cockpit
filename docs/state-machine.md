@@ -296,7 +296,7 @@ Why two ticks:
   colors, names) and the expensive `gh` (+ optional Linear) fetch + per-PR JSON
   snapshot.
 - **Fast tick** is network-free: it re-derives git-state cells for every
-  worktree, reconciles each workspace's name to its worktree dir
+  worktree, reconciles each workspace's name to its branch-derived label
   (`reconcile_workspace_names`), and republishes PR flat cells from the
   persistent JSON, so a `git checkout`, a drifted workspace name, or an OS
   tmpdir wipe recovers within ~30s instead of ~300s.

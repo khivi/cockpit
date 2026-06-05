@@ -112,6 +112,7 @@ from scripts.lib.gh import (  # noqa: E402
 )
 from scripts.lib.git import (  # noqa: E402
     branch_exists,
+    branch_label,
     collision_free,
     create_new_branch_worktree,
     create_worktree,
@@ -733,7 +734,11 @@ def main() -> int:
             return _die(str(e))
 
         if not short:
-            short = slugify(branch.rsplit("/", 1)[-1])
+            # Name the workspace by the same branch-derived label the daemon
+            # re-asserts each tick, so the spawn name agrees with reconcile and
+            # the path/name dedup below (no one-tick flip after creation).
+            prefix = select_repo(args.repo).get("branch_prefix", "")
+            short = branch_label(branch, prefix)
         branch_display = branch
 
         pr_explicit = bool(pr_num)  # True when PR was the input, not auto-detected

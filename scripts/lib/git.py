@@ -47,10 +47,25 @@ class Worktree:
     dirty_count: int = 0
     unpushed: int = 0
     is_primary: bool = False
+    branch_prefix: str = ""
 
     @property
     def short(self) -> str:
+        """Worktree dir basename — the path handle used for cwd→worktree
+        matching and the `git worktree remove` target. NOT the sidebar label;
+        see `label`."""
         return self.path.name
+
+    @property
+    def label(self) -> str:
+        """Branch-derived sidebar/workspace label (see `branch_label`).
+
+        Distinct from `short`: the label tracks the *branch* so a worktree dir
+        renamed out from under its branch still gets a branch-true name. Empty
+        for a detached worktree (no branch). `branch_prefix` is threaded in at
+        construction (`worktrees`/`worktrees_basic`) from the repo config.
+        """
+        return branch_label(self.branch, self.branch_prefix)
 
     @property
     def dirty(self) -> bool:
@@ -143,12 +158,16 @@ def _rebase_head_name(gitdir: Path) -> str | None:
     return None
 
 
-def worktrees_basic(repo_dir: Path) -> list[Worktree]:
+def worktrees_basic(repo_dir: Path, branch_prefix: str = "") -> list[Worktree]:
     """List worktrees by structure only — path/branch/rebasing/merging/is_primary.
 
     `dirty_count` and `unpushed` are left at 0; this skips the per-worktree
     `git status` + `git cherry` forks that `worktrees()` runs. Use it when the
     caller only needs identity (path/branch), e.g. the orphan-workspace reap.
+
+    `branch_prefix` (the repo's configured prefix) is stored on each Worktree so
+    its `label` strips the prefix cleanly; callers that don't render a label can
+    leave it "".
     """
     out = run(["git", "-C", str(repo_dir), "worktree", "list", "--porcelain"])
     blocks = [b for b in out.split("\n\n") if b.strip()]
@@ -189,19 +208,21 @@ def worktrees_basic(repo_dir: Path) -> list[Worktree]:
                     rebasing=rebasing,
                     merging=merging,
                     is_primary=is_primary,
+                    branch_prefix=branch_prefix,
                 )
             )
     return wts
 
 
-def worktrees(repo_dir: Path) -> list[Worktree]:
+def worktrees(repo_dir: Path, branch_prefix: str = "") -> list[Worktree]:
     """Full worktree listing with dirty/unpushed counts filled in.
 
     Layers the per-worktree `count_dirty` + `_count_unpushed` stats (run in
     parallel) onto `worktrees_basic`. Callers that don't need the counts
-    should use `worktrees_basic` to skip those forks.
+    should use `worktrees_basic` to skip those forks. `branch_prefix` is passed
+    through to `worktrees_basic` for the `label` strip.
     """
-    wts = worktrees_basic(repo_dir)
+    wts = worktrees_basic(repo_dir, branch_prefix)
 
     def _stats(w: Worktree) -> tuple[int, int]:
         return count_dirty(w.path), _count_unpushed(w.path)
@@ -300,6 +321,45 @@ def repo_state(cwd: str | os.PathLike) -> str:
 def slugify(s: str, max_len: int = 30) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
     return s[:max_len]
+
+
+# A leading Linear-ticket (`pe-4608-`) or bare PR/issue number (`123-`) token
+# at the head of a slugified branch. The `(?=.)` lookahead refuses to strip when
+# nothing descriptive follows, so a bare-ticket branch (`pe-4516`) keeps its id
+# rather than collapsing to "".
+_LEADING_TICKET_RE = re.compile(r"^(?:[a-z]+-\d+|\d+)-(?=.)")
+
+
+def branch_label(branch: str, branch_prefix: str = "") -> str:
+    """Sidebar/workspace label derived from a branch name.
+
+    Three steps:
+      1. Strip the repo's configured `branch_prefix` (e.g. `khivi/`) when the
+         branch carries it. Stripping the *configured* prefix (not a
+         strip-to-last-`/` heuristic) preserves a `master` mid-segment below.
+      2. Slugify the remainder — collapsing any surviving `/` to `-` so a
+         multi-segment branch keeps its full identity.
+      3. Drop a leading ticket/PR token (`pe-4608-`, `123-`) so the label reads
+         as the human description, NOT the tracker id — but only when something
+         descriptive follows (a bare-ticket branch keeps its id).
+
+        khivi/pe-4608-understand-dag-builder  →  understand-dag-builder
+        khivi/123-fix-login-bug               →  fix-login-bug
+        khivi/pe-4516            (no desc)     →  pe-4516
+        khivi/master/fnox-age                 →  master-fnox-age
+        feature/thing            (no prefix)  →  feature-thing
+        ""                       (detached)   →  ""
+
+    `branch_prefix` defaults to "" so a caller without repo config still gets a
+    slugified, ticket-stripped branch, just with the user prefix left on.
+    """
+    if branch_prefix and branch.startswith(branch_prefix):
+        branch = branch[len(branch_prefix) :]
+    # Normalize without meaningful truncation, strip the leading ticket, then
+    # apply the real 30-char cap so truncation never eats the description tail.
+    slug = slugify(branch, max_len=200)
+    slug = _LEADING_TICKET_RE.sub("", slug)
+    return slug[:30]
 
 
 def collision_free(path: Path) -> Path:
