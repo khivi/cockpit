@@ -2422,3 +2422,78 @@ def test_reap_gated_off_when_auto_cleanup_disabled(tmp_path):
         cycle._reap_branch_refs(ctx)
     lst.assert_not_called()
     dele.assert_not_called()
+
+
+# --- _check_plugin_update --------------------------------------------------
+
+
+def test_check_plugin_update_logs_when_newer(capsys):
+    pill_state: dict = {}
+    with (
+        patch.object(cycle.version, "running_version", return_value="0.27.74"),
+        patch.object(cycle.version, "latest_version", return_value="0.27.80"),
+    ):
+        cycle._check_plugin_update({"check_update": True}, pill_state)
+    out = capsys.readouterr().out
+    assert "update available" in out
+    assert "0.27.74 -> 0.27.80" in out
+    assert pill_state["update-check:warned"] == "0.27.80"
+
+
+def test_check_plugin_update_default_on_when_key_absent(capsys):
+    with (
+        patch.object(cycle.version, "running_version", return_value="0.27.74"),
+        patch.object(cycle.version, "latest_version", return_value="0.27.80"),
+    ):
+        cycle._check_plugin_update({}, {})
+    assert "update available" in capsys.readouterr().out
+
+
+def test_check_plugin_update_skips_when_disabled(capsys):
+    with patch.object(cycle.version, "latest_version") as latest:
+        cycle._check_plugin_update({"check_update": False}, {})
+    latest.assert_not_called()
+    assert capsys.readouterr().out == ""
+
+
+def test_check_plugin_update_silent_when_up_to_date(capsys):
+    with (
+        patch.object(cycle.version, "running_version", return_value="0.27.80"),
+        patch.object(cycle.version, "latest_version", return_value="0.27.80"),
+    ):
+        cycle._check_plugin_update({"check_update": True}, {})
+    assert capsys.readouterr().out == ""
+
+
+def test_check_plugin_update_silent_on_fetch_failure(capsys):
+    with (
+        patch.object(cycle.version, "running_version", return_value="0.27.74"),
+        patch.object(cycle.version, "latest_version", return_value=None),
+    ):
+        cycle._check_plugin_update({"check_update": True}, {})
+    assert capsys.readouterr().out == ""
+
+
+def test_check_plugin_update_ttl_throttles_second_call(capsys):
+    pill_state: dict = {}
+    with (
+        patch.object(cycle.version, "running_version", return_value="0.27.74"),
+        patch.object(cycle.version, "latest_version", return_value="0.27.80") as latest,
+    ):
+        cycle._check_plugin_update({"check_update": True}, pill_state)
+        capsys.readouterr()  # drain the first notice
+        cycle._check_plugin_update({"check_update": True}, pill_state)
+    # Second call is inside the TTL window — no re-query, no re-log.
+    assert latest.call_count == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_check_plugin_update_warns_once_per_version(capsys):
+    # A re-query (after the TTL) for the same newer version must not re-log.
+    pill_state = {"update-check:warned": "0.27.80"}
+    with (
+        patch.object(cycle.version, "running_version", return_value="0.27.74"),
+        patch.object(cycle.version, "latest_version", return_value="0.27.80"),
+    ):
+        cycle._check_plugin_update({"check_update": True}, pill_state)
+    assert capsys.readouterr().out == ""

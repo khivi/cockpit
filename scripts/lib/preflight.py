@@ -71,6 +71,20 @@ def _validate_review_prs(cfg: dict) -> None:
             )
 
 
+def _validate_check_update(cfg: dict) -> None:
+    """Hard-fail on a top-level `check_update` that isn't a bool.
+
+    `check_update` (default true) gates the slow-tick log line that fires when a
+    newer cockpit is published on the install repo's default branch. A non-bool
+    (e.g. a stray string) would be silently truthy, so it's rejected at start
+    like `review_prs`.
+    """
+    if "check_update" not in cfg:
+        return
+    if not isinstance(cfg["check_update"], bool):
+        _die(f"check_update must be true or false, got {cfg['check_update']!r}.")
+
+
 def _validate_linear_dev_done(cfg: dict) -> None:
     """Validate the dev-done pill config and warn on a missing API key.
 
@@ -112,6 +126,7 @@ def preflight(cfg: dict) -> None:
 
     _validate_sidebar_colors(cfg)
     _validate_review_prs(cfg)
+    _validate_check_update(cfg)
     _validate_linear_dev_done(cfg)
 
     if cfg.get("tool", "auto") == "auto":
