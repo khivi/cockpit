@@ -277,10 +277,10 @@ def _linear_prompt(branch: str, identifier: str) -> str:
         "- If the tool call fails because the MCP server is still connecting (tools "
         "show as unavailable or return a connection error), the in-session connector "
         "is still completing its handshake — this is common when several worktrees "
-        "spawn at once and the connection can take 30s+ under that load. Retry on a "
-        "backoff: `sleep 8` then retry, and if it still fails `sleep 15` then retry, "
-        "and if it still fails `sleep 30` then retry (up to three retries total). "
-        "Re-attempt the SAME MCP tool call each time — do not switch tools.",
+        "spawn at once. Immediately retry the SAME MCP tool call up to three times "
+        "(do not switch tools, do not insert shell `sleep` waits — they are blocked "
+        "in some environments and do not help); the connector usually finishes its "
+        "handshake within a couple of attempts.",
         "- If the MCP is still unavailable after all retries, STOP. Report to the user "
         "that the Linear connector did not finish connecting and that running `/mcp` "
         "to reconnect, then re-invoking this session, will resolve it. Exit without "
