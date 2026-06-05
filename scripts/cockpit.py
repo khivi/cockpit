@@ -138,7 +138,7 @@ def _fast_tick(state: dict) -> None:
             if not repo_path.is_dir():
                 continue
             try:
-                wts = worktrees(repo_path)
+                wts = worktrees(repo_path, repo_entry.get("branch_prefix", ""))
             except (RuntimeError, OSError):
                 continue
             for wt in wts:

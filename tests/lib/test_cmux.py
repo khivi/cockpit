@@ -349,27 +349,35 @@ def test_rename_workspace_if_needed_dry_reports_without_calling():
 
 def test_reconcile_workspace_names_renames_cwd_matched_diverged(tmp_path):
     """Only cwd-matched, name-drifted workspaces rename; name-matched and
-    cwd-unmatched refs are left alone."""
-    wt_a = tmp_path / "feat-a"
+    cwd-unmatched refs are left alone. The expected name is the branch-derived
+    `label`, NOT the dir basename — the motivating case: a dir `pe-4516` holding
+    branch `khivi/pe-4608-understand-dag-builder` labels by the branch."""
+    wt_a = tmp_path / "pe-4516"  # dir name diverged from its branch
     wt_a.mkdir()
     wt_b = tmp_path / "feat-b"
     wt_b.mkdir()
     wts = [
-        Worktree(path=wt_a, branch="khivi/a"),
-        Worktree(path=wt_b, branch="khivi/b"),
+        Worktree(
+            path=wt_a,
+            branch="khivi/pe-4608-understand-dag-builder",
+            branch_prefix="khivi/",
+        ),
+        Worktree(path=wt_b, branch="khivi/b", branch_prefix="khivi/"),
     ]
-    names = {"workspace:1": "stale-name", "workspace:2": "feat-b"}
+    names = {"workspace:1": "pe-4516", "workspace:2": "b"}
     cwds = {
-        "workspace:1": wt_a,  # name drifted → rename to feat-a
-        "workspace:2": wt_b,  # already matches → skip
+        "workspace:1": wt_a,  # name tracks dir → rename to branch label
+        "workspace:2": wt_b,  # already matches label "b" → skip
         "workspace:3": tmp_path / "elsewhere",  # no wt at this cwd → skip
     }
     calls: list[tuple] = []
     with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
         renamed = reconcile_workspace_names(names, cwds, wts)
 
-    assert renamed == [("workspace:1", "stale-name", "feat-a")]
-    assert calls == [("rename-workspace", "--workspace", "workspace:1", "feat-a")]
+    assert renamed == [("workspace:1", "pe-4516", "understand-dag-builder")]
+    assert calls == [
+        ("rename-workspace", "--workspace", "workspace:1", "understand-dag-builder")
+    ]
 
 
 def test_reconcile_workspace_names_skips_primary_checkout(tmp_path):
@@ -392,14 +400,14 @@ def test_reconcile_workspace_names_skips_primary_checkout(tmp_path):
 def test_reconcile_workspace_names_dry_reports_without_calling(tmp_path):
     wt_a = tmp_path / "feat-a"
     wt_a.mkdir()
-    wts = [Worktree(path=wt_a, branch="khivi/a")]
+    wts = [Worktree(path=wt_a, branch="khivi/a", branch_prefix="khivi/")]
     names = {"workspace:1": "old"}
     cwds = {"workspace:1": wt_a}
     calls: list[tuple] = []
     with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
         renamed = reconcile_workspace_names(names, cwds, wts, dry=True)
 
-    assert renamed == [("workspace:1", "old", "feat-a")]
+    assert renamed == [("workspace:1", "old", "a")]
     assert calls == []
 
 
