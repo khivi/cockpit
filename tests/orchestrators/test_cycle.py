@@ -1360,6 +1360,8 @@ def _spawn_ctx(
     tracked=None,
     review_candidates=None,
     pill_state=None,
+    names=None,
+    cwds=None,
     dry=False,
 ):
     return cycle.RepoCycle(
@@ -1371,8 +1373,8 @@ def _spawn_ctx(
         wts=wts or [],
         prs=prs or [],
         tracked=tracked or {},
-        names={},
-        cwds={},
+        names=names or {},
+        cwds=cwds or {},
         merged_branches={},
         merged_branches_deep={},
         pill_state={} if pill_state is None else pill_state,
@@ -1396,6 +1398,55 @@ def test_spawn_missing_bg_spawns_my_pr_without_worktree(tmp_path):
         cycle._spawn_missing_workspaces(ctx, {"name": "n"})
     bg.assert_called_once_with(ctx, "n", 7, "khivi/feat", review=False)
     sp.assert_not_called()
+
+
+def test_spawn_missing_orphan_skips_name_clash_different_path(tmp_path, capsys):
+    """A PR-less orphan whose short name is already used by a workspace rooted
+    at a different, existing path is a cross-repo clash → skip + log, never
+    spawn a duplicate-named workspace that would churn every cycle."""
+    orphan_wt = tmp_path / "fonx-groups"
+    orphan_wt.mkdir()
+    other_repo_ws = tmp_path / "other" / "fonx-groups"
+    other_repo_ws.mkdir(parents=True)
+    ctx = _spawn_ctx(
+        tmp_path,
+        wts=[Worktree(path=orphan_wt, branch="khivi/fonx-groups")],
+        names={"workspace:1": "fonx-groups"},
+        cwds={"workspace:1": other_repo_ws},
+    )
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace"),
+        patch.object(cycle, "spawn_orphan_workspace") as orphan,
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    orphan.assert_not_called()
+    out = capsys.readouterr().out
+    assert "orphan-spawn fonx-groups — workspace name already used by" in out
+    assert str(other_repo_ws) in out
+
+
+def test_spawn_missing_orphan_spawns_when_clash_cwd_missing(tmp_path):
+    """A same-named workspace whose cwd no longer exists must NOT suppress the
+    orphan spawn — that dead workspace is reaped by close_gone_cwd_workspaces,
+    so deferring to it would strand the orphan forever."""
+    orphan_wt = tmp_path / "fonx-groups"
+    orphan_wt.mkdir()
+    dead_ws = tmp_path / "gone" / "fonx-groups"  # never created on disk
+    ctx = _spawn_ctx(
+        tmp_path,
+        wts=[Worktree(path=orphan_wt, branch="khivi/fonx-groups")],
+        names={"workspace:1": "fonx-groups"},
+        cwds={"workspace:1": dead_ws},
+    )
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace"),
+        patch.object(cycle, "spawn_orphan_workspace") as orphan,
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    orphan.assert_called_once()
+    assert orphan.call_args.args[0] is ctx.wts[0]
 
 
 def test_spawn_missing_review_candidates_filtered(tmp_path):
