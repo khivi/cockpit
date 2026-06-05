@@ -372,6 +372,23 @@ def test_reconcile_workspace_names_renames_cwd_matched_diverged(tmp_path):
     assert calls == [("rename-workspace", "--workspace", "workspace:1", "feat-a")]
 
 
+def test_reconcile_workspace_names_skips_primary_checkout(tmp_path):
+    """A workspace parked on the primary checkout (e.g. one the user named
+    'morning' to run skills on master) must NOT be force-renamed to the repo
+    dir name. The primary dir can't be renamed to dodge it, so it's exempt."""
+    primary = tmp_path / "needl-ai"
+    primary.mkdir()
+    wts = [Worktree(path=primary, branch="master", is_primary=True)]
+    names = {"workspace:1": "morning"}  # user's custom name on the main checkout
+    cwds = {"workspace:1": primary}
+    calls: list[tuple] = []
+    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+        renamed = reconcile_workspace_names(names, cwds, wts)
+
+    assert renamed == []
+    assert calls == []
+
+
 def test_reconcile_workspace_names_dry_reports_without_calling(tmp_path):
     wt_a = tmp_path / "feat-a"
     wt_a.mkdir()
