@@ -369,6 +369,14 @@ def reconcile_workspace_names(
     expected name is that worktree's `short`. A workspace that would only match
     by name already equals `short`, so it never needs a rename and is skipped.
 
+    The **primary checkout** (`wt.is_primary` — the canonical clone, on a main
+    branch) is exempt: a workspace parked there to run skills (morning-align,
+    etc.) is a deliberate utility the user names by hand, and the documented
+    escape hatch ("rename the worktree dir") can't apply — the primary dir is
+    the repo's canonical name and can't be renamed. The slow-tick rename paths
+    already skip it (no PR → never `tracked`; `master` ∈ `MAIN_BRANCHES`); this
+    keeps the fast tick from clobbering it back to the repo dir name.
+
     Returns `[(ref, old_name, new_name)]` for the renames issued (or, under
     `dry`, that would be issued).
     """
@@ -376,7 +384,7 @@ def reconcile_workspace_names(
     renamed: list[tuple[str, str, str]] = []
     for ref, cwd in cwds.items():
         wt = wt_by_path.get(cwd.resolve())
-        if wt is None:
+        if wt is None or wt.is_primary:
             continue
         current = names.get(ref, "")
         if rename_workspace_if_needed(ref, wt.short, current, dry=dry):
