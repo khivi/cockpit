@@ -331,6 +331,59 @@ def spawn_workspace(name: str, cwd: Path, command: str) -> str | None:
     return wait_for_new_workspace_ref(before)
 
 
+def rename_workspace_if_needed(
+    ref: str, expected_name: str, current_name: str, *, dry: bool = False
+) -> bool:
+    """Re-assert workspace `ref`'s name to `expected_name` (its worktree's
+    `short` dir name) when the live cmux name has drifted.
+
+    cockpit names a workspace `wt.short` at spawn, but the name can diverge —
+    the user renames it by hand, a closed-then-reopened PR reuses the branch, or
+    a limux spawn lands a uuid name. cockpit resolves workspaces by cwd→path,
+    never by name, so drift is otherwise silently tolerated; this keeps the
+    sidebar label tracking the worktree dir. `rename-workspace` is not a pill
+    verb, so it works on both cmux and limux.
+
+    No-op (returns False) when `expected_name` is empty or already current.
+    Returns True iff a rename was issued (or, under `dry`, would have been).
+    """
+    if not expected_name or current_name == expected_name:
+        return False
+    if not dry:
+        cmux("rename-workspace", "--workspace", ref, expected_name, check=False)
+    return True
+
+
+def reconcile_workspace_names(
+    names: dict[str, str],
+    cwds: dict[str, Path],
+    wts: list[Worktree],
+    *,
+    dry: bool = False,
+) -> list[tuple[str, str, str]]:
+    """Rename every workspace whose cmux name has drifted from its worktree's
+    `short` (dir) name. Used by the fast tick to recover divergence within ~30s.
+
+    Resolution is cwd→path only, mirroring `find_cockpit_workspaces`'s primary
+    match: a workspace is bound to a worktree by its current directory, and its
+    expected name is that worktree's `short`. A workspace that would only match
+    by name already equals `short`, so it never needs a rename and is skipped.
+
+    Returns `[(ref, old_name, new_name)]` for the renames issued (or, under
+    `dry`, that would be issued).
+    """
+    wt_by_path = {wt.path.resolve(): wt for wt in wts}
+    renamed: list[tuple[str, str, str]] = []
+    for ref, cwd in cwds.items():
+        wt = wt_by_path.get(cwd.resolve())
+        if wt is None:
+            continue
+        current = names.get(ref, "")
+        if rename_workspace_if_needed(ref, wt.short, current, dry=dry):
+            renamed.append((ref, current, wt.short))
+    return renamed
+
+
 def nudge_if_idle(
     ref: str,
     message: str,

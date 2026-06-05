@@ -1760,6 +1760,52 @@ def test_refresh_orphan_clears_stuck_pill(tmp_path):
     stuck_mock.assert_called_once_with("workspace:7", None)
 
 
+def test_refresh_orphan_renames_drifted_workspace(tmp_path):
+    """An orphan workspace whose name drifted from its worktree dir is
+    re-asserted to `wt.short` in the slow tick."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.base_distance = {}
+
+    with (
+        patch.object(cycle, "cmux"),
+        patch.object(cycle, "apply_wip_pill"),
+        patch.object(cycle, "apply_stale_pill"),
+        patch.object(cycle, "apply_stuck_pill"),
+        patch.object(cycle, "maybe_nudge"),
+        patch.object(cycle, "rename_workspace_if_needed", return_value=True) as rn,
+    ):
+        cycle._refresh_orphan(ctx, "workspace:7", wt, "stale-name")
+
+    rn.assert_called_once_with("workspace:7", "repo-feat", "stale-name", dry=False)
+
+
+def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
+    """A tracked workspace whose name drifted from its worktree dir is
+    re-asserted to `wt.short` in the slow tick."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+    pr = _pr("khivi/feat", state="OPEN")
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.tracked = {"workspace:7": (pr, wt)}
+    ctx.names = {"workspace:7": "stale-name"}
+
+    with (
+        patch.object(cycle, "apply_pills"),
+        patch.object(cycle, "status_pills", return_value=()),
+        patch.object(cycle, "maybe_nudge", return_value=False),
+        patch.object(cycle, "_track_stale_issue"),
+        patch.object(cycle, "_track_dev_done"),
+        patch.object(cycle, "rename_workspace_if_needed", return_value=True) as rn,
+    ):
+        cycle._refresh_tracked_pills(ctx, {"workspace:7"})
+
+    rn.assert_called_once_with("workspace:7", "repo-feat", "stale-name", dry=False)
+
+
 def test_stale_threshold_default_is_three_slow_cycles():
     assert cycle._stale_threshold_seconds({}) == 900.0
     assert cycle._stale_threshold_seconds({"slow_poll_interval_seconds": 100}) == 300.0
