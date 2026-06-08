@@ -6,10 +6,10 @@
 # starship-flavored [custom.*] modules — cship's own line renderer does not
 # evaluate [custom.*] sections.
 #
-# Copied to ~/.config/starship.toml only when you run `cockpit footer`
+# Copied to ~/.config/starship.toml only when you run `cockpit setup`
 # (the explicit footer-setup command). --watch reconcile cycles
 # never touch this file, so any edits you make stick around until you
-# re-run --footer.
+# re-run --setup.
 
 # Explicit two-line layout:
 #   line 1 = session state (model / context / rate / branch / session time)
@@ -53,7 +53,7 @@ add_newline = false
 # Palette values are BARE NUMERIC ("243"), not `color_NNN`: starship 1.25.1
 # silently drops `color_NNN` styles inside [custom.*] modules.
 #
-# Changing `theme` takes effect on the next `cockpit footer` (the only command
+# Changing `theme` takes effect on the next `cockpit setup` (the only command
 # that re-seeds this file), exactly like any other edit to starship.toml.
 palette = "__COCKPIT_THEME__"
 

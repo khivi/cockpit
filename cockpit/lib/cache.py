@@ -4,7 +4,7 @@ Two cache directories, both owned by this module:
 
 1. `$COCKPIT_HOME/cache/{repo}__pr-{N}.json` (referenced as `CACHE_DIR`).
    Rich JSON per PR. Written each reconcile cycle by `write_pr_cache`,
-   read by the `cockpit watch` table and `cockpit/close.py`.
+   read by the `cockpit watch` table (including its close actions).
 
 2. `$TMPDIR/cockpit-cache/{stem}[-<sid>|-<branch>]` (referenced as
    `FLAT_CACHE_DIR`). Flat one-string-per-file payloads consumed by
@@ -45,19 +45,10 @@ if TYPE_CHECKING:
 def muted_payload(pref: NudgePref | None) -> str:
     """Serialize a NudgePref into the `pr-muted` flat-cell contract.
 
-    Returns "" when not muted, "all" for full mute, or a sorted comma-joined
-    category list (e.g. "ci,comments") for partial. Same string is also
-    embedded as JSON `muted` so renderer-spawned refreshers can copy it
-    straight through.
+    Returns "muted" when the PR is muted, else "". The same string is embedded
+    as JSON `muted` so renderer-spawned refreshers can copy it straight through.
     """
-    if pref is None or not pref.disabled_categories:
-        return ""
-    from .nudges import KNOWN_CATEGORIES
-
-    cats = pref.disabled_categories
-    if cats >= set(KNOWN_CATEGORIES):
-        return "all"
-    return ",".join(sorted(cats))
+    return "muted" if (pref is not None and pref.muted) else ""
 
 
 # ── JSON per-PR cache (cockpit's primary state) ────────────────────────────
@@ -521,9 +512,8 @@ def write_branch_pr_cache(
     `ci_glyph` is empty by default — the per-render background refresh
     will repopulate `pr-checks-<branch>` from `gh pr checks` when stale.
 
-    `muted` follows the `pr-muted` flat-cell contract: "" (not muted), "all"
-    (full mute), or sorted comma-joined category list (partial). Always
-    written so an unmute clears the cell same-tick.
+    `muted` follows the `pr-muted` flat-cell contract: "" (not muted) or
+    "muted". Always written so an unmute clears the cell same-tick.
 
     `comments` is the unaddressed review-thread count from the PR fetch.
     """

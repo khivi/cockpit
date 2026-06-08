@@ -2,7 +2,8 @@
 
 One JSON file per PR at `$COCKPIT_HOME/cache/nudges/<pr-number>.json`. Holds
 both the daemon-set `last_nudge_at` timestamp (for rate limiting) and the
-user-set `disabled_categories` / `until` mute (set via `cockpit nudge mute`).
+user-set `muted` / `until` mute (set via `cockpit nudge mute`). A mute is
+all-or-nothing — it silences every nudge category for the PR.
 
 Persisting both in one place means daemon restarts don't replay nudges the user
 already saw, and `parked=`-style runtime state survives across cmux restarts
@@ -20,12 +21,11 @@ from pathlib import Path
 from .config import CACHE_DIR
 
 NUDGE_DIR = CACHE_DIR / "nudges"
-KNOWN_CATEGORIES = ("comments", "ci", "conflicts")
 
 
 @dataclass
 class NudgePref:
-    disabled_categories: set[str] = field(default_factory=set)
+    muted: bool = False
     until: float | None = None
     reason: str = ""
     last_nudge_at: float = 0.0
@@ -37,7 +37,7 @@ class NudgePref:
 
     def to_json(self) -> dict:
         return {
-            "disabled_categories": sorted(self.disabled_categories),
+            "muted": self.muted,
             "until": self.until,
             "reason": self.reason,
             "last_nudge_at": self.last_nudge_at,
@@ -48,8 +48,10 @@ class NudgePref:
     @classmethod
     def from_json(cls, data: dict) -> NudgePref:
         raw_seen = data.get("first_seen_at") or {}
+        # A pre-boolean file's `disabled_categories` key is simply ignored — an
+        # absent `muted` reads as not muted (any prior mute is dropped).
         return cls(
-            disabled_categories=set(data.get("disabled_categories") or []),
+            muted=bool(data.get("muted")),
             until=data.get("until"),
             reason=data.get("reason", "") or "",
             last_nudge_at=float(data.get("last_nudge_at") or 0.0),
@@ -63,9 +65,9 @@ def _pref_path(pr_number: int) -> Path:
 
 
 def load_pref(pr_number: int, *, now: float | None = None) -> NudgePref:
-    """Load a PR's nudge pref. Auto-expires `disabled_categories` when `until`
-    has passed and persists the expiry, so the daemon resumes nudging without
-    a separate sweep step."""
+    """Load a PR's nudge pref. Auto-expires the mute when `until` has passed and
+    persists the expiry, so the daemon resumes nudging without a separate sweep
+    step."""
     path = _pref_path(pr_number)
     if not path.exists():
         return NudgePref()
@@ -74,8 +76,8 @@ def load_pref(pr_number: int, *, now: float | None = None) -> NudgePref:
     except (OSError, json.JSONDecodeError):
         return NudgePref()
     t = time.time() if now is None else now
-    if pref.until is not None and pref.until <= t and pref.disabled_categories:
-        pref.disabled_categories.clear()
+    if pref.until is not None and pref.until <= t and pref.muted:
+        pref.muted = False
         pref.until = None
         pref.reason = ""
         save_pref(pr_number, pref)
@@ -112,23 +114,17 @@ def list_prefs() -> dict[int, NudgePref]:
     return out
 
 
-def should_nudge(
-    pr_number: int,
-    category: str,
-    *,
-    now: float | None = None,
-) -> bool:
-    """True iff nudging this PR in this category is allowed right now.
+def should_nudge(pr_number: int, *, now: float | None = None) -> bool:
+    """True iff nudging this PR is allowed right now.
 
-    Blocks only when the user has muted the category. The slow tick's cadence
-    (`slow_poll_interval_seconds`, default 300s) is the implicit throttle —
-    each tick re-evaluates and re-fires if the issue persists. `last_nudge_at`
-    is still recorded so `cockpit nudge status` can display "last nudged X
-    ago," but it does not gate future nudges.
+    Blocks only when the user has muted the PR (a mute silences every category).
+    The slow tick's cadence (`slow_poll_interval_seconds`, default 300s) is the
+    implicit throttle — each tick re-evaluates and re-fires if the issue
+    persists. `last_nudge_at` is still recorded so `cockpit nudge status` can
+    display "last nudged X ago," but it does not gate future nudges.
     """
     t = time.time() if now is None else now
-    pref = load_pref(pr_number, now=t)
-    return category not in pref.disabled_categories
+    return not load_pref(pr_number, now=t).muted
 
 
 def record_nudge(pr_number: int, category: str, *, now: float | None = None) -> None:
@@ -152,20 +148,3 @@ def parse_duration(s: str) -> float:
     n = int(m.group(1))
     unit = m.group(2)
     return n * {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}[unit]
-
-
-def normalize_categories(raw: str | None) -> set[str]:
-    """Parse `--categories comments,ci`. Empty / None = all known categories
-    (full mute). Unknown tokens raise ValueError so typos don't silently no-op.
-    """
-    if not raw:
-        return set(KNOWN_CATEGORIES)
-    tokens = [t.strip() for t in raw.split(",") if t.strip()]
-    bad = [t for t in tokens if t not in KNOWN_CATEGORIES]
-    if bad:
-        label = "category" if len(bad) == 1 else "categories"
-        raise ValueError(
-            f"unknown {label}: {', '.join(bad)} "
-            f"(known: {', '.join(KNOWN_CATEGORIES)})"
-        )
-    return set(tokens)

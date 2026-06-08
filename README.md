@@ -45,7 +45,7 @@ uv tool install git+https://github.com/khivi/cockpit
 #   uvx --from git+https://github.com/khivi/cockpit cockpit --help
 ```
 
-`bin/cockpit.sh` launches the TUI daemon (`cockpit watch`), preferring the installed `cockpit` and otherwise running it from the checkout via `uv` — handy before a global install. `bin/update.sh` updates everything in one shot: it refreshes the Claude Code marketplace + plugin via the `claude` CLI, then reinstalls the `cockpit` command via `uv` (restart Claude Code and the daemon afterwards).
+`bin/cockpit.sh` launches the TUI daemon (`cockpit watch`), preferring the installed `cockpit` and otherwise running it from the checkout via `uv` — handy before a global install. It also supervises self-update: the TUI checks hourly for a newer version and shows an "⬆ update available" indicator in the header; press `u` and cockpit.sh runs `bin/update.sh`, then relaunches the daemon on the new version. `bin/update.sh` updates everything in one shot: it refreshes the Claude Code marketplace + plugin via the `claude` CLI, then reinstalls the `cockpit` command via `uv` (restart Claude Code afterwards for the plugin's slash commands/hooks). `bin/update.sh --check` reports whether an update is available without applying it (exit 10 = available, 0 = current).
 
 1. Inside Claude Code, add the plugin:
 
@@ -54,7 +54,7 @@ uv tool install git+https://github.com/khivi/cockpit
 /plugin install cockpit@khivi-cockpit
 ```
 
-The slash commands (`/cockpit:new`, `/cockpit:focus`, …) and the statusline hook invoke the `cockpit` command from step 1. If it isn't on `PATH`, the daemon warns at startup and the commands fail — re-run step 1.
+The slash commands (`/cockpit:new`, `/cockpit:repos`, …) and the statusline hook invoke the `cockpit` command from step 1. If it isn't on `PATH`, the daemon warns at startup and the commands fail — re-run step 1.
 
 For live PR/CI status to flow into the `cockpit watch` table and the statusline, start the daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible. `cockpit watch` opens a **terminal UI**: slow/fast tick countdowns + an update indicator in the header, and a navigable worktree table (arrow keys move the row cursor) showing each workspace's PR / review state / CI:
 
@@ -112,12 +112,9 @@ Out of scope here: rendering the Linear ticket title in the cship statusline pil
 | Command | What it does |
 |---|---|
 | `/cockpit:new <branch-or-pr>` | Create or attach to a worktree+workspace. Numeric arg = PR mode. |
-| `/cockpit:focus <pr\|branch\|slug>` | Switch cmux focus to the matching workspace. Read-only on disk. |
-| `/cockpit:close <pr\|branch\|slug> [--force]` | Tear down worktree + workspace + PR cache. Refuses on dirty state, unpushed commits, or open PR without `--force`. |
 | `/cockpit:repos` | List configured repos from `~/.config/cockpit/config.json`. |
-| `/cockpit:nudge` | Mute/unmute per-PR nudges. See [Nudge pills](#nudge-pills-optional). |
 
-Listing worktrees and forcing a poll now live in the `cockpit watch` TUI — the table is the live worktree list, and `s` forces a cycle (no `/cockpit:list` or `/cockpit:sync` commands).
+Listing worktrees, forcing a poll, focusing, closing a worktree, and nudging now live in the `cockpit watch` TUI — the table is the live worktree list, `f` (or Enter) focuses the cursor row's workspace, `s` forces a cycle, `c` tears down the cursor row (refuses on dirty/unpushed/open-PR), `C` force-closes it (overrides the open-PR refusal but never dirty/unpushed work), `m` mutes/unmutes its PR's nudges, and `n` sends a nudge to the cursor row's workspace now (overrides mute + the slow-tick throttle, still gated on idle so it never types into a permission prompt). The `cockpit nudge status|list|forget` CLI remains for shell use; closing is TUI-only now (`c`/`C`), with no `/cockpit:list`, `/cockpit:sync`, `/cockpit:close`, `/cockpit:focus`, or `/cockpit:nudge` commands.
 
 ## Configuration
 
@@ -193,25 +190,25 @@ To opt in:
 
 1. Install `cship` and `starship` on `PATH`.
 2. Set `use_cship: true` in `~/.config/cockpit/config.json`.
-3. Run `cockpit footer` once to wire `~/.claude/settings.json`.
+3. Run `cockpit setup` once to wire `~/.claude/settings.json`.
 
-`--footer` also seeds `~/.config/cship.toml` and `~/.config/starship.toml` with the bundled defaults. Re-running it clobbers any local edits to those files — that's intentional, it's the reset switch.
+`cockpit setup` also seeds `~/.config/cship.toml` and `~/.config/starship.toml` with the bundled defaults. Re-running it clobbers any local edits to those files — that's intentional, it's the reset switch.
 
 ## Nudge pills (optional)
 
-When the agent is idle, cockpit can ping the workspace about actionable PR signals (CI failed, unresolved threads, merge conflict). It's automatic and no-ops outside cmux.
+When the agent is idle, cockpit can ping the workspace about actionable PR signals (CI failed, unresolved threads, merge conflict). It's automatic and no-ops outside cmux. In the TUI, `n` sends a nudge to the cursor row now (overrides mute + the throttle) and `m` mutes/unmutes the row's PR.
 
-Mute per-PR when a nudge is wrong:
+Mute per-PR when a nudge is wrong, via the `cockpit nudge` CLI:
 
 ```text
-/cockpit:nudge mute --categories comments --until 7d --reason "copilot intentional"
-/cockpit:nudge unmute
-/cockpit:nudge status
-/cockpit:nudge list
-/cockpit:nudge forget    # wipe the nudge file (resets mute + rate-limit)
+cockpit nudge mute --until 7d --reason "copilot intentional"
+cockpit nudge unmute
+cockpit nudge status
+cockpit nudge list
+cockpit nudge forget    # wipe the nudge file (resets mute + rate-limit)
 ```
 
-Categories: `comments`, `ci`, `conflicts` (omit `--categories` to mute all). Mutes persist across daemon and cmux restarts and auto-clear once `until` passes.
+A mute is all-or-nothing — it silences every category (CI, comments, conflicts) for that PR. Mutes persist across daemon and cmux restarts and auto-clear once `until` passes.
 
 ## Uninstall
 

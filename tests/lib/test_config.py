@@ -1,9 +1,9 @@
 """Static guards on the bundled defaults under cockpit/defaults/ + a
-plug-and-play roundtrip that drives the real `cockpit --footer` install
+plug-and-play roundtrip that drives the real `cockpit setup` install
 helpers against a tmp $XDG_CONFIG_HOME.
 
 These configs ship with the plugin and only get copied to
-`~/.config/{cship,starship}.toml` when the user runs `cockpit --footer`.
+`~/.config/{cship,starship}.toml` when the user runs `cockpit setup`.
 A regression here silently breaks every install on the next plugin
 update — long after the test would have flagged it if we had one.
 """
@@ -143,7 +143,7 @@ def test_starship_toml_declares_theme_palettes():
 
 def test_footer_install_roundtrip_overwrites_stale_user_config(tmp_path, monkeypatch):
     """Plug-and-play: when the user reinstalls the plugin and runs
-    `cockpit --footer`, the bundled defaults MUST clobber whatever's
+    `cockpit setup`, the bundled defaults MUST clobber whatever's
     already at `~/.config/{cship,starship}.toml` — otherwise the user
     is stuck on stale config (e.g. the pre-fix `current_dir` line) and
     the fix doesn't take effect until they hand-edit. This test drives
@@ -199,7 +199,7 @@ def test_footer_install_roundtrip_overwrites_stale_user_config(tmp_path, monkeyp
 def test_footer_install_is_idempotent_and_announces_state(
     tmp_path, monkeypatch, capsys
 ):
-    """`cockpit --footer` must be verbose AND idempotent: a re-run on
+    """`cockpit setup` must be verbose AND idempotent: a re-run on
     already-installed defaults rewrites nothing but explicitly reports
     each target as `unchanged, default kept at <path>`. Silent no-ops
     are not acceptable — the user needs confirmation the command ran."""
@@ -269,6 +269,46 @@ def test_resolve_theme_validates():
     assert config_mod.resolve_theme({"theme": "light"}) == "light"
     assert config_mod.resolve_theme({"theme": "neon"}) == "dark"
     assert config_mod.resolve_theme({}) == "dark"
+
+
+def test_resolve_tui_theme_defaults_and_passthrough():
+    """tui_theme passes any non-empty string through (validation against the
+    registered Textual themes is the App's job); missing/blank → the default."""
+    assert config_mod.resolve_tui_theme({"tui_theme": "nord"}) == "nord"
+    assert config_mod.resolve_tui_theme({}) == config_mod.TUI_THEME_DEFAULT
+    assert (
+        config_mod.resolve_tui_theme({"tui_theme": ""}) == config_mod.TUI_THEME_DEFAULT
+    )
+    assert (
+        config_mod.resolve_tui_theme({"tui_theme": 5}) == config_mod.TUI_THEME_DEFAULT
+    )
+
+
+def test_save_tui_theme_roundtrips_and_preserves_keys(tmp_path, monkeypatch):
+    """save_tui_theme writes `tui_theme` atomically, keeps every other key, and
+    drops the per-process cache so the next load_config() sees it."""
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [{"name": "a"}], "theme": "light"}
+    )
+    cockpit_config.save_tui_theme("gruvbox")
+    on_disk = json.loads((tmp_path / "config.json").read_text())
+    assert on_disk["tui_theme"] == "gruvbox"
+    assert on_disk["theme"] == "light"  # untouched
+    assert on_disk["repos"] == [{"name": "a"}]
+    # Cache was reset → fresh read reflects the write.
+    assert cockpit_config.resolve_tui_theme(cockpit_config.load_config()) == "gruvbox"
+
+
+def test_save_tui_theme_noop_when_unchanged(tmp_path, monkeypatch):
+    """An unchanged value doesn't rewrite the file (no churn on the startup
+    apply, which sets the theme to whatever is already saved)."""
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "tui_theme": "nord"}
+    )
+    before = (tmp_path / "config.json").stat().st_mtime_ns
+    cockpit_config.save_tui_theme("nord")
+    after = (tmp_path / "config.json").stat().st_mtime_ns
+    assert before == after
 
 
 from tests.asserts import expected_starship as _expected_starship  # noqa: E402
@@ -505,7 +545,7 @@ def test_starship_default_renders_custom_modules_via_starship_prompt(
 
 def test_seed_replaces_dangling_symlink_with_real_file(tmp_path, monkeypatch):
     """If ~/.config/starship.toml is a dangling symlink (the exact state the
-    deleted dotfiles file left behind), --footer must replace it with a real
+    deleted dotfiles file left behind), --setup must replace it with a real
     file rather than write through to the missing target.
     """
     import os
@@ -533,7 +573,7 @@ def test_seed_replaces_dangling_symlink_with_real_file(tmp_path, monkeypatch):
 
 
 def test_seed_backs_up_live_symlink_target(tmp_path, monkeypatch):
-    """If the symlink resolves to a real file, --footer backs that file up
+    """If the symlink resolves to a real file, --setup backs that file up
     before unlinking the symlink and writing the bundled default."""
     import os
 

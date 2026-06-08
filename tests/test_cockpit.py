@@ -1,7 +1,7 @@
 """Tests for cockpit/cockpit.py CLI dispatch.
 
-`--footer` seeds statusLine + starship/cship configs; `--once` / `--watch` do
-NOT touch those files. Pipeline tests live in tests/orchestrators/test_cycle.py.
+`--setup` seeds statusLine + starship/cship configs; `--watch` does NOT touch
+those files. Pipeline tests live in tests/orchestrators/test_cycle.py.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from tests.fixtures import (
 
 
 def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
-    """`--footer` installs cship.toml + starship.toml + statusLine and exits."""
+    """`--setup` installs cship.toml + starship.toml + statusLine and exits."""
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "use_cship": True}
     )
@@ -31,12 +31,12 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
     importlib.reload(cockpit)
 
     def _explode(*_a, **_kw):
-        raise AssertionError("--footer must not trigger a reconcile cycle")
+        raise AssertionError("--setup must not trigger a reconcile cycle")
 
     monkeypatch.setattr(cockpit, "gh_self_user", _explode)
     monkeypatch.setattr(cockpit, "cycle_all", _explode)
 
-    assert cockpit.main(["--footer"]) == 0
+    assert cockpit.main(["--setup"]) == 0
 
     cship_toml = tmp_path / "xdg" / "cship.toml"
     assert cship_toml.exists()
@@ -60,7 +60,7 @@ def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
     import cockpit.cockpit as cockpit
 
     importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
+    monkeypatch.setattr(cockpit, "_build_state", lambda: {})
     monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: 0)
 
     assert cockpit.main(["--watch"]) == 0
@@ -118,7 +118,7 @@ def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
 
-    cockpit._fast_tick({"dry": False})
+    cockpit._fast_tick({})
 
     assert reconcile_calls == [(names, cwds, [wt])]
 
@@ -155,7 +155,7 @@ def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
         cockpit, "republish_pr_caches_from_disk", lambda: republished.append(True)
     )
 
-    cockpit._fast_tick({"dry": False})
+    cockpit._fast_tick({})
 
     assert reconcile_calls == []  # empty cwds → no reconcile attempted
     assert republished == [True]  # tick completed
@@ -166,6 +166,6 @@ def test_watch_requires_tty(capsys):
     prints a clean message and exits 2 instead of launching Textual."""
     import cockpit.cockpit as cockpit
 
-    rc = cockpit._watch({"dry": False}, 300, 30)
+    rc = cockpit._watch({}, 300, 30)
     assert rc == 2
     assert "requires a terminal" in capsys.readouterr().err

@@ -517,6 +517,4 @@ def print_pr_muted(branch: str | None = None) -> str:
     raw = read_text(branch_cache("pr-muted", branch))
     if not raw:
         return ""
-    if raw == "all":
-        return yellow(f"{ICON_PR_MUTED} muted")
-    return yellow(f"{ICON_PR_MUTED} muted: {raw.replace(',', '+')}")
+    return yellow(f"{ICON_PR_MUTED} muted")

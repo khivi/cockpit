@@ -1,8 +1,8 @@
 # Default cship statusline config bundled with the cockpit plugin.
-# Copied to ~/.config/cship.toml only when you run `cockpit footer` (the
+# Copied to ~/.config/cship.toml only when you run `cockpit setup` (the
 # explicit footer-setup command). --watch reconcile cycles never
 # touch this file, so any edits you make to ~/.config/cship.toml stick around
-# until you re-run --footer.
+# until you re-run --setup.
 #
 # cship 1.7.x requires the `[cship]` wrapper schema to expand $starship_prompt.
 # The legacy top-level `format = "..."` layout silently loads in "wrapper-free"

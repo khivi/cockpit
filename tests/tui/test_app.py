@@ -8,12 +8,14 @@ gating / capture behaviour, not the reconcile cycle underneath.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
 
 from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
+from cockpit.tui.widgets.config_screen import ConfigScreen
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.worktree_table import WorktreeTable
 
@@ -64,6 +66,41 @@ async def test_initial_ticks_fire_on_mount():
         await pilot.pause(0.8)
         assert calls["slow"] >= 1
         assert calls["fast"] >= 1
+
+
+async def test_table_primes_before_slow_completes(monkeypatch, tmp_path):
+    # The worktree table shows rows on startup even while the first slow tick
+    # is still running — priming reads git + cache, not the network.
+    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [{"name": "repo", "path": str(tmp_path)}],
+            "check_update": False,
+        },
+    )
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+
+    release = threading.Event()
+
+    def slow():
+        release.wait(2)  # hold the slow tick open
+
+    app = CockpitApp(
+        slow_tick=slow, fast_tick=lambda: None, slow_secs=300, fast_secs=30
+    )
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one(WorktreeTable)
+            for _ in range(20):
+                if table.row_count >= 1:
+                    break
+                await pilot.pause(0.1)
+            assert table.row_count == 1  # primed without waiting for slow
+            assert app._slow_phase in ("waiting", "running")  # slow still open
+    finally:
+        release.set()
 
 
 async def test_fast_starts_only_after_first_slow():
@@ -211,8 +248,10 @@ def _seed_one_worktree(monkeypatch, tmp_path, *, branch="khivi/feat-a"):
 async def test_focus_key_focuses_workspace(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    calls: list[tuple] = []
-    monkeypatch.setattr("cockpit.tui.app.cmux", lambda *a, **k: calls.append(a))
+    refs: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
+    )
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -220,14 +259,70 @@ async def test_focus_key_focuses_workspace(monkeypatch, tmp_path):
         await pilot.pause()
         await pilot.press("f")
         await pilot.pause(0.6)
-    assert ("focus", "--workspace", "ws1") in calls
+    assert refs == ["ws1"]
+
+
+async def test_focus_via_enter_key(monkeypatch, tmp_path):
+    # Enter on the focused row selects it → focuses (single click does not).
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    refs: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        app.query_one(WorktreeTable).focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert refs == ["ws1"]
+
+
+async def test_focus_via_double_click(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    refs: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.click(WorktreeTable, offset=(2, 1), times=2)
+        await pilot.pause(0.6)
+    assert refs == ["ws1"]
+
+
+async def test_single_click_does_not_focus(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    refs: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.click(WorktreeTable, offset=(2, 1))
+        await pilot.pause(0.4)
+    assert refs == []  # single click only moves the cursor
 
 
 async def test_focus_key_noop_on_limux(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
-    calls: list[tuple] = []
-    monkeypatch.setattr("cockpit.tui.app.cmux", lambda *a, **k: calls.append(a))
+    refs: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
+    )
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -235,7 +330,7 @@ async def test_focus_key_noop_on_limux(monkeypatch, tmp_path):
         await pilot.pause()
         await pilot.press("f")
         await pilot.pause(0.6)
-    assert not any(a and a[0] == "focus" for a in calls)
+    assert refs == []
 
 
 async def test_close_key_enqueues_when_clean(monkeypatch, tmp_path):
@@ -272,14 +367,54 @@ async def test_close_key_refuses_on_blockers(monkeypatch, tmp_path):
         await pilot.pause()
         await pilot.press("c")
         await pilot.pause(0.6)
-    assert enq == []  # an open PR is never force-closed from the TUI
+    assert enq == []  # `c` (no force) refuses on the open-PR soft blocker
+
+
+async def test_force_close_key_overrides_open_pr(monkeypatch, tmp_path):
+    # `C` force-close: it enqueues despite the soft open-PR blocker. No hard
+    # blockers (the seeded path isn't a real worktree).
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.worktree_state_blockers", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "cockpit.tui.app.probe_blockers", lambda *a, **k: ["PR #1 is OPEN"]
+    )
+    enq: list = []
+    monkeypatch.setattr("cockpit.tui.app.enqueue", lambda req: enq.append(req))
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("C")
+        await pilot.pause(0.6)
+    assert len(enq) == 1
+    assert enq[0].forced is True  # force flag propagates to the teardown request
+
+
+async def test_force_close_key_still_refuses_hard_blockers(monkeypatch, tmp_path):
+    # Force never overrides uncommitted / unpushed work.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktree_state_blockers",
+        lambda *a, **k: ["1 uncommitted file(s)"],
+    )
+    enq: list = []
+    monkeypatch.setattr("cockpit.tui.app.enqueue", lambda req: enq.append(req))
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("C")
+        await pilot.pause(0.6)
+    assert enq == []  # hard blocker stands even under force
 
 
 async def test_focus_shows_notification(monkeypatch, tmp_path):
     # The log pane is removed, so a toast is the only on-screen feedback.
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr("cockpit.tui.app.cmux", lambda *a, **k: None)
+    monkeypatch.setattr("cockpit.tui.app.select_workspace", lambda ref, **k: None)
     toasts: list[str] = []
     app, _ = _make_app()
     monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
@@ -303,6 +438,174 @@ async def test_close_key_noop_when_table_empty(monkeypatch):
     assert enq == []
 
 
+async def test_mute_key_mutes_unmuted_pr(monkeypatch, tmp_path):
+    from cockpit.lib.nudges import NudgePref
+
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.read_text", lambda *a, **k: "123")
+    monkeypatch.setattr("cockpit.tui.app.load_pref", lambda pr: NudgePref())
+    saved: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.save_pref", lambda pr, pref: saved.append((pr, pref))
+    )
+    app, calls = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        before = calls["slow"]
+        await pilot.press("m")
+        await pilot.pause(0.6)
+    assert len(saved) == 1
+    pr, pref = saved[0]
+    assert pr == 123
+    assert pref.muted  # muted
+    assert calls["slow"] > before  # kicks the slow tick to republish pr-muted
+
+
+async def test_mute_key_unmutes_muted_pr(monkeypatch, tmp_path):
+    from cockpit.lib.nudges import NudgePref
+
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.read_text", lambda *a, **k: "123")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_pref",
+        lambda pr: NudgePref(muted=True),
+    )
+    saved: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.save_pref", lambda pr, pref: saved.append((pr, pref))
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause(0.6)
+    assert len(saved) == 1
+    pr, pref = saved[0]
+    assert pr == 123
+    assert not pref.muted  # cleared → unmuted
+
+
+async def test_mute_key_noop_when_no_pr(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.read_text", lambda *a, **k: "")
+    saved: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.save_pref", lambda pr, pref: saved.append((pr, pref))
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause(0.6)
+    assert saved == []  # no PR on this row → nothing written
+
+
+async def test_nudge_key_sends_when_idle(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.nudge_if_idle",
+        lambda ref, msg, **k: calls.append((ref, msg)) or True,
+    )
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause(0.6)
+    assert len(calls) == 1
+    ref, _msg = calls[0]
+    assert ref == "ws1"  # resolved cwd→path workspace ref
+    assert any("nudged" in t for t in toasts)
+
+
+async def test_nudge_key_skips_when_not_idle(monkeypatch, tmp_path):
+    # nudge_if_idle returns False when the session is busy / awaiting permission
+    # / parked — the manual nudge must report a skip, never a forced send.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: False)
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause(0.6)
+    assert any("skipped" in t for t in toasts)
+
+
+async def test_nudge_key_noop_on_limux(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
+    calls: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: calls.append(ref)
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause(0.6)
+    assert calls == []  # a nudge is a cmux-only `send`
+
+
+async def test_nudge_key_noop_when_table_empty(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr(
+        "cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: calls.append(ref)
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause(0.3)
+    assert calls == []
+
+
+async def test_update_key_exits_with_restart_code():
+    # An available update + `u` exits with the sentinel so cockpit.sh updates
+    # and relaunches.
+    from cockpit.tui.app import RESTART_EXIT_CODE
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one(HeaderBar).update_text = "0.1 → 0.2"
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause()
+    assert app.return_code == RESTART_EXIT_CODE
+
+
+async def test_update_key_noop_when_no_update(monkeypatch):
+    # No advertised update → `u` is a no-op toast, the daemon keeps running.
+    app, _ = _make_app()
+    toasts: list[str] = []
+    monkeypatch.setattr(app, "notify", lambda m, **k: toasts.append(m))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause(0.3)
+        assert app.return_code is None  # still running; no restart requested
+    assert any("no update" in t.lower() for t in toasts)
+
+
 async def test_arrow_keys_move_row_cursor():
     app, _ = _make_app()
     async with app.run_test() as pilot:
@@ -321,3 +624,272 @@ async def test_arrow_keys_move_row_cursor():
         await pilot.press("down")
         await pilot.pause()
         assert table.cursor_row == start + 1
+
+
+async def test_show_repo_config_pushes_screen(monkeypatch, tmp_path):
+    # The palette command resolves the cursor row's repo and shows its config.
+    repo = {"name": "myrepo", "path": str(tmp_path), "branch_prefix": "khivi/"}
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [repo], "check_update": False},
+    )
+    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("myrepo", None, False, [wt])])
+        await pilot.pause()
+        app.action_show_repo_config()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConfigScreen)
+        assert "myrepo" in screen._title
+        assert "branch_prefix" in screen._body
+
+
+async def test_show_repo_config_no_repo_notifies(monkeypatch):
+    # Empty table → no repo to resolve → warn, don't push a screen.
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([])
+        await pilot.pause()
+        app.action_show_repo_config()
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfigScreen)
+        assert any("no repo" in t for t in toasts)
+
+
+async def test_show_full_config_pushes_screen(monkeypatch, tmp_path):
+    cfg = {"repos": [{"name": "a", "path": str(tmp_path)}], "check_update": False}
+    monkeypatch.setattr("cockpit.tui.app.load_config", lambda: cfg)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_full_config()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfigScreen)
+        assert "check_update" in app.screen._body
+
+
+async def test_full_config_surfaces_both_themes(monkeypatch):
+    # The overlay header shows the current `theme` (dark|light, pills/footer)
+    # and the live `tui_theme` (this TUI) — answering "show the current theme".
+    cfg = {"repos": [], "check_update": False, "theme": "light", "tui_theme": "nord"}
+    monkeypatch.setattr("cockpit.tui.app.load_config", lambda: cfg)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_show_full_config()
+        await pilot.pause()
+        body = app.screen._body
+        assert "theme" in body and "light" in body
+        assert "tui_theme" in body and "nord" in body
+
+
+async def test_applies_saved_tui_theme_on_mount(monkeypatch):
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [], "check_update": False, "tui_theme": "nord"},
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.theme == "nord"
+
+
+async def test_unknown_tui_theme_falls_back_without_crashing(monkeypatch):
+    # An unregistered name must not raise (Textual validates App.theme); the app
+    # stays on a valid theme.
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [], "check_update": False, "tui_theme": "no-such-theme"},
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.theme in app.available_themes
+
+
+async def test_theme_change_persists_to_config(monkeypatch):
+    # A palette theme pick (modeled by setting app.theme) is written back via
+    # save_tui_theme so it survives a restart — Textual itself never persists it.
+    saved: list[str] = []
+    monkeypatch.setattr("cockpit.tui.app.save_tui_theme", lambda n: saved.append(n))
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.theme = "gruvbox"
+        await pilot.pause()
+        assert saved == ["gruvbox"]
+
+
+async def test_open_pr_opens_cached_url(monkeypatch, tmp_path):
+    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    repo = {"name": "repo", "path": str(tmp_path)}
+    opened: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "_resolve_worktree", lambda p: (repo, wt))
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload",
+        lambda branch, name=None: {"url": "https://gh/pr/7", "number": 7},
+    )
+    monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("p")
+        await pilot.pause(0.6)
+    assert opened == ["https://gh/pr/7"]
+
+
+async def test_open_pr_no_pr_warns(monkeypatch, tmp_path):
+    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    opened: list[str] = []
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "_resolve_worktree", lambda p: ({"name": "r"}, wt))
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda b, name=None: None)
+    monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("p")
+        await pilot.pause(0.6)
+    assert opened == []
+    assert any("no PR" in t for t in toasts)
+
+
+async def test_show_output_and_escape_close(monkeypatch):
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._log_tail.append("slow-tick: every 300s")
+        await pilot.press("o")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfigScreen)
+        assert "slow-tick" in app.screen._body
+        await pilot.press("escape")  # esc closes the overlay
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfigScreen)
+
+
+async def test_escape_back_is_noop_on_base_screen():
+    # Escape on the main table must not crash or pop the base screen.
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        depth = len(app.screen_stack)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert len(app.screen_stack) == depth
+
+
+async def test_open_linear_opens_footer_url(monkeypatch, tmp_path):
+    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    repo = {"name": "repo", "path": str(tmp_path)}
+    opened: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "_resolve_worktree", lambda p: (repo, wt))
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload",
+        lambda b, name=None: {"number": 7, "linear": {"tickets": [{"id": "PE-9"}]}},
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app._pr_body",
+        lambda cwd, num: "Linear: [PE-9](https://linear.app/x/issue/PE-9)",
+    )
+    monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause(0.6)
+    assert opened == ["https://linear.app/x/issue/PE-9"]
+
+
+async def test_open_linear_no_ticket_warns(monkeypatch, tmp_path):
+    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    opened: list[str] = []
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "_resolve_worktree", lambda p: ({"name": "r"}, wt))
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload", lambda b, name=None: {"number": 7}
+    )
+    monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause(0.6)
+    assert opened == []
+    assert any("no Linear" in t for t in toasts)
+
+
+async def test_footer_hides_update_until_available():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        footer = app.query_one(FooterBar)
+        assert "Update" not in footer.global_text  # hidden with no update
+        app._set_update("0.1 → 0.2")
+        await pilot.pause()
+        assert "Update" in footer.global_text  # revealed once available
+
+
+async def test_footer_groups_row_keys_left_global_right():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        footer = app.query_one(FooterBar)
+        assert "Focus" in footer.row_text and "Close" in footer.row_text
+        assert "Sync" in footer.global_text and "Quit" in footer.global_text
+        assert "Focus" not in footer.global_text and "Sync" not in footer.row_text
+
+
+async def test_footer_labels_are_one_word():
+    # Verbose binding descriptions collapse to a single curated word; unknown
+    # actions fall back to the description's first word.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar([])
+    assert fb._label("open_pr", "Open PR") == "PR"
+    assert fb._label("force_close_row", "Force close") == "Force"
+    assert fb._label("sync", "Sync now") == "Sync"
+    assert fb._label("whatever", "Multi word thing") == "Multi"
+
+
+async def test_footer_hides_linear_when_not_configured():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    # _isolate patches load_config → repos with no linear_keys.
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "Linear" not in app.query_one(FooterBar).row_text
+
+
+async def test_footer_shows_linear_when_configured(monkeypatch):
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [{"name": "r", "path": "/tmp", "linear_keys": ["PE"]}]},
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "Linear" in app.query_one(FooterBar).row_text

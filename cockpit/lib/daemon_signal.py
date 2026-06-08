@@ -1,7 +1,7 @@
 """CLI → daemon signaling: SIGUSR1 kick, SIGTERM stop, and the close-request queue.
 
-This is the *caller-side* IPC channel — everything `cockpit/close.py`,
-`cockpit/sync.py`, `cockpit/spawn.py`, etc. use to talk *to* the daemon.
+This is the *caller-side* IPC channel — the TUI (`cockpit/tui/app.py`, e.g. its
+`c`/`C` close actions) and `cockpit/spawn.py` use it to talk *to* the daemon.
 The daemon-side runtime (pidfile + watch loop) lives in `lib/daemon.py`.
 
 Two channels live here because they're two halves of the same conversation:
@@ -9,8 +9,8 @@ Two channels live here because they're two halves of the same conversation:
   - **Signal**: `kick_running` (SIGUSR1 to wake), `stop_running` (SIGTERM to halt).
   - **Queue**: `enqueue` / `iter_pending` / `pop` / `prune_stale` — durable
     JSON markers under `$COCKPIT_HOME/state/close-requests/<repo>/<ref>.json`.
-    `cockpit/close.py` writes a marker when the daemon is up; the daemon drains
-    them each cycle through `orchestrators.teardown.teardown`. Markers older
+    The TUI's close action writes a marker when the daemon is up; the daemon
+    drains them each cycle through `orchestrators.teardown.teardown`. Markers older
     than `STALE_SECONDS` are pruned silently — long enough for a brief daemon
     outage, short enough that a reboot doesn't auto-close worktrees the user
     has stopped caring about.

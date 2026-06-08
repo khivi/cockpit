@@ -26,6 +26,7 @@ from cockpit.lib.cmux import (
     nudge_if_idle,
     reconcile_workspace_names,
     rename_workspace_if_needed,
+    select_workspace,
     set_workspace_color,
     spawn_workspace,
     status_pills,
@@ -35,7 +36,22 @@ from cockpit.lib.cmux import (
 )
 from cockpit.lib.gh import PR
 from cockpit.lib.git import Worktree
-from cockpit.lib.nudges import KNOWN_CATEGORIES, NudgePref
+from cockpit.lib.nudges import NudgePref
+
+
+def test_select_workspace_uses_select_workspace_verb():
+    # Regression: `cmux focus` is not a command (exits nonzero); the workspace
+    # switch verb is `select-workspace`.
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return "OK workspace:12"
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        select_workspace("workspace:12")
+
+    assert calls == [("select-workspace", "--workspace", "workspace:12")]
 
 
 def _pr(**overrides) -> PR:
@@ -473,18 +489,12 @@ def test_devdone_not_in_actionable_keys():
     assert DEVDONE_KEY not in ACTIONABLE_KEYS
 
 
-def test_status_pills_full_mute_emits_muted_tuple_at_front():
-    pref = NudgePref(disabled_categories=set(KNOWN_CATEGORIES))
+def test_status_pills_mute_emits_muted_tuple_at_front():
+    pref = NudgePref(muted=True)
     out = status_pills(_pr(), _wt(), pref=pref)
     # muted anchors the row; ci_passed still emits since muted doesn't suppress it.
     assert out[0] == (MUTED_KEY, "🔇 muted", YELLOW)
     assert any(k == "ci" for k, _, _ in out)
-
-
-def test_status_pills_partial_mute_lists_categories():
-    pref = NudgePref(disabled_categories={"ci", "comments"})
-    out = status_pills(_pr(), _wt(), pref=pref)
-    assert out[0] == (MUTED_KEY, "🔇 muted: ci+comments", YELLOW)
 
 
 def test_status_pills_no_mute_no_muted_tuple():
@@ -494,11 +504,11 @@ def test_status_pills_no_mute_no_muted_tuple():
 
 
 def test_status_pills_muted_with_owner_pill_for_coworker():
-    pref = NudgePref(disabled_categories={"ci"})
+    pref = NudgePref(muted=True)
     out = status_pills(_pr(author="bob"), _wt(), self_user="khivi", pref=pref)
     # owner is prepended for reversed set-order; muted comes from decide_pills.
     assert out[0] == ("owner", "👥 @bob", "#3b82f6")
-    assert (MUTED_KEY, "🔇 muted: ci", YELLOW) in out
+    assert (MUTED_KEY, "🔇 muted", YELLOW) in out
 
 
 def test_apply_pills_clears_muted_key():

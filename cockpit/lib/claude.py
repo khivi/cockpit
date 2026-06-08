@@ -1,6 +1,6 @@
 """Claude Code-side: parse statusLine stdin JSON, write session caches.
 
-Cockpit's statusLine command (`cockpit/footer.py`) reads Claude Code's
+Cockpit's statusLine command (`cockpit/statusline.py`) reads Claude Code's
 JSON blob from stdin once per render and calls `stash_from_stdin` here.
 Six session-scoped caches get populated:
 
@@ -17,7 +17,7 @@ transcript path. So this module is the sole writer for the session-scoped
 slice of the cship cache; the cship/PR-side writers live in `lib.cship`.
 
 No cship binary invocation lives here. The statusline entry-point
-(`cockpit/footer.py`) handles the hand-off to cship after this returns.
+(`cockpit/statusline.py`) handles the hand-off to cship after this returns.
 """
 
 from __future__ import annotations

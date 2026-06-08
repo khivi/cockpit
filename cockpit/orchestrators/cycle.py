@@ -199,7 +199,7 @@ def _track_stale_issue(
         pref = NudgePref()
         ctx.prefs[pr.number] = pref
 
-    muted = category is not None and not nudges.should_nudge(pr.number, category)
+    muted = category is not None and not nudges.should_nudge(pr.number)
     # Drop timers for any category that is no longer the live actionable one
     # (issue changed, e.g. ci→comments, or resolved entirely).
     stale_keys = [c for c in pref.first_seen_at if c != category]
@@ -1506,10 +1506,11 @@ def cycle_repo(
 
 
 def _drain_close_requests(dry: bool) -> None:
-    """Process pending `/cockpit:close` markers through the shared teardown.
+    """Process pending close markers (enqueued by the TUI's `c`/`C` actions and
+    autoclose) through the shared teardown.
 
     Refused markers (blockers reappeared between probe and drain) are dropped
-    with a log line — the user re-runs `cockpit:close --force` to retry.
+    with a log line — the user re-presses `C` in the TUI to force-retry.
     """
     daemon_signal.prune_stale()
     for path, req in daemon_signal.iter_pending():

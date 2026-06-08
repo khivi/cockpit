@@ -43,7 +43,11 @@ class HeaderBar(Static):
         left = f"slow ⏱ {_fmt(self.slow_remaining)}"
         if self.fast_remaining != -2:
             left += f"   fast ⏱ {_fmt(self.fast_remaining)}"
-        right = f"[yellow]⬆ update {self.update_text}[/]" if self.update_text else ""
+        right = (
+            f"[yellow]⬆ update available {self.update_text} (press u)[/]"
+            if self.update_text
+            else ""
+        )
         grid = Table.grid(expand=True)
         grid.add_column(justify="left", ratio=1)
         grid.add_column(justify="right")

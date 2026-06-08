@@ -433,7 +433,7 @@ def nudge_if_idle(
     if pr_number is not None and category is not None:
         from . import nudges
 
-        if not nudges.should_nudge(pr_number, category):
+        if not nudges.should_nudge(pr_number):
             return False
     status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
     native = _native_claude_state(status_lines)
@@ -566,16 +566,8 @@ def find_cockpit_workspaces(
     return out
 
 
-def _muted_label(p: dict) -> str:
-    """Sidebar label for the muted pill. Categories are sorted upstream."""
-    if p.get("scope") == "all":
-        return f"{MUTED_ICON} muted"
-    cats = "+".join(p.get("categories") or [])
-    return f"{MUTED_ICON} muted: {cats}" if cats else f"{MUTED_ICON} muted"
-
-
 _CMUX_RENDERERS = {
-    "muted": lambda p: (MUTED_KEY, _muted_label(p), YELLOW),
+    "muted": lambda _p: (MUTED_KEY, f"{MUTED_ICON} muted", YELLOW),
     "rebase": lambda _p: ("rebase", "🔄 rebasing", ORANGE),
     "merge": lambda _p: ("merge", "🔀 merging", ORANGE),
     "wip": lambda p: ("wip", f"✏️ {p['count']} dirty", ORANGE),
@@ -747,6 +739,17 @@ def resolve_workspace(query: str, repo_dir: Path) -> WorkspaceMatch:
         return WorkspaceMatch(ref, query, wt_for_ref.get(ref))
 
     raise LookupError(f"no workspace matched {query!r}")
+
+
+def select_workspace(ref: str, *, check: bool = False) -> str:
+    """Switch the active cmux workspace to `ref`.
+
+    The verb is `select-workspace` (a stable legacy alias for `workspace
+    select`), NOT `focus` — `cmux focus` is not a command and exits nonzero,
+    which `check=False` would silently swallow. Centralised here so the TUI's
+    `f`/Enter/double-click focus actions all use the one correct verb.
+    """
+    return cmux("select-workspace", "--workspace", ref, check=check)
 
 
 def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:

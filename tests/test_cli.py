@@ -31,7 +31,7 @@ def test_unknown_subcommand(capsys):
 
 @pytest.mark.parametrize(
     "sub,flag",
-    [("watch", "--watch"), ("footer", "--footer")],
+    [("watch", "--watch"), ("setup", "--setup")],
 )
 def test_daemon_subcommands_translate_to_flags(monkeypatch, sub, flag):
     seen = {}
@@ -41,18 +41,18 @@ def test_daemon_subcommands_translate_to_flags(monkeypatch, sub, flag):
         return 0
 
     monkeypatch.setattr("cockpit.cockpit.main", fake)
-    assert cli.main([sub, "--dry-run"]) == 0
-    assert seen["argv"] == [flag, "--dry-run"]
+    assert cli.main([sub]) == 0
+    assert seen["argv"] == [flag]
 
 
-def test_statusline_routes_to_footer(monkeypatch):
+def test_statusline_routes_to_statusline_module(monkeypatch):
     called = []
 
     def fake():
         called.append(True)
         return 0
 
-    monkeypatch.setattr("cockpit.footer.main", fake)
+    monkeypatch.setattr("cockpit.statusline.main", fake)
     assert cli.main(["statusline"]) == 0
     assert called == [True]
 
@@ -97,9 +97,7 @@ def test_nudge_passes_rest(monkeypatch):
 @pytest.mark.parametrize(
     "sub,mod,prog",
     [
-        ("close", "close", "cockpit-close"),
         ("new", "spawn", "cockpit-new"),
-        ("focus", "focus", "cockpit-focus"),
     ],
 )
 def test_argv_subcommands_reshape_and_restore(monkeypatch, sub, mod, prog):

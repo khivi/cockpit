@@ -95,8 +95,8 @@ def _count_unpushed(wt_path: Path) -> int:
     collapsed into a single upstream commit with a combined patch-id that
     matches none of the originals. Autoclose handles that case separately via
     `is_ancestor(wt, headRefOid)` from `fetch_merged_branches`; this function
-    intentionally over-counts there so the `cockpit watch` table and `/cockpit:close`
-    still surface "this branch hasn't been pushed" honestly.
+    intentionally over-counts there so the `cockpit watch` table and its close
+    actions still surface "this branch hasn't been pushed" honestly.
 
     Returns 0 if the default branch (whatever `origin/HEAD` points at) cannot
     be resolved. Returns -1 if git fails outright so callers can distinguish

@@ -7,9 +7,9 @@ Hard-fails (sys.exit(2)) on missing required binaries:
 Soft-warns (stderr only) on missing optional backend:
   - `cmux` / `limux` — drops cockpit into cache-only mode
 
-Slash-command entry scripts (`close.py`, `focus.py`, `spawn.py`) still call
-`require_workspace_binary()` from `lib.cmux` for their own backend-mandatory
-gate; that's a stricter policy than the daemon needs.
+The `spawn.py` entry script still calls `require_workspace_binary()` from
+`lib.cmux` for its own backend-mandatory gate; that's a stricter policy than
+the daemon needs.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """cship-binary exec — the bridge from cockpit's statusLine shim into cship.
 
-`cockpit/footer.py` calls `invoke_cship` after `lib.claude.stash_from_stdin`
+`cockpit/statusline.py` calls `invoke_cship` after `lib.claude.stash_from_stdin`
 has captured the session caches. cship then renders its line, delegating
 `[custom.*]` modules to starship (which spawns `cockpit/starship.py` per
 field — see `lib.starship`).
@@ -43,13 +43,13 @@ def invoke_cship(blob: bytes, sid: str | None) -> int:
     """
     if shutil.which(CSHIP_BIN) is None:
         sys.stderr.write(
-            "cockpit footer: `cship` binary not on PATH — install cship "
+            "cockpit setup: `cship` binary not on PATH — install cship "
             "(https://github.com/khivi/cship) or set use_cship=false\n"
         )
         return 127
     if shutil.which(STARSHIP_BIN) is None:
         sys.stderr.write(
-            "cockpit footer: `starship` binary not on PATH — install starship "
+            "cockpit setup: `starship` binary not on PATH — install starship "
             "(https://starship.rs) to render footer pills\n"
         )
         return 127

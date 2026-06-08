@@ -8,11 +8,11 @@ Owns:
   - install_cship_statusline_if_configured(): declarative statusLine writer,
     gated on `use_cship`. Points Claude Code's statusLine at the `cship`
     binary directly; hard-errors when the flag is set but cship isn't on PATH.
-    Invoked only by `cockpit footer`, not by --watch.
+    Invoked only by `cockpit setup`, not by --watch.
   - install_cship_default_config(): rewrite ~/.config/cship.toml from the
-    bundled default. Invoked only by `cockpit footer`, not by --watch — so reconcile cycles never touch ~/.config/cship.toml. Local
+    bundled default. Invoked only by `cockpit setup`, not by --watch — so reconcile cycles never touch ~/.config/cship.toml. Local
     edits to ~/.config/cship.toml survive across daemon restarts; running
-    `cockpit footer` deliberately clobbers them back to the bundled default.
+    `cockpit setup` deliberately clobbers them back to the bundled default.
   - install_starship_default_config(): same contract for ~/.config/starship.toml.
     cship's $starship_prompt spawns starship with STARSHIP_CONFIG set to that
     path, so any [custom.*] rendering depends on this file existing.
@@ -47,6 +47,10 @@ STARSHIP_CMD = f"{sys.executable} -m cockpit.cli starship"
 STARSHIP_PLACEHOLDER = "__COCKPIT_STARSHIP__"
 STARSHIP_THEME_PLACEHOLDER = "__COCKPIT_THEME__"
 VALID_THEMES = ("dark", "light")
+# Default Textual theme for the `cockpit watch` TUI when `tui_theme` is unset.
+# Mirrors Textual's own default (constants.DEFAULT_THEME = $TEXTUAL_THEME or
+# "textual-dark"), so an absent key changes nothing.
+TUI_THEME_DEFAULT = "textual-dark"
 
 
 def resolve_theme(cfg: dict | None = None) -> str:
@@ -58,6 +62,49 @@ def resolve_theme(cfg: dict | None = None) -> str:
     """
     theme = (cfg if cfg is not None else load_config()).get("theme", "dark")
     return theme if theme in VALID_THEMES else "dark"
+
+
+def resolve_tui_theme(cfg: dict | None = None) -> str:
+    """Return the configured Textual theme name for the `cockpit watch` TUI.
+
+    Distinct from `theme`: that is the dark|light palette tuning the cmux pills
+    (`lib.colors`) and the starship/cship footer (`resolve_theme` → TOML), both
+    rendered *outside* this process. `tui_theme` names a *Textual* theme (e.g.
+    "textual-dark", "nord", "gruvbox") styling only the TUI's own chrome. The
+    two are intentionally independent. The name is NOT validated here — the
+    valid set is Textual's registered-theme registry, known only to the running
+    App — so the caller (`CockpitApp.on_mount`) falls back to the App default
+    when the name isn't registered.
+    """
+    name = (cfg if cfg is not None else load_config()).get("tui_theme")
+    return name if isinstance(name, str) and name else TUI_THEME_DEFAULT
+
+
+def save_tui_theme(name: str) -> None:
+    """Persist the chosen Textual theme to config.json's `tui_theme` key.
+
+    Textual holds the active theme in memory only (`App.theme` defaults to
+    $TEXTUAL_THEME / "textual-dark") and never writes it to disk, so a theme
+    picked from the Ctrl+P "Change theme" palette resets on the next launch
+    unless we store it. This is the one sanctioned config write from the TUI:
+    `tui_theme` is a TUI-only cosmetic — never a cache cell, never read by the
+    daemon's reconcile — so it doesn't touch the daemon-is-sole-writer
+    invariant. Read-modify-writes the on-disk file atomically (preserving every
+    other key) and drops the per-process cache so a later `load_config()` in the
+    same run sees it. A no-op when the value is unchanged.
+    """
+    try:
+        data = _read_config()
+    except (OSError, ValueError):
+        data = {}
+    if data.get("tui_theme") == name:
+        return
+    data["tui_theme"] = name
+    ensure_state_dirs()
+    tmp = CONFIG_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    os.replace(tmp, CONFIG_PATH)
+    reset_config_cache()
 
 
 _CONFIG_CACHE: dict | None = None
@@ -73,6 +120,7 @@ def _read_config() -> dict:
             "autoclose_age_days": 14,
             "ci_skip_checks": ["copilot-pull-request-reviewer"],
             "theme": "dark",
+            "tui_theme": TUI_THEME_DEFAULT,
         }
     with CONFIG_PATH.open() as f:
         data: dict = json.load(f)
@@ -276,7 +324,7 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
     """Point Claude Code's statusLine at cockpit's statusline shim, gated on `use_cship`.
 
     `statusline_command` is the absolute invocation cockpit uses for its
-    `cockpit/footer.py` shim (which itself delegates to `cship`). When
+    `cockpit/statusline.py` shim (which itself delegates to `cship`). When
     `use_cship: true` in config.json, cockpit verifies `cship` is on PATH and
     writes `~/.claude/settings.json` so Claude Code invokes the shim each
     render. Backs up any existing settings.json before overwriting. Raises
@@ -285,7 +333,7 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
 
     When the flag is unset or false, cockpit does not touch the statusLine.
 
-    Called only from `cockpit footer` — only --footer needs to mutate
+    Called only from `cockpit setup` — only --setup needs to mutate
     the statusLine. --watch do not invoke this, but they still
     enforce the same `use_cship` → cship-on-PATH contract via
     `lib.preflight.preflight()`, which runs at the top of every cockpit
@@ -354,9 +402,9 @@ def _seed_default_toml(src: Path, dest: Path, label: str) -> None:
 def install_cship_default_config() -> None:
     """Rewrite ~/.config/cship.toml from the bundled default when `use_cship: true`.
 
-    Called only from `cockpit footer`. --watch never touch this
+    Called only from `cockpit setup`. --watch never touch this
     file, so reconcile cycles preserve local edits indefinitely. Running
-    `cockpit footer` deliberately copies `cockpit/defaults/cship.toml` over
+    `cockpit setup` deliberately copies `cockpit/defaults/cship.toml` over
     the target — that command is the only thing that clobbers local edits.
     Honors `$XDG_CONFIG_HOME`. Soft-fails if the bundled file is missing.
     """
@@ -373,19 +421,19 @@ def install_starship_default_config() -> None:
     cship's `[cship]/lines = ["...$starship_prompt..."]` schema spawns
     starship with STARSHIP_CONFIG=~/.config/starship.toml whenever
     $starship_prompt expands, so the [time] and [custom.*] modules are
-    rendered out of THIS file, not cship.toml. Same --footer-only contract
+    rendered out of THIS file, not cship.toml. Same --setup-only contract
     as install_cship_default_config: reconcile cycles never touch it.
 
     Substitutes the literal `__COCKPIT_CSHIP__` token in the bundled toml
     with the resolved absolute path to `cockpit/cship.py` before writing —
     starship spawns commands without changing cwd, so paths in the seeded
-    file must be absolute. Re-running `cockpit footer` after the plugin
+    file must be absolute. Re-running `cockpit setup` after the plugin
     moves on disk re-substitutes with the new location.
 
     Also substitutes `__COCKPIT_THEME__` with the validated `theme` from
     config ("dark" | "light") so starship's `palette` selector picks the
     background-appropriate neutral greys. Because this is baked at seed time,
-    changing `theme` takes effect on the next `cockpit footer`.
+    changing `theme` takes effect on the next `cockpit setup`.
     """
     if not load_config().get("use_cship"):
         return

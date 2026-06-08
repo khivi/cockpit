@@ -10,7 +10,7 @@ import pytest
 import cockpit.lib.cache as cache_mod
 from cockpit.lib.gh import PR
 from cockpit.lib.git import Worktree
-from cockpit.lib.nudges import KNOWN_CATEGORIES, NudgePref
+from cockpit.lib.nudges import NudgePref
 
 
 def _pr(**overrides) -> PR:
@@ -315,7 +315,7 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     # Write a PR JSON snapshot first (daemon side).
     pr = _pr(ci="failed:lint", review_decision="APPROVED", number=42, title="Fix it")
     wt = _wt()
-    pref = NudgePref(disabled_categories={"ci"})
+    pref = NudgePref(muted=True)
     cache_mod.write_pr_cache("testrepo", pr, wt, pref)
 
     # Wipe the flat cells to simulate an OS tmpdir cleanup, then republish.
@@ -334,7 +334,7 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     assert (flat / "pr-state-khivi-feature").read_text() == "APPROVED"
     assert (flat / "pr-num-khivi-feature").read_text() == "42"
     assert (flat / "pr-title-khivi-feature").read_text() == "Fix it"
-    assert (flat / "pr-muted-khivi-feature").read_text() == "ci"
+    assert (flat / "pr-muted-khivi-feature").read_text() == "muted"
     assert (flat / "pr-checks-khivi-feature").read_text() == "✗"
     assert (flat / "pr-comments-khivi-feature").read_text() == ""
 
@@ -398,14 +398,7 @@ def test_write_pr_cache_includes_pills(tmp_path, monkeypatch):
 def test_muted_payload_helper_serializes_pref():
     assert cache_mod.muted_payload(None) == ""
     assert cache_mod.muted_payload(NudgePref()) == ""
-    assert (
-        cache_mod.muted_payload(NudgePref(disabled_categories=set(KNOWN_CATEGORIES)))
-        == "all"
-    )
-    assert (
-        cache_mod.muted_payload(NudgePref(disabled_categories={"comments", "ci"}))
-        == "ci,comments"
-    )
+    assert cache_mod.muted_payload(NudgePref(muted=True)) == "muted"
 
 
 def test_write_branch_pr_cache_writes_muted_cell(cache_dir):
@@ -416,9 +409,9 @@ def test_write_branch_pr_cache_writes_muted_cell(cache_dir):
         review_decision="",
         number=1,
         title="t",
-        muted="all",
+        muted="muted",
     )
-    assert (cache_dir / "pr-muted-khivi-feature").read_text() == "all"
+    assert (cache_dir / "pr-muted-khivi-feature").read_text() == "muted"
 
 
 def test_write_branch_pr_cache_unmute_clears_cell(cache_dir):
@@ -451,16 +444,16 @@ def test_refresh_pr_data_copies_muted_from_json(cache_dir):
         "review": "",
         "number": 7,
         "title": "x",
-        "muted": "ci",
+        "muted": "muted",
     }
     with patch.object(cache_mod, "find_pr_payload", return_value=payload):
         cache_mod.refresh_pr_data("khivi/feat")
-    assert (cache_dir / "pr-muted-khivi-feat").read_text() == "ci"
+    assert (cache_dir / "pr-muted-khivi-feat").read_text() == "muted"
 
 
 def test_refresh_pr_data_clears_muted_on_no_pr(cache_dir):
     # Pre-seed a muted cell to ensure the no-PR branch wipes it.
-    (cache_dir / "pr-muted-khivi-gone").write_text("all")
+    (cache_dir / "pr-muted-khivi-gone").write_text("muted")
     with patch.object(cache_mod, "find_pr_payload", return_value=None):
         cache_mod.refresh_pr_data("khivi/gone")
     assert (cache_dir / "pr-muted-khivi-gone").read_text() == ""
@@ -477,9 +470,9 @@ def test_write_pr_cache_bakes_muted_into_json(tmp_path, monkeypatch):
 
     pr = _pr()
     wt = _wt()
-    pref = NudgePref(disabled_categories={"ci", "comments"})
+    pref = NudgePref(muted=True)
     payload = cache_mod.write_pr_cache("testrepo", pr, wt, pref)
-    assert payload["muted"] == "ci,comments"
+    assert payload["muted"] == "muted"
     assert payload["pills"][0]["kind"] == "muted"
 
 

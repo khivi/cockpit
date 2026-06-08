@@ -21,6 +21,7 @@ from cockpit.lib.linear import (
     extract_ticket,
     fetch_ticket_state,
     linear_mcp_available,
+    parse_linear_footer_links,
     parse_linear_footers,
 )
 
@@ -177,6 +178,30 @@ def test_parse_footers_ignores_inline_mentions():
 def test_parse_footers_empty_and_none():
     assert parse_linear_footers("") == []
     assert parse_linear_footers(None) == []  # type: ignore[arg-type]
+
+
+def test_parse_footer_links_captures_url():
+    body = "desc\n\nLinear: [PE-1234](https://linear.app/acme/issue/PE-1234)"
+    assert parse_linear_footer_links(body) == [
+        ("PE-1234", "https://linear.app/acme/issue/PE-1234")
+    ]
+
+
+def test_parse_footer_links_multiple_dedups_by_id():
+    body = (
+        "Linear: [PE-1](https://l/PE-1)\n"
+        "Linear: [ENG-9](https://l/ENG-9)\n"
+        "Linear: [PE-1](https://l/PE-1-again)\n"
+    )
+    assert parse_linear_footer_links(body) == [
+        ("PE-1", "https://l/PE-1"),
+        ("ENG-9", "https://l/ENG-9"),
+    ]
+
+
+def test_parse_footer_links_empty():
+    assert parse_linear_footer_links("") == []
+    assert parse_linear_footer_links("Linear: PE-1 no link") == []
 
 
 # ────────────────────────────────────────────────────────────────────────────

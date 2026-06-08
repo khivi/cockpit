@@ -183,7 +183,7 @@ type into the confirmation. Do not "simplify" the gate to trust it.
 
 ```mermaid
 flowchart TD
-  IN["nudge_if_idle(ref, msg,<br/>pr_number, category)"] --> G1{"PR-attached &<br/>muted for category?"}
+  IN["nudge_if_idle(ref, msg,<br/>pr_number, category)"] --> G1{"PR-attached &<br/>PR muted?"}
   G1 -->|yes| F1["return False<br/>(user mute, survives restart)"]
   G1 -->|"no / orphan nudge"| G2{"native ==<br/>Running?"}
 
@@ -247,7 +247,7 @@ Reset paths (any of these clears the timer and pill):
 
 - A successful nudge that cycle (`nudged=True`).
 - The actionable issue resolves (`category=None`).
-- User mutes the category (`should_nudge` returns False).
+- User mutes the PR (`should_nudge` returns False).
 - The issue switches category (e.g. `ci` → `comments`); the old category's
   timer is dropped so it can't false-escalate.
 

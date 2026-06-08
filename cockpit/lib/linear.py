@@ -38,6 +38,11 @@ LINEAR_RE_CI = re.compile(r"[A-Za-z]{2,6}-[0-9]+")
 # the strict delivery signal in the morning-align `linear_delivery.py` helper.
 # Anchored to line start so a mention buried in prose isn't a footer.
 LINEAR_FOOTER_RE = re.compile(r"^Linear:\s*\[([A-Z]+-[0-9]+)\]", re.MULTILINE)
+# Same footer, capturing the markdown link target so callers can open the exact
+# Linear URL (never hand-construct one — the workspace slug isn't known here).
+LINEAR_FOOTER_LINK_RE = re.compile(
+    r"^Linear:\s*\[([A-Z]+-[0-9]+)\]\((\S+?)\)", re.MULTILINE
+)
 
 # Linear's public GraphQL endpoint. A *personal API key* authenticates with the
 # raw key in the `Authorization` header (no `Bearer` prefix — that form is for
@@ -95,6 +100,22 @@ def parse_linear_footers(body: str) -> list[str]:
         if tid not in seen:
             seen.add(tid)
             out.append(tid)
+    return out
+
+
+def parse_linear_footer_links(body: str) -> list[tuple[str, str]]:
+    """`(ticket_id, url)` pairs from `body`'s `Linear: [PE-1234](url)` footer(s),
+    de-duplicated by id, order-preserving. Empty when `body` is falsy or carries
+    no footer link. Use this to open the canonical Linear URL rather than
+    constructing one from the id (the workspace slug isn't known here)."""
+    if not body:
+        return []
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for tid, url in LINEAR_FOOTER_LINK_RE.findall(body):
+        if tid not in seen:
+            seen.add(tid)
+            out.append((tid, url))
     return out
 
 

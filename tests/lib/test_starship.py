@@ -219,14 +219,9 @@ def test_print_pr_muted_empty_when_not_muted(cache_dir):
     assert starship.print_pr_muted("khivi/foo") == ""
 
 
-def test_print_pr_muted_full(cache_dir):
-    (cache_dir / "pr-muted-khivi-foo").write_text("all")
+def test_print_pr_muted(cache_dir):
+    (cache_dir / "pr-muted-khivi-foo").write_text("muted")
     assert starship.print_pr_muted("khivi/foo") == yellow("🔇 muted")
-
-
-def test_print_pr_muted_partial_renders_categories(cache_dir):
-    (cache_dir / "pr-muted-khivi-foo").write_text("ci,comments")
-    assert starship.print_pr_muted("khivi/foo") == yellow("🔇 muted: ci+comments")
 
 
 @pytest.mark.parametrize(

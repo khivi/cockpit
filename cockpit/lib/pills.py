@@ -52,14 +52,9 @@ KIND_ORDER = (
 
 
 def _muted_pill(pref: NudgePref | None) -> dict | None:
-    if pref is None or not pref.disabled_categories:
+    if pref is None or not pref.muted:
         return None
-    from .nudges import KNOWN_CATEGORIES
-
-    cats = pref.disabled_categories
-    if cats >= set(KNOWN_CATEGORIES):
-        return {"kind": "muted", "scope": "all", "categories": []}
-    return {"kind": "muted", "scope": "some", "categories": sorted(cats)}
+    return {"kind": "muted"}
 
 
 def decide_pills(
@@ -74,7 +69,7 @@ def decide_pills(
     Each entry has `kind` plus optional payload (e.g. `count`, `phase`,
     `state`). Order is canonical — see KIND_ORDER. No styling, no emoji.
 
-    `pref` is the persisted nudge pref (mute state). When non-empty, a
+    `pref` is the persisted nudge pref (mute state). When the PR is muted, a
     `muted` pill anchors the front of the list.
 
     `keep` marks user-spawned worktrees protected from auto-reap on merge.

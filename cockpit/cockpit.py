@@ -12,10 +12,10 @@ Per cycle, for every repo registered in $COCKPIT_HOME/config.json:
 
 Modes:
   --watch         long-running daemon (Textual TUI); SIGUSR1 kicks a cycle
-  --footer        re-run statusLine setup, then exit
+  --setup         re-run statusLine setup, then exit
 
 Sibling entry points (each script does one job):
-  cockpit/footer.py   statusLine shim — pipes Claude Code's stdin to cship
+  cockpit/statusline.py   statusLine shim — pipes Claude Code's stdin to cship
   cockpit/spawn.py    `/cockpit:new` — create worktree + workspace
 
 Failure policy: each cycle MUST exit 0 even on GitHub API errors. Errors go to
@@ -59,10 +59,9 @@ MIN_POLL_SECS = 5
 # "running" (holds the lock) from "waiting" (blocked on it) for the header.
 
 
-def _build_state(args: argparse.Namespace) -> dict:
+def _build_state() -> dict:
     return {
         "self_user": None,
-        "dry": args.dry_run,
         "pr_cache": {},
         "pill_state": {},
     }
@@ -75,7 +74,7 @@ def _once_with(state: dict) -> None:
     cycle_all(
         cfg,
         self_user,
-        dry=state["dry"],
+        dry=False,
         pr_cache=state["pr_cache"],
         pill_state=state["pill_state"],
     )
@@ -98,8 +97,6 @@ def _fast_tick(state: dict) -> None:
     Lock-free: the TUI serializes this against the slow tick under its own lock
     (both write the same cache cells).
     """
-    if state["dry"]:
-        return
     cfg = load_config()
     # Names/cwds are a local (non-network) cmux query; fetch once and reuse
     # across repos. A backend hiccup degrades to no rename, never a crash.
@@ -148,11 +145,12 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
         fast_tick=lambda: _fast_tick(state),
         slow_secs=watch_secs,
         fast_secs=fast_secs,
-        dry=state["dry"],
-        self_ws=self_ws if not state["dry"] else None,
+        self_ws=self_ws,
     )
     app.run()
-    return 0
+    # `u` exits with RESTART_EXIT_CODE so bin/cockpit.sh runs the updater and
+    # relaunches; a clean quit / SIGTERM leaves return_code at 0.
+    return app.return_code or 0
 
 
 def _statusline_command() -> str:
@@ -169,11 +167,10 @@ def main(argv: list[str] | None = None) -> int:
         "(slow_poll_interval_seconds + fast_poll_interval_seconds).",
     )
     g.add_argument(
-        "--footer",
+        "--setup",
         action="store_true",
-        help="Re-run footer setup only (cship.toml + starship.toml + statusLine), then exit.",
+        help="Re-run statusLine setup only (cship.toml + starship.toml + statusLine), then exit.",
     )
-    p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
 
     require_git()
@@ -182,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     ensure_state_dirs()
     preflight(load_config())
 
-    if args.footer:
+    if args.setup:
         install_cship_default_config()
         install_starship_default_config()
         install_cship_statusline_if_configured(_statusline_command())
@@ -204,9 +201,9 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        state = _build_state(args)
+        state = _build_state()
         return _watch(state, slow_secs, fast_secs)
-    # The mutually-exclusive group is required, so footer/watch are the only
+    # The mutually-exclusive group is required, so setup/watch are the only
     # paths; both return above.
     return 0
 

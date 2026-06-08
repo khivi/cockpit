@@ -14,12 +14,10 @@ import time
 from datetime import UTC, datetime
 
 from .nudges import (
-    KNOWN_CATEGORIES,
     NudgePref,
     delete_pref,
     list_prefs,
     load_pref,
-    normalize_categories,
     parse_duration,
     save_pref,
 )
@@ -69,26 +67,20 @@ def _fmt_until(until: float | None) -> str:
 
 
 def _print_status(pr_number: int, pref: NudgePref) -> None:
-    if not pref.disabled_categories:
+    if not pref.muted:
         print(f"PR #{pr_number}: not muted")
         if pref.last_nudge_at:
             ago = int(time.time() - pref.last_nudge_at)
             cat = pref.last_nudge_category or "?"
             print(f"  last nudge: {ago}s ago ({cat})")
         return
-    cats = ", ".join(sorted(pref.disabled_categories))
-    print(f"PR #{pr_number}: muted [{cats}] until {_fmt_until(pref.until)}")
+    print(f"PR #{pr_number}: muted until {_fmt_until(pref.until)}")
     if pref.reason:
         print(f"  reason: {pref.reason}")
 
 
 def _cmd_mute(args: argparse.Namespace) -> int:
     pr = _resolve_pr(args.pr)
-    try:
-        cats = normalize_categories(args.categories)
-    except ValueError as e:
-        print(str(e), file=sys.stderr)
-        return 2
     until: float | None = None
     if args.until:
         try:
@@ -97,11 +89,11 @@ def _cmd_mute(args: argparse.Namespace) -> int:
             print(str(e), file=sys.stderr)
             return 2
     pref = load_pref(pr)
-    pref.disabled_categories = cats
+    pref.muted = True
     pref.until = until
     pref.reason = args.reason or ""
     save_pref(pr, pref)
-    print(f"muted PR #{pr} [{', '.join(sorted(cats))}] until {_fmt_until(until)}")
+    print(f"muted PR #{pr} until {_fmt_until(until)}")
     if args.reason:
         print(f"  reason: {args.reason}")
     return 0
@@ -110,10 +102,10 @@ def _cmd_mute(args: argparse.Namespace) -> int:
 def _cmd_unmute(args: argparse.Namespace) -> int:
     pr = _resolve_pr(args.pr)
     pref = load_pref(pr)
-    if not pref.disabled_categories:
+    if not pref.muted:
         print(f"PR #{pr}: not muted")
         return 0
-    pref.disabled_categories = set()
+    pref.muted = False
     pref.until = None
     pref.reason = ""
     save_pref(pr, pref)
@@ -123,13 +115,12 @@ def _cmd_unmute(args: argparse.Namespace) -> int:
 
 def _cmd_list(_args: argparse.Namespace) -> int:
     prefs = list_prefs()
-    muted = {pr: p for pr, p in prefs.items() if p.disabled_categories}
+    muted = {pr: p for pr, p in prefs.items() if p.muted}
     if not muted:
         print("no muted PRs")
         return 0
     for pr_number, pref in sorted(muted.items()):
-        cats = ", ".join(sorted(pref.disabled_categories))
-        line = f"#{pr_number}  [{cats}]  until {_fmt_until(pref.until)}"
+        line = f"#{pr_number}  muted  until {_fmt_until(pref.until)}"
         if pref.reason:
             line += f"  — {pref.reason}"
         print(line)
@@ -158,13 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    mute = sub.add_parser("mute", help="Mute nudges for a PR.")
+    mute = sub.add_parser("mute", help="Mute all nudges for a PR.")
     mute.add_argument(
         "pr", type=int, nargs="?", help="PR number (default: current branch's PR)."
-    )
-    mute.add_argument(
-        "--categories",
-        help=f"Comma-separated subset of {{{','.join(KNOWN_CATEGORIES)}}} (default: all).",
     )
     mute.add_argument(
         "--until", help="Duration before auto-unmute (e.g. 30m, 2h, 7d, 1w)."

@@ -11,16 +11,24 @@ with the repo's `sidebar_color` via the same `CMUX_COLOR_ANSI` colorizer cmux
 uses, so the table and the cmux sidebar agree. Ticket + Status columns are added
 only when some configured repo is Linear-enabled (`show_linear`); they show the
 delivered Linear ticket id(s) and workflow state from the cached per-PR block.
+
+A muted PR (nudges silenced via `m` / `/cockpit:nudge`) prefixes its workspace
+name with the 🔇 glyph, read from the daemon-written `pr-muted` cell — the same
+snapshot starship reads, so the table never diverges from the sidebar.
 """
 
 from __future__ import annotations
 
 from rich.text import Text
+from textual import events
+from textual.binding import Binding
+from textual.message import Message
 from textual.widgets import DataTable
 
 from cockpit.lib.cache import branch_cache, find_pr_payload, read_text
 from cockpit.lib.colors import CMUX_COLOR_ANSI
 from cockpit.lib.git import Worktree
+from cockpit.lib.starship import ICON_PR_MUTED
 
 # (repo display name, sidebar_color, linear-enabled, worktrees)
 Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
@@ -41,14 +49,19 @@ _BASE_COLUMNS = ("Workspace", "PR", "Approval", "CI", "💬", "Title")
 _LINEAR_COLUMNS = ("Ticket", "Status")
 
 
-def _workspace_cell(wt: Worktree, repo_color: str | None) -> Text:
-    """The workspace name, tinted with the repo's cmux colour when set."""
+def _workspace_cell(wt: Worktree, repo_color: str | None, *, muted: bool) -> Text:
+    """The workspace name, tinted with the repo's cmux colour when set and
+    prefixed with the 🔇 glyph when the PR's nudges are muted."""
     label = wt.label or wt.short
     colorizer = CMUX_COLOR_ANSI.get(repo_color or "")
     if colorizer is not None:
         # Reuse the exact cmux colorizer (the source of truth) → parse its ANSI.
-        return Text.from_ansi(colorizer(label))
-    return Text(label, style="bold")
+        cell = Text.from_ansi(colorizer(label))
+    else:
+        cell = Text(label, style="bold")
+    if muted:
+        return Text.assemble((f"{ICON_PR_MUTED} ", "yellow"), cell)
+    return cell
 
 
 def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
@@ -85,7 +98,7 @@ def worktree_cells(
     label, style = _STATE.get(state, (state, "white"))
 
     cells = [
-        _workspace_cell(wt, repo_color),
+        _workspace_cell(wt, repo_color, muted=bool(cell("pr-muted"))),
         Text(f"#{num}") if num else Text(""),
         Text(label, style=style) if state else Text(""),
         Text(ci, style=_CI_STYLE.get(ci, "white")) if ci else Text(""),
@@ -104,6 +117,18 @@ class WorktreeTable(DataTable):
     WorktreeTable { width: 1fr; height: 1fr; }
     """
 
+    # Override DataTable's Enter→select_cursor so Enter raises FocusRequest
+    # instead of a RowSelected (which a *single* click also raises — we don't
+    # want single click to focus). Double-click is handled in `on_click`.
+    BINDINGS = [Binding("enter", "request_focus", "Focus", show=False)]
+
+    class FocusRequest(Message):
+        """User asked to focus a row's workspace (Enter or double-click)."""
+
+        def __init__(self, path: str) -> None:
+            self.path = path
+            super().__init__()
+
     def __init__(self, *, show_linear: bool = False, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._show_linear = show_linear
@@ -120,6 +145,20 @@ class WorktreeTable(DataTable):
             return None
         row_key, _ = self.coordinate_to_cell_key(self.cursor_coordinate)
         return row_key.value
+
+    def action_request_focus(self) -> None:
+        path = self.current_path()
+        if path:
+            self.post_message(self.FocusRequest(path))
+
+    def on_click(self, event: events.Click) -> None:
+        # Double-click focuses; single click only moves the cursor. DataTable's
+        # own `_on_click` (private) still runs to move the cursor first, so by
+        # the second click the row cursor already points at the clicked row.
+        if getattr(event, "chain", 1) >= 2:
+            path = self.current_path()
+            if path:
+                self.post_message(self.FocusRequest(path))
 
     def update_inventory(self, inventory: Inventory) -> None:
         """Rebuild rows from the worktree inventory, keeping the cursor on the

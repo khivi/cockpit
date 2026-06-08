@@ -7,12 +7,10 @@ heavy reconcile/spawn modules.
 
 Subcommands:
   watch                 long-running daemon (Textual TUI)
-  footer                (re)install the cship/starship statusLine config
+  setup                 (re)install the cship/starship statusLine config
   statusline            Claude Code statusLine shim (reads stdin → renders)
   starship <field>      starship field printer / `warm`
-  close  [args]         tear down a worktree + workspace
   new    [args]         create a worktree + workspace
-  focus  <ref>          switch workspace focus
   nudge  [args]         manage nudge mutes
   repos                 list configured repos
 """
@@ -24,12 +22,10 @@ from collections.abc import Callable
 
 _SUBCOMMANDS = (
     "watch",
-    "footer",
+    "setup",
     "statusline",
     "starship",
-    "close",
     "new",
-    "focus",
     "nudge",
     "repos",
 )
@@ -57,17 +53,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if argv else 2
     sub, rest = argv[0], argv[1:]
 
-    # watch / footer share cockpit.cockpit's argparse (require_git/gh +
+    # watch / setup share cockpit.cockpit's argparse (require_git/gh +
     # preflight live there); translate the subcommand back to its flag.
-    if sub in ("watch", "footer"):
+    if sub in ("watch", "setup"):
         from cockpit.cockpit import main as daemon_main
 
         return daemon_main([f"--{sub}", *rest])
 
     # statusline + starship are the hot render path — route straight to the
-    # leaf module, skipping the daemon preflight that footer/starship never run.
+    # leaf module, skipping the daemon preflight that setup/starship never run.
     if sub == "statusline":
-        from cockpit.footer import main as statusline_main
+        from cockpit.statusline import main as statusline_main
 
         return statusline_main()
     if sub == "starship":
@@ -84,20 +80,12 @@ def main(argv: list[str] | None = None) -> int:
 
         return nudge_main(rest)
 
-    # close / new / focus parse sys.argv internally; reshape it so their
-    # argparse sees only their own args (prog name + rest, no subcommand token).
-    if sub == "close":
-        from cockpit.close import main as close_main
-
-        return _run_with_argv("cockpit-close", rest, close_main)
+    # new parses sys.argv internally; reshape it so its argparse sees only its
+    # own args (prog name + rest, no subcommand token).
     if sub == "new":
         from cockpit.spawn import main as spawn_main
 
         return _run_with_argv("cockpit-new", rest, spawn_main)
-    if sub == "focus":
-        from cockpit.focus import main as focus_main
-
-        return _run_with_argv("cockpit-focus", rest, focus_main)
 
     print(f"cockpit: unknown subcommand {sub!r}\n{_usage()}", file=sys.stderr)
     return 2

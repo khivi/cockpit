@@ -14,7 +14,11 @@ import pytest
 
 import cockpit.lib.cache as cache_mod
 from cockpit.lib.git import Worktree
-from cockpit.tui.widgets.worktree_table import _BASE_COLUMNS, worktree_cells
+from cockpit.tui.widgets.worktree_table import (
+    _BASE_COLUMNS,
+    ICON_PR_MUTED,
+    worktree_cells,
+)
 
 
 @pytest.fixture
@@ -148,3 +152,16 @@ def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
 def test_no_linear_columns_when_not_configured(cache_dir):
     # show_linear False → no Ticket/Status cells
     assert len(_plain(_wt(), linear=True, show_linear=False)) == 6
+
+
+def test_muted_pr_prefixes_workspace_glyph(cache_dir):
+    wt = _wt(branch="khivi/silence", branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
+    cell = worktree_cells(wt, "r", None, False, show_linear=False)[0]
+    assert cell.plain == f"{ICON_PR_MUTED} silence"
+
+
+def test_unmuted_pr_has_no_glyph(cache_dir):
+    wt = _wt(branch="khivi/loud", branch_prefix="khivi/")
+    cell = worktree_cells(wt, "r", None, False, show_linear=False)[0]
+    assert cell.plain == "loud"
