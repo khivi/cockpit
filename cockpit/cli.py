@@ -30,7 +30,10 @@ _SUBCOMMANDS = (
 
 
 def _usage() -> str:
-    return "usage: cockpit <" + " | ".join(_SUBCOMMANDS) + "> [args]"
+    return (
+        "usage: cockpit <" + " | ".join(_SUBCOMMANDS) + "> [args]"
+        "  (no subcommand defaults to watch)"
+    )
 
 
 def _run_with_argv(prog: str, rest: list[str], main_fn: Callable[[], int]) -> int:
@@ -46,9 +49,13 @@ def _run_with_argv(prog: str, rest: list[str], main_fn: Callable[[], int]) -> in
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] in ("-h", "--help"):
+    if argv and argv[0] in ("-h", "--help"):
         print(_usage())
-        return 0 if argv else 2
+        return 0
+    # Bare `cockpit` defaults to `watch` — the daemon TUI is the primary entry
+    # point; every other subcommand is a hook/render shim or one-off.
+    if not argv:
+        argv = ["watch"]
     sub, rest = argv[0], argv[1:]
 
     # watch / setup share cockpit.cockpit's argparse (require_git/gh +
