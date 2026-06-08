@@ -1,7 +1,7 @@
-"""Tests for scripts/cockpit.py CLI dispatch.
+"""Tests for cockpit/cockpit.py CLI dispatch.
 
-`--footer` seeds statusLine + starship/cship configs; `--once` / `--watch` do
-NOT touch those files. Pipeline tests live in tests/orchestrators/test_cycle.py.
+`--setup` seeds statusLine + starship/cship configs; `--watch` does NOT touch
+those files. Pipeline tests live in tests/orchestrators/test_cycle.py.
 """
 
 from __future__ import annotations
@@ -19,24 +19,24 @@ from tests.fixtures import (
 
 
 def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
-    """`--footer` installs cship.toml + starship.toml + statusLine and exits."""
+    """`--setup` installs cship.toml + starship.toml + statusLine and exits."""
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "use_cship": True}
     )
     _make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cship", "starship")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    import scripts.cockpit as cockpit
+    import cockpit.cockpit as cockpit
 
     importlib.reload(cockpit)
 
     def _explode(*_a, **_kw):
-        raise AssertionError("--footer must not trigger a reconcile cycle")
+        raise AssertionError("--setup must not trigger a reconcile cycle")
 
     monkeypatch.setattr(cockpit, "gh_self_user", _explode)
     monkeypatch.setattr(cockpit, "cycle_all", _explode)
 
-    assert cockpit.main(["--footer"]) == 0
+    assert cockpit.main(["--setup"]) == 0
 
     cship_toml = tmp_path / "xdg" / "cship.toml"
     assert cship_toml.exists()
@@ -48,25 +48,7 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
 
     settings = _json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert settings["statusLine"]["type"] == "command"
-    assert settings["statusLine"]["command"].endswith("/footer.py")
-
-
-def test_cli_once_does_not_touch_footer_files(tmp_path, monkeypatch):
-    """`--once` is pure reconcile — never seeds either toml or writes statusLine."""
-    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
-    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cship", "starship")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-
-    import scripts.cockpit as cockpit
-
-    importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
-    monkeypatch.setattr(cockpit, "_once_with", lambda _s: None)
-
-    assert cockpit.main(["--once"]) == 0
-    assert not (tmp_path / "xdg" / "cship.toml").exists()
-    assert not (tmp_path / "xdg" / "starship.toml").exists()
-    assert not (tmp_path / ".claude" / "settings.json").exists()
+    assert settings["statusLine"]["command"].endswith("-m cockpit.cli statusline")
 
 
 def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
@@ -75,11 +57,11 @@ def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
     _make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cship", "starship")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    import scripts.cockpit as cockpit
+    import cockpit.cockpit as cockpit
 
     importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
-    monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: None)
+    monkeypatch.setattr(cockpit, "_build_state", lambda: {})
+    monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: 0)
 
     assert cockpit.main(["--watch"]) == 0
     assert not (tmp_path / "xdg" / "cship.toml").exists()
@@ -87,25 +69,23 @@ def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
     assert not (tmp_path / ".claude" / "settings.json").exists()
 
 
-def test_cli_once_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, capsys):
+def test_cli_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, capsys):
     """Preflight runs on every cockpit invocation: `use_cship: true` without
-    cship on PATH must hard-fail `--once` (and `--watch`, `--footer`) — same
-    contract as the standalone `lib.preflight.preflight()` test suite."""
+    cship on PATH must hard-fail before any dispatch — same contract as the
+    standalone `lib.preflight.preflight()` test suite."""
     _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
     bin_dir = _make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "starship")
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    import scripts.cockpit as cockpit
+    import cockpit.cockpit as cockpit
 
     importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
-    monkeypatch.setattr(cockpit, "_once_with", lambda _s: None)
 
     import pytest
 
     with pytest.raises(SystemExit) as exc:
-        cockpit.main(["--once"])
+        cockpit.main(["--watch"])
     assert exc.value.code == 2
     assert "`cship`" in capsys.readouterr().err
 
@@ -113,8 +93,8 @@ def test_cli_once_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, 
 def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
     """The fast tick fetches names/cwds once and reconciles workspace names
     against each repo's worktrees."""
-    import scripts.cockpit as cockpit
-    from scripts.lib.git import Worktree
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
 
     importlib.reload(cockpit)
 
@@ -138,7 +118,7 @@ def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
 
-    cockpit._fast_tick({"dry": False})
+    cockpit._fast_tick({})
 
     assert reconcile_calls == [(names, cwds, [wt])]
 
@@ -146,8 +126,8 @@ def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
 def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
     """A cmux backend hiccup degrades to no rename, never a crash, and the rest
     of the fast tick still runs."""
-    import scripts.cockpit as cockpit
-    from scripts.lib.git import Worktree
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
 
     importlib.reload(cockpit)
 
@@ -175,7 +155,17 @@ def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
         cockpit, "republish_pr_caches_from_disk", lambda: republished.append(True)
     )
 
-    cockpit._fast_tick({"dry": False})
+    cockpit._fast_tick({})
 
     assert reconcile_calls == []  # empty cwds → no reconcile attempted
     assert republished == [True]  # tick completed
+
+
+def test_watch_requires_tty(capsys):
+    """`cockpit watch` is TUI-only: with no TTY (as under pytest capture) it
+    prints a clean message and exits 2 instead of launching Textual."""
+    import cockpit.cockpit as cockpit
+
+    rc = cockpit._watch({}, 300, 30)
+    assert rc == 2
+    assert "requires a terminal" in capsys.readouterr().err

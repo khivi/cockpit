@@ -1,10 +1,10 @@
-"""Tests for scripts/lib/claude.py — stash_from_stdin parser."""
+"""Tests for cockpit/lib/claude.py — stash_from_stdin parser."""
 
 from __future__ import annotations
 
 import json
 
-import scripts.lib.claude as claude_mod
+import cockpit.lib.claude as claude_mod
 
 # ── stash_from_stdin (lib.claude) ──────────────────────────────────────────
 

@@ -11,7 +11,7 @@ combination layer — this document does. Diagrams are
 |---|---|---|
 | **GitHub PR** | `gh` API → PR cache JSON (`cache.py`) | `state` ∈ {`OPEN`,`MERGED`,`CLOSED`} × `ci` × `unaddressed` × `review_decision` × `isDraft` × `mergeable` |
 | **Claude session** | cmux native `claude_code=` + statusline stdin (`claude.py`) | `Running` / `Idle` / `Needs input`; context %, rate-limit, model, cost |
-| **cmux workspace** | cmux pills + in-memory `pill_state` dict | `idle=` `stuck=` `devdone=` `parked=` `ci=` `comments=` `merge=` `wip=` `draft=` `approved=` `keep=` `stale=` `loop=` + *does a worktree exist?* |
+| **cmux workspace** | cmux pills + in-memory `pill_state` dict | `idle=` `devdone=` `parked=` `ci=` `comments=` `merge=` `wip=` `draft=` `approved=` `stale=` `loop=` + *does a worktree exist?* |
 | **Linear** (aux) | `gh`-style GraphQL via `LINEAR_API_KEY` (`linear.py`) | ticket workflow `state.name` (e.g. `Dev Done`) — read-only, only for the `devdone=` pill |
 
 The decision functions consume these and emit actions. Everything below is a
@@ -36,7 +36,6 @@ flowchart LR
     MW["match_worktrees<br/>cycle.py:219"]
     SM["_spawn_missing_workspaces<br/>cycle.py:1079"]
     NI["nudge_if_idle<br/>cmux.py:314"]
-    TS["_track_stale_issue<br/>cycle.py:168"]
     DD["_track_dev_done<br/>cycle.py:219"]
     AC["_maybe_autoclose<br/>cycle.py:344"]
     BR["_reap_branch_refs<br/>cycle.py:490"]
@@ -45,23 +44,21 @@ flowchart LR
   subgraph ACT["Actions"]
     A1["bg spawn (plan-only / review)"]
     A2["nudge (send + enter)"]
-    A3["stuck= pill"]
     A4["teardown (worktree+workspace+branch)"]
     A5["refresh pills + colors + names"]
     A6["git branch -D (ref only)"]
     A7["devdone= pill"]
   end
 
-  GH --> MW & SM & TS & AC & BR
+  GH --> MW & SM & AC & BR
   GH --> DD
-  CM --> MW & NI & TS
+  CM --> MW & NI
   CL --> NI
   LIN --> DD
 
   MW --> SM
   SM --> A1
   NI --> A2
-  TS --> A3
   AC --> A4
   MW --> A5
   BR --> A6
@@ -69,7 +66,7 @@ flowchart LR
 ```
 
 The renderer (`starship.py`) is **not** in this picture by design: it only reads
-cache cells and never consults source state. See diagram 5.
+cache cells and never consults source state. See diagram 4.
 
 ---
 
@@ -94,8 +91,6 @@ flowchart TD
   REUSE -->|no| TRACK["Track: refresh pills + caches"]
   TRACK --> ACT{"actionable issue?<br/>ci / comments / conflicts<br/>AND state == OPEN"}
   ACT -->|yes| NUDGE["nudge_if_idle → diagram 3"]
-  ACT -->|"no / merged · closed"| CLR["clear stuck timer → diagram 4"]
-  NUDGE --> ST["_track_stale_issue → diagram 4"]
 
   WT -->|no| WHO{"author?"}
   WHO -->|mine| SP["bg spawn --pr N<br/>(plan-only first turn)"]
@@ -111,14 +106,12 @@ flowchart TD
   C["Worktree / workspace cleanup"] --> K{"state?"}
 
   K -->|"MERGED / branch gone"| AC{"autoclose<br/>blockers?"}
-  AC -->|"dirty · unpushed · open ·<br/>draft · ci≠green · unaddressed · keep"| SK["skip (log reason),<br/>keep worktree"]
+  AC -->|"dirty · unpushed · open ·<br/>draft · ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
   AC -->|"clean & merged"| TD["teardown: workspace →<br/>worktree → branch → PR cache"]
 
-  K -->|"CLOSED · mine"| OR["orphan: pills + nudge<br/>to push or close"]
+  K -->|"no open PR · mine"| OR["orphan: pills + nudge<br/>to push or close"]
 
-  K -->|"CLOSED · coworker"| KS{"--keep-stale?"}
-  KS -->|yes| KP["keep (log stale)"]
-  KS -->|no| CW["close workspace"]
+  K -->|"no open PR · coworker"| OC["orphan: pills only<br/>(no nudge, no close)"]
 
   K -->|"workspace, no worktree"| RP{"idle?"}
   RP -->|"yes & mine-prefix"| EN["enqueue forced teardown"]
@@ -137,7 +130,7 @@ Key gates (all from `cycle.py`):
   the smart-skip below). Its `ci`/`comments`/`conflicts` can no longer be
   resolved, so `actionable` is gated on `state == "OPEN"`; otherwise the nudge
   would loop forever (the issue never clears). The footer pill still shows the
-  state; only the nudge + stuck timer are suppressed.
+  state; only the nudge is suppressed.
 - **Reused-branch suppression** (`_is_reused_branch_merge`): a merged/closed PR
   whose `headRefOid` is no longer an ancestor of the worktree's HEAD means the
   branch was reused for new local work. The card shows no PR until a new one is
@@ -151,10 +144,16 @@ Key gates (all from `cycle.py`):
 - **Autoclose soft blockers** (`forced=True` overrides): unpushed commits, open PR.
 - **Autoclose smart-skip**: even when merged & clean, skip if draft, CI not green,
   or unaddressed review threads remain.
+- **A merged PR is the only reaper**: `_handle_orphans_and_close_stale` never
+  closes a worktree — a no-open-PR worktree (research/planning, or a coworker
+  branch reviewed locally) gets orphan pills and lives until the user closes it
+  (TUI `c`). Only `_maybe_autoclose` (merged & clean) tears anything down. There
+  is no `keep` flag — with non-merge closing gone, nothing needs protecting.
 - **In-flight spawn guard**: `_bg_spawn_pr` keys `spawn:<owner>/<name>:<branch>`
   in `pill_state` with a `time.monotonic()` stamp; a second spawn within
-  `_SPAWN_INFLIGHT_TTL_SECONDS` (600s) is skipped, so a `/cockpit:sync` kick
-  can't double-launch mid-creation.
+  `_SPAWN_INFLIGHT_TTL_SECONDS` (600s) is skipped, so a manual slow-tick kick
+  (the `s` key, or a `cockpit close`/`new` SIGUSR1) can't double-launch
+  mid-creation.
 - **Orphan auto-spawn is `<self_user>/`-prefix gated**: review worktrees are
   never orphan-spawned. It is deduped by **path** (skip if the worktree's path
   is already a workspace cwd) and additionally **name-clash gated**: skip + log
@@ -169,7 +168,7 @@ Key gates (all from `cycle.py`):
   `git branch -D`s any worktree-less local branch that is either merged (unbounded
   `merged_branches_deep`) with no post-merge commits, or has no remote and is
   contained in `origin/<default>`. Keeps unique-commit, open-PR, main/default, and
-  unverifiable branches. Same `auto_cleanup_on_merge` gate.
+  unverifiable branches. Unconditional cleanup, like `_maybe_autoclose`.
 
 ---
 
@@ -182,7 +181,7 @@ type into the confirmation. Do not "simplify" the gate to trust it.
 
 ```mermaid
 flowchart TD
-  IN["nudge_if_idle(ref, msg,<br/>pr_number, category)"] --> G1{"PR-attached &<br/>muted for category?"}
+  IN["nudge_if_idle(ref, msg,<br/>pr_number, category)"] --> G1{"PR-attached &<br/>PR muted?"}
   G1 -->|yes| F1["return False<br/>(user mute, survives restart)"]
   G1 -->|"no / orphan nudge"| G2{"native ==<br/>Running?"}
 
@@ -218,44 +217,7 @@ Truth table (native × `idle=` × `parked=` × muted → result):
 
 ---
 
-## 4. Stuck-pill timer (`_track_stale_issue`, `cycle.py:157`)
-
-The `stuck=` pill is the **stale-running escape hatch**: a passive sidebar
-visual (never a `send`) for when an actionable issue persists but the workspace
-never becomes nudgeable — agent wedged mid-turn, or every `idle=` self-heal
-failed. Per-category timing lives in `NudgePref.first_seen_at` (one JSON file
-per PR). Threshold = `nudge_stale_seconds`, default `3 × slow_poll_interval`
-(900s).
-
-```mermaid
-stateDiagram-v2
-  [*] --> NoTimer
-
-  NoTimer --> Timing: issue seen, not nudged, not muted (first_seen_at = now)
-  Timing --> Timing: still un-nudged, elapsed < threshold
-  Timing --> Stuck: elapsed >= threshold (apply stuck=cat Xm, RED)
-  Stuck --> Stuck: issue persists, still un-nudged
-
-  Timing --> NoTimer: nudged / resolved / muted / category switched
-  Stuck --> NoTimer: nudged / resolved / muted / category switched
-
-  NoTimer --> [*]
-```
-
-Reset paths (any of these clears the timer and pill):
-
-- A successful nudge that cycle (`nudged=True`).
-- The actionable issue resolves (`category=None`).
-- User mutes the category (`should_nudge` returns False).
-- The issue switches category (e.g. `ci` → `comments`); the old category's
-  timer is dropped so it can't false-escalate.
-
-The pill is managed **directly in the slow tick**, not via `apply_pills`, so it
-is intentionally absent from `cmux.ACTIONABLE_KEYS`. No-op in dry runs.
-
----
-
-## 5. Cell data-flow & ownership
+## 4. Cell data-flow & ownership
 
 **Only the daemon writes cells; renderers only read.** Field printers in
 `starship.py` are strictly read-only — no `gh`, no `git`, no subprocess forks.
@@ -292,7 +254,7 @@ a cell — it never touches a source directly.
 
 Why two ticks:
 
-- **Slow tick** owns every decision (spawn, nudge, stuck, devdone, teardown,
+- **Slow tick** owns every decision (spawn, nudge, devdone, teardown,
   colors, names) and the expensive `gh` (+ optional Linear) fetch + per-PR JSON
   snapshot.
 - **Fast tick** is network-free: it re-derives git-state cells for every

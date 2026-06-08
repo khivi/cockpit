@@ -1,4 +1,4 @@
-"""Tests for the scripts/bin/starship shim + scripts/lib/cship.py wiring.
+"""Tests for the cockpit/bin/starship shim + cockpit/lib/cship.py wiring.
 
 The shim rewrites `STARSHIP_SHELL=unknown` (which cship 1.7.1 forces) to
 `sh` before exec'ing the real starship — without this, every [custom.*]
@@ -18,10 +18,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-SHIM = REPO_ROOT / "scripts" / "bin" / "starship"
+SHIM = REPO_ROOT / "cockpit" / "bin" / "starship"
 SHIM_DIR = SHIM.parent
 
-import scripts.lib.cship as cship_mod  # noqa: E402
+import cockpit.lib.cship as cship_mod  # noqa: E402
 from tests.fixtures import make_bin_on_path  # noqa: E402
 
 # ── shim: STARSHIP_SHELL rewrite ──────────────────────────────────────────
@@ -215,7 +215,7 @@ def test_invoke_cship_pipes_blob_and_forwards_stdout(
         captured["env"] = env
         return _sp.CompletedProcess(cmd, 0, stdout=b"styled-output\n", stderr=b"")
 
-    monkeypatch.setattr("scripts.lib.cship.subprocess.run", fake_run)
+    monkeypatch.setattr("cockpit.lib.cship.subprocess.run", fake_run)
 
     assert cship_mod.invoke_cship(b'{"hello":"world"}', "sess1") == 0
     assert captured["cmd"] == ["cship"]
@@ -230,7 +230,7 @@ def test_invoke_cship_propagates_exit_code(tmp_path, monkeypatch, capsysbinary):
 
     make_bin_on_path(tmp_path, monkeypatch, "cship", "starship")
     monkeypatch.setattr(
-        "scripts.lib.cship.subprocess.run",
+        "cockpit.lib.cship.subprocess.run",
         lambda *a, **kw: _sp.CompletedProcess(["cship"], 17, b"", b"boom\n"),
     )
 
@@ -251,6 +251,6 @@ def test_invoke_cship_no_session_id_omits_env_export(tmp_path, monkeypatch):
         captured["env"] = env
         return _sp.CompletedProcess(cmd, 0, b"", b"")
 
-    monkeypatch.setattr("scripts.lib.cship.subprocess.run", fake_run)
+    monkeypatch.setattr("cockpit.lib.cship.subprocess.run", fake_run)
     cship_mod.invoke_cship(b"{}", None)
     assert "CSHIP_SESSION_ID" not in captured["env"]

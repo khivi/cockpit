@@ -1,4 +1,4 @@
-"""Pill decision tests targeting scripts/lib/pills.py.
+"""Pill decision tests targeting cockpit/lib/pills.py.
 
 `decide_pills` is the single source of truth for which pills a PR/worktree
 combination should surface. These tests pin the decisions; consumer-side
@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from scripts.lib.gh import PR
-from scripts.lib.git import Worktree
-from scripts.lib.nudges import KNOWN_CATEGORIES, NudgePref
-from scripts.lib.pills import KIND_ORDER, decide_pills
+from cockpit.lib.gh import PR
+from cockpit.lib.git import Worktree
+from cockpit.lib.nudges import NudgePref
+from cockpit.lib.pills import KIND_ORDER, decide_pills
 
 
 def _pr(**overrides) -> PR:
@@ -151,29 +151,6 @@ def test_decide_pills_membership(pr_overrides, must_have, must_not_have):
         assert k not in kinds
 
 
-def test_keep_pill_emitted_when_keep_true():
-    kinds = [p["kind"] for p in decide_pills(_pr(), _wt(), keep=True)]
-    assert "keep" in kinds
-
-
-def test_keep_pill_absent_when_keep_false():
-    kinds = [p["kind"] for p in decide_pills(_pr(), _wt(), keep=False)]
-    assert "keep" not in kinds
-
-
-def test_keep_pill_position_after_muted_before_rebase():
-    from scripts.lib.nudges import NudgePref
-
-    pref = NudgePref(disabled_categories={"ci"})
-    kinds = [
-        p["kind"]
-        for p in decide_pills(
-            _pr(ci="passed"), _wt(rebasing=True), pref=pref, keep=True
-        )
-    ]
-    assert kinds.index("muted") < kinds.index("keep") < kinds.index("rebase")
-
-
 def test_state_pill_only_for_non_open():
     # OPEN + ci=none → no pills; MERGED/CLOSED + ci=none → state pill only.
     # ci_passed is independent of state (see ci_passed_coexists_with_merged_state).
@@ -231,30 +208,20 @@ def test_muted_pref_none_or_empty_emits_no_muted():
     ]
 
 
-def test_muted_full_scope_anchors_front():
-    pref = NudgePref(disabled_categories=set(KNOWN_CATEGORIES))
+def test_muted_anchors_front():
+    pref = NudgePref(muted=True)
     pills = decide_pills(_pr(ci="failed:lint", unaddressed=2), _wt(), pref=pref)
-    assert pills[0] == {"kind": "muted", "scope": "all", "categories": []}
-
-
-def test_muted_partial_scope_lists_sorted_categories():
-    pref = NudgePref(disabled_categories={"comments", "ci"})
-    pills = decide_pills(_pr(), _wt(), pref=pref)
-    assert pills[0] == {
-        "kind": "muted",
-        "scope": "some",
-        "categories": ["ci", "comments"],
-    }
+    assert pills[0] == {"kind": "muted"}
 
 
 def test_muted_does_not_suppress_ci_passed_sentinel():
-    pref = NudgePref(disabled_categories={"ci"})
+    pref = NudgePref(muted=True)
     kinds = [p["kind"] for p in decide_pills(_pr(), _wt(), pref=pref)]
     assert kinds == ["muted", "ci_passed"]
 
 
 def test_muted_coexists_with_actionable_pills():
-    pref = NudgePref(disabled_categories={"ci"})
+    pref = NudgePref(muted=True)
     pills = decide_pills(_pr(ci="failed:lint", unaddressed=2), _wt(), pref=pref)
     kinds = [p["kind"] for p in pills]
     assert kinds[0] == "muted"
@@ -263,8 +230,8 @@ def test_muted_coexists_with_actionable_pills():
 
 
 def test_muted_with_expired_pref_clearing_via_load_pref(tmp_path, monkeypatch):
-    # An expired pref returned by load_pref already has disabled_categories
-    # cleared (see nudges.load_pref auto-expiry). Pass an explicit empty pref
-    # to mirror that contract — no muted pill should appear.
-    pref = NudgePref(disabled_categories=set(), until=None)
+    # An expired pref returned by load_pref already has `muted` cleared (see
+    # nudges.load_pref auto-expiry). Pass an explicit unmuted pref to mirror
+    # that contract — no muted pill should appear.
+    pref = NudgePref(muted=False, until=None)
     assert all(p["kind"] != "muted" for p in decide_pills(_pr(), _wt(), pref=pref))

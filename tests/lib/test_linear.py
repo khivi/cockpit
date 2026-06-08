@@ -1,4 +1,4 @@
-"""Tests for scripts/lib/linear.py — regex, extract_ticket, footer parsing,
+"""Tests for cockpit/lib/linear.py — regex, extract_ticket, footer parsing,
 and the one network surface (`fetch_ticket_state`).
 
 The Linear ticket *body* (title, description) is still fetched by Claude via the
@@ -15,12 +15,13 @@ import urllib.error
 from io import BytesIO
 from unittest.mock import patch
 
-from scripts.lib.linear import (
+from cockpit.lib.linear import (
     LINEAR_RE,
     LINEAR_RE_CI,
     extract_ticket,
     fetch_ticket_state,
     linear_mcp_available,
+    parse_linear_footer_links,
     parse_linear_footers,
 )
 
@@ -75,13 +76,13 @@ def _fake_completed(
 
 def test_linear_mcp_available_returns_none_when_claude_missing():
     """No `claude` on PATH → FileNotFoundError → None (can't tell)."""
-    with patch("scripts.lib.linear.subprocess.run", side_effect=FileNotFoundError):
+    with patch("cockpit.lib.linear.subprocess.run", side_effect=FileNotFoundError):
         assert linear_mcp_available() is None
 
 
 def test_linear_mcp_available_returns_none_on_timeout():
     with patch(
-        "scripts.lib.linear.subprocess.run",
+        "cockpit.lib.linear.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=3),
     ):
         assert linear_mcp_available() is None
@@ -90,7 +91,7 @@ def test_linear_mcp_available_returns_none_on_timeout():
 def test_linear_mcp_available_returns_none_on_nonzero_exit():
     """`claude mcp list` ran but failed → can't tell → None."""
     with patch(
-        "scripts.lib.linear.subprocess.run",
+        "cockpit.lib.linear.subprocess.run",
         return_value=_fake_completed(stdout="", returncode=1),
     ):
         assert linear_mcp_available() is None
@@ -98,7 +99,7 @@ def test_linear_mcp_available_returns_none_on_nonzero_exit():
 
 def test_linear_mcp_available_true_when_output_contains_linear():
     with patch(
-        "scripts.lib.linear.subprocess.run",
+        "cockpit.lib.linear.subprocess.run",
         return_value=_fake_completed(
             stdout="linear: https://mcp.linear.app/sse (HTTP)\n",
         ),
@@ -108,7 +109,7 @@ def test_linear_mcp_available_true_when_output_contains_linear():
 
 def test_linear_mcp_available_case_insensitive():
     with patch(
-        "scripts.lib.linear.subprocess.run",
+        "cockpit.lib.linear.subprocess.run",
         return_value=_fake_completed(stdout="LINEAR Connector enabled\n"),
     ):
         assert linear_mcp_available() is True
@@ -116,7 +117,7 @@ def test_linear_mcp_available_case_insensitive():
 
 def test_linear_mcp_available_false_when_no_linear_entry():
     with patch(
-        "scripts.lib.linear.subprocess.run",
+        "cockpit.lib.linear.subprocess.run",
         return_value=_fake_completed(stdout="github: gh-stuff\nfilesystem: fs-thing\n"),
     ):
         assert linear_mcp_available() is False
@@ -124,7 +125,7 @@ def test_linear_mcp_available_false_when_no_linear_entry():
 
 def test_linear_mcp_available_false_on_empty_output():
     with patch(
-        "scripts.lib.linear.subprocess.run",
+        "cockpit.lib.linear.subprocess.run",
         return_value=_fake_completed(stdout=""),
     ):
         assert linear_mcp_available() is False
@@ -132,7 +133,7 @@ def test_linear_mcp_available_false_on_empty_output():
 
 def test_linear_mcp_available_returns_none_on_oserror():
     with patch(
-        "scripts.lib.linear.subprocess.run",
+        "cockpit.lib.linear.subprocess.run",
         side_effect=OSError("permission denied"),
     ):
         assert linear_mcp_available() is None
@@ -143,7 +144,7 @@ def test_linear_mcp_available_uses_bumped_timeout():
     (~6s typical, 30s+ under load) so a slow-but-connecting Linear MCP yields
     a definitive answer instead of timing out at the old 3s budget."""
     with patch(
-        "scripts.lib.linear.subprocess.run",
+        "cockpit.lib.linear.subprocess.run",
         return_value=_fake_completed(stdout="linear: ...\n"),
     ) as run:
         linear_mcp_available()
@@ -179,6 +180,30 @@ def test_parse_footers_empty_and_none():
     assert parse_linear_footers(None) == []  # type: ignore[arg-type]
 
 
+def test_parse_footer_links_captures_url():
+    body = "desc\n\nLinear: [PE-1234](https://linear.app/acme/issue/PE-1234)"
+    assert parse_linear_footer_links(body) == [
+        ("PE-1234", "https://linear.app/acme/issue/PE-1234")
+    ]
+
+
+def test_parse_footer_links_multiple_dedups_by_id():
+    body = (
+        "Linear: [PE-1](https://l/PE-1)\n"
+        "Linear: [ENG-9](https://l/ENG-9)\n"
+        "Linear: [PE-1](https://l/PE-1-again)\n"
+    )
+    assert parse_linear_footer_links(body) == [
+        ("PE-1", "https://l/PE-1"),
+        ("ENG-9", "https://l/ENG-9"),
+    ]
+
+
+def test_parse_footer_links_empty():
+    assert parse_linear_footer_links("") == []
+    assert parse_linear_footer_links("Linear: PE-1 no link") == []
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # fetch_ticket_state — Linear GraphQL (mocked urlopen)
 # ────────────────────────────────────────────────────────────────────────────
@@ -212,7 +237,7 @@ def test_fetch_ticket_state_no_key_skips_network():
     """No LINEAR_API_KEY (and no override) → None, and urlopen is never called."""
     with (
         patch.dict("os.environ", {}, clear=True),
-        patch("scripts.lib.linear.urllib.request.urlopen") as urlopen,
+        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
     ):
         assert fetch_ticket_state("PE-1") is None
     urlopen.assert_not_called()
@@ -220,21 +245,21 @@ def test_fetch_ticket_state_no_key_skips_network():
 
 def test_fetch_ticket_state_happy_path():
     with patch(
-        "scripts.lib.linear.urllib.request.urlopen",
+        "cockpit.lib.linear.urllib.request.urlopen",
         return_value=_FakeResp(_state_payload("Dev Done")),
     ):
         assert fetch_ticket_state("PE-1234", api_key="lin_xxx") == "Dev Done"
 
 
 def test_fetch_ticket_state_rejects_non_ticket():
-    with patch("scripts.lib.linear.urllib.request.urlopen") as urlopen:
+    with patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen:
         assert fetch_ticket_state("not-a-ticket", api_key="k") is None
     urlopen.assert_not_called()
 
 
 def test_fetch_ticket_state_no_matching_issue_is_none():
     with patch(
-        "scripts.lib.linear.urllib.request.urlopen",
+        "cockpit.lib.linear.urllib.request.urlopen",
         return_value=_FakeResp({"data": {"issues": {"nodes": []}}}),
     ):
         assert fetch_ticket_state("PE-9", api_key="k") is None
@@ -242,12 +267,12 @@ def test_fetch_ticket_state_no_matching_issue_is_none():
 
 def test_fetch_ticket_state_http_error_is_none():
     err = urllib.error.HTTPError("u", 401, "unauthorized", {}, BytesIO(b""))  # type: ignore[arg-type]
-    with patch("scripts.lib.linear.urllib.request.urlopen", side_effect=err):
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=err):
         assert fetch_ticket_state("PE-1", api_key="k") is None
 
 
 def test_fetch_ticket_state_timeout_is_none():
-    with patch("scripts.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
         assert fetch_ticket_state("PE-1", api_key="k") is None
 
 
@@ -259,7 +284,7 @@ def test_fetch_ticket_state_sends_team_and_number_variables():
         captured["auth"] = req.headers.get("Authorization")
         return _FakeResp(_state_payload("In Progress"))
 
-    with patch("scripts.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
         fetch_ticket_state("eng-42", api_key="secret-key")
 
     assert captured["auth"] == "secret-key"  # raw key, no Bearer prefix

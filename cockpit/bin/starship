@@ -1,0 +1,56 @@
+#!/bin/sh
+# cship 1.7.1 sets STARSHIP_SHELL=unknown to force starship's plain-ANSI
+# output, but starship gates every [custom.*] block on shell detection and
+# `unknown` matches no entry — so the cockpit footer collapses to just
+# [time]. Rewriting to `sh` gives identical plain ANSI with all modules
+# intact. This shim is on PATH only inside the cship subprocess (see
+# cockpit/lib/cship.py); the host shell's starship is never affected.
+#
+# Uses only POSIX shell builtins (no dirname / realpath) so it works even
+# when PATH is restricted to the shim's own dir + the real-starship dir.
+
+if [ "${STARSHIP_SHELL-}" = "unknown" ]; then
+    # shellcheck disable=SC2209  # intentional string assignment, not command
+    STARSHIP_SHELL=sh
+    export STARSHIP_SHELL
+fi
+
+# Resolve our own directory without external commands. `${0%/*}` strips
+# the trailing /name component; if $0 has no slash we're a bare name on
+# PATH, which would itself be ambiguous — fall back to `.`.
+case "$0" in
+    */*) self_dir=${0%/*} ;;
+    *)   self_dir=. ;;
+esac
+# shellcheck disable=SC1007  # CDPATH= is intentional env-var-for-subshell idiom
+self_dir=$(CDPATH= cd -- "$self_dir" && pwd -P) || self_dir=""
+
+# Filter our own directory out of PATH so the resolution below doesn't
+# pick up this same shim (which would re-exec infinitely).
+filtered=""
+IFS_orig=$IFS
+IFS=:
+for entry in $PATH; do
+    candidate=$entry
+    [ -z "$candidate" ] && candidate=.
+    # shellcheck disable=SC1007  # CDPATH= is intentional env-var-for-subshell idiom
+    resolved=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || resolved=""
+    if [ -n "$self_dir" ] && [ -n "$resolved" ] && [ "$resolved" = "$self_dir" ]; then
+        continue
+    fi
+    if [ -z "$filtered" ]; then
+        filtered=$entry
+    else
+        filtered="$filtered:$entry"
+    fi
+done
+IFS=$IFS_orig
+
+real=$(PATH=$filtered command -v starship 2>/dev/null) || real=""
+if [ -z "$real" ]; then
+    # shellcheck disable=SC2016  # backtick in single quotes is intentional display literal
+    printf 'cockpit starship shim: real `starship` binary not found on PATH\n' >&2
+    exit 127
+fi
+
+exec "$real" "$@"

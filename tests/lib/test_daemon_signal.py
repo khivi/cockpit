@@ -16,10 +16,10 @@ import pytest
 def signal_mod(tmp_path, monkeypatch):
     """Isolate $COCKPIT_HOME and reload config + daemon_signal so each test starts fresh."""
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cfg
+    import cockpit.lib.config as cfg
 
     importlib.reload(cfg)
-    import scripts.lib.daemon_signal as ds
+    import cockpit.lib.daemon_signal as ds
 
     importlib.reload(ds)
     return ds
@@ -29,7 +29,7 @@ def signal_mod(tmp_path, monkeypatch):
 
 
 def test_enqueue_and_iter_round_trip(signal_mod):
-    from scripts.orchestrators.teardown import TeardownRequest
+    from cockpit.orchestrators.teardown import TeardownRequest
 
     req = TeardownRequest(
         ref="workspace:7",
@@ -56,7 +56,7 @@ def test_enqueue_and_iter_round_trip(signal_mod):
 
 
 def test_pop_removes_marker(signal_mod):
-    from scripts.orchestrators.teardown import TeardownRequest
+    from cockpit.orchestrators.teardown import TeardownRequest
 
     req = TeardownRequest(ref="workspace:1", repo_name="r")
     path = signal_mod.enqueue(req)
@@ -66,7 +66,7 @@ def test_pop_removes_marker(signal_mod):
 
 
 def test_iter_pending_scoped_by_repo(signal_mod):
-    from scripts.orchestrators.teardown import TeardownRequest
+    from cockpit.orchestrators.teardown import TeardownRequest
 
     signal_mod.enqueue(TeardownRequest(ref="workspace:1", repo_name="repo-a"))
     signal_mod.enqueue(TeardownRequest(ref="workspace:2", repo_name="repo-b"))
@@ -81,7 +81,7 @@ def test_iter_pending_scoped_by_repo(signal_mod):
 
 
 def test_prune_stale_removes_stale_requests(signal_mod):
-    from scripts.orchestrators.teardown import TeardownRequest
+    from cockpit.orchestrators.teardown import TeardownRequest
 
     fresh = signal_mod.enqueue(TeardownRequest(ref="workspace:fresh", repo_name="r"))
     stale = signal_mod.enqueue(TeardownRequest(ref="workspace:stale", repo_name="r"))
@@ -96,7 +96,7 @@ def test_prune_stale_removes_stale_requests(signal_mod):
 
 
 def test_corrupt_marker_skipped(signal_mod, capsys):
-    from scripts.orchestrators.teardown import TeardownRequest
+    from cockpit.orchestrators.teardown import TeardownRequest
 
     signal_mod.enqueue(TeardownRequest(ref="workspace:1", repo_name="r"))
     (signal_mod.STATE_DIR / "r" / "garbage.json").write_text("not json {")
@@ -116,7 +116,7 @@ def test_kick_running_no_pidfile_returns_false(signal_mod):
 
 
 def test_kick_running_signals_pid(signal_mod, monkeypatch):
-    from scripts.lib.config import PID_FILE
+    from cockpit.lib.config import PID_FILE
 
     sent: list[tuple[int, int]] = []
     monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append((pid, sig)))
@@ -128,7 +128,7 @@ def test_kick_running_signals_pid(signal_mod, monkeypatch):
 
 
 def test_kick_running_dead_pid_unlinks_pidfile(signal_mod, monkeypatch, capsys):
-    from scripts.lib.config import PID_FILE
+    from cockpit.lib.config import PID_FILE
 
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text("4242")
@@ -143,7 +143,7 @@ def test_kick_running_dead_pid_unlinks_pidfile(signal_mod, monkeypatch, capsys):
 
 
 def test_kick_running_corrupt_pidfile_warns(signal_mod, capsys):
-    from scripts.lib.config import PID_FILE
+    from cockpit.lib.config import PID_FILE
 
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text("not-an-int")
@@ -154,7 +154,7 @@ def test_kick_running_corrupt_pidfile_warns(signal_mod, capsys):
 
 
 def test_kick_running_permission_error_surfaces(signal_mod, monkeypatch, capsys):
-    from scripts.lib.config import PID_FILE
+    from cockpit.lib.config import PID_FILE
 
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text("4242")
@@ -175,7 +175,7 @@ def test_stop_running_no_pidfile_returns_zero(signal_mod, capsys):
 
 
 def test_stop_running_stale_pidfile_cleans_up(signal_mod, monkeypatch, capsys):
-    from scripts.lib.config import PID_FILE
+    from cockpit.lib.config import PID_FILE
 
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text("4242")
@@ -192,7 +192,7 @@ def test_stop_running_stale_pidfile_cleans_up(signal_mod, monkeypatch, capsys):
 def test_stop_running_signals_and_waits_for_pidfile_removal(
     signal_mod, monkeypatch, capsys
 ):
-    from scripts.lib.config import PID_FILE
+    from cockpit.lib.config import PID_FILE
 
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text("4242")
@@ -274,7 +274,7 @@ def _spawn_trap(tmp_path):
 
 
 def test_kick_running_signals_real_process(signal_mod, tmp_path):
-    from scripts.lib.config import PID_FILE
+    from cockpit.lib.config import PID_FILE
 
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     proc, usr1_marker, _ = _spawn_trap(tmp_path)
@@ -288,7 +288,7 @@ def test_kick_running_signals_real_process(signal_mod, tmp_path):
 
 
 def test_stop_running_terminates_real_process(signal_mod, tmp_path):
-    from scripts.lib.config import PID_FILE
+    from cockpit.lib.config import PID_FILE
 
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     proc, _, term_marker = _spawn_trap(tmp_path)

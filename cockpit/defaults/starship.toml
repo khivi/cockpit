@@ -1,0 +1,201 @@
+# Default starship config bundled with the cockpit plugin.
+#
+# cship's [starship_prompt] hook spawns the starship binary with
+# STARSHIP_CONFIG=~/.config/starship.toml whenever $starship_prompt appears
+# in cship.toml's `format`. That delegation is the only way to render
+# starship-flavored [custom.*] modules — cship's own line renderer does not
+# evaluate [custom.*] sections.
+#
+# Copied to ~/.config/starship.toml only when you run `cockpit setup`
+# (the explicit footer-setup command). --watch reconcile cycles
+# never touch this file, so any edits you make stick around until you
+# re-run --setup.
+
+# Explicit two-line layout:
+#   line 1 = session state (model / context / rate / branch / session time)
+#   line 2 = PR/Linear identity (ticket / state / num / checks / title)
+#
+# Line 2 collapses entirely when there's no Linear ticket and no PR for the
+# current branch — the trailing newline still prints, but cship trims
+# blank trailing lines, so the footer stays single-line in that case.
+#
+# `${custom.<name>}` (braces required) is starship's syntax for referencing
+# a specific [custom.*] block. Bare `$custom` would expand to every custom
+# module concatenated in arbitrary order; the dotted form is what lets us
+# pin the line break between session_time and linear.
+format = """\
+${custom.model}\
+${custom.context}\
+${custom.ratelimit}\
+${custom.branch_identity}\
+${custom.worktree_status}\
+${custom.permission_mode}\
+${custom.cost}\
+${custom.session_time}
+${custom.linear}\
+${custom.pr_state}\
+${custom.pr_num}\
+${custom.pr_comments}\
+${custom.pr_checks}\
+${custom.pr_muted}\
+${custom.pr_title}"""
+
+add_newline = false
+
+# Theme palette. The literal `__COCKPIT_THEME__` token is replaced with the
+# `theme` value from ~/.config/cockpit/config.json ("dark" | "light") at install
+# time by `install_starship_default_config()` in cockpit/lib/config.py. Only the
+# two neutral-grey roles are themed — the near-black greys were the only values
+# with a real contrast problem (see fix d42a1d2). The saturated styles
+# (permission-mode fg:172, linear fg:91) are legible on both backgrounds and stay
+# literal, mirroring the same decision in cockpit/lib/colors.py.
+#
+# Palette values are BARE NUMERIC ("243"), not `color_NNN`: starship 1.25.1
+# silently drops `color_NNN` styles inside [custom.*] modules.
+#
+# Changing `theme` takes effect on the next `cockpit setup` (the only command
+# that re-seeds this file), exactly like any other edit to starship.toml.
+palette = "__COCKPIT_THEME__"
+
+[palettes.dark]
+text_primary = "243"  # model, pr_num — neutral gray on dark bg
+text_muted   = "240"  # session_time, pr_title — dim gray on dark bg
+
+[palettes.light]
+text_primary = "236"  # ≈ original #1f2937, readable on light bg
+text_muted   = "238"  # ≈ original #475569, readable on light bg
+
+# Disable starship's default modules so the format above is authoritative:
+# `format` listing only `${custom.*}` would normally still render the prefix
+# the host shell's starship default appends, which we don't want here.
+[character]
+disabled = true
+
+# All [custom.*] commands invoke the bundled `cockpit/cship.py` dispatcher.
+# The literal `__COCKPIT_STARSHIP__` token is replaced with the resolved absolute
+# path at install time by `install_starship_default_config()` in
+# cockpit/lib/config.py — starship spawns commands without changing cwd, so
+# the path baked into ~/.config/starship.toml must be absolute.
+
+# Claude model display name (e.g. "Opus 4.7"); stashed by cship.py wrapper from statusLine JSON.
+[custom.model]
+command     = "__COCKPIT_STARSHIP__ model"
+when        = "true"
+format      = "(   [🤖 $output]($style))"
+style       = "fg:text_primary"
+description = "Claude model display name"
+
+# Running Claude Code session spend (e.g. "💰 $0.42"); cached from cost.total_cost_usd
+# in statusLine JSON. Tiered ANSI (slate / orange / crimson / bold_crimson) emitted
+# by the Python output. Hidden until first cost reading arrives.
+[custom.cost]
+command     = "__COCKPIT_STARSHIP__ cost"
+when        = "true"
+format      = "(   $output)"
+description = "Claude Code session spend in USD"
+
+# Claude Code context usage (e.g. "4%/1M"); ceiling cached by cship.py wrapper from display_name.
+# The 🧠 prefix is emitted by the Python output so tiered ANSI can color the whole pill.
+[custom.context]
+command     = "__COCKPIT_STARSHIP__ context"
+when        = "true"
+format      = "(   $output)"
+description = "Claude Code context window usage"
+
+# Rolling 5-hour usage limit, read from JSON Claude Code passes (cship's own usage_limits is broken).
+# The ⌛ prefix is emitted by the Python output so tiered ANSI can color the whole pill.
+[custom.ratelimit]
+command     = "__COCKPIT_STARSHIP__ rate-limit"
+when        = "true"
+format      = "(   $output)"
+description = "Anthropic rolling 5h usage limit"
+
+# Branch identity + ahead-of-* counts (e.g. "⎇ khivi/feature ↑3 ↗9").
+# Per-segment ANSI is emitted by the Python output so each marker carries its own color.
+[custom.branch_identity]
+command     = "__COCKPIT_STARSHIP__ branch-identity"
+when        = "true"
+format      = "(   $output)"
+description = "Git branch + ahead-of-origin + ahead-of-base"
+
+# Working-tree + sync state (e.g. " ●1 ✎2 ✚3 ↓1 ↻5"), hidden when nothing
+# to report. The Python output leads with a powerline-branch separator so
+# the segment visually attaches to [custom.branch_identity].
+[custom.worktree_status]
+command     = "__COCKPIT_STARSHIP__ worktree-status"
+when        = "true"
+format      = "(   $output)"
+description = "staged/unstaged/untracked + behind + base-staleness"
+
+# Permission mode (plan / accept-edits / bypass). Hidden when mode == default.
+[custom.permission_mode]
+command     = "__COCKPIT_STARSHIP__ permission-mode"
+when        = "true"
+format      = "(   [$output]($style))"
+style       = "bold fg:172"
+description = "Claude Code permission mode"
+
+# Claude Code session duration (e.g. "1h 23m"); cship.py wrapper stashes transcript path each render.
+[custom.session_time]
+command     = "__COCKPIT_STARSHIP__ session-time"
+when        = "true"
+format      = "(   [⏱ $output]($style))"
+style       = "fg:text_muted"
+description = "Claude Code session duration"
+
+# Linear ticket extracted from current branch (e.g. "PRO-123"). Hidden if branch has none.
+[custom.linear]
+command     = "__COCKPIT_STARSHIP__ linear"
+when        = "true"
+format      = "(   [◫ $output]($style))"
+style       = "bold fg:91"
+description = "Linear ticket ID from git branch"
+
+# PR state for current branch: OPEN | DRAFT | MERGED | CLOSED | APPROVED | CHANGES_REQUESTED.
+# Cached 60s. Hidden if no PR. Per-state ANSI is emitted by the Python output.
+[custom.pr_state]
+command     = "__COCKPIT_STARSHIP__ pr-state"
+when        = "true"
+format      = "(   $output)"
+description = "GitHub PR state for current branch"
+
+# PR number for current branch (e.g. "#27588"). Hidden if no PR.
+[custom.pr_num]
+command     = "__COCKPIT_STARSHIP__ pr-num"
+when        = "true"
+format      = "(   [$output]($style))"
+style       = "fg:text_primary"
+description = "GitHub PR number for current branch"
+
+# Unaddressed review-thread count for current branch's PR. Hidden when zero.
+# Red ANSI is emitted by the Python output.
+[custom.pr_comments]
+command     = "__COCKPIT_STARSHIP__ pr-comments"
+when        = "true"
+format      = "(   $output)"
+description = "Unaddressed review thread count for current branch's PR"
+
+# CI status glyph for current branch's PR: ✓ pass | ✗ fail | • pending. Cached 60s.
+# Traffic-light ANSI is emitted by the Python output.
+[custom.pr_checks]
+command     = "__COCKPIT_STARSHIP__ pr-checks"
+when        = "true"
+format      = "(   $output)"
+description = "GitHub PR CI status for current branch"
+
+# PR title for current branch — sits on line two alongside Linear + PR pills.
+[custom.pr_title]
+command     = "__COCKPIT_STARSHIP__ pr-title"
+when        = "true"
+format      = "(   [$output]($style))"
+style       = "italic fg:text_muted"
+description = "GitHub PR title for current branch"
+
+# Nudge mute indicator. Daemon resolves mute state once per cycle and bakes it
+# into the PR JSON snapshot; this field reads the flat cell only. Hidden when
+# not muted. Yellow ANSI is emitted by the Python output.
+[custom.pr_muted]
+command     = "__COCKPIT_STARSHIP__ pr-muted"
+when        = "true"
+format      = "(   $output)"
+description = "Cockpit nudge mute state for current branch's PR"

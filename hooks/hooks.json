@@ -4,7 +4,7 @@
       {
         "matcher": "",
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/scripts/footer.py || true" },
+          { "type": "command", "command": "cockpit statusline || true" },
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/cmux-idle-pill.sh stop" }
         ]
       }

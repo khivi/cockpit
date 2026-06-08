@@ -57,7 +57,7 @@ fi
 # Operator-debug log for cmux stderr. Silent failure of `cmux set-status`
 # (e.g. the empty-value rejection that masked this pill being broken for weeks)
 # lands here, prefixed per-line with ISO timestamp + workspace id so multi-
-# session output is attributable. Path mirrors scripts/lib/config.py's
+# session output is attributable. Path mirrors cockpit/lib/config.py's
 # COCKPIT_HOME default; respects env override for tests.
 LOG="${COCKPIT_HOME:-$HOME/.config/cockpit}/cmux-idle-pill.err"
 LOCKDIR="$LOG.lock.d"

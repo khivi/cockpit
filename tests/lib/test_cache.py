@@ -1,4 +1,4 @@
-"""Tests for scripts/lib/cache.py — cockpit-cache writers and refreshers."""
+"""Tests for cockpit/lib/cache.py — cockpit-cache writers and refreshers."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from unittest.mock import patch
 
 import pytest
 
-import scripts.lib.cache as cache_mod
-from scripts.lib.gh import PR
-from scripts.lib.git import Worktree
-from scripts.lib.nudges import KNOWN_CATEGORIES, NudgePref
+import cockpit.lib.cache as cache_mod
+from cockpit.lib.gh import PR
+from cockpit.lib.git import Worktree
+from cockpit.lib.nudges import NudgePref
 
 
 def _pr(**overrides) -> PR:
@@ -307,7 +307,7 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -315,7 +315,7 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     # Write a PR JSON snapshot first (daemon side).
     pr = _pr(ci="failed:lint", review_decision="APPROVED", number=42, title="Fix it")
     wt = _wt()
-    pref = NudgePref(disabled_categories={"ci"})
+    pref = NudgePref(muted=True)
     cache_mod.write_pr_cache("testrepo", pr, wt, pref)
 
     # Wipe the flat cells to simulate an OS tmpdir cleanup, then republish.
@@ -334,7 +334,7 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     assert (flat / "pr-state-khivi-feature").read_text() == "APPROVED"
     assert (flat / "pr-num-khivi-feature").read_text() == "42"
     assert (flat / "pr-title-khivi-feature").read_text() == "Fix it"
-    assert (flat / "pr-muted-khivi-feature").read_text() == "ci"
+    assert (flat / "pr-muted-khivi-feature").read_text() == "muted"
     assert (flat / "pr-checks-khivi-feature").read_text() == "✗"
     assert (flat / "pr-comments-khivi-feature").read_text() == ""
 
@@ -344,7 +344,7 @@ def test_republish_pr_caches_no_cache_dir_is_noop(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "nope"))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -374,7 +374,7 @@ def test_write_pr_cache_includes_pills(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -398,14 +398,7 @@ def test_write_pr_cache_includes_pills(tmp_path, monkeypatch):
 def test_muted_payload_helper_serializes_pref():
     assert cache_mod.muted_payload(None) == ""
     assert cache_mod.muted_payload(NudgePref()) == ""
-    assert (
-        cache_mod.muted_payload(NudgePref(disabled_categories=set(KNOWN_CATEGORIES)))
-        == "all"
-    )
-    assert (
-        cache_mod.muted_payload(NudgePref(disabled_categories={"comments", "ci"}))
-        == "ci,comments"
-    )
+    assert cache_mod.muted_payload(NudgePref(muted=True)) == "muted"
 
 
 def test_write_branch_pr_cache_writes_muted_cell(cache_dir):
@@ -416,9 +409,9 @@ def test_write_branch_pr_cache_writes_muted_cell(cache_dir):
         review_decision="",
         number=1,
         title="t",
-        muted="all",
+        muted="muted",
     )
-    assert (cache_dir / "pr-muted-khivi-feature").read_text() == "all"
+    assert (cache_dir / "pr-muted-khivi-feature").read_text() == "muted"
 
 
 def test_write_branch_pr_cache_unmute_clears_cell(cache_dir):
@@ -451,16 +444,16 @@ def test_refresh_pr_data_copies_muted_from_json(cache_dir):
         "review": "",
         "number": 7,
         "title": "x",
-        "muted": "ci",
+        "muted": "muted",
     }
     with patch.object(cache_mod, "find_pr_payload", return_value=payload):
         cache_mod.refresh_pr_data("khivi/feat")
-    assert (cache_dir / "pr-muted-khivi-feat").read_text() == "ci"
+    assert (cache_dir / "pr-muted-khivi-feat").read_text() == "muted"
 
 
 def test_refresh_pr_data_clears_muted_on_no_pr(cache_dir):
     # Pre-seed a muted cell to ensure the no-PR branch wipes it.
-    (cache_dir / "pr-muted-khivi-gone").write_text("all")
+    (cache_dir / "pr-muted-khivi-gone").write_text("muted")
     with patch.object(cache_mod, "find_pr_payload", return_value=None):
         cache_mod.refresh_pr_data("khivi/gone")
     assert (cache_dir / "pr-muted-khivi-gone").read_text() == ""
@@ -470,16 +463,16 @@ def test_write_pr_cache_bakes_muted_into_json(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
 
     pr = _pr()
     wt = _wt()
-    pref = NudgePref(disabled_categories={"ci", "comments"})
+    pref = NudgePref(muted=True)
     payload = cache_mod.write_pr_cache("testrepo", pr, wt, pref)
-    assert payload["muted"] == "ci,comments"
+    assert payload["muted"] == "muted"
     assert payload["pills"][0]["kind"] == "muted"
 
 
@@ -487,7 +480,7 @@ def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -500,88 +493,6 @@ def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
     kinds = [p["kind"] for p in payload["pills"]]
     assert "wip" not in kinds
     assert "ci_failed" in kinds
-
-
-# ── keep flag (write_pr_cache preserves, set_pr_keep writes) ─────────────────
-
-
-def test_write_pr_cache_preserves_existing_keep(tmp_path, monkeypatch):
-    """Once `keep: true` is on disk, daemon rewrites must not clear it."""
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
-
-    pr = _pr()
-    cache_mod.write_pr_cache("testrepo", pr)
-    # Simulate spawn.py marking the PR as kept.
-    cache_mod.set_pr_keep("testrepo", pr.number)
-
-    # Daemon rewrite (no keep param) must preserve the flag.
-    payload = cache_mod.write_pr_cache("testrepo", pr)
-    assert payload["keep"] is True
-
-    on_disk = cache_mod.find_pr_payload("khivi/feature", repo_name="testrepo")
-    assert on_disk is not None
-    assert on_disk["keep"] is True
-
-
-def test_write_pr_cache_keep_defaults_false(tmp_path, monkeypatch):
-    """New PR cache without a prior keep marker has keep=False."""
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
-
-    pr = _pr()
-    payload = cache_mod.write_pr_cache("testrepo", pr)
-    assert payload["keep"] is False
-
-
-def test_set_pr_keep_creates_stub_when_no_cache(tmp_path, monkeypatch):
-    """set_pr_keep creates a stub file when the PR cache doesn't exist yet."""
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
-
-    cache_mod.set_pr_keep("owner/repo", 42)
-
-    path = cache_mod.CACHE_DIR / "owner_repo__pr-42.json"
-    assert path.exists()
-    import json
-
-    data = json.loads(path.read_text())
-    assert data["keep"] is True
-
-
-def test_set_pr_keep_merges_into_existing_cache(tmp_path, monkeypatch):
-    """set_pr_keep preserves existing fields when updating an existing snapshot."""
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
-
-    pr = _pr()
-    cache_mod.write_pr_cache("testrepo", pr)
-    cache_mod.set_pr_keep("testrepo", pr.number)
-
-    on_disk = cache_mod.find_pr_payload("khivi/feature", repo_name="testrepo")
-    assert on_disk is not None
-    assert on_disk["keep"] is True
-    assert on_disk["title"] == "t"
 
 
 # ── reused-branch dedup (find_pr_payload / republish / prune) ──────────────
@@ -601,7 +512,7 @@ def json_cache(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)

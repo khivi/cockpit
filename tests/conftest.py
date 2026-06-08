@@ -26,7 +26,7 @@ def _reset_config_cache():
     it around every test so each starts like a fresh process and one test's
     config can't leak into the next. Imported inside the body to pick up the
     live module object (some fixtures `importlib.reload` the config module)."""
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     cockpit_config.reset_config_cache()
     yield
@@ -91,11 +91,9 @@ def cockpit_repo(tmp_path, monkeypatch) -> RepoFixture:
                 "path": str(repo),
                 "branch_prefix": "khivi/",
                 "default_base": "main",
-                "ci_skip_checks": ["copilot-pull-request-reviewer"],
             }
         ],
         "slow_poll_interval_seconds": 300,
-        "auto_cleanup_on_merge": True,
     }
     (cockpit_home / "config.json").write_text(json.dumps(cfg))
     monkeypatch.setenv("COCKPIT_HOME", str(cockpit_home))
@@ -104,11 +102,11 @@ def cockpit_repo(tmp_path, monkeypatch) -> RepoFixture:
     # env override actually takes effect.
     import importlib
 
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     # spawn imports find_repo_by_name from lib.config; refresh that binding.
-    import scripts.spawn as spawn
+    import cockpit.spawn as spawn
 
     importlib.reload(spawn)
 

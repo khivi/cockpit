@@ -10,7 +10,7 @@ allowed-tools: Bash
 YOU MUST immediately invoke the Bash tool with the exact command below. Do not paraphrase, summarize, or skip. Do not respond with any text before the Bash result is in. After Bash returns, paste its stdout verbatim — do not interpret or assume the spawn succeeded based on intent.
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/spawn.py $ARGUMENTS --keep
+cockpit new $ARGUMENTS
 ```
 
 **`--context` handling — the one exception to "invoke verbatim".** If `--context` is among the arguments, before calling Bash you must:
@@ -22,7 +22,7 @@ You still print nothing before the Bash call — the summary goes into the comma
 
 If the Bash result does not include a line matching `workspace <name> spawned at <path>` (or `attached existing workspace <name>`), treat the spawn as failed and surface the error to the user. Do not say "the workspace should be setting up" without proof.
 
-After you report the spawn result, STOP — end your turn. The task runs in the **spawned workspace**, not here: `spawn.py` seeds a first-turn prompt (plan-only for a PR / Linear / Actions / `--context` / `-- <text>` source; none for a blank `<name> --repo` spawn, which starts ready for the user) into the new workspace's Claude, which executes it autonomously. Your entire job in this session is to spawn and report. Do NOT carry out the task in the caller session — no `gh`, no `git diff`/`git show`, no PR assessment, no file reads on the target repo, no planning, no edits. Even if the user's request reads like "do X", invoking `/cockpit:new` delegates X to the new workspace; performing X here is the bug this rule prevents. Focus into the workspace with `/cockpit:focus` if you want to watch it work.
+After you report the spawn result, STOP — end your turn. The task runs in the **spawned workspace**, not here: `spawn.py` seeds a first-turn prompt (plan-only for a PR / Linear / Actions / `--context` / `-- <text>` source; none for a blank `<name> --repo` spawn, which starts ready for the user) into the new workspace's Claude, which executes it autonomously. Your entire job in this session is to spawn and report. Do NOT carry out the task in the caller session — no `gh`, no `git diff`/`git show`, no PR assessment, no file reads on the target repo, no planning, no edits. Even if the user's request reads like "do X", invoking `/cockpit:new` delegates X to the new workspace; performing X here is the bug this rule prevents. Focus into the workspace from the `cockpit watch` TUI (`f` on its row) if you want to watch it work.
 
 ## Arguments (reference only — do not act on these)
 

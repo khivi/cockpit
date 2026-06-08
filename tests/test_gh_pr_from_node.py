@@ -9,7 +9,7 @@ the legacy `status.contexts` array — together they cover every signal.
 
 from __future__ import annotations
 
-from scripts.lib.gh import _pr_from_node, _unaddressed
+from cockpit.lib.gh import _pr_from_node, _unaddressed
 
 
 def _node(check_runs=None, legacy_contexts=None, required_contexts=None):
@@ -279,41 +279,9 @@ def test_unaddressed_empty_body_comment_not_unresolved():
     assert total == 0
 
 
-def test_copilot_reviewer_failure_ignored():
-    """copilot-pull-request-reviewer crashes due to GitHub API bugs unrelated
-    to the PR's code; its failure must not count toward ci=failed when the
-    repo's per-repo ci_skip_checks lists it."""
-    runs = [
-        {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
-        {
-            "name": "copilot-pull-request-reviewer",
-            "status": "COMPLETED",
-            "conclusion": "FAILURE",
-        },
-    ]
-    pr = _pr_from_node(_node(runs), skip_checks={"copilot-pull-request-reviewer"})
-    assert pr is not None
-    assert pr.ci == "passed"
-
-
-def test_copilot_reviewer_excluded_but_real_failure_still_counted():
-    runs = [
-        {"name": "Tests", "status": "COMPLETED", "conclusion": "FAILURE"},
-        {
-            "name": "copilot-pull-request-reviewer",
-            "status": "COMPLETED",
-            "conclusion": "FAILURE",
-        },
-    ]
-    pr = _pr_from_node(_node(runs), skip_checks={"copilot-pull-request-reviewer"})
-    assert pr is not None
-    assert pr.ci == "failed:1"
-
-
-def test_no_skip_checks_counts_all_failures():
-    """ci_skip_checks is per-repo only — there is no implicit global default.
-    With no skip_checks passed, every failing check counts, including the
-    copilot reviewer."""
+def test_no_branch_protection_counts_all_failures():
+    """Without branch protection, every failing check counts toward the CI
+    roll-up — there is no skip-list to suppress noise checks."""
     runs = [
         {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
         {
@@ -327,10 +295,9 @@ def test_no_skip_checks_counts_all_failures():
     assert pr.ci == "failed:1"
 
 
-def test_required_checks_filter_overrides_skip_list():
+def test_required_checks_filter_excludes_noise():
     """When branch protection declares required checks, only those count —
-    non-required noise (lint bots, optional workflows) is ignored regardless
-    of whether the skip-list mentions them."""
+    non-required noise (lint bots, optional workflows) is ignored."""
     runs = [
         {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
         {"name": "lint-bot", "status": "COMPLETED", "conclusion": "FAILURE"},
@@ -353,57 +320,16 @@ def test_required_checks_failure_still_counts():
     assert pr.ci == "failed:1"
 
 
-def test_required_checks_overrides_skip_list_for_required_failure():
-    """If a required check name happens to match a skip-list entry, branch
-    protection still wins — the required failure must surface."""
+def test_empty_required_checks_counts_all():
+    """A branch protection rule with no required checks (rule exists but
+    empty list) behaves like no rule at all — every check counts."""
     runs = [
-        {
-            "name": "copilot-pull-request-reviewer",
-            "status": "COMPLETED",
-            "conclusion": "FAILURE",
-        },
+        {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        {"name": "lint-bot", "status": "COMPLETED", "conclusion": "FAILURE"},
     ]
-    pr = _pr_from_node(
-        _node(runs, required_contexts=["copilot-pull-request-reviewer"]),
-        skip_checks={"copilot-pull-request-reviewer"},
-    )
+    pr = _pr_from_node(_node(runs, required_contexts=[]))
     assert pr is not None
     assert pr.ci == "failed:1"
-
-
-def test_no_required_checks_falls_back_to_skip_list():
-    """Repos without branch protection (branchProtectionRule=null) use the
-    skip-list as before."""
-    runs = [
-        {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
-        {
-            "name": "copilot-pull-request-reviewer",
-            "status": "COMPLETED",
-            "conclusion": "FAILURE",
-        },
-    ]
-    pr = _pr_from_node(_node(runs), skip_checks={"copilot-pull-request-reviewer"})
-    assert pr is not None
-    assert pr.ci == "passed"
-
-
-def test_empty_required_checks_falls_back_to_skip_list():
-    """A branch protection rule with no required checks (rule exists but
-    empty list) behaves like no rule at all — fall back to skip-list."""
-    runs = [
-        {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
-        {
-            "name": "copilot-pull-request-reviewer",
-            "status": "COMPLETED",
-            "conclusion": "FAILURE",
-        },
-    ]
-    pr = _pr_from_node(
-        _node(runs, required_contexts=[]),
-        skip_checks={"copilot-pull-request-reviewer"},
-    )
-    assert pr is not None
-    assert pr.ci == "passed"
 
 
 def test_required_checks_filter_legacy_contexts():

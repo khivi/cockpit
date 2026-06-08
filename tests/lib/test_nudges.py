@@ -17,10 +17,10 @@ import pytest
 def nudges(tmp_path, monkeypatch):
     """Isolated COCKPIT_HOME + reloaded nudges module pointing at it."""
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
-    import scripts.lib.nudges as nudges_mod
+    import cockpit.lib.nudges as nudges_mod
 
     importlib.reload(nudges_mod)
     return nudges_mod
@@ -28,7 +28,7 @@ def nudges(tmp_path, monkeypatch):
 
 def test_load_pref_returns_defaults_when_missing(nudges):
     pref = nudges.load_pref(42)
-    assert pref.disabled_categories == set()
+    assert pref.muted is False
     assert pref.until is None
     assert pref.reason == ""
     assert pref.last_nudge_at == 0.0
@@ -36,7 +36,7 @@ def test_load_pref_returns_defaults_when_missing(nudges):
 
 def test_save_and_load_roundtrip(nudges):
     pref = nudges.NudgePref(
-        disabled_categories={"comments"},
+        muted=True,
         until=time.time() + 3600,
         reason="copilot",
         last_nudge_at=100.0,
@@ -44,31 +44,23 @@ def test_save_and_load_roundtrip(nudges):
     )
     nudges.save_pref(99, pref)
     loaded = nudges.load_pref(99)
-    assert loaded.disabled_categories == {"comments"}
+    assert loaded.muted is True
     assert loaded.reason == "copilot"
     assert loaded.last_nudge_at == 100.0
     assert loaded.last_nudge_category == "comments"
 
 
-def test_first_seen_at_roundtrip(nudges):
-    pref = nudges.NudgePref(first_seen_at={"ci": 1234.5, "comments": 6789.0})
-    nudges.save_pref(7, pref)
-    loaded = nudges.load_pref(7)
-    assert loaded.first_seen_at == {"ci": 1234.5, "comments": 6789.0}
+def test_legacy_disabled_categories_ignored(nudges):
+    # Pre-boolean files stored a `disabled_categories` set; it is ignored now —
+    # only the `muted` boolean is read (absent → not muted).
+    assert nudges.NudgePref.from_json({"disabled_categories": ["ci"]}).muted is False
 
 
-def test_first_seen_at_defaults_empty_and_coerces_types(nudges):
-    # Missing key → empty dict; legacy files without the field load cleanly.
-    assert nudges.NudgePref().first_seen_at == {}
-    loaded = nudges.NudgePref.from_json({"first_seen_at": {"ci": "10"}})
-    assert loaded.first_seen_at == {"ci": 10.0}
-
-
-def test_should_nudge_blocked_by_category_mute(nudges):
-    pref = nudges.NudgePref(disabled_categories={"comments"})
-    nudges.save_pref(7, pref)
-    assert nudges.should_nudge(7, "comments") is False
-    assert nudges.should_nudge(7, "ci") is True
+def test_should_nudge_blocked_by_mute(nudges):
+    nudges.save_pref(7, nudges.NudgePref(muted=True))
+    assert nudges.should_nudge(7) is False
+    nudges.save_pref(7, nudges.NudgePref(muted=False))
+    assert nudges.should_nudge(7) is True
 
 
 def test_should_nudge_not_blocked_by_recent_record(nudges):
@@ -77,21 +69,18 @@ def test_should_nudge_not_blocked_by_recent_record(nudges):
     status` display, but should_nudge does not gate on it."""
     now = 1000.0
     nudges.record_nudge(12, "comments", now=now)
-    assert nudges.should_nudge(12, "comments", now=now + 1) is True
-    assert nudges.should_nudge(12, "ci", now=now + 1) is True
+    assert nudges.should_nudge(12, now=now + 1) is True
 
 
 def test_expired_until_auto_clears_mute(nudges):
-    pref = nudges.NudgePref(
-        disabled_categories={"comments"}, until=500.0, reason="expired"
-    )
+    pref = nudges.NudgePref(muted=True, until=500.0, reason="expired")
     nudges.save_pref(33, pref)
     loaded = nudges.load_pref(33, now=600.0)
-    assert loaded.disabled_categories == set()
+    assert loaded.muted is False
     assert loaded.until is None
     # Persisted to disk, not just to the returned object.
     reloaded = nudges.load_pref(33, now=601.0)
-    assert reloaded.disabled_categories == set()
+    assert reloaded.muted is False
 
 
 def test_record_nudge_persists_last_nudge_at_across_reload(
@@ -113,7 +102,7 @@ def test_record_nudge_persists_last_nudge_at_across_reload(
 
 
 def test_list_prefs_skips_garbage_files(nudges, tmp_path):
-    nudges.save_pref(1, nudges.NudgePref(disabled_categories={"comments"}))
+    nudges.save_pref(1, nudges.NudgePref(muted=True))
     nudges.save_pref(2, nudges.NudgePref())
     (nudges.NUDGE_DIR / "not-a-pr.json").write_text("garbage")
     (nudges.NUDGE_DIR / "3.json").write_text("not json")
@@ -123,10 +112,10 @@ def test_list_prefs_skips_garbage_files(nudges, tmp_path):
 
 
 def test_delete_pref(nudges):
-    nudges.save_pref(8, nudges.NudgePref(disabled_categories={"ci"}))
+    nudges.save_pref(8, nudges.NudgePref(muted=True))
     assert nudges.delete_pref(8) is True
     assert nudges.delete_pref(8) is False  # already gone
-    assert nudges.load_pref(8).disabled_categories == set()
+    assert nudges.load_pref(8).muted is False
 
 
 def test_parse_duration(nudges):
@@ -141,45 +130,33 @@ def test_parse_duration(nudges):
         nudges.parse_duration("5x")
 
 
-def test_normalize_categories(nudges):
-    assert nudges.normalize_categories(None) == set(nudges.KNOWN_CATEGORIES)
-    assert nudges.normalize_categories("") == set(nudges.KNOWN_CATEGORIES)
-    assert nudges.normalize_categories("comments") == {"comments"}
-    assert nudges.normalize_categories("comments,ci") == {"comments", "ci"}
-    with pytest.raises(ValueError) as exc:
-        nudges.normalize_categories("typo,ci")
-    assert "typo" in str(exc.value)
-
-
 # ── CLI surface ─────────────────────────────────────────────────────────────
 
 
 @pytest.fixture
 def nudge_cli(nudges):
-    import scripts.lib.nudge_cli as cli
+    import cockpit.lib.nudge_cli as cli
 
     importlib.reload(cli)
     return cli
 
 
 def test_cli_mute_with_explicit_pr(nudges, nudge_cli, capsys):
-    rc = nudge_cli.main(
-        ["mute", "100", "--categories", "comments", "--reason", "copilot"]
-    )
+    rc = nudge_cli.main(["mute", "100", "--reason", "copilot"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "muted PR #100" in out
     pref = nudges.load_pref(100)
-    assert pref.disabled_categories == {"comments"}
+    assert pref.muted is True
     assert pref.reason == "copilot"
 
 
 def test_cli_mute_without_pr_uses_inference(nudges, nudge_cli, monkeypatch, capsys):
     monkeypatch.setattr(nudge_cli, "_infer_pr_number", lambda: 999)
-    rc = nudge_cli.main(["mute", "--categories", "ci", "--until", "1h"])
+    rc = nudge_cli.main(["mute", "--until", "1h"])
     assert rc == 0
     pref = nudges.load_pref(999)
-    assert pref.disabled_categories == {"ci"}
+    assert pref.muted is True
     assert pref.until is not None
     assert pref.until > time.time()
 
@@ -193,15 +170,15 @@ def test_cli_mute_fails_when_pr_cannot_be_inferred(nudge_cli, monkeypatch, capsy
 
 
 def test_cli_unmute(nudges, nudge_cli, capsys):
-    nudges.save_pref(50, nudges.NudgePref(disabled_categories={"comments"}, reason="x"))
+    nudges.save_pref(50, nudges.NudgePref(muted=True, reason="x"))
     rc = nudge_cli.main(["unmute", "50"])
     assert rc == 0
     assert "unmuted PR #50" in capsys.readouterr().out
-    assert nudges.load_pref(50).disabled_categories == set()
+    assert nudges.load_pref(50).muted is False
 
 
 def test_cli_list_filters_to_muted(nudges, nudge_cli, capsys):
-    nudges.save_pref(1, nudges.NudgePref(disabled_categories={"comments"}))
+    nudges.save_pref(1, nudges.NudgePref(muted=True))
     nudges.save_pref(2, nudges.NudgePref(last_nudge_at=time.time()))  # not muted
     rc = nudge_cli.main(["list"])
     assert rc == 0
@@ -220,20 +197,14 @@ def test_cli_status_reports_last_nudge(nudges, nudge_cli, capsys):
 
 
 def test_cli_forget_deletes_file(nudges, nudge_cli, capsys):
-    nudges.save_pref(70, nudges.NudgePref(disabled_categories={"ci"}))
+    nudges.save_pref(70, nudges.NudgePref(muted=True))
     rc = nudge_cli.main(["forget", "70"])
     assert rc == 0
-    assert nudges.load_pref(70).disabled_categories == set()
+    assert nudges.load_pref(70).muted is False
     # Second forget reports the absence rather than erroring.
     rc2 = nudge_cli.main(["forget", "70"])
     assert rc2 == 0
     assert "no nudge file" in capsys.readouterr().out
-
-
-def test_cli_mute_rejects_bad_categories(nudge_cli, capsys):
-    rc = nudge_cli.main(["mute", "100", "--categories", "bogus"])
-    assert rc == 2
-    assert "bogus" in capsys.readouterr().err
 
 
 def test_cli_mute_rejects_bad_duration(nudge_cli, capsys):

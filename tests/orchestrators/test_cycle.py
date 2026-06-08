@@ -1,4 +1,4 @@
-"""Tests for scripts/orchestrators/cycle.py.
+"""Tests for cockpit/orchestrators/cycle.py.
 
 Sections:
   - _resolve_skill_prompt / _run_repo_skills: fast/slow skill dispatch.
@@ -15,10 +15,10 @@ from unittest.mock import patch
 
 import pytest
 
-import scripts.orchestrators.cycle as cycle
-from scripts.lib.gh import PR
-from scripts.lib.git import Worktree
-from scripts.orchestrators import teardown as teardown_mod
+import cockpit.orchestrators.cycle as cycle
+from cockpit.lib.gh import PR
+from cockpit.lib.git import Worktree
+from cockpit.orchestrators import teardown as teardown_mod
 
 
 def _pr(
@@ -219,7 +219,6 @@ def test_cmux_close_runs_before_remove_worktree(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -247,7 +246,6 @@ def test_autoclose_dry_run_calls_neither(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -275,7 +273,6 @@ def test_autoclose_remove_failure_still_closes_cmux_and_skips_cache_delete(tmp_p
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -320,7 +317,6 @@ def test_autoclose_smart_skip_on_pr_signals(tmp_path, pr_kwargs, reason):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -350,7 +346,6 @@ def test_autoclose_fires_when_no_pr_in_list(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -385,7 +380,6 @@ def test_autoclose_reaps_when_merge_head_still_reachable(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -416,7 +410,6 @@ def test_autoclose_sets_delete_branch_when_head_at_merge_head(tmp_path):
         patch.object(cycle, "has_unique_commits", return_value=False) as huc_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -446,7 +439,6 @@ def test_autoclose_keeps_branch_when_post_merge_commits_exist(tmp_path):
         patch.object(cycle, "has_unique_commits", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -473,7 +465,6 @@ def test_autoclose_main_sibling_never_deletes_branch(tmp_path):
         patch.object(cycle, "has_unique_commits") as huc_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -507,7 +498,6 @@ def test_autoclose_keeps_reused_branch_name(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=False) as ancestor_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -520,38 +510,6 @@ def test_autoclose_keeps_reused_branch_name(tmp_path):
     # The reachability gate must actually be consulted — otherwise the no-teardown
     # assertions could pass vacuously if the branch never reached the gate.
     ancestor_mock.assert_called_once_with(wt_path, "979e571")
-    close_mock.assert_not_called()
-    remove_mock.assert_not_called()
-
-
-def test_autoclose_skips_kept_worktree(tmp_path):
-    """A worktree with `keep: true` in its PR cache survives autoclose."""
-    wt_path = tmp_path / "repo-feat"
-    wt_path.mkdir()
-    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
-
-    with (
-        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
-        patch.object(teardown_mod, "remove_worktree") as remove_mock,
-        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
-        patch.object(cycle, "is_ancestor", return_value=True),
-        patch.object(
-            cycle,
-            "find_pr_payload",
-            return_value={"branch": "khivi/feat", "keep": True},
-        ),
-    ):
-        cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
-            repo_path=tmp_path,
-            repo_name="testrepo",
-            wts=[wt],
-            merged_branches={"khivi/feat": "deadbeef"},
-            cwds={"ws-ref": wt_path},
-            prs=[_pr("khivi/feat")],
-            dry=False,
-        )
-
     close_mock.assert_not_called()
     remove_mock.assert_not_called()
 
@@ -569,7 +527,6 @@ def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -583,11 +540,11 @@ def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
     remove_mock.assert_not_called()
 
 
-def test_autoclose_clears_stuck_pill_when_skipped_dirty(tmp_path):
+def test_autoclose_clears_devdone_pill_when_skipped_dirty(tmp_path):
     """A merged worktree whose teardown is skipped (dirty/mid-turn) must still
-    clear any `stuck=` pill — the PR has left the tracked open-PR set, so
-    `_track_stale_issue` will never run again to clear it. Regression: a
-    `stuck:comments` pill stranded forever on a merged-but-running workspace.
+    clear any `devdone=` pill — the PR has left the tracked open-PR set, so
+    `_track_dev_done` will never run again to clear it. Regression: a `devdone`
+    pill stranded forever on a merged-but-running workspace.
     """
     wt_path = tmp_path / "repo-feat"
     wt_path.mkdir()
@@ -598,10 +555,9 @@ def test_autoclose_clears_stuck_pill_when_skipped_dirty(tmp_path):
         patch.object(teardown_mod, "remove_worktree") as remove_mock,
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
         patch.object(cycle, "is_ancestor", return_value=True),
-        patch.object(cycle, "apply_stuck_pill") as stuck_mock,
+        patch.object(cycle, "apply_devdone_pill") as devdone_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -613,11 +569,11 @@ def test_autoclose_clears_stuck_pill_when_skipped_dirty(tmp_path):
 
     close_mock.assert_not_called()
     remove_mock.assert_not_called()
-    stuck_mock.assert_called_once_with("ws-ref", None)
+    devdone_mock.assert_called_once_with("ws-ref", None)
 
 
-def test_autoclose_dry_run_does_not_clear_stuck_pill(tmp_path):
-    """Dry runs never mutate pills — the stuck= clear is gated on `not dry`."""
+def test_autoclose_dry_run_does_not_clear_devdone_pill(tmp_path):
+    """Dry runs never mutate pills — the devdone= clear is gated on `not dry`."""
     wt_path = tmp_path / "repo-feat"
     wt_path.mkdir()
     wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=3)
@@ -627,10 +583,9 @@ def test_autoclose_dry_run_does_not_clear_stuck_pill(tmp_path):
         patch.object(teardown_mod, "remove_worktree"),
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
         patch.object(cycle, "is_ancestor", return_value=True),
-        patch.object(cycle, "apply_stuck_pill") as stuck_mock,
+        patch.object(cycle, "apply_devdone_pill") as devdone_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -640,7 +595,7 @@ def test_autoclose_dry_run_does_not_clear_stuck_pill(tmp_path):
             dry=True,
         )
 
-    stuck_mock.assert_not_called()
+    devdone_mock.assert_not_called()
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -670,7 +625,6 @@ def test_autoclose_orphan_main_sibling_clean(tmp_path):
         patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -703,7 +657,6 @@ def test_autoclose_orphan_main_sibling_dirty_skipped(tmp_path):
         patch.object(cycle, "apply_wip_pill") as wip_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -735,7 +688,6 @@ def test_autoclose_orphan_main_sibling_clean_no_wip_pill(tmp_path):
         patch.object(cycle, "apply_wip_pill") as wip_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -763,7 +715,6 @@ def test_autoclose_dirty_main_sibling_dry_run_no_wip_pill(tmp_path):
         patch.object(cycle, "apply_wip_pill") as wip_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -794,7 +745,6 @@ def test_autoclose_orphan_main_sibling_unpushed_skipped(tmp_path):
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -826,7 +776,6 @@ def test_autoclose_orphan_main_sibling_unpushed_unknown_skipped(tmp_path):
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -859,7 +808,6 @@ def test_autoclose_primary_on_main_never_swept(tmp_path):
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -884,13 +832,13 @@ def test_autoclose_primary_on_main_never_swept(tmp_path):
 def reap_isolated(tmp_path, monkeypatch):
     """Isolated COCKPIT_HOME and reloaded modules so each test starts fresh."""
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "cockpit-home"))
-    import scripts.lib.config as cfg
+    import cockpit.lib.config as cfg
 
     importlib.reload(cfg)
-    import scripts.lib.daemon_signal as cr
+    import cockpit.lib.daemon_signal as cr
 
     importlib.reload(cr)
-    import scripts.orchestrators.cycle as cycle_mod
+    import cockpit.orchestrators.cycle as cycle_mod
 
     importlib.reload(cycle_mod)
     return cycle_mod, cr
@@ -1072,7 +1020,7 @@ def test_reap_skips_workspace_matched_by_name(reap_isolated, tmp_path):
 
 
 def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, capsys):
-    from scripts.lib.cmux import CmuxUnavailable
+    from cockpit.lib.cmux import CmuxUnavailable
 
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -1094,10 +1042,7 @@ def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, cap
         cfg={},
         pr_cache={},
         pill_state={},
-        keep_stale=False,
-        no_spawn=False,
         dry=False,
-        verbose=False,
     )
 
     assert result is None
@@ -1141,17 +1086,14 @@ def test_prepare_cycle_prunes_worktrees_before_listing(tmp_path, monkeypatch):
         cfg={},
         pr_cache={},
         pill_state={},
-        keep_stale=False,
-        no_spawn=False,
         dry=False,
-        verbose=False,
     )
 
     assert calls[:2] == ["prune", "list"], f"prune must precede list; got {calls}"
 
 
 def test_refresh_base_distance_short_circuits_when_no_feature_worktrees(tmp_path):
-    from scripts.lib.git import Worktree
+    from cockpit.lib.git import Worktree
 
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -1173,7 +1115,7 @@ def test_refresh_base_distance_short_circuits_when_no_feature_worktrees(tmp_path
 
 
 def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
-    from scripts.lib.git import Worktree
+    from cockpit.lib.git import Worktree
 
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -1222,10 +1164,7 @@ def _stub_repo_cycle(tmp_path, *, headless: bool = False):
         merged_branches={},
         merged_branches_deep={},
         pill_state={},
-        keep_stale=False,
-        no_spawn=False,
         dry=False,
-        verbose=False,
         headless=headless,
     )
 
@@ -1272,16 +1211,13 @@ def _cycle_patches(tmp_path, calls, *, headless=False):
     ]
 
 
-def _run_cycle_repo(no_spawn=False):
+def _run_cycle_repo():
     cycle.cycle_repo(
         repo_entry={"name": "n", "path": "/tmp"},
         self_user="khivi",
-        keep_stale=False,
-        no_spawn=no_spawn,
         dry=False,
         pr_cache={},
         pill_state={},
-        verbose=False,
         cfg={},
     )
 
@@ -1316,20 +1252,6 @@ def test_cycle_repo_headless_skips_workspace_phases(tmp_path):
     with _enter_all(_cycle_patches(tmp_path, calls, headless=True)):
         _run_cycle_repo()
     assert calls == []
-
-
-def test_cycle_repo_no_spawn_skips_spawn_phase(tmp_path):
-    calls: list[str] = []
-    with _enter_all(_cycle_patches(tmp_path, calls)):
-        _run_cycle_repo(no_spawn=True)
-    assert "spawn_missing" not in calls
-    assert calls == [
-        "dedupe",
-        "refresh_pills",
-        "handle_orphans",
-        "apply_colors",
-        "autoclose",
-    ]
 
 
 # ── _spawn_missing_workspaces background creation + _bg_spawn_pr ─────────────
@@ -1378,10 +1300,7 @@ def _spawn_ctx(
         merged_branches={},
         merged_branches_deep={},
         pill_state={} if pill_state is None else pill_state,
-        keep_stale=False,
-        no_spawn=False,
         dry=dry,
-        verbose=False,
         headless=False,
         review_candidates=review_candidates or [],
     )
@@ -1454,7 +1373,7 @@ def test_spawn_missing_orphan_spawns_when_clash_cwd_missing(tmp_path):
 def test_spawn_missing_review_candidates_filtered(tmp_path):
     """review_prs: spawn a review worktree for each other-authored open PR
     without a worktree; skip mine and skip ones already checked out."""
-    from scripts.lib.gh import OpenPRHead
+    from cockpit.lib.gh import OpenPRHead
 
     ctx = _spawn_ctx(
         tmp_path,
@@ -1499,7 +1418,8 @@ def test_bg_spawn_pr_launches_records_and_guards(tmp_path, monkeypatch):
     assert popen.call_count == 1
     argv = popen.call_args.args[0]
     assert "--auto" not in argv
-    assert argv[2:] == ["--pr", "9", "--repo", "n", "--review"]
+    assert argv[1:4] == ["-m", "cockpit.cli", "new"]  # module dispatch, not spawn.py
+    assert argv[4:] == ["--pr", "9", "--repo", "n", "--review"]
     assert ctx.pill_state["spawn:o/n:coworker/x"] == 100.0
 
 
@@ -1530,7 +1450,8 @@ def test_bg_spawn_pr_omits_repo_flag_without_name(tmp_path, monkeypatch):
     argv = popen.call_args.args[0]
     assert "--repo" not in argv
     assert "--auto" not in argv
-    assert argv[2:] == ["--pr", "9"]
+    assert argv[1:4] == ["-m", "cockpit.cli", "new"]  # module dispatch, not spawn.py
+    assert argv[4:] == ["--pr", "9"]
 
 
 # ── _apply_repo_colors / _repo_owned_refs ───────────────────────────────────
@@ -1553,10 +1474,7 @@ def _color_ctx(
         merged_branches={},
         merged_branches_deep={},
         pill_state={} if pill_state is None else pill_state,
-        keep_stale=False,
-        no_spawn=False,
         dry=dry,
-        verbose=False,
         headless=False,
     )
 
@@ -1598,14 +1516,14 @@ def test_apply_repo_colors_dry_noops(tmp_path):
 
 
 def test_repo_name_color_falls_back_to_bold_when_unset():
-    from scripts.lib.colors import bold
+    from cockpit.lib.colors import bold
 
     assert cycle._repo_name_color({"name": "n"}) is bold
     assert cycle._repo_name_color({"name": "n", "sidebar_color": None}) is bold
 
 
 def test_repo_name_color_uses_configured_sidebar_color():
-    from scripts.lib.colors import CMUX_COLOR_ANSI
+    from cockpit.lib.colors import CMUX_COLOR_ANSI
 
     assert (
         cycle._repo_name_color({"name": "n", "sidebar_color": "Teal"})
@@ -1663,10 +1581,10 @@ def test_apply_repo_colors_reapplies_on_change(tmp_path):
 @pytest.fixture
 def drain_isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "cockpit-home"))
-    import scripts.lib.config as cfg
+    import cockpit.lib.config as cfg
 
     importlib.reload(cfg)
-    import scripts.lib.daemon_signal as ds
+    import cockpit.lib.daemon_signal as ds
 
     importlib.reload(ds)
     importlib.reload(cycle)
@@ -1674,7 +1592,7 @@ def drain_isolated(tmp_path, monkeypatch):
 
 
 def _enqueue_marker(ds_mod, repo_name="repo", ref="workspace:1"):
-    from scripts.orchestrators.teardown import TeardownRequest
+    from cockpit.orchestrators.teardown import TeardownRequest
 
     return ds_mod.enqueue(
         TeardownRequest(
@@ -1761,9 +1679,6 @@ def test_drain_successful_teardown_pops_marker(drain_isolated):
     assert ds.iter_pending() == []
 
 
-# ── stale-running escape hatch (stuck= pill) ─────────────────────────────────
-
-
 def _stale_pr(*, ci: str = "failed") -> PR:
     """An OPEN PR whose display_issue is the actionable `ci` category."""
     return PR(
@@ -1782,37 +1697,6 @@ def _stale_pr(*, ci: str = "failed") -> PR:
     )
 
 
-def _stale_ctx(tmp_path, pref, *, dry: bool = False, cfg: dict | None = None):
-    ctx = _stub_repo_cycle(tmp_path, headless=False)
-    ctx.dry = dry
-    ctx.cfg = cfg if cfg is not None else {"nudge_stale_seconds": 900}
-    ctx.prefs = {1: pref}
-    return ctx
-
-
-def test_refresh_orphan_clears_stuck_pill(tmp_path):
-    """An orphan workspace (branch with no open PR) has no actionable category,
-    so any `stuck=` pill left over from when its PR was open and actionable must
-    be cleared — _track_stale_issue no longer runs for it.
-    """
-    wt_path = tmp_path / "repo-feat"
-    wt_path.mkdir()
-    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
-    ctx = _stub_repo_cycle(tmp_path)
-    ctx.base_distance = {}
-
-    with (
-        patch.object(cycle, "cmux"),
-        patch.object(cycle, "apply_wip_pill"),
-        patch.object(cycle, "apply_stale_pill"),
-        patch.object(cycle, "maybe_nudge"),
-        patch.object(cycle, "apply_stuck_pill") as stuck_mock,
-    ):
-        cycle._refresh_orphan(ctx, "workspace:7", wt, "repo-feat")
-
-    stuck_mock.assert_called_once_with("workspace:7", None)
-
-
 def test_refresh_orphan_renames_drifted_workspace(tmp_path):
     """An orphan workspace whose name drifted from its branch label is
     re-asserted to `wt.label` in the slow tick."""
@@ -1828,13 +1712,61 @@ def test_refresh_orphan_renames_drifted_workspace(tmp_path):
         patch.object(cycle, "cmux"),
         patch.object(cycle, "apply_wip_pill"),
         patch.object(cycle, "apply_stale_pill"),
-        patch.object(cycle, "apply_stuck_pill"),
         patch.object(cycle, "maybe_nudge"),
         patch.object(cycle, "rename_workspace_if_needed", return_value=True) as rn,
     ):
         cycle._refresh_orphan(ctx, "workspace:7", wt, "stale-name")
 
     rn.assert_called_once_with("workspace:7", "feat", "stale-name", dry=False)
+
+
+def test_handle_orphans_never_closes_and_gates_nudge(tmp_path):
+    """No-PR worktrees are never closed here — only a merged PR reaps (via
+    `_maybe_autoclose`). Mine-prefix branches are nudged; coworker branches get
+    orphan pills only (nudge=False — nudging a coworker branch to open a PR is
+    nonsense)."""
+    mine_path = tmp_path / "repo-mine"
+    mine_path.mkdir()
+    cow_path = tmp_path / "repo-cow"
+    cow_path.mkdir()
+    mine = Worktree(
+        path=mine_path, branch="khivi/feat", dirty_count=0, branch_prefix="khivi/"
+    )
+    cow = Worktree(path=cow_path, branch="coworker/feat", dirty_count=0)
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.wts = [mine, cow]
+    ctx.names = {"ws:mine": "feat", "ws:cow": "cow-feat"}
+    ctx.cwds = {"ws:mine": mine_path, "ws:cow": cow_path}
+
+    with (
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(cycle, "_refresh_orphan") as refresh_mock,
+    ):
+        cycle._handle_orphans_and_close_stale(ctx, {"ws:mine", "ws:cow"})
+
+    close_mock.assert_not_called()
+    nudge_by_ref = {c.args[1]: c.kwargs["nudge"] for c in refresh_mock.call_args_list}
+    assert nudge_by_ref == {"ws:mine": True, "ws:cow": False}
+
+
+def test_refresh_orphan_skips_nudge_when_disabled(tmp_path):
+    """`nudge=False` suppresses the push-or-close nudge but still applies pills."""
+    wt_path = tmp_path / "repo-cow"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="coworker/feat", dirty_count=0)
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.base_distance = {}
+
+    with (
+        patch.object(cycle, "cmux"),
+        patch.object(cycle, "apply_wip_pill"),
+        patch.object(cycle, "apply_stale_pill"),
+        patch.object(cycle, "rename_workspace_if_needed", return_value=False),
+        patch.object(cycle, "maybe_nudge") as nudge_mock,
+    ):
+        cycle._refresh_orphan(ctx, "ws:cow", wt, "cow-feat", nudge=False)
+
+    nudge_mock.assert_not_called()
 
 
 def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
@@ -1854,152 +1786,12 @@ def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
         patch.object(cycle, "apply_pills"),
         patch.object(cycle, "status_pills", return_value=()),
         patch.object(cycle, "maybe_nudge", return_value=False),
-        patch.object(cycle, "_track_stale_issue"),
         patch.object(cycle, "_track_dev_done"),
         patch.object(cycle, "rename_workspace_if_needed", return_value=True) as rn,
     ):
         cycle._refresh_tracked_pills(ctx, {"workspace:7"})
 
     rn.assert_called_once_with("workspace:7", "feat", "stale-name", dry=False)
-
-
-def test_stale_threshold_default_is_three_slow_cycles():
-    assert cycle._stale_threshold_seconds({}) == 900.0
-    assert cycle._stale_threshold_seconds({"slow_poll_interval_seconds": 100}) == 300.0
-    assert cycle._stale_threshold_seconds({"nudge_stale_seconds": 42}) == 42.0
-
-
-def test_track_stale_first_sighting_records_timer_no_pill(tmp_path):
-    from scripts.lib.nudges import NudgePref
-
-    pref = NudgePref()
-    ctx = _stale_ctx(tmp_path, pref)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "should_nudge", return_value=True),
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=1000.0),
-    ):
-        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
-
-    assert pref.first_seen_at == {"ci": 1000.0}
-    assert stuck == [("workspace:1", None)]  # timer started, not yet stuck
-
-
-def test_track_stale_past_threshold_raises_stuck_pill(tmp_path):
-    from scripts.lib.nudges import NudgePref
-
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "should_nudge", return_value=True),
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=1000.0 + 1000.0),
-    ):
-        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
-
-    assert len(stuck) == 1
-    ref, label = stuck[0]
-    assert ref == "workspace:1"
-    assert label is not None and label.startswith("stuck:ci")
-
-
-def test_track_stale_successful_nudge_clears_timer_and_pill(tmp_path):
-    from scripts.lib.nudges import NudgePref
-
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "should_nudge", return_value=True),
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=9999.0),
-    ):
-        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=True)
-
-    assert pref.first_seen_at == {}
-    assert stuck == [("workspace:1", None)]
-
-
-def test_track_stale_mute_wins_even_past_threshold(tmp_path):
-    from scripts.lib.nudges import NudgePref
-
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "should_nudge", return_value=False),  # muted
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=1000.0 + 10_000.0),
-    ):
-        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
-
-    assert pref.first_seen_at == {}
-    assert stuck == [("workspace:1", None)]
-
-
-def test_track_stale_resolved_issue_clears_everything(tmp_path):
-    from scripts.lib.nudges import NudgePref
-
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "should_nudge", return_value=True),
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=2000.0),
-    ):
-        # category=None → the actionable issue resolved this cycle.
-        cycle._track_stale_issue(
-            ctx, "workspace:1", _stale_pr(ci="passed"), None, nudged=False
-        )
-
-    assert pref.first_seen_at == {}
-    assert stuck == [("workspace:1", None)]
-
-
-def test_track_stale_category_switch_drops_old_timer(tmp_path):
-    from scripts.lib.nudges import NudgePref
-
-    # Was stuck on ci; now the live issue is comments — the ci timer must drop
-    # so a resolved category can't keep escalating.
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref)
-    with (
-        patch.object(cycle, "apply_stuck_pill"),
-        patch.object(cycle.nudges, "should_nudge", return_value=True),
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=5000.0),
-    ):
-        cycle._track_stale_issue(
-            ctx, "workspace:1", _stale_pr(), "comments", nudged=False
-        )
-
-    assert pref.first_seen_at == {"comments": 5000.0}
-
-
-def test_track_stale_dry_run_is_noop(tmp_path):
-    from scripts.lib.nudges import NudgePref
-
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref, dry=True)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "save_pref") as save,
-        patch.object(cycle.time, "time", return_value=99_999.0),
-    ):
-        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
-
-    assert pref.first_seen_at == {"ci": 1000.0}  # untouched
-    assert stuck == []
-    save.assert_not_called()
 
 
 # ── devdone pill: Linear-delivery resolution + decision ──────────────────────
@@ -2203,38 +1995,34 @@ def _refresh_with_mocks(ctx):
         patch.object(cycle, "status_pills", return_value=[]),
         patch.object(cycle, "apply_pills"),
         patch.object(cycle, "find_pr_payload", return_value=None),
-        patch.object(cycle, "_track_stale_issue") as track_mock,
+        patch.object(cycle, "_track_dev_done"),
         patch.object(cycle, "maybe_nudge", return_value=True) as nudge_mock,
     ):
         cycle._refresh_tracked_pills(ctx, {"workspace:1"})
-    return nudge_mock, track_mock
+    return nudge_mock
 
 
 def test_refresh_does_not_nudge_merged_pr_with_failing_ci(tmp_path):
     """A merged PR kept by _maybe_autoclose (merged with red CI) must not be
-    nudged: its CI can never be fixed, so the nudge would loop forever. The
-    category handed to _track_stale_issue is None, so no stuck timer fires
-    either."""
+    nudged: its CI can never be fixed, so the nudge would loop forever."""
     wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
     pr = _stale_pr(ci="failed:2")
     pr.state = "MERGED"
-    nudge_mock, track_mock = _refresh_with_mocks(_tracked_ctx(tmp_path, pr, wt))
+    nudge_mock = _refresh_with_mocks(_tracked_ctx(tmp_path, pr, wt))
 
     nudge_mock.assert_not_called()
-    track_mock.assert_called_once()
-    assert track_mock.call_args.args[3] is None
 
 
 def test_refresh_nudges_open_pr_with_failing_ci(tmp_path):
-    """Companion: an OPEN PR with the same failing CI still nudges and starts
-    the `ci` stale timer."""
+    """Companion: an OPEN PR with the same failing CI still nudges, with the
+    `ci` actionable category."""
     wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
-    nudge_mock, track_mock = _refresh_with_mocks(
+    nudge_mock = _refresh_with_mocks(
         _tracked_ctx(tmp_path, _stale_pr(ci="failed:2"), wt)
     )
 
     nudge_mock.assert_called_once()
-    assert track_mock.call_args.args[3] == "ci"
+    assert nudge_mock.call_args.kwargs["category"] == "ci"
 
 
 # ── reused-branch merged-PR suppression ──────────────────────────────────────
@@ -2300,7 +2088,7 @@ def test_is_reused_branch_merge_no_worktree():
 
 def test_refresh_suppresses_reused_branch_card(tmp_path):
     """Winning payload reusedBranch=True → clear the card pills, show no PR, and
-    never nudge. The stale timer is reset (category None)."""
+    never nudge."""
     wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
     ctx = _tracked_ctx(tmp_path, _pr("khivi/feat", state="MERGED"), wt)
     ctx.pr_payloads = {"khivi/feat": {"reusedBranch": True}}
@@ -2308,15 +2096,12 @@ def test_refresh_suppresses_reused_branch_card(tmp_path):
         patch.object(cycle, "clear_pr_pills") as clear_mock,
         patch.object(cycle, "apply_pills") as apply_mock,
         patch.object(cycle, "maybe_nudge", return_value=True) as nudge_mock,
-        patch.object(cycle, "_track_stale_issue") as track_mock,
     ):
         cycle._refresh_tracked_pills(ctx, {"workspace:1"})
 
     clear_mock.assert_called_once_with("workspace:1")
     apply_mock.assert_not_called()
     nudge_mock.assert_not_called()
-    track_mock.assert_called_once()
-    assert track_mock.call_args.args[3] is None
     assert ctx.pill_state["workspace:1"] == frozenset()
 
 
@@ -2415,7 +2200,7 @@ def _reap_ctx(
     cfg=None,
 ):
     return cycle.RepoCycle(
-        cfg={"auto_cleanup_on_merge": True} if cfg is None else cfg,
+        cfg=cfg or {},
         repo_path=tmp_path,
         owner="o",
         name="n",
@@ -2428,10 +2213,7 @@ def _reap_ctx(
         merged_branches={},
         merged_branches_deep=merged_deep or {},
         pill_state={},
-        keep_stale=False,
-        no_spawn=False,
         dry=dry,
-        verbose=False,
         headless=False,
     )
 
@@ -2509,21 +2291,6 @@ def test_reap_skips_main_default_worktree_and_open_pr_branches(tmp_path):
 def test_reap_dry_run_does_not_delete(tmp_path):
     ctx = _reap_ctx(tmp_path, merged_deep={"khivi/done": "abc123"}, dry=True)
     dele = _run_reap(ctx, local_branches=["khivi/done"], ahead=0)
-    dele.assert_not_called()
-
-
-def test_reap_gated_off_when_auto_cleanup_disabled(tmp_path):
-    ctx = _reap_ctx(
-        tmp_path,
-        merged_deep={"khivi/done": "abc123"},
-        cfg={"auto_cleanup_on_merge": False},
-    )
-    with (
-        patch.object(cycle, "list_local_branches") as lst,
-        patch.object(cycle, "delete_local_branch") as dele,
-    ):
-        cycle._reap_branch_refs(ctx)
-    lst.assert_not_called()
     dele.assert_not_called()
 
 
