@@ -66,9 +66,9 @@ Either alias works with self-update: pressing `u` runs `bin/update.sh` and relau
 /plugin install cockpit@khivi-cockpit
 ```
 
-The slash commands (`/cockpit:new`, `/cockpit:repos`, …) and the statusline hook invoke the `cockpit` command from step 1. If it isn't on `PATH`, the daemon warns at startup and the commands fail — re-run step 1.
+The `/cockpit:new` slash command and the statusline hook invoke the `cockpit` command from step 1. If it isn't on `PATH`, the daemon warns at startup and the commands fail — re-run step 1.
 
-For live PR/CI status to flow into the `cockpit watch` table and the statusline, start the daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible. `cockpit watch` opens a **terminal UI**: slow/fast tick countdowns + an update indicator in the header, and a navigable worktree table (arrow keys move the row cursor) showing each workspace's PR, author (the coworker login on a review PR, blank for your own), approval/CI state, unaddressed-comment count (💬), and dirty-tree state:
+For live PR/CI status to flow into the `cockpit watch` table and the statusline, start the daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible. `cockpit watch` opens a **terminal UI**: slow/fast tick countdowns + an update indicator in the header, and a navigable worktree table (arrow keys move the row cursor) showing each workspace's PR, author (the coworker login on a review PR, blank for your own), approval/CI state, unaddressed-comment count (💬), dirty-tree state, and PR title:
 
 ```bash
 cockpit watch    # long-running daemon, terminal UI (requires a TTY)
@@ -76,7 +76,7 @@ cockpit watch    # long-running daemon, terminal UI (requires a TTY)
 
 The daemon is a foreground process — close the terminal, it dies; run it in `tmux`/`cmux`/`screen` for persistence.
 
-First run auto-creates `~/.config/cockpit/`, seeds `config.json`, and prompts once to wire Claude Code's statusLine to the cockpit footer.
+First run auto-creates `~/.config/cockpit/` and seeds `config.json`. (Wiring Claude Code's statusLine is a separate one-time step — run `cockpit setup`, below.)
 
 ## Quick start
 
@@ -92,7 +92,7 @@ A blank spawn like this — a new branch with no PR, ticket, or extra context �
 
 Open the PR however you normally do. Once it exists, cockpit picks it up on the next daemon cycle (default 5 minutes; force it by pressing `s` in `cockpit watch`).
 
-When the PR merges and the worktree is clean, cockpit tears both down automatically (configurable — see [Defaults](#defaults)).
+When the PR merges and the worktree is clean, cockpit tears both down automatically.
 
 ### Is it working?
 
@@ -206,7 +206,7 @@ To opt in:
 
 ## Nudge pills (optional)
 
-When the agent is idle, cockpit can ping the workspace about actionable PR signals (CI failed, unresolved threads, merge conflict). It's automatic and no-ops outside cmux. In the TUI, `n` sends a nudge to the cursor row now (overrides mute + the throttle) and `m` mutes/unmutes the row's PR.
+When the agent is idle, cockpit can ping the workspace about actionable PR signals (CI failed, unresolved threads, merge conflict). It's automatic and no-ops outside cmux. In the TUI, `N` sends a nudge to the cursor row now (overrides mute + the throttle) and `m` mutes/unmutes the row's PR.
 
 Mute per-PR when a nudge is wrong, via the `cockpit nudge` CLI:
 
