@@ -2,7 +2,7 @@
 
 `worktree_cells` is a pure function — no Textual. Seeds the same flat cache
 cells the daemon writes, then asserts the per-column Rich Text. Columns are
-Workspace | PR | (Ticket) | Approval | CI | comments | ✎ | (Status) | Title —
+Workspace | PR | (Ticket) | 🚦 | CI | comments | ✎ | (Status) | Title —
 the Linear Ticket/Status columns appear only when configured, Ticket after PR and
 Status before Title. The repo is conveyed by tinting the workspace name (not a
 column). The Dirty column (icon header) reads the per-cwd `git-status` cell
@@ -18,7 +18,9 @@ import pytest
 import cockpit.lib.cache as cache_mod
 from cockpit.lib.git import Worktree
 from cockpit.tui.widgets.worktree_table import (
+    _APPROVAL_ICON,
     _DIRTY_ICON,
+    _PR_STATE_ICON,
     ICON_PR_MUTED,
     column_labels,
     worktree_cells,
@@ -45,7 +47,7 @@ def _plain(wt, repo="repo", color=None, linear=False, show_linear=False):
 def test_cell_count_matches_columns(cache_dir):
     cols = column_labels(show_linear=False)
     assert len(_plain(_wt())) == len(cols) == 7
-    assert cols[0] == "Workspace" and cols[2] == "Approval"
+    assert cols[0] == "Workspace" and cols[2] == _APPROVAL_ICON
     assert cols[5] == _DIRTY_ICON  # Dirty column header is now an icon
     # Ticket + Status columns added only when show_linear, interleaved:
     # Ticket right after PR, Status right before Title.
@@ -77,16 +79,16 @@ def test_unknown_color_falls_back_to_plain(cache_dir):
     assert not cell.spans
 
 
-def test_pr_columns_with_friendly_approval(cache_dir):
+def test_pr_columns_with_state_icon(cache_dir):
     wt = _wt(branch="khivi/feat-pr")
     cache_mod.branch_cache("pr-num", wt.branch).write_text("123")
     cache_mod.branch_cache("pr-state", wt.branch).write_text("APPROVED")
     cache_mod.branch_cache("pr-checks", wt.branch).write_text("✓")
     cache_mod.branch_cache("pr-comments", wt.branch).write_text("2")
     cache_mod.branch_cache("pr-title", wt.branch).write_text("Add the thing")
-    cells = _plain(wt)  # Workspace, PR, Approval, CI, 💬, Dirty, Title
+    cells = _plain(wt)  # Workspace, PR, state-icon, CI, 💬, Dirty, Title
     assert cells[1] == "#123"
-    assert cells[2] == "Approved"  # friendly label, not the raw enum
+    assert cells[2] == _PR_STATE_ICON["APPROVED"]  # icon, not a text label
     assert cells[3] == "✓"
     assert cells[4] == "2"
     assert cells[5] == ""  # clean tree (no git-status cell)
@@ -94,25 +96,19 @@ def test_pr_columns_with_friendly_approval(cache_dir):
 
 
 @pytest.mark.parametrize(
-    "raw,label",
-    [
-        ("DRAFT", "Draft"),
-        ("REVIEW_REQUIRED", "Waiting"),
-        ("CHANGES_REQUESTED", "Changes"),
-        ("MERGED", "Merged"),
-    ],
+    "raw", ["DRAFT", "REVIEW_REQUIRED", "CHANGES_REQUESTED", "MERGED"]
 )
-def test_approval_friendly_labels(cache_dir, raw, label):
+def test_approval_state_icons(cache_dir, raw):
     wt = _wt(branch=f"khivi/{raw.lower()}")
     cache_mod.branch_cache("pr-state", wt.branch).write_text(raw)
-    assert _plain(wt)[2] == label
+    assert _plain(wt)[2] == _PR_STATE_ICON[raw]
 
 
 def test_changes_requested_colored_red(cache_dir):
     wt = _wt(branch="khivi/cr")
     cache_mod.branch_cache("pr-state", wt.branch).write_text("CHANGES_REQUESTED")
     cell = worktree_cells(wt, "r", None, False, show_linear=False)[2]
-    assert cell.plain == "Changes"
+    assert cell.plain == _PR_STATE_ICON["CHANGES_REQUESTED"]
     assert "red" in str(cell.style)
 
 

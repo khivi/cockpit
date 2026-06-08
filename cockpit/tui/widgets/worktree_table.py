@@ -33,24 +33,32 @@ from cockpit.lib.cache import branch_cache, cwd_cache, find_pr_payload, read_tex
 from cockpit.lib.colors import CMUX_COLOR_ANSI
 from cockpit.lib.git import Worktree
 from cockpit.lib.starship import (
+    _PR_STATE_ICON,
     ICON_PR_MUTED,
     ICON_STAGED,
     ICON_UNSTAGED,
     ICON_UNTRACKED,
 )
 
+# Header glyph for the PR-state column (was the word "Approval"). The traffic
+# light reads as "review status" and collides with none of the value icons.
+_APPROVAL_ICON = "🚦"
+
 # (repo display name, sidebar_color, linear-enabled, worktrees)
 Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
 
-# Raw `pr-state` enum → (friendly label shown in the Approval column, style).
+# Raw `pr-state` enum → (icon shown in the PR-state column, style). The icons
+# reuse the sidebar's `_PR_STATE_ICON` vocabulary (single source of truth) so the
+# table and the statusline never disagree; the style is kept for the few terminals
+# that tint emoji and to drive colour assertions in tests.
 _STATE = {
-    "APPROVED": ("Approved", "green"),
-    "OPEN": ("Open", "cyan"),
-    "DRAFT": ("Draft", "grey50"),
-    "REVIEW_REQUIRED": ("Waiting", "yellow"),
-    "CHANGES_REQUESTED": ("Changes", "red"),
-    "MERGED": ("Merged", "magenta"),
-    "CLOSED": ("Closed", "red"),
+    "APPROVED": (_PR_STATE_ICON["APPROVED"], "green"),
+    "OPEN": (_PR_STATE_ICON["OPEN"], "cyan"),
+    "DRAFT": (_PR_STATE_ICON["DRAFT"], "grey50"),
+    "REVIEW_REQUIRED": (_PR_STATE_ICON["REVIEW_REQUIRED"], "yellow"),
+    "CHANGES_REQUESTED": (_PR_STATE_ICON["CHANGES_REQUESTED"], "red"),
+    "MERGED": (_PR_STATE_ICON["MERGED"], "magenta"),
+    "CLOSED": (_PR_STATE_ICON["CLOSED"], "red"),
 }
 _CI_STYLE = {"✓": "green", "✗": "red", "•": "yellow", "?": "grey50"}
 
@@ -66,7 +74,7 @@ def column_labels(*, show_linear: bool) -> tuple[str, ...]:
     cols = ["Workspace", "PR"]
     if show_linear:
         cols.append("Ticket")
-    cols += ["Approval", "CI", "💬", _DIRTY_ICON]
+    cols += [_APPROVAL_ICON, "CI", "💬", _DIRTY_ICON]
     if show_linear:
         cols.append("Status")
     cols.append("Title")
@@ -142,7 +150,7 @@ def worktree_cells(
 
     num, state, ci = cell("pr-num"), cell("pr-state"), cell("pr-checks")
     comments, title = cell("pr-comments"), cell("pr-title")
-    label, style = _STATE.get(state, (state, "white"))
+    state_icon, style = _STATE.get(state, (state, "white"))
     ticket, ticket_status = (
         _linear_cells(wt, repo_name) if linear_enabled else (Text(""), Text(""))
     )
@@ -154,7 +162,7 @@ def worktree_cells(
     if show_linear:
         cells.append(ticket)
     cells += [
-        Text(label, style=style) if state else Text(""),
+        Text(state_icon, style=style) if state else Text(""),
         Text(ci, style=_CI_STYLE.get(ci, "white")) if ci else Text(""),
         Text(comments, style="red") if comments and comments != "0" else Text(""),
         _dirty_cell(wt),
