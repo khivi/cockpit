@@ -45,7 +45,7 @@ uv tool install git+https://github.com/khivi/cockpit
 #   uvx --from git+https://github.com/khivi/cockpit cockpit --help
 ```
 
-`bin/cockpit.sh` launches the TUI daemon (`cockpit watch`), preferring the installed `cockpit` and otherwise running it from the checkout via `uv` — handy before a global install.
+`bin/cockpit.sh` launches the TUI daemon (`cockpit watch`), preferring the installed `cockpit` and otherwise running it from the checkout via `uv` — handy before a global install. `bin/update.sh` updates everything in one shot: it refreshes the Claude Code marketplace + plugin via the `claude` CLI, then reinstalls the `cockpit` command via `uv` (restart Claude Code and the daemon afterwards).
 
 1. Inside Claude Code, add the plugin:
 
