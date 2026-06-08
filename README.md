@@ -2,6 +2,8 @@
 
 A Claude Code plugin for running several PRs at once. Each task gets its own git worktree, a `cmux`/`limux` terminal with `claude` already running, and a GitHub PR — and cockpit shows all of them, with live CI and review status, in one TUI table. Start a task with `/cockpit:new`; when its PR merges, cockpit deletes the worktree and closes the terminal for you.
 
+![cockpit watch — every worktree, workspace, and PR in one table](docs/cockpit-tui.png)
+
 ## What it does
 
 - **`cockpit watch`** — a TUI showing every workspace's PR, approval, CI, comments, and dirty state in one navigable table; row keystrokes focus, close, mute, and nudge.
@@ -13,7 +15,7 @@ A Claude Code plugin for running several PRs at once. Each task gets its own git
 - `uv`, `git ≥ 2.30`, Python ≥ 3.12
 - [`gh`](https://cli.github.com/), authenticated
 - Claude Code
-- A workspace backend on `PATH` — `cmux` (macOS) or `limux` (Linux; no nudge pills)
+- A workspace backend on `PATH` — `cmux` (macOS) or `limux`
 - Optional: [`cship`](https://github.com/khivi/cship) + [`starship`](https://starship.rs/) for the statusline (set `use_cship: true`; wired automatically on `bin/update.sh`)
 
 ## Install
