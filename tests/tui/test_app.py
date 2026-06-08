@@ -523,7 +523,7 @@ async def test_nudge_key_sends_when_idle(monkeypatch, tmp_path):
         await pilot.pause()
         app._render_table([("repo", None, False, [wt])])
         await pilot.pause()
-        await pilot.press("n")
+        await pilot.press("N")
         await pilot.pause(0.6)
     assert len(calls) == 1
     ref, _msg = calls[0]
@@ -544,7 +544,7 @@ async def test_nudge_key_skips_when_not_idle(monkeypatch, tmp_path):
         await pilot.pause()
         app._render_table([("repo", None, False, [wt])])
         await pilot.pause()
-        await pilot.press("n")
+        await pilot.press("N")
         await pilot.pause(0.6)
     assert any("skipped" in t for t in toasts)
 
@@ -561,7 +561,7 @@ async def test_nudge_key_noop_on_limux(monkeypatch, tmp_path):
         await pilot.pause()
         app._render_table([("repo", None, False, [wt])])
         await pilot.pause()
-        await pilot.press("n")
+        await pilot.press("N")
         await pilot.pause(0.6)
     assert calls == []  # a nudge is a cmux-only `send`
 
@@ -575,9 +575,73 @@ async def test_nudge_key_noop_when_table_empty(monkeypatch):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        await pilot.press("n")
+        await pilot.press("N")
         await pilot.pause(0.3)
     assert calls == []
+
+
+async def test_new_key_opens_text_box(monkeypatch, tmp_path):
+    # `n` pushes the new-workspace modal with an input ready for typing.
+    from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
+
+    _seed_one_worktree(monkeypatch, tmp_path)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, NewWorkspaceScreen)
+
+
+async def test_new_box_submit_launches_spawn(monkeypatch, tmp_path):
+    # Submitting the box fires spawn.py detached (cwd = selected row's repo so a
+    # bare name routes correctly) with the typed source, then kicks the slow tick
+    # so the new worktree surfaces.
+    from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
+
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    launched: dict = {}
+
+    def fake_popen(cmd, **kwargs):
+        launched["cmd"] = cmd
+        launched["cwd"] = kwargs.get("cwd")
+        return object()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    app, calls = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        before = calls["slow"]
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, NewWorkspaceScreen)
+        await pilot.press(*"fix-login")
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    cmd = launched["cmd"]
+    assert cmd[-1] == "fix-login"  # typed source forwarded as the final spawn arg
+    assert any("spawn.py" in str(part) for part in cmd)
+    assert launched["cwd"] == str(tmp_path)  # selected row's repo path
+    assert calls["slow"] > before  # kicked so the new worktree surfaces
+
+
+async def test_new_box_cancel_does_not_spawn(monkeypatch, tmp_path):
+    # Escape (or blank submit) dismisses without launching spawn.
+    _seed_one_worktree(monkeypatch, tmp_path)
+    launched: list = []
+    monkeypatch.setattr(
+        "subprocess.Popen", lambda cmd, **k: launched.append(cmd) or object()
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause(0.4)
+    assert launched == []
 
 
 async def test_update_key_exits_with_restart_code():

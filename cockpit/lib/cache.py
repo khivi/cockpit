@@ -25,7 +25,6 @@ parsing JSON in every subprocess is too expensive.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import tempfile
@@ -95,10 +94,6 @@ def write_pr_cache(
     rather than recomputed every render. The daemon (cycle.py) decides when to
     refetch vs. carry forward; this writer just persists what it's handed.
 
-    `keep` is preserved from the existing cache if already True — once a
-    worktree is marked kept (user-spawned via `/cockpit:new`), daemon rewrites
-    never clear the flag.
-
     `reused_branch` records the daemon's reused-branch decision (a merged/closed
     PR whose head the worktree's HEAD has advanced past — see
     `cycle._is_reused_branch_merge`). It is the one place that signal is
@@ -110,10 +105,6 @@ def write_pr_cache(
     """
     ensure_state_dirs()
     path = CACHE_DIR / f"{_repo_slug(repo_name)}__pr-{pr.number}.json"
-    keep = False
-    if path.exists():
-        with contextlib.suppress(OSError, json.JSONDecodeError):
-            keep = bool(json.loads(path.read_text()).get("keep"))
     payload = {
         "number": pr.number,
         "title": pr.title,
@@ -127,8 +118,7 @@ def write_pr_cache(
         "unaddressed": pr.unaddressed,
         "mergeable": pr.mergeable,
         "muted": muted_payload(pref),
-        "pills": decide_pills(pr, wt, pref, keep=keep),
-        "keep": keep,
+        "pills": decide_pills(pr, wt, pref),
         "headRefOid": pr.head_oid,
         "reusedBranch": reused_branch,
     }
@@ -136,26 +126,6 @@ def write_pr_cache(
         payload["linear"] = linear
     _atomic_write_json(path, payload)
     return payload
-
-
-def set_pr_keep(repo_name: str, pr_num: int | str) -> None:
-    """Mark a PR's cache entry with `keep: true` so `_maybe_autoclose` skips it.
-
-    Reads the existing snapshot (if any) and merges in `"keep": true` before
-    writing back atomically. Creates a stub when no snapshot exists yet (the
-    daemon will fill in the full payload on its next cycle and `write_pr_cache`
-    will preserve the flag).
-    """
-    ensure_state_dirs()
-    path = CACHE_DIR / f"{_repo_slug(repo_name)}__pr-{pr_num}.json"
-    payload: dict = {}
-    if path.exists():
-        try:
-            payload = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            payload = {}
-    payload["keep"] = True
-    _atomic_write_json(path, payload)
 
 
 def _iter_cache(pattern: str):

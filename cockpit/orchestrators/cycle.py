@@ -392,7 +392,6 @@ def _maybe_autoclose(
     cwds: dict[str, Path],
     *,
     prs: list[PR] | None = None,
-    pr_payloads: dict[str, dict] | None = None,
     dry: bool,
 ) -> None:
     """Remove worktrees + workspaces for merged branches that are clean.
@@ -423,9 +422,10 @@ def _maybe_autoclose(
     Teardown delegates to `orchestrators.teardown.teardown` (forced=True since we've
     already validated merge-state-clean above).
 
-    `pr_payloads` is the cycle's prebuilt `{branch: payload}` map (the daemon
-    passes `ctx.pr_payloads` to skip a per-worktree `find_pr_payload` scan); when
-    None — direct callers/tests — each branch's `keep` is looked up on demand.
+    A merged PR is the *only* trigger that reaches teardown here — a worktree
+    with no merged PR (research/planning, an open PR, a coworker branch with no
+    PR) is never touched. Stale-but-merged worktrees are the sole auto-reap
+    case; everything else lives until the user closes it (TUI `c`).
     """
     if not cfg.get("auto_cleanup_on_merge", True):
         return
@@ -455,17 +455,6 @@ def _maybe_autoclose(
         merged_ref = _workspace_ref_for_path(wt.path, cwds)
         if merged_ref is not None and not dry:
             apply_devdone_pill(merged_ref, None)
-        pr_payload = (
-            pr_payloads.get(wt.branch)
-            if pr_payloads is not None
-            else find_pr_payload(wt.branch, repo_name)
-        )
-        if pr_payload and pr_payload.get("keep"):
-            print(
-                f"  {verb('autoclose')} {dim(f'skipped (keep) {wt.short}')}",
-                flush=True,
-            )
-            continue
         if wt.dirty_count > 0:
             print(
                 f"  {verb('autoclose')} {dim(f'skipped (uncommitted) {wt.short}')} "
@@ -824,10 +813,9 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     having to spawn its own `gh pr view` from cold.
     """
     # Build the branch→payload map once for the cycle's downstream consumers
-    # (_refresh_tracked_pills / _spawn_missing_workspaces / _maybe_autoclose),
-    # replacing their per-PR find_pr_payload scans. `keep` survives write_pr_cache
-    # rewrites and the loader applies the same rank dedup, so this pre-write
-    # snapshot matches what a post-write per-call lookup would return.
+    # (_refresh_tracked_pills reads `reusedBranch` from it), replacing a per-PR
+    # find_pr_payload scan. The loader applies the same rank dedup, so this
+    # pre-write snapshot matches what a post-write per-call lookup would return.
     ctx.pr_payloads = load_pr_payloads_by_branch(ctx.name)
     if ctx.dry:
         return
@@ -989,11 +977,10 @@ def _refresh_tracked_pills(
                 if changed and not ctx.dry:
                     ctx.pill_state[ref] = blank
                 continue
-            keep = bool(pr_payload and pr_payload.get("keep"))
-            desired = frozenset(status_pills(pr, wt, ctx.self_user, pref, keep=keep))
+            desired = frozenset(status_pills(pr, wt, ctx.self_user, pref))
             changed = ctx.pill_state.get(ref) != desired
             if changed and not ctx.dry:
-                apply_pills(ref, pr, wt, ctx.self_user, pref, keep=keep)
+                apply_pills(ref, pr, wt, ctx.self_user, pref)
             if changed:
                 if not group_header_printed:
                     print(f"  {dim(group_label)}", flush=True)
@@ -1044,8 +1031,12 @@ def _print_tracked_summary(
 
 
 def _handle_orphans_and_close_stale(ctx: RepoCycle, keep_refs: set[str]) -> None:
-    """For each surviving workspace whose worktree branch has no open PR:
-    mine → orphan pills + nudge; coworker → close.
+    """Apply orphan pills to every surviving workspace whose worktree branch has
+    no open PR. Worktrees are never closed here — a merged PR is the only reaper
+    (`_maybe_autoclose`), so a research/planning worktree survives until the user
+    closes it (TUI `c`). Mine-prefixed branches also get the "open a PR or close"
+    nudge; coworker branches (someone else's PR I'm reviewing locally) get the
+    pills only — nudging a coworker branch to open a PR makes no sense.
     """
     wt_by_name = {wt.label: wt for wt in ctx.wts}
     wt_by_path = {wt.path.resolve(): wt for wt in ctx.wts}
@@ -1061,19 +1052,13 @@ def _handle_orphans_and_close_stale(ctx: RepoCycle, keep_refs: set[str]) -> None
         ):
             continue
         wt = wt_opt
-        if wt.branch.startswith(my_prefix):
-            _refresh_orphan(ctx, ref, wt, ws_name)
-            continue
-        print(
-            f"  {verb('closing')} {ws_name} → {ref}  (branch {wt.branch} has no open PR)",
-            flush=True,
-        )
-        if not ctx.dry:
-            cmux_close_workspace_best_effort(ref)
+        _refresh_orphan(ctx, ref, wt, ws_name, nudge=wt.branch.startswith(my_prefix))
 
 
-def _refresh_orphan(ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str) -> None:
-    """Apply orphan/wip/stale pills and nudge if the orphan worktree is mine."""
+def _refresh_orphan(
+    ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str, *, nudge: bool = True
+) -> None:
+    """Apply orphan/wip/stale pills; nudge to push-or-close when `nudge` is set."""
     if _is_post_merge_stale(wt, ctx.merged_branches):
         print(
             f"  {verb('orphan')} {dim(f'{ws_name} ({wt.branch}) merged — autoclose may handle')}",
@@ -1109,13 +1094,14 @@ def _refresh_orphan(ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str) -> Non
         )
     if changed and not ctx.dry:
         ctx.pill_state[ref] = orphan_snap
-    maybe_nudge(
-        ref,
-        f"Worktree {wt.short} on {wt.branch} still has no open PR. "
-        f"Push commits and open a PR, or close the worktree if abandoned.",
-        ctx.dry,
-        ws_name,
-    )
+    if nudge:
+        maybe_nudge(
+            ref,
+            f"Worktree {wt.short} on {wt.branch} still has no open PR. "
+            f"Push commits and open a PR, or close the worktree if abandoned.",
+            ctx.dry,
+            ws_name,
+        )
 
 
 _SPAWN_SCRIPT = Path(__file__).resolve().parent.parent / "spawn.py"
@@ -1204,13 +1190,11 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
     tracked_pr_numbers = {pr.number for pr, _ in ctx.tracked.values()}
     for pr, wt in matched:
         if pr.number not in tracked_pr_numbers:
-            pr_payload = ctx.pr_payloads.get(pr.branch)
             spawn_pr_workspace(
                 pr,
                 wt,
                 self_user=ctx.self_user,
                 pref=ctx.prefs.get(pr.number),
-                keep=bool(pr_payload and pr_payload.get("keep")),
                 dry=ctx.dry,
             )
     if ctx.review_candidates:
@@ -1409,7 +1393,6 @@ def cycle_repo(
         ctx.merged_branches,
         ctx.cwds,
         prs=ctx.prs,
-        pr_payloads=ctx.pr_payloads,
         dry=dry,
     )
     _reap_branch_refs(ctx)

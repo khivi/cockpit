@@ -10,7 +10,7 @@ allowed-tools: Bash
 YOU MUST immediately invoke the Bash tool with the exact command below. Do not paraphrase, summarize, or skip. Do not respond with any text before the Bash result is in. After Bash returns, paste its stdout verbatim — do not interpret or assume the spawn succeeded based on intent.
 
 ```bash
-cockpit new $ARGUMENTS --keep
+cockpit new $ARGUMENTS
 ```
 
 **`--context` handling — the one exception to "invoke verbatim".** If `--context` is among the arguments, before calling Bash you must:

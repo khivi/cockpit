@@ -524,38 +524,6 @@ def test_autoclose_keeps_reused_branch_name(tmp_path):
     remove_mock.assert_not_called()
 
 
-def test_autoclose_skips_kept_worktree(tmp_path):
-    """A worktree with `keep: true` in its PR cache survives autoclose."""
-    wt_path = tmp_path / "repo-feat"
-    wt_path.mkdir()
-    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
-
-    with (
-        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
-        patch.object(teardown_mod, "remove_worktree") as remove_mock,
-        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
-        patch.object(cycle, "is_ancestor", return_value=True),
-        patch.object(
-            cycle,
-            "find_pr_payload",
-            return_value={"branch": "khivi/feat", "keep": True},
-        ),
-    ):
-        cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
-            repo_path=tmp_path,
-            repo_name="testrepo",
-            wts=[wt],
-            merged_branches={"khivi/feat": "deadbeef"},
-            cwds={"ws-ref": wt_path},
-            prs=[_pr("khivi/feat")],
-            dry=False,
-        )
-
-    close_mock.assert_not_called()
-    remove_mock.assert_not_called()
-
-
 def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
     """Uncommitted local work still wins over a clean merged PR."""
     wt_path = tmp_path / "repo-feat"
@@ -1768,6 +1736,55 @@ def test_refresh_orphan_renames_drifted_workspace(tmp_path):
         cycle._refresh_orphan(ctx, "workspace:7", wt, "stale-name")
 
     rn.assert_called_once_with("workspace:7", "feat", "stale-name", dry=False)
+
+
+def test_handle_orphans_never_closes_and_gates_nudge(tmp_path):
+    """No-PR worktrees are never closed here — only a merged PR reaps (via
+    `_maybe_autoclose`). Mine-prefix branches are nudged; coworker branches get
+    orphan pills only (nudge=False — nudging a coworker branch to open a PR is
+    nonsense)."""
+    mine_path = tmp_path / "repo-mine"
+    mine_path.mkdir()
+    cow_path = tmp_path / "repo-cow"
+    cow_path.mkdir()
+    mine = Worktree(
+        path=mine_path, branch="khivi/feat", dirty_count=0, branch_prefix="khivi/"
+    )
+    cow = Worktree(path=cow_path, branch="coworker/feat", dirty_count=0)
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.wts = [mine, cow]
+    ctx.names = {"ws:mine": "feat", "ws:cow": "cow-feat"}
+    ctx.cwds = {"ws:mine": mine_path, "ws:cow": cow_path}
+
+    with (
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(cycle, "_refresh_orphan") as refresh_mock,
+    ):
+        cycle._handle_orphans_and_close_stale(ctx, {"ws:mine", "ws:cow"})
+
+    close_mock.assert_not_called()
+    nudge_by_ref = {c.args[1]: c.kwargs["nudge"] for c in refresh_mock.call_args_list}
+    assert nudge_by_ref == {"ws:mine": True, "ws:cow": False}
+
+
+def test_refresh_orphan_skips_nudge_when_disabled(tmp_path):
+    """`nudge=False` suppresses the push-or-close nudge but still applies pills."""
+    wt_path = tmp_path / "repo-cow"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="coworker/feat", dirty_count=0)
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.base_distance = {}
+
+    with (
+        patch.object(cycle, "cmux"),
+        patch.object(cycle, "apply_wip_pill"),
+        patch.object(cycle, "apply_stale_pill"),
+        patch.object(cycle, "rename_workspace_if_needed", return_value=False),
+        patch.object(cycle, "maybe_nudge") as nudge_mock,
+    ):
+        cycle._refresh_orphan(ctx, "ws:cow", wt, "cow-feat", nudge=False)
+
+    nudge_mock.assert_not_called()
 
 
 def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):

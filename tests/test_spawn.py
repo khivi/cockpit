@@ -1201,97 +1201,14 @@ _FAKE_PR = {
 }
 
 
-def test_no_keep_flag_skips_set_pr_keep(spawn_main, monkeypatch, cockpit_repo):
-    """Spawn without --keep (e.g. daemon bg-spawn) must NOT call set_pr_keep."""
+def test_context_separator_parses_into_addendum(monkeypatch):
+    """A `-- <text>` separator (the shape `/cockpit:new <branch> -- text`
+    produces) is joined into `claude_addendum`, not parsed as flags."""
     import cockpit.spawn as spawn
 
-    keep_calls: list = []
-    wt_path = cockpit_repo.repo.parent / "feat"
-    wt_path.mkdir(exist_ok=True)
-
-    monkeypatch.setattr(spawn, "set_pr_keep", lambda *a, **kw: keep_calls.append(a))
-    monkeypatch.setattr(spawn, "repo_nwo", lambda _p: ("owner", "repo"))
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: _FAKE_PR)
-    monkeypatch.setattr(
-        spawn,
-        "resolve_worktree",
-        lambda *a, **kw: (wt_path, "khivi/feat", False),
-    )
-
-    code, _out, _err = spawn_main(["khivi/feat", "--repo", "testrepo"])
-    assert code == 0
-    assert keep_calls == []
-
-
-def test_keep_flag_calls_set_pr_keep(spawn_main, monkeypatch, cockpit_repo):
-    """--keep with explicit --pr writes the keep marker (PR was the input)."""
-    import cockpit.spawn as spawn
-
-    keep_calls: list = []
-    wt_path = cockpit_repo.repo.parent / "feat2"
-    wt_path.mkdir(exist_ok=True)
-
-    monkeypatch.setattr(spawn, "set_pr_keep", lambda *a, **kw: keep_calls.append(a))
-    monkeypatch.setattr(spawn, "repo_nwo", lambda _p: ("owner", "repo"))
-    monkeypatch.setattr(spawn, "fetch_pr_info", lambda *_a, **_kw: _FAKE_PR)
-    monkeypatch.setattr(
-        spawn,
-        "resolve_worktree",
-        lambda *a, **kw: (wt_path, "khivi/feat2", False),
-    )
-
-    code, _out, _err = spawn_main(["--pr", "9", "--repo", "testrepo", "--keep"])
-    assert code == 0
-    assert len(keep_calls) == 1
-    assert keep_calls[0] == ("owner/repo", "9")
-
-
-def test_keep_after_separator_is_promoted(monkeypatch):
-    """`--keep` appended after a `-- <context>` separator (the shape
-    `/cockpit:new <branch> -- text` produces) must still be parsed as the
-    flag, not leak into the addendum."""
-    import cockpit.spawn as spawn
-
-    monkeypatch.setattr(
-        sys, "argv", ["spawn.py", "feat", "--", "do", "thing", "X", "--keep"]
-    )
+    monkeypatch.setattr(sys, "argv", ["spawn.py", "feat", "--", "do", "thing", "X"])
     args = spawn.parse_args()
-    assert args.keep is True
     assert args.claude_addendum == "do thing X"
-
-
-def test_keep_before_separator_still_parses(monkeypatch):
-    """`--keep` ahead of the `--` separator is unaffected by the promotion."""
-    import cockpit.spawn as spawn
-
-    monkeypatch.setattr(
-        sys, "argv", ["spawn.py", "feat", "--keep", "--", "context text"]
-    )
-    args = spawn.parse_args()
-    assert args.keep is True
-    assert args.claude_addendum == "context text"
-
-
-def test_keep_flag_no_effect_for_branch_with_pr(spawn_main, monkeypatch, cockpit_repo):
-    """--keep on a branch spawn whose PR is auto-detected must NOT write keep."""
-    import cockpit.spawn as spawn
-
-    keep_calls: list = []
-    wt_path = cockpit_repo.repo.parent / "feat3"
-    wt_path.mkdir(exist_ok=True)
-
-    monkeypatch.setattr(spawn, "set_pr_keep", lambda *a, **kw: keep_calls.append(a))
-    monkeypatch.setattr(spawn, "repo_nwo", lambda _p: ("owner", "repo"))
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: _FAKE_PR)
-    monkeypatch.setattr(
-        spawn,
-        "resolve_worktree",
-        lambda *a, **kw: (wt_path, "khivi/feat3", False),
-    )
-
-    code, _out, _err = spawn_main(["khivi/feat3", "--repo", "testrepo", "--keep"])
-    assert code == 0
-    assert keep_calls == []
 
 
 # ── workspace path-fallback deduplication ────────────────────────────────────

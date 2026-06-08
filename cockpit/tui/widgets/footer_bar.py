@@ -71,6 +71,7 @@ class FooterBar(Horizontal):
         "force_close_row": "Force",
         "mute_row": "Mute",
         "nudge_row": "Nudge",
+        "new_workspace": "New",
         "update": "Update",
         "quit": "Quit",
     }
@@ -101,7 +102,6 @@ class FooterBar(Horizontal):
         self.global_text = ""
 
     def _label(self, action: str, desc: str) -> str:
-        # A single word: the curated label, else the description's first word.
         return self.LABELS.get(action) or (desc.split()[0] if desc else action)
 
     def _seg(self, key: str, action: str, desc: str) -> str:

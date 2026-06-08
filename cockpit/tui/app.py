@@ -76,10 +76,16 @@ from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.log_pane import LogPane
+from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
 from cockpit.tui.widgets.worktree_table import WorktreeTable
 
 _UPDATE_CHECK_SECONDS = 3600
 _LOG_TAIL_LINES = 200
+
+# The `n` (New) action shells out to the same `spawn.py` the daemon's
+# `_bg_spawn_pr` and `/cockpit:new` use. Detached output lands in `spawn.log`.
+_SPAWN_SCRIPT = Path(__file__).resolve().parent.parent / "spawn.py"
+_SPAWN_LOG = COCKPIT_HOME / "spawn.log"
 
 # Process exit code the TUI returns when the user presses `u` to update. The
 # `bin/cockpit.sh` launcher watches for this specific code: it runs
@@ -144,7 +150,8 @@ class CockpitApp(App[None]):
         ("c", "close_row", "Close"),
         ("C", "force_close_row", "Force close"),
         ("m", "mute_row", "Mute"),
-        ("n", "nudge_row", "Nudge"),
+        ("N", "nudge_row", "Nudge"),
+        ("n", "new_workspace", "New"),
         ("u", "update", "Update"),
         ("q", "quit", "Quit"),
         ("escape", "dismiss_overlay", "Back"),
@@ -250,7 +257,6 @@ class CockpitApp(App[None]):
             self.theme_changed_signal.subscribe(self, self._persist_theme)
 
     def _persist_theme(self, theme: object) -> None:
-        """Write a theme change (from the command palette) to `tui_theme`."""
         save_tui_theme(getattr(theme, "name", str(theme)))
 
     def _start_fast(self) -> None:
@@ -378,9 +384,9 @@ class CockpitApp(App[None]):
             )
 
     def _drain_log(self) -> None:
-        # Drain queued tick output into the bounded on-disk tail (last N lines)
-        # and any mounted LogPane. The pane is temporarily out of the layout, so
-        # the file is currently the only place this output lands.
+        # Drain queued tick output into the bounded on-disk tail and any mounted
+        # LogPane. The pane is currently out of the layout, so the file is the
+        # only sink.
         new: list[str] = []
         while True:
             try:
@@ -459,10 +465,9 @@ class CockpitApp(App[None]):
 
     def action_show_full_config(self) -> None:
         cfg = load_config()
-        # Surface the two active themes up top: `theme` (the dark|light palette
-        # driving the cmux pills + starship footer) and `tui_theme` (the live
-        # Textual theme of this TUI — reads `self.theme`, so it reflects an
-        # unsaved palette change too).
+        # Surface both active themes: `theme` (dark|light palette driving cmux
+        # pills + starship footer) and `tui_theme` (this TUI's live Textual theme
+        # — reads `self.theme`, so it reflects an unsaved palette change too).
         header = (
             f"theme     (pills / footer): {resolve_theme(cfg)}\n"
             f"tui_theme (this TUI):        {self.theme}\n\n"
@@ -472,17 +477,12 @@ class CockpitApp(App[None]):
         )
 
     def action_edit_config(self) -> None:
-        """Open config.json in $EDITOR (a command-palette entry).
-
-        The TUI is otherwise read-only, but this is the one user-driven
-        full-config write — the same sanctioned exception `save_tui_theme`
-        carves out. Suspends the app (restores the terminal so a full-screen
-        editor like vim can take over), shells to $VISUAL/$EDITOR, then
-        re-validates the JSON and drops the per-process config cache. Repo /
-        interval changes apply fully on the next daemon start; live-read paths
-        (`_gather_inventory`, `_resolve_worktree`) pick up the new repo set on
-        the next tick. A parse error leaves the running daemon on its last-good
-        in-memory config rather than reloading a broken file."""
+        """Open config.json in $EDITOR — the one user-driven full-config write
+        (same sanctioned exception as `save_tui_theme`). Suspends the app so a
+        full-screen editor can take over, then re-validates the JSON and drops
+        the config cache; a parse error keeps the daemon on its last-good
+        in-memory config. Repo/interval changes apply fully on the next daemon
+        start; live-read paths pick up the new repo set on the next tick."""
         import shlex
         import subprocess
 
@@ -507,17 +507,15 @@ class CockpitApp(App[None]):
         self.notify("config saved — restart cockpit to apply fully", timeout=6.0)
 
     def action_show_output(self) -> None:
-        # Show the captured slow/fast tick output (the bounded log tail) in a
-        # dismissable overlay — esc/q to close (ConfigScreen is a generic text
-        # modal). Snapshot, not live.
+        # Captured tick output (bounded log tail) in a dismissable overlay
+        # (ConfigScreen is a generic text modal). Snapshot, not live.
         body = "\n".join(self._log_tail) or "(no tick output yet)"
         self.push_screen(ConfigScreen("slow / fast output", body))
 
     def action_dismiss_overlay(self) -> None:
-        # Escape: close the keys/help panel if open, else pop a modal screen back
-        # toward the main table. No-op on the base screen. (Modals with their own
-        # escape binding — ConfigScreen, the command palette — handle it first.)
-        # Named to avoid overriding Textual's built-in async `action_back`.
+        # Escape: close the help panel if open, else pop a modal back toward the
+        # table (no-op on the base screen; modals with their own escape binding
+        # handle it first). Named to avoid overriding Textual's async `action_back`.
         if self.query("HelpPanel"):
             with contextlib.suppress(Exception):
                 self.action_hide_help_panel()
@@ -566,11 +564,37 @@ class CockpitApp(App[None]):
         if path:
             self._send_nudge(path)
 
+    def action_new_workspace(self) -> None:
+        # Spawn a worktree + workspace from the typed source (the `/cockpit:new`
+        # path). The cursor row's repo is a hint so a bare branch name lands in
+        # the right repo.
+        path = self.query_one(WorktreeTable).current_path()
+        repo = self._repo_config_for_path(path)
+        hint = (
+            (repo.get("name") or Path(os.path.expanduser(repo["path"])).name)
+            if repo
+            else None
+        )
+        self.push_screen(NewWorkspaceScreen(hint), self._spawn_new)
+
+    def _spawn_new(self, source: str | None) -> None:
+        # Modal callback (UI thread): resolve the repo path so spawn.py's
+        # cwd-based discovery routes a bare name correctly. `None`/blank =
+        # cancelled.
+        if not source or not source.strip():
+            return
+        path = self.query_one(WorktreeTable).current_path()
+        repo = self._repo_config_for_path(path)
+        if repo is None:
+            repos = load_config().get("repos", []) or []
+            repo = repos[0] if repos else None
+        cwd = str(Path(os.path.expanduser(repo["path"]))) if repo else None
+        self._launch_spawn(source.strip(), cwd)
+
     def action_update(self) -> None:
-        # Only meaningful when the header is advertising a newer version (set by
-        # `_check_update`). Exit with the restart sentinel so `bin/cockpit.sh`
-        # runs `bin/update.sh` and relaunches — the update can't take effect in
-        # this process (it reinstalls the package the daemon runs from).
+        # Only meaningful when the header advertises a newer version. Exit with
+        # the restart sentinel; bin/cockpit.sh runs the updater + relaunches (the
+        # in-process reinstall can't take effect — see RESTART_EXIT_CODE).
         if not self.query_one(HeaderBar).update_text:
             self.notify("no update available", severity="information", timeout=4.0)
             return
@@ -579,9 +603,9 @@ class CockpitApp(App[None]):
     def on_worktree_table_focus_request(
         self, event: WorktreeTable.FocusRequest
     ) -> None:
-        # Enter or double-click on a row focuses its workspace — same as `f`.
-        # Single click only moves the cursor (the table raises FocusRequest only
-        # for Enter / double-click), so mouse navigation never yanks cmux focus.
+        # Enter / double-click focuses the row's workspace (same as `f`); the
+        # table raises FocusRequest only for those, so single-click never yanks
+        # cmux focus.
         self._focus_worktree(event.path)
 
     def _resolve_worktree(self, path_str: str) -> tuple[dict, Worktree] | None:
@@ -604,7 +628,6 @@ class CockpitApp(App[None]):
 
     @staticmethod
     def _workspace_ref(wt: Worktree) -> str | None:
-        """The cmux workspace ref rooted at this worktree (cwd→path), or None."""
         target = wt.path.resolve()
         return next(
             (ref for ref, p in workspace_cwds().items() if p.resolve() == target),
@@ -618,8 +641,6 @@ class CockpitApp(App[None]):
 
     @work(thread=True, group="focus", exit_on_error=False)
     def _focus_worktree(self, path_str: str) -> None:
-        # Shells out to git/cmux — runs off the UI thread. cmux-only (limux has
-        # no focus verb).
         if not is_cmux():
             self._notify("focus requires cmux", severity="warning")
             return
@@ -649,7 +670,6 @@ class CockpitApp(App[None]):
 
     @work(thread=True, group="open", exit_on_error=False)
     def _open_pr_url(self, path_str: str) -> None:
-        # Reads the cached PR payload (resolves git) — runs off the UI thread.
         payload = self._pr_payload_for_path(path_str)
         if not payload or not payload.get("url"):
             self._notify("no PR for this row", severity="warning")
@@ -661,7 +681,7 @@ class CockpitApp(App[None]):
     def _open_linear_url(self, path_str: str) -> None:
         # The cached Linear block carries only ticket ids; the canonical URL is
         # never hand-constructed (workspace slug unknown), so fetch the PR body
-        # and open the exact `Linear: [ID](url)` footer link. Runs in a worker.
+        # and open the exact `Linear: [ID](url)` footer link.
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
             self._notify("no worktree for this row", severity="warning")
@@ -686,11 +706,10 @@ class CockpitApp(App[None]):
 
     @work(thread=True, group="close", exit_on_error=False)
     def _close_worktree(self, path_str: str, *, force: bool = False) -> None:
-        # `c` (no force): refuse on any blocker. `C` (force=True): override the
-        # *soft* open-PR blocker only. Hard blockers (uncommitted / unpushed
-        # work) are checked via `worktree_state_blockers` and refuse even under
-        # force — so `C` can never discard local work. Either way the teardown
-        # is enqueued and drained by the daemon (sole writer).
+        # `c`: refuse on any blocker. `C` (force): override the *soft* open-PR
+        # blocker only — hard blockers (uncommitted/unpushed, via
+        # `worktree_state_blockers`) still refuse, so force never discards local
+        # work. Teardown is enqueued + drained by the daemon (sole writer).
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
             self._notify(f"close: no worktree at {path_str}", severity="error")
@@ -706,8 +725,7 @@ class CockpitApp(App[None]):
             payload is not None and str(payload.get("state", "")).upper() == "MERGED"
         )
 
-        # Hard blockers (dirty/unpushed) refuse even on `C` — force never
-        # overrides unsaved or unmerged work.
+        # Hard blockers (dirty/unpushed) refuse even under force.
         hard = worktree_state_blockers(
             wt.path, branch=wt.branch, is_mine=is_mine, pr_merged=pr_is_merged
         )
@@ -748,11 +766,10 @@ class CockpitApp(App[None]):
 
     @work(thread=True, group="mute", exit_on_error=False)
     def _toggle_mute(self, path_str: str) -> None:
-        # Toggle the user nudge-mute for the row's PR (a mute silences every
-        # category, no expiry — the same full mute `/cockpit:nudge mute` writes).
-        # This writes a NudgePref, NOT a cache cell, so the daemon stays the sole
-        # cache writer; the kicked slow tick republishes the `pr-muted` cell +
-        # pills the table reads, so the 🔇 glyph catches up within the cycle.
+        # Toggle the row PR's nudge-mute (full mute, no expiry — same as
+        # `/cockpit:nudge mute`). Writes a NudgePref, NOT a cache cell, so the
+        # daemon stays sole writer; the kicked slow tick republishes the
+        # `pr-muted` cell + pills, so the 🔇 glyph catches up within the cycle.
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
             self._notify(f"mute: no worktree at {path_str}", severity="error")
@@ -781,12 +798,10 @@ class CockpitApp(App[None]):
 
     @work(thread=True, group="nudge", exit_on_error=False)
     def _send_nudge(self, path_str: str) -> None:
-        # Manual nudge: send the reminder to the row's workspace NOW instead of
-        # waiting for the slow tick. A deliberate keypress overrides mute + the
-        # slow-tick throttle (call `nudge_if_idle` without pr_number/category),
-        # but still respects its idle/parked safety gate — so it never types
-        # into a pending permission prompt or a running turn. cmux-only (a
-        # nudge is a `send`); never writes a cache cell.
+        # Manual nudge NOW (not the slow tick): a deliberate keypress overrides
+        # mute + throttle (`nudge_if_idle` without pr_number/category) but still
+        # respects its idle/parked safety gate, so it never types into a running
+        # turn or a pending permission prompt. cmux-only; never writes a cache cell.
         if not is_cmux():
             self._notify("nudge requires cmux", severity="warning")
             return
@@ -813,6 +828,51 @@ class CockpitApp(App[None]):
                 "(busy, awaiting permission, or parked)",
                 severity="warning",
             )
+
+    @work(thread=True, group="new", exit_on_error=False)
+    def _launch_spawn(self, source: str, cwd: str | None) -> None:
+        # Fire `spawn.py <source>` detached (like the daemon's `_bg_spawn_pr`)
+        # so the TUI never blocks on `git fetch` + worktree add. No auto-teardown
+        # to guard against: a worktree is only reaped once its PR merges, so a
+        # freshly spawned research/planning worktree is safe by construction.
+        # spawn.py writes no cache cell (daemon stays sole writer); the worktree
+        # surfaces on the slow tick we kick below. Detached output → spawn.log.
+        import shlex
+        import subprocess
+        import sys
+        from typing import IO
+
+        try:
+            args = shlex.split(source)
+        except ValueError as e:
+            self._notify(f"new: bad input: {e}", severity="error")
+            return
+        if not args:
+            return
+        cmd = [sys.executable, str(_SPAWN_SCRIPT), *args]
+        logfile: IO[bytes] | None = None
+        try:
+            logfile = open(_SPAWN_LOG, "ab")  # noqa: SIM115 — passed to a detached Popen; must outlive this scope
+        except OSError:
+            logfile = None
+        sink: IO[bytes] | int = logfile if logfile is not None else subprocess.DEVNULL
+        try:
+            subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                stdout=sink,
+                stderr=sink,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as e:
+            self._notify(f"new: failed to launch spawn: {e}", severity="error")
+            return
+        finally:
+            if logfile is not None:
+                logfile.close()
+        self._notify(f"creating: {source} — surfaces on next sync")
+        self.call_from_thread(self._kick_slow)
 
     # ---- cmux loop pill --------------------------------------------------
 

@@ -11,7 +11,7 @@ combination layer — this document does. Diagrams are
 |---|---|---|
 | **GitHub PR** | `gh` API → PR cache JSON (`cache.py`) | `state` ∈ {`OPEN`,`MERGED`,`CLOSED`} × `ci` × `unaddressed` × `review_decision` × `isDraft` × `mergeable` |
 | **Claude session** | cmux native `claude_code=` + statusline stdin (`claude.py`) | `Running` / `Idle` / `Needs input`; context %, rate-limit, model, cost |
-| **cmux workspace** | cmux pills + in-memory `pill_state` dict | `idle=` `devdone=` `parked=` `ci=` `comments=` `merge=` `wip=` `draft=` `approved=` `keep=` `stale=` `loop=` + *does a worktree exist?* |
+| **cmux workspace** | cmux pills + in-memory `pill_state` dict | `idle=` `devdone=` `parked=` `ci=` `comments=` `merge=` `wip=` `draft=` `approved=` `stale=` `loop=` + *does a worktree exist?* |
 | **Linear** (aux) | `gh`-style GraphQL via `LINEAR_API_KEY` (`linear.py`) | ticket workflow `state.name` (e.g. `Dev Done`) — read-only, only for the `devdone=` pill |
 
 The decision functions consume these and emit actions. Everything below is a
@@ -106,14 +106,12 @@ flowchart TD
   C["Worktree / workspace cleanup"] --> K{"state?"}
 
   K -->|"MERGED / branch gone"| AC{"autoclose<br/>blockers?"}
-  AC -->|"dirty · unpushed · open ·<br/>draft · ci≠green · unaddressed · keep"| SK["skip (log reason),<br/>keep worktree"]
+  AC -->|"dirty · unpushed · open ·<br/>draft · ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
   AC -->|"clean & merged"| TD["teardown: workspace →<br/>worktree → branch → PR cache"]
 
-  K -->|"CLOSED · mine"| OR["orphan: pills + nudge<br/>to push or close"]
+  K -->|"no open PR · mine"| OR["orphan: pills + nudge<br/>to push or close"]
 
-  K -->|"CLOSED · coworker"| KS{"--keep-stale?"}
-  KS -->|yes| KP["keep (log stale)"]
-  KS -->|no| CW["close workspace"]
+  K -->|"no open PR · coworker"| OC["orphan: pills only<br/>(no nudge, no close)"]
 
   K -->|"workspace, no worktree"| RP{"idle?"}
   RP -->|"yes & mine-prefix"| EN["enqueue forced teardown"]
@@ -146,6 +144,11 @@ Key gates (all from `cycle.py`):
 - **Autoclose soft blockers** (`forced=True` overrides): unpushed commits, open PR.
 - **Autoclose smart-skip**: even when merged & clean, skip if draft, CI not green,
   or unaddressed review threads remain.
+- **A merged PR is the only reaper**: `_handle_orphans_and_close_stale` never
+  closes a worktree — a no-open-PR worktree (research/planning, or a coworker
+  branch reviewed locally) gets orphan pills and lives until the user closes it
+  (TUI `c`). Only `_maybe_autoclose` (merged & clean) tears anything down. There
+  is no `keep` flag — with non-merge closing gone, nothing needs protecting.
 - **In-flight spawn guard**: `_bg_spawn_pr` keys `spawn:<owner>/<name>:<branch>`
   in `pill_state` with a `time.monotonic()` stamp; a second spawn within
   `_SPAWN_INFLIGHT_TTL_SECONDS` (600s) is skipped, so a manual slow-tick kick

@@ -151,29 +151,6 @@ def test_decide_pills_membership(pr_overrides, must_have, must_not_have):
         assert k not in kinds
 
 
-def test_keep_pill_emitted_when_keep_true():
-    kinds = [p["kind"] for p in decide_pills(_pr(), _wt(), keep=True)]
-    assert "keep" in kinds
-
-
-def test_keep_pill_absent_when_keep_false():
-    kinds = [p["kind"] for p in decide_pills(_pr(), _wt(), keep=False)]
-    assert "keep" not in kinds
-
-
-def test_keep_pill_position_after_muted_before_rebase():
-    from cockpit.lib.nudges import NudgePref
-
-    pref = NudgePref(muted=True)
-    kinds = [
-        p["kind"]
-        for p in decide_pills(
-            _pr(ci="passed"), _wt(rebasing=True), pref=pref, keep=True
-        )
-    ]
-    assert kinds.index("muted") < kinds.index("keep") < kinds.index("rebase")
-
-
 def test_state_pill_only_for_non_open():
     # OPEN + ci=none → no pills; MERGED/CLOSED + ci=none → state pill only.
     # ci_passed is independent of state (see ci_passed_coexists_with_merged_state).

@@ -82,7 +82,6 @@ import re
 import sys
 from pathlib import Path
 
-from cockpit.lib.cache import set_pr_keep
 from cockpit.lib.cmux import (
     cmux,
     require_workspace_binary,
@@ -104,7 +103,6 @@ from cockpit.lib.gh import (
     fetch_pr_info,
     fetch_run_info,
     pr_for_branch,
-    repo_nwo,
     resolve_pr_branch,
 )
 from cockpit.lib.git import (
@@ -165,7 +163,6 @@ def parse_args() -> argparse.Namespace:
         "--skill",
         help="spawn workspace running a global or repo skill (no worktree, no branch)",
     )
-    p.add_argument("--keep", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
         "--review",
         action="store_true",
@@ -183,14 +180,6 @@ def parse_args() -> argparse.Namespace:
     if "--" in raw:
         idx = raw.index("--")
         pre, post = raw[:idx], raw[idx + 1 :]
-        # `--keep` is a daemon/cockpit:new flag appended after the user's
-        # `$ARGUMENTS`. When the user typed a `--` separator (free-text
-        # context), the trailing `--keep` lands in `post` and would leak into
-        # the addendum instead of being parsed by argparse. Promote any such
-        # flag back into `pre` so position relative to `--` never matters.
-        post = [tok for tok in post if tok != "--keep"]
-        if len(post) != len(raw) - idx - 1:
-            pre = pre + ["--keep"]
         addendum = " ".join(post).strip() or None
     else:
         pre, addendum = raw, None
@@ -620,9 +609,6 @@ def main() -> int:
     skill = args.skill
     from_name = False
     is_linear = False  # positional classified as a Linear key (any context → plan)
-    pr_explicit = (
-        False  # set True only when PR is the explicit input (not branch auto-detect)
-    )
 
     prompt: str | None = None
     seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
@@ -738,7 +724,6 @@ def main() -> int:
             short = branch_label(branch, prefix)
         branch_display = branch
 
-        pr_explicit = bool(pr_num)  # True when PR was the input, not auto-detected
         pr_info: dict | None = None
         if pr_num:
             try:
@@ -826,18 +811,6 @@ def main() -> int:
         prefix = f"workspace {ws_name} spawned at {wt}"
     suffix = f" on {branch_display}" if branch_display else " (no worktree)"
     print(f"{prefix}{suffix}")
-
-    if args.keep and pr_explicit and pr_num:
-        try:
-            owner, name = repo_nwo(wt)
-            set_pr_keep(f"{owner}/{name}", pr_num)
-        except Exception as e:
-            # Surface rather than silently drop --keep: a missed keep flag means
-            # the daemon may autoclose this worktree on the next merge cycle.
-            print(
-                f"warn: could not set keep flag for PR #{pr_num}: {e}",
-                file=sys.stderr,
-            )
 
     kick_running(quiet=True)
     return 0
