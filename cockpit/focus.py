@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """`/cockpit:focus` — switch cmux focus to a workspace by PR / branch / slug."""
 
 from __future__ import annotations

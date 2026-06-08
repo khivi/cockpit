@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Create worktree (sibling of main repo) + spawn cmux workspace with claude pre-running.
 
 Usage:

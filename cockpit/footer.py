@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Claude Code statusLine entry — orchestrates the footer render.
 
 First byte in, last byte out: this script is what Claude Code's

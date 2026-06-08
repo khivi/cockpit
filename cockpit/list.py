@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """`/cockpit:list` entry point — render the cached worktree+PR table."""
 
 from __future__ import annotations

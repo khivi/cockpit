@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """`/cockpit:repos` entry point — list configured repos."""
 
 from __future__ import annotations

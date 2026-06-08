@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """`/cockpit:close` — tear down a worktree + workspace.
 
 Workflow:

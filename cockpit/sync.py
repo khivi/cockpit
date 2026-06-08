@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """`/cockpit:sync` — kick a running daemon, else run one cycle inline."""
 
 from __future__ import annotations

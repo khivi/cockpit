@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """starship dispatcher: field printers + warm.
 
 Invoked from `cockpit/defaults/starship.toml`'s `[custom.*]` blocks for

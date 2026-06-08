@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """`/cockpit:nudge` entry point — manage nudge mutes."""
 
 from __future__ import annotations

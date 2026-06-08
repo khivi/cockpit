@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """cockpit — unified console entry point (`[project.scripts] cockpit`).
 
 A thin subcommand dispatcher over the per-feature modules. Each subcommand

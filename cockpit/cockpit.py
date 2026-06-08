@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """cockpit: the reconcile-loop daemon for PRs ↔ cmux workspaces.
 
 Per cycle, for every repo registered in $COCKPIT_HOME/config.json:
