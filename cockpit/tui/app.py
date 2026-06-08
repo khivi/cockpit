@@ -2,13 +2,14 @@
 
 It owns the pidfile (claimed before construction in `cockpit.cockpit._watch`,
 released on unmount), runs the slow + fast ticks itself in thread workers,
-shows live countdowns, funnels tick output into a log pane, and renders a
-read-only card per worktree.
+shows live countdowns, and renders a read-only, arrow-key-navigable worktree
+table. (The log pane that displayed tick output is temporarily removed; stdout
+is still captured so prints can't corrupt the screen.)
 
 Design notes (the two footguns this avoids):
-  • Log capture installs ONE process-wide stdout/stderr writer in `on_mount`
-    (a thread-safe `queue.SimpleQueue`), not per-tick `redirect_stdout` — the
-    slow and fast tick threads would otherwise race on the global stream.
+  • Stdout capture installs ONE process-wide writer in `on_mount` (a thread-safe
+    `queue.SimpleQueue`), not per-tick `redirect_stdout` — the slow and fast tick
+    threads would otherwise race on the global stream.
   • Signals use `loop.add_signal_handler`, never `signal.signal` (which raises
     off the main thread). SIGUSR1 kicks a slow tick (keeps `/cockpit:sync`
     working); SIGTERM/SIGHUP ask Textual to exit cleanly.
@@ -109,8 +110,9 @@ class CockpitApp(App[None]):
     def compose(self) -> ComposeResult:
         # Log pane temporarily removed — the table runs full-width. stdout is
         # still captured (below) so tick prints can't corrupt the screen.
+        show_linear = any(r.get("linear_keys") for r in load_config().get("repos", []))
         yield HeaderBar(id="header")
-        yield WorktreeTable(id="table")
+        yield WorktreeTable(show_linear=show_linear, id="table")
         yield Footer()
 
     def on_mount(self) -> None:
