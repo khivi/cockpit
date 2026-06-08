@@ -14,7 +14,9 @@ from tests.fixtures import make_bin_on_path
 
 
 def _all_required(tmp_path, monkeypatch) -> None:
-    make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cmux")
+    # `cockpit` too — preflight soft-warns when its own console script is absent,
+    # so a healthy (silent) preflight needs it on PATH alongside gh/git/cmux.
+    make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cmux", "cockpit")
 
 
 def test_preflight_passes_when_required_bins_present(tmp_path, monkeypatch, capsys):

@@ -47,7 +47,12 @@ def test_daemon_subcommands_translate_to_flags(monkeypatch, sub, flag):
 
 def test_statusline_routes_to_footer(monkeypatch):
     called = []
-    monkeypatch.setattr("cockpit.footer.main", lambda: called.append(True) or 0)
+
+    def fake():
+        called.append(True)
+        return 0
+
+    monkeypatch.setattr("cockpit.footer.main", fake)
     assert cli.main(["statusline"]) == 0
     assert called == [True]
 
@@ -69,7 +74,12 @@ def test_starship_passes_field_with_prog(monkeypatch):
 )
 def test_noarg_subcommands(monkeypatch, sub, mod):
     called = []
-    monkeypatch.setattr(f"cockpit.{mod}.main", lambda: called.append(True) or 7)
+
+    def fake():
+        called.append(True)
+        return 7
+
+    monkeypatch.setattr(f"cockpit.{mod}.main", fake)
     assert cli.main([sub]) == 7
     assert called == [True]
 

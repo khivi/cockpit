@@ -76,7 +76,7 @@ repos:
         name: pytest
         entry: pytest
         language: python
-        additional_dependencies: [pytest==9.0.3]
+        additional_dependencies: [pytest==9.0.3, pytest-asyncio==1.4.0, textual>=0.79]
         types: [python]
         pass_filenames: false
         stages: [pre-push]
@@ -85,8 +85,8 @@ repos:
         name: mypy type check
         entry: mypy
         language: python
-        additional_dependencies: [mypy==2.1.0, pytest==9.0.3]
-        args: ['scripts/', 'tests/']
+        additional_dependencies: [mypy==2.1.0, pytest==9.0.3, textual>=0.79]
+        args: ['cockpit/', 'tests/']
         types: [python]
         pass_filenames: false
         stages: [pre-push]
