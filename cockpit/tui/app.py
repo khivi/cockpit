@@ -219,6 +219,8 @@ class CockpitApp(App[None]):
         self._set_loop_pill(True)
         self._install_signal_handlers()
 
+        self.query_one(HeaderBar).version_text = version.running_version()
+
         self._next_slow = time.monotonic() + self._slow_secs
         self.set_interval(1.0, self._update_countdown)
         self.set_interval(0.2, self._drain_log)
