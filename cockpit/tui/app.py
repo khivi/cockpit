@@ -82,9 +82,11 @@ from cockpit.tui.widgets.worktree_table import WorktreeTable
 _UPDATE_CHECK_SECONDS = 3600
 _LOG_TAIL_LINES = 200
 
-# The `n` (New) action shells out to the same `spawn.py` the daemon's
-# `_bg_spawn_pr` and `/cockpit:new` use. Detached output lands in `spawn.log`.
-_SPAWN_SCRIPT = Path(__file__).resolve().parent.parent / "spawn.py"
+# The `n` (New) action shells out via the same module dispatch the daemon's
+# `_bg_spawn_pr` uses: `python -m cockpit.cli new …`. NOT `python spawn.py …` by
+# path — that puts the package dir on sys.path[0], where `cockpit.py` shadows the
+# `cockpit` package and intra-package imports die (`'cockpit' is not a package`).
+# Detached output lands in `spawn.log`.
 _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
 
 # Process exit code the TUI returns when the user presses `u` to update. The
@@ -831,8 +833,11 @@ class CockpitApp(App[None]):
 
     @work(thread=True, group="new", exit_on_error=False)
     def _launch_spawn(self, source: str, cwd: str | None) -> None:
-        # Fire `spawn.py <source>` detached (like the daemon's `_bg_spawn_pr`)
-        # so the TUI never blocks on `git fetch` + worktree add. No auto-teardown
+        # Fire `cockpit new <source>` detached via module dispatch (like the
+        # daemon's `_bg_spawn_pr`) so the TUI never blocks on `git fetch` +
+        # worktree add. Module dispatch, not `spawn.py` by path — see the
+        # `_SPAWN_LOG` note above for why path invocation breaks imports. No
+        # auto-teardown
         # to guard against: a worktree is only reaped once its PR merges, so a
         # freshly spawned research/planning worktree is safe by construction.
         # spawn.py writes no cache cell (daemon stays sole writer); the worktree
@@ -849,7 +854,7 @@ class CockpitApp(App[None]):
             return
         if not args:
             return
-        cmd = [sys.executable, str(_SPAWN_SCRIPT), *args]
+        cmd = [sys.executable, "-m", "cockpit.cli", "new", *args]
         logfile: IO[bytes] | None = None
         try:
             logfile = open(_SPAWN_LOG, "ab")  # noqa: SIM115 — passed to a detached Popen; must outlive this scope

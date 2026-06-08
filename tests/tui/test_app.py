@@ -594,9 +594,9 @@ async def test_new_key_opens_text_box(monkeypatch, tmp_path):
 
 
 async def test_new_box_submit_launches_spawn(monkeypatch, tmp_path):
-    # Submitting the box fires spawn.py detached (cwd = selected row's repo so a
-    # bare name routes correctly) with the typed source, then kicks the slow tick
-    # so the new worktree surfaces.
+    # Submitting the box fires `cockpit new` via module dispatch detached (cwd =
+    # selected row's repo so a bare name routes correctly) with the typed source,
+    # then kicks the slow tick so the new worktree surfaces.
     from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
 
     wt = _seed_one_worktree(monkeypatch, tmp_path)
@@ -622,7 +622,10 @@ async def test_new_box_submit_launches_spawn(monkeypatch, tmp_path):
         await pilot.pause(0.6)
     cmd = launched["cmd"]
     assert cmd[-1] == "fix-login"  # typed source forwarded as the final spawn arg
-    assert any("spawn.py" in str(part) for part in cmd)
+    # Module dispatch, not `spawn.py` by path (path invocation shadows the
+    # `cockpit` package on sys.path[0] → ModuleNotFoundError in the child).
+    assert cmd[1:4] == ["-m", "cockpit.cli", "new"]
+    assert not any("spawn.py" in str(part) for part in cmd)
     assert launched["cwd"] == str(tmp_path)  # selected row's repo path
     assert calls["slow"] > before  # kicked so the new worktree surfaces
 

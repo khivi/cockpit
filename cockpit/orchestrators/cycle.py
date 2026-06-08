@@ -1104,7 +1104,6 @@ def _refresh_orphan(
         )
 
 
-_SPAWN_SCRIPT = Path(__file__).resolve().parent.parent / "spawn.py"
 _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
 # Suppress a re-spawn of the same branch for two slow ticks (default 300s each)
 # so a manual SIGUSR1 kick can't double-launch while a `git fetch` +
@@ -1115,8 +1114,13 @@ _SPAWN_INFLIGHT_TTL_SECONDS = 600
 def _bg_spawn_pr(
     ctx: RepoCycle, repo_name: str | None, number: int, branch: str, *, review: bool
 ) -> None:
-    """Fire `spawn.py --pr <n> [--repo <name>] [--review]` detached so the slow
-    tick never blocks on `git fetch` + worktree add.
+    """Fire `cockpit new --pr <n> [--repo <name>] [--review]` detached so the
+    slow tick never blocks on `git fetch` + worktree add.
+
+    Invoked via module dispatch (`python -m cockpit.cli new …`), NOT `spawn.py`
+    by path: a path invocation puts the package dir on `sys.path[0]`, where
+    `cockpit.py` shadows the `cockpit` package and the child dies on
+    `ModuleNotFoundError: 'cockpit' is not a package` before doing anything.
 
     The child reuses the exact path `/cockpit:new` walks (create_worktree +
     spawn_pr_workspace), then the new worktree surfaces as cells on a later
@@ -1135,7 +1139,7 @@ def _bg_spawn_pr(
     if ctx.dry:
         print(f"  [dry] {label} #{number} branch={branch}", flush=True)
         return
-    cmd = [sys.executable, str(_SPAWN_SCRIPT), "--pr", str(number)]
+    cmd = [sys.executable, "-m", "cockpit.cli", "new", "--pr", str(number)]
     if repo_name:
         cmd += ["--repo", repo_name]
     if review:

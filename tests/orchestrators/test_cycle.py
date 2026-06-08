@@ -1438,7 +1438,8 @@ def test_bg_spawn_pr_launches_records_and_guards(tmp_path, monkeypatch):
     assert popen.call_count == 1
     argv = popen.call_args.args[0]
     assert "--auto" not in argv
-    assert argv[2:] == ["--pr", "9", "--repo", "n", "--review"]
+    assert argv[1:4] == ["-m", "cockpit.cli", "new"]  # module dispatch, not spawn.py
+    assert argv[4:] == ["--pr", "9", "--repo", "n", "--review"]
     assert ctx.pill_state["spawn:o/n:coworker/x"] == 100.0
 
 
@@ -1469,7 +1470,8 @@ def test_bg_spawn_pr_omits_repo_flag_without_name(tmp_path, monkeypatch):
     argv = popen.call_args.args[0]
     assert "--repo" not in argv
     assert "--auto" not in argv
-    assert argv[2:] == ["--pr", "9"]
+    assert argv[1:4] == ["-m", "cockpit.cli", "new"]  # module dispatch, not spawn.py
+    assert argv[4:] == ["--pr", "9"]
 
 
 # ── _apply_repo_colors / _repo_owned_refs ───────────────────────────────────
