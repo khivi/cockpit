@@ -1,6 +1,6 @@
 # Cockpit
 
-Cockpit is a terminal UI for juggling several PRs at once from Claude Code. Each task gets its own git worktree, a `cmux`/`limux` terminal running `claude`, and a GitHub PR — and cockpit shows them all in one live table (CI, reviews, comments, dirty state) that you drive by keystroke: focus, close, or nudge any row. Start a task with `/cockpit:new`; when its PR merges, cockpit removes the worktree and closes the terminal.
+Cockpit is a terminal UI for juggling several PRs at once from Claude Code. Each task gets its own git worktree, a `cmux`/`limux` terminal running `claude`, and a GitHub PR — and cockpit shows them all in one live table (CI, reviews, comments, dirty state) that you drive by keystroke: focus, close, or nudge any row.
 
 ![cockpit watch — every worktree, workspace, and PR in one table](docs/cockpit-tui.png)
 
