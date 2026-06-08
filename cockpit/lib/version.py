@@ -1,19 +1,25 @@
 """Plugin version: the running version, the latest on the install repo's
 default branch, and a comparator — for the slow-tick update check.
 
-`running_version` reads the bundled `.claude-plugin/plugin.json`. The daemon
-executes from `~/.claude/plugins/cache/.../<version>/`, so its own plugin.json
-*is* the running version. `latest_version` reads the same file on the install
-source's default branch via `gh api`, which is the marketplace's source of
-truth — the repo cuts no releases/tags, so main's plugin.json version is what
-`/plugin install`/`/plugin update` resolves. Both degrade to `""`/`None` on any
-error (network, auth, parse) so the slow-tick check never raises.
+`running_version` reads the bundled `.claude-plugin/plugin.json`, falling back
+to the installed package metadata. The daemon runs from the uv-tool install
+(`cockpit` console script), NOT the plugin cache dir — the wheel bundles the
+manifests into `site-packages/.claude-plugin/` via a hatch `force-include` (see
+pyproject) so the file read resolves there; `importlib.metadata` is the
+belt-and-suspenders fallback (the wheel version is single-sourced from the same
+plugin.json at build time, so the two can't disagree). `latest_version` reads
+plugin.json on the install source's default branch via `gh api`, which is the
+marketplace's source of truth — the repo cuts no releases/tags, so main's
+plugin.json version is what `/plugin install`/`/plugin update` resolves. Both
+degrade to `""`/`None` on any error (network, auth, parse) so the slow-tick
+check never raises.
 """
 
 from __future__ import annotations
 
 import json
 import subprocess
+from importlib import metadata
 from pathlib import Path
 
 _PLUGIN_DIR = Path(__file__).resolve().parents[2] / ".claude-plugin"
@@ -29,8 +35,15 @@ def _read_version(path: Path) -> str:
 
 
 def running_version() -> str:
-    """Version string from the bundled plugin.json, or `""` if unreadable."""
-    return _read_version(_PLUGIN_JSON)
+    """Version string from the bundled plugin.json, falling back to the
+    installed package metadata, or `""` if neither is available."""
+    bundled = _read_version(_PLUGIN_JSON)
+    if bundled:
+        return bundled
+    try:
+        return metadata.version("cockpit").strip()
+    except (metadata.PackageNotFoundError, ValueError):
+        return ""
 
 
 def install_repo() -> str | None:
