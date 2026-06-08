@@ -568,29 +568,35 @@ class CockpitApp(App[None]):
 
     def action_new_workspace(self) -> None:
         # Spawn a worktree + workspace from the typed source (the `/cockpit:new`
-        # path). The cursor row's repo is a hint so a bare branch name lands in
-        # the right repo.
-        path = self.query_one(WorktreeTable).current_path()
-        repo = self._repo_config_for_path(path)
-        hint = (
-            (repo.get("name") or Path(os.path.expanduser(repo["path"])).name)
-            if repo
+        # path). The modal offers a repo picker (when more than one is
+        # configured) so a bare branch name can be routed to any repo; it
+        # defaults to the cursor row's repo, which sets spawn.py's cwd.
+        repos = [
+            (
+                repo.get("name") or Path(os.path.expanduser(repo["path"])).name,
+                str(Path(os.path.expanduser(repo["path"]))),
+            )
+            for repo in load_config().get("repos", []) or []
+        ]
+        default_repo = self._repo_config_for_path(
+            self.query_one(WorktreeTable).current_path()
+        )
+        default_path = (
+            str(Path(os.path.expanduser(default_repo["path"])))
+            if default_repo
             else None
         )
-        self.push_screen(NewWorkspaceScreen(hint), self._spawn_new)
+        self.push_screen(NewWorkspaceScreen(repos, default_path), self._spawn_new)
 
-    def _spawn_new(self, source: str | None) -> None:
-        # Modal callback (UI thread): resolve the repo path so spawn.py's
-        # cwd-based discovery routes a bare name correctly. `None`/blank =
-        # cancelled.
+    def _spawn_new(self, result: tuple[str, str | None] | None) -> None:
+        # Modal callback (UI thread): `(source, repo_path)` or `None`/blank when
+        # cancelled. The repo_path the user chose becomes spawn.py's cwd, so its
+        # cwd-based discovery routes a bare name into the selected repo.
+        if not result:
+            return
+        source, cwd = result
         if not source or not source.strip():
             return
-        path = self.query_one(WorktreeTable).current_path()
-        repo = self._repo_config_for_path(path)
-        if repo is None:
-            repos = load_config().get("repos", []) or []
-            repo = repos[0] if repos else None
-        cwd = str(Path(os.path.expanduser(repo["path"]))) if repo else None
         self._launch_spawn(source.strip(), cwd)
 
     def action_update(self) -> None:
