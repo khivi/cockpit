@@ -8,11 +8,13 @@ back to its workspace for focus / close.
 
 Repos are distinguished by colour, not a column: the workspace name is tinted
 with the repo's `sidebar_color` via the same `CMUX_COLOR_ANSI` colorizer cmux
-uses, so the table and the cmux sidebar agree. The Dirty column reads the same
-daemon-written `git-status` cell the footer does (`●S ✎M ✚U`). Ticket + Status
-columns are added only when some configured repo is Linear-enabled
+uses, so the table and the cmux sidebar agree. The Dirty column (headed with the
+`✎` modifications glyph rather than the word "Dirty") reads the same
+daemon-written `git-status` cell the footer does (`●S ✎M ✚U`). The Ticket and
+Status columns are added only when some configured repo is Linear-enabled
 (`show_linear`); they show the delivered Linear ticket id(s) and workflow state
-from the cached per-PR block.
+from the cached per-PR block, with Ticket placed right after PR and Status right
+before Title.
 
 A muted PR (nudges silenced via `m` / `/cockpit:nudge`) prefixes its workspace
 name with the 🔇 glyph, read from the daemon-written `pr-muted` cell — the same
@@ -31,29 +33,52 @@ from cockpit.lib.cache import branch_cache, cwd_cache, find_pr_payload, read_tex
 from cockpit.lib.colors import CMUX_COLOR_ANSI
 from cockpit.lib.git import Worktree
 from cockpit.lib.starship import (
+    _PR_STATE_ICON,
     ICON_PR_MUTED,
     ICON_STAGED,
     ICON_UNSTAGED,
     ICON_UNTRACKED,
 )
 
+# Header glyph for the PR-state column (was the word "Approval"). The traffic
+# light reads as "review status" and collides with none of the value icons.
+_APPROVAL_ICON = "🚦"
+
 # (repo display name, sidebar_color, linear-enabled, worktrees)
 Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
 
-# Raw `pr-state` enum → (friendly label shown in the Approval column, style).
+# Raw `pr-state` enum → (icon shown in the PR-state column, style). The icons
+# reuse the sidebar's `_PR_STATE_ICON` vocabulary (single source of truth) so the
+# table and the statusline never disagree; the style is kept for the few terminals
+# that tint emoji and to drive colour assertions in tests.
 _STATE = {
-    "APPROVED": ("Approved", "green"),
-    "OPEN": ("Open", "cyan"),
-    "DRAFT": ("Draft", "grey50"),
-    "REVIEW_REQUIRED": ("Waiting", "yellow"),
-    "CHANGES_REQUESTED": ("Changes", "red"),
-    "MERGED": ("Merged", "magenta"),
-    "CLOSED": ("Closed", "red"),
+    "APPROVED": (_PR_STATE_ICON["APPROVED"], "green"),
+    "OPEN": (_PR_STATE_ICON["OPEN"], "cyan"),
+    "DRAFT": (_PR_STATE_ICON["DRAFT"], "grey50"),
+    "REVIEW_REQUIRED": (_PR_STATE_ICON["REVIEW_REQUIRED"], "yellow"),
+    "CHANGES_REQUESTED": (_PR_STATE_ICON["CHANGES_REQUESTED"], "red"),
+    "MERGED": (_PR_STATE_ICON["MERGED"], "magenta"),
+    "CLOSED": (_PR_STATE_ICON["CLOSED"], "red"),
 }
 _CI_STYLE = {"✓": "green", "✗": "red", "•": "yellow", "?": "grey50"}
 
-_BASE_COLUMNS = ("Workspace", "PR", "Approval", "CI", "💬", "Dirty", "Title")
-_LINEAR_COLUMNS = ("Ticket", "Status")
+# The Dirty column header is the modifications glyph (matching its cell content)
+# rather than the word "Dirty".
+_DIRTY_ICON = ICON_UNSTAGED
+
+
+def column_labels(*, show_linear: bool) -> tuple[str, ...]:
+    """Column headers in display order. The Linear `Ticket` column sits right
+    after `PR` and the Linear `Status` column right before `Title`; both appear
+    only when some configured repo is Linear-enabled (`show_linear`)."""
+    cols = ["Workspace", "PR"]
+    if show_linear:
+        cols.append("Ticket")
+    cols += [_APPROVAL_ICON, "CI", "💬", _DIRTY_ICON]
+    if show_linear:
+        cols.append("Status")
+    cols.append("Title")
+    return tuple(cols)
 
 
 def _workspace_cell(wt: Worktree, repo_color: str | None, *, muted: bool) -> Text:
@@ -115,30 +140,36 @@ def worktree_cells(
     *,
     show_linear: bool,
 ) -> list[Text]:
-    """Build one row's cells (Rich Text, so colours survive). The Ticket + Status
-    cells are appended only when `show_linear` (the columns exist); both blank for
-    a row whose repo isn't Linear-enabled."""
+    """Build one row's cells (Rich Text, so colours survive), in `column_labels`
+    order: the Ticket cell follows PR and the Status cell precedes Title, both
+    present only when `show_linear` (the columns exist) and blank for a row whose
+    repo isn't Linear-enabled."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
 
     num, state, ci = cell("pr-num"), cell("pr-state"), cell("pr-checks")
     comments, title = cell("pr-comments"), cell("pr-title")
-    label, style = _STATE.get(state, (state, "white"))
+    state_icon, style = _STATE.get(state, (state, "white"))
+    ticket, ticket_status = (
+        _linear_cells(wt, repo_name) if linear_enabled else (Text(""), Text(""))
+    )
 
     cells = [
         _workspace_cell(wt, repo_color, muted=bool(cell("pr-muted"))),
         Text(f"#{num}") if num else Text(""),
-        Text(label, style=style) if state else Text(""),
+    ]
+    if show_linear:
+        cells.append(ticket)
+    cells += [
+        Text(state_icon, style=style) if state else Text(""),
         Text(ci, style=_CI_STYLE.get(ci, "white")) if ci else Text(""),
         Text(comments, style="red") if comments and comments != "0" else Text(""),
         _dirty_cell(wt),
-        Text((title[:48] + "…") if len(title) > 49 else title, style="grey62"),
     ]
     if show_linear:
-        cells.extend(
-            _linear_cells(wt, repo_name) if linear_enabled else (Text(""), Text(""))
-        )
+        cells.append(ticket_status)
+    cells.append(Text((title[:48] + "…") if len(title) > 49 else title, style="grey62"))
     return cells
 
 
@@ -166,8 +197,7 @@ class WorktreeTable(DataTable):
     def on_mount(self) -> None:
         self.cursor_type = "row"
         self.zebra_stripes = True
-        labels = _BASE_COLUMNS + (_LINEAR_COLUMNS if self._show_linear else ())
-        self.add_columns(*labels)
+        self.add_columns(*column_labels(show_linear=self._show_linear))
 
     def current_path(self) -> str | None:
         """Worktree path (the row key) under the cursor, or None when empty."""
