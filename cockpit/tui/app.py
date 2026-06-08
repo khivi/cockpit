@@ -369,24 +369,31 @@ class CockpitApp(App[None]):
             None,
         )
 
+    def _notify(self, message: str, *, severity: str = "information") -> None:
+        """Toast feedback, safe from a worker thread. The log pane is removed,
+        so a `print` is invisible — a notification is the only on-screen cue."""
+        self.call_from_thread(self.notify, message, severity=severity, timeout=4.0)
+
     @work(thread=True, group="focus", exit_on_error=False)
     def _focus_worktree(self, path_str: str) -> None:
         # Shells out to git/cmux — runs off the UI thread. cmux-only (limux has
         # no focus verb), matching `cockpit focus`.
         if not is_cmux():
-            print("focus: requires cmux")
+            self._notify("focus requires cmux", severity="warning")
             return
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
-            print(f"focus: no worktree at {path_str}")
+            self._notify(f"focus: no worktree at {path_str}", severity="error")
             return
         _repo, wt = resolved
         ref = self._workspace_ref(wt)
         if ref is None:
-            print(f"focus: no workspace rooted at {wt.path}")
+            self._notify(
+                f"focus: no workspace for {wt.label or wt.short}", severity="warning"
+            )
             return
         cmux("focus", "--workspace", ref, check=False)
-        print(f"focused {wt.label or wt.short}")
+        self._notify(f"focused {wt.label or wt.short}")
 
     @work(thread=True, group="close", exit_on_error=False)
     def _close_worktree(self, path_str: str) -> None:
@@ -396,7 +403,7 @@ class CockpitApp(App[None]):
         # `cockpit:close --force` is the override path.
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
-            print(f"close: no worktree at {path_str}")
+            self._notify(f"close: no worktree at {path_str}", severity="error")
             return
         repo, wt = resolved
         repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
@@ -406,10 +413,11 @@ class CockpitApp(App[None]):
 
         blockers = probe_blockers(wt.path, wt.branch, repo_name, is_mine=is_mine)
         if blockers:
-            print(
+            self._notify(
                 f"close refused {wt.label or wt.short}: "
                 + "; ".join(blockers)
-                + " (use `cockpit:close --force` to override)"
+                + " — use `cockpit:close --force`",
+                severity="warning",
             )
             return
 
@@ -430,7 +438,7 @@ class CockpitApp(App[None]):
             delete_branch=pr_is_merged,
         )
         enqueue(req)
-        print(f"queued close: {wt.label or wt.short} (daemon will process)")
+        self._notify(f"queued close: {wt.label or wt.short}")
         self.call_from_thread(self._kick_slow)
 
     # ---- cmux loop pill --------------------------------------------------

@@ -275,6 +275,23 @@ async def test_close_key_refuses_on_blockers(monkeypatch, tmp_path):
     assert enq == []  # an open PR is never force-closed from the TUI
 
 
+async def test_focus_shows_notification(monkeypatch, tmp_path):
+    # The log pane is removed, so a toast is the only on-screen feedback.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.cmux", lambda *a, **k: None)
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("f")
+        await pilot.pause(0.6)
+    assert any("focused" in t for t in toasts)
+
+
 async def test_close_key_noop_when_table_empty(monkeypatch):
     enq: list = []
     monkeypatch.setattr("cockpit.tui.app.enqueue", lambda req: enq.append(req))
