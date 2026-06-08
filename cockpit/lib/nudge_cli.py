@@ -71,8 +71,7 @@ def _print_status(pr_number: int, pref: NudgePref) -> None:
         print(f"PR #{pr_number}: not muted")
         if pref.last_nudge_at:
             ago = int(time.time() - pref.last_nudge_at)
-            cat = pref.last_nudge_category or "?"
-            print(f"  last nudge: {ago}s ago ({cat})")
+            print(f"  last nudge: {ago}s ago")
         return
     print(f"PR #{pr_number}: muted until {_fmt_until(pref.until)}")
     if pref.reason:

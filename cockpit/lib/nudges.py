@@ -3,7 +3,7 @@
 One JSON file per PR at `$COCKPIT_HOME/cache/nudges/<pr-number>.json`. Holds
 both the daemon-set `last_nudge_at` timestamp (for rate limiting) and the
 user-set `muted` / `until` mute (set via `cockpit nudge mute`). A mute is
-all-or-nothing — it silences every nudge category for the PR.
+all-or-nothing — it silences every nudge for the PR.
 
 Persisting both in one place means daemon restarts don't replay nudges the user
 already saw, and `parked=`-style runtime state survives across cmux restarts
@@ -29,7 +29,6 @@ class NudgePref:
     until: float | None = None
     reason: str = ""
     last_nudge_at: float = 0.0
-    last_nudge_category: str | None = None
 
     def to_json(self) -> dict:
         return {
@@ -37,19 +36,18 @@ class NudgePref:
             "until": self.until,
             "reason": self.reason,
             "last_nudge_at": self.last_nudge_at,
-            "last_nudge_category": self.last_nudge_category,
         }
 
     @classmethod
     def from_json(cls, data: dict) -> NudgePref:
-        # A pre-boolean file's `disabled_categories` key is simply ignored — an
-        # absent `muted` reads as not muted (any prior mute is dropped).
+        # Legacy keys (`disabled_categories`, `last_nudge_category`) are simply
+        # ignored — an absent `muted` reads as not muted (any prior mute is
+        # dropped).
         return cls(
             muted=bool(data.get("muted")),
             until=data.get("until"),
             reason=data.get("reason", "") or "",
             last_nudge_at=float(data.get("last_nudge_at") or 0.0),
-            last_nudge_category=data.get("last_nudge_category"),
         )
 
 
@@ -110,7 +108,7 @@ def list_prefs() -> dict[int, NudgePref]:
 def should_nudge(pr_number: int, *, now: float | None = None) -> bool:
     """True iff nudging this PR is allowed right now.
 
-    Blocks only when the user has muted the PR (a mute silences every category).
+    Blocks only when the user has muted the PR (a mute silences all nudges).
     The slow tick's cadence (`slow_poll_interval_seconds`, default 300s) is the
     implicit throttle — each tick re-evaluates and re-fires if the issue
     persists. `last_nudge_at` is still recorded so `cockpit nudge status` can
@@ -120,11 +118,10 @@ def should_nudge(pr_number: int, *, now: float | None = None) -> bool:
     return not load_pref(pr_number, now=t).muted
 
 
-def record_nudge(pr_number: int, category: str, *, now: float | None = None) -> None:
+def record_nudge(pr_number: int, *, now: float | None = None) -> None:
     t = time.time() if now is None else now
     pref = load_pref(pr_number, now=t)
     pref.last_nudge_at = t
-    pref.last_nudge_category = category
     save_pref(pr_number, pref)
 
 

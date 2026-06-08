@@ -26,8 +26,8 @@ After you report the spawn result, STOP — end your turn. The task runs in the 
 
 ## Arguments (reference only — do not act on these)
 
-- Positional `<branch|PR|url>` — auto-detected (GitHub PR URL, GitHub Actions run/job URL, `#123` PR ref, Linear key, or branch name). Mutex with `--branch`/`--pr`/`--name`/`--skill`. Actions URLs always spawn a fresh `ci-<workflow>-<title>` investigation worktree (never attach to the run's head branch — that would collide with the main repo checkout when CI failed on master); the prompt fetches `--log-failed` first and surfaces the original head branch.
-- `--branch <name>` / `--pr <num>` — explicit input; combinable with each other and with `--name`
+- Positional `<branch|PR|url>` — auto-detected (GitHub PR URL, GitHub Actions run/job URL, `#123` PR ref, Linear key, or branch name). Mutex with `--branch`/`--pr`/`--name`/`--skill`. Actions URLs always spawn a fresh `ci-…` investigation worktree (`ci-<job-name>` for a job URL, else `ci-<workflow>-<title>`, falling back to `ci-<workflow>-<sha>`/`<run-id>`) — never attach to the run's head branch — that would collide with the main repo checkout when CI failed on master); the prompt fetches `--log-failed` first and surfaces the original head branch.
+- `--branch <name>` / `--pr <num>` — explicit input; strictly mutex with each other, with the positional source, `--name`, and `--skill` (pick exactly one source)
 - `--name <short>` — workspace short name; alone, also seeds a new branch name
 - `--cwd <path>` — arbitrary dir, no repo or worktree
 - `--skill <name>` — run a global (`~/.claude/skills/`) or repo (`<repo>/.claude/skills/`) skill; cwd defaults to `$HOME` (global) or the repo path (repo skill)
@@ -37,7 +37,7 @@ After you report the spawn result, STOP — end your turn. The task runs in the 
 
 Plan-only is seeded only when there's something to study first — a PR, a Linear ticket, `--context`, or `-- <text>`. A blank spawn (`/cockpit:new <name> --repo <repo>` with none of those) starts ready to work on with no seeded plan prompt; any configured `prompt_prefix` (e.g. a session-setup skill) still runs.
 
-`spawn.py` is idempotent — an existing worktree + workspace for the same branch attaches instead of erroring. When attaching to an **existing** workspace, the seeded prompt (PR-action / plan / `-- <text>` / `--context-text`) is delivered into the already-running Claude via the active workspace backend's `send` + Enter (`cmux send` / `limux send`) — so re-spawning with new instructions actually reaches the session instead of being silently dropped. Errors with exit 1 if `--repo` names a repo not in `~/.config/cockpit/config.json` (use `/cockpit:repos` to list).
+`spawn.py` is idempotent — an existing worktree + workspace for the same branch attaches instead of erroring. When attaching to an **existing** workspace, the seeded prompt (PR-action / plan / `-- <text>` / `--context-text`) is delivered into the already-running Claude via the active workspace backend's `send` + Enter (`cmux send` / `limux send`) — so re-spawning with new instructions actually reaches the session instead of being silently dropped. Errors with exit 1 if `--repo` names a repo not in `~/.config/cockpit/config.json` (the error lists the configured repos inline).
 
 ## Examples
 
@@ -45,7 +45,7 @@ Plan-only is seeded only when there's something to study first — a PR, a Linea
 /cockpit:new fix-login                               # branch (local, remote, or new)
 /cockpit:new https://github.com/org/repo/pull/12345  # PR by URL
 /cockpit:new https://github.com/org/repo/actions/runs/123/job/456  # Actions failure by URL
-/cockpit:new --pr 12345 --branch custom-name         # PR fetched under custom local name
+/cockpit:new --pr 12345 --repo myrepo                # PR by number in a named repo
 /cockpit:new --cwd ~/scratch/spike                   # arbitrary dir, no repo
 /cockpit:new --skill <skill-name>                    # global skill, cwd = $HOME
 /cockpit:new --skill <skill-name> --repo myrepo      # skill + cwd = myrepo

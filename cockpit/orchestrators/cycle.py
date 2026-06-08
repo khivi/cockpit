@@ -154,7 +154,6 @@ def maybe_nudge(
     tag: str,
     *,
     pr_number: int | None = None,
-    category: str | None = None,
 ) -> bool:
     """Nudge `ref` if idle; return True iff the nudge actually fired."""
     if nudge_if_idle(
@@ -163,7 +162,6 @@ def maybe_nudge(
         dry=dry,
         tag=tag,
         pr_number=pr_number,
-        category=category,
     ):
         snippet = message if len(message) <= 60 else message[:57] + "..."
         print(
@@ -1132,7 +1130,6 @@ def _refresh_tracked_pills(
                     ctx.dry,
                     label,
                     pr_number=pr.number,
-                    category=pr.display_issue,
                 )
             _track_dev_done(ctx, ref, ctx.linear_blocks.get(pr.branch))
     return printed_refresh, mine_items, others_items
@@ -1564,8 +1561,9 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
     Within owned workspaces, a stranded one (no matching live worktree by
     cwd or name) is enqueued for tear-down — but only when Claude is idle.
     If Claude is mid-turn the reap is deferred to the next cycle so we
-    don't yank the session out from under an active turn. Only mine-prefix
-    branches are reaped; coworker-spawned workspaces are left to the user.
+    don't yank the session out from under an active turn. Every owned orphan
+    is reaped; the mine-prefix check only gates whether the stale local branch
+    ref is also deleted — a coworker-spawned branch ref is left in place.
     """
     all_wts: list[Worktree] = []
     repo_lookup: dict[Path, tuple[str, Path]] = {}

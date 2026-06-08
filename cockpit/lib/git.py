@@ -320,7 +320,9 @@ def repo_state(cwd: str | os.PathLike) -> str:
 
 def slugify(s: str, max_len: int = 30) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
-    return s[:max_len]
+    # rstrip again after truncation: the cap can land mid-separator and leave a
+    # trailing "-" that the pre-truncation strip("-") above didn't catch.
+    return s[:max_len].rstrip("-")
 
 
 # A leading base-branch segment (`master/`, `main/`) — it denotes the branch's

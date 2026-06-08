@@ -377,7 +377,6 @@ def nudge_if_idle(
     dry: bool = False,
     tag: str = "",
     pr_number: int | None = None,
-    category: str | None = None,
 ) -> bool:
     """Send `message` + enter to workspace `ref` if it's idle and not parked.
 
@@ -407,7 +406,7 @@ def nudge_if_idle(
     (`slow_poll_interval_seconds`, default 300s) is the implicit rate limit
     — each tick re-evaluates and re-fires if the underlying issue persists.
     """
-    if pr_number is not None and category is not None:
+    if pr_number is not None:
         from . import nudges
 
         if not nudges.should_nudge(pr_number):
@@ -432,10 +431,10 @@ def nudge_if_idle(
     except (RuntimeError, FileNotFoundError) as e:
         print(f"  warn: {tool.resolve_tool()} send failed for {ref}: {e}", flush=True)
         return False
-    if pr_number is not None and category is not None:
+    if pr_number is not None:
         from . import nudges
 
-        nudges.record_nudge(pr_number, category)
+        nudges.record_nudge(pr_number)
     return True
 
 

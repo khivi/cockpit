@@ -33,12 +33,12 @@ flowchart LR
   end
 
   subgraph DEC["Decision functions"]
-    MW["match_worktrees<br/>cycle.py:219"]
-    SM["_spawn_missing_workspaces<br/>cycle.py:1079"]
-    NI["nudge_if_idle<br/>cmux.py:314"]
+    MW["match_worktrees<br/>cycle.py:247"]
+    SM["_spawn_missing_workspaces<br/>cycle.py:1300"]
+    NI["nudge_if_idle<br/>cmux.py:373"]
     DD["_track_dev_done<br/>cycle.py:219"]
-    AC["_maybe_autoclose<br/>cycle.py:344"]
-    BR["_reap_branch_refs<br/>cycle.py:490"]
+    AC["_maybe_autoclose<br/>cycle.py:500"]
+    BR["_reap_branch_refs<br/>cycle.py:641"]
   end
 
   subgraph ACT["Actions"]
@@ -106,7 +106,7 @@ flowchart TD
   C["Worktree / workspace cleanup"] --> K{"state?"}
 
   K -->|"MERGED / branch gone"| AC{"autoclose<br/>blockers?"}
-  AC -->|"dirty · unpushed · open ·<br/>draft · ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
+  AC -->|"dirty · draft ·<br/>ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
   AC -->|"clean & merged"| TD["teardown: workspace →<br/>worktree → branch → PR cache"]
 
   K -->|"no open PR · mine"| OR["orphan: pills + nudge<br/>to push or close"]
@@ -114,7 +114,7 @@ flowchart TD
   K -->|"no open PR · coworker"| OC["orphan: pills only<br/>(no nudge, no close)"]
 
   K -->|"workspace, no worktree"| RP{"idle?"}
-  RP -->|"yes & mine-prefix"| EN["enqueue forced teardown"]
+  RP -->|"yes (idle)"| EN["enqueue forced teardown<br/>(branch del only if mine-prefix)"]
   RP -->|"no (mid-turn)"| DF["defer to next cycle"]
 
   K -->|"local branch, no worktree"| BR{"_branch_reap_reason"}
@@ -141,9 +141,13 @@ Key gates (all from `cycle.py`):
   hidden. The persistent JSON snapshot is kept — autoclose/teardown still read
   it; only the *display* is suppressed.
 - **Autoclose hard blocker** (never overridden): uncommitted files.
-- **Autoclose soft blockers** (`forced=True` overrides): unpushed commits, open PR.
 - **Autoclose smart-skip**: even when merged & clean, skip if draft, CI not green,
   or unaddressed review threads remain.
+- **Unpushed / open-PR are NOT autoclose blockers** — `_maybe_autoclose` only fires
+  on a merged PR and tears down with `forced=True`; unpushed commits merely preserve
+  the local branch ref. The unpushed / open-PR gate lives in `probe_blockers` (the
+  TUI `c` close path), where `C` force overrides the open-PR soft block but never
+  uncommitted/unpushed work.
 - **A merged PR is the only reaper**: `_handle_orphans_and_close_stale` never
   closes a worktree — a no-open-PR worktree (research/planning, or a coworker
   branch reviewed locally) gets orphan pills and lives until the user closes it
@@ -172,7 +176,7 @@ Key gates (all from `cycle.py`):
 
 ---
 
-## 3. Nudge idle-gate (`nudge_if_idle`, `cmux.py:314`)
+## 3. Nudge idle-gate (`nudge_if_idle`, `cmux.py:373`)
 
 Five sequential guards decide whether it is safe to `send` a nudge. The subtle
 rule: cmux native `Needs input` is **deliberately untrusted** — it is the same
@@ -263,7 +267,7 @@ Why two ticks:
   persistent JSON, so a `git checkout`, a drifted workspace name, or an OS
   tmpdir wipe recovers within ~30s instead of ~300s.
 
-Both hold `_tick_lock` (`daemon.py`) so they never collide on the same cells.
+Both hold `_tick_lock` (`tui/app.py`) so they never collide on the same cells.
 
 **Invariant**: a new cell's writer goes in `cache.py`; the call site goes in the
 slow tick (decision + snapshot) and/or the fast tick (republish). Never let a

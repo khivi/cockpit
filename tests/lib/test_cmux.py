@@ -656,7 +656,7 @@ def test_nudge_if_idle_does_not_record_nudge_on_send_failure():
             "cockpit.lib.nudges.record_nudge", side_effect=lambda *a: recorded.append(a)
         ),
     ):
-        nudge_if_idle("workspace:1", "fix CI", tag="t", pr_number=42, category="ci")
+        nudge_if_idle("workspace:1", "fix CI", tag="t", pr_number=42)
 
     assert recorded == []
 
@@ -676,12 +676,10 @@ def test_nudge_if_idle_records_nudge_on_success():
             "cockpit.lib.nudges.record_nudge", side_effect=lambda *a: recorded.append(a)
         ),
     ):
-        result = nudge_if_idle(
-            "workspace:1", "fix CI", tag="t", pr_number=42, category="ci"
-        )
+        result = nudge_if_idle("workspace:1", "fix CI", tag="t", pr_number=42)
 
     assert result is True
-    assert recorded == [(42, "ci")]
+    assert recorded == [(42,)]
 
 
 # ── native-state gate (the stale-pill regression + permission safety) ────────
