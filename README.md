@@ -39,9 +39,13 @@ Two pieces: the **`cockpit` command** (the daemon, and the binary the slash comm
 
 ```bash
 uv tool install git+https://github.com/khivi/cockpit
+# or, from a checkout / the installed plugin dir, a one-shot bootstrap that
+# installs uv too if missing:  bin/install.sh
 # or run ad-hoc without installing:
 #   uvx --from git+https://github.com/khivi/cockpit cockpit --help
 ```
+
+`bin/cockpit.sh` is a launcher that prefers the installed `cockpit` and otherwise runs it from the checkout via `uv` — handy for the daemon (`bin/cockpit.sh watch`) before a global install.
 
 1. Inside Claude Code, add the plugin:
 
