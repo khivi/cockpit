@@ -512,10 +512,12 @@ async def test_nudge_key_sends_when_idle(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.nudge_if_idle",
-        lambda ref, msg, **k: calls.append((ref, msg)) or True,
-    )
+
+    def _fake_nudge(ref, msg, **k):
+        calls.append((ref, msg))
+        return True
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake_nudge)
     toasts: list[str] = []
     app, _ = _make_app()
     monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
@@ -634,9 +636,12 @@ async def test_new_box_cancel_does_not_spawn(monkeypatch, tmp_path):
     # Escape (or blank submit) dismisses without launching spawn.
     _seed_one_worktree(monkeypatch, tmp_path)
     launched: list = []
-    monkeypatch.setattr(
-        "subprocess.Popen", lambda cmd, **k: launched.append(cmd) or object()
-    )
+
+    def _fake_popen(cmd, **k):
+        launched.append(cmd)
+        return object()
+
+    monkeypatch.setattr("subprocess.Popen", _fake_popen)
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()

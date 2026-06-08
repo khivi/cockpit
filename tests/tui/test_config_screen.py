@@ -10,9 +10,12 @@ and the only styling is the decoded foreground colour (no background fill).
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.screen import Screen
 from textual.widgets import Static
 
 from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
@@ -25,9 +28,11 @@ class _Host(App[None]):
         yield Static("host", id="host")
 
 
-def _body_content(screen: ConfigScreen) -> object:
+def _body_content(screen: Screen[object]) -> Any:
     # The middle Static (title, body, hint) holds the rendered body. Read the
     # stored content object: a `Text` (our fix) vs a raw `str` (markup-parsed).
+    # `app.screen` is typed `Screen[object]`; the body content is dynamically a
+    # `Text` or `str`, so the return is `Any` (callers assert the concrete type).
     body = screen.query(Static)[1]
     return body._Static__content  # type: ignore[attr-defined]
 
