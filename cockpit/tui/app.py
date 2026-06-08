@@ -32,8 +32,8 @@ from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Footer, Static
+from textual.containers import Horizontal
+from textual.widgets import Footer
 
 from cockpit.lib import version
 from cockpit.lib.cmux import BLUE, LOOP_ICON, LOOP_KEY, cmux
@@ -42,7 +42,7 @@ from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.git import Worktree, worktrees
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.log_pane import LogPane
-from cockpit.tui.widgets.workspace_card import WorkspaceCard
+from cockpit.tui.widgets.worktree_table import WorktreeTable
 
 _UPDATE_CHECK_SECONDS = 3600
 
@@ -72,9 +72,8 @@ class _QueueWriter(io.TextIOBase):
 class CockpitApp(App[None]):
     CSS = """
     #body { height: 1fr; }
-    #cards { width: 2fr; padding: 1; }
-    .repo-name { text-style: bold; color: $accent; padding: 1 0 0 0; }
-    .empty { color: $text-muted; padding: 1; }
+    #table { width: 2fr; }
+    #log { width: 1fr; border-left: solid $panel; padding: 0 1; }
     """
 
     BINDINGS = [
@@ -112,7 +111,7 @@ class CockpitApp(App[None]):
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header")
         with Horizontal(id="body"):
-            yield VerticalScroll(id="cards")
+            yield WorktreeTable(id="table")
             yield LogPane(id="log")
         yield Footer()
 
@@ -196,7 +195,7 @@ class CockpitApp(App[None]):
         finally:
             self._slow_in_flight = False
             inv = self._gather_inventory()
-            self.call_from_thread(self._render_cards, inv)
+            self.call_from_thread(self._render_table, inv)
 
     @work(thread=True, group="fast", exit_on_error=False)
     def _run_fast(self) -> None:
@@ -207,7 +206,7 @@ class CockpitApp(App[None]):
         finally:
             self._fast_in_flight = False
             inv = self._gather_inventory()
-            self.call_from_thread(self._render_cards, inv)
+            self.call_from_thread(self._render_table, inv)
 
     @work(thread=True, group="update", exit_on_error=False)
     def _check_update(self) -> None:
@@ -261,18 +260,8 @@ class CockpitApp(App[None]):
             )
         return out
 
-    def _render_cards(self, inventory: Inventory) -> None:
-        container = self.query_one("#cards", VerticalScroll)
-        container.remove_children()
-        if not inventory:
-            container.mount(Static("no repos configured", classes="empty"))
-            return
-        for name, linear_enabled, wts in inventory:
-            container.mount(Static(f" {name}", classes="repo-name"))
-            if not wts:
-                container.mount(Static("  [dim]no worktrees[/]", classes="empty"))
-            for wt in wts:
-                container.mount(WorkspaceCard(wt, name, linear_enabled))
+    def _render_table(self, inventory: Inventory) -> None:
+        self.query_one(WorktreeTable).update_inventory(inventory)
 
     # ---- actions ---------------------------------------------------------
 

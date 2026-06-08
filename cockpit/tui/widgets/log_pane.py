@@ -2,12 +2,15 @@
 
 The app installs a process-wide stdout/stderr writer that funnels every
 `print(...)` from the tick functions into a queue; a timer drains that queue
-into this widget. We render lines verbatim (no Rich markup interpretation) so a
-stray bracket in tool output can't corrupt the display.
+into this widget. The cycle output carries raw ANSI colour codes, so each line
+is parsed with `Text.from_ansi` (not fed as a plain/markup string) — otherwise
+Rich mangles the escape sequences into garbled boxes. Rich-markup interpretation
+stays off so a stray bracket in tool output can't corrupt the display.
 """
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual.widgets import RichLog
 
 
@@ -30,4 +33,4 @@ class LogPane(RichLog):
         )
 
     def append(self, line: str) -> None:
-        self.write(line)
+        self.write(Text.from_ansi(line))

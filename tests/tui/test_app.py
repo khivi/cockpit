@@ -16,7 +16,7 @@ from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.log_pane import LogPane
-from cockpit.tui.widgets.workspace_card import WorkspaceCard
+from cockpit.tui.widgets.worktree_table import WorktreeTable
 
 pytestmark = pytest.mark.asyncio
 
@@ -98,7 +98,7 @@ async def test_tick_output_lands_in_log():
         assert len(log.lines) > 0
 
 
-async def test_render_cards_mounts_one_card_per_worktree():
+async def test_render_table_adds_one_row_per_worktree():
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -106,15 +106,35 @@ async def test_render_cards_mounts_one_card_per_worktree():
             Worktree(path=Path("/tmp/a"), branch="khivi/feat-a"),
             Worktree(path=Path("/tmp/b"), branch="khivi/feat-b"),
         ]
-        app._render_cards([("repo", False, wts)])
+        app._render_table([("repo", False, wts)])
         await pilot.pause()
-        assert len(app.query(WorkspaceCard)) == 2
+        assert app.query_one(WorktreeTable).row_count == 2
 
 
-async def test_render_cards_empty_inventory_shows_placeholder():
+async def test_render_table_empty_inventory_has_no_rows():
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_cards([])
+        app._render_table([])
         await pilot.pause()
-        assert len(app.query(WorkspaceCard)) == 0
+        assert app.query_one(WorktreeTable).row_count == 0
+
+
+async def test_arrow_keys_move_row_cursor():
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wts = [
+            Worktree(path=Path("/tmp/a"), branch="khivi/feat-a"),
+            Worktree(path=Path("/tmp/b"), branch="khivi/feat-b"),
+            Worktree(path=Path("/tmp/c"), branch="khivi/feat-c"),
+        ]
+        app._render_table([("repo", False, wts)])
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        table.focus()
+        await pilot.pause()
+        start = table.cursor_row
+        await pilot.press("down")
+        await pilot.pause()
+        assert table.cursor_row == start + 1
