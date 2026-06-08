@@ -26,6 +26,7 @@ from cockpit.tui.widgets.worktree_table import (
     _STATUS_ICON,
     DEVDONE_ICON,
     ICON_PR_MUTED,
+    _comments_cell,
     _linear_status_icon,
     column_labels,
     worktree_cells,
@@ -139,6 +140,33 @@ def test_zero_comments_is_blank(cache_dir):
     wt = _wt(branch="khivi/zero")
     cache_mod.branch_cache("pr-comments", wt.branch).write_text("0")
     assert _plain(wt)[5] == ""
+
+
+@pytest.mark.parametrize(
+    "unaddressed,total,expected",
+    [
+        ("", "", ""),  # no PR / no threads → blank
+        ("0", "5", ""),  # all addressed → blank (column = "needs attention")
+        ("2", "", "2"),  # total cell empty → bare count
+        ("2", "0", "2"),  # total zero → bare count
+        ("2", "2", "2"),  # every thread fresh → denominator adds nothing
+        ("2", "5", "2/5"),  # some addressed → ratio
+        ("3", "2", "3"),  # total < unaddressed (stale) → bare count, no ratio
+        ("bad", "5", ""),  # unparsable → blank, never raises
+    ],
+)
+def test_comments_cell_ratio(unaddressed, total, expected):
+    cell = _comments_cell(unaddressed, total)
+    assert cell.plain == expected
+    if expected:
+        assert "red" in str(cell.style)
+
+
+def test_comments_ratio_through_worktree_cells(cache_dir):
+    wt = _wt(branch="khivi/ratio")
+    cache_mod.branch_cache("pr-comments", wt.branch).write_text("2")
+    cache_mod.branch_cache("pr-comments-total", wt.branch).write_text("5")
+    assert _plain(wt)[5] == "2/5"
 
 
 def test_no_pr_leaves_columns_blank(cache_dir):

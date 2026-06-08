@@ -125,6 +125,7 @@ def write_pr_cache(
         "url": pr.url,
         "updatedAt": pr.updated_at,
         "unaddressed": pr.unaddressed,
+        "total": pr.total_from_others,
         "mergeable": pr.mergeable,
         "muted": muted_payload(pref),
         "pills": decide_pills(pr, wt, pref),
@@ -335,14 +336,20 @@ def _write_pr_flat_cells(
     title: str,
     muted: str,
     comments: int,
+    total: int = 0,
     author: str = "",
 ) -> None:
-    """Write the six branch-keyed PR flat cells that every PR writer shares.
+    """Write the seven branch-keyed PR flat cells that every PR writer shares.
 
     `state` is already resolved (see `_resolve_state`). The `pr-checks` cell is
     deliberately NOT written here — its three writers disagree on purpose
     (slow tick only when non-empty, fast-tick republish always, the `warm`
     prewarm via `refresh_pr_checks`), so each handles it itself.
+
+    `comments` is the unaddressed review-thread count; `total` is the total
+    threads opened by others (`pr.total_from_others`). The TUI table renders
+    `unaddressed/total` from the pair; the starship footer reads only
+    `pr-comments`. Both cells write "" when zero so a stale value can't survive.
 
     `author` is the coworker login for an other-authored PR, empty for a
     self-authored one (see `write_pr_cache`'s `other_author`). Always written so
@@ -354,6 +361,7 @@ def _write_pr_flat_cells(
     atomic_write(branch_cache("pr-title", branch), str(title or ""))
     atomic_write(branch_cache("pr-muted", branch), str(muted or ""))
     atomic_write(branch_cache("pr-comments", branch), str(comments) if comments else "")
+    atomic_write(branch_cache("pr-comments-total", branch), str(total) if total else "")
     atomic_write(branch_cache("pr-author", branch), str(author or ""))
 
 
@@ -376,7 +384,14 @@ def refresh_pr_data(branch: str) -> None:
     # like "no PR" — its cells stay empty so the card shows `—`.
     if data is None or data.get("reusedBranch"):
         _write_pr_flat_cells(
-            branch, state="", number=None, title="", muted="", comments=0, author=""
+            branch,
+            state="",
+            number=None,
+            title="",
+            muted="",
+            comments=0,
+            total=0,
+            author="",
         )
         return
     _write_pr_flat_cells(
@@ -390,6 +405,7 @@ def refresh_pr_data(branch: str) -> None:
         title=str(data.get("title") or ""),
         muted=str(data.get("muted") or ""),
         comments=int(data.get("unaddressed") or 0),
+        total=int(data.get("total") or 0),
         author=str(data.get("author") or ""),
     )
 
@@ -493,6 +509,7 @@ def write_branch_pr_cache(
     ci_glyph: str = "",
     muted: str = "",
     comments: int = 0,
+    total: int = 0,
     author: str = "",
 ) -> None:
     """Daemon-tick entrypoint: write pre-resolved PR fields straight to the
@@ -505,7 +522,8 @@ def write_branch_pr_cache(
     `muted` follows the `pr-muted` flat-cell contract: "" (not muted) or
     "muted". Always written so an unmute clears the cell same-tick.
 
-    `comments` is the unaddressed review-thread count from the PR fetch.
+    `comments` is the unaddressed review-thread count from the PR fetch;
+    `total` is the total threads opened by others (`pr.total_from_others`).
 
     `author` is the coworker login for an other-authored PR, empty for a
     self-authored one (the daemon resolves this against `self_user` — see
@@ -520,6 +538,7 @@ def write_branch_pr_cache(
         title=title,
         muted=muted,
         comments=comments,
+        total=total,
         author=author,
     )
     if ci_glyph:
@@ -532,6 +551,7 @@ _BRANCH_PR_CELLS = (
     "pr-title",
     "pr-muted",
     "pr-comments",
+    "pr-comments-total",
     "pr-author",
     "pr-checks",
 )
@@ -544,8 +564,8 @@ def clear_branch_pr_cache(branch: str) -> None:
     PR whose head the worktree has advanced past (branch reused — see
     `cycle._is_reused_branch_merge`). The persistent JSON snapshot is kept
     (autoclose/teardown still read it), but the statusline must show no PR, so
-    all six flat cells are zeroed — the same empty shape the no-PR path in
-    `refresh_pr_data` / `refresh_pr_checks` writes.
+    every flat cell (`_BRANCH_PR_CELLS`) is zeroed — the same empty shape the
+    no-PR path in `refresh_pr_data` / `refresh_pr_checks` writes.
     """
     if not branch:
         return
@@ -559,7 +579,8 @@ def republish_pr_caches_from_disk() -> None:
     Daemon-side replacement for the old renderer-spawned `*-refresh`
     pattern. Walks `$COCKPIT_HOME/cache/*__pr-*.json` and, for each
     payload's `branch`, re-writes `pr-state`, `pr-num`, `pr-title`,
-    `pr-muted`, `pr-author`, `pr-checks`. Pure JSON → flat-cell republish,
+    `pr-muted`, `pr-comments`, `pr-comments-total`, `pr-author`, `pr-checks`.
+    Pure JSON → flat-cell republish,
     no `gh` calls — safe to run on the fast tick.
 
     Necessary because the per-PR JSON lives under `$COCKPIT_HOME/cache/`
@@ -599,6 +620,7 @@ def republish_pr_caches_from_disk() -> None:
             title=str(payload.get("title") or ""),
             muted=str(payload.get("muted") or ""),
             comments=int(payload.get("unaddressed") or 0),
+            total=int(payload.get("total") or 0),
             author=str(payload.get("author") or ""),
         )
         atomic_write(

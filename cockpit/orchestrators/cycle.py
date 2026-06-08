@@ -973,6 +973,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             ci_glyph=ci_glyph(pr.ci),
             muted=muted_payload(pref),
             comments=pr.unaddressed,
+            total=pr.total_from_others,
             author=other_author,
         )
     # After the live snapshots are on disk, drop any superseded snapshot

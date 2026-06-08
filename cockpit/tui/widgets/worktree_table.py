@@ -167,6 +167,31 @@ def _dirty_cell(wt: Worktree) -> Text:
     return Text(" ").join(segs) if segs else Text("")
 
 
+def _comments_cell(unaddressed_raw: str, total_raw: str) -> Text:
+    """The 💬 column: unaddressed review-thread count, with a `/total` denominator
+    when there are addressed threads too.
+
+    Reads the daemon-written `pr-comments` (unaddressed) and `pr-comments-total`
+    (threads opened by others) cells. Renders:
+      - blank when nothing is unaddressed — the column reads as "needs my
+        attention", and zero-unaddressed is the happy path even if past threads
+        exist;
+      - `N` (red) when every thread from others is still unaddressed (the
+        denominator would add no information);
+      - `N/T` (red) when `T` threads exist and `N < T` are unaddressed, so the
+        ratio signals "a few new threads among many already handled".
+    """
+    try:
+        unaddressed = int(unaddressed_raw or 0)
+        total = int(total_raw or 0)
+    except ValueError:
+        return Text("")
+    if unaddressed <= 0:
+        return Text("")
+    label = f"{unaddressed}/{total}" if total > unaddressed else str(unaddressed)
+    return Text(label, style="red")
+
+
 def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
     """Delivered Linear ticket id(s) and workflow state(s) from the cached per-PR
     block, as two cells. The Ticket cell is the comma-joined id(s); the Status
@@ -202,7 +227,8 @@ def worktree_cells(
         return read_text(branch_cache(stem, wt.branch))
 
     num, state, ci = cell("pr-num"), cell("pr-state"), cell("pr-checks")
-    comments, title = cell("pr-comments"), cell("pr-title")
+    comments = _comments_cell(cell("pr-comments"), cell("pr-comments-total"))
+    title = cell("pr-title")
     author = cell("pr-author")
     state_icon, style = _STATE.get(state, (state, "white"))
     ticket, ticket_status = (
@@ -222,7 +248,7 @@ def worktree_cells(
     cells += [
         Text(state_icon, style=style) if state else Text(""),
         Text(ci, style=_CI_STYLE.get(ci, "white")) if ci else Text(""),
-        Text(comments, style="red") if comments and comments != "0" else Text(""),
+        comments,
         _dirty_cell(wt),
     ]
     if show_linear:
