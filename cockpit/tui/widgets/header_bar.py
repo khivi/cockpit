@@ -35,12 +35,16 @@ class HeaderBar(Static):
     }
     """
 
+    version_text: reactive[str] = reactive("")
     slow_remaining: reactive[int] = reactive(0)
     fast_remaining: reactive[int] = reactive(-2)
     update_text: reactive[str] = reactive("")
 
     def render(self) -> RenderableType:
-        left = f"slow ⏱ {_fmt(self.slow_remaining)}"
+        left = ""
+        if self.version_text:
+            left += f"[bold cyan]cockpit {self.version_text}[/]   "
+        left += f"slow ⏱ {_fmt(self.slow_remaining)}"
         if self.fast_remaining != -2:
             left += f"   fast ⏱ {_fmt(self.fast_remaining)}"
         right = (
