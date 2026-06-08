@@ -29,7 +29,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import threading
 from pathlib import Path
 
 from cockpit.lib.cache import (
@@ -57,14 +56,9 @@ DEFAULT_SLOW_POLL_SECS = 300
 DEFAULT_FAST_POLL_SECS = 30
 MIN_POLL_SECS = 5
 
-_tick_lock = threading.Lock()
-"""Serializes the slow tick (`_once_with`) and fast tick (`_fast_tick`).
-
-The lib.daemon framework is concurrency-agnostic — it calls the tick fns
-unsynchronized from the main loop, the fast-tick background thread, and
-the SIGUSR1 wake path. Both ticks write the same cache cells (git-state +
-PR flat cells), so they serialize themselves here.
-"""
+# Slow + fast tick bodies are lock-free; the only caller is the TUI
+# (`cockpit.tui.app`), which serializes them under its own lock so it can tell
+# "running" (holds the lock) from "waiting" (blocked on it) for the header.
 
 
 def _build_state(args: argparse.Namespace) -> dict:
@@ -77,17 +71,16 @@ def _build_state(args: argparse.Namespace) -> dict:
 
 
 def _once_with(state: dict) -> None:
-    with _tick_lock:
-        cfg = load_config()
-        self_user = state.get("self_user") or gh_self_user()
-        state["self_user"] = self_user
-        cycle_all(
-            cfg,
-            self_user,
-            dry=state["dry"],
-            pr_cache=state["pr_cache"],
-            pill_state=state["pill_state"],
-        )
+    cfg = load_config()
+    self_user = state.get("self_user") or gh_self_user()
+    state["self_user"] = self_user
+    cycle_all(
+        cfg,
+        self_user,
+        dry=state["dry"],
+        pr_cache=state["pr_cache"],
+        pill_state=state["pill_state"],
+    )
 
 
 def _fast_tick(state: dict) -> None:
@@ -104,33 +97,31 @@ def _fast_tick(state: dict) -> None:
         (cells live under `$TMPDIR/cockpit-cache/`; JSON survives under
         `$COCKPIT_HOME/cache/`)
 
-    Acquires module-level `_tick_lock` to serialize with the slow tick —
-    both write the same cache cells. The lib.daemon framework no longer
-    holds a shared lock; concurrency is each tick's own concern.
+    Lock-free: the TUI serializes this against the slow tick under its own lock
+    (both write the same cache cells).
     """
     if state["dry"]:
         return
-    with _tick_lock:
-        cfg = load_config()
-        # Names/cwds are a local (non-network) cmux query; fetch once and reuse
-        # across repos. A backend hiccup degrades to no rename, never a crash.
+    cfg = load_config()
+    # Names/cwds are a local (non-network) cmux query; fetch once and reuse
+    # across repos. A backend hiccup degrades to no rename, never a crash.
+    try:
+        names, cwds = workspace_state()
+    except CmuxUnavailable:
+        names, cwds = {}, {}
+    for repo_entry in cfg.get("repos", []):
+        repo_path = Path(os.path.expanduser(repo_entry["path"]))
+        if not repo_path.is_dir():
+            continue
         try:
-            names, cwds = workspace_state()
-        except CmuxUnavailable:
-            names, cwds = {}, {}
-        for repo_entry in cfg.get("repos", []):
-            repo_path = Path(os.path.expanduser(repo_entry["path"]))
-            if not repo_path.is_dir():
-                continue
-            try:
-                wts = worktrees(repo_path, repo_entry.get("branch_prefix", ""))
-            except (RuntimeError, OSError):
-                continue
-            for wt in wts:
-                write_git_state_cache(wt.path)
-            if cwds:
-                reconcile_workspace_names(names, cwds, wts)
-        republish_pr_caches_from_disk()
+            wts = worktrees(repo_path, repo_entry.get("branch_prefix", ""))
+        except (RuntimeError, OSError):
+            continue
+        for wt in wts:
+            write_git_state_cache(wt.path)
+        if cwds:
+            reconcile_workspace_names(names, cwds, wts)
+    republish_pr_caches_from_disk()
 
 
 def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:

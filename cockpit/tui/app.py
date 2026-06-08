@@ -15,9 +15,11 @@ Design notes (the two footguns this avoids):
     working); SIGTERM/SIGHUP ask Textual to exit cleanly.
 
 The tick functions are injected as callables so this module never imports back
-into `cockpit.cockpit` (avoids a circular import); they already serialize on
-that module's `_tick_lock`, and per-tick in-flight gates here prevent a timer
-from launching an overlapping run of the same tick.
+into `cockpit.cockpit` (avoids a circular import). They are lock-free; the app
+serializes slow vs fast under its own `_tick_lock` (acquired inside the worker)
+so the header can show "waiting" (blocked on the lock) distinctly from
+"running", and per-tick phase gates prevent a timer from launching an
+overlapping run of the same tick.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import io
 import os
 import queue
 import signal
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -96,8 +99,12 @@ class CockpitApp(App[None]):
         self._fast_secs = fast_secs
         self._dry = dry
         self._self_ws = self_ws
-        self._slow_in_flight = False
-        self._fast_in_flight = False
+        # Tick bodies are lock-free; this serializes slow vs fast so we can tell
+        # "running" (holds the lock) from "waiting" (blocked on it).
+        self._tick_lock = threading.Lock()
+        # Per-tick phase: "idle" | "waiting" (on the lock) | "running".
+        self._slow_phase = "idle"
+        self._fast_phase = "idle"
         self._fast_started = False
         self._next_slow = 0.0
         self._next_fast = 0.0
@@ -177,27 +184,29 @@ class CockpitApp(App[None]):
     # ---- ticks -----------------------------------------------------------
 
     def _kick_slow(self) -> None:
-        if self._slow_in_flight:
+        if self._slow_phase != "idle":
             return
-        self._slow_in_flight = True
+        self._slow_phase = "waiting"
         self._next_slow = time.monotonic() + self._slow_secs
         self._run_slow()
 
     def _kick_fast(self) -> None:
-        if self._fast_secs <= 0 or self._fast_in_flight:
+        if self._fast_secs <= 0 or self._fast_phase != "idle":
             return
-        self._fast_in_flight = True
+        self._fast_phase = "waiting"
         self._next_fast = time.monotonic() + self._fast_secs
         self._run_fast()
 
     @work(thread=True, group="slow", exit_on_error=False)
     def _run_slow(self) -> None:
         try:
-            self._slow_tick()
+            with self._tick_lock:  # "waiting" until acquired, then "running"
+                self._slow_phase = "running"
+                self._slow_tick()
         except Exception as e:  # a tick must never take the daemon down
             print(f"slow-tick error: {e}")
         finally:
-            self._slow_in_flight = False
+            self._slow_phase = "idle"
             inv = self._gather_inventory()
             self.call_from_thread(self._render_table, inv)
             # First slow tick done → the PR caches exist; safe to start fast.
@@ -206,11 +215,13 @@ class CockpitApp(App[None]):
     @work(thread=True, group="fast", exit_on_error=False)
     def _run_fast(self) -> None:
         try:
-            self._fast_tick()
+            with self._tick_lock:  # "waiting" until acquired, then "running"
+                self._fast_phase = "running"
+                self._fast_tick()
         except Exception as e:
             print(f"fast-tick error: {e}")
         finally:
-            self._fast_in_flight = False
+            self._fast_phase = "idle"
             inv = self._gather_inventory()
             self.call_from_thread(self._render_table, inv)
 
@@ -225,19 +236,27 @@ class CockpitApp(App[None]):
 
     # ---- ui updates ------------------------------------------------------
 
+    @staticmethod
+    def _phase_remaining(phase: str, deadline: float, now: float) -> int:
+        if phase == "running":
+            return -1
+        if phase == "waiting":  # blocked on the tick lock
+            return -3
+        return max(0, int(deadline - now))
+
     def _update_countdown(self) -> None:
         now = time.monotonic()
         header = self.query_one(HeaderBar)
-        header.slow_remaining = (
-            -1 if self._slow_in_flight else max(0, int(self._next_slow - now))
+        header.slow_remaining = self._phase_remaining(
+            self._slow_phase, self._next_slow, now
         )
         if self._fast_secs <= 0:
             header.fast_remaining = -2
         elif not self._fast_started:
             header.fast_remaining = -3  # waiting on the first slow tick
         else:
-            header.fast_remaining = (
-                -1 if self._fast_in_flight else max(0, int(self._next_fast - now))
+            header.fast_remaining = self._phase_remaining(
+                self._fast_phase, self._next_fast, now
             )
 
     def _drain_log(self) -> None:

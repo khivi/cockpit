@@ -90,18 +90,38 @@ async def test_sync_key_kicks_slow_tick():
         assert calls["slow"] > before
 
 
-async def test_in_flight_gate_blocks_overlapping_kick(monkeypatch):
+async def test_phase_gate_blocks_overlapping_kick(monkeypatch):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause(0.6)
         ran = []
         monkeypatch.setattr(app, "_run_slow", lambda: ran.append(1))
-        app._slow_in_flight = True
+        app._slow_phase = "running"
         app._kick_slow()
-        assert ran == []  # blocked while a slow tick is in flight
-        app._slow_in_flight = False
+        assert ran == []  # blocked while a slow tick is waiting/running
+        app._slow_phase = "idle"
         app._kick_slow()
-        assert ran == [1]  # runs once the flag clears
+        assert ran == [1]  # runs once the phase clears
+
+
+async def test_waiting_on_lock_shows_waiting_not_running():
+    # Hold the tick lock so the slow worker blocks acquiring it: its phase must
+    # be "waiting" (header sentinel -3), not "running" (-1).
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.6)
+        app._tick_lock.acquire()
+        try:
+            app._slow_phase = "idle"  # allow a fresh kick
+            app._kick_slow()
+            await pilot.pause(0.4)  # worker spins up, blocks on the held lock
+            assert app._slow_phase == "waiting"
+            app._update_countdown()
+            assert app.query_one(HeaderBar).slow_remaining == -3
+        finally:
+            app._tick_lock.release()
+        await pilot.pause(0.4)  # worker acquires, runs, returns to idle
+        assert app._slow_phase == "idle"
 
 
 async def test_tick_output_does_not_crash_without_log_pane():
