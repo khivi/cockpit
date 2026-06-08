@@ -37,8 +37,8 @@ def _plain(wt, repo="repo", color=None, linear=False, show_linear=False):
 def test_cell_count_matches_columns(cache_dir):
     assert len(_plain(_wt())) == len(_BASE_COLUMNS) == 6
     assert _BASE_COLUMNS[0] == "Workspace" and _BASE_COLUMNS[2] == "Approval"
-    # Linear column appended only when show_linear
-    assert len(_plain(_wt(), show_linear=True)) == 7
+    # Ticket + Status columns appended only when show_linear
+    assert len(_plain(_wt(), show_linear=True)) == 8
 
 
 def test_workspace_label_strips_prefix(cache_dir):
@@ -119,7 +119,7 @@ def test_long_title_truncated(cache_dir):
     assert len(title) <= 49
 
 
-def test_linear_column_shows_ticket_when_enabled(cache_dir, monkeypatch):
+def test_ticket_and_status_columns_when_enabled(cache_dir, monkeypatch):
     wt = _wt(branch="khivi/lin")
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
@@ -127,22 +127,24 @@ def test_linear_column_shows_ticket_when_enabled(cache_dir, monkeypatch):
             "linear": {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}
         },
     )
-    # column present + repo Linear-enabled → ticket id + state
-    cell = worktree_cells(wt, "r", None, True, show_linear=True)[6]
-    assert "PE-1" in cell.plain and "Dev Done" in cell.plain
-    assert "green" in str(cell.style)  # all tickets done → green
+    cells = worktree_cells(wt, "r", None, True, show_linear=True)
+    ticket, status = cells[6], cells[7]  # Ticket, Status
+    assert ticket.plain == "PE-1"
+    assert status.plain == "Dev Done"
+    assert "green" in str(status.style)  # all tickets done → green status
 
 
-def test_linear_column_blank_for_non_linear_repo(cache_dir, monkeypatch):
+def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
     wt = _wt(branch="khivi/nl")
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
         lambda branch, repo: {"linear": {"tickets": [{"id": "PE-9", "state": "x"}]}},
     )
-    # column exists (some other repo is Linear) but this row's repo isn't
-    assert worktree_cells(wt, "r", None, False, show_linear=True)[6].plain == ""
+    # columns exist (some other repo is Linear) but this row's repo isn't
+    cells = worktree_cells(wt, "r", None, False, show_linear=True)
+    assert cells[6].plain == "" and cells[7].plain == ""
 
 
-def test_no_linear_column_when_not_configured(cache_dir):
-    # show_linear False → no 7th cell at all
+def test_no_linear_columns_when_not_configured(cache_dir):
+    # show_linear False → no Ticket/Status cells
     assert len(_plain(_wt(), linear=True, show_linear=False)) == 6

@@ -7,9 +7,9 @@ so a future keybinding can resolve the selected row back to its workspace.
 
 Repos are distinguished by colour, not a column: the workspace name is tinted
 with the repo's `sidebar_color` via the same `CMUX_COLOR_ANSI` colorizer cmux
-uses, so the table and the cmux sidebar agree. A Linear column is added only
-when some configured repo is Linear-enabled (`show_linear`); it shows the
-delivered ticket id(s) + workflow state from the cached per-PR Linear block.
+uses, so the table and the cmux sidebar agree. Ticket + Status columns are added
+only when some configured repo is Linear-enabled (`show_linear`); they show the
+delivered Linear ticket id(s) and workflow state from the cached per-PR block.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ _STATE = {
 _CI_STYLE = {"✓": "green", "✗": "red", "•": "yellow", "?": "grey50"}
 
 _BASE_COLUMNS = ("Workspace", "PR", "Approval", "CI", "💬", "Title")
-_LINEAR_COLUMN = "Linear"
+_LINEAR_COLUMNS = ("Ticket", "Status")
 
 
 def _workspace_cell(wt: Worktree, repo_color: str | None) -> Text:
@@ -50,18 +50,18 @@ def _workspace_cell(wt: Worktree, repo_color: str | None) -> Text:
     return Text(label, style="bold")
 
 
-def _linear_cell(wt: Worktree, repo_name: str) -> Text:
-    """Delivered Linear ticket(s) + state from the cached per-PR block; green
-    when every ticket is done-ish, magenta otherwise. Blank when none."""
+def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
+    """Delivered Linear ticket id(s) and workflow state(s) from the cached per-PR
+    block, as two cells. Status is green when every ticket is done-ish, yellow
+    otherwise. Both blank when there are no delivered tickets."""
     payload = find_pr_payload(wt.branch, repo_name) or {}
     tickets = (payload.get("linear") or {}).get("tickets") or []
     if not tickets:
-        return Text("")
-    rendered = ", ".join(
-        f"{t.get('id', '?')} {t.get('state', '')}".strip() for t in tickets
-    )
+        return Text(""), Text("")
+    ids = ", ".join(str(t.get("id", "?")) for t in tickets)
+    states = ", ".join(str(t.get("state", "")).strip() for t in tickets)
     done = all("done" in str(t.get("state", "")).lower() for t in tickets)
-    return Text(rendered, style="green" if done else "magenta")
+    return Text(ids, style="magenta"), Text(states, style="green" if done else "yellow")
 
 
 def worktree_cells(
@@ -72,9 +72,9 @@ def worktree_cells(
     *,
     show_linear: bool,
 ) -> list[Text]:
-    """Build one row's cells (Rich Text, so colours survive). The Linear cell is
-    appended only when `show_linear` (the column exists); it's blank for a row
-    whose repo isn't Linear-enabled."""
+    """Build one row's cells (Rich Text, so colours survive). The Ticket + Status
+    cells are appended only when `show_linear` (the columns exist); both blank for
+    a row whose repo isn't Linear-enabled."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
@@ -92,7 +92,9 @@ def worktree_cells(
         Text((title[:48] + "…") if len(title) > 49 else title, style="grey62"),
     ]
     if show_linear:
-        cells.append(_linear_cell(wt, repo_name) if linear_enabled else Text(""))
+        cells.extend(
+            _linear_cells(wt, repo_name) if linear_enabled else (Text(""), Text(""))
+        )
     return cells
 
 
@@ -108,7 +110,7 @@ class WorktreeTable(DataTable):
     def on_mount(self) -> None:
         self.cursor_type = "row"
         self.zebra_stripes = True
-        labels = _BASE_COLUMNS + ((_LINEAR_COLUMN,) if self._show_linear else ())
+        labels = _BASE_COLUMNS + (_LINEAR_COLUMNS if self._show_linear else ())
         self.add_columns(*labels)
 
     def update_inventory(self, inventory: Inventory) -> None:
