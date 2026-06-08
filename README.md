@@ -40,7 +40,7 @@ The daemon *is* the TUI — run it yourself (no auto-start):
 cockpit watch          # requires a TTY; run under tmux/cmux/screen to persist
 ```
 
-The table lists each workspace's PR, author, approval/CI, unaddressed comments (💬), dirty state, and title. Row keys: `f` focus · `p`/`l` open PR/Linear · `c`/`C` close/force-close · `m` mute nudges · `N` nudge · `n` new · `s` sync · `u` update · `q` quit.
+The table lists each workspace's PR, author, approval/CI, unaddressed comments (💬), dirty state, and title (plus Linear ticket + status columns when a repo sets `linear_keys`). Row keys: `f` focus · `p`/`l` open PR/Linear · `c`/`C` close/force-close · `m` mute nudges · `N` nudge · `n` new · `s` sync · `r` repo config · `o` output · `u` update · `q` quit.
 
 Create work from any git repo:
 
