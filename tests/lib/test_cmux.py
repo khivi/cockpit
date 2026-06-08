@@ -1,4 +1,4 @@
-"""Tests for cmux pill consumption targeting scripts/lib/cmux.py.
+"""Tests for cmux pill consumption targeting cockpit/lib/cmux.py.
 
 Covers `apply_pills` (clear/set behavior) and `status_pills` (kind→styling
 mapping from `decide_pills` output).
@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts.lib.cmux import (
+from cockpit.lib.cmux import (
     ACTIONABLE_KEYS,
     COCKPIT_KEY,
     DEVDONE_KEY,
@@ -33,9 +33,9 @@ from scripts.lib.cmux import (
     workspace_names,
     workspace_state,
 )
-from scripts.lib.gh import PR
-from scripts.lib.git import Worktree
-from scripts.lib.nudges import KNOWN_CATEGORIES, NudgePref
+from cockpit.lib.gh import PR
+from cockpit.lib.git import Worktree
+from cockpit.lib.nudges import KNOWN_CATEGORIES, NudgePref
 
 
 def _pr(**overrides) -> PR:
@@ -84,7 +84,7 @@ def test_apply_pills_clears_legacy_managed_key():
         calls.append(args)
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         apply_pills("workspace:1", _pr(), _wt())
 
     cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}
@@ -167,7 +167,7 @@ def test_apply_pills_clears_owner_key():
         calls.append(args)
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         apply_pills("workspace:1", _pr(), _wt())
 
     cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}
@@ -182,7 +182,7 @@ def test_workspace_names_raises_on_nonzero_rc():
         raise RuntimeError("cmux list-workspaces failed: socket missing")
 
     with (
-        patch("scripts.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
         pytest.raises(CmuxUnavailable, match="list-workspaces failed"),
     ):
         workspace_names()
@@ -193,8 +193,8 @@ def test_workspace_cwds_raises_on_nonzero_rc():
         raise RuntimeError("cmux rpc workspace.list failed: daemon down")
 
     with (
-        patch("scripts.lib.tool.resolve_tool", return_value="cmux"),
-        patch("scripts.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
         pytest.raises(CmuxUnavailable, match="rpc workspace.list failed"),
     ):
         workspace_cwds()
@@ -202,8 +202,8 @@ def test_workspace_cwds_raises_on_nonzero_rc():
 
 def test_workspace_cwds_raises_on_non_json():
     with (
-        patch("scripts.lib.tool.resolve_tool", return_value="cmux"),
-        patch("scripts.lib.cmux.cmux", return_value="not json"),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.cmux", return_value="not json"),
         pytest.raises(CmuxUnavailable, match="non-JSON"),
     ):
         workspace_cwds()
@@ -214,8 +214,8 @@ def test_workspace_state_propagates_cmux_unavailable():
         raise RuntimeError("backend offline")
 
     with (
-        patch("scripts.lib.tool.resolve_tool", return_value="cmux"),
-        patch("scripts.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
         pytest.raises(CmuxUnavailable),
     ):
         workspace_state()
@@ -223,7 +223,7 @@ def test_workspace_state_propagates_cmux_unavailable():
 
 def test_workspace_names_parses_ok_when_cmux_ok():
     with patch(
-        "scripts.lib.cmux.cmux",
+        "cockpit.lib.cmux.cmux",
         return_value="workspace:1 feat-x\nworkspace:2 other\n",
     ):
         assert workspace_names() == {"workspace:1": "feat-x", "workspace:2": "other"}
@@ -234,7 +234,7 @@ def test_workspace_names_parses_limux_uuid_refs():
         "  workspace:850fee36-6efb-48b1-91cc-27225bb45c44 needl-ai\n"
         "* workspace:65160839-6664-4325-9d3c-bf272aa7d13a feature-branch\n"
     )
-    with patch("scripts.lib.cmux.cmux", return_value=output):
+    with patch("cockpit.lib.cmux.cmux", return_value=output):
         result = workspace_names()
         assert result["workspace:850fee36-6efb-48b1-91cc-27225bb45c44"] == "needl-ai"
         assert (
@@ -245,8 +245,8 @@ def test_workspace_names_parses_limux_uuid_refs():
 def test_workspace_cwds_parses_ok_when_cmux_ok():
     payload = '{"workspaces":[{"ref":"workspace:1","current_directory":"/tmp/wt"}]}'
     with (
-        patch("scripts.lib.tool.resolve_tool", return_value="cmux"),
-        patch("scripts.lib.cmux.cmux", return_value=payload),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.cmux", return_value=payload),
     ):
         assert workspace_cwds() == {"workspace:1": Path("/tmp/wt")}
 
@@ -256,8 +256,8 @@ def test_workspace_cwds_parses_limux_json():
     # limux path bypasses the cmux() wrapper because --json is a global flag
     # that must come before the command.
     with (
-        patch("scripts.lib.tool.resolve_tool", return_value="limux"),
-        patch("scripts.lib.cmux.run", return_value=payload),
+        patch("cockpit.lib.tool.resolve_tool", return_value="limux"),
+        patch("cockpit.lib.cmux.run", return_value=payload),
     ):
         assert workspace_cwds() == {"workspace:abc-def": Path("/tmp/wt")}
 
@@ -274,8 +274,8 @@ def test_spawn_workspace_limux_parses_ref_and_renames():
         return ""
 
     with (
-        patch("scripts.lib.tool.resolve_tool", return_value="limux"),
-        patch("scripts.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="limux"),
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
     ):
         ref = spawn_workspace("my-short", Path("/tmp/wt"), "claude --help")
 
@@ -305,8 +305,8 @@ def test_spawn_workspace_cmux_polls_for_new_ref():
         return ""
 
     with (
-        patch("scripts.lib.tool.resolve_tool", return_value="cmux"),
-        patch("scripts.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
     ):
         ref = spawn_workspace("feat", Path("/tmp/wt"), "claude")
 
@@ -318,7 +318,7 @@ def test_spawn_workspace_cmux_polls_for_new_ref():
 
 def test_rename_workspace_if_needed_noop_when_matching():
     calls: list[tuple] = []
-    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+    with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
         assert rename_workspace_if_needed("workspace:1", "feat", "feat") is False
     assert calls == []
 
@@ -326,21 +326,21 @@ def test_rename_workspace_if_needed_noop_when_matching():
 def test_rename_workspace_if_needed_noop_when_expected_empty():
     """An empty expected name (ref not in the names dict) must never rename to ""."""
     calls: list[tuple] = []
-    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+    with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
         assert rename_workspace_if_needed("workspace:1", "", "whatever") is False
     assert calls == []
 
 
 def test_rename_workspace_if_needed_renames_when_diverged():
     calls: list[tuple] = []
-    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+    with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
         assert rename_workspace_if_needed("workspace:1", "feat", "old-name") is True
     assert calls == [("rename-workspace", "--workspace", "workspace:1", "feat")]
 
 
 def test_rename_workspace_if_needed_dry_reports_without_calling():
     calls: list[tuple] = []
-    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+    with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
         assert (
             rename_workspace_if_needed("workspace:1", "feat", "old", dry=True) is True
         )
@@ -371,7 +371,7 @@ def test_reconcile_workspace_names_renames_cwd_matched_diverged(tmp_path):
         "workspace:3": tmp_path / "elsewhere",  # no wt at this cwd → skip
     }
     calls: list[tuple] = []
-    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+    with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
         renamed = reconcile_workspace_names(names, cwds, wts)
 
     assert renamed == [("workspace:1", "pe-4516", "understand-dag-builder")]
@@ -390,7 +390,7 @@ def test_reconcile_workspace_names_skips_primary_checkout(tmp_path):
     names = {"workspace:1": "morning"}  # user's custom name on the main checkout
     cwds = {"workspace:1": primary}
     calls: list[tuple] = []
-    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+    with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
         renamed = reconcile_workspace_names(names, cwds, wts)
 
     assert renamed == []
@@ -404,7 +404,7 @@ def test_reconcile_workspace_names_dry_reports_without_calling(tmp_path):
     names = {"workspace:1": "old"}
     cwds = {"workspace:1": wt_a}
     calls: list[tuple] = []
-    with patch("scripts.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+    with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
         renamed = reconcile_workspace_names(names, cwds, wts, dry=True)
 
     assert renamed == [("workspace:1", "old", "a")]
@@ -424,7 +424,7 @@ def test_close_workspace_best_effort_passes_workspace_flag():
             return ""
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         cmux_close_workspace_best_effort("workspace:abc-123-def")
 
     close_call = next(c for c in calls if c[0] == "close-workspace")
@@ -444,7 +444,7 @@ def test_apply_devdone_pill_sets_label_when_ticket():
         calls.append(args)
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         apply_devdone_pill("workspace:1", "PE-1234")
 
     set_call = next(c for c in calls if c[0] == "set-status")
@@ -460,7 +460,7 @@ def test_apply_devdone_pill_clears_when_none():
         calls.append(args)
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         apply_devdone_pill("workspace:1", None)
 
     clear_call = next(c for c in calls if c[0] == "clear-status")
@@ -508,7 +508,7 @@ def test_apply_pills_clears_muted_key():
         calls.append(args)
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         apply_pills("workspace:1", _pr(), _wt())
 
     cleared_keys = {args[1] for args in calls if args and args[0] == "clear-status"}
@@ -525,7 +525,7 @@ def test_set_workspace_color_builds_workspace_action_argv():
         calls.append(args)
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         set_workspace_color("workspace:7", "Teal")
 
     assert calls == [
@@ -546,8 +546,8 @@ def test_set_workspace_color_noops_on_limux():
     resolve to no binary and never shell out, so limux users silently skip the
     sidebar tint rather than erroring."""
     with (
-        patch("scripts.lib.tool.resolve_tool", return_value="limux"),
-        patch("scripts.lib.cmux.run") as run_mock,
+        patch("cockpit.lib.tool.resolve_tool", return_value="limux"),
+        patch("cockpit.lib.cmux.run") as run_mock,
     ):
         set_workspace_color("workspace:7", "Teal")
 
@@ -562,7 +562,7 @@ def test_workspace_colors_include_cockpit_defaults():
 def test_workspace_colors_derived_from_color_ansi_map():
     # Single source of truth: the valid set is exactly the log-echo map's keys,
     # so a name added to one can't be missing from the other.
-    from scripts.lib.colors import CMUX_COLOR_ANSI
+    from cockpit.lib.colors import CMUX_COLOR_ANSI
 
     assert frozenset(CMUX_COLOR_ANSI) == WORKSPACE_COLORS
 
@@ -596,7 +596,7 @@ def test_nudge_if_idle_returns_true_on_success(capsys):
             return _idle_status_lines()
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         result = nudge_if_idle("workspace:1", "fix CI", tag="feat-x")
 
     assert result is True
@@ -614,7 +614,7 @@ def test_nudge_if_idle_prints_error_and_returns_false_on_send_failure(capsys):
             raise RuntimeError("cmux send failed: socket gone")
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         result = nudge_if_idle("workspace:1", "fix CI", tag="feat-x")
 
     assert result is False
@@ -629,7 +629,7 @@ def test_nudge_if_idle_skips_when_not_idle():
             return ""  # no idle pill
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         result = nudge_if_idle("workspace:1", "fix CI", tag="feat-x")
 
     assert result is False
@@ -641,7 +641,7 @@ def test_nudge_if_idle_skips_when_parked():
             return _idle_status_lines(parked=True)
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         result = nudge_if_idle("workspace:1", "fix CI", tag="feat-x")
 
     assert result is False
@@ -659,9 +659,9 @@ def test_nudge_if_idle_does_not_record_nudge_on_send_failure():
         return ""
 
     with (
-        patch("scripts.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
         patch(
-            "scripts.lib.nudges.record_nudge", side_effect=lambda *a: recorded.append(a)
+            "cockpit.lib.nudges.record_nudge", side_effect=lambda *a: recorded.append(a)
         ),
     ):
         nudge_if_idle("workspace:1", "fix CI", tag="t", pr_number=42, category="ci")
@@ -678,10 +678,10 @@ def test_nudge_if_idle_records_nudge_on_success():
         return ""
 
     with (
-        patch("scripts.lib.cmux.cmux", side_effect=fake_cmux),
-        patch("scripts.lib.nudges.should_nudge", return_value=True),
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.nudges.should_nudge", return_value=True),
         patch(
-            "scripts.lib.nudges.record_nudge", side_effect=lambda *a: recorded.append(a)
+            "cockpit.lib.nudges.record_nudge", side_effect=lambda *a: recorded.append(a)
         ),
     ):
         result = nudge_if_idle(
@@ -706,7 +706,7 @@ def test_nudge_fires_on_native_idle_without_pill_and_self_heals():
             return _native_line("Idle")  # no idle= pill present
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         result = nudge_if_idle("workspace:1", "fix CI", tag="t")
 
     assert result is True
@@ -728,7 +728,7 @@ def test_nudge_suppressed_on_bare_needs_input():
             return _native_line("Needs input")
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         result = nudge_if_idle("workspace:1", "fix CI", tag="t")
 
     assert result is False
@@ -744,7 +744,7 @@ def test_nudge_fires_when_idle_pill_present_even_if_native_needs_input():
             return _idle_status_lines() + "\n" + _native_line("Needs input")
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         result = nudge_if_idle("workspace:1", "fix CI", tag="t")
 
     assert result is True
@@ -759,7 +759,7 @@ def test_nudge_suppressed_when_native_running_even_with_idle_pill():
             return _idle_status_lines() + "\n" + _native_line("Running")
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         result = nudge_if_idle("workspace:1", "fix CI", tag="t")
 
     assert result is False
@@ -771,14 +771,14 @@ def test_nudge_suppressed_when_parked_even_on_native_idle():
             return _native_line("Idle") + "\nparked=1"
         return ""
 
-    with patch("scripts.lib.cmux.cmux", side_effect=fake_cmux):
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
         result = nudge_if_idle("workspace:1", "fix CI", tag="t")
 
     assert result is False
 
 
 def test_native_claude_state_parsing():
-    from scripts.lib.cmux import _native_claude_state
+    from cockpit.lib.cmux import _native_claude_state
 
     assert _native_claude_state([_native_line("Needs input")]) == "Needs input"
     assert _native_claude_state([_native_line("Running")]) == "Running"

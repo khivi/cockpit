@@ -1,4 +1,4 @@
-"""Tests for scripts/lib/starship.py — field printers consumed by cship/starship."""
+"""Tests for cockpit/lib/starship.py — field printers consumed by cship/starship."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ import time
 
 import pytest
 
-import scripts.lib.claude as claude_mod
-import scripts.lib.starship as starship
-from scripts.lib.colors import (
+import cockpit.lib.claude as claude_mod
+import cockpit.lib.starship as starship
+from cockpit.lib.colors import (
     Colorizer,
     amber,
     azure,
@@ -245,7 +245,7 @@ def test_print_pr_checks(cache_dir, glyph, expected):
 
 
 def test_print_pr_comments_with_count(cache_dir):
-    from scripts.lib.colors import red
+    from cockpit.lib.colors import red
 
     (cache_dir / "pr-comments-khivi-foo").write_text("3")
     assert starship.print_pr_comments("khivi/foo") == red("💬 3")
@@ -413,7 +413,7 @@ def _seed_git_state(repo) -> None:
     in `_git_state` returns the repo's actual state. Mirrors what the
     daemon's slow/fast tick would do — required because the renderer no
     longer falls back to live git when cells are missing."""
-    from scripts.lib.cache import write_git_state_cache
+    from cockpit.lib.cache import write_git_state_cache
 
     write_git_state_cache(repo)
 
@@ -426,7 +426,7 @@ def test_git_state_cache_read_skips_live_git(cache_dir, tmp_path, monkeypatch):
     them without shelling out — critical: the cached branch name wins even
     when the cwd is NOT a git repo, proving no live `git rev-parse` happens.
     """
-    import scripts.lib.cache as cache_mod
+    import cockpit.lib.cache as cache_mod
 
     monkeypatch.chdir(tmp_path)
     slug = cache_mod._cwd_key(tmp_path)
@@ -464,7 +464,7 @@ def test_git_state_stale_cell_still_read_no_refresh_spawn(
     spawner at all. Guards against accidentally re-introducing one."""
     import os as _os
 
-    import scripts.lib.cache as cache_mod
+    import cockpit.lib.cache as cache_mod
 
     monkeypatch.chdir(tmp_path)
     slug = cache_mod._cwd_key(tmp_path)
@@ -484,7 +484,7 @@ def test_git_state_empty_branch_cell_treated_as_no_repo(
 ):
     """Empty `git-branch` cell (daemon wrote it after cwd left a repo) means
     'no branch' — printers must return empty, not fall through to live git."""
-    import scripts.lib.cache as cache_mod
+    import cockpit.lib.cache as cache_mod
 
     monkeypatch.chdir(tmp_path)
     slug = cache_mod._cwd_key(tmp_path)

@@ -1,4 +1,4 @@
-"""Pill decision tests targeting scripts/lib/pills.py.
+"""Pill decision tests targeting cockpit/lib/pills.py.
 
 `decide_pills` is the single source of truth for which pills a PR/worktree
 combination should surface. These tests pin the decisions; consumer-side
@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from scripts.lib.gh import PR
-from scripts.lib.git import Worktree
-from scripts.lib.nudges import KNOWN_CATEGORIES, NudgePref
-from scripts.lib.pills import KIND_ORDER, decide_pills
+from cockpit.lib.gh import PR
+from cockpit.lib.git import Worktree
+from cockpit.lib.nudges import KNOWN_CATEGORIES, NudgePref
+from cockpit.lib.pills import KIND_ORDER, decide_pills
 
 
 def _pr(**overrides) -> PR:
@@ -162,7 +162,7 @@ def test_keep_pill_absent_when_keep_false():
 
 
 def test_keep_pill_position_after_muted_before_rebase():
-    from scripts.lib.nudges import NudgePref
+    from cockpit.lib.nudges import NudgePref
 
     pref = NudgePref(disabled_categories={"ci"})
     kinds = [

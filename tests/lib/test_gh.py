@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts.lib.gh import (
+from cockpit.lib.gh import (
     _PR_LIGHT_FIELDS,
     OpenPRHead,
     _graphql,
@@ -86,14 +86,14 @@ def test_graphql_passes_through_errors_field():
             "errors": [{"type": "SERVICE_UNAVAILABLE", "message": "Actions down"}],
         }
     )
-    with patch("scripts.lib.gh.run", return_value=payload):
+    with patch("cockpit.lib.gh.run", return_value=payload):
         data = _graphql("query { mine }", {})
     assert data["errors"][0]["type"] == "SERVICE_UNAVAILABLE"
 
 
 def test_graphql_returns_data_when_no_errors():
     payload = json.dumps({"data": {"mine": {"nodes": []}}})
-    with patch("scripts.lib.gh.run", return_value=payload):
+    with patch("cockpit.lib.gh.run", return_value=payload):
         data = _graphql("query { mine }", {})
     assert data == {"data": {"mine": {"nodes": []}}}
 
@@ -130,7 +130,7 @@ def _node(num: int, branch: str, oid: str) -> dict:
 
 def test_fetch_merged_branches_single_page():
     pages = [_page([_node(1, "feat/a", "sha-a"), _node(2, "feat/b", "sha-b")])]
-    with patch("scripts.lib.gh._graphql", side_effect=pages):
+    with patch("cockpit.lib.gh._graphql", side_effect=pages):
         result = fetch_merged_branches("o", "n")
     assert result == {"feat/a": "sha-a", "feat/b": "sha-b"}
 
@@ -142,7 +142,7 @@ def test_fetch_merged_branches_pages_until_no_next_page():
         _page([_node(11, "feat/b", "sha-b1")], end="c2", more=True),
         _page([_node(12, "feat/c", "sha-c1")]),  # hasNextPage=False
     ]
-    with patch("scripts.lib.gh._graphql", side_effect=pages) as m:
+    with patch("cockpit.lib.gh._graphql", side_effect=pages) as m:
         result = fetch_merged_branches("o", "n", max_pages=10)
     assert m.call_count == 3
     assert result == {"feat/a": "sha-a1", "feat/b": "sha-b1", "feat/c": "sha-c1"}
@@ -158,7 +158,7 @@ def test_fetch_merged_branches_stops_at_max_pages_cap():
         _page([_node(2, "feat/b", "sha-b")], end="c2", more=True),
         _page([_node(3, "feat/c", "sha-c")], end="c3", more=True),
     ]
-    with patch("scripts.lib.gh._graphql", side_effect=pages) as m:
+    with patch("cockpit.lib.gh._graphql", side_effect=pages) as m:
         result = fetch_merged_branches("o", "n", max_pages=2)
     assert m.call_count == 2
     assert result == {"feat/a": "sha-a", "feat/b": "sha-b"}
@@ -173,14 +173,14 @@ def test_fetch_merged_branches_highest_pr_wins_across_pages():
         _page([_node(50, "feat/a", "sha-new")], end="c1", more=True),
         _page([_node(10, "feat/a", "sha-old")]),
     ]
-    with patch("scripts.lib.gh._graphql", side_effect=pages):
+    with patch("cockpit.lib.gh._graphql", side_effect=pages):
         result = fetch_merged_branches("o", "n")
     assert result == {"feat/a": "sha-new"}
 
 
 def test_fetch_merged_branches_empty_search_returns_empty_map():
     pages = [_page([])]
-    with patch("scripts.lib.gh._graphql", side_effect=pages):
+    with patch("cockpit.lib.gh._graphql", side_effect=pages):
         assert fetch_merged_branches("o", "n") == {}
 
 
@@ -204,7 +204,7 @@ def test_list_open_pr_heads_single_page():
             ]
         )
     ]
-    with patch("scripts.lib.gh._graphql", side_effect=pages) as m:
+    with patch("cockpit.lib.gh._graphql", side_effect=pages) as m:
         result = list_open_pr_heads("o", "n")
     assert result == [
         OpenPRHead(1, "coworker/a", "coworker"),
@@ -220,7 +220,7 @@ def test_list_open_pr_heads_paginates_until_no_next_page():
         _page([_pr_head_node(11, "feat/b", "b")], end="c2", more=True),
         _page([_pr_head_node(12, "feat/c", "c")]),
     ]
-    with patch("scripts.lib.gh._graphql", side_effect=pages) as m:
+    with patch("cockpit.lib.gh._graphql", side_effect=pages) as m:
         result = list_open_pr_heads("o", "n")
     assert m.call_count == 3
     assert [h.number for h in result] == [10, 11, 12]
@@ -232,7 +232,7 @@ def test_list_open_pr_heads_null_author_becomes_empty_string():
     """Bots (Copilot/dependabot) return author=null — reported as "" so the
     caller can decide to skip or include them explicitly."""
     pages = [_page([_pr_head_node(5, "dependabot/x", None)])]
-    with patch("scripts.lib.gh._graphql", side_effect=pages):
+    with patch("cockpit.lib.gh._graphql", side_effect=pages):
         result = list_open_pr_heads("o", "n")
     assert result == [OpenPRHead(5, "dependabot/x", "")]
 
@@ -241,7 +241,7 @@ def test_list_open_pr_heads_empty_on_graphql_failure():
     import subprocess
 
     with patch(
-        "scripts.lib.gh._graphql",
+        "cockpit.lib.gh._graphql",
         side_effect=subprocess.CalledProcessError(1, "gh"),
     ):
         assert list_open_pr_heads("o", "n") == []
@@ -251,7 +251,7 @@ def test_fetch_merged_branches_graphql_failure_returns_empty_map():
     import subprocess as _sp
 
     err = _sp.CalledProcessError(1, ["gh", "api", "graphql"])
-    with patch("scripts.lib.gh._graphql", side_effect=err):
+    with patch("cockpit.lib.gh._graphql", side_effect=err):
         assert fetch_merged_branches("o", "n") == {}
 
 
@@ -265,7 +265,7 @@ def test_fetch_merged_branches_search_includes_date_window():
         captured.update(variables)
         return _page([])
 
-    with patch("scripts.lib.gh._graphql", side_effect=_capture):
+    with patch("cockpit.lib.gh._graphql", side_effect=_capture):
         fetch_merged_branches("acme", "widgets", cutoff_days=7)
     assert "repo:acme/widgets is:pr is:merged merged:>=" in captured["search"]
     # No cursor on the first page request.
@@ -280,7 +280,7 @@ def test_require_gh_exits_when_missing(monkeypatch, capsys):
     def _raise_fnf(*_args, **_kwargs):
         raise FileNotFoundError
 
-    monkeypatch.setattr("scripts.lib.gh.subprocess.run", _raise_fnf)
+    monkeypatch.setattr("cockpit.lib.gh.subprocess.run", _raise_fnf)
     with pytest.raises(SystemExit) as excinfo:
         require_gh()
     assert excinfo.value.code == 2
@@ -290,7 +290,7 @@ def test_require_gh_exits_when_missing(monkeypatch, capsys):
 
 
 def test_require_gh_returns_when_present(monkeypatch):
-    monkeypatch.setattr("scripts.lib.gh.subprocess.run", lambda *_a, **_kw: None)
+    monkeypatch.setattr("cockpit.lib.gh.subprocess.run", lambda *_a, **_kw: None)
     require_gh()
 
 
@@ -322,7 +322,7 @@ def _full_pr_node(**over: object) -> dict:
 
 
 def test_pr_from_node_parses_head_oid():
-    from scripts.lib.gh import _pr_from_node
+    from cockpit.lib.gh import _pr_from_node
 
     pr = _pr_from_node(_full_pr_node())
     assert pr is not None
@@ -332,7 +332,7 @@ def test_pr_from_node_parses_head_oid():
 def test_pr_from_node_head_oid_absent_is_none():
     """An old PR node lacking headRefOid yields head_oid=None — the suppression
     gate then falls through (never hides a real PR)."""
-    from scripts.lib.gh import _pr_from_node
+    from cockpit.lib.gh import _pr_from_node
 
     node = _full_pr_node()
     del node["headRefOid"]
@@ -341,6 +341,6 @@ def test_pr_from_node_head_oid_absent_is_none():
 
 
 def test_pr_fields_query_includes_head_ref_oid():
-    from scripts.lib.gh import _PR_FIELDS
+    from cockpit.lib.gh import _PR_FIELDS
 
     assert "headRefOid" in _PR_FIELDS

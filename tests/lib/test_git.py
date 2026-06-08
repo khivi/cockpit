@@ -12,8 +12,8 @@ import subprocess
 
 import pytest
 
-import scripts.lib.git as gitlib
-from scripts.lib.git import (
+import cockpit.lib.git as gitlib
+from cockpit.lib.git import (
     Worktree,
     _fetch_remote_branch,
     _has_local_branch,
@@ -610,7 +610,7 @@ def test_require_git_exits_when_missing(monkeypatch, capsys):
     def _raise_fnf(*_args, **_kwargs):
         raise FileNotFoundError
 
-    monkeypatch.setattr("scripts.lib.git.subprocess.run", _raise_fnf)
+    monkeypatch.setattr("cockpit.lib.git.subprocess.run", _raise_fnf)
     with pytest.raises(SystemExit) as excinfo:
         require_git()
     assert excinfo.value.code == 2
@@ -620,7 +620,7 @@ def test_require_git_exits_when_missing(monkeypatch, capsys):
 
 
 def test_require_git_returns_when_present(monkeypatch):
-    monkeypatch.setattr("scripts.lib.git.subprocess.run", lambda *_a, **_kw: None)
+    monkeypatch.setattr("cockpit.lib.git.subprocess.run", lambda *_a, **_kw: None)
     require_git()
 
 

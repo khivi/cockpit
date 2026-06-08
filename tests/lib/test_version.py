@@ -1,4 +1,4 @@
-"""Tests for scripts/lib/version — running/latest version + comparator.
+"""Tests for cockpit/lib/version — running/latest version + comparator.
 
 `running_version`/`install_repo` read the bundled manifests against tmp files
 (leaf-on-disk style). `latest_version` shells out to `gh`, so its network/auth
@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts.lib import version
+from cockpit.lib import version
 
 
 def _write_plugin(path, ver):

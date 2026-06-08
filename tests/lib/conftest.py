@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-import scripts.lib.cache as cache_mod
+import cockpit.lib.cache as cache_mod
 
 
 @pytest.fixture

@@ -1,0 +1,21 @@
+# Default cship statusline config bundled with the cockpit plugin.
+# Copied to ~/.config/cship.toml only when you run `cockpit footer` (the
+# explicit footer-setup command). --once / --watch reconcile cycles never
+# touch this file, so any edits you make to ~/.config/cship.toml stick around
+# until you re-run --footer.
+#
+# cship 1.7.x requires the `[cship]` wrapper schema to expand $starship_prompt.
+# The legacy top-level `format = "..."` layout silently loads in "wrapper-free"
+# mode (see cship's debug log: "loading cship.toml in legacy wrapper-free
+# format") and never spawns starship, so every [custom.*] module disappears.
+# The wrapper form below makes cship invoke starship with
+# STARSHIP_CONFIG=~/.config/starship.toml whenever $starship_prompt expands.
+# See cockpit/defaults/starship.toml for the modules rendered downstream
+# (clock, context, session-time, rate-limit, Linear, PR pills).
+#
+# No `$cship.workspace.current_dir` — Claude Code's header already shows the
+# cwd (abbreviated with `~`); cship's built-in renders the absolute path and
+# duplicates it.
+
+[cship]
+lines = ["$starship_prompt"]

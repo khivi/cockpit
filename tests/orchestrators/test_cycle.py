@@ -1,4 +1,4 @@
-"""Tests for scripts/orchestrators/cycle.py.
+"""Tests for cockpit/orchestrators/cycle.py.
 
 Sections:
   - _resolve_skill_prompt / _run_repo_skills: fast/slow skill dispatch.
@@ -15,10 +15,10 @@ from unittest.mock import patch
 
 import pytest
 
-import scripts.orchestrators.cycle as cycle
-from scripts.lib.gh import PR
-from scripts.lib.git import Worktree
-from scripts.orchestrators import teardown as teardown_mod
+import cockpit.orchestrators.cycle as cycle
+from cockpit.lib.gh import PR
+from cockpit.lib.git import Worktree
+from cockpit.orchestrators import teardown as teardown_mod
 
 
 def _pr(
@@ -884,13 +884,13 @@ def test_autoclose_primary_on_main_never_swept(tmp_path):
 def reap_isolated(tmp_path, monkeypatch):
     """Isolated COCKPIT_HOME and reloaded modules so each test starts fresh."""
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "cockpit-home"))
-    import scripts.lib.config as cfg
+    import cockpit.lib.config as cfg
 
     importlib.reload(cfg)
-    import scripts.lib.daemon_signal as cr
+    import cockpit.lib.daemon_signal as cr
 
     importlib.reload(cr)
-    import scripts.orchestrators.cycle as cycle_mod
+    import cockpit.orchestrators.cycle as cycle_mod
 
     importlib.reload(cycle_mod)
     return cycle_mod, cr
@@ -1072,7 +1072,7 @@ def test_reap_skips_workspace_matched_by_name(reap_isolated, tmp_path):
 
 
 def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, capsys):
-    from scripts.lib.cmux import CmuxUnavailable
+    from cockpit.lib.cmux import CmuxUnavailable
 
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -1151,7 +1151,7 @@ def test_prepare_cycle_prunes_worktrees_before_listing(tmp_path, monkeypatch):
 
 
 def test_refresh_base_distance_short_circuits_when_no_feature_worktrees(tmp_path):
-    from scripts.lib.git import Worktree
+    from cockpit.lib.git import Worktree
 
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -1173,7 +1173,7 @@ def test_refresh_base_distance_short_circuits_when_no_feature_worktrees(tmp_path
 
 
 def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
-    from scripts.lib.git import Worktree
+    from cockpit.lib.git import Worktree
 
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -1454,7 +1454,7 @@ def test_spawn_missing_orphan_spawns_when_clash_cwd_missing(tmp_path):
 def test_spawn_missing_review_candidates_filtered(tmp_path):
     """review_prs: spawn a review worktree for each other-authored open PR
     without a worktree; skip mine and skip ones already checked out."""
-    from scripts.lib.gh import OpenPRHead
+    from cockpit.lib.gh import OpenPRHead
 
     ctx = _spawn_ctx(
         tmp_path,
@@ -1598,14 +1598,14 @@ def test_apply_repo_colors_dry_noops(tmp_path):
 
 
 def test_repo_name_color_falls_back_to_bold_when_unset():
-    from scripts.lib.colors import bold
+    from cockpit.lib.colors import bold
 
     assert cycle._repo_name_color({"name": "n"}) is bold
     assert cycle._repo_name_color({"name": "n", "sidebar_color": None}) is bold
 
 
 def test_repo_name_color_uses_configured_sidebar_color():
-    from scripts.lib.colors import CMUX_COLOR_ANSI
+    from cockpit.lib.colors import CMUX_COLOR_ANSI
 
     assert (
         cycle._repo_name_color({"name": "n", "sidebar_color": "Teal"})
@@ -1663,10 +1663,10 @@ def test_apply_repo_colors_reapplies_on_change(tmp_path):
 @pytest.fixture
 def drain_isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "cockpit-home"))
-    import scripts.lib.config as cfg
+    import cockpit.lib.config as cfg
 
     importlib.reload(cfg)
-    import scripts.lib.daemon_signal as ds
+    import cockpit.lib.daemon_signal as ds
 
     importlib.reload(ds)
     importlib.reload(cycle)
@@ -1674,7 +1674,7 @@ def drain_isolated(tmp_path, monkeypatch):
 
 
 def _enqueue_marker(ds_mod, repo_name="repo", ref="workspace:1"):
-    from scripts.orchestrators.teardown import TeardownRequest
+    from cockpit.orchestrators.teardown import TeardownRequest
 
     return ds_mod.enqueue(
         TeardownRequest(
@@ -1870,7 +1870,7 @@ def test_stale_threshold_default_is_three_slow_cycles():
 
 
 def test_track_stale_first_sighting_records_timer_no_pill(tmp_path):
-    from scripts.lib.nudges import NudgePref
+    from cockpit.lib.nudges import NudgePref
 
     pref = NudgePref()
     ctx = _stale_ctx(tmp_path, pref)
@@ -1888,7 +1888,7 @@ def test_track_stale_first_sighting_records_timer_no_pill(tmp_path):
 
 
 def test_track_stale_past_threshold_raises_stuck_pill(tmp_path):
-    from scripts.lib.nudges import NudgePref
+    from cockpit.lib.nudges import NudgePref
 
     pref = NudgePref(first_seen_at={"ci": 1000.0})
     ctx = _stale_ctx(tmp_path, pref)
@@ -1908,7 +1908,7 @@ def test_track_stale_past_threshold_raises_stuck_pill(tmp_path):
 
 
 def test_track_stale_successful_nudge_clears_timer_and_pill(tmp_path):
-    from scripts.lib.nudges import NudgePref
+    from cockpit.lib.nudges import NudgePref
 
     pref = NudgePref(first_seen_at={"ci": 1000.0})
     ctx = _stale_ctx(tmp_path, pref)
@@ -1926,7 +1926,7 @@ def test_track_stale_successful_nudge_clears_timer_and_pill(tmp_path):
 
 
 def test_track_stale_mute_wins_even_past_threshold(tmp_path):
-    from scripts.lib.nudges import NudgePref
+    from cockpit.lib.nudges import NudgePref
 
     pref = NudgePref(first_seen_at={"ci": 1000.0})
     ctx = _stale_ctx(tmp_path, pref)
@@ -1944,7 +1944,7 @@ def test_track_stale_mute_wins_even_past_threshold(tmp_path):
 
 
 def test_track_stale_resolved_issue_clears_everything(tmp_path):
-    from scripts.lib.nudges import NudgePref
+    from cockpit.lib.nudges import NudgePref
 
     pref = NudgePref(first_seen_at={"ci": 1000.0})
     ctx = _stale_ctx(tmp_path, pref)
@@ -1965,7 +1965,7 @@ def test_track_stale_resolved_issue_clears_everything(tmp_path):
 
 
 def test_track_stale_category_switch_drops_old_timer(tmp_path):
-    from scripts.lib.nudges import NudgePref
+    from cockpit.lib.nudges import NudgePref
 
     # Was stuck on ci; now the live issue is comments — the ci timer must drop
     # so a resolved category can't keep escalating.
@@ -1985,7 +1985,7 @@ def test_track_stale_category_switch_drops_old_timer(tmp_path):
 
 
 def test_track_stale_dry_run_is_noop(tmp_path):
-    from scripts.lib.nudges import NudgePref
+    from cockpit.lib.nudges import NudgePref
 
     pref = NudgePref(first_seen_at={"ci": 1000.0})
     ctx = _stale_ctx(tmp_path, pref, dry=True)

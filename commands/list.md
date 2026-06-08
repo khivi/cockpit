@@ -10,7 +10,7 @@ allowed-tools: Bash
 YOU MUST immediately invoke the Bash tool with the exact command below. Do not paraphrase or skip. After Bash returns, paste its stdout verbatim.
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/list.py
+cockpit list
 ```
 
 ## Output

@@ -9,7 +9,7 @@ the legacy `status.contexts` array — together they cover every signal.
 
 from __future__ import annotations
 
-from scripts.lib.gh import _pr_from_node, _unaddressed
+from cockpit.lib.gh import _pr_from_node, _unaddressed
 
 
 def _node(check_runs=None, legacy_contexts=None, required_contexts=None):

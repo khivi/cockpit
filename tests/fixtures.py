@@ -100,7 +100,7 @@ def setup_cockpit_config(tmp_path: Path, monkeypatch, cfg: dict):
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     (tmp_path / "config.json").write_text(json.dumps(cfg))
 
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     return cockpit_config

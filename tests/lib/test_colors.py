@@ -15,7 +15,7 @@ from collections.abc import Callable
 
 import pytest
 
-import scripts.lib.colors as colors_mod
+import cockpit.lib.colors as colors_mod
 
 
 @pytest.fixture(autouse=True)

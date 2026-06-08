@@ -10,7 +10,7 @@ allowed-tools: Bash
 YOU MUST immediately invoke the Bash tool with the exact command below. Do not paraphrase or skip. After Bash returns, paste its stdout verbatim.
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/repos.py
+cockpit repos
 ```
 
 ## Output

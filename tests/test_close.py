@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-import scripts.close as close_script
-from scripts.lib.git import Worktree
+import cockpit.close as close_script
+from cockpit.lib.git import Worktree
 
 
 def _make_wt(repo_dir: Path, path: Path, branch: str) -> Worktree:
@@ -149,7 +149,7 @@ def test_main_errors_when_daemon_absent(cockpit_repo, monkeypatch, capsys):
     assert rc == 1
     err = capsys.readouterr().err
     assert "daemon not running" in err
-    assert "cockpit --watch" in err
+    assert "cockpit watch" in err
     assert enqueue_calls == []
 
 

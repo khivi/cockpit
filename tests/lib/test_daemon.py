@@ -1,4 +1,4 @@
-"""Integration tests for `scripts.lib.daemon.run_watcher`.
+"""Integration tests for `cockpit.lib.daemon.run_watcher`.
 
 Drives a real Python subprocess that imports the module and calls
 `run_watcher`, then exercises pidfile collisions, SIGUSR1 wake,
@@ -59,7 +59,7 @@ def _write_driver(
         f"""
         import sys
         sys.path.insert(0, {str(REPO_ROOT)!r})
-        from scripts.lib.daemon import run_watcher
+        from cockpit.lib.daemon import run_watcher
 
         _count = {{'n': 0}}
         _fast = {{'n': 0}}
@@ -244,3 +244,50 @@ def test_tick_exception_does_not_kill_loop(tmp_path, cockpit_home):
 
     assert "watch cycle error" in stderr
     assert "boom-" in stderr
+
+
+# --- claim_pidfile / release_pidfile (extracted helpers, also used by the TUI) ---
+
+
+def test_claim_pidfile_writes_our_pid(tmp_path, monkeypatch):
+    import cockpit.lib.daemon as daemon
+
+    pf = tmp_path / "cockpit.pid"
+    monkeypatch.setattr(daemon, "PID_FILE", pf)
+    monkeypatch.setattr(daemon, "ensure_state_dirs", lambda: None)
+    daemon.claim_pidfile()
+    assert pf.read_text() == str(os.getpid())
+
+
+def test_release_pidfile_is_idempotent(tmp_path, monkeypatch):
+    import cockpit.lib.daemon as daemon
+
+    pf = tmp_path / "cockpit.pid"
+    monkeypatch.setattr(daemon, "PID_FILE", pf)
+    pf.write_text("123")
+    daemon.release_pidfile()
+    assert not pf.exists()
+    daemon.release_pidfile()  # second call must not raise
+
+
+def test_claim_pidfile_reclaims_stale(tmp_path, monkeypatch):
+    import cockpit.lib.daemon as daemon
+
+    pf = tmp_path / "cockpit.pid"
+    monkeypatch.setattr(daemon, "PID_FILE", pf)
+    monkeypatch.setattr(daemon, "ensure_state_dirs", lambda: None)
+    pf.write_text("2147483647")  # a PID that does not exist → stale, reclaim
+    daemon.claim_pidfile()
+    assert pf.read_text() == str(os.getpid())
+
+
+def test_claim_pidfile_refuses_when_live(tmp_path, monkeypatch):
+    import cockpit.lib.daemon as daemon
+
+    pf = tmp_path / "cockpit.pid"
+    monkeypatch.setattr(daemon, "PID_FILE", pf)
+    monkeypatch.setattr(daemon, "ensure_state_dirs", lambda: None)
+    pf.write_text(str(os.getpid()))  # our own PID is alive → refuse to start
+    with pytest.raises(SystemExit) as exc:
+        daemon.claim_pidfile()
+    assert exc.value.code == 1

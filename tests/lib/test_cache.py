@@ -1,4 +1,4 @@
-"""Tests for scripts/lib/cache.py — cockpit-cache writers and refreshers."""
+"""Tests for cockpit/lib/cache.py — cockpit-cache writers and refreshers."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from unittest.mock import patch
 
 import pytest
 
-import scripts.lib.cache as cache_mod
-from scripts.lib.gh import PR
-from scripts.lib.git import Worktree
-from scripts.lib.nudges import KNOWN_CATEGORIES, NudgePref
+import cockpit.lib.cache as cache_mod
+from cockpit.lib.gh import PR
+from cockpit.lib.git import Worktree
+from cockpit.lib.nudges import KNOWN_CATEGORIES, NudgePref
 
 
 def _pr(**overrides) -> PR:
@@ -307,7 +307,7 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -344,7 +344,7 @@ def test_republish_pr_caches_no_cache_dir_is_noop(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "nope"))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -374,7 +374,7 @@ def test_write_pr_cache_includes_pills(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -470,7 +470,7 @@ def test_write_pr_cache_bakes_muted_into_json(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -487,7 +487,7 @@ def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -510,7 +510,7 @@ def test_write_pr_cache_preserves_existing_keep(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -534,7 +534,7 @@ def test_write_pr_cache_keep_defaults_false(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -549,7 +549,7 @@ def test_set_pr_keep_creates_stub_when_no_cache(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -569,7 +569,7 @@ def test_set_pr_keep_merges_into_existing_cache(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
@@ -601,7 +601,7 @@ def json_cache(tmp_path, monkeypatch):
     import importlib
 
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import scripts.lib.config as cockpit_config
+    import cockpit.lib.config as cockpit_config
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)

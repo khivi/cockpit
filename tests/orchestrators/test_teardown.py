@@ -6,8 +6,8 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.orchestrators import teardown as teardown_mod
-from scripts.orchestrators.teardown import (
+from cockpit.orchestrators import teardown as teardown_mod
+from cockpit.orchestrators.teardown import (
     TeardownRequest,
     probe_blockers,
     teardown,
@@ -224,7 +224,7 @@ def test_teardown_advances_default_branch_worktree(tmp_path, capsys):
         repo_name="repo",
         forced=True,
     )
-    from scripts.lib.git import Worktree
+    from cockpit.lib.git import Worktree
 
     main_wt = Worktree(path=tmp_path / "main", branch="main")
     with (

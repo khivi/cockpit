@@ -1,1 +1,1 @@
-"""Marks the repo root as pytest rootdir so `scripts/` is importable from tests."""
+"""Marks the repo root as pytest rootdir so `cockpit/` is importable from tests."""

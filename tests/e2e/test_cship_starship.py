@@ -7,7 +7,7 @@ passes cleanly; the laptop hosts the actual signal.
 
 Each test isolates HOME / XDG_CONFIG_HOME / TMPDIR into a tmpdir so the
 user's real cship / starship configs and cockpit-cache are never touched.
-The bundled scripts/defaults/{cship,starship}.toml configs are copied in
+The bundled cockpit/defaults/{cship,starship}.toml configs are copied in
 verbatim, with the `__COCKPIT_STARSHIP__` placeholder substituted exactly
 like `install_starship_default_config()` does at install time.
 """
@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,12 +29,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-SCRIPTS = REPO_ROOT / "scripts"
-FOOTER_PY = SCRIPTS / "footer.py"
-STARSHIP_PY = SCRIPTS / "starship.py"
+SCRIPTS = REPO_ROOT / "cockpit"
 SHIM_DIR = SCRIPTS / "bin"
 DEFAULTS = SCRIPTS / "defaults"
 PLACEHOLDER = "__COCKPIT_STARSHIP__"
+# The render command starship invokes, mirroring install_starship_default_config()
+# (lib.config.STARSHIP_CMD): the venv interpreter + module dispatch.
+STARSHIP_CMD = f"{sys.executable} -m cockpit.cli starship"
+STATUSLINE_CMD = [sys.executable, "-m", "cockpit.cli", "statusline"]
 
 
 @pytest.fixture
@@ -47,10 +50,10 @@ def footer_env(tmp_path):
     cache_dir = tmpdir / "cockpit-cache"
     cache_dir.mkdir()
 
-    # Substitute __COCKPIT_STARSHIP__ → absolute path to scripts/starship.py,
+    # Substitute __COCKPIT_STARSHIP__ → the module-dispatch render command,
     # mirroring install_starship_default_config().
     starship_toml = (
-        (DEFAULTS / "starship.toml").read_text().replace(PLACEHOLDER, str(STARSHIP_PY))
+        (DEFAULTS / "starship.toml").read_text().replace(PLACEHOLDER, STARSHIP_CMD)
     )
     (config_dir / "starship.toml").write_text(starship_toml)
     shutil.copy(DEFAULTS / "cship.toml", config_dir / "cship.toml")
@@ -68,7 +71,7 @@ def footer_env(tmp_path):
 
 def _run_footer(env: dict, stdin: bytes = b"{}") -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["python3", str(FOOTER_PY)],
+        STATUSLINE_CMD,
         input=stdin,
         env=env,
         capture_output=True,

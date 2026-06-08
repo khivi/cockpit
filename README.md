@@ -10,7 +10,8 @@ A background daemon polls GitHub every few minutes and caches each PR's CI / rev
 
 ## Requirements
 
-- Python **3.11+**
+- Python **3.12+**
+- [`uv`](https://docs.astral.sh/uv/) (to install the `cockpit` command)
 - `git` **2.30+**
 - Workspace backend on `PATH`:
   - macOS → `cmux`
@@ -32,23 +33,33 @@ A background daemon polls GitHub every few minutes and caches each PR's CI / rev
 
 ## Install
 
-Inside Claude Code:
+Two pieces: the **`cockpit` command** (the daemon, and the binary the slash commands call) and the Claude Code **plugin** (slash commands + hooks).
+
+1. Install the `cockpit` command so it's on your `PATH`:
+
+```bash
+uv tool install git+https://github.com/khivi/cockpit
+# or run ad-hoc without installing:
+#   uvx --from git+https://github.com/khivi/cockpit cockpit --help
+```
+
+1. Inside Claude Code, add the plugin:
 
 ```text
 /plugin marketplace add https://github.com/khivi/cockpit
 /plugin install cockpit@khivi-cockpit
 ```
 
-That installs the slash commands. You can use `/cockpit:new` and the rest immediately — see [Quick start](#quick-start) below.
+The slash commands (`/cockpit:new`, `/cockpit:list`, …) and the statusline hook invoke the `cockpit` command from step 1. If it isn't on `PATH`, the daemon warns at startup and the commands fail — re-run step 1.
 
-For live PR/CI status to flow into `/cockpit:list` and the statusline, you also need to start the polling daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible:
+For live PR/CI status to flow into `/cockpit:list` and the statusline, start the daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible. `cockpit watch` opens a **terminal UI** (slow/fast tick countdowns, a per-workspace status grid, an update indicator, and a live log of each cycle); `cockpit once` runs a single cycle non-interactively:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/cockpit.py --watch    # long-running poller
-${CLAUDE_PLUGIN_ROOT}/scripts/cockpit.py --once     # single cycle, then exit
+cockpit watch    # long-running daemon, terminal UI (requires a TTY)
+cockpit once     # single cycle, then exit (no TTY needed)
 ```
 
-`$CLAUDE_PLUGIN_ROOT` is set inside Claude Code sessions. From a plain shell, `echo $CLAUDE_PLUGIN_ROOT` from a Claude session once and save it as an alias. The daemon is a foreground process — close the terminal, it dies; run it in `tmux`/`cmux`/`screen` for persistence.
+The daemon is a foreground process — close the terminal, it dies; run it in `tmux`/`cmux`/`screen` for persistence.
 
 First run auto-creates `~/.config/cockpit/`, seeds `config.json`, and prompts once to wire Claude Code's statusLine to the cockpit footer.
 
@@ -166,7 +177,7 @@ The cockpit logs to stderr — visible in the `--watch` terminal. No log file is
 | Auto-close age | 14 days | `config.json` → `autoclose_age_days`. Worktrees older than this threshold with no open PR are eligible for auto-close. |
 | Prompt prefix | _(empty)_ | `config.json` → `prompt_prefix`. Prepended to the first-turn prompt of every new workspace — and is the entire first turn for a blank spawn that seeds no plan prompt. |
 | Theme | `dark` | `config.json` → `theme` (`dark` \| `light`). Themes the neutral-grey statusline text; saturated hues stay background-agnostic. |
-| Update check | **on** | `config.json` → `check_update`. When on, the slow tick reads `plugin.json` on the install repo's default branch (via `gh api`, at most hourly) and logs a one-line notice to the `--watch` terminal when a newer version is published. Set `false` to skip the check. |
+| Update check | **on** | `config.json` → `check_update`. When on, the slow tick reads `plugin.json` on the install repo's default branch (via `gh api`, at most hourly) and logs a one-line notice to the `cockpit watch` log (and the header update indicator) when a newer version is published. Set `false` to skip the check. |
 | Branch prefix | `<gh user>/` | `config.json` → per-repo `branch_prefix` |
 | Default base branch | repo's `defaultBranchRef` | `config.json` → per-repo `default_base` |
 | CI checks to skip | _(none)_ | `config.json` → per-repo `ci_skip_checks`. List of check names excluded from the CI pass/fail roll-up (e.g. bot reviewers that always show as pending). |
@@ -189,7 +200,7 @@ To opt in:
 
 1. Install `cship` and `starship` on `PATH`.
 2. Set `use_cship: true` in `~/.config/cockpit/config.json`.
-3. Run `cockpit.py --footer` once to wire `~/.claude/settings.json`.
+3. Run `cockpit footer` once to wire `~/.claude/settings.json`.
 
 `--footer` also seeds `~/.config/cship.toml` and `~/.config/starship.toml` with the bundled defaults. Re-running it clobbers any local edits to those files — that's intentional, it's the reset switch.
 

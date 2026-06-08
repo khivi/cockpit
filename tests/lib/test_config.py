@@ -1,4 +1,4 @@
-"""Static guards on the bundled defaults under scripts/defaults/ + a
+"""Static guards on the bundled defaults under cockpit/defaults/ + a
 plug-and-play roundtrip that drives the real `cockpit --footer` install
 helpers against a tmp $XDG_CONFIG_HOME.
 
@@ -13,9 +13,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-DEFAULTS = Path(__file__).resolve().parent.parent.parent / "scripts" / "defaults"
+DEFAULTS = Path(__file__).resolve().parent.parent.parent / "cockpit" / "defaults"
 
-import scripts.lib.config as config_mod  # noqa: E402
+import cockpit.lib.config as config_mod  # noqa: E402
 
 
 def _strip_comments(toml_body: str) -> str:
@@ -622,7 +622,7 @@ def test_linear_dev_done_state_override(tmp_path, monkeypatch):
 
 def test_linear_dev_done_state_uses_passed_cfg_without_disk_read():
     # Passing cfg avoids load_config(); blank/whitespace falls back to default.
-    from scripts.lib import config as cockpit_config
+    from cockpit.lib import config as cockpit_config
 
     assert cockpit_config.linear_dev_done_state({"linear_dev_done_state": "QA"}) == "QA"
     assert (

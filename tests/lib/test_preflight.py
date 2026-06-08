@@ -1,4 +1,4 @@
-"""Tests for scripts/lib/preflight.preflight().
+"""Tests for cockpit/lib/preflight.preflight().
 
 Verifies the unified dependency check that runs at the top of every
 `cockpit.py` invocation: hard-fails on missing required binaries, soft-warns
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.lib.preflight import preflight
+from cockpit.lib.preflight import preflight
 from tests.fixtures import make_bin_on_path
 
 
@@ -92,10 +92,23 @@ def test_preflight_warns_when_no_workspace_backend(tmp_path, monkeypatch, capsys
 
 
 def test_preflight_silent_when_tool_explicitly_set(tmp_path, monkeypatch, capsys):
-    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    # `cockpit` on PATH too, else the soft install-hint warning fires.
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cockpit")
     monkeypatch.setenv("PATH", str(bin_dir))
     preflight({"tool": "none"})
     assert capsys.readouterr().err == ""
+
+
+def test_preflight_warns_when_cockpit_not_on_path(tmp_path, monkeypatch, capsys):
+    # gh + git present (so no hard-fail) but `cockpit` absent → soft warning,
+    # not an exit: the daemon runs, but the slash-commands need it installed.
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    preflight({"tool": "none"})
+    err = capsys.readouterr().err
+    assert "cockpit" in err
+    assert "PATH" in err
+    assert "uv tool install" in err
 
 
 def test_preflight_exits_on_invalid_sidebar_color(tmp_path, monkeypatch, capsys):
