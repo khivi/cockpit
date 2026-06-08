@@ -10,11 +10,9 @@ Subcommands:
   footer                (re)install the cship/starship statusLine config
   statusline            Claude Code statusLine shim (reads stdin → renders)
   starship <field>      starship field printer / `warm`
-  sync                  kick a running daemon, else run one cycle inline
   close  [args]         tear down a worktree + workspace
   new    [args]         create a worktree + workspace
   focus  <ref>          switch workspace focus
-  list                  render the cached worktree + PR table
   nudge  [args]         manage nudge mutes
   repos                 list configured repos
 """
@@ -29,11 +27,9 @@ _SUBCOMMANDS = (
     "footer",
     "statusline",
     "starship",
-    "sync",
     "close",
     "new",
     "focus",
-    "list",
     "nudge",
     "repos",
 )
@@ -79,14 +75,6 @@ def main(argv: list[str] | None = None) -> int:
 
         return starship_main(["cockpit-starship", *rest])
 
-    if sub == "sync":
-        from cockpit.sync import main as sync_main
-
-        return sync_main()
-    if sub == "list":
-        from cockpit.list import main as list_main
-
-        return list_main()
     if sub == "repos":
         from cockpit.repos import main as repos_main
 

@@ -1204,7 +1204,7 @@ def _refresh_orphan(ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str) -> Non
 _SPAWN_SCRIPT = Path(__file__).resolve().parent.parent / "spawn.py"
 _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
 # Suppress a re-spawn of the same branch for two slow ticks (default 300s each)
-# so a manual `/cockpit:sync` kick can't double-launch while a `git fetch` +
+# so a manual SIGUSR1 kick can't double-launch while a `git fetch` +
 # worktree add is still in flight. Expires so a failed creation is retried.
 _SPAWN_INFLIGHT_TTL_SECONDS = 600
 

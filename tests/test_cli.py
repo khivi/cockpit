@@ -69,9 +69,7 @@ def test_starship_passes_field_with_prog(monkeypatch):
     assert seen["argv"] == ["cockpit-starship", "model"]
 
 
-@pytest.mark.parametrize(
-    "sub,mod", [("sync", "sync"), ("list", "list"), ("repos", "repos")]
-)
+@pytest.mark.parametrize("sub,mod", [("repos", "repos")])
 def test_noarg_subcommands(monkeypatch, sub, mod):
     called = []
 

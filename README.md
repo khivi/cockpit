@@ -54,9 +54,9 @@ uv tool install git+https://github.com/khivi/cockpit
 /plugin install cockpit@khivi-cockpit
 ```
 
-The slash commands (`/cockpit:new`, `/cockpit:list`, …) and the statusline hook invoke the `cockpit` command from step 1. If it isn't on `PATH`, the daemon warns at startup and the commands fail — re-run step 1.
+The slash commands (`/cockpit:new`, `/cockpit:focus`, …) and the statusline hook invoke the `cockpit` command from step 1. If it isn't on `PATH`, the daemon warns at startup and the commands fail — re-run step 1.
 
-For live PR/CI status to flow into `/cockpit:list` and the statusline, start the daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible. `cockpit watch` opens a **terminal UI**: slow/fast tick countdowns + an update indicator in the header, and a navigable worktree table (arrow keys move the row cursor) showing each workspace's PR / review state / CI:
+For live PR/CI status to flow into the `cockpit watch` table and the statusline, start the daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible. `cockpit watch` opens a **terminal UI**: slow/fast tick countdowns + an update indicator in the header, and a navigable worktree table (arrow keys move the row cursor) showing each workspace's PR / review state / CI:
 
 ```bash
 cockpit watch    # long-running daemon, terminal UI (requires a TTY)
@@ -78,7 +78,7 @@ Cockpit auto-registers the GitHub repo, creates a worktree at `<parent>/fix-logi
 
 A blank spawn like this — a new branch with no PR, ticket, or extra context — starts ready for you to state the task; no plan-only prompt is seeded. Cockpit seeds a plan-only first turn only when there's something to study first: a PR, a Linear ticket, inherited `--context`, or an explicit `-- <text>` task. Either way, a configured [`prompt_prefix`](#defaults) still runs.
 
-Open the PR however you normally do. Once it exists, cockpit picks it up on the next daemon cycle (default 5 minutes; force it with `/cockpit:sync`).
+Open the PR however you normally do. Once it exists, cockpit picks it up on the next daemon cycle (default 5 minutes; force it by pressing `s` in `cockpit watch`).
 
 When the PR merges and the worktree is clean, cockpit tears both down automatically (configurable — see [Defaults](#defaults)).
 
@@ -87,10 +87,9 @@ When the PR merges and the worktree is clean, cockpit tears both down automatica
 | Check | Expected |
 |---|---|
 | `cat ~/.config/cockpit/cockpit.pid` | a running PID; absent or stale → daemon not running |
-| `/cockpit:list` | your managed worktrees show with PR / CI / review columns populated |
-| `/cockpit:sync` | forces a poll; PR data should refresh within a few seconds |
+| `cockpit watch` | your managed worktrees show in the table with PR / Approval / CI columns populated |
 
-If `/cockpit:list` shows `—` everywhere, the daemon hasn't completed a cycle yet — wait for the polling interval or run `/cockpit:sync`. If pidfile exists but `/cockpit:list` is stale, tail the `--watch` terminal for the cycle error.
+If the table is empty, the daemon hasn't completed a cycle yet — wait for the polling interval or press `s` to force one. If the pidfile exists but the table is stale, check `~/.config/cockpit/watch.log` for the cycle error.
 
 ## Linear positional input
 
@@ -113,21 +112,12 @@ Out of scope here: rendering the Linear ticket title in the cship statusline pil
 | Command | What it does |
 |---|---|
 | `/cockpit:new <branch-or-pr>` | Create or attach to a worktree+workspace. Numeric arg = PR mode. |
-| `/cockpit:list` | Table of all managed worktrees: branch, PR, CI, review, last update. |
 | `/cockpit:focus <pr\|branch\|slug>` | Switch cmux focus to the matching workspace. Read-only on disk. |
 | `/cockpit:close <pr\|branch\|slug> [--force]` | Tear down worktree + workspace + PR cache. Refuses on dirty state, unpushed commits, or open PR without `--force`. |
-| `/cockpit:sync` | Force an immediate poll cycle without waiting for the next interval. |
 | `/cockpit:repos` | List configured repos from `~/.config/cockpit/config.json`. |
 | `/cockpit:nudge` | Mute/unmute per-PR nudges. See [Nudge pills](#nudge-pills-optional). |
 
-Example `/cockpit:list` output:
-
-```text
-REPO          BRANCH                          PR      CI        REVIEW                UPDATED
-myrepo        feature/foo                     #123    pass      approved              2025-05-17T14:23:01
-myrepo        fix/bar                         #124    fail      changes-req 💬3       2025-05-17T13:10:44
-otherrepo     experiment/baz                  —       —         —                     — (no workspace)
-```
+Listing worktrees and forcing a poll now live in the `cockpit watch` TUI — the table is the live worktree list, and `s` forces a cycle (no `/cockpit:list` or `/cockpit:sync` commands).
 
 ## Configuration
 

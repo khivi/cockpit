@@ -3,7 +3,8 @@
 Strictly a renderer: it only *reads* the same flat cache cells starship reads
 (`pr-*` by branch) plus the per-PR JSON for Linear. It never writes a cell,
 preserving the daemon-is-sole-writer invariant. Rows are keyed by worktree path
-so a future keybinding can resolve the selected row back to its workspace.
+so the app's `f`/`c` keybindings can resolve the cursor row (`current_path`)
+back to its workspace for focus / close.
 
 Repos are distinguished by colour, not a column: the workspace name is tinted
 with the repo's `sidebar_color` via the same `CMUX_COLOR_ANSI` colorizer cmux
@@ -112,6 +113,13 @@ class WorktreeTable(DataTable):
         self.zebra_stripes = True
         labels = _BASE_COLUMNS + (_LINEAR_COLUMNS if self._show_linear else ())
         self.add_columns(*labels)
+
+    def current_path(self) -> str | None:
+        """Worktree path (the row key) under the cursor, or None when empty."""
+        if not self.row_count:
+            return None
+        row_key, _ = self.coordinate_to_cell_key(self.cursor_coordinate)
+        return row_key.value
 
     def update_inventory(self, inventory: Inventory) -> None:
         """Rebuild rows from the worktree inventory, keeping the cursor on the

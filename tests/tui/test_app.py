@@ -168,6 +168,124 @@ async def test_render_table_empty_inventory_has_no_rows():
         assert app.query_one(WorktreeTable).row_count == 0
 
 
+async def test_current_path_returns_cursor_row_key():
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wts = [
+            Worktree(path=Path("/tmp/a"), branch="khivi/feat-a"),
+            Worktree(path=Path("/tmp/b"), branch="khivi/feat-b"),
+        ]
+        app._render_table([("repo", None, False, wts)])
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        table.move_cursor(row=1)
+        assert table.current_path() == "/tmp/b"
+
+
+async def test_current_path_none_when_empty():
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one(WorktreeTable).current_path() is None
+
+
+def _seed_one_worktree(monkeypatch, tmp_path, *, branch="khivi/feat-a"):
+    """Patch the resolution leaves so the cursor row maps to one worktree whose
+    cmux workspace is `ws1`. Returns the Worktree."""
+    wt = Worktree(path=tmp_path / "wt-a", branch=branch)
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [{"name": "repo", "path": str(tmp_path)}],
+            "check_update": False,
+        },
+    )
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path})
+    monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {"ws1": "feat-a"})
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
+    return wt
+
+
+async def test_focus_key_focuses_workspace(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    calls: list[tuple] = []
+    monkeypatch.setattr("cockpit.tui.app.cmux", lambda *a, **k: calls.append(a))
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("f")
+        await pilot.pause(0.6)
+    assert ("focus", "--workspace", "ws1") in calls
+
+
+async def test_focus_key_noop_on_limux(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
+    calls: list[tuple] = []
+    monkeypatch.setattr("cockpit.tui.app.cmux", lambda *a, **k: calls.append(a))
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("f")
+        await pilot.pause(0.6)
+    assert not any(a and a[0] == "focus" for a in calls)
+
+
+async def test_close_key_enqueues_when_clean(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.probe_blockers", lambda *a, **k: [])
+    enq: list = []
+    monkeypatch.setattr("cockpit.tui.app.enqueue", lambda req: enq.append(req))
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause(0.6)
+    assert len(enq) == 1
+    req = enq[0]
+    assert req.ref == "ws1"
+    assert req.worktree_path == wt.path
+    assert req.branch == "khivi/feat-a"
+    assert req.forced is False
+
+
+async def test_close_key_refuses_on_blockers(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "cockpit.tui.app.probe_blockers", lambda *a, **k: ["PR #1 is OPEN"]
+    )
+    enq: list = []
+    monkeypatch.setattr("cockpit.tui.app.enqueue", lambda req: enq.append(req))
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause(0.6)
+    assert enq == []  # an open PR is never force-closed from the TUI
+
+
+async def test_close_key_noop_when_table_empty(monkeypatch):
+    enq: list = []
+    monkeypatch.setattr("cockpit.tui.app.enqueue", lambda req: enq.append(req))
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause(0.3)
+    assert enq == []
+
+
 async def test_arrow_keys_move_row_cursor():
     app, _ = _make_app()
     async with app.run_test() as pilot:

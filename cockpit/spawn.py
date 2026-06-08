@@ -263,7 +263,7 @@ def _linear_prompt(branch: str, identifier: str) -> str:
     ticket fetch and the post-fetch `git branch -m` to `<prefix><id-lower>-<title-slug>`.
     Workspace name + worktree directory stay on the original short slug;
     cockpit's reconciliation re-reads `git worktree list` each cycle, so the
-    rename surfaces in `/cockpit:list` without further action.
+    rename surfaces in the `cockpit watch` table without further action.
     """
     lines = [
         f"You are starting a fresh task in a new worktree on branch `{branch}`.",
@@ -303,7 +303,7 @@ def _linear_prompt(branch: str, identifier: str) -> str:
         "- If `$CMUX_WORKSPACE_ID` is unset for any reason, run `cmux identify` "
         "first to discover the workspace ref, then pass `--workspace <ref>` explicitly.",
         "- Cockpit's next reconcile cycle reads `cmux list-workspaces`, so the renamed "
-        "workspace surfaces in `/cockpit:list` automatically.",
+        "workspace surfaces in the `cockpit watch` table automatically.",
         "- Do not push or change anything else in this step.",
     ]
     return "\n".join(lines + _PLAN_TAIL)

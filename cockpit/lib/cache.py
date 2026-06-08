@@ -4,7 +4,7 @@ Two cache directories, both owned by this module:
 
 1. `$COCKPIT_HOME/cache/{repo}__pr-{N}.json` (referenced as `CACHE_DIR`).
    Rich JSON per PR. Written each reconcile cycle by `write_pr_cache`,
-   read by `/cockpit:list` and `cockpit/close.py`.
+   read by the `cockpit watch` table and `cockpit/close.py`.
 
 2. `$TMPDIR/cockpit-cache/{stem}[-<sid>|-<branch>]` (referenced as
    `FLAT_CACHE_DIR`). Flat one-string-per-file payloads consumed by

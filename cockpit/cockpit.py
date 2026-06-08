@@ -16,8 +16,6 @@ Modes:
 
 Sibling entry points (each script does one job):
   cockpit/footer.py   statusLine shim — pipes Claude Code's stdin to cship
-  cockpit/list.py     `/cockpit:list` table
-  cockpit/sync.py     USR1-kick the daemon (requires one running)
   cockpit/spawn.py    `/cockpit:new` — create worktree + workspace
 
 Failure policy: each cycle MUST exit 0 even on GitHub API errors. Errors go to

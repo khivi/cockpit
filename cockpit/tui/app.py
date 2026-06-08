@@ -41,10 +41,22 @@ from textual.app import App, ComposeResult
 from textual.widgets import Footer
 
 from cockpit.lib import version
-from cockpit.lib.cmux import BLUE, LOOP_ICON, LOOP_KEY, cmux
+from cockpit.lib.cache import find_pr_payload
+from cockpit.lib.cmux import (
+    BLUE,
+    LOOP_ICON,
+    LOOP_KEY,
+    cmux,
+    workspace_cwds,
+    workspace_names,
+)
 from cockpit.lib.config import COCKPIT_HOME, load_config
 from cockpit.lib.daemon import release_pidfile
+from cockpit.lib.daemon_signal import enqueue
 from cockpit.lib.git import Worktree, worktrees
+from cockpit.lib.teardown_types import TeardownRequest
+from cockpit.lib.tool import is_cmux
+from cockpit.orchestrators.teardown import probe_blockers
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.log_pane import LogPane
 from cockpit.tui.widgets.worktree_table import WorktreeTable
@@ -82,6 +94,8 @@ class CockpitApp(App[None]):
 
     BINDINGS = [
         ("s", "sync", "Sync now"),
+        ("f", "focus_row", "Focus"),
+        ("c", "close_row", "Close"),
         ("q", "quit", "Quit"),
     ]
 
@@ -317,6 +331,107 @@ class CockpitApp(App[None]):
     def action_sync(self) -> None:
         print("kick: manual sync — running cycle now")
         self._kick_slow()
+
+    def action_focus_row(self) -> None:
+        path = self.query_one(WorktreeTable).current_path()
+        if path:
+            self._focus_worktree(path)
+
+    def action_close_row(self) -> None:
+        path = self.query_one(WorktreeTable).current_path()
+        if path:
+            self._close_worktree(path)
+
+    def _resolve_worktree(self, path_str: str) -> tuple[dict, Worktree] | None:
+        """Map a row's worktree-path key back to its (repo config, Worktree).
+
+        Re-derives from `git worktree list` per configured repo — inventory is
+        derived, not stored, so a keypress resolves against live state."""
+        target = Path(path_str).resolve()
+        for repo in load_config().get("repos", []):
+            rp = Path(os.path.expanduser(repo["path"]))
+            if not rp.is_dir():
+                continue
+            try:
+                for wt in worktrees(rp, repo.get("branch_prefix", "")):
+                    if wt.path.resolve() == target:
+                        return repo, wt
+            except (RuntimeError, OSError):
+                continue
+        return None
+
+    @staticmethod
+    def _workspace_ref(wt: Worktree) -> str | None:
+        """The cmux workspace ref rooted at this worktree (cwd→path), or None."""
+        target = wt.path.resolve()
+        return next(
+            (ref for ref, p in workspace_cwds().items() if p.resolve() == target),
+            None,
+        )
+
+    @work(thread=True, group="focus", exit_on_error=False)
+    def _focus_worktree(self, path_str: str) -> None:
+        # Shells out to git/cmux — runs off the UI thread. cmux-only (limux has
+        # no focus verb), matching `cockpit focus`.
+        if not is_cmux():
+            print("focus: requires cmux")
+            return
+        resolved = self._resolve_worktree(path_str)
+        if resolved is None:
+            print(f"focus: no worktree at {path_str}")
+            return
+        _repo, wt = resolved
+        ref = self._workspace_ref(wt)
+        if ref is None:
+            print(f"focus: no workspace rooted at {wt.path}")
+            return
+        cmux("focus", "--workspace", ref, check=False)
+        print(f"focused {wt.label or wt.short}")
+
+    @work(thread=True, group="close", exit_on_error=False)
+    def _close_worktree(self, path_str: str) -> None:
+        # Mirrors `cockpit close` (no --force): refuse on any blocker, else
+        # enqueue a teardown marker and kick the slow tick to drain it. Never
+        # force-closes — dirty/unpushed/open-PR work is protected; the shell
+        # `cockpit:close --force` is the override path.
+        resolved = self._resolve_worktree(path_str)
+        if resolved is None:
+            print(f"close: no worktree at {path_str}")
+            return
+        repo, wt = resolved
+        repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
+        repo_dir = Path(os.path.expanduser(repo["path"]))
+        prefix = repo.get("branch_prefix", "")
+        is_mine = wt.branch.startswith(prefix) if (prefix and wt.branch) else True
+
+        blockers = probe_blockers(wt.path, wt.branch, repo_name, is_mine=is_mine)
+        if blockers:
+            print(
+                f"close refused {wt.label or wt.short}: "
+                + "; ".join(blockers)
+                + " (use `cockpit:close --force` to override)"
+            )
+            return
+
+        ref = self._workspace_ref(wt)
+        names = workspace_names()
+        payload = find_pr_payload(wt.branch, repo_name=repo_name) if wt.branch else None
+        pr_is_merged = (
+            payload is not None and str(payload.get("state", "")).upper() == "MERGED"
+        )
+        req = TeardownRequest(
+            ref=ref or wt.branch or wt.short,
+            name=(names.get(ref, "") if ref else ""),
+            worktree_path=wt.path,
+            branch=wt.branch,
+            repo_path=repo_dir,
+            repo_name=repo_name,
+            forced=False,
+            delete_branch=pr_is_merged,
+        )
+        enqueue(req)
+        print(f"queued close: {wt.label or wt.short} (daemon will process)")
+        self.call_from_thread(self._kick_slow)
 
     # ---- cmux loop pill --------------------------------------------------
 
