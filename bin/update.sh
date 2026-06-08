@@ -112,5 +112,17 @@ else
   exit 1
 fi
 
+# Re-pin the footer to the freshly-installed interpreter. `cockpit` on PATH is
+# now the just-installed uv-tool launcher (a stable, worktree-independent
+# interpreter); `cockpit setup` run through it rewrites the statusLine +
+# starship.toml to that path. This heals a prior pin to a since-removed worktree
+# venv — the "footer disappeared after update" failure. Non-fatal: setup is a
+# no-op unless use_cship is enabled, and a setup hiccup must not (under `set -e`)
+# fail an otherwise-successful update.
+if command -v cockpit >/dev/null 2>&1; then
+  echo "re-pinning footer config (cockpit setup)..."
+  cockpit setup || echo "cockpit setup failed; footer config left as-is." >&2
+fi
+
 echo
 echo "done. restart Claude Code and 'cockpit watch' to apply."
