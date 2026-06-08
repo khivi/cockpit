@@ -114,7 +114,7 @@ flowchart TD
   K -->|"no open PR · coworker"| OC["orphan: pills only<br/>(no nudge, no close)"]
 
   K -->|"workspace, no worktree"| RP{"idle?"}
-  RP -->|"yes & mine-prefix"| EN["enqueue forced teardown"]
+  RP -->|"yes (idle)"| EN["enqueue forced teardown<br/>(branch del only if mine-prefix)"]
   RP -->|"no (mid-turn)"| DF["defer to next cycle"]
 
   K -->|"local branch, no worktree"| BR{"_branch_reap_reason"}
