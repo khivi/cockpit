@@ -581,7 +581,7 @@ def republish_pr_caches_from_disk() -> None:
     (subject to OS tmpdir cleanup). When the OS prunes tmpdir, the JSON
     survives; the fast tick repopulates the flat cells from JSON within
     one cycle. Also bounds the lag between an externally-triggered
-    `cockpit once` (which writes JSON + cells together) and the next
+    the slow tick (which writes JSON + cells together) and the next
     render — without this, the renderer would have to spawn its own
     refresher to detect tmpdir-wipe.
     """

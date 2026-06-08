@@ -15,9 +15,7 @@ cockpit sync
 
 ## Behaviour
 
-Triggers an immediate cockpit cycle. Two paths:
+Kicks the running daemon to run a cycle now (refresh the PR cache, update cmux pills).
 
-1. If `~/.config/cockpit/cockpit.pid` exists and the process is alive → `kill -USR1 <pid>` (cheap, no double-poll). Always returns 0.
-2. Otherwise → fork `cockpit once` (blocks until the cycle finishes). Exits 0 on GitHub API errors; may exit non-zero on hard failures (config missing, etc.).
-
-Either way: refresh the PR cache, update cmux pills, emit warnings to stderr.
+- If `~/.config/cockpit/cockpit.pid` exists and the process is alive → `kill -USR1 <pid>` (cheap, no double-poll). Returns 0.
+- Otherwise → prints "no daemon running — start one with `cockpit watch`" and exits 1. There is no inline fallback; start the daemon (`cockpit watch` or `bin/cockpit.sh`).

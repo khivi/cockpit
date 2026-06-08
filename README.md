@@ -56,11 +56,10 @@ uv tool install git+https://github.com/khivi/cockpit
 
 The slash commands (`/cockpit:new`, `/cockpit:list`, …) and the statusline hook invoke the `cockpit` command from step 1. If it isn't on `PATH`, the daemon warns at startup and the commands fail — re-run step 1.
 
-For live PR/CI status to flow into `/cockpit:list` and the statusline, start the daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible. `cockpit watch` opens a **terminal UI** (slow/fast tick countdowns, a per-workspace status grid, an update indicator, and a live log of each cycle); `cockpit once` runs a single cycle non-interactively:
+For live PR/CI status to flow into `/cockpit:list` and the statusline, start the daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible. `cockpit watch` opens a **terminal UI**: slow/fast tick countdowns + an update indicator in the header, and a navigable worktree table (arrow keys move the row cursor) showing each workspace's PR / review state / CI:
 
 ```bash
 cockpit watch    # long-running daemon, terminal UI (requires a TTY)
-cockpit once     # single cycle, then exit (no TTY needed)
 ```
 
 The daemon is a foreground process — close the terminal, it dies; run it in `tmux`/`cmux`/`screen` for persistence.

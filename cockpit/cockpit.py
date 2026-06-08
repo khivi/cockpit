@@ -11,17 +11,17 @@ Per cycle, for every repo registered in $COCKPIT_HOME/config.json:
   8. autoclean merged worktrees + workspaces (clean + no unpushed only)
 
 Modes:
-  --watch [SECS]  long-running daemon; SIGUSR1 kicks an immediate cycle
-  --once          run exactly one cycle and exit
+  --watch         long-running daemon (Textual TUI); SIGUSR1 kicks a cycle
+  --footer        re-run statusLine setup, then exit
 
 Sibling entry points (each script does one job):
   cockpit/footer.py   statusLine shim — pipes Claude Code's stdin to cship
   cockpit/list.py     `/cockpit:list` table
-  cockpit/sync.py     USR1-kick the daemon, else fall back to `cockpit once`
+  cockpit/sync.py     USR1-kick the daemon (requires one running)
   cockpit/spawn.py    `/cockpit:new` — create worktree + workspace
 
 Failure policy: each cycle MUST exit 0 even on GitHub API errors. Errors go to
-stderr (visible in the --watch terminal); the next cycle retries.
+stderr (visible in the watch TUI log); the next cycle retries.
 """
 
 from __future__ import annotations
@@ -149,8 +149,8 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
     """
     if not sys.stdout.isatty():
         print(
-            "cockpit watch requires a terminal (TTY). "
-            "Use `cockpit once` for a single non-interactive cycle.",
+            "cockpit watch requires a terminal (TTY); run it in a terminal "
+            "or cmux/tmux tab.",
             file=sys.stderr,
         )
         return 2
@@ -185,7 +185,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Run as a daemon. Tick rates come from config "
         "(slow_poll_interval_seconds + fast_poll_interval_seconds).",
     )
-    g.add_argument("--once", action="store_true")
     g.add_argument(
         "--footer",
         action="store_true",
@@ -227,8 +226,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         state = _build_state(args)
         return _watch(state, slow_secs, fast_secs)
-    state = _build_state(args)
-    _once_with(state)
+    # The mutually-exclusive group is required, so footer/watch are the only
+    # paths; both return above.
     return 0
 
 

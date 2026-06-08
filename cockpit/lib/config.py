@@ -8,10 +8,9 @@ Owns:
   - install_cship_statusline_if_configured(): declarative statusLine writer,
     gated on `use_cship`. Points Claude Code's statusLine at the `cship`
     binary directly; hard-errors when the flag is set but cship isn't on PATH.
-    Invoked only by `cockpit footer`, not by --once / --watch.
+    Invoked only by `cockpit footer`, not by --watch.
   - install_cship_default_config(): rewrite ~/.config/cship.toml from the
-    bundled default. Invoked only by `cockpit footer`, not by --once /
-    --watch — so reconcile cycles never touch ~/.config/cship.toml. Local
+    bundled default. Invoked only by `cockpit footer`, not by --watch — so reconcile cycles never touch ~/.config/cship.toml. Local
     edits to ~/.config/cship.toml survive across daemon restarts; running
     `cockpit footer` deliberately clobbers them back to the bundled default.
   - install_starship_default_config(): same contract for ~/.config/starship.toml.
@@ -287,7 +286,7 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
     When the flag is unset or false, cockpit does not touch the statusLine.
 
     Called only from `cockpit footer` — only --footer needs to mutate
-    the statusLine. --once / --watch do not invoke this, but they still
+    the statusLine. --watch do not invoke this, but they still
     enforce the same `use_cship` → cship-on-PATH contract via
     `lib.preflight.preflight()`, which runs at the top of every cockpit
     invocation. The cship check here is defensive belt-and-suspenders for
@@ -355,7 +354,7 @@ def _seed_default_toml(src: Path, dest: Path, label: str) -> None:
 def install_cship_default_config() -> None:
     """Rewrite ~/.config/cship.toml from the bundled default when `use_cship: true`.
 
-    Called only from `cockpit footer`. --once / --watch never touch this
+    Called only from `cockpit footer`. --watch never touch this
     file, so reconcile cycles preserve local edits indefinitely. Running
     `cockpit footer` deliberately copies `cockpit/defaults/cship.toml` over
     the target — that command is the only thing that clobbers local edits.

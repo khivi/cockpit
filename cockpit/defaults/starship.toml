@@ -7,7 +7,7 @@
 # evaluate [custom.*] sections.
 #
 # Copied to ~/.config/starship.toml only when you run `cockpit footer`
-# (the explicit footer-setup command). --once / --watch reconcile cycles
+# (the explicit footer-setup command). --watch reconcile cycles
 # never touch this file, so any edits you make stick around until you
 # re-run --footer.
 

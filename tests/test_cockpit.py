@@ -51,24 +51,6 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
     assert settings["statusLine"]["command"].endswith("-m cockpit.cli statusline")
 
 
-def test_cli_once_does_not_touch_footer_files(tmp_path, monkeypatch):
-    """`--once` is pure reconcile — never seeds either toml or writes statusLine."""
-    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
-    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cship", "starship")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-
-    import cockpit.cockpit as cockpit
-
-    importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
-    monkeypatch.setattr(cockpit, "_once_with", lambda _s: None)
-
-    assert cockpit.main(["--once"]) == 0
-    assert not (tmp_path / "xdg" / "cship.toml").exists()
-    assert not (tmp_path / "xdg" / "starship.toml").exists()
-    assert not (tmp_path / ".claude" / "settings.json").exists()
-
-
 def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
     """`--watch` is pure reconcile — never seeds either toml or writes statusLine."""
     _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
@@ -87,10 +69,10 @@ def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
     assert not (tmp_path / ".claude" / "settings.json").exists()
 
 
-def test_cli_once_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, capsys):
+def test_cli_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, capsys):
     """Preflight runs on every cockpit invocation: `use_cship: true` without
-    cship on PATH must hard-fail `--once` (and `--watch`, `--footer`) — same
-    contract as the standalone `lib.preflight.preflight()` test suite."""
+    cship on PATH must hard-fail before any dispatch — same contract as the
+    standalone `lib.preflight.preflight()` test suite."""
     _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
     bin_dir = _make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "starship")
     monkeypatch.setenv("PATH", str(bin_dir))
@@ -99,13 +81,11 @@ def test_cli_once_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, 
     import cockpit.cockpit as cockpit
 
     importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda _a: {"dry": True})
-    monkeypatch.setattr(cockpit, "_once_with", lambda _s: None)
 
     import pytest
 
     with pytest.raises(SystemExit) as exc:
-        cockpit.main(["--once"])
+        cockpit.main(["--watch"])
     assert exc.value.code == 2
     assert "`cship`" in capsys.readouterr().err
 

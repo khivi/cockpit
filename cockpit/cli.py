@@ -7,7 +7,6 @@ heavy reconcile/spawn modules.
 
 Subcommands:
   watch                 long-running daemon (Textual TUI)
-  once                  run a single reconcile cycle, then exit
   footer                (re)install the cship/starship statusLine config
   statusline            Claude Code statusLine shim (reads stdin → renders)
   starship <field>      starship field printer / `warm`
@@ -27,7 +26,6 @@ from collections.abc import Callable
 
 _SUBCOMMANDS = (
     "watch",
-    "once",
     "footer",
     "statusline",
     "starship",
@@ -63,9 +61,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if argv else 2
     sub, rest = argv[0], argv[1:]
 
-    # watch / once / footer share cockpit.cockpit's argparse (require_git/gh +
+    # watch / footer share cockpit.cockpit's argparse (require_git/gh +
     # preflight live there); translate the subcommand back to its flag.
-    if sub in ("watch", "once", "footer"):
+    if sub in ("watch", "footer"):
         from cockpit.cockpit import main as daemon_main
 
         return daemon_main([f"--{sub}", *rest])

@@ -2,7 +2,7 @@
 
 Composes gh + cmux + git + cache + starship + teardown wrappers into the
 per-cycle sequence driven by `cockpit/cockpit.py`. The CLI entry points
-(`--watch`, `--once`) live in `cockpit.py`; everything between "read
+(`--watch`) live in `cockpit.py`; everything between "read
 config" and "next cycle" lives here.
 """
 

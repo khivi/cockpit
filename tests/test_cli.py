@@ -31,7 +31,7 @@ def test_unknown_subcommand(capsys):
 
 @pytest.mark.parametrize(
     "sub,flag",
-    [("watch", "--watch"), ("once", "--once"), ("footer", "--footer")],
+    [("watch", "--watch"), ("footer", "--footer")],
 )
 def test_daemon_subcommands_translate_to_flags(monkeypatch, sub, flag):
     seen = {}
