@@ -809,7 +809,7 @@ class CockpitApp(App[None]):
     @work(thread=True, group="nudge", exit_on_error=False)
     def _send_nudge(self, path_str: str) -> None:
         # Manual nudge NOW (not the slow tick): a deliberate keypress overrides
-        # mute + throttle (`nudge_if_idle` without pr_number/category) but still
+        # mute + throttle (`nudge_if_idle` without pr_number) but still
         # respects its idle/parked safety gate, so it never types into a running
         # turn or a pending permission prompt. cmux-only; never writes a cache cell.
         if not is_cmux():

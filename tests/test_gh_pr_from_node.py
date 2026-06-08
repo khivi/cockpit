@@ -244,8 +244,9 @@ def test_unaddressed_human_approved_review_not_unresolved():
 
 
 def test_unaddressed_later_approval_clears_earlier_comment():
-    """A reviewer who COMMENTED then later APPROVED has signed off — their
-    most recent review wins, so the earlier feedback no longer counts."""
+    """A reviewer who COMMENTED then later APPROVED has signed off — only their
+    most recent review counts, for BOTH unresolved and total: the reviewer is a
+    single review item (now addressed), not two."""
     reviews = [
         {
             "author": {"login": "alice", "__typename": "User"},
@@ -261,7 +262,28 @@ def test_unaddressed_later_approval_clears_earlier_comment():
     node = _pr_node_with_threads([], reviews=reviews)
     unresolved, total = _unaddressed(node, "khivi")
     assert unresolved == 0
-    assert total == 2
+    assert total == 1
+
+
+def test_unaddressed_same_reviewer_multiple_reviews_counted_once():
+    """A reviewer who posts several substantive reviews is one review item, not
+    N — total must not exceed unresolved by double-counting their history."""
+    reviews = [
+        {
+            "author": {"login": "alice", "__typename": "User"},
+            "state": "COMMENTED",
+            "body": "First pass: concern A.",
+        },
+        {
+            "author": {"login": "alice", "__typename": "User"},
+            "state": "CHANGES_REQUESTED",
+            "body": "Second pass: concern B still stands.",
+        },
+    ]
+    node = _pr_node_with_threads([], reviews=reviews)
+    unresolved, total = _unaddressed(node, "khivi")
+    assert unresolved == 1
+    assert total == 1
 
 
 def test_unaddressed_empty_body_comment_not_unresolved():

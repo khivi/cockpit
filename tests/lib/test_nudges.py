@@ -40,14 +40,12 @@ def test_save_and_load_roundtrip(nudges):
         until=time.time() + 3600,
         reason="copilot",
         last_nudge_at=100.0,
-        last_nudge_category="comments",
     )
     nudges.save_pref(99, pref)
     loaded = nudges.load_pref(99)
     assert loaded.muted is True
     assert loaded.reason == "copilot"
     assert loaded.last_nudge_at == 100.0
-    assert loaded.last_nudge_category == "comments"
 
 
 def test_legacy_disabled_categories_ignored(nudges):
@@ -68,7 +66,7 @@ def test_should_nudge_not_blocked_by_recent_record(nudges):
     limit. `record_nudge` still updates `last_nudge_at` for `cockpit nudge
     status` display, but should_nudge does not gate on it."""
     now = 1000.0
-    nudges.record_nudge(12, "comments", now=now)
+    nudges.record_nudge(12, now=now)
     assert nudges.should_nudge(12, now=now + 1) is True
 
 
@@ -89,16 +87,14 @@ def test_record_nudge_persists_last_nudge_at_across_reload(
     """`last_nudge_at` is still serialized so `cockpit nudge status` can
     display "last nudged X ago" — it just no longer gates future nudges."""
     now = 5000.0
-    nudges.record_nudge(77, "ci", now=now)
+    nudges.record_nudge(77, now=now)
     pref = nudges.load_pref(77, now=now + 50)
     assert pref.last_nudge_at == now
-    assert pref.last_nudge_category == "ci"
 
     # Simulate full process restart by reloading the module.
     importlib.reload(nudges)
     reloaded = nudges.load_pref(77, now=now + 50)
     assert reloaded.last_nudge_at == now
-    assert reloaded.last_nudge_category == "ci"
 
 
 def test_list_prefs_skips_garbage_files(nudges, tmp_path):
@@ -188,7 +184,7 @@ def test_cli_list_filters_to_muted(nudges, nudge_cli, capsys):
 
 
 def test_cli_status_reports_last_nudge(nudges, nudge_cli, capsys):
-    nudges.record_nudge(60, "comments")
+    nudges.record_nudge(60)
     rc = nudge_cli.main(["status", "60"])
     assert rc == 0
     out = capsys.readouterr().out

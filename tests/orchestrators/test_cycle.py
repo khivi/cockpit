@@ -2268,15 +2268,15 @@ def test_refresh_does_not_nudge_merged_pr_with_failing_ci(tmp_path):
 
 
 def test_refresh_nudges_open_pr_with_failing_ci(tmp_path):
-    """Companion: an OPEN PR with the same failing CI still nudges, with the
-    `ci` actionable category."""
+    """Companion: an OPEN PR with the same failing CI still nudges, keyed by its
+    PR number for the mute lookup."""
     wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
     nudge_mock = _refresh_with_mocks(
         _tracked_ctx(tmp_path, _stale_pr(ci="failed:2"), wt)
     )
 
     nudge_mock.assert_called_once()
-    assert nudge_mock.call_args.kwargs["category"] == "ci"
+    assert nudge_mock.call_args.kwargs["pr_number"] == 1
 
 
 # ── reused-branch merged-PR suppression ──────────────────────────────────────

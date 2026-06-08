@@ -30,6 +30,7 @@ from cockpit.lib.git import (
     list_local_branches,
     prune_worktrees,
     require_git,
+    slugify,
     worktrees,
     worktrees_basic,
 )
@@ -89,6 +90,15 @@ def test_branch_label_truncates_after_ticket_strip(tmp_path):
     description is not pre-truncated by the ticket token's width."""
     branch = "khivi/pe-4608-" + "a" * 40
     assert branch_label(branch, "khivi/") == "a" * 30
+
+
+def test_slugify_no_trailing_dash_after_truncation():
+    """The 30-char cap can land mid-separator; the result must not end in '-'
+    (the pre-truncation strip can't see the cut introduced by the cap)."""
+    # 29 chars then a separator-producing space at index 30 → cap would leave "-".
+    s = slugify("a" * 29 + " tail")
+    assert len(s) <= 30
+    assert not s.endswith("-")
 
 
 def test_worktree_label_uses_stored_prefix(tmp_path):

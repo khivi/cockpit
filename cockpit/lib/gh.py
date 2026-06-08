@@ -429,14 +429,16 @@ def _unaddressed(pr_node: dict, pr_author: str) -> tuple[int, int]:
         login = a.get("login")
         if not login or login == pr_author:
             continue
-        if (r.get("body") or "").strip():
-            total += 1
         latest_review[login] = r  # API order is chronological → last wins
+    # Count each reviewer once, by their most-recent review only. A later
+    # APPROVED/DISMISSED clears earlier feedback, so an earlier substantive
+    # review must not inflate `total` — counting every bodied review would let
+    # one reviewer's repeated reviews push the denominator past `unresolved`.
     for r in latest_review.values():
-        if (
-            r.get("state") in ("COMMENTED", "CHANGES_REQUESTED")
-            and (r.get("body") or "").strip()
-        ):
+        if not (r.get("body") or "").strip():
+            continue
+        total += 1
+        if r.get("state") in ("COMMENTED", "CHANGES_REQUESTED"):
             unresolved += 1
     return unresolved, total
 
