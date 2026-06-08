@@ -8,7 +8,10 @@ back to its workspace for focus / close.
 
 Repos are distinguished by colour, not a column: the workspace name is tinted
 with the repo's `sidebar_color` via the same `CMUX_COLOR_ANSI` colorizer cmux
-uses, so the table and the cmux sidebar agree. The Dirty column (headed with the
+uses, so the table and the cmux sidebar agree. The Author column (right after
+PR) shows the PR author's login prefixed with `@`, populated by the daemon only
+for other-authored PRs (coworker / review PRs) and blank for my own. The Dirty
+column (headed with the
 `✎` modifications glyph rather than the word "Dirty") reads the same
 daemon-written `git-status` cell the footer does (`●S ✎M ✚U`). The Ticket and
 Status columns are added only when some configured repo is Linear-enabled
@@ -112,10 +115,12 @@ _DIRTY_ICON = ICON_UNSTAGED
 
 
 def column_labels(*, show_linear: bool) -> tuple[str, ...]:
-    """Column headers in display order. The Linear `Ticket` column sits right
-    after `PR` and the Linear `Status` column right before `Title`; both appear
-    only when some configured repo is Linear-enabled (`show_linear`)."""
-    cols = ["Workspace", "PR"]
+    """Column headers in display order. The `Author` column sits right after
+    `PR` (always present — blank for self-authored PRs, the coworker login for
+    a review PR). The Linear `Ticket` column follows it and the Linear `Status`
+    column sits right before `Title`; both appear only when some configured
+    repo is Linear-enabled (`show_linear`)."""
+    cols = ["Workspace", "PR", "Author"]
     if show_linear:
         cols.append("Ticket")
     cols += [_APPROVAL_ICON, "CI", "💬", _DIRTY_ICON]
@@ -198,6 +203,7 @@ def worktree_cells(
 
     num, state, ci = cell("pr-num"), cell("pr-state"), cell("pr-checks")
     comments, title = cell("pr-comments"), cell("pr-title")
+    author = cell("pr-author")
     state_icon, style = _STATE.get(state, (state, "white"))
     ticket, ticket_status = (
         _linear_cells(wt, repo_name) if linear_enabled else (Text(""), Text(""))
@@ -206,6 +212,10 @@ def worktree_cells(
     cells = [
         _workspace_cell(wt, repo_color, muted=bool(cell("pr-muted"))),
         Text(f"#{num}") if num else Text(""),
+        # Author is populated by the daemon only for other-authored (coworker /
+        # review) PRs — blank for my own, so the column reads "whose PR is this
+        # that isn't mine".
+        Text(f"@{author}", style="cyan") if author else Text(""),
     ]
     if show_linear:
         cells.append(ticket)
