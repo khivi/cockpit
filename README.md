@@ -68,7 +68,7 @@ Either alias works with self-update: pressing `u` runs `bin/update.sh` and relau
 
 The slash commands (`/cockpit:new`, `/cockpit:repos`, …) and the statusline hook invoke the `cockpit` command from step 1. If it isn't on `PATH`, the daemon warns at startup and the commands fail — re-run step 1.
 
-For live PR/CI status to flow into the `cockpit watch` table and the statusline, start the daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible. `cockpit watch` opens a **terminal UI**: slow/fast tick countdowns + an update indicator in the header, and a navigable worktree table (arrow keys move the row cursor) showing each workspace's PR / review state / CI:
+For live PR/CI status to flow into the `cockpit watch` table and the statusline, start the daemon. There is no auto-start (no LaunchAgent, no systemd unit) — run it yourself in a terminal or cmux tab so failures are visible. `cockpit watch` opens a **terminal UI**: slow/fast tick countdowns + an update indicator in the header, and a navigable worktree table (arrow keys move the row cursor) showing each workspace's PR, author (the coworker login on a review PR, blank for your own), approval/CI state, unaddressed-comment count (💬), and dirty-tree state:
 
 ```bash
 cockpit watch    # long-running daemon, terminal UI (requires a TTY)
@@ -124,9 +124,8 @@ Out of scope here: rendering the Linear ticket title in the cship statusline pil
 | Command | What it does |
 |---|---|
 | `/cockpit:new <branch-or-pr>` | Create or attach to a worktree+workspace. Numeric arg = PR mode. |
-| `/cockpit:repos` | List configured repos from `~/.config/cockpit/config.json`. |
 
-Listing worktrees, forcing a poll, focusing, closing a worktree, and nudging now live in the `cockpit watch` TUI — the table is the live worktree list, `f` (or Enter) focuses the cursor row's workspace, `s` forces a cycle, `c` tears down the cursor row (refuses on dirty/unpushed/open-PR), `C` force-closes it (overrides the open-PR refusal but never dirty/unpushed work), `m` mutes/unmutes its PR's nudges, `N` sends a nudge to the cursor row's workspace now (overrides mute + the slow-tick throttle, still gated on idle so it never types into a permission prompt), and `n` opens the new-workspace modal (type a branch name / `#N` / Linear id; with more than one repo configured a picker chooses which repo, defaulting to the cursor row's). The `cockpit nudge status|list|forget` CLI remains for shell use; closing is TUI-only now (`c`/`C`), with no `/cockpit:list`, `/cockpit:sync`, `/cockpit:close`, `/cockpit:focus`, or `/cockpit:nudge` commands.
+Listing worktrees, forcing a poll, focusing, closing a worktree, and nudging now live in the `cockpit watch` TUI — the table is the live worktree list, `f` (or Enter) focuses the cursor row's workspace, `p` opens its PR in your browser, `l` opens its linked Linear ticket, `s` forces a cycle, `c` tears down the cursor row (refuses on dirty/unpushed/open-PR), `C` force-closes it (overrides the open-PR refusal but never dirty/unpushed work), `m` mutes/unmutes its PR's nudges, `N` sends a nudge to the cursor row's workspace now (overrides mute + the slow-tick throttle, still gated on idle so it never types into a permission prompt), and `n` opens the new-workspace modal (type a branch name / `#N` / Linear id; with more than one repo configured a picker chooses which repo, defaulting to the cursor row's). The `cockpit nudge status|list|forget` CLI remains for shell use; closing is TUI-only now (`c`/`C`), with no `/cockpit:list`, `/cockpit:sync`, `/cockpit:close`, `/cockpit:focus`, `/cockpit:repos`, or `/cockpit:nudge` commands (`/cockpit:new` is the only slash command).
 
 ## Configuration
 
