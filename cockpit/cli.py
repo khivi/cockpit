@@ -12,7 +12,6 @@ Subcommands:
   starship <field>      starship field printer / `warm`
   new    [args]         create a worktree + workspace
   nudge  [args]         manage nudge mutes
-  repos                 list configured repos
 """
 
 from __future__ import annotations
@@ -27,7 +26,6 @@ _SUBCOMMANDS = (
     "starship",
     "new",
     "nudge",
-    "repos",
 )
 
 
@@ -71,10 +69,6 @@ def main(argv: list[str] | None = None) -> int:
 
         return starship_main(["cockpit-starship", *rest])
 
-    if sub == "repos":
-        from cockpit.repos import main as repos_main
-
-        return repos_main()
     if sub == "nudge":
         from cockpit.lib.nudge_cli import main as nudge_main
 

@@ -140,11 +140,11 @@ def _unknown_repo_msg(name: str) -> str:
     if listed:
         return (
             f"--repo {name!r}: no configured repo with that name. "
-            f"Configured: {listed}. Run /cockpit:repos for details."
+            f"Configured: {listed}."
         )
     return (
         f"--repo {name!r}: no configured repo with that name, and no repos "
-        f"are configured. Run /cockpit:repos or /cockpit:new from inside a "
+        f"are configured. Run /cockpit:new from inside a "
         f"git repo to auto-register."
     )
 
@@ -318,7 +318,7 @@ def select_repo(repo_name: str | None) -> dict:
     repo_cfg = discover_repo()
     if repo_cfg is None:
         listed = _format_configured_repos(repo_names())
-        hint = f" Configured repos: {listed}. Run /cockpit:repos." if listed else ""
+        hint = f" Configured repos: {listed}." if listed else ""
         raise ValueError(
             "cannot determine repo from cwd; pass --repo <name> or run from "
             "inside a managed repo (register first with `cockpit add`)." + hint
