@@ -62,6 +62,15 @@ async def test_mounts_with_header_and_table():
         assert app.query_one(WorktreeTable) is not None
 
 
+async def test_header_shows_running_version(monkeypatch):
+    # The header's top-left displays the running plugin version on mount.
+    monkeypatch.setattr("cockpit.tui.app.version.running_version", lambda: "9.9.9")
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one(HeaderBar).version_text == "9.9.9"
+
+
 async def test_initial_ticks_fire_on_mount():
     app, calls = _make_app()
     async with app.run_test() as pilot:
