@@ -14,6 +14,8 @@ from textual.widgets import Static
 
 
 def _fmt(seconds: int) -> str:
+    if seconds == -3:
+        return "waiting"
     if seconds == -2:
         return "off"
     if seconds == -1:

@@ -32,7 +32,6 @@ from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal
 from textual.widgets import Footer
 
 from cockpit.lib import version
@@ -46,8 +45,8 @@ from cockpit.tui.widgets.worktree_table import WorktreeTable
 
 _UPDATE_CHECK_SECONDS = 3600
 
-# (repo display name, linear-enabled, worktrees)
-Inventory = list[tuple[str, bool, list[Worktree]]]
+# (repo display name, sidebar_color, linear-enabled, worktrees)
+Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
 
 
 class _QueueWriter(io.TextIOBase):
@@ -71,9 +70,7 @@ class _QueueWriter(io.TextIOBase):
 
 class CockpitApp(App[None]):
     CSS = """
-    #body { height: 1fr; }
-    #table { width: 2fr; }
-    #log { width: 1fr; border-left: solid $panel; padding: 0 1; }
+    #table { width: 1fr; height: 1fr; }
     """
 
     BINDINGS = [
@@ -100,6 +97,7 @@ class CockpitApp(App[None]):
         self._self_ws = self_ws
         self._slow_in_flight = False
         self._fast_in_flight = False
+        self._fast_started = False
         self._next_slow = 0.0
         self._next_fast = 0.0
         self._log_q: queue.SimpleQueue[str] = queue.SimpleQueue()
@@ -109,10 +107,10 @@ class CockpitApp(App[None]):
     # ---- lifecycle -------------------------------------------------------
 
     def compose(self) -> ComposeResult:
+        # Log pane temporarily removed — the table runs full-width. stdout is
+        # still captured (below) so tick prints can't corrupt the screen.
         yield HeaderBar(id="header")
-        with Horizontal(id="body"):
-            yield WorktreeTable(id="table")
-            yield LogPane(id="log")
+        yield WorktreeTable(id="table")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -126,26 +124,30 @@ class CockpitApp(App[None]):
         self._set_loop_pill(True)
         self._install_signal_handlers()
 
-        now = time.monotonic()
-        self._next_slow = now + self._slow_secs
-        self._next_fast = now + self._fast_secs if self._fast_secs > 0 else 0.0
-
+        self._next_slow = time.monotonic() + self._slow_secs
         self.set_interval(1.0, self._update_countdown)
         self.set_interval(0.2, self._drain_log)
         self.set_interval(self._slow_secs, self._kick_slow)
-        if self._fast_secs > 0:
-            self.set_interval(self._fast_secs, self._kick_fast)
         self.set_interval(_UPDATE_CHECK_SECONDS, self._check_update)
 
         print(f"slow-tick: every {self._slow_secs}s")
         if self._fast_secs > 0:
-            print(f"fast-tick: every {self._fast_secs}s")
+            print(f"fast-tick: every {self._fast_secs}s (starts after first slow)")
 
-        # First paint + first ticks immediately so the screen isn't empty.
+        # Slow first; the fast loop starts only once the slow tick has populated
+        # the PR caches (so the first fast republish isn't a no-op).
         self._check_update()
         self._kick_slow()
-        if self._fast_secs > 0:
-            self._kick_fast()
+
+    def _start_fast(self) -> None:
+        """Begin the fast tick loop — called on the UI thread after the first
+        slow tick completes. Idempotent."""
+        if self._fast_secs <= 0 or self._fast_started:
+            return
+        self._fast_started = True
+        self._next_fast = time.monotonic() + self._fast_secs
+        self.set_interval(self._fast_secs, self._kick_fast)
+        self._kick_fast()
 
     def on_unmount(self) -> None:
         import sys
@@ -196,6 +198,8 @@ class CockpitApp(App[None]):
             self._slow_in_flight = False
             inv = self._gather_inventory()
             self.call_from_thread(self._render_table, inv)
+            # First slow tick done → the PR caches exist; safe to start fast.
+            self.call_from_thread(self._start_fast)
 
     @work(thread=True, group="fast", exit_on_error=False)
     def _run_fast(self) -> None:
@@ -227,18 +231,24 @@ class CockpitApp(App[None]):
         )
         if self._fast_secs <= 0:
             header.fast_remaining = -2
+        elif not self._fast_started:
+            header.fast_remaining = -3  # waiting on the first slow tick
         else:
             header.fast_remaining = (
                 -1 if self._fast_in_flight else max(0, int(self._next_fast - now))
             )
 
     def _drain_log(self) -> None:
-        log = self.query_one(LogPane)
+        # The log pane is temporarily out of the layout; drain (and discard) so
+        # the queue stays bounded and re-adding a LogPane restores display.
+        panes = list(self.query(LogPane))
         while True:
             try:
-                log.append(self._log_q.get_nowait())
+                line = self._log_q.get_nowait()
             except queue.Empty:
                 return
+            for pane in panes:
+                pane.append(line)
 
     def _set_update(self, text: str) -> None:
         self.query_one(HeaderBar).update_text = text
@@ -256,7 +266,12 @@ class CockpitApp(App[None]):
             except (RuntimeError, OSError):
                 continue
             out.append(
-                (repo.get("name") or path.name, bool(repo.get("linear_keys")), wts)
+                (
+                    repo.get("name") or path.name,
+                    repo.get("sidebar_color"),
+                    bool(repo.get("linear_keys")),
+                    wts,
+                )
             )
         return out
 

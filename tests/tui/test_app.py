@@ -15,7 +15,6 @@ import pytest
 from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
 from cockpit.tui.widgets.header_bar import HeaderBar
-from cockpit.tui.widgets.log_pane import LogPane
 from cockpit.tui.widgets.worktree_table import WorktreeTable
 
 pytestmark = pytest.mark.asyncio
@@ -49,20 +48,36 @@ def _make_app(**kw):
     return app, calls
 
 
-async def test_mounts_with_header_and_log():
+async def test_mounts_with_header_and_table():
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.query_one(HeaderBar) is not None
-        assert app.query_one(LogPane) is not None
+        assert app.query_one(WorktreeTable) is not None
 
 
 async def test_initial_ticks_fire_on_mount():
     app, calls = _make_app()
     async with app.run_test() as pilot:
-        await pilot.pause(0.6)
+        await pilot.pause(0.8)
         assert calls["slow"] >= 1
         assert calls["fast"] >= 1
+
+
+async def test_fast_starts_only_after_first_slow():
+    order: list[str] = []
+    app = CockpitApp(
+        slow_tick=lambda: order.append("slow"),
+        fast_tick=lambda: order.append("fast"),
+        slow_secs=300,
+        fast_secs=30,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause(0.8)
+        assert order, "no ticks ran"
+        assert order[0] == "slow"  # slow runs first on startup
+        assert "fast" in order  # fast started once slow completed
+        assert app._fast_started
 
 
 async def test_sync_key_kicks_slow_tick():
@@ -89,13 +104,13 @@ async def test_in_flight_gate_blocks_overlapping_kick(monkeypatch):
         assert ran == [1]  # runs once the flag clears
 
 
-async def test_tick_output_lands_in_log():
+async def test_tick_output_does_not_crash_without_log_pane():
+    # The log pane is temporarily out of the layout; captured stdout must still
+    # drain harmlessly (no LogPane to write to) rather than raise.
     app, _ = _make_app()
     async with app.run_test() as pilot:
-        # on_mount prints "slow-tick: every 300s" through the captured stdout.
-        await pilot.pause(0.6)
-        log = app.query_one(LogPane)
-        assert len(log.lines) > 0
+        await pilot.pause(0.4)
+        app._drain_log()  # no LogPane mounted → drains and discards, no error
 
 
 async def test_render_table_adds_one_row_per_worktree():
@@ -106,7 +121,7 @@ async def test_render_table_adds_one_row_per_worktree():
             Worktree(path=Path("/tmp/a"), branch="khivi/feat-a"),
             Worktree(path=Path("/tmp/b"), branch="khivi/feat-b"),
         ]
-        app._render_table([("repo", False, wts)])
+        app._render_table([("repo", None, False, wts)])
         await pilot.pause()
         assert app.query_one(WorktreeTable).row_count == 2
 
@@ -129,7 +144,7 @@ async def test_arrow_keys_move_row_cursor():
             Worktree(path=Path("/tmp/b"), branch="khivi/feat-b"),
             Worktree(path=Path("/tmp/c"), branch="khivi/feat-c"),
         ]
-        app._render_table([("repo", False, wts)])
+        app._render_table([("repo", None, False, wts)])
         await pilot.pause()
         table = app.query_one(WorktreeTable)
         table.focus()
