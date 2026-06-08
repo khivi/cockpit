@@ -13,10 +13,16 @@ import pytest
 import cockpit.cli as cli
 
 
-def test_no_args_prints_usage(capsys):
-    rc = cli.main([])
-    assert rc == 2
-    assert "usage: cockpit" in capsys.readouterr().out
+def test_no_args_defaults_to_watch(monkeypatch):
+    seen = {}
+
+    def fake(argv):
+        seen["argv"] = argv
+        return 0
+
+    monkeypatch.setattr("cockpit.cockpit.main", fake)
+    assert cli.main([]) == 0
+    assert seen["argv"] == ["--watch"]
 
 
 def test_help_flag_prints_usage(capsys):
