@@ -111,6 +111,48 @@ def _validate_linear_dev_done(cfg: dict) -> None:
         )
 
 
+def _validate_linear_done_on_merge(cfg: dict) -> None:
+    """Validate the merge-transition config and warn on a missing API key.
+
+    `linear_done_on_merge` (top-level *and* per-repo) must be a bool — a stray
+    truthy string would silently enable a Linear *write*, so it's rejected like
+    `review_prs`. `linear_merge_done_state`, when present, must be a string.
+
+    Then, if the feature is enabled anywhere (global or any repo) but
+    `LINEAR_API_KEY` is unset, the daemon can't perform the transition — warn
+    once (soft degrade, not an error), matching `_validate_linear_dev_done`.
+    """
+    top = cfg.get("linear_done_on_merge")
+    if top is not None and not isinstance(top, bool):
+        _die(f"linear_done_on_merge must be true or false, got {top!r}.")
+
+    state = cfg.get("linear_merge_done_state")
+    if state is not None and not isinstance(state, str):
+        _die(f"linear_merge_done_state must be a string, got {state!r}.")
+
+    enabled = bool(top)
+    for repo in cfg.get("repos", []):
+        val = repo.get("linear_done_on_merge")
+        if val is None:
+            continue
+        if not isinstance(val, bool):
+            name = repo.get("name") or repo.get("path", "?")
+            _die(
+                f"repo {name!r}: linear_done_on_merge must be true or false, "
+                f"got {val!r}."
+            )
+        enabled = enabled or val
+
+    if enabled and not os.environ.get(LINEAR_API_KEY_ENV):
+        print(
+            f"{yellow('cockpit:')} linear_done_on_merge is enabled but "
+            f"{LINEAR_API_KEY_ENV} is unset — linked tickets won't transition "
+            f"on merge. Export {LINEAR_API_KEY_ENV} to enable it.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _warn_cockpit_not_on_path() -> None:
     """Soft-warn when the `cockpit` console script isn't on PATH.
 
@@ -150,6 +192,7 @@ def preflight(cfg: dict) -> None:
     _validate_review_prs(cfg)
     _validate_check_update(cfg)
     _validate_linear_dev_done(cfg)
+    _validate_linear_done_on_merge(cfg)
 
     if cfg.get("tool", "auto") == "auto":
         resolved = resolve_tool()

@@ -19,10 +19,14 @@ from cockpit.lib.linear import (
     LINEAR_RE,
     LINEAR_RE_CI,
     extract_ticket,
+    fetch_team_states,
+    fetch_ticket_meta,
     fetch_ticket_state,
+    fetch_viewer_id,
     linear_mcp_available,
     parse_linear_footer_links,
     parse_linear_footers,
+    update_ticket_state,
 )
 
 
@@ -289,3 +293,170 @@ def test_fetch_ticket_state_sends_team_and_number_variables():
 
     assert captured["auth"] == "secret-key"  # raw key, no Bearer prefix
     assert captured["body"]["variables"] == {"team": "ENG", "number": 42.0}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# merge-transition helpers — viewer / meta / team-states / mutation
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_fetch_viewer_id_no_key_skips_network():
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_viewer_id() is None
+    urlopen.assert_not_called()
+
+
+def test_fetch_viewer_id_happy_path():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_FakeResp({"data": {"viewer": {"id": "u-123"}}}),
+    ):
+        assert fetch_viewer_id(api_key="k") == "u-123"
+
+
+def test_fetch_viewer_id_error_is_none():
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
+        assert fetch_viewer_id(api_key="k") is None
+
+
+def _meta_payload(
+    *, state="Dev Done", state_type="completed", assignee="u-1", team="t-1"
+) -> dict:
+    return {
+        "data": {
+            "issues": {
+                "nodes": [
+                    {
+                        "id": "issue-uuid",
+                        "identifier": "PE-1",
+                        "state": {"name": state, "type": state_type},
+                        "assignee": {"id": assignee} if assignee else None,
+                        "team": {"id": team},
+                    }
+                ]
+            }
+        }
+    }
+
+
+def test_fetch_ticket_meta_happy_path():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_FakeResp(_meta_payload()),
+    ):
+        meta = fetch_ticket_meta("PE-1234", api_key="k")
+    assert meta == {
+        "id": "issue-uuid",
+        "state": "Dev Done",
+        "type": "completed",
+        "assignee_id": "u-1",
+        "team_id": "t-1",
+    }
+
+
+def test_fetch_ticket_meta_unassigned_is_none_assignee():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_FakeResp(_meta_payload(assignee=None)),
+    ):
+        meta = fetch_ticket_meta("PE-1", api_key="k")
+    assert meta is not None
+    assert meta["assignee_id"] is None
+
+
+def test_fetch_ticket_meta_no_key_skips_network():
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_ticket_meta("PE-1") is None
+    urlopen.assert_not_called()
+
+
+def test_fetch_ticket_meta_rejects_non_ticket():
+    with patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen:
+        assert fetch_ticket_meta("nope", api_key="k") is None
+    urlopen.assert_not_called()
+
+
+def test_fetch_ticket_meta_no_match_is_none():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_FakeResp({"data": {"issues": {"nodes": []}}}),
+    ):
+        assert fetch_ticket_meta("PE-9", api_key="k") is None
+
+
+def test_fetch_team_states_builds_casefolded_map():
+    payload = {
+        "data": {
+            "team": {
+                "states": {
+                    "nodes": [
+                        {"id": "s-done", "name": "Done"},
+                        {"id": "s-prog", "name": "In Progress"},
+                    ]
+                }
+            }
+        }
+    }
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen", return_value=_FakeResp(payload)
+    ):
+        states = fetch_team_states("t-1", api_key="k")
+    assert states == {"done": "s-done", "in progress": "s-prog"}
+
+
+def test_fetch_team_states_no_key_or_team_skips_network():
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_team_states("t-1") is None  # no key (env cleared)
+        assert fetch_team_states("", api_key="k") is None  # no team
+    urlopen.assert_not_called()
+
+
+def test_fetch_team_states_error_is_none():
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
+        assert fetch_team_states("t-1", api_key="k") is None
+
+
+def test_update_ticket_state_success():
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data.decode())
+        return _FakeResp({"data": {"issueUpdate": {"success": True}}})
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        ok = update_ticket_state("issue-uuid", "s-done", api_key="k")
+    assert ok is True
+    assert captured["body"]["variables"] == {"id": "issue-uuid", "stateId": "s-done"}
+
+
+def test_update_ticket_state_unsuccessful_is_false():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_FakeResp({"data": {"issueUpdate": {"success": False}}}),
+    ):
+        assert update_ticket_state("i", "s", api_key="k") is False
+
+
+def test_update_ticket_state_no_key_or_args_skips_network():
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
+    ):
+        assert update_ticket_state("i", "s") is False  # no key (env cleared)
+        assert update_ticket_state("", "s", api_key="k") is False  # no issue
+        assert update_ticket_state("i", "", api_key="k") is False  # no state
+    urlopen.assert_not_called()
+
+
+def test_update_ticket_state_error_is_false():
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
+        assert update_ticket_state("i", "s", api_key="k") is False

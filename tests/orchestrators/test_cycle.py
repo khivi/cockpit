@@ -1203,6 +1203,11 @@ def _cycle_patches(tmp_path, calls, *, headless=False):
         ),
         patch.object(
             cycle,
+            "_transition_merged_tickets",
+            side_effect=lambda *_a, **_kw: calls.append("transition"),
+        ),
+        patch.object(
+            cycle,
             "_maybe_autoclose",
             side_effect=lambda *_a, **_kw: calls.append("autoclose"),
         ),
@@ -1241,6 +1246,7 @@ def test_cycle_repo_phase_order(tmp_path):
         "handle_orphans",
         "apply_colors",
         "spawn_missing",
+        "transition",
         "autoclose",
     ]
 
@@ -1252,6 +1258,254 @@ def test_cycle_repo_headless_skips_workspace_phases(tmp_path):
     with _enter_all(_cycle_patches(tmp_path, calls, headless=True)):
         _run_cycle_repo()
     assert calls == []
+
+
+# ── _transition_merged_tickets: the opt-in Linear write at OPEN→MERGED ───────
+
+
+def _transition_ctx(
+    tmp_path,
+    *,
+    cfg=None,
+    repo_entry=None,
+    tickets=None,
+    branch="khivi/feat",
+    dry=False,
+):
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir(exist_ok=True)
+    wt = Worktree(path=wt_path, branch=branch, dirty_count=0, is_primary=False)
+    return cycle.RepoCycle(
+        cfg=cfg if cfg is not None else {"linear_done_on_merge": True},
+        repo_path=tmp_path,
+        owner="o",
+        name="n",
+        self_user="khivi",
+        wts=[wt],
+        prs=[],
+        tracked={},
+        names={},
+        cwds={},
+        merged_branches={branch: "deadbeef"},
+        merged_branches_deep={},
+        pill_state={},
+        dry=dry,
+        headless=False,
+        repo_entry=repo_entry if repo_entry is not None else {"linear_keys": ["PE"]},
+    )
+
+
+def _transition_patches(
+    *,
+    viewer="u-me",
+    meta=None,
+    team_states=None,
+    payload=None,
+):
+    """Patch the read-only linear leaf calls + is_ancestor (drives
+    _is_post_merge_stale) and find_pr_payload. `update_ticket_state` is left for
+    each test to patch so it can assert on the call. `payload` defaults to a
+    one-ticket linear block."""
+    if payload is None:
+        payload = {"linear": {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}}
+    if meta is None:
+        meta = {
+            "id": "issue-uuid",
+            "state": "Dev Done",
+            "type": "completed",
+            "assignee_id": "u-me",
+            "team_id": "t-1",
+        }
+    if team_states is None:
+        team_states = {"done": "s-done"}
+    return [
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "find_pr_payload", return_value=payload),
+        patch.object(cycle, "fetch_viewer_id", return_value=viewer),
+        patch.object(cycle, "fetch_ticket_meta", return_value=meta),
+        patch.object(cycle, "fetch_team_states", return_value=team_states),
+    ]
+
+
+def test_transition_happy_path_moves_ticket(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    with (
+        _enter_all(_transition_patches()),
+        patch.object(cycle, "update_ticket_state", return_value=True) as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_called_once_with("issue-uuid", "s-done")
+    assert ctx.pill_state.get("merged-done:o/n:PE-1") is True
+
+
+def test_transition_noop_when_flag_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path, cfg={"linear_done_on_merge": False})
+    with (
+        _enter_all(_transition_patches()),
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_not_called()
+
+
+def test_transition_repo_override_enables(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    # Global off, per-repo on → fires.
+    ctx = _transition_ctx(
+        tmp_path,
+        cfg={"linear_done_on_merge": False},
+        repo_entry={"linear_keys": ["PE"], "linear_done_on_merge": True},
+    )
+    with (
+        _enter_all(_transition_patches()),
+        patch.object(cycle, "update_ticket_state", return_value=True) as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_called_once()
+
+
+def test_transition_noop_when_dry(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path, dry=True)
+    with (
+        _enter_all(_transition_patches()),
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_not_called()
+
+
+def test_transition_noop_when_no_linear_keys(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path, repo_entry={"name": "n"})
+    with (
+        _enter_all(_transition_patches()),
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_not_called()
+
+
+def test_transition_noop_when_no_api_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    ctx = _transition_ctx(tmp_path)
+    with (
+        _enter_all(_transition_patches()),
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_not_called()
+
+
+def test_transition_skips_other_assignee(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    meta = {
+        "id": "issue-uuid",
+        "state": "Dev Done",
+        "type": "completed",
+        "assignee_id": "someone-else",
+        "team_id": "t-1",
+    }
+    with (
+        _enter_all(_transition_patches(meta=meta)),
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_not_called()
+    # Still marked so it isn't re-queried every tick.
+    assert ctx.pill_state.get("merged-done:o/n:PE-1") is True
+
+
+def test_transition_skips_already_at_target(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    meta = {
+        "id": "issue-uuid",
+        "state": "Done",  # already terminal
+        "type": "completed",
+        "assignee_id": "u-me",
+        "team_id": "t-1",
+    }
+    with (
+        _enter_all(_transition_patches(meta=meta)),
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_not_called()
+
+
+def test_transition_skips_canceled_ticket(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    meta = {
+        "id": "issue-uuid",
+        "state": "Closed",
+        "type": "canceled",  # never resurrect
+        "assignee_id": "u-me",
+        "team_id": "t-1",
+    }
+    with (
+        _enter_all(_transition_patches(meta=meta)),
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_not_called()
+
+
+def test_transition_idempotent_marker_skips_refetch(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    ctx.pill_state["merged-done:o/n:PE-1"] = True
+    with (
+        _enter_all(_transition_patches()),
+        patch.object(cycle, "fetch_ticket_meta") as meta_mock,
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    meta_mock.assert_not_called()
+    upd.assert_not_called()
+
+
+def test_transition_unknown_target_state_skips_and_warns(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    # Team has no state matching the target name.
+    with (
+        _enter_all(_transition_patches(team_states={"todo": "s-todo"})),
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_not_called()
+    assert "not found" in capsys.readouterr().out
+
+
+def test_transition_failed_mutation_clears_marker(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    with (
+        _enter_all(_transition_patches()),
+        patch.object(cycle, "update_ticket_state", return_value=False),
+    ):
+        cycle._transition_merged_tickets(ctx)
+    # Marker cleared so a later tick retries.
+    assert "merged-done:o/n:PE-1" not in ctx.pill_state
+
+
+def test_transition_skips_non_stale_worktree(tmp_path, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    patches = _transition_patches()
+    # Override is_ancestor → not post-merge-stale → nothing happens.
+    patches[0] = patch.object(cycle, "is_ancestor", return_value=False)
+    with (
+        _enter_all(patches),
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_not_called()
 
 
 # ── _spawn_missing_workspaces background creation + _bg_spawn_pr ─────────────

@@ -269,6 +269,36 @@ def linear_dev_done_state(cfg: dict | None = None) -> str:
     return str(cfg.get("linear_dev_done_state") or "Dev Done").strip() or "Dev Done"
 
 
+def linear_merge_done_state(cfg: dict | None = None) -> str:
+    """Name of the Linear workflow state a delivered ticket is moved to when its
+    PR merges (default: "Done"). Distinct from `linear_dev_done_state` ("Dev
+    Done") — that's where the passive `devdone=` pill lights up while the PR is
+    *open*; this is the terminal state the opt-in `linear_done_on_merge` writer
+    transitions to on merge. Override with `linear_merge_done_state` when your
+    team's terminal column is named differently. Matched case-insensitively.
+    """
+    cfg = cfg if cfg is not None else load_config()
+    return str(cfg.get("linear_merge_done_state") or "Done").strip() or "Done"
+
+
+def linear_done_on_merge(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> bool:
+    """Whether the daemon moves a PR's delivered Linear tickets to
+    `linear_merge_done_state` when the PR merges (default: False).
+
+    Resolved per-repo over global: a `linear_done_on_merge` on the repo entry
+    wins (so you can enable it only on repos you own the tickets for), otherwise
+    the top-level key, otherwise False. Opt-in by default because, unlike every
+    other Linear touch in cockpit, this makes the daemon a Linear *writer* — see
+    `cycle._transition_merged_tickets`.
+    """
+    if repo_entry is not None and "linear_done_on_merge" in repo_entry:
+        return bool(repo_entry["linear_done_on_merge"])
+    cfg = cfg if cfg is not None else load_config()
+    return bool(cfg.get("linear_done_on_merge", False))
+
+
 def _read_current_statusline(settings_path: Path) -> str | None:
     if not settings_path.exists():
         return ""

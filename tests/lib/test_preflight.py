@@ -216,3 +216,75 @@ def test_preflight_silent_when_no_linear_repo_even_without_key(
     monkeypatch.delenv("LINEAR_API_KEY", raising=False)
     preflight({"tool": "cmux", "repos": [{"name": "r", "path": "/x"}]})
     assert capsys.readouterr().err == ""
+
+
+# ── linear_done_on_merge (the opt-in Linear write) ──────────────────────────
+
+
+def test_preflight_exits_on_non_bool_global_done_on_merge(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "linear_done_on_merge": "yes"})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "linear_done_on_merge" in err
+    assert "'yes'" in err
+
+
+def test_preflight_exits_on_non_bool_repo_done_on_merge(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [{"name": "r", "linear_done_on_merge": 1}]})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "linear_done_on_merge" in err
+    assert "'r'" in err
+
+
+def test_preflight_exits_on_non_string_merge_done_state(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "linear_merge_done_state": 5})
+    assert exc.value.code == 2
+    assert "linear_merge_done_state" in capsys.readouterr().err
+
+
+def test_preflight_warns_when_done_on_merge_enabled_but_no_api_key(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    preflight({"tool": "cmux", "linear_done_on_merge": True, "repos": []})
+    err = capsys.readouterr().err
+    assert "linear_done_on_merge is enabled" in err
+    assert "LINEAR_API_KEY" in err
+
+
+def test_preflight_warns_when_repo_done_on_merge_enabled_but_no_api_key(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    preflight({"tool": "cmux", "repos": [{"name": "r", "linear_done_on_merge": True}]})
+    assert "linear_done_on_merge is enabled" in capsys.readouterr().err
+
+
+def test_preflight_silent_when_done_on_merge_enabled_and_api_key_set(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("LINEAR_API_KEY", "lin_xxx")
+    preflight({"tool": "cmux", "linear_done_on_merge": True, "repos": []})
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_silent_when_done_on_merge_disabled_without_key(
+    tmp_path, monkeypatch, capsys
+):
+    # Default-off: a missing key is irrelevant, so no warning.
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    preflight({"tool": "cmux", "linear_done_on_merge": False, "repos": []})
+    assert capsys.readouterr().err == ""

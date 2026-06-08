@@ -72,6 +72,8 @@ from cockpit.lib.config import (
     COCKPIT_HOME,
     ensure_state_dirs,
     linear_dev_done_state,
+    linear_done_on_merge,
+    linear_merge_done_state,
 )
 from cockpit.lib.gh import (
     PR,
@@ -99,7 +101,15 @@ from cockpit.lib.git import (
     worktrees_basic,
 )
 from cockpit.lib.issue_color import issue_color
-from cockpit.lib.linear import fetch_ticket_state, parse_linear_footers
+from cockpit.lib.linear import (
+    LINEAR_API_KEY_ENV,
+    fetch_team_states,
+    fetch_ticket_meta,
+    fetch_ticket_state,
+    fetch_viewer_id,
+    parse_linear_footers,
+    update_ticket_state,
+)
 from cockpit.lib.log_format import verb
 from cockpit.lib.nudges import NudgePref
 from cockpit.lib.nudges import load_pref as _load_nudge_pref
@@ -381,6 +391,110 @@ def _workspace_ref_for_path(wt_path: Path, cwds: dict[str, Path]) -> str | None:
         if cwd.resolve() == target:
             return ref
     return None
+
+
+def _transition_merged_tickets(ctx: RepoCycle) -> None:
+    """Opt-in: move a merged PR's delivered Linear tickets to the configured
+    terminal state (`linear_merge_done_state`, default "Done").
+
+    This is the *one* place cockpit *writes* to Linear — every other Linear
+    touch is read-only. It runs on the same `_is_post_merge_stale` signal
+    `_maybe_autoclose` uses, but independently: a ticket moves to Done on merge
+    even when teardown is held back (uncommitted work, unaddressed threads) — a
+    merged PR means the work shipped regardless of leftover local state.
+
+    Gates, all of which must hold:
+      * `linear_done_on_merge` enabled for this repo (per-repo over global);
+      * the repo is Linear-configured (`linear_keys`) and `LINEAR_API_KEY` set;
+      * not a dry run.
+
+    Per delivered ticket (read from the cached PR snapshot's `linear` block —
+    the strict footer set, no extra network to discover them):
+      * skip if already evaluated this daemon run (a `merged-done:` marker in
+        `pill_state` — keeps a kept-but-merged worktree from re-querying every
+        tick; the already-at-target check below is the cross-restart backstop);
+      * skip unless the ticket is assigned to me (the API key's `viewer`) — never
+        move a teammate's ticket;
+      * skip if it's already at the target state, or its state `type` is
+        `canceled` (never resurrect a canceled ticket — note "Dev Done"/"Done"
+        both have `type: completed`, so equality, not type, decides "already
+        done");
+      * otherwise resolve the target state's UUID for the ticket's team and fire
+        the `issueUpdate` mutation.
+    """
+    if ctx.dry:
+        return
+    if not linear_done_on_merge(ctx.cfg, ctx.repo_entry):
+        return
+    if not ctx.repo_entry.get("linear_keys"):
+        return
+    if not os.environ.get(LINEAR_API_KEY_ENV):
+        return
+
+    viewer_id = fetch_viewer_id()
+    if not viewer_id:
+        # Can't confirm ownership → move nothing (fail-safe). The preflight
+        # already warns on a missing key; a transient viewer-query failure
+        # simply retries next tick.
+        return
+
+    target = linear_merge_done_state(ctx.cfg)
+    target_cf = target.casefold()
+    team_states: dict[str, dict | None] = {}  # team_id → name-cf→uuid (per cycle)
+
+    for wt in ctx.wts:
+        if wt.is_primary or wt.branch in MAIN_BRANCHES:
+            continue
+        if not _is_post_merge_stale(wt, ctx.merged_branches):
+            continue
+        payload = find_pr_payload(wt.branch, ctx.name)
+        tickets = ((payload or {}).get("linear") or {}).get("tickets") or []
+        for entry in tickets:
+            tid = entry.get("id")
+            if not tid:
+                continue
+            marker = f"merged-done:{ctx.owner}/{ctx.name}:{tid}"
+            if ctx.pill_state.get(marker):
+                continue
+            meta = fetch_ticket_meta(tid)
+            if not meta:
+                continue  # transient failure → no marker, retry next tick
+            # From here the ticket has been evaluated; mark it so a kept merged
+            # worktree doesn't re-query every tick regardless of the outcome.
+            ctx.pill_state[marker] = True
+            if meta.get("assignee_id") != viewer_id:
+                continue
+            state_name = (meta.get("state") or "").casefold()
+            if state_name == target_cf or meta.get("type") == "canceled":
+                continue
+            team_id = meta.get("team_id")
+            if not team_id:
+                continue
+            if team_id not in team_states:
+                team_states[team_id] = fetch_team_states(team_id)
+            states = team_states.get(team_id)
+            state_id = (states or {}).get(target_cf)
+            if not state_id:
+                print(
+                    f"  {verb('linear', color=yellow)} {dim(tid)}: "
+                    f"target state {target!r} not found for its team — skipped",
+                    flush=True,
+                )
+                continue
+            if update_ticket_state(meta["id"], state_id):
+                print(
+                    f"  {verb('linear')} {tid} → {target} "
+                    f"{dim(f'(merged {wt.short})')}",
+                    flush=True,
+                )
+            else:
+                # Mutation failed — clear the marker so a later tick retries.
+                ctx.pill_state.pop(marker, None)
+                print(
+                    f"  {verb('linear', color=yellow)} {dim(tid)}: "
+                    f"transition to {target!r} failed — will retry",
+                    flush=True,
+                )
 
 
 def _maybe_autoclose(
@@ -1381,6 +1495,7 @@ def cycle_repo(
     _handle_orphans_and_close_stale(ctx, keep_refs)
     _apply_repo_colors(ctx, repo_entry, keep_refs)
     _spawn_missing_workspaces(ctx, repo_entry)
+    _transition_merged_tickets(ctx)
     _maybe_autoclose(
         ctx.repo_path,
         ctx.name,
