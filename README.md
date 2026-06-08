@@ -40,12 +40,24 @@ Two pieces: the **`cockpit` command** (the daemon, and the binary the slash comm
 ```bash
 uv tool install git+https://github.com/khivi/cockpit
 # or, from a checkout / the installed plugin dir, a one-shot bootstrap that
-# installs uv too if missing:  bin/install.sh
+# installs uv too if missing:  bin/update.sh
 # or run ad-hoc without installing:
 #   uvx --from git+https://github.com/khivi/cockpit cockpit --help
 ```
 
-`bin/cockpit.sh` launches the TUI daemon (`cockpit watch`), preferring the installed `cockpit` and otherwise running it from the checkout via `uv` — handy before a global install. It also supervises self-update: the TUI checks hourly for a newer version and shows an "⬆ update available" indicator in the header; press `u` and cockpit.sh runs `bin/update.sh`, then relaunches the daemon on the new version. `bin/update.sh` updates everything in one shot: it refreshes the Claude Code marketplace + plugin via the `claude` CLI, then reinstalls the `cockpit` command via `uv` (restart Claude Code afterwards for the plugin's slash commands/hooks). `bin/update.sh --check` reports whether an update is available without applying it (exit 10 = available, 0 = current).
+`bin/cockpit.sh` launches the TUI daemon (`cockpit watch`), preferring the installed `cockpit` and otherwise running it from the checkout via `uv` — handy before a global install. It also supervises self-update: the TUI checks hourly for a newer version and shows an "⬆ update available" indicator in the header; press `u` and cockpit.sh runs `bin/update.sh`, then relaunches the daemon on the new version. `bin/update.sh` updates everything in one shot: it bootstraps `uv` if missing, refreshes the Claude Code marketplace + plugin via the `claude` CLI, then reinstalls the `cockpit` command via `uv` (restart Claude Code afterwards for the plugin's slash commands/hooks). `bin/update.sh --check` reports whether an update is available without applying it (exit 10 = available, 0 = current).
+
+**Where to launch it.** `bin/cockpit.sh` lives in a checkout's `bin/`, and in each installed plugin version dir (`~/.claude/plugins/cache/khivi-cockpit/cockpit/<version>/bin/cockpit.sh`). Run it from a terminal or cmux tab (see "no auto-start" below). An alias keeps it one keystroke away:
+
+```bash
+# Have a checkout? Alias the stable path (stays current via git pull):
+alias cockpit-watch='~/code/cockpit/bin/cockpit.sh'
+
+# Plugin-only (no checkout)? Always launch the newest installed copy:
+alias cockpit-watch='bash "$(ls -d ~/.claude/plugins/cache/khivi-cockpit/cockpit/*/bin/cockpit.sh | sort -V | tail -1)"'
+```
+
+Either alias works with self-update: pressing `u` runs `bin/update.sh` and relaunches on the new version. The same launcher also takes an `update` verb — `cockpit-watch update` (or `cockpit-watch update --check`) delegates to `bin/update.sh` without opening the TUI, for headless or scripted updates. The plugin-only alias also picks up a newer `cockpit.sh` itself on the next launch (the checkout alias gets that via `git pull`). The alias resolves through symlinks too, so `~/bin/cockpit-watch -> …/cockpit.sh` is fine.
 
 1. Inside Claude Code, add the plugin:
 
