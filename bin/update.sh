@@ -42,9 +42,16 @@ marketplace="$(read_name "${repo_root}/.claude-plugin/marketplace.json")"
 
 if command -v claude >/dev/null 2>&1; then
   echo "refreshing marketplace ${marketplace}..."
-  claude plugin marketplace update "${marketplace}"
-  echo "updating plugin ${plugin}..."
-  claude plugin update "${plugin}"
+  # `marketplace update` takes the bare marketplace name; `plugin update` needs
+  # the fully-qualified `<plugin>@<marketplace>` id (a bare name yields
+  # `Plugin "cockpit" not found`). Both stay manifest-derived.
+  claude plugin marketplace update "${marketplace}" \
+    || echo "marketplace refresh failed; continuing to the uv reinstall." >&2
+  echo "updating plugin ${plugin}@${marketplace}..."
+  # Non-fatal: the uv reinstall below is what actually swaps the running daemon,
+  # so a plugin-refresh failure must not (under `set -e`) abort before it.
+  claude plugin update "${plugin}@${marketplace}" \
+    || echo "plugin refresh failed; continuing to the uv reinstall." >&2
 else
   echo "claude CLI not found — update the plugin from inside Claude Code with /plugin." >&2
 fi
