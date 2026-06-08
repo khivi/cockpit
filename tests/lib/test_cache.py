@@ -118,6 +118,35 @@ def test_write_branch_pr_cache_zero_comments_writes_empty(cache_dir):
     assert (cache_dir / "pr-comments-khivi-feature").read_text() == ""
 
 
+def test_write_branch_pr_cache_writes_comments_total(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/feature",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=24,
+        title="Threads",
+        comments=2,
+        total=5,
+    )
+    assert (cache_dir / "pr-comments-khivi-feature").read_text() == "2"
+    assert (cache_dir / "pr-comments-total-khivi-feature").read_text() == "5"
+
+
+def test_write_branch_pr_cache_zero_total_writes_empty(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/feature",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=25,
+        title="None",
+        comments=0,
+        total=0,
+    )
+    assert (cache_dir / "pr-comments-total-khivi-feature").read_text() == ""
+
+
 def test_write_branch_pr_cache_writes_author(cache_dir):
     cache_mod.write_branch_pr_cache(
         "coworker/feature",
@@ -165,6 +194,7 @@ def test_refresh_pr_data_writes_no_pr_sentinel(cache_dir):
     assert (cache_dir / "pr-num-khivi-foo").read_text() == ""
     assert (cache_dir / "pr-title-khivi-foo").read_text() == ""
     assert (cache_dir / "pr-comments-khivi-foo").read_text() == ""
+    assert (cache_dir / "pr-comments-total-khivi-foo").read_text() == ""
 
 
 def test_refresh_pr_data_populates_from_json_snapshot(cache_dir):
@@ -175,6 +205,7 @@ def test_refresh_pr_data_populates_from_json_snapshot(cache_dir):
         "number": 99,
         "title": "Fix it",
         "unaddressed": 2,
+        "total": 5,
     }
     with patch.object(cache_mod, "find_pr_payload", return_value=payload):
         cache_mod.refresh_pr_data("khivi/bar")
@@ -182,6 +213,7 @@ def test_refresh_pr_data_populates_from_json_snapshot(cache_dir):
     assert (cache_dir / "pr-num-khivi-bar").read_text() == "99"
     assert (cache_dir / "pr-title-khivi-bar").read_text() == "Fix it"
     assert (cache_dir / "pr-comments-khivi-bar").read_text() == "2"
+    assert (cache_dir / "pr-comments-total-khivi-bar").read_text() == "5"
 
 
 def test_refresh_pr_data_zero_unaddressed_writes_empty(cache_dir):
@@ -338,7 +370,14 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     importlib.reload(cache_mod)
 
     # Write a PR JSON snapshot first (daemon side).
-    pr = _pr(ci="failed:lint", review_decision="APPROVED", number=42, title="Fix it")
+    pr = _pr(
+        ci="failed:lint",
+        review_decision="APPROVED",
+        number=42,
+        title="Fix it",
+        unaddressed=2,
+        total_from_others=5,
+    )
     wt = _wt()
     pref = NudgePref(muted=True)
     cache_mod.write_pr_cache("testrepo", pr, wt, pref)
@@ -351,6 +390,7 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
         "pr-muted",
         "pr-checks",
         "pr-comments",
+        "pr-comments-total",
     ):
         cache_mod.branch_cache(stem, "khivi/feature").unlink(missing_ok=True)
     cache_mod.republish_pr_caches_from_disk()
@@ -361,7 +401,8 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     assert (flat / "pr-title-khivi-feature").read_text() == "Fix it"
     assert (flat / "pr-muted-khivi-feature").read_text() == "muted"
     assert (flat / "pr-checks-khivi-feature").read_text() == "✗"
-    assert (flat / "pr-comments-khivi-feature").read_text() == ""
+    assert (flat / "pr-comments-khivi-feature").read_text() == "2"
+    assert (flat / "pr-comments-total-khivi-feature").read_text() == "5"
 
 
 def test_republish_pr_caches_no_cache_dir_is_noop(tmp_path, monkeypatch):
@@ -499,6 +540,21 @@ def test_write_pr_cache_bakes_muted_into_json(tmp_path, monkeypatch):
     payload = cache_mod.write_pr_cache("testrepo", pr, wt, pref)
     assert payload["muted"] == "muted"
     assert payload["pills"][0]["kind"] == "muted"
+
+
+def test_write_pr_cache_bakes_total_into_json(tmp_path, monkeypatch):
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    import cockpit.lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    importlib.reload(cache_mod)
+
+    pr = _pr(unaddressed=2, total_from_others=5)
+    payload = cache_mod.write_pr_cache("testrepo", pr)
+    assert payload["unaddressed"] == 2
+    assert payload["total"] == 5
 
 
 def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
