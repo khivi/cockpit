@@ -91,11 +91,9 @@ def cockpit_repo(tmp_path, monkeypatch) -> RepoFixture:
                 "path": str(repo),
                 "branch_prefix": "khivi/",
                 "default_base": "main",
-                "ci_skip_checks": ["copilot-pull-request-reviewer"],
             }
         ],
         "slow_poll_interval_seconds": 300,
-        "auto_cleanup_on_merge": True,
     }
     (cockpit_home / "config.json").write_text(json.dumps(cfg))
     monkeypatch.setenv("COCKPIT_HOME", str(cockpit_home))

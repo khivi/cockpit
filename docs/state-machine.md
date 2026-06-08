@@ -168,7 +168,7 @@ Key gates (all from `cycle.py`):
   `git branch -D`s any worktree-less local branch that is either merged (unbounded
   `merged_branches_deep`) with no post-merge commits, or has no remote and is
   contained in `origin/<default>`. Keeps unique-commit, open-PR, main/default, and
-  unverifiable branches. Same `auto_cleanup_on_merge` gate.
+  unverifiable branches. Unconditional cleanup, like `_maybe_autoclose`.
 
 ---
 

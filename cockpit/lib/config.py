@@ -116,9 +116,7 @@ def _read_config() -> dict:
             "repos": [],
             "slow_poll_interval_seconds": 300,
             "fast_poll_interval_seconds": 30,
-            "auto_cleanup_on_merge": True,
             "autoclose_age_days": 14,
-            "ci_skip_checks": ["copilot-pull-request-reviewer"],
             "theme": "dark",
             "tui_theme": TUI_THEME_DEFAULT,
         }

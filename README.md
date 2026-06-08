@@ -144,7 +144,6 @@ Edit `config.json` to register repos manually, or just run `/cockpit:new` and le
   ],
   "slow_poll_interval_seconds": 300,
   "fast_poll_interval_seconds": 30,
-  "auto_cleanup_on_merge": true,
   "use_cship": false,
   "use_linear": false,
   "check_update": true,
@@ -163,17 +162,17 @@ Each cycle's output is written to a bounded log file at `~/.config/cockpit/watch
 | Slow poll interval | 300 s | `config.json` → `slow_poll_interval_seconds` |
 | Fast poll interval | 30 s | `config.json` → `fast_poll_interval_seconds` |
 | Workspace backend | `auto` (cmux, fall back to limux) | `config.json` → `tool` (`cmux` \| `limux` \| `none` \| `auto`) |
-| Auto-cleanup on merge | **on** | `config.json` → `auto_cleanup_on_merge`. When on, cockpit removes the worktree and closes the workspace on any cycle where the PR is MERGED, the worktree is clean, and there are no unpushed commits. |
 | Auto-close age | 14 days | `config.json` → `autoclose_age_days`. Worktrees older than this threshold with no open PR are eligible for auto-close. |
 | Prompt prefix | _(empty)_ | `config.json` → `prompt_prefix`. Prepended to the first-turn prompt of every new workspace — and is the entire first turn for a blank spawn that seeds no plan prompt. |
 | Theme | `dark` | `config.json` → `theme` (`dark` \| `light`). Themes the neutral-grey statusline text; saturated hues stay background-agnostic. |
 | Update check | **on** | `config.json` → `check_update`. When on, the slow tick reads `plugin.json` on the install repo's default branch (via `gh api`, at most hourly) and logs a one-line notice to the `cockpit watch` log (and the header update indicator) when a newer version is published. Set `false` to skip the check. |
 | Branch prefix | `<gh user>/` | `config.json` → per-repo `branch_prefix` |
 | Default base branch | repo's `defaultBranchRef` | `config.json` → per-repo `default_base` |
-| CI checks to skip | _(none)_ | `config.json` → per-repo `ci_skip_checks`. List of check names excluded from the CI pass/fail roll-up (e.g. bot reviewers that always show as pending). |
 | Sidebar color | _(unset)_ | `config.json` → per-repo `sidebar_color`. A cmux color name that tints that repo's workspace entries in the cmux sidebar (and its name in cockpit's `--watch` log). Valid names: `Red`, `Crimson`, `Orange`, `Amber`, `Olive`, `Green`, `Teal`, `Aqua`, `Blue`, `Navy`, `Indigo`, `Purple`, `Magenta`, `Rose`, `Brown`, `Charcoal`. Unset = no tint. No effect on limux. An invalid name causes cockpit to refuse to start. |
 | Smart Linear flow | **off** (opt-in) | `config.json` → `use_linear`. When on, `/cockpit:new PE-1234` pre-flights `claude mcp list` for a Linear connector and (if found) seeds Claude's first turn to fetch the ticket via the Linear MCP and rename branch + workspace to include the title slug. Off → plain branch `khivi/pe-1234` + generic plan prompt (the positional Linear key still counts as context, so plan-only is seeded; only the MCP fetch + rename are skipped). |
 | Linear key → repo routing | per-repo, opt-in | Per-repo `linear_keys: ["PE", ...]` paired with `use_linear: true`. `/cockpit:new PE-1234` (no `--repo`) routes the spawn to the repo whose `linear_keys` contains `PE`, regardless of cwd. Unique match wins; zero matches falls back to cwd discovery; multiple matches print a note on stderr and also fall back. `--repo <name>` always overrides. |
+
+Worktree cleanup on merge is unconditional (no knob): every slow tick, cockpit removes the worktree and closes its workspace for any branch whose PR is MERGED, the worktree is clean, and nothing is unpushed. A worktree with no merged PR is never touched.
 
 ## Claude Code statusline (optional)
 

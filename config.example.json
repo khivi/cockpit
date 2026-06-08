@@ -6,14 +6,12 @@
       "branch_prefix": "yourusername/",
       "default_base": "main",
       "linear_keys": ["TEAM"],
-      "ci_skip_checks": ["copilot-pull-request-reviewer"],
       "sidebar_color": "Blue",
       "review_prs": false
     }
   ],
   "slow_poll_interval_seconds": 300,
   "fast_poll_interval_seconds": 30,
-  "auto_cleanup_on_merge": true,
   "autoclose_age_days": 14,
   "prompt_prefix": "",
   "use_cship": false,

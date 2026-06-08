@@ -219,7 +219,6 @@ def test_cmux_close_runs_before_remove_worktree(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -247,7 +246,6 @@ def test_autoclose_dry_run_calls_neither(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -275,7 +273,6 @@ def test_autoclose_remove_failure_still_closes_cmux_and_skips_cache_delete(tmp_p
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -320,7 +317,6 @@ def test_autoclose_smart_skip_on_pr_signals(tmp_path, pr_kwargs, reason):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -350,7 +346,6 @@ def test_autoclose_fires_when_no_pr_in_list(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -385,7 +380,6 @@ def test_autoclose_reaps_when_merge_head_still_reachable(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -416,7 +410,6 @@ def test_autoclose_sets_delete_branch_when_head_at_merge_head(tmp_path):
         patch.object(cycle, "has_unique_commits", return_value=False) as huc_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -446,7 +439,6 @@ def test_autoclose_keeps_branch_when_post_merge_commits_exist(tmp_path):
         patch.object(cycle, "has_unique_commits", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -473,7 +465,6 @@ def test_autoclose_main_sibling_never_deletes_branch(tmp_path):
         patch.object(cycle, "has_unique_commits") as huc_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -507,7 +498,6 @@ def test_autoclose_keeps_reused_branch_name(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=False) as ancestor_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -537,7 +527,6 @@ def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
         patch.object(cycle, "is_ancestor", return_value=True),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -569,7 +558,6 @@ def test_autoclose_clears_devdone_pill_when_skipped_dirty(tmp_path):
         patch.object(cycle, "apply_devdone_pill") as devdone_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -598,7 +586,6 @@ def test_autoclose_dry_run_does_not_clear_devdone_pill(tmp_path):
         patch.object(cycle, "apply_devdone_pill") as devdone_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -638,7 +625,6 @@ def test_autoclose_orphan_main_sibling_clean(tmp_path):
         patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -671,7 +657,6 @@ def test_autoclose_orphan_main_sibling_dirty_skipped(tmp_path):
         patch.object(cycle, "apply_wip_pill") as wip_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -703,7 +688,6 @@ def test_autoclose_orphan_main_sibling_clean_no_wip_pill(tmp_path):
         patch.object(cycle, "apply_wip_pill") as wip_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -731,7 +715,6 @@ def test_autoclose_dirty_main_sibling_dry_run_no_wip_pill(tmp_path):
         patch.object(cycle, "apply_wip_pill") as wip_mock,
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -762,7 +745,6 @@ def test_autoclose_orphan_main_sibling_unpushed_skipped(tmp_path):
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -794,7 +776,6 @@ def test_autoclose_orphan_main_sibling_unpushed_unknown_skipped(tmp_path):
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -827,7 +808,6 @@ def test_autoclose_primary_on_main_never_swept(tmp_path):
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
     ):
         cycle._maybe_autoclose(
-            cfg={"auto_cleanup_on_merge": True},
             repo_path=tmp_path,
             repo_name="testrepo",
             wts=[wt],
@@ -2220,7 +2200,7 @@ def _reap_ctx(
     cfg=None,
 ):
     return cycle.RepoCycle(
-        cfg={"auto_cleanup_on_merge": True} if cfg is None else cfg,
+        cfg=cfg or {},
         repo_path=tmp_path,
         owner="o",
         name="n",
@@ -2311,21 +2291,6 @@ def test_reap_skips_main_default_worktree_and_open_pr_branches(tmp_path):
 def test_reap_dry_run_does_not_delete(tmp_path):
     ctx = _reap_ctx(tmp_path, merged_deep={"khivi/done": "abc123"}, dry=True)
     dele = _run_reap(ctx, local_branches=["khivi/done"], ahead=0)
-    dele.assert_not_called()
-
-
-def test_reap_gated_off_when_auto_cleanup_disabled(tmp_path):
-    ctx = _reap_ctx(
-        tmp_path,
-        merged_deep={"khivi/done": "abc123"},
-        cfg={"auto_cleanup_on_merge": False},
-    )
-    with (
-        patch.object(cycle, "list_local_branches") as lst,
-        patch.object(cycle, "delete_local_branch") as dele,
-    ):
-        cycle._reap_branch_refs(ctx)
-    lst.assert_not_called()
     dele.assert_not_called()
 
 

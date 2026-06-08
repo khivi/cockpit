@@ -384,7 +384,6 @@ def _workspace_ref_for_path(wt_path: Path, cwds: dict[str, Path]) -> str | None:
 
 
 def _maybe_autoclose(
-    cfg: dict,
     repo_path: Path,
     repo_name: str,
     wts: list[Worktree],
@@ -427,8 +426,6 @@ def _maybe_autoclose(
     PR) is never touched. Stale-but-merged worktrees are the sole auto-reap
     case; everything else lives until the user closes it (TUI `c`).
     """
-    if not cfg.get("auto_cleanup_on_merge", True):
-        return
     pr_by_branch = {pr.branch: pr for pr in (prs or [])}
     for wt in wts:
         if wt.is_primary:
@@ -543,11 +540,9 @@ def _reap_branch_refs(ctx: RepoCycle) -> None:
     appears here, so it is conservatively skipped this tick and reaped on the
     next (when the snapshot no longer lists it). No double-delete, no error.
 
-    Gated on the shared `auto_cleanup_on_merge` flag, the same lever
-    `_maybe_autoclose` uses, so one switch governs all cleanup.
+    Runs every slow tick — worktree teardown is unconditional cockpit behavior,
+    the same as `_maybe_autoclose`.
     """
-    if not ctx.cfg.get("auto_cleanup_on_merge", True):
-        return
     default = origin_head_branch(ctx.repo_path)
     wt_branches = {wt.branch for wt in ctx.wts}
     open_pr_branches = {pr.branch for pr in ctx.prs if pr.state == "OPEN"}
@@ -738,11 +733,8 @@ def _prepare_cycle(
     # in list_relevant_prs fetches any-state PRs so the cache refreshes after
     # OPEN→MERGED / OPEN→CLOSED — `is:open author:self` alone misses those.
     branches = sorted({w.branch for w in wts if w.branch not in MAIN_BRANCHES})
-    skip_checks = set(repo_entry.get("ci_skip_checks") or [])
     try:
-        prs = list_relevant_prs(
-            owner, name, self_user, branches, cache=pr_cache, skip_checks=skip_checks
-        )
+        prs = list_relevant_prs(owner, name, self_user, branches, cache=pr_cache)
     except RuntimeError as e:
         print(
             f"  {yellow('skip')} {owner}/{name}: list_relevant_prs failed: {e}",
@@ -1390,7 +1382,6 @@ def cycle_repo(
     _apply_repo_colors(ctx, repo_entry, keep_refs)
     _spawn_missing_workspaces(ctx, repo_entry)
     _maybe_autoclose(
-        cfg,
         ctx.repo_path,
         ctx.name,
         ctx.wts,
@@ -1569,7 +1560,7 @@ def cycle_all(
         return
     if not _cache_only(cfg):
         _drain_close_requests(dry=dry)
-    if cfg.get("auto_cleanup_on_merge", True) and not _cache_only(cfg):
+    if not _cache_only(cfg):
         try:
             close_gone_cwd_workspaces(dry=dry)
         except CmuxUnavailable as e:

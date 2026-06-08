@@ -60,7 +60,6 @@ def register_cwd() -> dict:
             "repos": [],
             "slow_poll_interval_seconds": 300,
             "fast_poll_interval_seconds": 30,
-            "auto_cleanup_on_merge": False,
         }
 
     repos = cfg.setdefault("repos", [])
