@@ -10,6 +10,7 @@ Like the rest of the TUI it never writes a cell — it only reads `load_config()
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.command import Hit, Hits, Provider
@@ -45,7 +46,14 @@ class ConfigScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll():
             yield Static(self._title, classes="config-title")
-            yield Static(self._body)
+            # Parse the body with `Text.from_ansi` (not a raw markup string): the
+            # captured tick output carries ANSI colour codes and stray brackets
+            # (`[clean]`, `[timestamp]`), and JSON config bodies contain `[` `]`
+            # array delimiters — both of which Textual's markup parser mangles
+            # into garbled cream-highlighted boxes. `from_ansi` decodes the colour
+            # codes and disables markup interpretation; on a body with no ANSI
+            # (the JSON views) it yields plain, unstyled text.
+            yield Static(Text.from_ansi(self._body))
             yield Static("esc / q to close", classes="config-hint")
 
 
