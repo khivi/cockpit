@@ -23,6 +23,16 @@ pattern = '"version":\s*"(?P<version>[^"]+)"'
 [tool.hatch.build.targets.wheel]
 packages = ["cockpit"]
 
+# The runtime update check (cockpit/lib/version.py) reads the plugin manifests
+# at `parents[2]/.claude-plugin/` — which, for the installed wheel, is
+# `site-packages/.claude-plugin/`. Without this the daemon (run from the
+# uv-tool install, not the plugin cache) can't resolve its own version or the
+# install repo, so `latest_version()` is None and the "update available"
+# header is silently never shown.
+[tool.hatch.build.targets.wheel.force-include]
+".claude-plugin/plugin.json" = ".claude-plugin/plugin.json"
+".claude-plugin/marketplace.json" = ".claude-plugin/marketplace.json"
+
 [dependency-groups]
 dev = [
     "pytest==9.0.3",

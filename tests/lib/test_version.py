@@ -54,6 +54,25 @@ def test_read_version_absent_key(tmp_path):
     assert version._read_version(p) == ""
 
 
+def test_running_version_falls_back_to_metadata(monkeypatch, tmp_path):
+    # Installed-wheel layout regression: if the bundled manifest can't be read,
+    # the package metadata (single-sourced from the same plugin.json at build
+    # time) is the fallback — otherwise the update check is silently dead.
+    monkeypatch.setattr(version, "_PLUGIN_JSON", tmp_path / "nope.json")
+    monkeypatch.setattr(version.metadata, "version", lambda name: "9.9.9")
+    assert version.running_version() == "9.9.9"
+
+
+def test_running_version_empty_when_no_file_and_no_metadata(monkeypatch, tmp_path):
+    monkeypatch.setattr(version, "_PLUGIN_JSON", tmp_path / "nope.json")
+
+    def _missing(name):
+        raise version.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(version.metadata, "version", _missing)
+    assert version.running_version() == ""
+
+
 # --- install_repo ----------------------------------------------------------
 
 
