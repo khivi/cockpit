@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
-# Launcher for the cockpit CLI. Prefers the installed `cockpit` command; if it
-# isn't on PATH, runs it from this checkout via `uv run`. Handy for the daemon
-# (`bin/cockpit.sh watch`) without a global install.
-#
-# NOTE: this adds uv's startup overhead on the fallback path, so it is for
-# interactive/daemon use only. The per-render statusline + starship fields use
-# the installed `cockpit` directly (see lib/config.STARSHIP_CMD) — never route
-# that hot path through this wrapper.
+# Launch the cockpit TUI daemon (`cockpit watch`). Prefers the installed
+# `cockpit` command; if it isn't on PATH, runs it from this checkout via `uv`.
+# This wrapper only starts the TUI — any extra args are forwarded as flags to
+# `watch` (e.g. --dry-run). Use the `cockpit` command directly for other
+# subcommands (sync/close/new/list/...).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if command -v cockpit >/dev/null 2>&1; then
-  exec cockpit "$@"
+  exec cockpit watch "$@"
 fi
 
 if command -v uv >/dev/null 2>&1; then
-  exec uv run --project "${repo_root}" cockpit "$@"
+  exec uv run --project "${repo_root}" cockpit watch "$@"
 fi
 
 echo "cockpit: not installed and uv is unavailable." >&2

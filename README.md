@@ -45,7 +45,7 @@ uv tool install git+https://github.com/khivi/cockpit
 #   uvx --from git+https://github.com/khivi/cockpit cockpit --help
 ```
 
-`bin/cockpit.sh` is a launcher that prefers the installed `cockpit` and otherwise runs it from the checkout via `uv` — handy for the daemon (`bin/cockpit.sh watch`) before a global install.
+`bin/cockpit.sh` launches the TUI daemon (`cockpit watch`), preferring the installed `cockpit` and otherwise running it from the checkout via `uv` — handy before a global install.
 
 1. Inside Claude Code, add the plugin:
 
