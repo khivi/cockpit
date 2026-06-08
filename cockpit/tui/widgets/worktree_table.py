@@ -12,8 +12,10 @@ uses, so the table and the cmux sidebar agree. The Dirty column (headed with the
 `✎` modifications glyph rather than the word "Dirty") reads the same
 daemon-written `git-status` cell the footer does (`●S ✎M ✚U`). The Ticket and
 Status columns are added only when some configured repo is Linear-enabled
-(`show_linear`); they show the delivered Linear ticket id(s) and workflow state
-from the cached per-PR block, with Ticket placed right after PR and Status right
+(`show_linear`); Ticket shows the delivered Linear ticket id(s) and Status shows
+one workflow-state *icon* per ticket (headed with the `🔄` glyph rather than the
+word "Status", mapped from the state name via `_linear_status_icon`), both from
+the cached per-PR block, with Ticket placed right after PR and Status right
 before Title.
 
 A muted PR (nudges silenced via `m` / `/cockpit:nudge`) prefixes its workspace
@@ -30,6 +32,7 @@ from textual.message import Message
 from textual.widgets import DataTable
 
 from cockpit.lib.cache import branch_cache, cwd_cache, find_pr_payload, read_text
+from cockpit.lib.cmux import DEVDONE_ICON
 from cockpit.lib.colors import CMUX_COLOR_ANSI
 from cockpit.lib.git import Worktree
 from cockpit.lib.starship import (
@@ -43,6 +46,47 @@ from cockpit.lib.starship import (
 # Header glyph for the PR-state column (was the word "Approval"). The traffic
 # light reads as "review status" and collides with none of the value icons.
 _APPROVAL_ICON = "🚦"
+
+# Header glyph for the Linear workflow-state column (was the word "Status"). The
+# cycle arrows read as "where in the workflow" and collide with none of the
+# value icons below.
+_STATUS_ICON = "🔄"
+
+# Linear workflow-state *name* (case-insensitive substring) → (icon, style).
+# Matched top-to-bottom so the more specific names win over their bare
+# fallbacks ("dev done" before "done", "in review" before a bare match). State
+# names are arbitrary per team, so this is a heuristic over Linear's common
+# vocabulary — the same name-substring approach `_linear_cells` already uses for
+# the status colour. An unrecognised state falls back to a neutral ◎.
+_LINEAR_STATUS_ICONS: tuple[tuple[str, str, str], ...] = (
+    ("cancel", "⛔", "red"),
+    ("duplicate", "⛔", "red"),
+    ("dev done", DEVDONE_ICON, "green"),
+    ("review", "👀", "yellow"),
+    ("progress", "🔵", "cyan"),
+    ("doing", "🔵", "cyan"),
+    ("started", "🔵", "cyan"),
+    ("done", "✅", "green"),
+    ("complete", "✅", "green"),
+    ("ship", "✅", "green"),
+    ("deploy", "✅", "green"),
+    ("backlog", "📋", "grey50"),
+    ("triage", "🩺", "grey50"),
+    ("todo", "⚪", "grey50"),
+    ("to do", "⚪", "grey50"),
+)
+_LINEAR_STATUS_FALLBACK = ("◎", "white")
+
+
+def _linear_status_icon(state: str) -> tuple[str, str]:
+    """Map a Linear workflow-state name to a `(icon, style)` pair via the ordered
+    `_LINEAR_STATUS_ICONS` substring table, falling back to a neutral ◎."""
+    low = state.lower()
+    for needle, icon, style in _LINEAR_STATUS_ICONS:
+        if needle in low:
+            return icon, style
+    return _LINEAR_STATUS_FALLBACK
+
 
 # (repo display name, sidebar_color, linear-enabled, worktrees)
 Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
@@ -76,7 +120,7 @@ def column_labels(*, show_linear: bool) -> tuple[str, ...]:
         cols.append("Ticket")
     cols += [_APPROVAL_ICON, "CI", "💬", _DIRTY_ICON]
     if show_linear:
-        cols.append("Status")
+        cols.append(_STATUS_ICON)
     cols.append("Title")
     return tuple(cols)
 
@@ -120,16 +164,20 @@ def _dirty_cell(wt: Worktree) -> Text:
 
 def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
     """Delivered Linear ticket id(s) and workflow state(s) from the cached per-PR
-    block, as two cells. Status is green when every ticket is done-ish, yellow
-    otherwise. Both blank when there are no delivered tickets."""
+    block, as two cells. The Ticket cell is the comma-joined id(s); the Status
+    cell is one workflow-state *icon* per ticket (space-joined), each tinted by
+    its own `_linear_status_icon` style. Both blank when there are no delivered
+    tickets."""
     payload = find_pr_payload(wt.branch, repo_name) or {}
     tickets = (payload.get("linear") or {}).get("tickets") or []
     if not tickets:
         return Text(""), Text("")
     ids = ", ".join(str(t.get("id", "?")) for t in tickets)
-    states = ", ".join(str(t.get("state", "")).strip() for t in tickets)
-    done = all("done" in str(t.get("state", "")).lower() for t in tickets)
-    return Text(ids, style="magenta"), Text(states, style="green" if done else "yellow")
+    icons = []
+    for t in tickets:
+        icon, style = _linear_status_icon(str(t.get("state", "")))
+        icons.append(Text(icon, style=style))
+    return Text(ids, style="magenta"), Text(" ").join(icons)
 
 
 def worktree_cells(
