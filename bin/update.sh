@@ -98,7 +98,15 @@ esac
 
 if command -v uv >/dev/null 2>&1; then
   echo "(re)installing the cockpit command from ${install_src}..."
-  uv tool install --force "${install_src}"
+  # --no-cache is load-bearing, not belt-and-suspenders. The wheel version is
+  # read at build time from .claude-plugin/plugin.json (hatch dynamic version),
+  # but uv keys its build cache on the source *path*, not that file's contents.
+  # A version-only bump (the common case — the pre-push hook touches nothing but
+  # plugin.json) therefore leaves the cache key unchanged, so a plain
+  # `--force` reinstall rebuilds nothing and re-serves the stale wheel: the
+  # daemon stays pinned to the old version no matter how many times you run this.
+  # --no-cache forces an actual rebuild so the new version is picked up.
+  uv tool install --force --no-cache "${install_src}"
 else
   echo "error: uv installed but 'uv' is not on PATH — open a new shell and re-run ${repo_root}/bin/update.sh." >&2
   exit 1

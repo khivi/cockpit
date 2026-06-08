@@ -6,7 +6,11 @@ that record argv (and, for one test, fail on demand), then assert:
   1. `claude plugin update` is given the fully-qualified `<plugin>@<marketplace>`
      id — a bare name yields `Plugin "cockpit" not found` and was the bug.
   2. A plugin-refresh failure does NOT (under `set -e`) abort before the
-     `uv tool install --force` reinstall, which is what swaps the running daemon.
+     `uv tool install --force --no-cache` reinstall, which is what swaps the
+     running daemon. The `--no-cache` is load-bearing: the wheel version is read
+     from plugin.json at build time, but uv keys its build cache on the source
+     path, so a version-only bump otherwise re-serves the stale cached wheel and
+     the daemon never moves off the old version.
   3. The uv bootstrap (absorbed from the former `install.sh`) stays dormant when
      `uv` is already on PATH — `curl` must not be invoked.
   4. Run from inside the plugin cache, the daemon is reinstalled from the NEWEST
@@ -59,7 +63,10 @@ def test_plugin_update_uses_qualified_id(tmp_path, monkeypatch):
 
     # The uv reinstall still runs, targeting repo_root.
     repo_root = UPDATE_SH.resolve().parent.parent
-    assert any(line == f"tool install --force {repo_root}" for line in _lines(uv_log))
+    assert any(
+        line == f"tool install --force --no-cache {repo_root}"
+        for line in _lines(uv_log)
+    )
 
 
 def test_plugin_refresh_failure_does_not_block_uv_reinstall(tmp_path, monkeypatch):
@@ -87,7 +94,27 @@ def test_plugin_refresh_failure_does_not_block_uv_reinstall(tmp_path, monkeypatc
     assert "plugin update cockpit@khivi-cockpit" in _lines(claude_log)
     # ...yet the uv reinstall still ran.
     repo_root = UPDATE_SH.resolve().parent.parent
-    assert any(line == f"tool install --force {repo_root}" for line in _lines(uv_log))
+    assert any(
+        line == f"tool install --force --no-cache {repo_root}"
+        for line in _lines(uv_log)
+    )
+
+
+def test_reinstall_passes_no_cache(tmp_path, monkeypatch):
+    # --no-cache is required, not cosmetic: the wheel version is read from
+    # plugin.json at build time, but uv keys its build cache on the source path.
+    # A version-only bump (the common case) leaves that key unchanged, so a plain
+    # `--force` rebuilds nothing and re-serves the stale wheel — the daemon stays
+    # pinned to the old version. Assert the flag is on the install line.
+    make_shim_on_path(tmp_path, monkeypatch, "claude")
+    uv_log = make_shim_on_path(tmp_path, monkeypatch, "uv")
+
+    result = _run()
+    assert result.returncode == 0, result.stderr
+
+    install_lines = [line for line in _lines(uv_log) if line.startswith("tool install")]
+    assert install_lines, "uv tool install never ran"
+    assert all("--no-cache" in line for line in install_lines), install_lines
 
 
 def test_does_not_bootstrap_uv_when_present(tmp_path, monkeypatch):
@@ -112,7 +139,10 @@ def test_dev_checkout_installs_repo_root(tmp_path, monkeypatch):
     assert result.returncode == 0, result.stderr
 
     repo_root = UPDATE_SH.resolve().parent.parent
-    assert any(line == f"tool install --force {repo_root}" for line in _lines(uv_log))
+    assert any(
+        line == f"tool install --force --no-cache {repo_root}"
+        for line in _lines(uv_log)
+    )
 
 
 def test_installs_newest_cached_version_from_plugin_cache(tmp_path, monkeypatch):
@@ -143,8 +173,12 @@ def test_installs_newest_cached_version_from_plugin_cache(tmp_path, monkeypatch)
     assert result.returncode == 0, result.stderr
 
     # Reinstalled from the newer dir, not the one it ran from.
-    assert any(line == f"tool install --force {new_dir}" for line in _lines(uv_log))
-    assert not any(line == f"tool install --force {old_dir}" for line in _lines(uv_log))
+    assert any(
+        line == f"tool install --force --no-cache {new_dir}" for line in _lines(uv_log)
+    )
+    assert not any(
+        line == f"tool install --force --no-cache {old_dir}" for line in _lines(uv_log)
+    )
     # Plugin refresh still ran against the manifest-derived ids.
     assert "plugin update cockpit@khivi-cockpit" in _lines(claude_log)
 
@@ -181,4 +215,6 @@ def test_resolves_through_symlink(tmp_path, monkeypatch):
     assert result.returncode == 0, result.stderr
 
     # Followed the symlink into the cache, then auto-detected the newest dir.
-    assert any(line == f"tool install --force {new_dir}" for line in _lines(uv_log))
+    assert any(
+        line == f"tool install --force --no-cache {new_dir}" for line in _lines(uv_log)
+    )
