@@ -2,11 +2,12 @@
 
 `worktree_cells` is a pure function — no Textual. Seeds the same flat cache
 cells the daemon writes, then asserts the per-column Rich Text. Columns are
-Workspace | PR | (Ticket) | 🚦 | CI | comments | ✎ | (Status) | Title —
-the Linear Ticket/Status columns appear only when configured, Ticket after PR and
-Status before Title. The repo is conveyed by tinting the workspace name (not a
-column). The Dirty column (icon header) reads the per-cwd `git-status` cell
-(`"<staged> <unstaged> <untracked>"`).
+Workspace | PR | Author | (Ticket) | 🚦 | CI | comments | ✎ | (Status) | Title —
+the Author column is always present (blank for self-authored PRs, the coworker
+login for a review PR); the Linear Ticket/Status columns appear only when
+configured, Ticket after Author and Status before Title. The repo is conveyed
+by tinting the workspace name (not a column). The Dirty column (icon header)
+reads the per-cwd `git-status` cell (`"<staged> <unstaged> <untracked>"`).
 """
 
 from __future__ import annotations
@@ -50,15 +51,16 @@ def _plain(wt, repo="repo", color=None, linear=False, show_linear=False):
 
 def test_cell_count_matches_columns(cache_dir):
     cols = column_labels(show_linear=False)
-    assert len(_plain(_wt())) == len(cols) == 7
-    assert cols[0] == "Workspace" and cols[2] == _APPROVAL_ICON
-    assert cols[5] == _DIRTY_ICON  # Dirty column header is now an icon
+    assert len(_plain(_wt())) == len(cols) == 8
+    assert cols[0] == "Workspace" and cols[1] == "PR" and cols[2] == "Author"
+    assert cols[3] == _APPROVAL_ICON
+    assert cols[6] == _DIRTY_ICON  # Dirty column header is now an icon
     # Ticket + Status columns added only when show_linear, interleaved:
-    # Ticket right after PR, Status right before Title.
+    # Ticket right after Author, Status right before Title.
     lin = column_labels(show_linear=True)
-    assert len(_plain(_wt(), show_linear=True)) == len(lin) == 9
-    assert lin[2] == "Ticket"
-    assert lin[7] == _STATUS_ICON  # Status column header is now an icon
+    assert len(_plain(_wt(), show_linear=True)) == len(lin) == 10
+    assert lin[3] == "Ticket"
+    assert lin[8] == _STATUS_ICON  # Status column header is now an icon
     assert lin[-1] == "Title"
 
 
@@ -90,13 +92,14 @@ def test_pr_columns_with_state_icon(cache_dir):
     cache_mod.branch_cache("pr-checks", wt.branch).write_text("✓")
     cache_mod.branch_cache("pr-comments", wt.branch).write_text("2")
     cache_mod.branch_cache("pr-title", wt.branch).write_text("Add the thing")
-    cells = _plain(wt)  # Workspace, PR, state-icon, CI, 💬, Dirty, Title
+    cells = _plain(wt)  # Workspace, PR, Author, state-icon, CI, 💬, Dirty, Title
     assert cells[1] == "#123"
-    assert cells[2] == _PR_STATE_ICON["APPROVED"]  # icon, not a text label
-    assert cells[3] == "✓"
-    assert cells[4] == "2"
-    assert cells[5] == ""  # clean tree (no git-status cell)
-    assert cells[6] == "Add the thing"
+    assert cells[2] == ""  # self-authored → no author shown
+    assert cells[3] == _PR_STATE_ICON["APPROVED"]  # icon, not a text label
+    assert cells[4] == "✓"
+    assert cells[5] == "2"
+    assert cells[6] == ""  # clean tree (no git-status cell)
+    assert cells[7] == "Add the thing"
 
 
 @pytest.mark.parametrize(
@@ -105,32 +108,49 @@ def test_pr_columns_with_state_icon(cache_dir):
 def test_approval_state_icons(cache_dir, raw):
     wt = _wt(branch=f"khivi/{raw.lower()}")
     cache_mod.branch_cache("pr-state", wt.branch).write_text(raw)
-    assert _plain(wt)[2] == _PR_STATE_ICON[raw]
+    assert _plain(wt)[3] == _PR_STATE_ICON[raw]
 
 
 def test_changes_requested_colored_red(cache_dir):
     wt = _wt(branch="khivi/cr")
     cache_mod.branch_cache("pr-state", wt.branch).write_text("CHANGES_REQUESTED")
-    cell = worktree_cells(wt, "r", None, False, show_linear=False)[2]
+    cell = worktree_cells(wt, "r", None, False, show_linear=False)[3]
     assert cell.plain == _PR_STATE_ICON["CHANGES_REQUESTED"]
     assert "red" in str(cell.style)
+
+
+def test_author_column_shows_coworker_login(cache_dir):
+    # The daemon writes `pr-author` only for other-authored PRs; the table
+    # renders it `@login`.
+    wt = _wt(branch="coworker/feat")
+    cache_mod.branch_cache("pr-author", wt.branch).write_text("octocat")
+    cell = worktree_cells(wt, "r", None, False, show_linear=False)[2]
+    assert cell.plain == "@octocat"
+    assert "cyan" in str(cell.style)
+
+
+def test_author_column_blank_for_self_authored(cache_dir):
+    # Self-authored PR → daemon leaves `pr-author` empty → blank Author cell.
+    wt = _wt(branch="khivi/mine")
+    assert _plain(wt)[2] == ""
 
 
 def test_zero_comments_is_blank(cache_dir):
     wt = _wt(branch="khivi/zero")
     cache_mod.branch_cache("pr-comments", wt.branch).write_text("0")
-    assert _plain(wt)[4] == ""
+    assert _plain(wt)[5] == ""
 
 
 def test_no_pr_leaves_columns_blank(cache_dir):
     cells = _plain(_wt(branch="khivi/bare"))
+    # PR, Author, state-icon all blank with no PR cells seeded.
     assert cells[1] == "" and cells[2] == "" and cells[3] == ""
 
 
 def test_long_title_truncated(cache_dir):
     wt = _wt(branch="khivi/long")
     cache_mod.branch_cache("pr-title", wt.branch).write_text("x" * 80)
-    title = _plain(wt)[6]
+    title = _plain(wt)[7]
     assert title.endswith("…")
     assert len(title) <= 49
 
@@ -144,7 +164,7 @@ def test_ticket_and_status_columns_when_enabled(cache_dir, monkeypatch):
         },
     )
     cells = worktree_cells(wt, "r", None, True, show_linear=True)
-    ticket, status = cells[2], cells[7]  # Ticket after PR, Status before Title
+    ticket, status = cells[3], cells[8]  # Ticket after Author, Status before Title
     assert ticket.plain == "PE-1"
     assert status.plain == DEVDONE_ICON  # "Dev Done" → 🏁 icon, not text
     assert any("green" in str(s.style) for s in status.spans)  # dev-done → green
@@ -184,7 +204,7 @@ def test_status_cell_one_icon_per_ticket(cache_dir, monkeypatch):
         },
     )
     cells = worktree_cells(wt, "r", None, True, show_linear=True)
-    ticket, status = cells[2], cells[7]
+    ticket, status = cells[3], cells[8]  # Ticket after Author, Status before Title
     assert ticket.plain == "PE-1, PE-2"  # ids still comma-joined
     assert status.plain == "👀 ✅"  # one icon per ticket, space-joined
 
@@ -197,12 +217,12 @@ def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
     )
     # columns exist (some other repo is Linear) but this row's repo isn't
     cells = worktree_cells(wt, "r", None, False, show_linear=True)
-    assert cells[2].plain == "" and cells[7].plain == ""  # Ticket, Status
+    assert cells[3].plain == "" and cells[8].plain == ""  # Ticket, Status
 
 
 def test_no_linear_columns_when_not_configured(cache_dir):
     # show_linear False → no Ticket/Status cells
-    assert len(_plain(_wt(), linear=True, show_linear=False)) == 7
+    assert len(_plain(_wt(), linear=True, show_linear=False)) == 8
 
 
 def test_muted_pr_prefixes_workspace_glyph(cache_dir):
@@ -221,7 +241,7 @@ def test_unmuted_pr_has_no_glyph(cache_dir):
 def test_dirty_column_renders_counts(cache_dir):
     wt = _wt(path="/tmp/dirtywt", branch="khivi/dirty")
     cache_mod.cwd_cache("git-status", wt.path).write_text("1 2 3")
-    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[5]
+    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[6]
     # ●1 ✎2 ✚3 with the footer's glyphs
     assert dirty.plain == "●1 ✎2 ✚3"
     assert "green" in str(dirty.spans[0].style)  # staged
@@ -231,19 +251,19 @@ def test_dirty_column_renders_counts(cache_dir):
 def test_dirty_column_omits_zero_segments(cache_dir):
     wt = _wt(path="/tmp/partialdirty", branch="khivi/partial")
     cache_mod.cwd_cache("git-status", wt.path).write_text("0 0 4")
-    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[5]
+    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[6]
     assert dirty.plain == "✚4"  # only untracked shown
 
 
 def test_dirty_column_blank_when_clean(cache_dir):
     wt = _wt(path="/tmp/cleanwt", branch="khivi/clean")
     cache_mod.cwd_cache("git-status", wt.path).write_text("0 0 0")
-    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[5]
+    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[6]
     assert dirty.plain == ""
 
 
 def test_dirty_column_blank_when_cell_missing(cache_dir):
     # Cold start: daemon hasn't written the git-status cell yet.
     wt = _wt(path="/tmp/coldwt", branch="khivi/cold")
-    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[5]
+    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[6]
     assert dirty.plain == ""

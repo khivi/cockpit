@@ -77,6 +77,7 @@ def write_pr_cache(
     linear: dict | None = None,
     *,
     reused_branch: bool = False,
+    other_author: str = "",
 ) -> dict:
     """Write a JSON snapshot of `pr` to the cache dir and return the payload.
 
@@ -102,6 +103,14 @@ def write_pr_cache(
     `refresh_pr_data`/`refresh_pr_checks`) trusts the persisted boolean rather
     than re-running `git`, so the fast tick and renderer paths stay
     `git`-free. `headRefOid` is stored alongside for debuggability.
+
+    `other_author` holds the PR author's login *only* when the PR was authored
+    by someone other than the daemon's user (the coworker / review-PR case);
+    it is empty for self-authored PRs. The daemon makes that comparison once
+    (it is the only place `self_user` is known) and bakes the result here so
+    every flat-cell republish path (`republish_pr_caches_from_disk`,
+    `refresh_pr_data`) can populate the `pr-author` cell without re-resolving
+    `self_user`.
     """
     ensure_state_dirs()
     path = CACHE_DIR / f"{_repo_slug(repo_name)}__pr-{pr.number}.json"
@@ -121,6 +130,7 @@ def write_pr_cache(
         "pills": decide_pills(pr, wt, pref),
         "headRefOid": pr.head_oid,
         "reusedBranch": reused_branch,
+        "author": other_author,
     }
     if linear is not None:
         payload["linear"] = linear
@@ -325,24 +335,32 @@ def _write_pr_flat_cells(
     title: str,
     muted: str,
     comments: int,
+    author: str = "",
 ) -> None:
-    """Write the five branch-keyed PR flat cells that every PR writer shares.
+    """Write the six branch-keyed PR flat cells that every PR writer shares.
 
     `state` is already resolved (see `_resolve_state`). The `pr-checks` cell is
     deliberately NOT written here — its three writers disagree on purpose
     (slow tick only when non-empty, fast-tick republish always, the `warm`
     prewarm via `refresh_pr_checks`), so each handles it itself.
+
+    `author` is the coworker login for an other-authored PR, empty for a
+    self-authored one (see `write_pr_cache`'s `other_author`). Always written so
+    a PR that flips ownership (rare) or whose snapshot is rebuilt clears stale
+    values.
     """
     atomic_write(branch_cache("pr-state", branch), state)
     atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
     atomic_write(branch_cache("pr-title", branch), str(title or ""))
     atomic_write(branch_cache("pr-muted", branch), str(muted or ""))
     atomic_write(branch_cache("pr-comments", branch), str(comments) if comments else "")
+    atomic_write(branch_cache("pr-author", branch), str(author or ""))
 
 
 def refresh_pr_data(branch: str) -> None:
-    """Repopulate pr-state / pr-num / pr-title / pr-muted / pr-comments
-    flat-cache cells for `branch` from the daemon's per-PR JSON snapshot.
+    """Repopulate pr-state / pr-num / pr-title / pr-muted / pr-comments /
+    pr-author flat-cache cells for `branch` from the daemon's per-PR JSON
+    snapshot.
 
     Empty (no-PR) sentinel = zero-byte file with a fresh mtime; suppresses
     per-render reads during the 60s TTL.
@@ -358,7 +376,7 @@ def refresh_pr_data(branch: str) -> None:
     # like "no PR" — its cells stay empty so the card shows `—`.
     if data is None or data.get("reusedBranch"):
         _write_pr_flat_cells(
-            branch, state="", number=None, title="", muted="", comments=0
+            branch, state="", number=None, title="", muted="", comments=0, author=""
         )
         return
     _write_pr_flat_cells(
@@ -372,6 +390,7 @@ def refresh_pr_data(branch: str) -> None:
         title=str(data.get("title") or ""),
         muted=str(data.get("muted") or ""),
         comments=int(data.get("unaddressed") or 0),
+        author=str(data.get("author") or ""),
     )
 
 
@@ -474,6 +493,7 @@ def write_branch_pr_cache(
     ci_glyph: str = "",
     muted: str = "",
     comments: int = 0,
+    author: str = "",
 ) -> None:
     """Daemon-tick entrypoint: write pre-resolved PR fields straight to the
     flat cache, no `gh` round-trip needed. Caller (cockpit.py::cycle_repo)
@@ -486,6 +506,10 @@ def write_branch_pr_cache(
     "muted". Always written so an unmute clears the cell same-tick.
 
     `comments` is the unaddressed review-thread count from the PR fetch.
+
+    `author` is the coworker login for an other-authored PR, empty for a
+    self-authored one (the daemon resolves this against `self_user` — see
+    `write_pr_cache`'s `other_author`).
     """
     if not branch:
         return
@@ -496,6 +520,7 @@ def write_branch_pr_cache(
         title=title,
         muted=muted,
         comments=comments,
+        author=author,
     )
     if ci_glyph:
         atomic_write(branch_cache("pr-checks", branch), ci_glyph)
@@ -507,6 +532,7 @@ _BRANCH_PR_CELLS = (
     "pr-title",
     "pr-muted",
     "pr-comments",
+    "pr-author",
     "pr-checks",
 )
 
@@ -533,8 +559,8 @@ def republish_pr_caches_from_disk() -> None:
     Daemon-side replacement for the old renderer-spawned `*-refresh`
     pattern. Walks `$COCKPIT_HOME/cache/*__pr-*.json` and, for each
     payload's `branch`, re-writes `pr-state`, `pr-num`, `pr-title`,
-    `pr-muted`, `pr-checks`. Pure JSON → flat-cell republish, no `gh`
-    calls — safe to run on the fast tick.
+    `pr-muted`, `pr-author`, `pr-checks`. Pure JSON → flat-cell republish,
+    no `gh` calls — safe to run on the fast tick.
 
     Necessary because the per-PR JSON lives under `$COCKPIT_HOME/cache/`
     (persistent) but the flat cells live under `$TMPDIR/cockpit-cache/`
@@ -573,6 +599,7 @@ def republish_pr_caches_from_disk() -> None:
             title=str(payload.get("title") or ""),
             muted=str(payload.get("muted") or ""),
             comments=int(payload.get("unaddressed") or 0),
+            author=str(payload.get("author") or ""),
         )
         atomic_write(
             branch_cache("pr-checks", branch), _ci_glyph(str(payload.get("ci") or ""))

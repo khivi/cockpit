@@ -941,7 +941,20 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
         linear = _resolve_linear_block(ctx, pr)
         ctx.linear_blocks[pr.branch] = linear
         reused = _is_reused_branch_merge(wt_opt, pr)
-        write_pr_cache(ctx.name, pr, wt_opt, pref, linear=linear, reused_branch=reused)
+        # The author's login only when this is someone else's PR (a coworker /
+        # review PR) — empty for my own. Resolved here, the one place self_user
+        # is known, and baked into the cache so the flat-cell republish paths
+        # don't need it (see write_pr_cache's `other_author`).
+        other_author = pr.author if pr.author != ctx.self_user else ""
+        write_pr_cache(
+            ctx.name,
+            pr,
+            wt_opt,
+            pref,
+            linear=linear,
+            reused_branch=reused,
+            other_author=other_author,
+        )
         if reused:
             # Branch reused for new local work after this PR merged/closed —
             # show no PR. Only clear the branch-keyed cells when no live open PR
@@ -960,6 +973,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             ci_glyph=ci_glyph(pr.ci),
             muted=muted_payload(pref),
             comments=pr.unaddressed,
+            author=other_author,
         )
     # After the live snapshots are on disk, drop any superseded snapshot
     # sharing a branch (reused branch: old merged PR alongside the live one)

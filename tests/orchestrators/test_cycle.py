@@ -2406,8 +2406,35 @@ def test_write_pr_caches_writes_cells_when_not_reused(tmp_path):
         cycle._write_pr_caches(ctx)
 
     assert wpc.call_args.kwargs["reused_branch"] is False
+    # Self-authored (PR.author == ctx.self_user="khivi") → no coworker login.
+    assert wpc.call_args.kwargs["other_author"] == ""
+    assert wbpc.call_args.kwargs["author"] == ""
     cbpc.assert_not_called()
     wbpc.assert_called_once()
+
+
+def test_write_pr_caches_passes_coworker_author(tmp_path):
+    """An other-authored PR (PR.author != self_user) → the author login is
+    threaded into both cache writers; my own PRs pass an empty author."""
+    wt = Worktree(path=tmp_path / "wt", branch="coworker/feat", dirty_count=0)
+    pr = _reused_pr(branch="coworker/feat", state="OPEN")
+    pr.author = "octocat"
+    ctx = _write_caches_ctx(tmp_path, [pr], wt)  # ctx.self_user == "khivi"
+    with (
+        patch.object(cycle, "_refresh_base_distance", return_value={}),
+        patch.object(cycle, "load_pr_payloads_by_branch", return_value={}),
+        patch.object(cycle, "_resolve_linear_block", return_value=None),
+        patch.object(cycle, "write_git_state_cache"),
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "write_pr_cache") as wpc,
+        patch.object(cycle, "write_branch_pr_cache") as wbpc,
+        patch.object(cycle, "clear_branch_pr_cache"),
+        patch.object(cycle, "prune_superseded_pr_caches"),
+    ):
+        cycle._write_pr_caches(ctx)
+
+    assert wpc.call_args.kwargs["other_author"] == "octocat"
+    assert wbpc.call_args.kwargs["author"] == "octocat"
 
 
 def test_write_pr_caches_keeps_cells_when_open_pr_shares_branch(tmp_path):

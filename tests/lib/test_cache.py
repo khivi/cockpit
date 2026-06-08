@@ -118,6 +118,31 @@ def test_write_branch_pr_cache_zero_comments_writes_empty(cache_dir):
     assert (cache_dir / "pr-comments-khivi-feature").read_text() == ""
 
 
+def test_write_branch_pr_cache_writes_author(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "coworker/feature",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=22,
+        title="Theirs",
+        author="octocat",
+    )
+    assert (cache_dir / "pr-author-coworker-feature").read_text() == "octocat"
+
+
+def test_write_branch_pr_cache_default_author_empty(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/feature",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=23,
+        title="Mine",
+    )
+    assert (cache_dir / "pr-author-khivi-feature").read_text() == ""
+
+
 def test_write_branch_pr_cache_no_branch_noop(cache_dir):
     cache_mod.write_branch_pr_cache(
         "",
@@ -650,6 +675,18 @@ def test_write_pr_cache_defaults_reused_branch_false(json_cache):
     payload = cache_mod.write_pr_cache("testrepo", _pr(head_oid="abc"))
     assert payload["reusedBranch"] is False
     assert payload["headRefOid"] == "abc"
+
+
+def test_write_pr_cache_bakes_other_author(json_cache):
+    payload = cache_mod.write_pr_cache("testrepo", _pr(), other_author="octocat")
+    assert payload["author"] == "octocat"
+    on_disk = cache_mod.find_pr_payload("khivi/feature", repo_name="testrepo")
+    assert on_disk is not None and on_disk["author"] == "octocat"
+
+
+def test_write_pr_cache_defaults_other_author_empty(json_cache):
+    # Self-authored PRs (the daemon passes "") leave the field blank.
+    assert cache_mod.write_pr_cache("testrepo", _pr())["author"] == ""
 
 
 def test_clear_branch_pr_cache_empties_all_cells(cache_dir):
