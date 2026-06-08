@@ -20,8 +20,12 @@ from cockpit.lib.git import Worktree
 from cockpit.tui.widgets.worktree_table import (
     _APPROVAL_ICON,
     _DIRTY_ICON,
+    _LINEAR_STATUS_FALLBACK,
     _PR_STATE_ICON,
+    _STATUS_ICON,
+    DEVDONE_ICON,
     ICON_PR_MUTED,
+    _linear_status_icon,
     column_labels,
     worktree_cells,
 )
@@ -54,7 +58,7 @@ def test_cell_count_matches_columns(cache_dir):
     lin = column_labels(show_linear=True)
     assert len(_plain(_wt(), show_linear=True)) == len(lin) == 9
     assert lin[2] == "Ticket"
-    assert lin[7] == "Status"
+    assert lin[7] == _STATUS_ICON  # Status column header is now an icon
     assert lin[-1] == "Title"
 
 
@@ -142,8 +146,47 @@ def test_ticket_and_status_columns_when_enabled(cache_dir, monkeypatch):
     cells = worktree_cells(wt, "r", None, True, show_linear=True)
     ticket, status = cells[2], cells[7]  # Ticket after PR, Status before Title
     assert ticket.plain == "PE-1"
-    assert status.plain == "Dev Done"
-    assert "green" in str(status.style)  # all tickets done → green status
+    assert status.plain == DEVDONE_ICON  # "Dev Done" → 🏁 icon, not text
+    assert any("green" in str(s.style) for s in status.spans)  # dev-done → green
+
+
+@pytest.mark.parametrize(
+    "state,icon,style",
+    [
+        ("Dev Done", DEVDONE_ICON, "green"),  # specific beats bare "done"
+        ("Done", "✅", "green"),
+        ("In Review", "👀", "yellow"),
+        ("In Progress", "🔵", "cyan"),
+        ("Backlog", "📋", "grey50"),
+        ("Todo", "⚪", "grey50"),
+        ("Canceled", "⛔", "red"),
+    ],
+)
+def test_linear_status_icon_mapping(state, icon, style):
+    assert _linear_status_icon(state) == (icon, style)
+
+
+def test_linear_status_icon_unknown_falls_back(cache_dir):
+    assert _linear_status_icon("Some Custom Workflow") == _LINEAR_STATUS_FALLBACK
+
+
+def test_status_cell_one_icon_per_ticket(cache_dir, monkeypatch):
+    wt = _wt(branch="khivi/multi")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: {
+            "linear": {
+                "tickets": [
+                    {"id": "PE-1", "state": "In Review"},
+                    {"id": "PE-2", "state": "Done"},
+                ]
+            }
+        },
+    )
+    cells = worktree_cells(wt, "r", None, True, show_linear=True)
+    ticket, status = cells[2], cells[7]
+    assert ticket.plain == "PE-1, PE-2"  # ids still comma-joined
+    assert status.plain == "👀 ✅"  # one icon per ticket, space-joined
 
 
 def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
