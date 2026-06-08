@@ -671,6 +671,71 @@ def test_linear_dev_done_state_uses_passed_cfg_without_disk_read():
     )
 
 
+# ── linear_merge_done_state reader ───────────────────────────────────────────
+
+
+def test_linear_merge_done_state_defaults(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.linear_merge_done_state() == "Done"
+
+
+def test_linear_merge_done_state_override(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "linear_merge_done_state": "Shipped"}
+    )
+    assert cockpit_config.linear_merge_done_state() == "Shipped"
+
+
+def test_linear_merge_done_state_uses_passed_cfg_and_blank_falls_back():
+    from cockpit.lib import config as cockpit_config
+
+    assert (
+        cockpit_config.linear_merge_done_state({"linear_merge_done_state": "Closed"})
+        == "Closed"
+    )
+    assert (
+        cockpit_config.linear_merge_done_state({"linear_merge_done_state": "  "})
+        == "Done"
+    )
+
+
+# ── linear_done_on_merge reader (per-repo over global) ───────────────────────
+
+
+def test_linear_done_on_merge_defaults_false():
+    from cockpit.lib import config as cockpit_config
+
+    assert cockpit_config.linear_done_on_merge({"repos": []}) is False
+
+
+def test_linear_done_on_merge_global_true():
+    from cockpit.lib import config as cockpit_config
+
+    assert cockpit_config.linear_done_on_merge({"linear_done_on_merge": True}) is True
+
+
+def test_linear_done_on_merge_repo_overrides_global():
+    from cockpit.lib import config as cockpit_config
+
+    cfg = {"linear_done_on_merge": True}
+    # Per-repo False wins over a True global.
+    assert (
+        cockpit_config.linear_done_on_merge(cfg, {"linear_done_on_merge": False})
+        is False
+    )
+    # And per-repo True wins over a False/absent global.
+    assert (
+        cockpit_config.linear_done_on_merge({}, {"linear_done_on_merge": True}) is True
+    )
+
+
+def test_linear_done_on_merge_repo_without_key_falls_back_to_global():
+    from cockpit.lib import config as cockpit_config
+
+    cfg = {"linear_done_on_merge": True}
+    assert cockpit_config.linear_done_on_merge(cfg, {"name": "r"}) is True
+
+
 # ── find_repos_by_linear_key ────────────────────────────────────────────────
 
 

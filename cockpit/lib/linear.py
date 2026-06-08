@@ -13,10 +13,19 @@ unrelated ids (`HTTP-200`, `UTF-8`).
 
 The Linear ticket *body* (title, description) is still fetched by Claude
 itself via the Linear MCP on the first turn of a spawned workspace — the
-daemon can't reach the MCP. But the daemon *does* make one direct,
-read-only GraphQL call (`fetch_ticket_state`) to learn a ticket's current
-workflow state for the `devdone=` sidebar pill. That is the only network
-surface in this module, gated on the `LINEAR_API_KEY` env var.
+daemon can't reach the MCP. But the daemon *does* make direct GraphQL calls:
+
+  * read-only — `fetch_ticket_state` (the `devdone=` pill), plus
+    `fetch_viewer_id` / `fetch_ticket_meta` / `fetch_team_states` (the
+    merge-transition eligibility checks);
+  * the one *write* — `update_ticket_state`, the `issueUpdate` mutation that
+    moves a ticket's workflow state. It is reached only by the opt-in
+    `linear_done_on_merge` path in the slow tick (see
+    `cycle._transition_merged_tickets`); the *policy* (which ticket, when,
+    skip-if-already-done) lives there, this module just performs the call.
+
+Every call is gated on the `LINEAR_API_KEY` env var and degrades to
+None/False — never raises — on a missing key, timeout, or API error.
 """
 
 from __future__ import annotations
@@ -61,6 +70,34 @@ _TICKET_STATE_QUERY = (
     "query($team:String!,$number:Float!){"
     "issues(filter:{team:{key:{eq:$team}},number:{eq:$number}}){"
     "nodes{identifier state{name}}}}"
+)
+
+# Same team-key + number filter, but pulling the extra fields the
+# merge-transition path needs: the opaque issue `id` (UUID — what `issueUpdate`
+# wants), the state `type` (so a *canceled* ticket is never resurrected — note
+# "Dev Done"/"In QA"/"Done" all share `type: completed`, so type alone can't
+# tell "already final"), the `assignee` id (gate: only move my own tickets),
+# and the `team` id (to resolve the target state's UUID for that team).
+_TICKET_META_QUERY = (
+    "query($team:String!,$number:Float!){"
+    "issues(filter:{team:{key:{eq:$team}},number:{eq:$number}}){"
+    "nodes{id identifier state{name type} assignee{id} team{id}}}}"
+)
+
+# The API key's own user ("me") — the gate for "only transition tickets
+# assigned to me". A personal key authenticates as its owner, so `viewer` is
+# exactly the configured user without any extra identity config.
+_VIEWER_QUERY = "query{viewer{id}}"
+
+# A team's workflow states (name → UUID). `issueUpdate` needs the state UUID,
+# not its display name, so the merge-transition path resolves the target name
+# through this once per team.
+_TEAM_STATES_QUERY = "query($id:String!){team(id:$id){states{nodes{id name}}}}"
+
+# The one mutation in this module: move a ticket to a workflow state by UUID.
+_ISSUE_UPDATE_MUTATION = (
+    "mutation($id:String!,$stateId:String!){"
+    "issueUpdate(id:$id,input:{stateId:$stateId}){success}}"
 )
 
 # `claude mcp list` health-checks each server by connecting to it, not just
@@ -193,3 +230,135 @@ def fetch_ticket_state(ticket_id: str, *, api_key: str | None = None) -> str | N
         return None
     state = (nodes[0].get("state") or {}).get("name")
     return state or None
+
+
+def _post_graphql(query: str, variables: dict, *, api_key: str, timeout: float):
+    """POST a GraphQL `query`/`variables` to Linear; return the `data` dict or
+    None on any failure. Never raises. The raw key authenticates in the
+    `Authorization` header (no `Bearer` prefix) and is never logged. Shared by
+    the merge-transition helpers below; `fetch_ticket_state` predates it and
+    keeps its own inlined request.
+    """
+    body = json.dumps({"query": query, "variables": variables}).encode()
+    req = urllib.request.Request(
+        LINEAR_API_URL,
+        data=body,
+        headers={"Authorization": api_key, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        return None
+    return (payload or {}).get("data")
+
+
+def fetch_viewer_id(*, api_key: str | None = None) -> str | None:
+    """Return the Linear user id of the API key's owner ("me"), or None.
+
+    The gate for "only transition tickets assigned to me": a personal API key
+    authenticates as its owner, so `viewer` is exactly the configured user with
+    no extra identity config. None when the key is unset or the query fails —
+    the caller then transitions nothing (fail-safe: never touch a ticket we
+    can't confirm is ours).
+    """
+    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    if not key:
+        return None
+    data = _post_graphql(
+        _VIEWER_QUERY, {}, api_key=key, timeout=_TICKET_STATE_TIMEOUT_SECONDS
+    )
+    return ((data or {}).get("viewer") or {}).get("id") or None
+
+
+def fetch_ticket_meta(ticket_id: str, *, api_key: str | None = None) -> dict | None:
+    """Return the merge-transition metadata for `ticket_id`, or None.
+
+    `{"id": <uuid>, "state": <name>, "type": <state-type>, "assignee_id":
+    <uuid|None>, "team_id": <uuid>}`. The UUID `id` is what `issueUpdate` wants;
+    `type` distinguishes a *canceled* ticket (never resurrect) from a merely
+    `completed`-typed source column like "Dev Done"; `assignee_id` and `team_id`
+    drive the only-mine gate and the target-state resolution.
+
+    None — never raises — on missing key, an unparsable id, or any API failure.
+    """
+    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    if not key:
+        return None
+    if not LINEAR_RE_CI.fullmatch(ticket_id or ""):
+        return None
+    team, _, num = ticket_id.partition("-")
+    try:
+        number = float(int(num))
+    except ValueError:
+        return None
+    data = _post_graphql(
+        _TICKET_META_QUERY,
+        {"team": team.upper(), "number": number},
+        api_key=key,
+        timeout=_TICKET_STATE_TIMEOUT_SECONDS,
+    )
+    nodes = ((data or {}).get("issues") or {}).get("nodes")
+    if not nodes:
+        return None
+    node = nodes[0]
+    state = node.get("state") or {}
+    return {
+        "id": node.get("id"),
+        "state": state.get("name"),
+        "type": state.get("type"),
+        "assignee_id": (node.get("assignee") or {}).get("id"),
+        "team_id": (node.get("team") or {}).get("id"),
+    }
+
+
+def fetch_team_states(team_id: str, *, api_key: str | None = None) -> dict | None:
+    """Return a `{state-name-casefolded: state-uuid}` map for `team_id`, or None.
+
+    `issueUpdate` takes a state UUID, not its display name, so the
+    merge-transition path resolves the configured target name through this map.
+    Casefolded keys mirror the case-insensitive matching the dev-done pill uses.
+    None on missing key or API failure.
+    """
+    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    if not key or not team_id:
+        return None
+    data = _post_graphql(
+        _TEAM_STATES_QUERY,
+        {"id": team_id},
+        api_key=key,
+        timeout=_TICKET_STATE_TIMEOUT_SECONDS,
+    )
+    nodes = (((data or {}).get("team") or {}).get("states") or {}).get("nodes")
+    if nodes is None:
+        return None
+    out: dict[str, str] = {}
+    for n in nodes:
+        name = n.get("name")
+        sid = n.get("id")
+        if name and sid:
+            out[name.casefold()] = sid
+    return out
+
+
+def update_ticket_state(
+    issue_uuid: str, state_id: str, *, api_key: str | None = None
+) -> bool:
+    """Move the issue `issue_uuid` to workflow state `state_id` (both UUIDs).
+
+    The module's one *write*. Returns True iff the `issueUpdate` mutation
+    reported `success`; False on missing key, missing args, or any API failure.
+    Never raises. Callers (cycle._transition_merged_tickets) own the policy of
+    *whether* to call this — this just performs the mutation.
+    """
+    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    if not key or not issue_uuid or not state_id:
+        return False
+    data = _post_graphql(
+        _ISSUE_UPDATE_MUTATION,
+        {"id": issue_uuid, "stateId": state_id},
+        api_key=key,
+        timeout=_TICKET_STATE_TIMEOUT_SECONDS,
+    )
+    return bool(((data or {}).get("issueUpdate") or {}).get("success"))
