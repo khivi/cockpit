@@ -25,12 +25,14 @@ overlapping run of the same tick.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import os
 import queue
 import signal
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -40,7 +42,7 @@ from textual.widgets import Footer
 
 from cockpit.lib import version
 from cockpit.lib.cmux import BLUE, LOOP_ICON, LOOP_KEY, cmux
-from cockpit.lib.config import load_config
+from cockpit.lib.config import COCKPIT_HOME, load_config
 from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.git import Worktree, worktrees
 from cockpit.tui.widgets.header_bar import HeaderBar
@@ -48,6 +50,7 @@ from cockpit.tui.widgets.log_pane import LogPane
 from cockpit.tui.widgets.worktree_table import WorktreeTable
 
 _UPDATE_CHECK_SECONDS = 3600
+_LOG_TAIL_LINES = 200
 
 # (repo display name, sidebar_color, linear-enabled, worktrees)
 Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
@@ -109,6 +112,9 @@ class CockpitApp(App[None]):
         self._next_slow = 0.0
         self._next_fast = 0.0
         self._log_q: queue.SimpleQueue[str] = queue.SimpleQueue()
+        # Bounded on-disk tail of tick output (last N lines), rewritten on drain.
+        self._log_tail: deque[str] = deque(maxlen=_LOG_TAIL_LINES)
+        self._log_path = COCKPIT_HOME / "watch.log"
         self._saved_stdout: object | None = None
         self._saved_stderr: object | None = None
 
@@ -260,16 +266,23 @@ class CockpitApp(App[None]):
             )
 
     def _drain_log(self) -> None:
-        # The log pane is temporarily out of the layout; drain (and discard) so
-        # the queue stays bounded and re-adding a LogPane restores display.
-        panes = list(self.query(LogPane))
+        # Drain queued tick output into the bounded on-disk tail (last N lines)
+        # and any mounted LogPane. The pane is temporarily out of the layout, so
+        # the file is currently the only place this output lands.
+        new: list[str] = []
         while True:
             try:
-                line = self._log_q.get_nowait()
+                new.append(self._log_q.get_nowait())
             except queue.Empty:
-                return
-            for pane in panes:
+                break
+        if not new:
+            return
+        self._log_tail.extend(new)
+        for pane in self.query(LogPane):
+            for line in new:
                 pane.append(line)
+        with contextlib.suppress(OSError):
+            self._log_path.write_text("\n".join(self._log_tail) + "\n")
 
     def _set_update(self, text: str) -> None:
         self.query_one(HeaderBar).update_text = text

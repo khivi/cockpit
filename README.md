@@ -167,7 +167,7 @@ Edit `config.json` to register repos manually, or just run `/cockpit:new` and le
 
 Full schema with every optional key in [`config.example.json`](config.example.json).
 
-The cockpit logs to stderr — visible in the `--watch` terminal. No log file is written.
+Each cycle's output is written to a bounded log file at `~/.config/cockpit/watch.log` (the last 200 lines), so it's greppable even though the TUI doesn't show a log pane right now.
 
 ### Defaults
 

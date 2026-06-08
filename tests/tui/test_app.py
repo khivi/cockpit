@@ -21,13 +21,15 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture(autouse=True)
-def _isolate(monkeypatch):
-    # No live config reads; no network update check.
+def _isolate(monkeypatch, tmp_path):
+    # No live config reads; no network update check; watch.log under a tmp dir
+    # (not the developer's real ~/.config/cockpit).
     monkeypatch.setattr(
         "cockpit.tui.app.load_config",
         lambda: {"repos": [], "check_update": False},
     )
     monkeypatch.setattr("cockpit.lib.version.latest_version", lambda: None)
+    monkeypatch.setattr("cockpit.tui.app.COCKPIT_HOME", tmp_path)
 
 
 def _make_app(**kw):
@@ -124,13 +126,24 @@ async def test_waiting_on_lock_shows_waiting_not_running():
         assert app._slow_phase == "idle"
 
 
-async def test_tick_output_does_not_crash_without_log_pane():
-    # The log pane is temporarily out of the layout; captured stdout must still
-    # drain harmlessly (no LogPane to write to) rather than raise.
+async def test_tick_output_written_to_bounded_log_file():
+    # No LogPane in the layout; tick output lands in the bounded watch.log.
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.5)  # mount prints "slow-tick: …" → drained to file
+    assert "slow-tick" in app._log_path.read_text()
+
+
+async def test_log_file_bounded_to_tail():
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause(0.4)
-        app._drain_log()  # no LogPane mounted → drains and discards, no error
+        for i in range(300):
+            print(f"line {i}")  # captured by the stdout writer
+        app._drain_log()
+    lines = app._log_path.read_text().splitlines()
+    assert len(lines) <= 200
+    assert lines[-1] == "line 299"  # newest kept
 
 
 async def test_render_table_adds_one_row_per_worktree():
