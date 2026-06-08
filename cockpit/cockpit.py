@@ -70,10 +70,7 @@ PR flat cells), so they serialize themselves here.
 def _build_state(args: argparse.Namespace) -> dict:
     return {
         "self_user": None,
-        "keep_stale": args.keep_stale,
-        "no_spawn": args.no_spawn,
         "dry": args.dry_run,
-        "verbose": args.verbose,
         "pr_cache": {},
         "pill_state": {},
     }
@@ -87,12 +84,9 @@ def _once_with(state: dict) -> None:
         cycle_all(
             cfg,
             self_user,
-            keep_stale=state["keep_stale"],
-            no_spawn=state["no_spawn"],
             dry=state["dry"],
             pr_cache=state["pr_cache"],
             pill_state=state["pill_state"],
-            verbose=state["verbose"],
         )
 
 
@@ -190,10 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Re-run footer setup only (cship.toml + starship.toml + statusLine), then exit.",
     )
-    p.add_argument("--keep-stale", action="store_true")
-    p.add_argument("--no-spawn", action="store_true")
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--verbose", "-v", action="store_true")
     args = p.parse_args(argv)
 
     require_git()

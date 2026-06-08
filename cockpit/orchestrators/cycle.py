@@ -730,10 +730,7 @@ class RepoCycle:
     merged_branches: dict[str, str]
     merged_branches_deep: dict[str, str]
     pill_state: dict
-    keep_stale: bool
-    no_spawn: bool
     dry: bool
-    verbose: bool
     headless: bool
     default_branch: str | None = None
     prefs: dict[int, NudgePref] = field(default_factory=dict)
@@ -765,10 +762,7 @@ def _prepare_cycle(
     cfg: dict,
     pr_cache: dict,
     pill_state: dict,
-    keep_stale: bool,
-    no_spawn: bool,
     dry: bool,
-    verbose: bool,
 ) -> RepoCycle | None:
     """Validate the repo, fetch wts/state/merged in parallel, fetch relevant PRs,
     print the cycle header. Returns None if the repo should be skipped this cycle.
@@ -882,10 +876,7 @@ def _prepare_cycle(
         merged_branches=merged_branches,
         merged_branches_deep=merged_branches_deep,
         pill_state=pill_state,
-        keep_stale=keep_stale,
-        no_spawn=no_spawn,
         dry=dry,
-        verbose=verbose,
         headless=headless,
         default_branch=origin_head_branch(repo_path),
         prefs=prefs,
@@ -1053,7 +1044,7 @@ def _refresh_tracked_pills(
                 changed = ctx.pill_state.get(ref) != blank
                 if changed and not ctx.dry:
                     clear_pr_pills(ref)
-                if changed or ctx.verbose:
+                if changed:
                     if not group_header_printed:
                         print(f"  {dim(group_label)}", flush=True)
                         group_header_printed = True
@@ -1073,7 +1064,7 @@ def _refresh_tracked_pills(
             changed = ctx.pill_state.get(ref) != desired
             if changed and not ctx.dry:
                 apply_pills(ref, pr, wt, ctx.self_user, pref, keep=keep)
-            if changed or ctx.verbose:
+            if changed:
                 if not group_header_printed:
                     print(f"  {dim(group_label)}", flush=True)
                     group_header_printed = True
@@ -1132,7 +1123,7 @@ def _print_tracked_summary(
 
 def _handle_orphans_and_close_stale(ctx: RepoCycle, keep_refs: set[str]) -> None:
     """For each surviving workspace whose worktree branch has no open PR:
-    mine → orphan pills + nudge; coworker → keep (if keep_stale) or close.
+    mine → orphan pills + nudge; coworker → close.
     """
     wt_by_name = {wt.label: wt for wt in ctx.wts}
     wt_by_path = {wt.path.resolve(): wt for wt in ctx.wts}
@@ -1150,12 +1141,6 @@ def _handle_orphans_and_close_stale(ctx: RepoCycle, keep_refs: set[str]) -> None
         wt = wt_opt
         if wt.branch.startswith(my_prefix):
             _refresh_orphan(ctx, ref, wt, ws_name)
-            continue
-        if ctx.keep_stale:
-            print(
-                f"  {verb('stale')} {dim(f'{ws_name} → {ref}  (kept; branch {wt.branch} has no open PR)')}",
-                flush=True,
-            )
             continue
         print(
             f"  {verb('closing')} {ws_name} → {ref}  (branch {wt.branch} has no open PR)",
@@ -1200,7 +1185,7 @@ def _refresh_orphan(ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str) -> Non
         apply_stuck_pill(ref, None)
     orphan_snap, tag = _orphan_snapshot(wt, behind_base)
     changed = ctx.pill_state.get(ref) != orphan_snap
-    if changed or ctx.verbose:
+    if changed:
         print(
             f"  {verb('refreshed')} {cyan(ws_name)} → {ref}  [{yellow(tag)}]",
             flush=True,
@@ -1474,12 +1459,9 @@ def cycle_repo(
     repo_entry: dict,
     self_user: str,
     *,
-    keep_stale: bool,
-    no_spawn: bool,
     dry: bool,
     pr_cache: dict,
     pill_state: dict,
-    verbose: bool,
     cfg: dict,
 ) -> None:
     ctx = _prepare_cycle(
@@ -1488,10 +1470,7 @@ def cycle_repo(
         cfg=cfg,
         pr_cache=pr_cache,
         pill_state=pill_state,
-        keep_stale=keep_stale,
-        no_spawn=no_spawn,
         dry=dry,
-        verbose=verbose,
     )
     if ctx is None:
         return
@@ -1504,8 +1483,7 @@ def cycle_repo(
         _print_tracked_summary(ctx, mine_items, others_items)
     _handle_orphans_and_close_stale(ctx, keep_refs)
     _apply_repo_colors(ctx, repo_entry, keep_refs)
-    if not no_spawn:
-        _spawn_missing_workspaces(ctx, repo_entry)
+    _spawn_missing_workspaces(ctx, repo_entry)
     _maybe_autoclose(
         cfg,
         ctx.repo_path,
@@ -1671,12 +1649,9 @@ def cycle_all(
     cfg: dict,
     self_user: str,
     *,
-    keep_stale: bool,
-    no_spawn: bool,
     dry: bool,
     pr_cache: dict,
     pill_state: dict,
-    verbose: bool,
 ) -> None:
     ensure_state_dirs()
     _check_plugin_update(cfg, pill_state)
@@ -1704,12 +1679,9 @@ def cycle_all(
             cycle_repo(
                 repo_entry,
                 self_user,
-                keep_stale=keep_stale,
-                no_spawn=no_spawn,
                 dry=dry,
                 pr_cache=pr_cache,
                 pill_state=pill_state,
-                verbose=verbose,
                 cfg=cfg,
             )
         except (RuntimeError, subprocess.SubprocessError, OSError) as e:

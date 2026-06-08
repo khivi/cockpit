@@ -1094,10 +1094,7 @@ def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, cap
         cfg={},
         pr_cache={},
         pill_state={},
-        keep_stale=False,
-        no_spawn=False,
         dry=False,
-        verbose=False,
     )
 
     assert result is None
@@ -1141,10 +1138,7 @@ def test_prepare_cycle_prunes_worktrees_before_listing(tmp_path, monkeypatch):
         cfg={},
         pr_cache={},
         pill_state={},
-        keep_stale=False,
-        no_spawn=False,
         dry=False,
-        verbose=False,
     )
 
     assert calls[:2] == ["prune", "list"], f"prune must precede list; got {calls}"
@@ -1222,10 +1216,7 @@ def _stub_repo_cycle(tmp_path, *, headless: bool = False):
         merged_branches={},
         merged_branches_deep={},
         pill_state={},
-        keep_stale=False,
-        no_spawn=False,
         dry=False,
-        verbose=False,
         headless=headless,
     )
 
@@ -1272,16 +1263,13 @@ def _cycle_patches(tmp_path, calls, *, headless=False):
     ]
 
 
-def _run_cycle_repo(no_spawn=False):
+def _run_cycle_repo():
     cycle.cycle_repo(
         repo_entry={"name": "n", "path": "/tmp"},
         self_user="khivi",
-        keep_stale=False,
-        no_spawn=no_spawn,
         dry=False,
         pr_cache={},
         pill_state={},
-        verbose=False,
         cfg={},
     )
 
@@ -1316,20 +1304,6 @@ def test_cycle_repo_headless_skips_workspace_phases(tmp_path):
     with _enter_all(_cycle_patches(tmp_path, calls, headless=True)):
         _run_cycle_repo()
     assert calls == []
-
-
-def test_cycle_repo_no_spawn_skips_spawn_phase(tmp_path):
-    calls: list[str] = []
-    with _enter_all(_cycle_patches(tmp_path, calls)):
-        _run_cycle_repo(no_spawn=True)
-    assert "spawn_missing" not in calls
-    assert calls == [
-        "dedupe",
-        "refresh_pills",
-        "handle_orphans",
-        "apply_colors",
-        "autoclose",
-    ]
 
 
 # ── _spawn_missing_workspaces background creation + _bg_spawn_pr ─────────────
@@ -1378,10 +1352,7 @@ def _spawn_ctx(
         merged_branches={},
         merged_branches_deep={},
         pill_state={} if pill_state is None else pill_state,
-        keep_stale=False,
-        no_spawn=False,
         dry=dry,
-        verbose=False,
         headless=False,
         review_candidates=review_candidates or [],
     )
@@ -1553,10 +1524,7 @@ def _color_ctx(
         merged_branches={},
         merged_branches_deep={},
         pill_state={} if pill_state is None else pill_state,
-        keep_stale=False,
-        no_spawn=False,
         dry=dry,
-        verbose=False,
         headless=False,
     )
 
@@ -2428,10 +2396,7 @@ def _reap_ctx(
         merged_branches={},
         merged_branches_deep=merged_deep or {},
         pill_state={},
-        keep_stale=False,
-        no_spawn=False,
         dry=dry,
-        verbose=False,
         headless=False,
     )
 
