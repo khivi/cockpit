@@ -153,8 +153,9 @@ Key gates (all from `cycle.py`):
   or unaddressed review threads remain.
 - **In-flight spawn guard**: `_bg_spawn_pr` keys `spawn:<owner>/<name>:<branch>`
   in `pill_state` with a `time.monotonic()` stamp; a second spawn within
-  `_SPAWN_INFLIGHT_TTL_SECONDS` (600s) is skipped, so a `/cockpit:sync` kick
-  can't double-launch mid-creation.
+  `_SPAWN_INFLIGHT_TTL_SECONDS` (600s) is skipped, so a manual slow-tick kick
+  (the `s` key, or a `cockpit close`/`new` SIGUSR1) can't double-launch
+  mid-creation.
 - **Orphan auto-spawn is `<self_user>/`-prefix gated**: review worktrees are
   never orphan-spawned. It is deduped by **path** (skip if the worktree's path
   is already a workspace cwd) and additionally **name-clash gated**: skip + log

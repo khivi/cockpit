@@ -11,8 +11,9 @@ Design notes (the two footguns this avoids):
     `queue.SimpleQueue`), not per-tick `redirect_stdout` — the slow and fast tick
     threads would otherwise race on the global stream.
   • Signals use `loop.add_signal_handler`, never `signal.signal` (which raises
-    off the main thread). SIGUSR1 kicks a slow tick (keeps `/cockpit:sync`
-    working); SIGTERM/SIGHUP ask Textual to exit cleanly.
+    off the main thread). SIGUSR1 kicks a slow tick (how `cockpit close`/`new`
+    wake the daemon to drain their queued work); SIGTERM/SIGHUP ask Textual to
+    exit cleanly.
 
 The tick functions are injected as callables so this module never imports back
 into `cockpit.cockpit` (avoids a circular import). They are lock-free; the app
