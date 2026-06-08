@@ -56,20 +56,6 @@ def test_legacy_disabled_categories_ignored(nudges):
     assert nudges.NudgePref.from_json({"disabled_categories": ["ci"]}).muted is False
 
 
-def test_first_seen_at_roundtrip(nudges):
-    pref = nudges.NudgePref(first_seen_at={"ci": 1234.5, "comments": 6789.0})
-    nudges.save_pref(7, pref)
-    loaded = nudges.load_pref(7)
-    assert loaded.first_seen_at == {"ci": 1234.5, "comments": 6789.0}
-
-
-def test_first_seen_at_defaults_empty_and_coerces_types(nudges):
-    # Missing key → empty dict; legacy files without the field load cleanly.
-    assert nudges.NudgePref().first_seen_at == {}
-    loaded = nudges.NudgePref.from_json({"first_seen_at": {"ci": "10"}})
-    assert loaded.first_seen_at == {"ci": 10.0}
-
-
 def test_should_nudge_blocked_by_mute(nudges):
     nudges.save_pref(7, nudges.NudgePref(muted=True))
     assert nudges.should_nudge(7) is False

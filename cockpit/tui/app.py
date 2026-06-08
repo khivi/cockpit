@@ -56,7 +56,10 @@ from cockpit.lib.cmux import (
 )
 from cockpit.lib.config import (
     COCKPIT_HOME,
+    CONFIG_PATH,
+    ensure_state_dirs,
     load_config,
+    reset_config_cache,
     resolve_theme,
     resolve_tui_theme,
     save_tui_theme,
@@ -467,6 +470,41 @@ class CockpitApp(App[None]):
         self.push_screen(
             ConfigScreen("config: all", header + json.dumps(cfg, indent=2))
         )
+
+    def action_edit_config(self) -> None:
+        """Open config.json in $EDITOR (a command-palette entry).
+
+        The TUI is otherwise read-only, but this is the one user-driven
+        full-config write — the same sanctioned exception `save_tui_theme`
+        carves out. Suspends the app (restores the terminal so a full-screen
+        editor like vim can take over), shells to $VISUAL/$EDITOR, then
+        re-validates the JSON and drops the per-process config cache. Repo /
+        interval changes apply fully on the next daemon start; live-read paths
+        (`_gather_inventory`, `_resolve_worktree`) pick up the new repo set on
+        the next tick. A parse error leaves the running daemon on its last-good
+        in-memory config rather than reloading a broken file."""
+        import shlex
+        import subprocess
+
+        ensure_state_dirs()  # seed config.json from the example if absent
+        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+        try:
+            with self.suspend():
+                subprocess.run([*shlex.split(editor), str(CONFIG_PATH)])
+        except (OSError, ValueError) as e:
+            self.notify(f"could not open editor: {e}", severity="error", timeout=8.0)
+            return
+        try:
+            json.loads(CONFIG_PATH.read_text())
+        except (OSError, ValueError) as e:
+            self.notify(
+                f"config.json has invalid JSON — not reloaded: {e}",
+                severity="error",
+                timeout=10.0,
+            )
+            return
+        reset_config_cache()
+        self.notify("config saved — restart cockpit to apply fully", timeout=6.0)
 
     def action_show_output(self) -> None:
         # Show the captured slow/fast tick output (the bounded log tail) in a

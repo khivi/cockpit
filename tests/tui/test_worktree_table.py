@@ -3,7 +3,8 @@
 `worktree_cells` is a pure function — no Textual. Seeds the same flat cache
 cells the daemon writes, then asserts the per-column Rich Text. Columns are
 Workspace | PR | Approval | CI | comments | Title (+ Linear when configured); the
-repo is conveyed by tinting the workspace name (not a column).
+repo is conveyed by tinting the workspace name (not a column). The Dirty column
+reads the per-cwd `git-status` cell (`"<staged> <unstaged> <untracked>"`).
 """
 
 from __future__ import annotations
@@ -39,10 +40,11 @@ def _plain(wt, repo="repo", color=None, linear=False, show_linear=False):
 
 
 def test_cell_count_matches_columns(cache_dir):
-    assert len(_plain(_wt())) == len(_BASE_COLUMNS) == 6
+    assert len(_plain(_wt())) == len(_BASE_COLUMNS) == 7
     assert _BASE_COLUMNS[0] == "Workspace" and _BASE_COLUMNS[2] == "Approval"
+    assert _BASE_COLUMNS[5] == "Dirty"
     # Ticket + Status columns appended only when show_linear
-    assert len(_plain(_wt(), show_linear=True)) == 8
+    assert len(_plain(_wt(), show_linear=True)) == 9
 
 
 def test_workspace_label_strips_prefix(cache_dir):
@@ -73,12 +75,13 @@ def test_pr_columns_with_friendly_approval(cache_dir):
     cache_mod.branch_cache("pr-checks", wt.branch).write_text("✓")
     cache_mod.branch_cache("pr-comments", wt.branch).write_text("2")
     cache_mod.branch_cache("pr-title", wt.branch).write_text("Add the thing")
-    cells = _plain(wt)  # Workspace, PR, Approval, CI, 💬, Title
+    cells = _plain(wt)  # Workspace, PR, Approval, CI, 💬, Dirty, Title
     assert cells[1] == "#123"
     assert cells[2] == "Approved"  # friendly label, not the raw enum
     assert cells[3] == "✓"
     assert cells[4] == "2"
-    assert cells[5] == "Add the thing"
+    assert cells[5] == ""  # clean tree (no git-status cell)
+    assert cells[6] == "Add the thing"
 
 
 @pytest.mark.parametrize(
@@ -118,7 +121,7 @@ def test_no_pr_leaves_columns_blank(cache_dir):
 def test_long_title_truncated(cache_dir):
     wt = _wt(branch="khivi/long")
     cache_mod.branch_cache("pr-title", wt.branch).write_text("x" * 80)
-    title = _plain(wt)[5]
+    title = _plain(wt)[6]
     assert title.endswith("…")
     assert len(title) <= 49
 
@@ -132,7 +135,7 @@ def test_ticket_and_status_columns_when_enabled(cache_dir, monkeypatch):
         },
     )
     cells = worktree_cells(wt, "r", None, True, show_linear=True)
-    ticket, status = cells[6], cells[7]  # Ticket, Status
+    ticket, status = cells[7], cells[8]  # Ticket, Status
     assert ticket.plain == "PE-1"
     assert status.plain == "Dev Done"
     assert "green" in str(status.style)  # all tickets done → green status
@@ -146,12 +149,12 @@ def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
     )
     # columns exist (some other repo is Linear) but this row's repo isn't
     cells = worktree_cells(wt, "r", None, False, show_linear=True)
-    assert cells[6].plain == "" and cells[7].plain == ""
+    assert cells[7].plain == "" and cells[8].plain == ""
 
 
 def test_no_linear_columns_when_not_configured(cache_dir):
     # show_linear False → no Ticket/Status cells
-    assert len(_plain(_wt(), linear=True, show_linear=False)) == 6
+    assert len(_plain(_wt(), linear=True, show_linear=False)) == 7
 
 
 def test_muted_pr_prefixes_workspace_glyph(cache_dir):
@@ -165,3 +168,34 @@ def test_unmuted_pr_has_no_glyph(cache_dir):
     wt = _wt(branch="khivi/loud", branch_prefix="khivi/")
     cell = worktree_cells(wt, "r", None, False, show_linear=False)[0]
     assert cell.plain == "loud"
+
+
+def test_dirty_column_renders_counts(cache_dir):
+    wt = _wt(path="/tmp/dirtywt", branch="khivi/dirty")
+    cache_mod.cwd_cache("git-status", wt.path).write_text("1 2 3")
+    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[5]
+    # ●1 ✎2 ✚3 with the footer's glyphs
+    assert dirty.plain == "●1 ✎2 ✚3"
+    assert "green" in str(dirty.spans[0].style)  # staged
+    assert "yellow" in str(dirty.spans[1].style)  # unstaged
+
+
+def test_dirty_column_omits_zero_segments(cache_dir):
+    wt = _wt(path="/tmp/partialdirty", branch="khivi/partial")
+    cache_mod.cwd_cache("git-status", wt.path).write_text("0 0 4")
+    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[5]
+    assert dirty.plain == "✚4"  # only untracked shown
+
+
+def test_dirty_column_blank_when_clean(cache_dir):
+    wt = _wt(path="/tmp/cleanwt", branch="khivi/clean")
+    cache_mod.cwd_cache("git-status", wt.path).write_text("0 0 0")
+    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[5]
+    assert dirty.plain == ""
+
+
+def test_dirty_column_blank_when_cell_missing(cache_dir):
+    # Cold start: daemon hasn't written the git-status cell yet.
+    wt = _wt(path="/tmp/coldwt", branch="khivi/cold")
+    dirty = worktree_cells(wt, "r", None, False, show_linear=False)[5]
+    assert dirty.plain == ""

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import IO
 
 import cockpit.lib.daemon_signal as daemon_signal
-from cockpit.lib import nudges, version
+from cockpit.lib import version
 from cockpit.lib.cache import (
     clear_branch_pr_cache,
     find_pr_payload,
@@ -41,7 +41,6 @@ from cockpit.lib.cmux import (
     apply_devdone_pill,
     apply_pills,
     apply_stale_pill,
-    apply_stuck_pill,
     apply_wip_pill,
     clear_pr_pills,
     close_gone_cwd_workspaces,
@@ -163,68 +162,6 @@ def maybe_nudge(
         )
         return True
     return False
-
-
-def _stale_threshold_seconds(cfg: dict) -> float:
-    """Seconds an actionable issue may persist without a successful nudge before
-    the stale-running escape hatch (`stuck=` pill) fires. Defaults to three slow
-    cycles so it tracks the poll cadence; override with `nudge_stale_seconds`.
-    """
-    explicit = cfg.get("nudge_stale_seconds")
-    if explicit is not None:
-        return float(explicit)
-    return 3 * float(cfg.get("slow_poll_interval_seconds", 300))
-
-
-def _track_stale_issue(
-    ctx: RepoCycle,
-    ref: str,
-    pr: PR,
-    category: str | None,
-    *,
-    nudged: bool,
-) -> None:
-    """Advance / reset the per-category stale timer and toggle the `stuck=` pill.
-
-    `category` is the PR's current actionable category (`None` once it resolves).
-    The timer starts the first cycle the issue is seen while the workspace is
-    NOT nudgeable; if the issue persists past the threshold still un-nudged, the
-    out-of-session `stuck=` pill is raised. A successful nudge, a resolved issue,
-    or a user mute all reset it. No-op in dry runs — never mutates pref/pills.
-    """
-    if ctx.dry:
-        return
-    pref = ctx.prefs.get(pr.number)
-    if pref is None:
-        pref = NudgePref()
-        ctx.prefs[pr.number] = pref
-
-    muted = category is not None and not nudges.should_nudge(pr.number)
-    # Drop timers for any category that is no longer the live actionable one
-    # (issue changed, e.g. ci→comments, or resolved entirely).
-    stale_keys = [c for c in pref.first_seen_at if c != category]
-    changed = bool(stale_keys)
-    for c in stale_keys:
-        del pref.first_seen_at[c]
-
-    label: str | None = None
-    if category is None or nudged or muted:
-        if category in pref.first_seen_at:
-            del pref.first_seen_at[category]
-            changed = True
-    else:
-        now = time.time()
-        first = pref.first_seen_at.get(category)
-        if first is None:
-            pref.first_seen_at[category] = now
-            changed = True
-        elif now - first >= _stale_threshold_seconds(ctx.cfg):
-            age_min = int((now - first) // 60)
-            label = f"stuck:{category} {age_min}m"
-
-    apply_stuck_pill(ref, label)
-    if changed:
-        nudges.save_pref(pr.number, pref)
 
 
 def _linear_state_ttl_seconds(cfg: dict) -> float:
@@ -510,18 +447,13 @@ def _maybe_autoclose(
             continue
         if not _is_post_merge_stale(wt, merged_branches):
             continue
-        # Merged: any `stuck=` pill raised while the PR was open and actionable
-        # is now moot. The PR has left the tracked open-PR set, so
-        # `_track_stale_issue` will never run again to clear it — clear it here
-        # so a skipped teardown (uncommitted/keep/draft/CI/unaddressed below)
-        # doesn't strand the pill on a kept workspace. See AGENTS.md `stuck=`.
+        # Merged: the Linear dev-done pill raised while the PR was open is now
+        # moot. The PR has left the tracked open-PR set, so `_track_dev_done`
+        # won't run again to clear it on a kept workspace (live, the ticket has
+        # usually moved to "Done" anyway, but don't depend on that) — clear it
+        # here so a skipped teardown doesn't strand the pill.
         merged_ref = _workspace_ref_for_path(wt.path, cwds)
         if merged_ref is not None and not dry:
-            apply_stuck_pill(merged_ref, None)
-            # Same reasoning for the Linear dev-done pill: a merged PR leaves the
-            # tracked open-PR set, so `_track_dev_done` won't run again to clear
-            # it on a kept workspace. (Live, the ticket has usually moved to
-            # "Done" anyway, but don't depend on that to drop the pill.)
             apply_devdone_pill(merged_ref, None)
         pr_payload = (
             pr_payloads.get(wt.branch)
@@ -1056,8 +988,6 @@ def _refresh_tracked_pills(
                     printed_refresh = True
                 if changed and not ctx.dry:
                     ctx.pill_state[ref] = blank
-                # Drop any stale-issue timer; the PR is no longer tracked here.
-                _track_stale_issue(ctx, ref, pr, None, nudged=False)
                 continue
             keep = bool(pr_payload and pr_payload.get("keep"))
             desired = frozenset(status_pills(pr, wt, ctx.self_user, pref, keep=keep))
@@ -1085,11 +1015,10 @@ def _refresh_tracked_pills(
             # _maybe_autoclose kept its worktree (e.g. merged with red CI) — the
             # per-branch query refreshes any-state PRs into the cache. Gate on
             # OPEN so the footer pill still shows the merged-with-red-CI state
-            # for inspection, but no nudge or stuck timer fires.
+            # for inspection, but no nudge fires.
             actionable = pr.display_issue in ACTIONABLE_ISSUES and pr.state == "OPEN"
-            nudged = False
             if actionable:
-                nudged = maybe_nudge(
+                maybe_nudge(
                     ref,
                     f"PR #{pr.number}: {_NUDGE_DESC[pr.display_issue](pr)}.",
                     ctx.dry,
@@ -1097,13 +1026,6 @@ def _refresh_tracked_pills(
                     pr_number=pr.number,
                     category=pr.display_issue,
                 )
-            _track_stale_issue(
-                ctx,
-                ref,
-                pr,
-                pr.display_issue if actionable else None,
-                nudged=nudged,
-            )
             _track_dev_done(ctx, ref, ctx.linear_blocks.get(pr.branch))
     return printed_refresh, mine_items, others_items
 
@@ -1178,11 +1100,6 @@ def _refresh_orphan(ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str) -> Non
         )
         apply_wip_pill(ref, wt.dirty_count)
         apply_stale_pill(ref, behind_base)
-        # An orphan has no open PR, so no actionable category and no stuck
-        # state. Clear any `stuck=` pill left over from when this branch still
-        # had an open, actionable PR (closed-without-merge, branch reused) —
-        # _track_stale_issue no longer runs for it to clear it itself.
-        apply_stuck_pill(ref, None)
     orphan_snap, tag = _orphan_snapshot(wt, behind_base)
     changed = ctx.pill_state.get(ref) != orphan_snap
     if changed:

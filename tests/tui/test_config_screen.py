@@ -15,7 +15,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from cockpit.tui.widgets.config_screen import ConfigScreen
+from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 
 pytestmark = pytest.mark.asyncio
 
@@ -65,6 +65,16 @@ async def test_ansi_decoded_to_foreground_only():
         assert styled, "expected the ANSI colour to produce a styled span"
         for span in styled:
             assert span.style.bgcolor is None
+
+
+async def test_palette_offers_edit_config():
+    # The Ctrl+P palette must list the edit entry alongside the read entries.
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        provider = ConfigCommands(app.screen)
+        hits = [h async for h in provider.search("edit config")]
+        assert any("Edit config" in str(h.text) for h in hits)
 
 
 async def test_plain_json_body_is_unstyled():

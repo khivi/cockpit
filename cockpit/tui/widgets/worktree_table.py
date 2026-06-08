@@ -8,9 +8,11 @@ back to its workspace for focus / close.
 
 Repos are distinguished by colour, not a column: the workspace name is tinted
 with the repo's `sidebar_color` via the same `CMUX_COLOR_ANSI` colorizer cmux
-uses, so the table and the cmux sidebar agree. Ticket + Status columns are added
-only when some configured repo is Linear-enabled (`show_linear`); they show the
-delivered Linear ticket id(s) and workflow state from the cached per-PR block.
+uses, so the table and the cmux sidebar agree. The Dirty column reads the same
+daemon-written `git-status` cell the footer does (`●S ✎M ✚U`). Ticket + Status
+columns are added only when some configured repo is Linear-enabled
+(`show_linear`); they show the delivered Linear ticket id(s) and workflow state
+from the cached per-PR block.
 
 A muted PR (nudges silenced via `m` / `/cockpit:nudge`) prefixes its workspace
 name with the 🔇 glyph, read from the daemon-written `pr-muted` cell — the same
@@ -25,10 +27,15 @@ from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import DataTable
 
-from cockpit.lib.cache import branch_cache, find_pr_payload, read_text
+from cockpit.lib.cache import branch_cache, cwd_cache, find_pr_payload, read_text
 from cockpit.lib.colors import CMUX_COLOR_ANSI
 from cockpit.lib.git import Worktree
-from cockpit.lib.starship import ICON_PR_MUTED
+from cockpit.lib.starship import (
+    ICON_PR_MUTED,
+    ICON_STAGED,
+    ICON_UNSTAGED,
+    ICON_UNTRACKED,
+)
 
 # (repo display name, sidebar_color, linear-enabled, worktrees)
 Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
@@ -45,7 +52,7 @@ _STATE = {
 }
 _CI_STYLE = {"✓": "green", "✗": "red", "•": "yellow", "?": "grey50"}
 
-_BASE_COLUMNS = ("Workspace", "PR", "Approval", "CI", "💬", "Title")
+_BASE_COLUMNS = ("Workspace", "PR", "Approval", "CI", "💬", "Dirty", "Title")
 _LINEAR_COLUMNS = ("Ticket", "Status")
 
 
@@ -62,6 +69,28 @@ def _workspace_cell(wt: Worktree, repo_color: str | None, *, muted: bool) -> Tex
     if muted:
         return Text.assemble((f"{ICON_PR_MUTED} ", "yellow"), cell)
     return cell
+
+
+def _dirty_cell(wt: Worktree) -> Text:
+    """Working-tree dirtiness from the daemon-written `git-status` cell
+    (`"<staged> <unstaged> <untracked>"`), rendered as `●S ✎M ✚U` with the
+    same glyphs and colours the footer's `print_worktree_status` uses. Blank
+    when the tree is clean (or the cell isn't populated yet)."""
+    parts = read_text(cwd_cache("git-status", wt.path)).split()
+    if len(parts) != 3:
+        return Text("")
+    try:
+        staged, unstaged, untracked = (int(p) for p in parts)
+    except ValueError:
+        return Text("")
+    segs = []
+    if staged:
+        segs.append(Text(f"{ICON_STAGED}{staged}", style="green"))
+    if unstaged:
+        segs.append(Text(f"{ICON_UNSTAGED}{unstaged}", style="yellow"))
+    if untracked:
+        segs.append(Text(f"{ICON_UNTRACKED}{untracked}", style="grey50"))
+    return Text(" ").join(segs) if segs else Text("")
 
 
 def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
@@ -103,6 +132,7 @@ def worktree_cells(
         Text(label, style=style) if state else Text(""),
         Text(ci, style=_CI_STYLE.get(ci, "white")) if ci else Text(""),
         Text(comments, style="red") if comments and comments != "0" else Text(""),
+        _dirty_cell(wt),
         Text((title[:48] + "…") if len(title) > 49 else title, style="grey62"),
     ]
     if show_linear:

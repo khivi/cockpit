@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from .config import CACHE_DIR
@@ -30,10 +30,6 @@ class NudgePref:
     reason: str = ""
     last_nudge_at: float = 0.0
     last_nudge_category: str | None = None
-    # category → unix time the actionable issue was first seen while the
-    # workspace was NOT nudgeable. Drives the stale-running escape hatch
-    # (cmux `stuck=` pill). Reset when the issue resolves or a nudge lands.
-    first_seen_at: dict[str, float] = field(default_factory=dict)
 
     def to_json(self) -> dict:
         return {
@@ -42,12 +38,10 @@ class NudgePref:
             "reason": self.reason,
             "last_nudge_at": self.last_nudge_at,
             "last_nudge_category": self.last_nudge_category,
-            "first_seen_at": dict(self.first_seen_at),
         }
 
     @classmethod
     def from_json(cls, data: dict) -> NudgePref:
-        raw_seen = data.get("first_seen_at") or {}
         # A pre-boolean file's `disabled_categories` key is simply ignored — an
         # absent `muted` reads as not muted (any prior mute is dropped).
         return cls(
@@ -56,7 +50,6 @@ class NudgePref:
             reason=data.get("reason", "") or "",
             last_nudge_at=float(data.get("last_nudge_at") or 0.0),
             last_nudge_category=data.get("last_nudge_category"),
-            first_seen_at={str(k): float(v) for k, v in raw_seen.items()},
         )
 
 

@@ -2,10 +2,13 @@
 
 `ConfigScreen` is a read-only scrollable overlay that prints a JSON blob (a
 single repo's config, or the whole `config.json`). `ConfigCommands` registers
-"Show config: …" entries in the built-in command palette (Ctrl+P) that resolve
-the *currently selected* repo (the cursor row's repo) and push the screen.
+"Show config: …" / "Edit config" entries in the built-in command palette
+(Ctrl+P): the show entries resolve the *currently selected* repo (the cursor
+row's repo) and push the screen; the edit entry opens `config.json` in $EDITOR.
 
-Like the rest of the TUI it never writes a cell — it only reads `load_config()`.
+Like the rest of the TUI the *viewer* never writes a cell — it only reads
+`load_config()`. The edit entry delegates to `app.action_edit_config`, the one
+sanctioned full-config write (mirroring `save_tui_theme`).
 """
 
 from __future__ import annotations
@@ -73,6 +76,11 @@ class ConfigCommands(Provider):
                 "Show config: all repos",
                 "action_show_full_config",
                 "Show the full cockpit config (all repos + globals)",
+            ),
+            (
+                "Edit config: open in $EDITOR",
+                "action_edit_config",
+                "Edit config.json in $EDITOR (changes apply on restart)",
             ),
         )
         for label, action, help_text in commands:

@@ -65,21 +65,12 @@ WIP_ICON = "✏️"
 STALE_KEY = "stale"
 STALE_ICON = "↻"
 
-# Stale-running escape hatch: set when an actionable PR issue has persisted past
-# the stale threshold without the workspace ever becoming nudgeable (e.g. the
-# agent is wedged mid-turn, or its `idle=` pill write was lost and never
-# re-asserted). A passive, out-of-session visual marker — never a `send`, so it
-# can't type into a pending y/n permission prompt. Managed in the cycle's slow
-# tick, not via apply_pills, so it is deliberately absent from ACTIONABLE_KEYS.
-STUCK_KEY = "stuck"
-STUCK_ICON = "🚨"
-
 # Linear "dev done" marker: set when a tracked PR's linked Linear ticket sits in
-# the configured dev-done workflow state (see config.linear_dev_done_state). Like
-# `stuck=`, it is a passive sidebar visual managed directly in the slow tick (not
-# via apply_pills) and so is deliberately absent from ACTIONABLE_KEYS — it is
-# never a `send`. Gated on the repo being Linear-configured AND the branch
-# carrying a ticket id (the same branch→ticket alignment the footer renders).
+# the configured dev-done workflow state (see config.linear_dev_done_state). It
+# is a passive sidebar visual managed directly in the slow tick (not via
+# apply_pills) and so is deliberately absent from ACTIONABLE_KEYS — it is never a
+# `send`. Gated on the repo being Linear-configured AND the branch carrying a
+# ticket id (the same branch→ticket alignment the footer renders).
 DEVDONE_KEY = "devdone"
 DEVDONE_ICON = "🏁"
 
@@ -243,16 +234,6 @@ def apply_stale_pill(ref: str, behind_base: int) -> None:
     omitted there.
     """
     _apply_count_pill(ref, STALE_KEY, STALE_ICON, behind_base)
-
-
-def apply_stuck_pill(ref: str, label: str | None) -> None:
-    """Set the stale-running escape-hatch pill on `ref` to `label`, or clear it
-    when `label` is falsy. See `STUCK_KEY` for the design rationale.
-    """
-    if label:
-        _set_status(ref, STUCK_KEY, f"{STUCK_ICON} {label}", RED)
-    else:
-        _clear_status(ref, STUCK_KEY)
 
 
 def apply_devdone_pill(ref: str, ticket: str | None) -> None:

@@ -8,6 +8,8 @@ gating / capture behaviour, not the reconcile cycle underneath.
 
 from __future__ import annotations
 
+import contextlib
+import subprocess
 import threading
 from pathlib import Path
 
@@ -777,6 +779,69 @@ async def test_show_output_and_escape_close(monkeypatch):
         await pilot.press("escape")  # esc closes the overlay
         await pilot.pause()
         assert not isinstance(app.screen, ConfigScreen)
+
+
+def _patch_edit_config(monkeypatch, app, cfg_path, *, editor_writes):
+    """Wire `action_edit_config` to a tmp config + a fake editor + spies.
+
+    Returns (toasts, reset_calls). The fake editor invokes `editor_writes(path)`
+    so a test can simulate writing valid / invalid JSON.
+    """
+    monkeypatch.setattr("cockpit.tui.app.CONFIG_PATH", cfg_path)
+    monkeypatch.setattr("cockpit.tui.app.ensure_state_dirs", lambda: None)
+    reset_calls = {"n": 0}
+    monkeypatch.setattr(
+        "cockpit.tui.app.reset_config_cache",
+        lambda: reset_calls.__setitem__("n", reset_calls["n"] + 1),
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda argv, *a, **k: editor_writes(cfg_path)
+    )
+    # Suspend tears down the terminal — a no-op in the headless test harness.
+    monkeypatch.setattr(app, "suspend", lambda: contextlib.nullcontext())
+    toasts: list[str] = []
+    monkeypatch.setattr(app, "notify", lambda m, **kw: toasts.append(m))
+    return toasts, reset_calls
+
+
+async def test_edit_config_valid_reloads(monkeypatch, tmp_path):
+    # A valid edit drops the config cache (so live-read tick paths see it) and
+    # toasts the restart-to-apply hint.
+    app, _ = _make_app()
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"repos": []}\n')
+    toasts, reset_calls = _patch_edit_config(
+        monkeypatch,
+        app,
+        cfg,
+        editor_writes=lambda p: p.write_text('{"repos": [{"name": "r"}]}\n'),
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_edit_config()
+        await pilot.pause()
+    assert reset_calls["n"] == 1
+    assert any("config saved" in t for t in toasts)
+
+
+async def test_edit_config_invalid_json_does_not_reload(monkeypatch, tmp_path):
+    # A broken edit must NOT drop the cache — the running daemon stays on its
+    # last-good in-memory config — and must surface the parse error.
+    app, _ = _make_app()
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"repos": []}\n')
+    toasts, reset_calls = _patch_edit_config(
+        monkeypatch,
+        app,
+        cfg,
+        editor_writes=lambda p: p.write_text("{ this is not json"),
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_edit_config()
+        await pilot.pause()
+    assert reset_calls["n"] == 0
+    assert any("invalid JSON" in t for t in toasts)
 
 
 async def test_escape_back_is_noop_on_base_screen():

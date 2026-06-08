@@ -583,11 +583,11 @@ def test_autoclose_skips_dirty_even_with_clean_pr(tmp_path):
     remove_mock.assert_not_called()
 
 
-def test_autoclose_clears_stuck_pill_when_skipped_dirty(tmp_path):
+def test_autoclose_clears_devdone_pill_when_skipped_dirty(tmp_path):
     """A merged worktree whose teardown is skipped (dirty/mid-turn) must still
-    clear any `stuck=` pill — the PR has left the tracked open-PR set, so
-    `_track_stale_issue` will never run again to clear it. Regression: a
-    `stuck:comments` pill stranded forever on a merged-but-running workspace.
+    clear any `devdone=` pill — the PR has left the tracked open-PR set, so
+    `_track_dev_done` will never run again to clear it. Regression: a `devdone`
+    pill stranded forever on a merged-but-running workspace.
     """
     wt_path = tmp_path / "repo-feat"
     wt_path.mkdir()
@@ -598,7 +598,7 @@ def test_autoclose_clears_stuck_pill_when_skipped_dirty(tmp_path):
         patch.object(teardown_mod, "remove_worktree") as remove_mock,
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
         patch.object(cycle, "is_ancestor", return_value=True),
-        patch.object(cycle, "apply_stuck_pill") as stuck_mock,
+        patch.object(cycle, "apply_devdone_pill") as devdone_mock,
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -613,11 +613,11 @@ def test_autoclose_clears_stuck_pill_when_skipped_dirty(tmp_path):
 
     close_mock.assert_not_called()
     remove_mock.assert_not_called()
-    stuck_mock.assert_called_once_with("ws-ref", None)
+    devdone_mock.assert_called_once_with("ws-ref", None)
 
 
-def test_autoclose_dry_run_does_not_clear_stuck_pill(tmp_path):
-    """Dry runs never mutate pills — the stuck= clear is gated on `not dry`."""
+def test_autoclose_dry_run_does_not_clear_devdone_pill(tmp_path):
+    """Dry runs never mutate pills — the devdone= clear is gated on `not dry`."""
     wt_path = tmp_path / "repo-feat"
     wt_path.mkdir()
     wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=3)
@@ -627,7 +627,7 @@ def test_autoclose_dry_run_does_not_clear_stuck_pill(tmp_path):
         patch.object(teardown_mod, "remove_worktree"),
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
         patch.object(cycle, "is_ancestor", return_value=True),
-        patch.object(cycle, "apply_stuck_pill") as stuck_mock,
+        patch.object(cycle, "apply_devdone_pill") as devdone_mock,
     ):
         cycle._maybe_autoclose(
             cfg={"auto_cleanup_on_merge": True},
@@ -640,7 +640,7 @@ def test_autoclose_dry_run_does_not_clear_stuck_pill(tmp_path):
             dry=True,
         )
 
-    stuck_mock.assert_not_called()
+    devdone_mock.assert_not_called()
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1729,9 +1729,6 @@ def test_drain_successful_teardown_pops_marker(drain_isolated):
     assert ds.iter_pending() == []
 
 
-# ── stale-running escape hatch (stuck= pill) ─────────────────────────────────
-
-
 def _stale_pr(*, ci: str = "failed") -> PR:
     """An OPEN PR whose display_issue is the actionable `ci` category."""
     return PR(
@@ -1750,37 +1747,6 @@ def _stale_pr(*, ci: str = "failed") -> PR:
     )
 
 
-def _stale_ctx(tmp_path, pref, *, dry: bool = False, cfg: dict | None = None):
-    ctx = _stub_repo_cycle(tmp_path, headless=False)
-    ctx.dry = dry
-    ctx.cfg = cfg if cfg is not None else {"nudge_stale_seconds": 900}
-    ctx.prefs = {1: pref}
-    return ctx
-
-
-def test_refresh_orphan_clears_stuck_pill(tmp_path):
-    """An orphan workspace (branch with no open PR) has no actionable category,
-    so any `stuck=` pill left over from when its PR was open and actionable must
-    be cleared — _track_stale_issue no longer runs for it.
-    """
-    wt_path = tmp_path / "repo-feat"
-    wt_path.mkdir()
-    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
-    ctx = _stub_repo_cycle(tmp_path)
-    ctx.base_distance = {}
-
-    with (
-        patch.object(cycle, "cmux"),
-        patch.object(cycle, "apply_wip_pill"),
-        patch.object(cycle, "apply_stale_pill"),
-        patch.object(cycle, "maybe_nudge"),
-        patch.object(cycle, "apply_stuck_pill") as stuck_mock,
-    ):
-        cycle._refresh_orphan(ctx, "workspace:7", wt, "repo-feat")
-
-    stuck_mock.assert_called_once_with("workspace:7", None)
-
-
 def test_refresh_orphan_renames_drifted_workspace(tmp_path):
     """An orphan workspace whose name drifted from its branch label is
     re-asserted to `wt.label` in the slow tick."""
@@ -1796,7 +1762,6 @@ def test_refresh_orphan_renames_drifted_workspace(tmp_path):
         patch.object(cycle, "cmux"),
         patch.object(cycle, "apply_wip_pill"),
         patch.object(cycle, "apply_stale_pill"),
-        patch.object(cycle, "apply_stuck_pill"),
         patch.object(cycle, "maybe_nudge"),
         patch.object(cycle, "rename_workspace_if_needed", return_value=True) as rn,
     ):
@@ -1822,152 +1787,12 @@ def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
         patch.object(cycle, "apply_pills"),
         patch.object(cycle, "status_pills", return_value=()),
         patch.object(cycle, "maybe_nudge", return_value=False),
-        patch.object(cycle, "_track_stale_issue"),
         patch.object(cycle, "_track_dev_done"),
         patch.object(cycle, "rename_workspace_if_needed", return_value=True) as rn,
     ):
         cycle._refresh_tracked_pills(ctx, {"workspace:7"})
 
     rn.assert_called_once_with("workspace:7", "feat", "stale-name", dry=False)
-
-
-def test_stale_threshold_default_is_three_slow_cycles():
-    assert cycle._stale_threshold_seconds({}) == 900.0
-    assert cycle._stale_threshold_seconds({"slow_poll_interval_seconds": 100}) == 300.0
-    assert cycle._stale_threshold_seconds({"nudge_stale_seconds": 42}) == 42.0
-
-
-def test_track_stale_first_sighting_records_timer_no_pill(tmp_path):
-    from cockpit.lib.nudges import NudgePref
-
-    pref = NudgePref()
-    ctx = _stale_ctx(tmp_path, pref)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "should_nudge", return_value=True),
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=1000.0),
-    ):
-        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
-
-    assert pref.first_seen_at == {"ci": 1000.0}
-    assert stuck == [("workspace:1", None)]  # timer started, not yet stuck
-
-
-def test_track_stale_past_threshold_raises_stuck_pill(tmp_path):
-    from cockpit.lib.nudges import NudgePref
-
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "should_nudge", return_value=True),
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=1000.0 + 1000.0),
-    ):
-        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
-
-    assert len(stuck) == 1
-    ref, label = stuck[0]
-    assert ref == "workspace:1"
-    assert label is not None and label.startswith("stuck:ci")
-
-
-def test_track_stale_successful_nudge_clears_timer_and_pill(tmp_path):
-    from cockpit.lib.nudges import NudgePref
-
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "should_nudge", return_value=True),
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=9999.0),
-    ):
-        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=True)
-
-    assert pref.first_seen_at == {}
-    assert stuck == [("workspace:1", None)]
-
-
-def test_track_stale_mute_wins_even_past_threshold(tmp_path):
-    from cockpit.lib.nudges import NudgePref
-
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "should_nudge", return_value=False),  # muted
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=1000.0 + 10_000.0),
-    ):
-        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
-
-    assert pref.first_seen_at == {}
-    assert stuck == [("workspace:1", None)]
-
-
-def test_track_stale_resolved_issue_clears_everything(tmp_path):
-    from cockpit.lib.nudges import NudgePref
-
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "should_nudge", return_value=True),
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=2000.0),
-    ):
-        # category=None → the actionable issue resolved this cycle.
-        cycle._track_stale_issue(
-            ctx, "workspace:1", _stale_pr(ci="passed"), None, nudged=False
-        )
-
-    assert pref.first_seen_at == {}
-    assert stuck == [("workspace:1", None)]
-
-
-def test_track_stale_category_switch_drops_old_timer(tmp_path):
-    from cockpit.lib.nudges import NudgePref
-
-    # Was stuck on ci; now the live issue is comments — the ci timer must drop
-    # so a resolved category can't keep escalating.
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref)
-    with (
-        patch.object(cycle, "apply_stuck_pill"),
-        patch.object(cycle.nudges, "should_nudge", return_value=True),
-        patch.object(cycle.nudges, "save_pref"),
-        patch.object(cycle.time, "time", return_value=5000.0),
-    ):
-        cycle._track_stale_issue(
-            ctx, "workspace:1", _stale_pr(), "comments", nudged=False
-        )
-
-    assert pref.first_seen_at == {"comments": 5000.0}
-
-
-def test_track_stale_dry_run_is_noop(tmp_path):
-    from cockpit.lib.nudges import NudgePref
-
-    pref = NudgePref(first_seen_at={"ci": 1000.0})
-    ctx = _stale_ctx(tmp_path, pref, dry=True)
-    stuck: list = []
-    with (
-        patch.object(cycle, "apply_stuck_pill", side_effect=lambda *a: stuck.append(a)),
-        patch.object(cycle.nudges, "save_pref") as save,
-        patch.object(cycle.time, "time", return_value=99_999.0),
-    ):
-        cycle._track_stale_issue(ctx, "workspace:1", _stale_pr(), "ci", nudged=False)
-
-    assert pref.first_seen_at == {"ci": 1000.0}  # untouched
-    assert stuck == []
-    save.assert_not_called()
 
 
 # ── devdone pill: Linear-delivery resolution + decision ──────────────────────
@@ -2171,38 +1996,34 @@ def _refresh_with_mocks(ctx):
         patch.object(cycle, "status_pills", return_value=[]),
         patch.object(cycle, "apply_pills"),
         patch.object(cycle, "find_pr_payload", return_value=None),
-        patch.object(cycle, "_track_stale_issue") as track_mock,
+        patch.object(cycle, "_track_dev_done"),
         patch.object(cycle, "maybe_nudge", return_value=True) as nudge_mock,
     ):
         cycle._refresh_tracked_pills(ctx, {"workspace:1"})
-    return nudge_mock, track_mock
+    return nudge_mock
 
 
 def test_refresh_does_not_nudge_merged_pr_with_failing_ci(tmp_path):
     """A merged PR kept by _maybe_autoclose (merged with red CI) must not be
-    nudged: its CI can never be fixed, so the nudge would loop forever. The
-    category handed to _track_stale_issue is None, so no stuck timer fires
-    either."""
+    nudged: its CI can never be fixed, so the nudge would loop forever."""
     wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
     pr = _stale_pr(ci="failed:2")
     pr.state = "MERGED"
-    nudge_mock, track_mock = _refresh_with_mocks(_tracked_ctx(tmp_path, pr, wt))
+    nudge_mock = _refresh_with_mocks(_tracked_ctx(tmp_path, pr, wt))
 
     nudge_mock.assert_not_called()
-    track_mock.assert_called_once()
-    assert track_mock.call_args.args[3] is None
 
 
 def test_refresh_nudges_open_pr_with_failing_ci(tmp_path):
-    """Companion: an OPEN PR with the same failing CI still nudges and starts
-    the `ci` stale timer."""
+    """Companion: an OPEN PR with the same failing CI still nudges, with the
+    `ci` actionable category."""
     wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
-    nudge_mock, track_mock = _refresh_with_mocks(
+    nudge_mock = _refresh_with_mocks(
         _tracked_ctx(tmp_path, _stale_pr(ci="failed:2"), wt)
     )
 
     nudge_mock.assert_called_once()
-    assert track_mock.call_args.args[3] == "ci"
+    assert nudge_mock.call_args.kwargs["category"] == "ci"
 
 
 # ── reused-branch merged-PR suppression ──────────────────────────────────────
@@ -2268,7 +2089,7 @@ def test_is_reused_branch_merge_no_worktree():
 
 def test_refresh_suppresses_reused_branch_card(tmp_path):
     """Winning payload reusedBranch=True → clear the card pills, show no PR, and
-    never nudge. The stale timer is reset (category None)."""
+    never nudge."""
     wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
     ctx = _tracked_ctx(tmp_path, _pr("khivi/feat", state="MERGED"), wt)
     ctx.pr_payloads = {"khivi/feat": {"reusedBranch": True}}
@@ -2276,15 +2097,12 @@ def test_refresh_suppresses_reused_branch_card(tmp_path):
         patch.object(cycle, "clear_pr_pills") as clear_mock,
         patch.object(cycle, "apply_pills") as apply_mock,
         patch.object(cycle, "maybe_nudge", return_value=True) as nudge_mock,
-        patch.object(cycle, "_track_stale_issue") as track_mock,
     ):
         cycle._refresh_tracked_pills(ctx, {"workspace:1"})
 
     clear_mock.assert_called_once_with("workspace:1")
     apply_mock.assert_not_called()
     nudge_mock.assert_not_called()
-    track_mock.assert_called_once()
-    assert track_mock.call_args.args[3] is None
     assert ctx.pill_state["workspace:1"] == frozenset()
 
 
