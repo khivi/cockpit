@@ -57,6 +57,11 @@ class FooterBar(Horizontal):
         }
     )
 
+    # Explicit render order for the global (right) group — independent of BINDINGS
+    # order. Actions not listed here render after these, in BINDINGS order. The
+    # command palette is always appended last (it has no BINDINGS entry).
+    GLOBAL_ORDER = ("new_workspace", "sync", "show_output", "update", "quit")
+
     # One-word footer label per action — the BINDINGS descriptions are verbose
     # ("Sync now", "Force close") and two open_* actions would both first-word to
     # "Open". Unmapped actions fall back to the description's first word.
@@ -108,6 +113,17 @@ class FooterBar(Horizontal):
         # Clickable key (bold) + one-word label, via a Textual markup action link.
         return f"[@click=app.{action}][b]{key}[/b][/] {self._label(action, desc)}"
 
+    def _close_seg(self, close_key: str, force_key: str | None) -> str:
+        # `c/C Close`: close and force-close share one footer slot. Each letter
+        # stays independently clickable (`c` → close, `C` → force). `force_close_row`
+        # is folded in here rather than rendered as its own segment.
+        close_link = f"[@click=app.close_row][b]{close_key}[/b][/]"
+        label = self._label("close_row", "Close")
+        if force_key is None:
+            return f"{close_link} {label}"
+        force_link = f"[@click=app.force_close_row][b]{force_key}[/b][/]"
+        return f"{close_link}/{force_link} {label}"
+
     def compose(self) -> ComposeResult:
         yield Static("", id="footer-row")
         yield Static("", id="footer-global")
@@ -133,15 +149,33 @@ class FooterBar(Horizontal):
 
     def _rebuild(self) -> None:
         left: list[str] = []
-        right: list[str] = []
+        # (order, insertion-index, seg) — the global group renders in GLOBAL_ORDER,
+        # not BINDINGS order; insertion index keeps unlisted actions stable.
+        right: list[tuple[int, int, str]] = []
+        key_by_action = {action: key for key, action, _ in self._hints}
         for key, action, desc in self._hints:
             if self._skip(action):
                 continue
-            target = left if action in self.ROW_ACTIONS else right
-            target.append(self._seg(key, action, desc))
-        # The built-in command palette has no app BINDINGS entry — surface it.
-        right.append("[@click=app.command_palette][b]^p[/b][/] Palette")
+            if action == "force_close_row":
+                continue  # folded into the close_row segment as `c/C`
+            if action == "close_row":
+                seg = self._close_seg(key, key_by_action.get("force_close_row"))
+            else:
+                seg = self._seg(key, action, desc)
+            if action in self.ROW_ACTIONS:
+                left.append(seg)
+            else:
+                order = (
+                    self.GLOBAL_ORDER.index(action)
+                    if action in self.GLOBAL_ORDER
+                    else len(self.GLOBAL_ORDER)
+                )
+                right.append((order, len(right), seg))
+        right.sort()
+        right_segs = [seg for _, _, seg in right]
+        # The built-in command palette has no app BINDINGS entry — surface it last.
+        right_segs.append("[@click=app.command_palette][b]^p[/b][/] Palette")
         self.row_text = "   ".join(left)
-        self.global_text = "   ".join(right)
+        self.global_text = "   ".join(right_segs)
         self.query_one("#footer-row", Static).update(self.row_text)
         self.query_one("#footer-global", Static).update(self.global_text)

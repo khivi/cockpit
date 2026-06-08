@@ -989,6 +989,36 @@ async def test_footer_groups_row_keys_left_global_right():
         assert "Focus" not in footer.global_text and "Sync" not in footer.row_text
 
 
+async def test_footer_merges_close_and_force_into_one_segment():
+    # `c` (close) and `C` (force) share a single `c/C Close` slot — both letters
+    # stay independently clickable, and there is no standalone "Force" label.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        rt = app.query_one(FooterBar).row_text
+        assert rt.count("Close") == 1  # one combined slot, not two
+        assert "app.close_row" in rt and "app.force_close_row" in rt  # both clickable
+        # The two click links sit adjacent, joined by `/` → renders as `c/C Close`.
+        assert "[/]/[@click=app.force_close_row]" in rt
+        assert "Force" not in rt  # folded in, no separate label
+
+
+async def test_footer_global_group_orders_new_sync_output_first():
+    # The global group renders New, Sync, Output in that order regardless of
+    # BINDINGS order (FooterBar.GLOBAL_ORDER), with Quit trailing.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        gt = app.query_one(FooterBar).global_text
+        assert (
+            gt.index("New") < gt.index("Sync") < gt.index("Output") < gt.index("Quit")
+        )
+
+
 async def test_footer_labels_are_one_word():
     # Verbose binding descriptions collapse to a single curated word; unknown
     # actions fall back to the description's first word.
