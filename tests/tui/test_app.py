@@ -652,6 +652,55 @@ async def test_new_box_cancel_does_not_spawn(monkeypatch, tmp_path):
     assert launched == []
 
 
+async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
+    # With multiple repos, the modal's repo Select drives spawn.py's cwd — so a
+    # bare name routes to the *chosen* repo, not the cursor row's.
+    from textual.widgets import Input, Select
+
+    from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
+
+    repo_a = tmp_path / "a"
+    repo_b = tmp_path / "b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    wt = Worktree(path=repo_a / "wt-a", branch="khivi/feat-a")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [
+                {"name": "a", "path": str(repo_a)},
+                {"name": "b", "path": str(repo_b)},
+            ],
+            "check_update": False,
+        },
+    )
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path})
+    monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {"ws1": "feat-a"})
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
+
+    launched: dict = {}
+    monkeypatch.setattr(
+        "subprocess.Popen",
+        lambda cmd, **kw: launched.update(cmd=cmd, cwd=kw.get("cwd")) or object(),
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("a", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, NewWorkspaceScreen)
+        # Pick repo b (cursor row is repo a), then submit a bare name.
+        app.screen.query_one(Select).value = str(repo_b)
+        app.screen.query_one("#nw-input", Input).value = "fix-login"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert launched["cmd"][-1] == "fix-login"
+    assert launched["cwd"] == str(repo_b)  # chosen repo, not the cursor row's
+
+
 async def test_update_key_exits_with_restart_code():
     # An available update + `u` exits with the sentinel so cockpit.sh updates
     # and relaunches.
