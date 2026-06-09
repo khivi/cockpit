@@ -16,10 +16,10 @@ column (headed with the
 daemon-written `git-status` cell the footer does (`●S ✎M ✚U`). The Ticket and
 Status columns are added only when some configured repo is Linear-enabled
 (`show_linear`); Ticket shows the delivered Linear ticket id(s) and Status shows
-one workflow-state *icon* per ticket (headed with the `🔄` glyph rather than the
+one workflow-state *icon* per ticket (headed with the `📍` glyph rather than the
 word "Status", mapped from the state name via `_linear_status_icon`), both from
-the cached per-PR block, with Ticket placed right after PR and Status right
-before Title.
+the cached per-PR block, with Ticket placed right after Author and Status right
+after the PR-state column (`🔀`) so the two status columns are adjacent.
 
 A muted PR (nudges silenced via `m` / `/cockpit:nudge`) prefixes its workspace
 name with the 🔇 glyph, read from the daemon-written `pr-muted` cell — the same
@@ -46,14 +46,16 @@ from cockpit.lib.starship import (
     ICON_UNTRACKED,
 )
 
-# Header glyph for the PR-state column (was the word "Approval"). The traffic
-# light reads as "review status" and collides with none of the value icons.
-_APPROVAL_ICON = "🚦"
+# Header glyph for the PR-state column (was the word "Approval"). The merge
+# arrows read as "pull-request / review verdict" and collide with none of the
+# value icons.
+_APPROVAL_ICON = "🔀"
 
 # Header glyph for the Linear workflow-state column (was the word "Status"). The
-# cycle arrows read as "where in the workflow" and collide with none of the
-# value icons below.
-_STATUS_ICON = "🔄"
+# pin reads as "pipeline position" and collides with none of the value icons
+# below. Sits right after `_APPROVAL_ICON` so the two status columns are
+# adjacent.
+_STATUS_ICON = "📍"
 
 # Linear workflow-state *name* (case-insensitive substring) → (icon, style).
 # Matched top-to-bottom so the more specific names win over their bare
@@ -61,22 +63,27 @@ _STATUS_ICON = "🔄"
 # names are arbitrary per team, so this is a heuristic over Linear's common
 # vocabulary — the same name-substring approach `_linear_cells` already uses for
 # the status colour. An unrecognised state falls back to a neutral ◎.
+#
+# These deliberately share NO glyph with the adjacent PR-state column
+# (`_STATE` / `_PR_STATE_ICON`): a "workflow position" family (squares + tools)
+# rather than PR's "review verdict" family (circles + checks). Without this the
+# two columns — now side by side — were indistinguishable (both used 🔵/👀/✅/⛔).
 _LINEAR_STATUS_ICONS: tuple[tuple[str, str, str], ...] = (
-    ("cancel", "⛔", "red"),
-    ("duplicate", "⛔", "red"),
+    ("cancel", "🚫", "red"),
+    ("duplicate", "🚫", "red"),
     ("dev done", DEVDONE_ICON, "green"),
-    ("review", "👀", "yellow"),
-    ("progress", "🔵", "cyan"),
-    ("doing", "🔵", "cyan"),
-    ("started", "🔵", "cyan"),
-    ("done", "✅", "green"),
-    ("complete", "✅", "green"),
-    ("ship", "✅", "green"),
-    ("deploy", "✅", "green"),
+    ("review", "🔍", "yellow"),
+    ("progress", "🚧", "cyan"),
+    ("doing", "🚧", "cyan"),
+    ("started", "🚧", "cyan"),
+    ("done", "🟢", "green"),
+    ("complete", "🟢", "green"),
+    ("ship", "🟢", "green"),
+    ("deploy", "🟢", "green"),
     ("backlog", "📋", "grey50"),
     ("triage", "🩺", "grey50"),
-    ("todo", "⚪", "grey50"),
-    ("to do", "⚪", "grey50"),
+    ("todo", "⬜", "grey50"),
+    ("to do", "⬜", "grey50"),
 )
 _LINEAR_STATUS_FALLBACK = ("◎", "white")
 
@@ -117,16 +124,17 @@ _DIRTY_ICON = ICON_UNSTAGED
 def column_labels(*, show_linear: bool) -> tuple[str, ...]:
     """Column headers in display order. The `Author` column sits right after
     `PR` (always present — blank for self-authored PRs, the coworker login for
-    a review PR). The Linear `Ticket` column follows it and the Linear `Status`
-    column sits right before `Title`; both appear only when some configured
-    repo is Linear-enabled (`show_linear`)."""
+    a review PR). The Linear `Ticket` column follows it; the Linear `Status`
+    column sits right after the PR-state column so the two status columns are
+    adjacent. Both Linear columns appear only when some configured repo is
+    Linear-enabled (`show_linear`)."""
     cols = ["Workspace", "PR", "Author"]
     if show_linear:
         cols.append("Ticket")
-    cols += [_APPROVAL_ICON, "CI", "💬", _DIRTY_ICON]
+    cols.append(_APPROVAL_ICON)
     if show_linear:
         cols.append(_STATUS_ICON)
-    cols.append("Title")
+    cols += ["CI", "💬", _DIRTY_ICON, "Title"]
     return tuple(cols)
 
 
@@ -219,9 +227,9 @@ def worktree_cells(
     show_linear: bool,
 ) -> list[Text]:
     """Build one row's cells (Rich Text, so colours survive), in `column_labels`
-    order: the Ticket cell follows PR and the Status cell precedes Title, both
-    present only when `show_linear` (the columns exist) and blank for a row whose
-    repo isn't Linear-enabled."""
+    order: the Ticket cell follows Author and the Status cell follows the
+    PR-state cell, both present only when `show_linear` (the columns exist) and
+    blank for a row whose repo isn't Linear-enabled."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
@@ -245,14 +253,14 @@ def worktree_cells(
     ]
     if show_linear:
         cells.append(ticket)
+    cells.append(Text(state_icon, style=style) if state else Text(""))
+    if show_linear:
+        cells.append(ticket_status)
     cells += [
-        Text(state_icon, style=style) if state else Text(""),
         Text(ci, style=_CI_STYLE.get(ci, "white")) if ci else Text(""),
         comments,
         _dirty_cell(wt),
     ]
-    if show_linear:
-        cells.append(ticket_status)
     cells.append(Text((title[:48] + "…") if len(title) > 49 else title, style="grey62"))
     return cells
 

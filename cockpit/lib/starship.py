@@ -89,7 +89,7 @@ _PR_STATE_ICON: dict[str, str] = {
     "OPEN": "🔵",
     "REVIEW_REQUIRED": "👀",
     "APPROVED": "✅",
-    "CHANGES_REQUESTED": "💬",
+    "CHANGES_REQUESTED": "🔴",
     "MERGED": "🟣",
     "CLOSED": "⛔",
 }

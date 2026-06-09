@@ -2,10 +2,10 @@
 
 `worktree_cells` is a pure function — no Textual. Seeds the same flat cache
 cells the daemon writes, then asserts the per-column Rich Text. Columns are
-Workspace | PR | Author | (Ticket) | 🚦 | CI | comments | ✎ | (Status) | Title —
+Workspace | PR | Author | (Ticket) | 🔀 | (Status) | CI | comments | ✎ | Title —
 the Author column is always present (blank for self-authored PRs, the coworker
 login for a review PR); the Linear Ticket/Status columns appear only when
-configured, Ticket after Author and Status before Title. The repo is conveyed
+configured, Ticket after Author and Status right after the PR-state column. The repo is conveyed
 by tinting the workspace name (not a column). The Dirty column (icon header)
 reads the per-cwd `git-status` cell (`"<staged> <unstaged> <untracked>"`).
 """
@@ -57,11 +57,12 @@ def test_cell_count_matches_columns(cache_dir):
     assert cols[3] == _APPROVAL_ICON
     assert cols[6] == _DIRTY_ICON  # Dirty column header is now an icon
     # Ticket + Status columns added only when show_linear, interleaved:
-    # Ticket right after Author, Status right before Title.
+    # Ticket right after Author, Status right after the PR-state column.
     lin = column_labels(show_linear=True)
     assert len(_plain(_wt(), show_linear=True)) == len(lin) == 10
     assert lin[3] == "Ticket"
-    assert lin[8] == _STATUS_ICON  # Status column header is now an icon
+    assert lin[4] == _APPROVAL_ICON
+    assert lin[5] == _STATUS_ICON  # Status column header is now an icon, after PR state
     assert lin[-1] == "Title"
 
 
@@ -192,7 +193,7 @@ def test_ticket_and_status_columns_when_enabled(cache_dir, monkeypatch):
         },
     )
     cells = worktree_cells(wt, "r", None, True, show_linear=True)
-    ticket, status = cells[3], cells[8]  # Ticket after Author, Status before Title
+    ticket, status = cells[3], cells[5]  # Ticket after Author, Status after PR state
     assert ticket.plain == "PE-1"
     assert status.plain == DEVDONE_ICON  # "Dev Done" → 🏁 icon, not text
     assert any("green" in str(s.style) for s in status.spans)  # dev-done → green
@@ -202,12 +203,12 @@ def test_ticket_and_status_columns_when_enabled(cache_dir, monkeypatch):
     "state,icon,style",
     [
         ("Dev Done", DEVDONE_ICON, "green"),  # specific beats bare "done"
-        ("Done", "✅", "green"),
-        ("In Review", "👀", "yellow"),
-        ("In Progress", "🔵", "cyan"),
+        ("Done", "🟢", "green"),
+        ("In Review", "🔍", "yellow"),
+        ("In Progress", "🚧", "cyan"),
         ("Backlog", "📋", "grey50"),
-        ("Todo", "⚪", "grey50"),
-        ("Canceled", "⛔", "red"),
+        ("Todo", "⬜", "grey50"),
+        ("Canceled", "🚫", "red"),
     ],
 )
 def test_linear_status_icon_mapping(state, icon, style):
@@ -232,9 +233,9 @@ def test_status_cell_one_icon_per_ticket(cache_dir, monkeypatch):
         },
     )
     cells = worktree_cells(wt, "r", None, True, show_linear=True)
-    ticket, status = cells[3], cells[8]  # Ticket after Author, Status before Title
+    ticket, status = cells[3], cells[5]  # Ticket after Author, Status after PR state
     assert ticket.plain == "PE-1, PE-2"  # ids still comma-joined
-    assert status.plain == "👀 ✅"  # one icon per ticket, space-joined
+    assert status.plain == "🔍 🟢"  # one icon per ticket, space-joined
 
 
 def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
@@ -245,7 +246,7 @@ def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
     )
     # columns exist (some other repo is Linear) but this row's repo isn't
     cells = worktree_cells(wt, "r", None, False, show_linear=True)
-    assert cells[3].plain == "" and cells[8].plain == ""  # Ticket, Status
+    assert cells[3].plain == "" and cells[5].plain == ""  # Ticket, Status
 
 
 def test_no_linear_columns_when_not_configured(cache_dir):
