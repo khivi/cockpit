@@ -259,6 +259,26 @@ def use_linear() -> bool:
     return bool(load_config().get("use_linear", False))
 
 
+def use_slack() -> bool:
+    """Whether Slack-thread spawn sources are enabled (default: False).
+
+    When False (default), a Slack permalink passed to `/cockpit:new` still
+    classifies as `slack` mode in `spawn.detect_source` (so the worktree lands
+    on a codename branch instead of a garbage branch named after the URL), but
+    spawn skips the Slack-MCP-fetch prompt — the workspace starts on the
+    codename branch with the generic plan-only prompt carrying the URL as
+    context, and the user can fetch the thread manually. Safer default for users
+    without the Slack MCP configured.
+
+    When True, spawn seeds the Slack-MCP fetch + branch/workspace rename prompt.
+    Unlike `use_linear`, there is deliberately no `claude mcp list` pre-flight —
+    that probe is unreliable for claude.ai-managed connectors, so the fetch
+    prompt's own retry-then-STOP logic handles a genuinely absent connector
+    in-session (see `cockpit.lib.slack`).
+    """
+    return bool(load_config().get("use_slack", False))
+
+
 def linear_dev_done_state(cfg: dict | None = None) -> str:
     """Name of the Linear workflow state that the `devdone=` pill keys off
     (default: "Dev Done"). Matched case-insensitively against the ticket's live

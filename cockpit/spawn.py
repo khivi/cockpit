@@ -27,14 +27,23 @@ Optional:
                           prompts (e.g. `spawn.py PE-1234 -- focus on the
                           retry loop in fetch_pr`).
 
-Positional detection (6 steps):
+Positional detection:
   1. GitHub PR URL (https://github.com/.../pull/N) → PR mode
-  2. #-prefixed PR number (#N)                       → PR mode
+  2. GitHub Actions run URL                          → actions mode
+  3. Slack message/thread permalink                  → slack mode (codename branch)
+  4. #-prefixed PR number (#N)                       → PR mode
                                                        (bare N is a branch — see below)
-  3. Linear ID ([A-Z]{2,6}-\\d+, case-insensitive)   → linear mode
-  4. Local branch (refs/heads/<branch> exists)           → checkout
-  5. Remote branch (ls-remote origin <branch> matches)   → fetch + checkout
-  6. New branch (neither local nor remote)               → create from default_base
+  5. Linear ID ([A-Z]{2,6}-\\d+, case-insensitive)   → linear mode
+  6. Local branch (refs/heads/<branch> exists)           → checkout
+  7. Remote branch (ls-remote origin <branch> matches)   → fetch + checkout
+  8. New branch (neither local nor remote)               → create from default_base
+
+  Slack mode synthesizes a deterministic codename branch `<branch_prefix><adj>-<noun>`
+  (e.g. `khivi/cosmic-otter`) from the thread's stable identity, then — with
+  `use_slack: true` and the Slack MCP detected — seeds a prompt instructing
+  Claude to read the thread via the Slack MCP and rename the branch + workspace
+  to append a topic slug. The thread URL is always seeded as context regardless
+  of `use_slack`.
 
   After branch resolution (steps 4-6), gh is queried for an open PR on
   the head ref; if found, the PR info is printed and the plan-only prompt
@@ -89,6 +98,7 @@ from cockpit.lib.cmux import (
     workspace_cwds,
     workspace_names,
 )
+from cockpit.lib.codename import codename
 from cockpit.lib.config import (
     discover_repo,
     find_repo_by_name,
@@ -97,6 +107,9 @@ from cockpit.lib.config import (
 )
 from cockpit.lib.config import (
     use_linear as cfg_use_linear,
+)
+from cockpit.lib.config import (
+    use_slack as cfg_use_slack,
 )
 from cockpit.lib.daemon_signal import kick_running
 from cockpit.lib.gh import (
@@ -117,6 +130,7 @@ from cockpit.lib.git import (
 from cockpit.lib.linear import LINEAR_RE_CI, linear_mcp_available
 from cockpit.lib.prompts import claude_command
 from cockpit.lib.repos import repo_names
+from cockpit.lib.slack import SLACK_URL_RE, slack_seed
 
 
 def _die(msg: str, code: int = 1) -> int:
@@ -137,8 +151,7 @@ def _unknown_repo_msg(name: str) -> str:
     listed = _format_configured_repos(repo_names())
     if listed:
         return (
-            f"--repo {name!r}: no configured repo with that name. "
-            f"Configured: {listed}."
+            f"--repo {name!r}: no configured repo with that name. Configured: {listed}."
         )
     return (
         f"--repo {name!r}: no configured repo with that name, and no repos "
@@ -199,6 +212,8 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
       - `pr`      : GitHub PR URL or `#N`. Bare integers stay `branch`.
       - `actions` : GitHub Actions run URL (optionally job-scoped).
                     `value` is `<run_id>` or `<run_id>:<job_id>`.
+      - `slack`   : Slack message/thread permalink. `value` is the URL verbatim
+                    (the spawned Claude reads the thread via the Slack MCP).
       - `linear`  : whole positional matches `[A-Z]{2,6}-\\d+` (case-insensitive).
                     Normalised to uppercase in `value`.
       - `branch`  : anything else; local/remote/new resolved by create_worktree.
@@ -214,6 +229,8 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
     if m:
         run_id, job_id = m.group(2), m.group(3)
         return "actions", f"{run_id}:{job_id}" if job_id else run_id, m.group(1)
+    if SLACK_URL_RE.match(value):
+        return "slack", value, None
     if re.fullmatch(r"#\d+", value):
         return "pr", value.lstrip("#"), None
     if LINEAR_RE_CI.fullmatch(value):
@@ -295,6 +312,86 @@ def _linear_prompt(branch: str, identifier: str) -> str:
         "workspace surfaces in the `cockpit watch` table automatically.",
         "- Do not push or change anything else in this step.",
     ]
+    return "\n".join(lines + _PLAN_TAIL)
+
+
+def _slack_prompt(branch: str, url: str, *, mcp_fetch: bool) -> str:
+    """First-turn prompt for a Slack-thread source.
+
+    Cockpit never calls the Slack API itself: spawn creates the worktree on a
+    deterministic codename branch (e.g. `khivi/cosmic-otter`) and the spawned
+    Claude reads the thread via the Slack MCP, derives the task, and — when
+    `mcp_fetch` — renames the branch + workspace to append a topic slug:
+    `cosmic-otter` → `cosmic-otter-fix-oauth-retry`. The codename survives as the
+    prefix (the "something cool" part) and the slug makes the worktree
+    discoverable. Mirrors `_linear_prompt`'s fetch-then-rename shape.
+
+    `mcp_fetch` is just `use_slack` (no `claude mcp list` pre-flight — that probe
+    is unreliable for managed connectors; see `cockpit.lib.slack`). It gates the
+    explicit fetch + rename steps, whose own retry-then-STOP logic handles a
+    genuinely absent connector in-session. When False the prompt still carries
+    the URL so the thread is available as context (read it best-effort, no
+    rename) — the URL is the whole point of a Slack source, so it is always
+    seeded regardless of the flag.
+    """
+    lines = [
+        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
+        "",
+        f"**Source**: Slack thread {url}",
+    ]
+    if mcp_fetch:
+        lines += [
+            "",
+            "**Step 1 (REQUIRED)** — Read the thread via the Slack MCP:",
+            f"- Use the Slack MCP `slack_read_thread` tool to read the thread at {url} "
+            "(the parent message and every reply). The channel id and message "
+            "timestamp are encoded in the URL.",
+            "- If the tool call fails because the MCP server is still connecting (tools "
+            "show as unavailable or return a connection error), the in-session connector "
+            "is still completing its handshake — common when several worktrees spawn at "
+            "once. Immediately retry the SAME MCP tool call up to three times (do not "
+            "switch tools, do not insert shell `sleep` waits — they are blocked in some "
+            "environments and do not help); the connector usually finishes within a "
+            "couple of attempts.",
+            "- If the MCP is still unavailable after all retries, STOP. Report that the "
+            "Slack connector did not finish connecting and that running `/mcp` to "
+            "reconnect, then re-invoking this session, will resolve it. Exit without "
+            "writing a plan; do not guess the task from the URL alone.",
+            "",
+            "**Step 2 (REQUIRED)** — Derive a topic slug and rename the branch:",
+            "- From the thread's subject/ask, derive `<slug>`: lowercase, "
+            "non-alphanumerics → `-`, trim leading/trailing `-`, cap at 30 chars. "
+            "Use the SAME `<slug>` in step 3.",
+            "- Read the current branch: `CUR=$(git branch --show-current)`.",
+            '- Run: `git branch -m "$CUR" "$CUR-<slug>"` (append `-<slug>` to whatever '
+            "the current branch is — cockpit may have bumped the codename to `-2`/`-3` "
+            "to avoid a collision). The codename prefix stays; the slug adds context.",
+            "- Verify with `git branch --show-current` — it should now end with `-<slug>`.",
+            "- If the rename fails (target already exists, etc.), keep the original "
+            "branch and note it in your plan.",
+            "",
+            "**Step 3 (REQUIRED)** — Rename the cmux workspace to match:",
+            "- Replace the codename-only workspace name with `<codename>-<slug>` (the "
+            "branch's name after the `branch_prefix`, i.e. the same value the branch now "
+            "ends with).",
+            '- Run: `cmux workspace-action --action rename --title "<codename>-<slug>"`. '
+            "Defaults to the current workspace via `$CMUX_WORKSPACE_ID` (always set "
+            "inside a cmux-spawned shell).",
+            "- If `$CMUX_WORKSPACE_ID` is unset for any reason, run `cmux identify` "
+            "first to discover the workspace ref, then pass `--workspace <ref>` "
+            "explicitly.",
+            "- Cockpit's next reconcile cycle reads the workspace list, so the rename "
+            "surfaces in the `cockpit watch` table automatically. Do not push or change "
+            "anything else in this step.",
+        ]
+    else:
+        lines += [
+            "",
+            "**Step 1** — Read the thread for context: use the Slack MCP "
+            f"`slack_read_thread` tool on {url} if the connector is available. If the "
+            "Slack MCP is not connected, ask the user to paste the thread contents — "
+            "do not guess the task from the URL alone.",
+        ]
     return "\n".join(lines + _PLAN_TAIL)
 
 
@@ -609,6 +706,7 @@ def main() -> int:
     skill = args.skill
     from_name = False
     is_linear = False  # positional classified as a Linear key (any context → plan)
+    is_slack = False  # positional classified as a Slack URL (any context → plan)
 
     prompt: str | None = None
     seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
@@ -639,6 +737,22 @@ def main() -> int:
             # which is the bug this branch fixes.
             branch = _actions_short_name(actions_run_info, actions_job_id)
             from_name = True
+        elif mode == "slack":
+            # No human-readable name in a Slack URL, so synthesize a cool
+            # codename branch (deterministic from the thread's stable identity,
+            # so re-spawning the same URL is idempotent). The spawned Claude
+            # reads the thread via the Slack MCP and renames the branch to
+            # append a topic slug (see _slack_prompt).
+            branch = codename(slack_seed(value))
+            from_name = True
+            is_slack = True
+            # `use_slack` alone gates the fetch + rename steps — no
+            # `claude mcp list` pre-flight. That probe is unreliable for
+            # claude.ai-managed connectors (false-negatives even when live), so
+            # the fetch prompt's own retry-then-STOP logic handles a genuinely
+            # absent connector in-session instead. The thread URL is always
+            # seeded as context regardless, since it's the entire source.
+            seeded_prompt = _slack_prompt(branch, value, mcp_fetch=cfg_use_slack())
         elif mode == "linear":
             branch = value.lower()
             from_name = True
@@ -750,7 +864,11 @@ def main() -> int:
         elif args.review:
             prompt = _review_prompt(branch, pr_info)
         elif prompt is None and (
-            pr_info or is_linear or args.context_text or args.claude_addendum
+            pr_info
+            or is_linear
+            or is_slack
+            or args.context_text
+            or args.claude_addendum
         ):
             # Plan-only fires only when there's something to study first: a PR,
             # a Linear ticket, inherited `--context`, or an explicit `-- <text>`

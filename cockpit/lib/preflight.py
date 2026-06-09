@@ -85,6 +85,22 @@ def _validate_check_update(cfg: dict) -> None:
         _die(f"check_update must be true or false, got {cfg['check_update']!r}.")
 
 
+def _validate_use_slack(cfg: dict) -> None:
+    """Hard-fail on a top-level `use_slack` that isn't a bool.
+
+    `use_slack` (default false) gates whether spawn seeds the Slack-MCP-fetch
+    prompt for a Slack-permalink source. A non-bool (e.g. a stray string) would
+    be silently truthy, so it's rejected at start like `check_update`. No
+    API-key warning: cockpit never calls Slack itself — the spawned Claude
+    fetches the thread via the Slack MCP — so there's nothing to soft-degrade
+    here.
+    """
+    if "use_slack" not in cfg:
+        return
+    if not isinstance(cfg["use_slack"], bool):
+        _die(f"use_slack must be true or false, got {cfg['use_slack']!r}.")
+
+
 def _validate_linear_dev_done(cfg: dict) -> None:
     """Validate the dev-done pill config and warn on a missing API key.
 
@@ -191,6 +207,7 @@ def preflight(cfg: dict) -> None:
     _validate_sidebar_colors(cfg)
     _validate_review_prs(cfg)
     _validate_check_update(cfg)
+    _validate_use_slack(cfg)
     _validate_linear_dev_done(cfg)
     _validate_linear_done_on_merge(cfg)
 

@@ -645,6 +645,28 @@ def test_use_linear_returns_false_when_explicitly_false(tmp_path, monkeypatch):
     assert cockpit_config.use_linear() is False
 
 
+# ── use_slack reader ─────────────────────────────────────────────────────────
+
+
+def test_use_slack_defaults_false_when_unset(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.use_slack() is False
+
+
+def test_use_slack_returns_true_when_set(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_slack": True}
+    )
+    assert cockpit_config.use_slack() is True
+
+
+def test_use_slack_returns_false_when_explicitly_false(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "use_slack": False}
+    )
+    assert cockpit_config.use_slack() is False
+
+
 # ── linear_dev_done_state reader ─────────────────────────────────────────────
 
 
