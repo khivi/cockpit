@@ -26,6 +26,7 @@ from cockpit.tui.widgets.worktree_table import (
     _STATUS_ICON,
     DEVDONE_ICON,
     ICON_PR_MUTED,
+    ICON_PR_NUDGE,
     _comments_cell,
     _linear_status_icon,
     column_labels,
@@ -265,6 +266,33 @@ def test_unmuted_pr_has_no_glyph(cache_dir):
     wt = _wt(branch="khivi/loud", branch_prefix="khivi/")
     cell = worktree_cells(wt, "r", None, False, show_linear=False)[0]
     assert cell.plain == "loud"
+
+
+def test_nudge_pr_prefixes_bell_glyph(cache_dir):
+    """An actionable, unmuted PR (the `pr-nudge` cell holds its issue category)
+    prefixes the workspace name with 🔔."""
+    wt = _wt(branch="khivi/ringing", branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
+    cell = worktree_cells(wt, "r", None, False, show_linear=False)[0]
+    assert cell.plain == f"{ICON_PR_NUDGE} ringing"
+
+
+def test_mute_wins_over_nudge_glyph(cache_dir):
+    """A muted PR fires no nudge, so the mute glyph wins even when the daemon
+    still wrote a `pr-nudge` value (mute is orthogonal to the issue state)."""
+    wt = _wt(branch="khivi/quiet", branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
+    cache_mod.branch_cache("pr-nudge", wt.branch).write_text("comments")
+    cell = worktree_cells(wt, "r", None, False, show_linear=False)[0]
+    assert cell.plain == f"{ICON_PR_MUTED} quiet"
+
+
+def test_empty_nudge_cell_has_no_glyph(cache_dir):
+    """A blank `pr-nudge` cell (no actionable issue) shows no bell."""
+    wt = _wt(branch="khivi/calm", branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-nudge", wt.branch).write_text("")
+    cell = worktree_cells(wt, "r", None, False, show_linear=False)[0]
+    assert cell.plain == "calm"
 
 
 def test_dirty_column_renders_counts(cache_dir):
