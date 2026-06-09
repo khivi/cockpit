@@ -174,7 +174,7 @@ def test_print_linear_no_ticket(_clean_git_env, cache_dir, tmp_path, monkeypatch
         ("DRAFT", bold_shadow("📝 DRAFT")),
         ("OPEN", bold_azure("🔵 OPEN")),
         ("REVIEW_REQUIRED", bold_orange("👀 REVIEW_REQUIRED")),
-        ("CHANGES_REQUESTED", bold_crimson("💬 CHANGES_REQUESTED")),
+        ("CHANGES_REQUESTED", bold_crimson("🔴 CHANGES_REQUESTED")),
         ("MERGED", bold_violet("🟣 MERGED")),
         ("CLOSED", bold_ruby("⛔ CLOSED")),
         ("WHATEVER", "WHATEVER"),
