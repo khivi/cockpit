@@ -39,7 +39,7 @@ def _isolate(monkeypatch, tmp_path):
 def _make_app(**kw):
     calls = {"slow": 0, "fast": 0}
 
-    def slow():
+    def slow(on_repo_done=None):
         calls["slow"] += 1
 
     def fast():
@@ -94,7 +94,7 @@ async def test_table_primes_before_slow_completes(monkeypatch, tmp_path):
 
     release = threading.Event()
 
-    def slow():
+    def slow(on_repo_done=None):
         release.wait(2)  # hold the slow tick open
 
     app = CockpitApp(
@@ -114,10 +114,54 @@ async def test_table_primes_before_slow_completes(monkeypatch, tmp_path):
         release.set()
 
 
+async def test_slow_tick_gets_per_repo_publish_callback(monkeypatch, tmp_path):
+    # The slow tick is handed an `on_repo_done` callback; invoking it mid-tick
+    # republishes the table from the cells/worktrees on disk so a finished repo
+    # surfaces before the whole tick returns.
+    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [{"name": "repo", "path": str(tmp_path)}],
+            "check_update": False,
+        },
+    )
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+
+    captured: dict = {}
+    published = threading.Event()
+
+    def slow(on_repo_done=None):
+        captured["cb"] = on_repo_done
+        on_repo_done()  # a repo finished — surface it now, not at tick end
+        published.set()
+
+    app = CockpitApp(
+        slow_tick=slow, fast_tick=lambda: None, slow_secs=300, fast_secs=30
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for _ in range(20):
+            if published.is_set():
+                break
+            await pilot.pause(0.1)
+        assert callable(captured.get("cb"))  # callback was threaded in
+        table = app.query_one(WorktreeTable)
+        for _ in range(20):
+            if table.row_count >= 1:
+                break
+            await pilot.pause(0.1)
+        assert table.row_count == 1  # published from the per-repo callback
+
+
 async def test_fast_starts_only_after_first_slow():
     order: list[str] = []
+
+    def slow(on_repo_done=None):
+        order.append("slow")
+
     app = CockpitApp(
-        slow_tick=lambda: order.append("slow"),
+        slow_tick=slow,
         fast_tick=lambda: order.append("fast"),
         slow_secs=300,
         fast_secs=30,
