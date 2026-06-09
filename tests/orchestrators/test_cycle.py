@@ -2648,3 +2648,109 @@ def test_check_plugin_update_warns_once_per_version(capsys):
     ):
         cycle._check_plugin_update({"check_update": True}, pill_state)
     assert capsys.readouterr().out == ""
+
+
+# --- cycle_all on_repo_done -------------------------------------------------
+
+
+def _patch_cycle_all_collaborators():
+    """Stub everything cycle_all touches except the per-repo loop, so a test can
+    assert the on_repo_done callback fires once per repo without standing up
+    `gh`/`git`/`cmux`."""
+    return (
+        patch.object(cycle, "ensure_state_dirs", lambda: None),
+        patch.object(cycle, "_check_plugin_update", lambda *_a, **_k: None),
+        patch.object(cycle, "_drain_close_requests", lambda *, dry: None),
+        patch.object(cycle, "close_gone_cwd_workspaces", lambda *, dry: None),
+        patch.object(cycle, "_reap_workspace_orphans", lambda *_a, **_k: None),
+    )
+
+
+def test_cycle_all_calls_on_repo_done_once_per_repo():
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
+    seen: list[str] = []
+    patches = _patch_cycle_all_collaborators()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patch.object(
+            cycle, "cycle_repo", lambda repo_entry, *_a, **_k: seen.append("repo")
+        ),
+    ):
+        ticks: list[int] = []
+        cycle.cycle_all(
+            cfg,
+            "khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            on_repo_done=lambda: ticks.append(len(seen)),
+        )
+    # Fired after each repo, in order: once with 1 repo done, once with 2.
+    assert ticks == [1, 2]
+
+
+def test_cycle_all_on_repo_done_fires_even_when_a_repo_errors():
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
+
+    def _boom(repo_entry, *_a, **_k):
+        if repo_entry["name"] == "a":
+            raise RuntimeError("repo a blew up")
+
+    calls: list[str] = []
+    patches = _patch_cycle_all_collaborators()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patch.object(cycle, "cycle_repo", _boom),
+    ):
+        cycle.cycle_all(
+            cfg,
+            "khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            on_repo_done=lambda: calls.append("x"),
+        )
+    # The error on repo a is caught; the callback still fires for both repos so
+    # repo b surfaces and a's partial cells aren't stranded.
+    assert calls == ["x", "x"]
+
+
+def test_cycle_all_callback_error_does_not_abort_remaining_repos(capsys):
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
+    processed: list[str] = []
+    patches = _patch_cycle_all_collaborators()
+
+    def _publish():
+        raise RuntimeError("render exploded")
+
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patch.object(
+            cycle,
+            "cycle_repo",
+            lambda repo_entry, *_a, **_k: processed.append(repo_entry["name"]),
+        ),
+    ):
+        cycle.cycle_all(
+            cfg,
+            "khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            on_repo_done=_publish,
+        )
+    # A failing callback is swallowed (logged to stderr) — every repo still runs.
+    assert processed == ["a", "b"]
+    assert "on_repo_done" in capsys.readouterr().err

@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import traceback
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1677,7 +1678,16 @@ def cycle_all(
     dry: bool,
     pr_cache: dict,
     pill_state: dict,
+    on_repo_done: Callable[[], None] | None = None,
 ) -> None:
+    """Reconcile every managed repo, serially.
+
+    `cycle_repo` writes each repo's cache cells to disk before the next repo is
+    fetched, so a renderer reading those cells can surface a finished repo while
+    later repos are still doing `gh` round-trips. `on_repo_done`, if given, is
+    invoked after each repo (success or caught error) to let the caller republish
+    the table incrementally instead of waiting for the whole tick. It is a pure
+    read-side hook — it must never write a cache cell (only the daemon does)."""
     ensure_state_dirs()
     _check_plugin_update(cfg, pill_state)
     repos = cfg.get("repos", [])
@@ -1717,6 +1727,19 @@ def cycle_all(
                 file=sys.stderr,
                 flush=True,
             )
+        # Surface this repo's freshly-written cells before fetching the next one.
+        # A failing callback must not abort the remaining repos.
+        if on_repo_done is not None:
+            try:
+                on_repo_done()
+            except Exception as e:  # noqa: BLE001 — a render hiccup can't stop the tick
+                ts = datetime.now().isoformat(timespec="seconds")
+                print(
+                    f"[{ts}] {yellow('skip')} on_repo_done for "
+                    f"{repo_entry.get('name')}: {e}",
+                    file=sys.stderr,
+                    flush=True,
+                )
     if not _cache_only(cfg):
         try:
             _reap_workspace_orphans(repos, self_user, dry=dry)

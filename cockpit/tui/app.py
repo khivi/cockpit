@@ -161,7 +161,7 @@ class CockpitApp(App[None]):
     def __init__(
         self,
         *,
-        slow_tick: Callable[[], None],
+        slow_tick: Callable[[Callable[[], None]], None],
         fast_tick: Callable[[], None],
         slow_secs: int,
         fast_secs: int,
@@ -318,13 +318,15 @@ class CockpitApp(App[None]):
         try:
             with self._tick_lock:  # "waiting" until acquired, then "running"
                 self._slow_phase = "running"
-                self._slow_tick()
+                # `_publish_inventory` republishes the table after each repo so a
+                # finished repo surfaces while later repos are still fetching `gh`,
+                # rather than all repos appearing at once when the tick returns.
+                self._slow_tick(self._publish_inventory)
         except Exception as e:  # a tick must never take the daemon down
             print(f"slow-tick error: {e}")
         finally:
             self._slow_phase = "idle"
-            inv = self._gather_inventory()
-            self.call_from_thread(self._render_table, inv)
+            self._publish_inventory()
             # First slow tick done → the PR caches exist; safe to start fast.
             self.call_from_thread(self._start_fast)
             # Re-check for a newer release on every slow tick (network-light gh
@@ -340,8 +342,7 @@ class CockpitApp(App[None]):
         cells) appear instantly. The first slow tick refreshes them when it
         completes; this is lock-free since it never writes a cell."""
         try:
-            inv = self._gather_inventory()
-            self.call_from_thread(self._render_table, inv)
+            self._publish_inventory()
         except Exception as e:  # priming must never take the daemon down
             print(f"prime error: {e}")
 
@@ -355,8 +356,7 @@ class CockpitApp(App[None]):
             print(f"fast-tick error: {e}")
         finally:
             self._fast_phase = "idle"
-            inv = self._gather_inventory()
-            self.call_from_thread(self._render_table, inv)
+            self._publish_inventory()
 
     @work(thread=True, group="update", exclusive=True, exit_on_error=False)
     def _check_update(self) -> None:
@@ -437,6 +437,14 @@ class CockpitApp(App[None]):
                 )
             )
         return out
+
+    def _publish_inventory(self) -> None:
+        """Re-gather worktrees and refresh the table. Safe to call from a worker
+        thread (the slow tick's per-repo `on_repo_done` hook): `_gather_inventory`
+        is a pure git + cache-cell read, and `call_from_thread` marshals the
+        render onto the UI thread — the same two steps the tick's `finally` runs."""
+        inv = self._gather_inventory()
+        self.call_from_thread(self._render_table, inv)
 
     def _render_table(self, inventory: Inventory) -> None:
         self._path_repo_name = {

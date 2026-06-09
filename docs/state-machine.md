@@ -260,7 +260,12 @@ Why two ticks:
 
 - **Slow tick** owns every decision (spawn, nudge, devdone, teardown,
   colors, names) and the expensive `gh` (+ optional Linear) fetch + per-PR JSON
-  snapshot.
+  snapshot. It processes repos serially, writing each repo's cells before
+  fetching the next, and fires an `on_repo_done` hook after each one
+  (`tui/app.py::_publish_inventory`) so the table republishes per-repo — a
+  finished repo surfaces while later repos still round-trip `gh`, rather than all
+  repos appearing at tick end. The hook is read-only (re-gather worktrees +
+  re-render); it writes no cell.
 - **Fast tick** is network-free: it re-derives git-state cells for every
   worktree, reconciles each workspace's name to its branch-derived label
   (`reconcile_workspace_names`), and republishes PR flat cells from the
