@@ -23,7 +23,13 @@ after the PR-state column (`🔀`) so the two status columns are adjacent.
 
 A muted PR (nudges silenced via `m` / `/cockpit:nudge`) prefixes its workspace
 name with the 🔇 glyph, read from the daemon-written `pr-muted` cell — the same
-snapshot starship reads, so the table never diverges from the sidebar.
+snapshot starship reads, so the table never diverges from the sidebar. An
+unmuted PR with an actionable nudge condition (failing CI / unresolved threads /
+conflicts on an OPEN PR) instead shows the 🔔 glyph, read from the `pr-nudge`
+cell — `PR.nudge_issue`, the same value the slow tick's nudge decision uses, so
+the bell can't disagree with whether a nudge would fire. Mute wins over 🔔 (a
+muted PR fires no nudge); the bell clears automatically when CI goes green /
+threads resolve / the PR merges.
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ from cockpit.lib.git import Worktree
 from cockpit.lib.starship import (
     _PR_STATE_ICON,
     ICON_PR_MUTED,
+    ICON_PR_NUDGE,
     ICON_STAGED,
     ICON_UNSTAGED,
     ICON_UNTRACKED,
@@ -138,9 +145,14 @@ def column_labels(*, show_linear: bool) -> tuple[str, ...]:
     return tuple(cols)
 
 
-def _workspace_cell(wt: Worktree, repo_color: str | None, *, muted: bool) -> Text:
+def _workspace_cell(
+    wt: Worktree, repo_color: str | None, *, muted: bool, nudge: bool
+) -> Text:
     """The workspace name, tinted with the repo's cmux colour when set and
-    prefixed with the 🔇 glyph when the PR's nudges are muted."""
+    prefixed with a status glyph: 🔇 when the PR's nudges are muted, else 🔔 when
+    the PR has an actionable, unmuted nudge condition (failing CI / unresolved
+    threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute wins: a muted
+    PR fires no nudge, so it shows 🔇, never 🔔. No glyph when neither holds."""
     label = wt.label or wt.short
     colorizer = CMUX_COLOR_ANSI.get(repo_color or "")
     if colorizer is not None:
@@ -150,6 +162,8 @@ def _workspace_cell(wt: Worktree, repo_color: str | None, *, muted: bool) -> Tex
         cell = Text(label, style="bold")
     if muted:
         return Text.assemble((f"{ICON_PR_MUTED} ", "yellow"), cell)
+    if nudge:
+        return Text.assemble((f"{ICON_PR_NUDGE} ", "yellow"), cell)
     return cell
 
 
@@ -244,7 +258,12 @@ def worktree_cells(
     )
 
     cells = [
-        _workspace_cell(wt, repo_color, muted=bool(cell("pr-muted"))),
+        _workspace_cell(
+            wt,
+            repo_color,
+            muted=bool(cell("pr-muted")),
+            nudge=bool(cell("pr-nudge")),
+        ),
         Text(f"#{num}") if num else Text(""),
         # Author is populated by the daemon only for other-authored (coworker /
         # review) PRs — blank for my own, so the column reads "whose PR is this

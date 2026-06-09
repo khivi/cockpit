@@ -120,8 +120,6 @@ from cockpit.orchestrators.teardown import TeardownRequest, teardown
 
 MAIN_BRANCHES = {"master", "main"}
 
-ACTIONABLE_ISSUES = {"ci", "comments", "conflicts"}
-
 # Cutoff for the *deep* merged-branches fetch that feeds the branch-ref reaper.
 # Effectively unbounded (≈100 years) so a branch whose worktree was removed long
 # ago is still recognized as merged — the reaper has no 14-day autoclose window
@@ -973,6 +971,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             comments=pr.unaddressed,
             total=pr.total_from_others,
             author=other_author,
+            nudge=pr.nudge_issue,
         )
     # After the live snapshots are on disk, drop any superseded snapshot
     # sharing a branch (reused branch: old merged PR alongside the live one)
@@ -1119,10 +1118,12 @@ def _refresh_tracked_pills(
             # "fix CI" on it loops forever (the nudge never stops because the
             # state never changes). A merged PR can still be tracked here when
             # _maybe_autoclose kept its worktree (e.g. merged with red CI) — the
-            # per-branch query refreshes any-state PRs into the cache. Gate on
-            # OPEN so the footer pill still shows the merged-with-red-CI state
-            # for inspection, but no nudge fires.
-            actionable = pr.display_issue in ACTIONABLE_ISSUES and pr.state == "OPEN"
+            # per-branch query refreshes any-state PRs into the cache. `nudge_issue`
+            # encodes the OPEN-gate so the footer pill still shows the
+            # merged-with-red-CI state for inspection, but no nudge fires; it is
+            # also the single source the `pr-nudge` flat cell (TUI 🔔) reads, so
+            # the bell never disagrees with whether a nudge would fire.
+            actionable = bool(pr.nudge_issue)
             if actionable:
                 maybe_nudge(
                     ref,

@@ -308,6 +308,13 @@ def repo_nwo(repo_dir: Path) -> tuple[str, str]:
     return data["owner"]["login"], data["name"]
 
 
+# The `display_issue` categories that warrant a nudge (and the TUI 🔔). A PR
+# whose issue is none of these — `approved`, `clean`, `changes-requested` — is
+# never nudged. Lives here, next to `PR.nudge_issue`, so the model is the single
+# authority; `cycle` imports it rather than declaring its own copy.
+ACTIONABLE_ISSUES = frozenset({"ci", "comments", "conflicts"})
+
+
 @dataclass
 class PR:
     number: int
@@ -351,6 +358,22 @@ class PR:
         ):
             return "changes-requested"
         return self.primary_issue
+
+    @property
+    def nudge_issue(self) -> str:
+        """The actionable issue category warranting a nudge, or "" when none.
+
+        Single source for both the slow-tick nudge decision
+        (`cycle._refresh_tracked_pills`) and the `pr-nudge` flat cell that drives
+        the TUI's 🔔 — so the bell can never disagree with whether a nudge would
+        actually fire. A nudge fires only for an OPEN PR whose `display_issue` is
+        in `ACTIONABLE_ISSUES`: a merged/closed PR is never actionable (its CI,
+        comments, and conflicts can no longer be resolved, so nudging loops
+        forever — the same reasoning as the OPEN gate that consumes this).
+        """
+        if self.state == "OPEN" and self.display_issue in ACTIONABLE_ISSUES:
+            return self.display_issue
+        return ""
 
 
 _PR_FIELDS = """

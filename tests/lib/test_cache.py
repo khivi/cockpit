@@ -172,6 +172,31 @@ def test_write_branch_pr_cache_default_author_empty(cache_dir):
     assert (cache_dir / "pr-author-khivi-feature").read_text() == ""
 
 
+def test_write_branch_pr_cache_writes_nudge(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/feature",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=26,
+        title="Failing",
+        nudge="ci",
+    )
+    assert (cache_dir / "pr-nudge-khivi-feature").read_text() == "ci"
+
+
+def test_write_branch_pr_cache_default_nudge_empty(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/feature",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=27,
+        title="Clean",
+    )
+    assert (cache_dir / "pr-nudge-khivi-feature").read_text() == ""
+
+
 def test_write_branch_pr_cache_no_branch_noop(cache_dir):
     cache_mod.write_branch_pr_cache(
         "",
@@ -195,6 +220,21 @@ def test_refresh_pr_data_writes_no_pr_sentinel(cache_dir):
     assert (cache_dir / "pr-title-khivi-foo").read_text() == ""
     assert (cache_dir / "pr-comments-khivi-foo").read_text() == ""
     assert (cache_dir / "pr-comments-total-khivi-foo").read_text() == ""
+    assert (cache_dir / "pr-nudge-khivi-foo").read_text() == ""
+
+
+def test_refresh_pr_data_populates_nudge_from_json_snapshot(cache_dir):
+    payload = {
+        "state": "OPEN",
+        "isDraft": False,
+        "review": "",
+        "number": 88,
+        "title": "Failing",
+        "nudge": "ci",
+    }
+    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
+        cache_mod.refresh_pr_data("khivi/ci")
+    assert (cache_dir / "pr-nudge-khivi-ci").read_text() == "ci"
 
 
 def test_refresh_pr_data_populates_from_json_snapshot(cache_dir):
@@ -391,6 +431,7 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
         "pr-checks",
         "pr-comments",
         "pr-comments-total",
+        "pr-nudge",
     ):
         cache_mod.branch_cache(stem, "khivi/feature").unlink(missing_ok=True)
     cache_mod.republish_pr_caches_from_disk()
@@ -403,6 +444,8 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     assert (flat / "pr-checks-khivi-feature").read_text() == "✗"
     assert (flat / "pr-comments-khivi-feature").read_text() == "2"
     assert (flat / "pr-comments-total-khivi-feature").read_text() == "5"
+    # unaddressed=2 → primary_issue "comments" → nudge_issue "comments".
+    assert (flat / "pr-nudge-khivi-feature").read_text() == "comments"
 
 
 def test_republish_pr_caches_no_cache_dir_is_noop(tmp_path, monkeypatch):
@@ -555,6 +598,29 @@ def test_write_pr_cache_bakes_total_into_json(tmp_path, monkeypatch):
     payload = cache_mod.write_pr_cache("testrepo", pr)
     assert payload["unaddressed"] == 2
     assert payload["total"] == 5
+
+
+def test_write_pr_cache_bakes_nudge_issue_into_json(tmp_path, monkeypatch):
+    """The JSON snapshot carries `PR.nudge_issue` so the fast-tick republish can
+    repopulate `pr-nudge` without recomputing the model's issue logic."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    import cockpit.lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    importlib.reload(cache_mod)
+
+    # OPEN + failing CI (no comments/conflicts) → actionable "ci".
+    failing = cache_mod.write_pr_cache("testrepo", _pr(ci="failed:lint"))
+    assert failing["nudge"] == "ci"
+
+    # MERGED + failing CI → not actionable (state gate), so "".
+    merged = cache_mod.write_pr_cache(
+        "testrepo",
+        _pr(number=2, branch="khivi/merged", ci="failed:lint", state="MERGED"),
+    )
+    assert merged["nudge"] == ""
 
 
 def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):

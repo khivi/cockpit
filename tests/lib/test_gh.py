@@ -344,3 +344,62 @@ def test_pr_fields_query_includes_head_ref_oid():
     from cockpit.lib.gh import _PR_FIELDS
 
     assert "headRefOid" in _PR_FIELDS
+
+
+# ── PR.nudge_issue — single source for the nudge decision + TUI 🔔 ──────────
+
+
+def _issue_pr(**overrides):
+    from cockpit.lib.gh import PR
+
+    base: dict = dict(
+        number=1,
+        title="t",
+        branch="khivi/feature",
+        url="https://example/pr/1",
+        author="khivi",
+        is_draft=False,
+        review_decision="REVIEW_REQUIRED",
+        mergeable="MERGEABLE",
+        ci="passed",
+        unaddressed=0,
+        total_from_others=0,
+        state="OPEN",
+    )
+    base.update(overrides)
+    return PR(**base)
+
+
+@pytest.mark.parametrize(
+    "overrides,expected",
+    [
+        # Actionable categories on an OPEN PR.
+        (dict(ci="failed:lint"), "ci"),
+        (dict(unaddressed=2), "comments"),
+        # CHANGES_REQUESTED *with* an unresolved thread stays "comments".
+        (dict(review_decision="CHANGES_REQUESTED", unaddressed=2), "comments"),
+        (dict(mergeable="CONFLICTING"), "conflicts"),
+        # Non-actionable display_issue values → no nudge.
+        (dict(review_decision="APPROVED"), ""),  # approved
+        ({}, ""),  # clean
+        # changes-requested with nothing unaddressed → display_issue
+        # "changes-requested", which is NOT in ACTIONABLE_ISSUES.
+        (dict(review_decision="CHANGES_REQUESTED", unaddressed=0), ""),
+    ],
+)
+def test_nudge_issue_open_pr(overrides, expected):
+    assert _issue_pr(**overrides).nudge_issue == expected
+
+
+@pytest.mark.parametrize("state", ["MERGED", "CLOSED"])
+def test_nudge_issue_non_open_is_empty(state):
+    """A merged/closed PR is never actionable even with a failing issue — the
+    OPEN gate stops the forever-nudge loop."""
+    assert _issue_pr(ci="failed:lint", state=state).nudge_issue == ""
+
+
+def test_nudge_issue_matches_display_issue_when_actionable():
+    """When actionable, nudge_issue is exactly display_issue (so the 🔔 and the
+    nudge message can't diverge)."""
+    pr = _issue_pr(ci="failed:lint")
+    assert pr.nudge_issue == pr.display_issue == "ci"

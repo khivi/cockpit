@@ -97,6 +97,7 @@ _PR_STATE_ICON: dict[str, str] = {
 ICON_PR_NUM = "🔗"
 ICON_PR_TITLE = "📄"
 ICON_PR_MUTED = "🔇"
+ICON_PR_NUDGE = "🔔"  # 🔔 PR has an actionable, unmuted nudge condition (TUI only)
 ICON_PR_COMMENTS = "💬"
 ICON_COST = "💰"  # 💰 running session spend in USD
 

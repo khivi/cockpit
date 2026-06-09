@@ -132,6 +132,12 @@ def write_pr_cache(
         "headRefOid": pr.head_oid,
         "reusedBranch": reused_branch,
         "author": other_author,
+        # The actionable issue category that warrants a nudge ("" when none) —
+        # `PR.nudge_issue`, persisted so every flat-cell republish path
+        # (`republish_pr_caches_from_disk`, `refresh_pr_data`) can populate the
+        # `pr-nudge` cell that drives the TUI 🔔 without recomputing the model's
+        # issue logic (the daemon-is-sole-decider invariant).
+        "nudge": pr.nudge_issue,
     }
     if linear is not None:
         payload["linear"] = linear
@@ -338,8 +344,9 @@ def _write_pr_flat_cells(
     comments: int,
     total: int = 0,
     author: str = "",
+    nudge: str = "",
 ) -> None:
-    """Write the seven branch-keyed PR flat cells that every PR writer shares.
+    """Write the eight branch-keyed PR flat cells that every PR writer shares.
 
     `state` is already resolved (see `_resolve_state`). The `pr-checks` cell is
     deliberately NOT written here — its three writers disagree on purpose
@@ -355,6 +362,11 @@ def _write_pr_flat_cells(
     self-authored one (see `write_pr_cache`'s `other_author`). Always written so
     a PR that flips ownership (rare) or whose snapshot is rebuilt clears stale
     values.
+
+    `nudge` is `PR.nudge_issue` — the actionable issue category ("" when none)
+    that the TUI renders as 🔔. Always written so the bell clears the moment CI
+    goes green / threads resolve / the PR merges, with no separate clearing path
+    (derived, never stored as standalone state).
     """
     atomic_write(branch_cache("pr-state", branch), state)
     atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
@@ -363,12 +375,13 @@ def _write_pr_flat_cells(
     atomic_write(branch_cache("pr-comments", branch), str(comments) if comments else "")
     atomic_write(branch_cache("pr-comments-total", branch), str(total) if total else "")
     atomic_write(branch_cache("pr-author", branch), str(author or ""))
+    atomic_write(branch_cache("pr-nudge", branch), str(nudge or ""))
 
 
 def refresh_pr_data(branch: str) -> None:
     """Repopulate pr-state / pr-num / pr-title / pr-muted / pr-comments /
-    pr-author flat-cache cells for `branch` from the daemon's per-PR JSON
-    snapshot.
+    pr-author / pr-nudge flat-cache cells for `branch` from the daemon's per-PR
+    JSON snapshot.
 
     Empty (no-PR) sentinel = zero-byte file with a fresh mtime; suppresses
     per-render reads during the 60s TTL.
@@ -392,6 +405,7 @@ def refresh_pr_data(branch: str) -> None:
             comments=0,
             total=0,
             author="",
+            nudge="",
         )
         return
     _write_pr_flat_cells(
@@ -407,6 +421,7 @@ def refresh_pr_data(branch: str) -> None:
         comments=int(data.get("unaddressed") or 0),
         total=int(data.get("total") or 0),
         author=str(data.get("author") or ""),
+        nudge=str(data.get("nudge") or ""),
     )
 
 
@@ -511,6 +526,7 @@ def write_branch_pr_cache(
     comments: int = 0,
     total: int = 0,
     author: str = "",
+    nudge: str = "",
 ) -> None:
     """Daemon-tick entrypoint: write pre-resolved PR fields straight to the
     flat cache, no `gh` round-trip needed. Caller (cockpit.py::cycle_repo)
@@ -528,6 +544,9 @@ def write_branch_pr_cache(
     `author` is the coworker login for an other-authored PR, empty for a
     self-authored one (the daemon resolves this against `self_user` — see
     `write_pr_cache`'s `other_author`).
+
+    `nudge` is `PR.nudge_issue` — the actionable issue category ("" when none)
+    rendered as the TUI 🔔; always written so the bell clears same-tick.
     """
     if not branch:
         return
@@ -540,6 +559,7 @@ def write_branch_pr_cache(
         comments=comments,
         total=total,
         author=author,
+        nudge=nudge,
     )
     if ci_glyph:
         atomic_write(branch_cache("pr-checks", branch), ci_glyph)
@@ -553,6 +573,7 @@ _BRANCH_PR_CELLS = (
     "pr-comments",
     "pr-comments-total",
     "pr-author",
+    "pr-nudge",
     "pr-checks",
 )
 
@@ -579,7 +600,8 @@ def republish_pr_caches_from_disk() -> None:
     Daemon-side replacement for the old renderer-spawned `*-refresh`
     pattern. Walks `$COCKPIT_HOME/cache/*__pr-*.json` and, for each
     payload's `branch`, re-writes `pr-state`, `pr-num`, `pr-title`,
-    `pr-muted`, `pr-comments`, `pr-comments-total`, `pr-author`, `pr-checks`.
+    `pr-muted`, `pr-comments`, `pr-comments-total`, `pr-author`, `pr-nudge`,
+    `pr-checks`.
     Pure JSON → flat-cell republish,
     no `gh` calls — safe to run on the fast tick.
 
@@ -622,6 +644,7 @@ def republish_pr_caches_from_disk() -> None:
             comments=int(payload.get("unaddressed") or 0),
             total=int(payload.get("total") or 0),
             author=str(payload.get("author") or ""),
+            nudge=str(payload.get("nudge") or ""),
         )
         atomic_write(
             branch_cache("pr-checks", branch), _ci_glyph(str(payload.get("ci") or ""))
