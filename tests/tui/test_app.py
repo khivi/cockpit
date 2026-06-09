@@ -174,6 +174,33 @@ async def test_waiting_on_lock_shows_waiting_not_running():
         assert app._slow_phase == "idle"
 
 
+async def test_update_check_re_runs_on_each_slow_tick(monkeypatch):
+    # The update check rides the slow tick (no separate hourly timer), so a
+    # release that lands after startup surfaces on the next slow tick — not up
+    # to an hour later. Clear the indicator after the startup check, kick a
+    # fresh slow tick, and assert it gets re-set.
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [], "check_update": True},
+    )
+    monkeypatch.setattr("cockpit.lib.version.running_version", lambda: "0.1")
+    monkeypatch.setattr("cockpit.lib.version.latest_version", lambda: "0.2")
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.8)  # startup slow tick + its update check land
+        header = app.query_one(HeaderBar)
+        assert header.update_text == "0.1 → 0.2"
+
+        header.update_text = ""  # forget it; only a re-check can restore it
+        await pilot.press("s")  # kick a fresh slow tick
+        for _ in range(20):
+            if header.update_text:
+                break
+            await pilot.pause(0.1)
+        assert header.update_text == "0.1 → 0.2"  # slow tick re-checked
+
+
 async def test_tick_output_written_to_bounded_log_file():
     # No LogPane in the layout; tick output lands in the bounded watch.log.
     app, _ = _make_app()

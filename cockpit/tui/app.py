@@ -79,7 +79,6 @@ from cockpit.tui.widgets.log_pane import LogPane
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
 from cockpit.tui.widgets.worktree_table import WorktreeTable
 
-_UPDATE_CHECK_SECONDS = 3600
 _LOG_TAIL_LINES = 200
 
 # The `n` (New) action shells out via the same module dispatch the daemon's
@@ -225,7 +224,9 @@ class CockpitApp(App[None]):
         self.set_interval(1.0, self._update_countdown)
         self.set_interval(0.2, self._drain_log)
         self.set_interval(self._slow_secs, self._kick_slow)
-        self.set_interval(_UPDATE_CHECK_SECONDS, self._check_update)
+        # The update check rides the slow tick (see _run_slow); no separate
+        # timer — that's why a fresh release surfaces in ~one slow interval,
+        # not up to an hour.
 
         print(f"slow-tick: every {self._slow_secs}s")
         if self._fast_secs > 0:
@@ -326,6 +327,10 @@ class CockpitApp(App[None]):
             self.call_from_thread(self._render_table, inv)
             # First slow tick done → the PR caches exist; safe to start fast.
             self.call_from_thread(self._start_fast)
+            # Re-check for a newer release on every slow tick (network-light gh
+            # api). `exclusive` coalesces a manual `s`/SIGUSR1 kick that lands
+            # on top of an in-flight check.
+            self.call_from_thread(self._check_update)
 
     @work(thread=True, group="prime", exit_on_error=False)
     def _prime_table(self) -> None:
@@ -353,7 +358,7 @@ class CockpitApp(App[None]):
             inv = self._gather_inventory()
             self.call_from_thread(self._render_table, inv)
 
-    @work(thread=True, group="update", exit_on_error=False)
+    @work(thread=True, group="update", exclusive=True, exit_on_error=False)
     def _check_update(self) -> None:
         if not load_config().get("check_update", True):
             return
