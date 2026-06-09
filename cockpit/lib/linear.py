@@ -45,12 +45,17 @@ LINEAR_RE_CI = re.compile(r"[A-Za-z]{2,6}-[0-9]+")
 # body — NOT via the branch-slug regex above (which catches predecessor /
 # follow-up / "reapply X" mentions the PR doesn't actually deliver). This mirrors
 # the strict delivery signal in the morning-align `linear_delivery.py` helper.
-# Anchored to line start so a mention buried in prose isn't a footer.
-LINEAR_FOOTER_RE = re.compile(r"^Linear:\s*\[([A-Z]+-[0-9]+)\]", re.MULTILINE)
+# Anchored to line start so a mention buried in prose isn't a footer. Matched
+# case-insensitively (the `Linear:` label and the id can be any case — branch
+# slugs lowercase the id); `parse_linear_footers` uppercases captures to the
+# canonical `PE-1234` form so display, dedup, and GraphQL lookups stay stable.
+LINEAR_FOOTER_RE = re.compile(
+    r"^Linear:\s*\[([A-Za-z]+-[0-9]+)\]", re.MULTILINE | re.IGNORECASE
+)
 # Same footer, capturing the markdown link target so callers can open the exact
 # Linear URL (never hand-construct one — the workspace slug isn't known here).
 LINEAR_FOOTER_LINK_RE = re.compile(
-    r"^Linear:\s*\[([A-Z]+-[0-9]+)\]\((\S+?)\)", re.MULTILINE
+    r"^Linear:\s*\[([A-Za-z]+-[0-9]+)\]\((\S+?)\)", re.MULTILINE | re.IGNORECASE
 )
 
 # Linear's public GraphQL endpoint. A *personal API key* authenticates with the
@@ -127,13 +132,15 @@ def extract_ticket(branch: str) -> str:
 def parse_linear_footers(body: str) -> list[str]:
     """Return the de-duplicated, order-preserving list of ticket ids declared in
     `body`'s `Linear: [PE-1234](url)` footer line(s) — the strict set of tickets
-    the PR delivers. Empty when `body` is falsy or has no footer.
+    the PR delivers. Ids are uppercased to the canonical `PE-1234` form (the
+    footer match is case-insensitive). Empty when `body` is falsy or has no footer.
     """
     if not body:
         return []
     seen: set[str] = set()
     out: list[str] = []
     for tid in LINEAR_FOOTER_RE.findall(body):
+        tid = tid.upper()
         if tid not in seen:
             seen.add(tid)
             out.append(tid)
@@ -142,14 +149,17 @@ def parse_linear_footers(body: str) -> list[str]:
 
 def parse_linear_footer_links(body: str) -> list[tuple[str, str]]:
     """`(ticket_id, url)` pairs from `body`'s `Linear: [PE-1234](url)` footer(s),
-    de-duplicated by id, order-preserving. Empty when `body` is falsy or carries
-    no footer link. Use this to open the canonical Linear URL rather than
-    constructing one from the id (the workspace slug isn't known here)."""
+    de-duplicated by id, order-preserving. Ids are uppercased to the canonical
+    `PE-1234` form (the footer match is case-insensitive) so they key the same as
+    `parse_linear_footers` output. Empty when `body` is falsy or carries no footer
+    link. Use this to open the canonical Linear URL rather than constructing one
+    from the id (the workspace slug isn't known here)."""
     if not body:
         return []
     seen: set[str] = set()
     out: list[tuple[str, str]] = []
     for tid, url in LINEAR_FOOTER_LINK_RE.findall(body):
+        tid = tid.upper()
         if tid not in seen:
             seen.add(tid)
             out.append((tid, url))
