@@ -8,6 +8,7 @@ config" and "next cycle" lives here.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -18,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import IO
+from typing import IO, cast
 
 import cockpit.lib.daemon_signal as daemon_signal
 from cockpit.lib import version
@@ -106,7 +107,7 @@ from cockpit.lib.linear import (
     LINEAR_API_KEY_ENV,
     fetch_team_states,
     fetch_ticket_meta,
-    fetch_ticket_state,
+    fetch_ticket_states,
     fetch_viewer_id,
     parse_linear_footers,
     update_ticket_state,
@@ -183,34 +184,82 @@ def _linear_state_ttl_seconds(cfg: dict) -> float:
     return 3 * float(cfg.get("slow_poll_interval_seconds", 300))
 
 
-def _resolve_linear_block(ctx: RepoCycle, pr: PR) -> dict | None:
-    """Resolve (and cache) the Linear-delivery block for `pr` — the tickets it
-    delivers (via the `Linear:` PR-body footer) and their workflow states.
+def _linear_identity_ttl_seconds(cfg: dict) -> float:
+    """Cross-tick cache lifetime for the near-immutable Linear *identity* data the
+    merge-transition path reads — the API key's `viewer` id and each team's
+    workflow-state name→UUID map. Both change far less often than ticket states,
+    so they're cached in `pill_state` rather than refetched every slow tick.
+    Defaults to twelve slow cycles; override with `linear_identity_ttl_seconds`.
+    """
+    explicit = cfg.get("linear_identity_ttl_seconds")
+    if explicit is not None:
+        return float(explicit)
+    return 12 * float(cfg.get("slow_poll_interval_seconds", 300))
 
-    Returns `{"tickets": [{"id", "state"}], "fetched_at": ts}`, or None when the
-    repo isn't Linear-configured (so `write_pr_cache` leaves the field untouched).
 
-    Refetches ticket states from Linear only when the footer's id-set differs
-    from the prior snapshot OR the prior snapshot has aged past the TTL backstop;
-    otherwise it carries the prior states forward. So a re-link refreshes
-    immediately and an independent state transition is caught within the TTL,
-    without a per-tick Linear call for every PR. Caller gates `ctx.dry`.
+def _decide_linear_refetch(ctx: RepoCycle, pr: PR, now: float) -> tuple[str, object]:
+    """Decide how `pr`'s Linear-delivery block resolves this cycle — pure, no
+    network. Returns one of:
+
+      * `("skip", None)`   — repo isn't Linear-configured; leave the block None so
+        `write_pr_cache` leaves the field untouched.
+      * `("carry", block)` — the prior snapshot's footer id-set is unchanged and
+        still within the TTL backstop; carry it forward verbatim.
+      * `("build", ids)`   — (re)build the block from freshly-fetched states for
+        `ids` (the footer set, possibly empty), triggered by a footer change or a
+        prior snapshot aged past the TTL.
+
+    Reads the *prior* on-disk snapshot via `ctx.pr_payloads` (loaded before the
+    write loop overwrites the file), so a re-link refreshes immediately and an
+    independent state transition is caught within the TTL.
     """
     if not ctx.repo_entry.get("linear_keys"):
-        return None
+        return "skip", None
     ids = parse_linear_footers(pr.body)
-    prior = find_pr_payload(pr.branch, ctx.name)
-    prior_block: dict | None = (prior or {}).get("linear") if prior else None
-    now = time.time()
+    prior_block = (ctx.pr_payloads.get(pr.branch) or {}).get("linear")
     if prior_block:
         prior_ids = [t.get("id") for t in prior_block.get("tickets", [])]
         fresh = now - float(
             prior_block.get("fetched_at", 0)
         ) < _linear_state_ttl_seconds(ctx.cfg)
         if prior_ids == ids and fresh:
-            return prior_block
-    tickets = [{"id": tid, "state": fetch_ticket_state(tid)} for tid in ids]
-    return {"tickets": tickets, "fetched_at": now}
+            return "carry", prior_block
+    return "build", ids
+
+
+def _prefetch_linear_blocks(ctx: RepoCycle) -> None:
+    """Populate `ctx.linear_blocks` for every PR in one batched Linear round-trip
+    per team, replacing a per-PR `fetch_ticket_state` fan-out.
+
+    Two passes: first decide each PR's outcome (`_decide_linear_refetch`, pure) —
+    carrying unchanged blocks forward and collecting the union of ticket ids that
+    need a fresh state across *all* PRs — then resolve that union with a single
+    `fetch_ticket_states` (one query per team) and assemble the rebuilt blocks
+    from it. So a repo's whole crop of due tickets costs one round-trip per team,
+    not one per ticket; nothing due → no network. Caller gates `ctx.dry`.
+
+    Runs before the write loop's `write_pr_cache` calls so the decision still
+    reads the prior on-disk snapshot, matching the old per-PR resolve ordering.
+    """
+    now = time.time()
+    builds: list[tuple[str, list[str]]] = []  # (branch, footer ids) to rebuild
+    due: set[str] = set()
+    for pr in ctx.prs:
+        outcome, data = _decide_linear_refetch(ctx, pr, now)
+        if outcome == "carry":
+            ctx.linear_blocks[pr.branch] = data  # type: ignore[assignment]
+        elif outcome == "build":
+            ids: list[str] = data  # type: ignore[assignment]
+            builds.append((pr.branch, ids))
+            due.update(ids)
+        else:  # skip — repo not Linear-configured
+            ctx.linear_blocks[pr.branch] = None
+    if not builds:
+        return
+    states = fetch_ticket_states(sorted(due)) if due else {}
+    for branch, ids in builds:
+        tickets = [{"id": tid, "state": states.get(tid)} for tid in ids]
+        ctx.linear_blocks[branch] = {"tickets": tickets, "fetched_at": now}
 
 
 def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
@@ -390,6 +439,42 @@ def _workspace_ref_for_path(wt_path: Path, cwds: dict[str, Path]) -> str | None:
     return None
 
 
+def _cached_linear_identity[T](
+    ctx: RepoCycle, key: str, fetch: Callable[[], T | None]
+) -> T | None:
+    """Return a Linear identity value from `pill_state[key]` when still within the
+    identity TTL, else call `fetch()` and cache a *truthy* result. A falsy/failed
+    fetch isn't cached, so a transient failure retries next tick (never poisons
+    the cache with None). Used for the merge-transition's near-immutable reads.
+    """
+    now = time.time()
+    entry = ctx.pill_state.get(key)
+    ttl = _linear_identity_ttl_seconds(ctx.cfg)
+    if isinstance(entry, dict) and (now - float(entry.get("ts", 0))) < ttl:
+        return cast("T | None", entry.get("value"))
+    value = fetch()
+    if value:
+        ctx.pill_state[key] = {"value": value, "ts": now}
+    return value
+
+
+def _cached_viewer_id(ctx: RepoCycle) -> str | None:
+    """The API key's `viewer` id, cached across ticks. Keyed by a non-secret
+    fingerprint of the key so rotating `LINEAR_API_KEY` invalidates the entry
+    (the raw key is never stored in `pill_state`)."""
+    raw = os.environ.get(LINEAR_API_KEY_ENV) or ""
+    fp = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    return _cached_linear_identity(ctx, f"linear-viewer:{fp}", fetch_viewer_id)
+
+
+def _cached_team_states(ctx: RepoCycle, team_id: str) -> dict | None:
+    """A team's workflow-state name→UUID map, cached across ticks (subsumes the
+    old per-cycle dedupe — a same-tick second lookup is a cache hit)."""
+    return _cached_linear_identity(
+        ctx, f"linear-team-states:{team_id}", lambda: fetch_team_states(team_id)
+    )
+
+
 def _transition_merged_tickets(ctx: RepoCycle) -> None:
     """Opt-in: move a merged PR's delivered Linear tickets to the configured
     terminal state (`linear_merge_done_state`, default "Done").
@@ -410,8 +495,9 @@ def _transition_merged_tickets(ctx: RepoCycle) -> None:
       * skip if already evaluated this daemon run (a `merged-done:` marker in
         `pill_state` — keeps a kept-but-merged worktree from re-querying every
         tick; the already-at-target check below is the cross-restart backstop);
-      * skip unless the ticket is assigned to me (the API key's `viewer`) — never
-        move a teammate's ticket;
+      * skip unless the ticket is assigned to me (the API key's `viewer`, fetched
+        lazily on the first real candidate and cached across ticks) — never move
+        a teammate's ticket;
       * skip if it's already at the target state, or its state `type` is
         `canceled` (never resurrect a canceled ticket — note "Dev Done"/"Done"
         both have `type: completed`, so equality, not type, decides "already
@@ -428,16 +514,12 @@ def _transition_merged_tickets(ctx: RepoCycle) -> None:
     if not os.environ.get(LINEAR_API_KEY_ENV):
         return
 
-    viewer_id = fetch_viewer_id()
-    if not viewer_id:
-        # Can't confirm ownership → move nothing (fail-safe). The preflight
-        # already warns on a missing key; a transient viewer-query failure
-        # simply retries next tick.
-        return
-
     target = linear_merge_done_state(ctx.cfg)
     target_cf = target.casefold()
-    team_states: dict[str, dict | None] = {}  # team_id → name-cf→uuid (per cycle)
+    # Viewer id resolved lazily on the first real candidate ticket (cached across
+    # ticks), so a repo with nothing eligible makes zero Linear calls per tick.
+    viewer_id: str | None = None
+    viewer_resolved = False
 
     for wt in ctx.wts:
         if wt.is_primary or wt.branch in MAIN_BRANCHES:
@@ -453,6 +535,13 @@ def _transition_merged_tickets(ctx: RepoCycle) -> None:
             marker = f"merged-done:{ctx.owner}/{ctx.name}:{tid}"
             if ctx.pill_state.get(marker):
                 continue
+            if not viewer_resolved:
+                viewer_id = _cached_viewer_id(ctx)
+                viewer_resolved = True
+            if not viewer_id:
+                # Can't confirm ownership → move nothing (fail-safe). No marker,
+                # so a transient viewer-query failure retries next tick.
+                continue
             meta = fetch_ticket_meta(tid)
             if not meta:
                 continue  # transient failure → no marker, retry next tick
@@ -467,9 +556,7 @@ def _transition_merged_tickets(ctx: RepoCycle) -> None:
             team_id = meta.get("team_id")
             if not team_id:
                 continue
-            if team_id not in team_states:
-                team_states[team_id] = fetch_team_states(team_id)
-            states = team_states.get(team_id)
+            states = _cached_team_states(ctx, team_id)
             state_id = (states or {}).get(target_cf)
             if not state_id:
                 print(
@@ -929,14 +1016,15 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
         write_git_state_cache(wt.path)
     wt_by_branch = {wt.branch: wt for wt in ctx.wts}
     open_branches = {p.branch for p in ctx.prs if p.state == "OPEN"}
+    # Resolve every PR's Linear-delivery block in one batched pass BEFORE the
+    # write loop (each `write_pr_cache` overwrites the snapshot the refetch-vs-
+    # carry-forward decision reads, so this must run against the old files).
+    _prefetch_linear_blocks(ctx)
     for pr in ctx.prs:
         pref = ctx.prefs.get(pr.number)
         wt_opt = wt_by_branch.get(pr.branch)
-        # Resolve the Linear-delivery block BEFORE write_pr_cache (it reads the
-        # prior snapshot to decide refetch-vs-carry-forward, so it must run
-        # against the old file). None for non-Linear repos → field untouched.
-        linear = _resolve_linear_block(ctx, pr)
-        ctx.linear_blocks[pr.branch] = linear
+        # None for non-Linear repos → field untouched by write_pr_cache.
+        linear = ctx.linear_blocks.get(pr.branch)
         reused = _is_reused_branch_merge(wt_opt, pr)
         # The author's login only when this is someone else's PR (a coworker /
         # review PR) — empty for my own. Resolved here, the one place self_user

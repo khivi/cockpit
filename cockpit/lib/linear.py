@@ -15,9 +15,9 @@ The Linear ticket *body* (title, description) is still fetched by Claude
 itself via the Linear MCP on the first turn of a spawned workspace — the
 daemon can't reach the MCP. But the daemon *does* make direct GraphQL calls:
 
-  * read-only — `fetch_ticket_state` (the `devdone=` pill), plus
-    `fetch_viewer_id` / `fetch_ticket_meta` / `fetch_team_states` (the
-    merge-transition eligibility checks);
+  * read-only — `fetch_ticket_state` and its batched form `fetch_ticket_states`
+    (the `devdone=` pill), plus `fetch_viewer_id` / `fetch_ticket_meta` /
+    `fetch_team_states` (the merge-transition eligibility checks);
   * the one *write* — `update_ticket_state`, the `issueUpdate` mutation that
     moves a ticket's workflow state. It is reached only by the opt-in
     `linear_done_on_merge` path in the slow tick (see
@@ -74,6 +74,16 @@ _TICKET_STATE_TIMEOUT_SECONDS = 10
 _TICKET_STATE_QUERY = (
     "query($team:String!,$number:Float!){"
     "issues(filter:{team:{key:{eq:$team}},number:{eq:$number}}){"
+    "nodes{identifier state{name}}}}"
+)
+
+# The batched form of the above: a whole team's worth of ticket numbers in one
+# round-trip (`number:{in:[…]}` instead of `{eq:…}`). The slow tick collects
+# every ticket due for a state refresh across all of a repo's open PRs and
+# resolves them with one query per team rather than one per ticket.
+_TICKET_STATES_BATCH_QUERY = (
+    "query($team:String!,$numbers:[Float!]!){"
+    "issues(filter:{team:{key:{eq:$team}},number:{in:$numbers}}){"
     "nodes{identifier state{name}}}}"
 )
 
@@ -262,6 +272,60 @@ def _post_graphql(query: str, variables: dict, *, api_key: str, timeout: float):
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         return None
     return (payload or {}).get("data")
+
+
+def fetch_ticket_states(
+    ticket_ids: list[str], *, api_key: str | None = None
+) -> dict[str, str | None]:
+    """Return a `{ticket_id: state_name_or_None}` map covering every id in
+    `ticket_ids` — the batched form of `fetch_ticket_state`.
+
+    Ids are grouped by team key and each team is resolved in a single
+    `number:{in:[…]}` query, so a repo's whole crop of due tickets costs one
+    round-trip per team instead of one per ticket. Matching back to the input is
+    case-insensitive (the canonical `identifier` Linear returns is uppercase).
+
+    Every input id appears in the result. An id maps to None when its state can't
+    be determined — unset key, unparsable id, no matching issue, or that team's
+    query failing — and a failure is isolated to its own team (other teams keep
+    their fetched states). Never raises.
+    """
+    out: dict[str, str | None] = {tid: None for tid in ticket_ids}
+    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    if not key:
+        return out
+
+    # team key (uppercased) → set of issue numbers; plus a case-folded id lookup
+    # to map each returned `identifier` back to the caller's original id. An
+    # unparsable id is never grouped, so it simply stays None.
+    by_team: dict[str, set[float]] = {}
+    id_by_upper: dict[str, str] = {}
+    for tid in ticket_ids:
+        if not LINEAR_RE_CI.fullmatch(tid or ""):
+            continue
+        team, _, num = tid.partition("-")
+        try:
+            number = float(int(num))
+        except ValueError:
+            continue
+        by_team.setdefault(team.upper(), set()).add(number)
+        id_by_upper[tid.upper()] = tid
+
+    for team, numbers in by_team.items():
+        data = _post_graphql(
+            _TICKET_STATES_BATCH_QUERY,
+            {"team": team, "numbers": sorted(numbers)},
+            api_key=key,
+            timeout=_TICKET_STATE_TIMEOUT_SECONDS,
+        )
+        nodes = ((data or {}).get("issues") or {}).get("nodes")
+        if not nodes:
+            continue  # team query failed / no matches → its ids stay None
+        for node in nodes:
+            orig = id_by_upper.get((node.get("identifier") or "").upper())
+            if orig is not None:
+                out[orig] = (node.get("state") or {}).get("name") or None
+    return out
 
 
 def fetch_viewer_id(*, api_key: str | None = None) -> str | None:
