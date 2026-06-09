@@ -415,6 +415,104 @@ async def test_focus_key_noop_on_limux(monkeypatch, tmp_path):
     assert refs == []
 
 
+def _patch_open_workspace(monkeypatch, *, backend, has_ws):
+    """Wire `w`'s leaves: `resolve_tool` → backend, `workspace_cwds`/`names`
+    so the row's worktree either already has a workspace (`has_ws`) or not, and
+    capturing stubs for both spawn helpers + `select_workspace`. Returns the
+    capture dicts."""
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: backend)
+    cwds = {"ws1": Path("/x")}  # placeholder; the test sets the real path below
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: cwds if has_ws else {}
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_names", lambda: {"ws1": "feat-a"} if has_ws else {}
+    )
+    cap: dict[str, list] = {"select": [], "orphan": [], "pr": []}
+
+    def _spawn_orphan(wt, **k):
+        cap["orphan"].append(wt.branch)
+        return "ws2"
+
+    def _spawn_pr(pr, wt, **k):
+        cap["pr"].append(pr.number)
+        return "ws2"
+
+    monkeypatch.setattr(
+        "cockpit.tui.app.select_workspace", lambda ref, **k: cap["select"].append(ref)
+    )
+    monkeypatch.setattr("cockpit.tui.app.spawn_orphan_workspace", _spawn_orphan)
+    monkeypatch.setattr("cockpit.tui.app.spawn_pr_workspace", _spawn_pr)
+    return cap, cwds
+
+
+async def _press_open(app, wt):
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("w")
+        await pilot.pause(0.6)
+
+
+async def test_open_workspace_focuses_existing_on_cmux(monkeypatch, tmp_path):
+    # Workspace already exists → `w` just focuses it (no spawn), like `f`.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    cap, cwds = _patch_open_workspace(monkeypatch, backend="cmux", has_ws=True)
+    cwds.clear()
+    cwds["ws1"] = wt.path
+    app, _ = _make_app()
+    await _press_open(app, wt)
+    assert cap["select"] == ["ws1"]
+    assert cap["orphan"] == [] and cap["pr"] == []
+
+
+async def test_open_workspace_spawns_orphan_when_missing(monkeypatch, tmp_path):
+    # No workspace + no cached PR → spawn an orphan workspace, then focus it.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    cap, _ = _patch_open_workspace(monkeypatch, backend="cmux", has_ws=False)
+    app, _ = _make_app()
+    await _press_open(app, wt)
+    assert cap["orphan"] == [wt.branch]
+    assert cap["pr"] == []
+    assert cap["select"] == ["ws2"]
+
+
+async def test_open_workspace_spawns_pr_when_payload(monkeypatch, tmp_path):
+    # No workspace but a cached PR → reconstruct it and spawn a PR workspace.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    cap, _ = _patch_open_workspace(monkeypatch, backend="cmux", has_ws=False)
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload",
+        lambda *a, **k: {"number": 42, "title": "t", "branch": wt.branch},
+    )
+    monkeypatch.setattr("cockpit.tui.app.load_pref", lambda n: None)
+    app, _ = _make_app()
+    await _press_open(app, wt)
+    assert cap["pr"] == [42]
+    assert cap["orphan"] == []
+    assert cap["select"] == ["ws2"]
+
+
+async def test_open_workspace_spawns_without_focus_on_limux(monkeypatch, tmp_path):
+    # limux can spawn but not select — create the workspace, never focus it.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    cap, _ = _patch_open_workspace(monkeypatch, backend="limux", has_ws=False)
+    app, _ = _make_app()
+    await _press_open(app, wt)
+    assert cap["orphan"] == [wt.branch]
+    assert cap["select"] == []
+
+
+async def test_open_workspace_noop_when_tool_none(monkeypatch, tmp_path):
+    # tool=none → no backend, so `w` neither spawns nor focuses.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    cap, _ = _patch_open_workspace(monkeypatch, backend="none", has_ws=False)
+    app, _ = _make_app()
+    await _press_open(app, wt)
+    assert cap["orphan"] == [] and cap["pr"] == [] and cap["select"] == []
+
+
 async def test_close_key_enqueues_when_clean(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.probe_blockers", lambda *a, **k: [])
