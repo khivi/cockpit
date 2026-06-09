@@ -182,6 +182,28 @@ def test_preflight_ignores_absent_check_update(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_preflight_exits_on_non_bool_use_slack(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "use_slack": "yes"})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "use_slack" in err
+    assert "'yes'" in err
+
+
+def test_preflight_passes_on_bool_use_slack(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "use_slack": True})
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_ignores_absent_use_slack(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight({"tool": "cmux"})
+    assert capsys.readouterr().err == ""
+
+
 def test_preflight_exits_on_non_string_dev_done_state(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     monkeypatch.setenv("LINEAR_API_KEY", "k")

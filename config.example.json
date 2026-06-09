@@ -17,6 +17,7 @@
   "prompt_prefix": "",
   "use_cship": false,
   "use_linear": false,
+  "use_slack": false,
   "linear_done_on_merge": false,
   "linear_merge_done_state": "Done",
   "check_update": true,

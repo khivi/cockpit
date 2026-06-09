@@ -124,6 +124,37 @@ def test_actions_attempts_with_job_url_parses():
     assert nwo == "owner/repo"
 
 
+def test_slack_archives_url_returns_slack_mode_verbatim():
+    url = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
+    mode, value, nwo = detect_source(url)
+    assert mode == "slack"
+    assert value == url  # passed through untouched — Claude reads it via the MCP
+    assert nwo is None  # no GitHub owner/repo to route to
+
+
+def test_slack_archives_url_with_query_still_slack():
+    url = (
+        "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
+        "?thread_ts=1700000000.123456&cid=C0123ABC"
+    )
+    mode, value, _nwo = detect_source(url)
+    assert mode == "slack"
+    assert value == url
+
+
+def test_slack_client_deep_link_returns_slack_mode():
+    url = "https://app.slack.com/client/T01234567/C0123ABC"
+    mode, value, _nwo = detect_source(url)
+    assert mode == "slack"
+    assert value == url
+
+
+def test_non_slack_url_is_branch():
+    # A bare branch name that merely contains the word slack is NOT a URL.
+    mode, _value, _nwo = detect_source("khivi/slack-feature")
+    assert mode == "branch"
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # resolve_worktree (real tmp repo via cockpit_repo)
 # ────────────────────────────────────────────────────────────────────────────
@@ -843,6 +874,72 @@ def test_linear_on_with_inconclusive_probe_seeds_smart_prompt(
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "Linear MCP" in cmd
     assert "STOP" in cmd
+
+
+# ── slack dispatch ─────────────────────────────────────────────────────────
+#
+# A Slack permalink has no human name, so spawn synthesizes a deterministic
+# codename branch from the thread's stable identity and seeds a prompt that
+# delegates the thread read to the in-session Slack MCP. Cockpit never calls
+# the Slack API — no network surface to mock, only branch shape + prompt +
+# gating. There is deliberately no `claude mcp list` probe (unreliable for
+# managed connectors), so unlike Linear these tests monkeypatch nothing.
+
+_SLACK_URL = "https://acme.slack.com/archives/C0123ABC/p1700000000123456"
+
+
+def test_positional_slack_creates_codename_branch(spawn_main):
+    from cockpit.lib.codename import codename
+    from cockpit.lib.slack import slack_seed
+
+    expected = codename(slack_seed(_SLACK_URL))
+    code, out, _err = spawn_main([_SLACK_URL, "--repo", "testrepo"])
+    assert code == 0
+    assert f"on khivi/{expected}" in out
+    assert _cmux_kwarg(spawn_main.cmux_calls[0], "name") == expected
+
+
+def test_slack_branch_is_deterministic_across_query_params(spawn_main):
+    """The same thread linked with and without `?thread_ts=…&cid=…` resolves
+    to the same codename branch — the seed is the thread identity, not the URL."""
+    from cockpit.lib.codename import codename
+    from cockpit.lib.slack import slack_seed
+
+    plain = codename(slack_seed(_SLACK_URL))
+    with_query = codename(slack_seed(_SLACK_URL + "?thread_ts=1700000000.123456"))
+    assert plain == with_query
+
+
+def test_slack_default_off_seeds_url_context_no_rename(spawn_main):
+    """Default (use_slack absent) → the thread URL is seeded as context, but no
+    MCP-fetch or branch/workspace rename instructions."""
+    code, _out, _err = spawn_main([_SLACK_URL, "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert _SLACK_URL in cmd  # URL always reaches the first turn
+    assert "Slack thread" in cmd
+    assert 'git branch -m "$CUR" "$CUR-<slug>"' not in cmd
+    assert "cmux workspace-action" not in cmd
+    assert "PLAN ONLY" in cmd
+
+
+def test_slack_on_seeds_fetch_and_rename(spawn_main, cockpit_repo):
+    """use_slack: true → full prompt: read via the Slack MCP, append a topic
+    slug to the codename branch, rename the workspace. Mirrors the Linear flow,
+    including the immediate-retry (no shell `sleep`) and /mcp STOP guidance."""
+    _set_config_key(cockpit_repo, "use_slack", True)
+    code, _out, _err = spawn_main([_SLACK_URL, "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert _SLACK_URL in cmd
+    assert "slack_read_thread" in cmd
+    assert 'git branch -m "$CUR" "$CUR-<slug>"' in cmd
+    assert "cmux workspace-action --action rename" in cmd
+    assert "STOP" in cmd
+    assert "retry the SAME MCP tool call up to three times" in cmd
+    assert "sleep" not in cmd or "do not insert shell `sleep`" in cmd
+    assert "/mcp" in cmd
+    assert "PLAN ONLY" in cmd
 
 
 def test_trailing_addendum_is_appended_to_seeded_prompt(

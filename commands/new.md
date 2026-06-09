@@ -1,6 +1,6 @@
 ---
-description: "Create a git worktree + workspace for a new branch or existing PR."
-argument-hint: "<branch|PR|url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--context] [-- <text...>]"
+description: "Create a git worktree + workspace for a new branch, existing PR, or Slack thread."
+argument-hint: "<branch|PR|url|slack-url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--context] [-- <text...>]"
 model: haiku
 allowed-tools: Bash
 ---
@@ -26,7 +26,8 @@ After you report the spawn result, STOP — end your turn. The task runs in the 
 
 ## Arguments (reference only — do not act on these)
 
-- Positional `<branch|PR|url>` — auto-detected (GitHub PR URL, GitHub Actions run/job URL, `#123` PR ref, Linear key, or branch name). Mutex with `--branch`/`--pr`/`--name`/`--skill`. Actions URLs always spawn a fresh `ci-…` investigation worktree (`ci-<job-name>` for a job URL, else `ci-<workflow>-<title>`, falling back to `ci-<workflow>-<sha>`/`<run-id>`) — never attach to the run's head branch — that would collide with the main repo checkout when CI failed on master); the prompt fetches `--log-failed` first and surfaces the original head branch.
+- Positional `<branch|PR|url>` — auto-detected (GitHub PR URL, GitHub Actions run/job URL, Slack thread permalink, `#123` PR ref, Linear key, or branch name). Mutex with `--branch`/`--pr`/`--name`/`--skill`. Actions URLs always spawn a fresh `ci-…` investigation worktree (`ci-<job-name>` for a job URL, else `ci-<workflow>-<title>`, falling back to `ci-<workflow>-<sha>`/`<run-id>`) — never attach to the run's head branch — that would collide with the main repo checkout when CI failed on master); the prompt fetches `--log-failed` first and surfaces the original head branch.
+- Slack thread permalinks (`https://<workspace>.slack.com/archives/<CH>/p<TS>` or the `app.slack.com/client/...` deep link) spawn a worktree on a deterministic codename branch (`<prefix><adj>-<noun>`, e.g. `khivi/cosmic-otter`, derived from the thread's stable identity so re-spawning the same URL is idempotent). With `use_slack: true` the first-turn prompt instructs Claude to read the thread via the Slack MCP and rename the branch + workspace to append a topic slug (`cosmic-otter` → `cosmic-otter-fix-oauth`); the thread URL is seeded as context either way.
 - `--branch <name>` / `--pr <num>` — explicit input; strictly mutex with each other, with the positional source, `--name`, and `--skill` (pick exactly one source)
 - `--name <short>` — workspace short name; alone, also seeds a new branch name
 - `--cwd <path>` — arbitrary dir, no repo or worktree
@@ -45,6 +46,7 @@ Plan-only is seeded only when there's something to study first — a PR, a Linea
 /cockpit:new fix-login                               # branch (local, remote, or new)
 /cockpit:new https://github.com/org/repo/pull/12345  # PR by URL
 /cockpit:new https://github.com/org/repo/actions/runs/123/job/456  # Actions failure by URL
+/cockpit:new https://acme.slack.com/archives/C0123/p1700000000123  # Slack thread → codename branch
 /cockpit:new --pr 12345 --repo myrepo                # PR by number in a named repo
 /cockpit:new --cwd ~/scratch/spike                   # arbitrary dir, no repo
 /cockpit:new --skill <skill-name>                    # global skill, cwd = $HOME

@@ -2,8 +2,9 @@
 
 The app's `n` action pushes this screen; on submit it dismisses with a
 `(source, repo_path)` tuple, which the app feeds to `spawn.py` — a bare name
-(new branch), a PR (`#N` / URL), or a Linear id, auto-detected by spawn.py (the
-same path `/cockpit:new` walks) — with `repo_path` becoming the spawn `cwd`, so
+(new branch), a PR (`#N` / URL), a Linear id, or a Slack thread URL,
+auto-detected by spawn.py (the same path `/cockpit:new` walks) — with
+`repo_path` becoming the spawn `cwd`, so
 the source resolves against the chosen repo. Empty input / escape dismisses with
 `None` (no spawn).
 
@@ -66,7 +67,7 @@ class NewWorkspaceScreen(ModalScreen["tuple[str, str | None] | None"]):
         with VerticalScroll():
             yield Static("New workspace", classes="nw-title")
             yield Static(
-                "Branch name, PR (#N or URL), or Linear id",
+                "Branch name, PR (#N or URL), Linear id, or Slack thread URL",
                 classes="nw-hint",
             )
             if self._has_select:
