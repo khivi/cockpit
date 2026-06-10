@@ -23,6 +23,7 @@ from . import run, tool
 from .cache import find_pr_payload_by_number
 from .colors import CMUX_COLOR_ANSI, bold, dim
 from .config import discover_repo
+from .constants import MAIN_BRANCHES
 from .gh import PR
 from .git import Worktree, worktrees
 from .issue_color import issue_color
@@ -347,13 +348,16 @@ def reconcile_workspace_names(
     expected name is that worktree's `label`. A workspace that would only match
     by name already equals `label`, so it never needs a rename and is skipped.
 
-    The **primary checkout** (`wt.is_primary` — the canonical clone, on a main
-    branch) is exempt: a workspace parked there to run skills (morning-align,
-    etc.) is a deliberate utility the user names by hand, and the documented
-    escape hatch ("rename the branch") can't apply — the primary is on a main
-    branch the user won't rename. The slow-tick rename paths already skip it (no
-    PR → never `tracked`; `master` ∈ `MAIN_BRANCHES`); this keeps the fast tick
-    from clobbering it back to the branch label.
+    Any worktree on a **main branch** (`wt.is_primary` or `wt.branch in
+    MAIN_BRANCHES`) is exempt: its `label` derivation collapses to the branch
+    name (`main`/`master`), so a forced rename would either clobber a sibling
+    already named that or revert a deliberate user-supplied name with no escape
+    hatch ("rename the branch" can't apply to a trunk the user won't rename). In
+    a **bare repo** no sibling worktree is ever `is_primary` (there's no
+    canonical checkout), so the branch check is what protects a feature worktree
+    temporarily parked on `main`. The slow-tick rename paths already skip these
+    (no PR → never `tracked`; `branch ∈ MAIN_BRANCHES`); this keeps the fast tick
+    from clobbering them back to the branch label.
 
     Returns `[(ref, old_name, new_name)]` for the renames issued (or, under
     `dry`, that would be issued).
@@ -362,7 +366,7 @@ def reconcile_workspace_names(
     renamed: list[tuple[str, str, str]] = []
     for ref, cwd in cwds.items():
         wt = wt_by_path.get(cwd.resolve())
-        if wt is None or wt.is_primary:
+        if wt is None or wt.is_primary or wt.branch in MAIN_BRANCHES:
             continue
         current = names.get(ref, "")
         if rename_workspace_if_needed(ref, wt.label, current, dry=dry):

@@ -78,6 +78,7 @@ from cockpit.lib.config import (
     linear_merge_done_state,
     orphan_nudge_grace_seconds,
 )
+from cockpit.lib.constants import MAIN_BRANCHES
 from cockpit.lib.gh import (
     PR,
     OpenPRHead,
@@ -121,8 +122,6 @@ from cockpit.lib.pills import ci_glyph
 from cockpit.lib.prompts import claude_command, shell_quote
 from cockpit.lib.tool import is_cmux
 from cockpit.orchestrators.teardown import TeardownRequest, teardown
-
-MAIN_BRANCHES = {"master", "main"}
 
 # Cutoff for the *deep* merged-branches fetch that feeds the branch-ref reaper.
 # Effectively unbounded (≈100 years) so a branch whose worktree was removed long
