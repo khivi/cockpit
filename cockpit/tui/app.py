@@ -51,6 +51,8 @@ from cockpit.lib.cmux import (
     cmux,
     nudge_if_idle,
     select_workspace,
+    spawn_orphan_workspace,
+    spawn_pr_workspace,
     workspace_cwds,
     workspace_names,
 )
@@ -66,11 +68,12 @@ from cockpit.lib.config import (
 )
 from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.daemon_signal import enqueue
+from cockpit.lib.gh import PR
 from cockpit.lib.git import Worktree, worktrees
 from cockpit.lib.linear import parse_linear_footer_links
 from cockpit.lib.nudges import load_pref, save_pref
 from cockpit.lib.teardown_types import TeardownRequest
-from cockpit.lib.tool import is_cmux
+from cockpit.lib.tool import is_cmux, resolve_tool
 from cockpit.orchestrators.teardown import probe_blockers, worktree_state_blockers
 from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
@@ -98,6 +101,32 @@ RESTART_EXIT_CODE = 42
 
 # (repo display name, sidebar_color, linear-enabled, worktrees)
 Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
+
+
+def _pr_from_payload(p: dict) -> PR:
+    """Reconstruct a `PR` from a cached PR payload (`cache.write_pr_cache`'s
+    inverse) so the `w` action can reuse `spawn_pr_workspace` — the daemon's own
+    spawn helper — for an identical prompt and pills rather than re-deriving
+    them. Lossy by design: `author` is empty for self-authored PRs (the cache
+    only records a *coworker's* login), and fields absent from the snapshot
+    (`body`, `merged_at`) fall back to defaults. The daemon re-applies live
+    pills on its next tick, so any drift self-heals within a cycle."""
+    return PR(
+        number=int(p.get("number") or 0),
+        title=str(p.get("title") or ""),
+        branch=str(p.get("branch") or ""),
+        url=str(p.get("url") or ""),
+        author=str(p.get("author") or ""),
+        is_draft=bool(p.get("isDraft")),
+        review_decision=str(p.get("review") or ""),
+        mergeable=str(p.get("mergeable") or ""),
+        ci=str(p.get("ci") or ""),
+        unaddressed=int(p.get("unaddressed") or 0),
+        total_from_others=int(p.get("total") or 0),
+        state=str(p.get("state") or "OPEN"),
+        updated_at=str(p.get("updatedAt") or ""),
+        head_oid=p.get("headRefOid"),
+    )
 
 
 def _pr_body(cwd: Path, number: int) -> str:
@@ -144,6 +173,7 @@ class CockpitApp(App[None]):
     BINDINGS = [
         ("s", "sync", "Sync now"),
         ("f", "focus_row", "Focus"),
+        ("w", "open_workspace", "Open workspace"),
         ("p", "open_pr", "Open PR"),
         ("l", "open_linear", "Open Linear"),
         ("r", "show_repo_config", "Repo config"),
@@ -551,6 +581,11 @@ class CockpitApp(App[None]):
         if path:
             self._focus_worktree(path)
 
+    def action_open_workspace(self) -> None:
+        path = self.query_one(WorktreeTable).current_path()
+        if path:
+            self._open_workspace(path)
+
     def action_open_pr(self) -> None:
         path = self.query_one(WorktreeTable).current_path()
         if path:
@@ -680,6 +715,53 @@ class CockpitApp(App[None]):
             return
         select_workspace(ref)
         self._notify(f"focused {wt.label or wt.short}")
+
+    @work(thread=True, group="focus", exit_on_error=False)
+    def _open_workspace(self, path_str: str) -> None:
+        # `w`: ensure the row's worktree has a workspace, spawning one when it
+        # doesn't, then focus it. Unlike `f` (focus-only, cmux-only), this works
+        # on limux too — limux can spawn a workspace but has no select verb, so
+        # there it just creates the workspace and the user switches via limux's
+        # own UI. The spawn reuses the daemon's exact spawn+pill helpers, so a
+        # `w`-spawned workspace is indistinguishable from a daemon-spawned one;
+        # the next tick adopts it by cwd (path-keyed, not pill-keyed) so it is
+        # never double-spawned, and `_dedupe_workspaces` reaps any same-path
+        # dupe from a rare race with the slow tick. Spawning is not a cache
+        # write, so the daemon-is-sole-writer invariant still holds.
+        backend = resolve_tool()
+        if backend == "none":
+            self._notify("open: no workspace backend (tool=none)", severity="warning")
+            return
+        resolved = self._resolve_worktree(path_str)
+        if resolved is None:
+            self._notify(f"open: no worktree at {path_str}", severity="error")
+            return
+        repo, wt = resolved
+        # Re-read live workspaces just before spawning to shrink the window in
+        # which the slow tick could spawn the same workspace concurrently.
+        if (ref := self._workspace_ref(wt)) is not None:
+            if backend == "cmux":
+                select_workspace(ref)
+                self._notify(f"focused {wt.label or wt.short}")
+            else:
+                self._notify(f"workspace already open: {wt.label or wt.short}")
+            return
+        repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
+        payload = find_pr_payload(wt.branch, repo_name) if wt.branch else None
+        if payload:
+            pr = _pr_from_payload(payload)
+            new_ref = spawn_pr_workspace(pr, wt, pref=load_pref(pr.number))
+        else:
+            new_ref = spawn_orphan_workspace(wt)
+        if new_ref is None:
+            self._notify(f"open failed: {wt.label or wt.short}", severity="error")
+            return
+        if backend == "cmux":
+            select_workspace(new_ref)
+            self._notify(f"opened + focused {wt.label or wt.short}")
+        else:
+            self._notify(f"opened {wt.label or wt.short} — switch via limux")
+        self.call_from_thread(self._kick_slow)
 
     def _pr_payload_for_path(self, path_str: str) -> dict | None:
         """The cached PR payload for the row at `path_str` (resolves git), or

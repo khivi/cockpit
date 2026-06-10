@@ -47,6 +47,7 @@ class FooterBar(Horizontal):
     ROW_ACTIONS = frozenset(
         {
             "focus_row",
+            "open_workspace",
             "open_pr",
             "open_linear",
             "show_repo_config",
@@ -68,6 +69,7 @@ class FooterBar(Horizontal):
     LABELS = {
         "sync": "Sync",
         "focus_row": "Focus",
+        "open_workspace": "Open",
         "open_pr": "PR",
         "open_linear": "Linear",
         "show_repo_config": "Repo",
