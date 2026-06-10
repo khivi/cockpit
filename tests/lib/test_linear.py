@@ -22,6 +22,7 @@ from cockpit.lib.linear import (
     fetch_team_states,
     fetch_ticket_meta,
     fetch_ticket_state,
+    fetch_ticket_states,
     fetch_viewer_id,
     linear_mcp_available,
     parse_linear_footer_links,
@@ -166,9 +167,7 @@ def test_parse_footers_single():
 
 
 def test_parse_footers_multiple_preserves_order_and_dedups():
-    body = (
-        "Linear: [PE-100](u)\n" "Linear: [ENG-5](u)\n" "Linear: [PE-100](u)\n"  # dup
-    )
+    body = "Linear: [PE-100](u)\nLinear: [ENG-5](u)\nLinear: [PE-100](u)\n"  # dup
     assert parse_linear_footers(body) == ["PE-100", "ENG-5"]
 
 
@@ -310,6 +309,115 @@ def test_fetch_ticket_state_sends_team_and_number_variables():
 
     assert captured["auth"] == "secret-key"  # raw key, no Bearer prefix
     assert captured["body"]["variables"] == {"team": "ENG", "number": 42.0}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# fetch_ticket_states — batched form (one query per team, mocked urlopen)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _batch_resp(nodes: list[dict]) -> _FakeResp:
+    return _FakeResp({"data": {"issues": {"nodes": nodes}}})
+
+
+def test_fetch_ticket_states_empty_input_no_network():
+    with patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen:
+        assert fetch_ticket_states([], api_key="k") == {}
+    urlopen.assert_not_called()
+
+
+def test_fetch_ticket_states_no_key_all_none_no_network():
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_ticket_states(["PE-1", "ENG-2"]) == {"PE-1": None, "ENG-2": None}
+    urlopen.assert_not_called()
+
+
+def test_fetch_ticket_states_single_team_one_query():
+    captured: list[dict] = []
+
+    def fake_urlopen(req, timeout=None):
+        captured.append(json.loads(req.data.decode()))
+        return _batch_resp(
+            [
+                {"identifier": "PE-1", "state": {"name": "Dev Done"}},
+                {"identifier": "PE-2", "state": {"name": "In Progress"}},
+            ]
+        )
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_ticket_states(["PE-1", "PE-2"], api_key="k")
+
+    assert out == {"PE-1": "Dev Done", "PE-2": "In Progress"}
+    assert len(captured) == 1  # one team → one round-trip
+    assert captured[0]["variables"] == {"team": "PE", "numbers": [1.0, 2.0]}
+
+
+def test_fetch_ticket_states_groups_by_team():
+    seen_teams: list[str] = []
+
+    def fake_urlopen(req, timeout=None):
+        body = json.loads(req.data.decode())
+        team = body["variables"]["team"]
+        seen_teams.append(team)
+        node = {"PE": "PE-1", "ENG": "ENG-9"}[team]
+        return _batch_resp([{"identifier": node, "state": {"name": "Dev Done"}}])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_ticket_states(["PE-1", "ENG-9"], api_key="k")
+
+    assert out == {"PE-1": "Dev Done", "ENG-9": "Dev Done"}
+    assert sorted(seen_teams) == ["ENG", "PE"]  # one query per team
+
+
+def test_fetch_ticket_states_team_failure_isolated():
+    """One team's query failing leaves only that team's ids None; other teams
+    keep their fetched states."""
+
+    def fake_urlopen(req, timeout=None):
+        team = json.loads(req.data.decode())["variables"]["team"]
+        if team == "ENG":
+            raise TimeoutError()
+        return _batch_resp([{"identifier": "PE-1", "state": {"name": "Dev Done"}}])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_ticket_states(["PE-1", "ENG-9"], api_key="k")
+
+    assert out == {"PE-1": "Dev Done", "ENG-9": None}
+
+
+def test_fetch_ticket_states_missing_issue_stays_none():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_batch_resp([{"identifier": "PE-1", "state": {"name": "Done"}}]),
+    ):
+        out = fetch_ticket_states(["PE-1", "PE-2"], api_key="k")
+    assert out == {"PE-1": "Done", "PE-2": None}
+
+
+def test_fetch_ticket_states_unparsable_id_stays_none_not_queried():
+    captured: list[dict] = []
+
+    def fake_urlopen(req, timeout=None):
+        captured.append(json.loads(req.data.decode()))
+        return _batch_resp([{"identifier": "PE-1", "state": {"name": "Done"}}])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_ticket_states(["PE-1", "not-a-ticket"], api_key="k")
+
+    assert out == {"PE-1": "Done", "not-a-ticket": None}
+    assert captured[0]["variables"]["numbers"] == [1.0]  # bad id never grouped
+
+
+def test_fetch_ticket_states_matches_case_insensitively():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_batch_resp([{"identifier": "ENG-42", "state": {"name": "Done"}}]),
+    ):
+        out = fetch_ticket_states(["eng-42"], api_key="k")
+    assert out == {"eng-42": "Done"}
 
 
 # ────────────────────────────────────────────────────────────────────────────

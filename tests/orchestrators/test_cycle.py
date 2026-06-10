@@ -1508,6 +1508,154 @@ def test_transition_skips_non_stale_worktree(tmp_path, monkeypatch):
     upd.assert_not_called()
 
 
+def test_transition_no_viewer_call_when_nothing_eligible(tmp_path, monkeypatch):
+    """Viewer id is resolved lazily on the first real candidate, so a repo with
+    no stale merged worktree never makes the viewer call."""
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    patches = _transition_patches()
+    patches[0] = patch.object(cycle, "is_ancestor", return_value=False)  # not stale
+    with (
+        _enter_all(patches),
+        patch.object(cycle, "fetch_viewer_id") as viewer,
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    viewer.assert_not_called()
+    upd.assert_not_called()
+
+
+def test_transition_skips_when_viewer_none(tmp_path, monkeypatch):
+    """A set key but unresolvable viewer → move nothing, no marker (so a
+    transient viewer failure retries next tick), no meta fetch."""
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    with (
+        _enter_all(_transition_patches(viewer=None)),
+        patch.object(cycle, "fetch_ticket_meta") as meta_mock,
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    meta_mock.assert_not_called()
+    upd.assert_not_called()
+    assert "merged-done:o/n:PE-1" not in ctx.pill_state
+
+
+def test_transition_viewer_and_team_states_fetched_once(tmp_path, monkeypatch):
+    """Across multiple eligible tickets in one tick, the viewer is resolved once
+    (cached) and a shared team's states are fetched once."""
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    ctx = _transition_ctx(tmp_path)
+    wt2_path = tmp_path / "repo-feat2"
+    wt2_path.mkdir(exist_ok=True)
+    ctx.wts.append(
+        Worktree(path=wt2_path, branch="khivi/feat2", dirty_count=0, is_primary=False)
+    )
+    ctx.merged_branches["khivi/feat2"] = "cafe"
+    payloads = {
+        "khivi/feat": {"linear": {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}},
+        "khivi/feat2": {"linear": {"tickets": [{"id": "PE-2", "state": "Dev Done"}]}},
+    }
+    metas = {
+        "PE-1": {
+            "id": "u1",
+            "state": "Dev Done",
+            "type": "completed",
+            "assignee_id": "u-me",
+            "team_id": "t-1",
+        },
+        "PE-2": {
+            "id": "u2",
+            "state": "Dev Done",
+            "type": "completed",
+            "assignee_id": "u-me",
+            "team_id": "t-1",
+        },
+    }
+    with (
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(
+            cycle, "find_pr_payload", side_effect=lambda b, n: payloads.get(b)
+        ),
+        patch.object(cycle, "fetch_viewer_id", return_value="u-me") as viewer,
+        patch.object(cycle, "fetch_ticket_meta", side_effect=lambda t: metas.get(t)),
+        patch.object(
+            cycle, "fetch_team_states", return_value={"done": "s-done"}
+        ) as teams,
+        patch.object(cycle, "update_ticket_state", return_value=True) as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    assert viewer.call_count == 1  # resolved once, cached for the second ticket
+    assert teams.call_count == 1  # same team → one fetch
+    assert upd.call_count == 2
+
+
+# ── _cached_linear_identity / _cached_viewer_id — cross-tick identity cache ──
+
+
+def test_cached_linear_identity_caches_within_ttl(tmp_path):
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.cfg = {"slow_poll_interval_seconds": 300}
+    calls: list[int] = []
+
+    def fetch():
+        calls.append(1)
+        return "v"
+
+    with patch.object(cycle.time, "time", return_value=1000.0):
+        assert cycle._cached_linear_identity(ctx, "k", fetch) == "v"
+        assert cycle._cached_linear_identity(ctx, "k", fetch) == "v"
+    assert len(calls) == 1  # second call served from the cache
+
+
+def test_cached_linear_identity_refetches_when_stale(tmp_path):
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.cfg = {"slow_poll_interval_seconds": 300}  # identity TTL = 12 × 300 = 3600
+    calls: list[int] = []
+
+    def fetch():
+        calls.append(1)
+        return "v"
+
+    with patch.object(cycle.time, "time", return_value=1000.0):
+        cycle._cached_linear_identity(ctx, "k", fetch)
+    with patch.object(cycle.time, "time", return_value=1000.0 + 3601):
+        cycle._cached_linear_identity(ctx, "k", fetch)
+    assert len(calls) == 2
+
+
+def test_cached_linear_identity_does_not_cache_falsy(tmp_path):
+    ctx = _stub_repo_cycle(tmp_path)
+    calls: list[int] = []
+
+    def fetch():
+        calls.append(1)
+        return None
+
+    with patch.object(cycle.time, "time", return_value=1000.0):
+        assert cycle._cached_linear_identity(ctx, "k", fetch) is None
+        assert cycle._cached_linear_identity(ctx, "k", fetch) is None
+    assert len(calls) == 2  # a falsy result is never cached → retried
+    assert "k" not in ctx.pill_state
+
+
+def test_cached_viewer_id_keyed_by_api_key_fingerprint(tmp_path, monkeypatch):
+    ctx = _stub_repo_cycle(tmp_path)
+    monkeypatch.setenv("LINEAR_API_KEY", "key-one")
+    with (
+        patch.object(cycle, "fetch_viewer_id", return_value="u-1") as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        assert cycle._cached_viewer_id(ctx) == "u-1"
+        assert cycle._cached_viewer_id(ctx) == "u-1"  # cache hit, same key
+        # Rotate the key → different fingerprint → cache miss → refetch.
+        monkeypatch.setenv("LINEAR_API_KEY", "key-two")
+        fetch.return_value = "u-2"
+        assert cycle._cached_viewer_id(ctx) == "u-2"
+    assert fetch.call_count == 2
+    assert not any("key-one" in k or "key-two" in k for k in ctx.pill_state)
+
+
 # ── _spawn_missing_workspaces background creation + _bg_spawn_pr ─────────────
 
 
@@ -2080,82 +2228,143 @@ def _devdone_ctx(tmp_path, *, linear_keys=("PE",), dry=False, cfg=None):
 FOOTER = "desc\n\n---\nLinear: [PE-1234](https://linear.app/x/PE-1234)"
 
 
-def test_resolve_linear_block_none_when_not_configured(tmp_path):
+def _prefetch_one(ctx, pr):
+    """Drive `_prefetch_linear_blocks` for a single PR and return its block."""
+    ctx.prs = [pr]
+    cycle._prefetch_linear_blocks(ctx)
+    return ctx.linear_blocks.get(pr.branch)
+
+
+def test_prefetch_linear_blocks_none_when_not_configured(tmp_path):
     ctx = _devdone_ctx(tmp_path, linear_keys=None)
-    assert cycle._resolve_linear_block(ctx, _devdone_pr(FOOTER)) is None
+    pr = _devdone_pr(FOOTER)
+    with patch.object(cycle, "fetch_ticket_states") as fetch:
+        block = _prefetch_one(ctx, pr)
+    assert block is None
+    fetch.assert_not_called()
 
 
-def test_resolve_linear_block_fetches_when_no_prior(tmp_path):
+def test_prefetch_linear_blocks_fetches_when_no_prior(tmp_path):
     ctx = _devdone_ctx(tmp_path)
     with (
-        patch.object(cycle, "find_pr_payload", return_value=None),
-        patch.object(cycle, "fetch_ticket_state", return_value="Dev Done") as fetch,
+        patch.object(
+            cycle, "fetch_ticket_states", return_value={"PE-1234": "Dev Done"}
+        ) as fetch,
         patch.object(cycle.time, "time", return_value=1000.0),
     ):
-        block = cycle._resolve_linear_block(ctx, _devdone_pr(FOOTER))
+        block = _prefetch_one(ctx, _devdone_pr(FOOTER))
 
     assert block == {
         "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
         "fetched_at": 1000.0,
     }
-    fetch.assert_called_once_with("PE-1234")
+    fetch.assert_called_once_with(["PE-1234"])
 
 
-def test_resolve_linear_block_carries_forward_when_unchanged_and_fresh(tmp_path):
+def test_prefetch_linear_blocks_carries_forward_when_unchanged_and_fresh(tmp_path):
     ctx = _devdone_ctx(tmp_path, cfg={"slow_poll_interval_seconds": 300})
     prior = {
-        "linear": {
-            "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
-            "fetched_at": 900.0,
-        }
+        "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
+        "fetched_at": 900.0,
     }
+    pr = _devdone_pr(FOOTER)
+    ctx.pr_payloads = {pr.branch: {"linear": prior}}
     with (
-        patch.object(cycle, "find_pr_payload", return_value=prior),
-        patch.object(cycle, "fetch_ticket_state") as fetch,
+        patch.object(cycle, "fetch_ticket_states") as fetch,
         patch.object(cycle.time, "time", return_value=1000.0),  # 100s < 900s TTL
     ):
-        block = cycle._resolve_linear_block(ctx, _devdone_pr(FOOTER))
+        block = _prefetch_one(ctx, pr)
 
-    assert block is prior["linear"]
+    assert block is prior
     fetch.assert_not_called()
 
 
-def test_resolve_linear_block_refetches_when_footer_changed(tmp_path):
+def test_prefetch_linear_blocks_refetches_when_footer_changed(tmp_path):
     ctx = _devdone_ctx(tmp_path, cfg={"slow_poll_interval_seconds": 300})
-    prior = {
-        "linear": {
-            "tickets": [{"id": "PE-9", "state": "Dev Done"}],
-            "fetched_at": 990.0,
+    pr = _devdone_pr(FOOTER)
+    ctx.pr_payloads = {
+        pr.branch: {
+            "linear": {
+                "tickets": [{"id": "PE-9", "state": "Dev Done"}],
+                "fetched_at": 990.0,
+            }
         }
     }
     with (
-        patch.object(cycle, "find_pr_payload", return_value=prior),
-        patch.object(cycle, "fetch_ticket_state", return_value="In Progress") as fetch,
+        patch.object(
+            cycle, "fetch_ticket_states", return_value={"PE-1234": "In Progress"}
+        ) as fetch,
         patch.object(cycle.time, "time", return_value=1000.0),  # fresh, but ids differ
     ):
-        block = cycle._resolve_linear_block(ctx, _devdone_pr(FOOTER))
+        block = _prefetch_one(ctx, pr)
 
     assert block is not None
     assert block["tickets"] == [{"id": "PE-1234", "state": "In Progress"}]
-    fetch.assert_called_once_with("PE-1234")
+    fetch.assert_called_once_with(["PE-1234"])
 
 
-def test_resolve_linear_block_refetches_when_stale(tmp_path):
+def test_prefetch_linear_blocks_refetches_when_stale(tmp_path):
     ctx = _devdone_ctx(tmp_path, cfg={"slow_poll_interval_seconds": 300})  # TTL 900s
-    prior = {
-        "linear": {
-            "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
-            "fetched_at": 0.0,
+    pr = _devdone_pr(FOOTER)
+    ctx.pr_payloads = {
+        pr.branch: {
+            "linear": {
+                "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
+                "fetched_at": 0.0,
+            }
         }
     }
     with (
-        patch.object(cycle, "find_pr_payload", return_value=prior),
-        patch.object(cycle, "fetch_ticket_state", return_value="Dev Done") as fetch,
+        patch.object(
+            cycle, "fetch_ticket_states", return_value={"PE-1234": "Dev Done"}
+        ) as fetch,
         patch.object(cycle.time, "time", return_value=10_000.0),  # way past TTL
     ):
-        cycle._resolve_linear_block(ctx, _devdone_pr(FOOTER))
+        _prefetch_one(ctx, pr)
 
-    fetch.assert_called_once_with("PE-1234")
+    fetch.assert_called_once_with(["PE-1234"])
+
+
+def test_prefetch_linear_blocks_batches_across_prs_one_call(tmp_path):
+    """All due tickets across every PR collapse into a single batched fetch, and
+    each PR's block is assembled from the shared result."""
+    ctx = _devdone_ctx(tmp_path)
+    pr_a = _devdone_pr("Linear: [PE-1](https://linear.app/x/PE-1)", branch="khivi/pe-a")
+    pr_b = _devdone_pr(
+        "Linear: [PE-2](https://linear.app/x/PE-2)\nLinear: [ENG-3](https://e/ENG-3)",
+        branch="khivi/pe-b",
+    )
+    ctx.prs = [pr_a, pr_b]
+    states = {"PE-1": "Dev Done", "PE-2": "In Progress", "ENG-3": "Dev Done"}
+    with (
+        patch.object(cycle, "fetch_ticket_states", return_value=states) as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        cycle._prefetch_linear_blocks(ctx)
+
+    fetch.assert_called_once_with(["ENG-3", "PE-1", "PE-2"])  # union, sorted
+    assert ctx.linear_blocks["khivi/pe-a"]["tickets"] == [
+        {"id": "PE-1", "state": "Dev Done"}
+    ]
+    assert ctx.linear_blocks["khivi/pe-b"]["tickets"] == [
+        {"id": "PE-2", "state": "In Progress"},
+        {"id": "ENG-3", "state": "Dev Done"},
+    ]
+
+
+def test_prefetch_linear_blocks_no_footers_no_fetch(tmp_path):
+    """A Linear repo whose PRs deliver no tickets builds empty blocks without any
+    network call."""
+    ctx = _devdone_ctx(tmp_path)
+    pr = _devdone_pr("no footer here")
+    with (
+        patch.object(cycle, "fetch_ticket_states") as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        block = _prefetch_one(ctx, pr)
+
+    assert block == {"tickets": [], "fetched_at": 1000.0}
+    fetch.assert_not_called()
 
 
 def test_track_dev_done_dry_run_noop(tmp_path):
@@ -2374,7 +2583,7 @@ def test_write_pr_caches_clears_cells_for_reused_branch(tmp_path):
     with (
         patch.object(cycle, "_refresh_base_distance", return_value={}),
         patch.object(cycle, "load_pr_payloads_by_branch", return_value={}),
-        patch.object(cycle, "_resolve_linear_block", return_value=None),
+        patch.object(cycle, "_prefetch_linear_blocks"),
         patch.object(cycle, "write_git_state_cache"),
         patch.object(cycle, "is_ancestor", return_value=False),  # diverged → reused
         patch.object(cycle, "write_pr_cache") as wpc,
@@ -2395,7 +2604,7 @@ def test_write_pr_caches_writes_cells_when_not_reused(tmp_path):
     with (
         patch.object(cycle, "_refresh_base_distance", return_value={}),
         patch.object(cycle, "load_pr_payloads_by_branch", return_value={}),
-        patch.object(cycle, "_resolve_linear_block", return_value=None),
+        patch.object(cycle, "_prefetch_linear_blocks"),
         patch.object(cycle, "write_git_state_cache"),
         patch.object(cycle, "is_ancestor", return_value=True),  # reachable → not reused
         patch.object(cycle, "write_pr_cache") as wpc,
@@ -2423,7 +2632,7 @@ def test_write_pr_caches_passes_coworker_author(tmp_path):
     with (
         patch.object(cycle, "_refresh_base_distance", return_value={}),
         patch.object(cycle, "load_pr_payloads_by_branch", return_value={}),
-        patch.object(cycle, "_resolve_linear_block", return_value=None),
+        patch.object(cycle, "_prefetch_linear_blocks"),
         patch.object(cycle, "write_git_state_cache"),
         patch.object(cycle, "is_ancestor", return_value=True),
         patch.object(cycle, "write_pr_cache") as wpc,
@@ -2449,7 +2658,7 @@ def test_write_pr_caches_keeps_cells_when_open_pr_shares_branch(tmp_path):
     with (
         patch.object(cycle, "_refresh_base_distance", return_value={}),
         patch.object(cycle, "load_pr_payloads_by_branch", return_value={}),
-        patch.object(cycle, "_resolve_linear_block", return_value=None),
+        patch.object(cycle, "_prefetch_linear_blocks"),
         patch.object(cycle, "write_git_state_cache"),
         patch.object(cycle, "is_ancestor", return_value=False),
         patch.object(cycle, "write_pr_cache"),

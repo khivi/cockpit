@@ -33,12 +33,12 @@ flowchart LR
   end
 
   subgraph DEC["Decision functions"]
-    MW["match_worktrees<br/>cycle.py:247"]
-    SM["_spawn_missing_workspaces<br/>cycle.py:1300"]
+    MW["match_worktrees<br/>cycle.py:293"]
+    SM["_spawn_missing_workspaces<br/>cycle.py:1388"]
     NI["nudge_if_idle<br/>cmux.py:373"]
-    DD["_track_dev_done<br/>cycle.py:219"]
-    AC["_maybe_autoclose<br/>cycle.py:500"]
-    BR["_reap_branch_refs<br/>cycle.py:641"]
+    DD["_track_dev_done<br/>cycle.py:265"]
+    AC["_maybe_autoclose<br/>cycle.py:584"]
+    BR["_reap_branch_refs<br/>cycle.py:725"]
   end
 
   subgraph ACT["Actions"]
