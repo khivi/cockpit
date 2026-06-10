@@ -76,6 +76,7 @@ from cockpit.lib.config import (
     linear_dev_done_state,
     linear_done_on_merge,
     linear_merge_done_state,
+    orphan_nudge_grace_seconds,
 )
 from cockpit.lib.gh import (
     PR,
@@ -99,6 +100,7 @@ from cockpit.lib.git import (
     log_ff_advances,
     origin_head_branch,
     prune_worktrees,
+    worktree_age_seconds,
     worktrees,
     worktrees_basic,
 )
@@ -1303,6 +1305,15 @@ def _refresh_orphan(
     if changed and not ctx.dry:
         ctx.pill_state[ref] = orphan_snap
     if nudge:
+        grace = orphan_nudge_grace_seconds(ctx.cfg, ctx.repo_entry)
+        age = worktree_age_seconds(wt.path)
+        if grace > 0 and age < grace:
+            reason = (
+                f"nudge {ws_name} ({wt.branch}) — worktree {age / 3600:.1f}h old "
+                f"< {grace / 3600:.0f}h grace"
+            )
+            print(f"  {verb('skip')} {dim(reason)}", flush=True)
+            return
         maybe_nudge(
             ref,
             f"Worktree {wt.short} on {wt.branch} still has no open PR. "

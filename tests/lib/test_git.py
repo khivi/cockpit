@@ -31,6 +31,7 @@ from cockpit.lib.git import (
     prune_worktrees,
     require_git,
     slugify,
+    worktree_age_seconds,
     worktrees,
     worktrees_basic,
 )
@@ -742,3 +743,28 @@ def test_prune_worktrees_warns_not_raises_on_failure(
     prune_worktrees(not_a_repo)  # must not raise
 
     assert "worktree prune failed" in capsys.readouterr().err
+
+
+# ── worktree_age_seconds ────────────────────────────────────────────────────
+
+
+def test_worktree_age_seconds_uses_now_relative_to_creation(tmp_path):
+    """Age is `now - creation`; a `now` well past creation yields that delta."""
+    wt = tmp_path / "fresh"
+    wt.mkdir()
+    created = wt.stat().st_birthtime if hasattr(wt.stat(), "st_birthtime") else None
+    base = created if created is not None else wt.stat().st_ctime
+    # 2 hours after creation.
+    assert worktree_age_seconds(wt, now=base + 7200) == pytest.approx(7200, abs=1)
+
+
+def test_worktree_age_seconds_never_negative(tmp_path):
+    """A `now` before the creation stamp clamps to 0 rather than going negative."""
+    wt = tmp_path / "fresh"
+    wt.mkdir()
+    assert worktree_age_seconds(wt, now=0) == 0.0
+
+
+def test_worktree_age_seconds_missing_path_fails_open(tmp_path):
+    """An un-stat-able path returns inf so the orphan nudge isn't silently muted."""
+    assert worktree_age_seconds(tmp_path / "nope") == float("inf")

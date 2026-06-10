@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from typing import NoReturn
 
 from .colors import yellow
 from .linear import LINEAR_API_KEY_ENV
@@ -26,7 +27,7 @@ REQUIRED_BINARIES = ("gh", "git")
 CSHIP_BINARIES = ("cship", "starship")
 
 
-def _die(msg: str) -> None:
+def _die(msg: str) -> NoReturn:
     print(f"cockpit: {msg}", file=sys.stderr, flush=True)
     sys.exit(2)
 
@@ -99,6 +100,32 @@ def _validate_use_slack(cfg: dict) -> None:
         return
     if not isinstance(cfg["use_slack"], bool):
         _die(f"use_slack must be true or false, got {cfg['use_slack']!r}.")
+
+
+def _validate_orphan_nudge_grace(cfg: dict) -> None:
+    """Hard-fail on an `orphan_nudge_grace_hours` (top-level *or* per-repo) that
+    isn't a non-negative number.
+
+    It sets how long a no-open-PR worktree is spared the "push or close" nudge
+    after creation (`config.orphan_nudge_grace_seconds`). A non-numeric value
+    would be silently clamped to the default, and a negative one is nonsensical
+    (it'd never grace), so both are rejected at start like `review_prs`. `0`
+    (disable grace) is allowed.
+    """
+
+    def _check(val: object, where: str) -> None:
+        if isinstance(val, bool) or not isinstance(val, int | float):
+            _die(f"{where}: orphan_nudge_grace_hours must be a number, got {val!r}.")
+        if val < 0:
+            _die(f"{where}: orphan_nudge_grace_hours must be >= 0, got {val!r}.")
+
+    if "orphan_nudge_grace_hours" in cfg:
+        _check(cfg["orphan_nudge_grace_hours"], "orphan_nudge_grace_hours")
+    for repo in cfg.get("repos", []):
+        if "orphan_nudge_grace_hours" not in repo:
+            continue
+        name = repo.get("name") or repo.get("path", "?")
+        _check(repo["orphan_nudge_grace_hours"], f"repo {name!r}")
 
 
 def _validate_linear_dev_done(cfg: dict) -> None:
@@ -208,6 +235,7 @@ def preflight(cfg: dict) -> None:
     _validate_review_prs(cfg)
     _validate_check_update(cfg)
     _validate_use_slack(cfg)
+    _validate_orphan_nudge_grace(cfg)
     _validate_linear_dev_done(cfg)
     _validate_linear_done_on_merge(cfg)
 

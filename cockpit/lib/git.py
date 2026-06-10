@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,6 +71,30 @@ class Worktree:
     @property
     def dirty(self) -> bool:
         return self.dirty_count > 0
+
+
+def worktree_age_seconds(path: Path, *, now: float | None = None) -> float:
+    """Seconds since the worktree directory was created.
+
+    Reads the directory's birth time (`st_birthtime`, stamped by `git worktree
+    add`) where the platform exposes it (macOS/BSD); falls back to the inode
+    change time (`st_ctime`) on Linux, where `os.stat` surfaces no creation time.
+    Derived from the filesystem on every call — never stored, honouring the
+    inventory-is-derived rule.
+
+    Returns `inf` when the path can't be stat'd, so a transient filesystem error
+    fails open to the original always-nudge behaviour rather than silently
+    muting the orphan nudge forever.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return float("inf")
+    created = getattr(st, "st_birthtime", None)
+    if created is None:
+        created = st.st_ctime
+    ref = time.time() if now is None else now
+    return max(0.0, ref - created)
 
 
 def count_dirty(wt_path: Path) -> int:

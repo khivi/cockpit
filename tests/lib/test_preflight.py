@@ -204,6 +204,63 @@ def test_preflight_ignores_absent_use_slack(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_preflight_exits_on_non_numeric_orphan_nudge_grace(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "orphan_nudge_grace_hours": "soon"})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "orphan_nudge_grace_hours" in err
+    assert "'soon'" in err
+
+
+def test_preflight_exits_on_negative_orphan_nudge_grace(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "orphan_nudge_grace_hours": -1})
+    assert exc.value.code == 2
+    assert "orphan_nudge_grace_hours" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_bool_orphan_nudge_grace(tmp_path, monkeypatch, capsys):
+    """`True` is an int in Python — reject it so a stray bool isn't read as 1h."""
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "orphan_nudge_grace_hours": True})
+    assert exc.value.code == 2
+    assert "orphan_nudge_grace_hours" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_non_numeric_repo_orphan_nudge_grace(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {
+                "tool": "cmux",
+                "repos": [{"name": "r", "orphan_nudge_grace_hours": "soon"}],
+            }
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "r" in err and "orphan_nudge_grace_hours" in err
+
+
+def test_preflight_passes_on_numeric_orphan_nudge_grace(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "orphan_nudge_grace_hours": 0,
+            "repos": [{"name": "r", "orphan_nudge_grace_hours": 2.5}],
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
 def test_preflight_exits_on_non_string_dev_done_state(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     monkeypatch.setenv("LINEAR_API_KEY", "k")

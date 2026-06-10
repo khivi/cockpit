@@ -2171,6 +2171,70 @@ def test_refresh_orphan_skips_nudge_when_disabled(tmp_path):
     nudge_mock.assert_not_called()
 
 
+def _orphan_grace_ctx(tmp_path, grace_hours):
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path, branch="khivi/feat", dirty_count=0, branch_prefix="khivi/"
+    )
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.cfg = {"orphan_nudge_grace_hours": grace_hours}
+    ctx.base_distance = {}
+    return ctx, wt
+
+
+def test_refresh_orphan_grace_suppresses_nudge_for_fresh_worktree(tmp_path, capsys):
+    """A mine-prefix orphan younger than the grace window gets pills but no nudge."""
+    ctx, wt = _orphan_grace_ctx(tmp_path, grace_hours=4)
+
+    with (
+        patch.object(cycle, "cmux"),
+        patch.object(cycle, "apply_wip_pill"),
+        patch.object(cycle, "apply_stale_pill"),
+        patch.object(cycle, "rename_workspace_if_needed", return_value=False),
+        patch.object(cycle, "worktree_age_seconds", return_value=3600),  # 1h < 4h
+        patch.object(cycle, "maybe_nudge") as nudge_mock,
+    ):
+        cycle._refresh_orphan(ctx, "ws:mine", wt, "feat")
+
+    nudge_mock.assert_not_called()
+    assert "grace" in capsys.readouterr().out
+
+
+def test_refresh_orphan_nudges_after_grace_elapses(tmp_path):
+    """Once the worktree ages past the grace window the push-or-close nudge fires."""
+    ctx, wt = _orphan_grace_ctx(tmp_path, grace_hours=4)
+
+    with (
+        patch.object(cycle, "cmux"),
+        patch.object(cycle, "apply_wip_pill"),
+        patch.object(cycle, "apply_stale_pill"),
+        patch.object(cycle, "rename_workspace_if_needed", return_value=False),
+        patch.object(cycle, "worktree_age_seconds", return_value=5 * 3600),  # 5h > 4h
+        patch.object(cycle, "maybe_nudge") as nudge_mock,
+    ):
+        cycle._refresh_orphan(ctx, "ws:mine", wt, "feat")
+
+    nudge_mock.assert_called_once()
+
+
+def test_refresh_orphan_grace_zero_nudges_immediately(tmp_path):
+    """grace=0 disables the window — even a brand-new worktree is nudged."""
+    ctx, wt = _orphan_grace_ctx(tmp_path, grace_hours=0)
+
+    with (
+        patch.object(cycle, "cmux"),
+        patch.object(cycle, "apply_wip_pill"),
+        patch.object(cycle, "apply_stale_pill"),
+        patch.object(cycle, "rename_workspace_if_needed", return_value=False),
+        patch.object(cycle, "worktree_age_seconds", return_value=1),  # 1s, grace off
+        patch.object(cycle, "maybe_nudge") as nudge_mock,
+    ):
+        cycle._refresh_orphan(ctx, "ws:mine", wt, "feat")
+
+    nudge_mock.assert_called_once()
+
+
 def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
     """A tracked workspace whose name drifted from its branch label is
     re-asserted to `wt.label` in the slow tick."""

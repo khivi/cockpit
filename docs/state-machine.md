@@ -109,7 +109,9 @@ flowchart TD
   AC -->|"dirty · draft ·<br/>ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
   AC -->|"clean & merged"| TD["teardown: workspace →<br/>worktree → branch → PR cache"]
 
-  K -->|"no open PR · mine"| OR["orphan: pills + nudge<br/>to push or close"]
+  K -->|"no open PR · mine"| OG{"worktree age ≥<br/>grace?"}
+  OG -->|"no (just created)"| OP["orphan: pills only<br/>(grace — no nudge yet)"]
+  OG -->|"yes"| OR["orphan: pills + nudge<br/>to push or close"]
 
   K -->|"no open PR · coworker"| OC["orphan: pills only<br/>(no nudge, no close)"]
 
@@ -153,6 +155,14 @@ Key gates (all from `cycle.py`):
   branch reviewed locally) gets orphan pills and lives until the user closes it
   (TUI `c`). Only `_maybe_autoclose` (merged & clean) tears anything down. There
   is no `keep` flag — with non-merge closing gone, nothing needs protecting.
+- **Orphan-nudge grace** (`config.orphan_nudge_grace_seconds`, default 4h,
+  per-repo over global, `0` disables): a freshly-spawned worktree has the exact
+  no-commits / no-PR shape the orphan nudge targets, so `_refresh_orphan` skips
+  the "push or close" nudge until the worktree's filesystem age
+  (`git.worktree_age_seconds`, birthtime-based) clears the grace. Pills still
+  apply during grace; only the `send` is held. Age is the *worktree's*, not the
+  branch's or HEAD commit's — an empty branch sits at the old base tip, so commit
+  date would mis-read "just created" as ancient.
 - **In-flight spawn guard**: `_bg_spawn_pr` keys `spawn:<owner>/<name>:<branch>`
   in `pill_state` with a `time.monotonic()` stamp; a second spawn within
   `_SPAWN_INFLIGHT_TTL_SECONDS` (600s) is skipped, so a manual slow-tick kick
