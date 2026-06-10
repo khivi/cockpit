@@ -172,6 +172,18 @@ def test_parse_footers_multiple_preserves_order_and_dedups():
     assert parse_linear_footers(body) == ["PE-100", "ENG-5"]
 
 
+def test_parse_footers_case_insensitive_normalizes_to_upper():
+    # The `Linear:` label and the id can be any case (branch slugs lowercase the
+    # id); the footer still counts as delivery and the id is canonicalised upper.
+    body = "lINeaR: [pe-4698](https://linear.app/x/PE-4698)"
+    assert parse_linear_footers(body) == ["PE-4698"]
+
+
+def test_parse_footers_dedups_across_case():
+    body = "Linear: [PE-100](u)\n" "linear: [pe-100](u)\n"
+    assert parse_linear_footers(body) == ["PE-100"]
+
+
 def test_parse_footers_ignores_inline_mentions():
     # Only a line-anchored `Linear:` footer counts — a prose mention of a
     # predecessor / follow-up ticket is NOT a delivery signal.
@@ -201,6 +213,11 @@ def test_parse_footer_links_multiple_dedups_by_id():
         ("PE-1", "https://l/PE-1"),
         ("ENG-9", "https://l/ENG-9"),
     ]
+
+
+def test_parse_footer_links_case_insensitive_normalizes_id():
+    body = "linear: [pe-4698](https://l/pe-4698)"
+    assert parse_linear_footer_links(body) == [("PE-4698", "https://l/pe-4698")]
 
 
 def test_parse_footer_links_empty():
