@@ -54,6 +54,27 @@ def test_read_version_absent_key(tmp_path):
     assert version._read_version(p) == ""
 
 
+# --- plugin_name / marketplace_name ----------------------------------------
+# These feed the plugin-cache path cockpit.lib.supervisor probes for cockpit.sh.
+
+
+def test_plugin_name_reads_bundled_manifest():
+    assert version.plugin_name() == "cockpit"
+
+
+def test_marketplace_name_reads_bundled_manifest():
+    assert version.marketplace_name() == "khivi-cockpit"
+
+
+def test_names_empty_when_manifest_unreadable(monkeypatch, tmp_path):
+    # Unreadable manifest degrades to "" (cache path then unresolvable), never
+    # raises.
+    monkeypatch.setattr(version, "_PLUGIN_JSON", tmp_path / "nope.json")
+    monkeypatch.setattr(version, "_MARKETPLACE_JSON", tmp_path / "nope.json")
+    assert version.plugin_name() == ""
+    assert version.marketplace_name() == ""
+
+
 def test_running_version_falls_back_to_metadata(monkeypatch, tmp_path):
     # Installed-wheel layout regression: if the bundled manifest can't be read,
     # the package metadata (single-sourced from the same plugin.json at build
@@ -93,7 +114,7 @@ def test_install_repo_no_github_source(monkeypatch, tmp_path):
     assert version.install_repo() is None
 
 
-# --- is_newer / _parse -----------------------------------------------------
+# --- is_newer / parse_version ----------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -115,7 +136,7 @@ def test_is_newer(candidate, current, expected):
 
 
 def test_parse_non_numeric_chunks_default_zero():
-    assert version._parse("1.2.x") == (1, 2, 0)
+    assert version.parse_version("1.2.x") == (1, 2, 0)
 
 
 # --- latest_version --------------------------------------------------------

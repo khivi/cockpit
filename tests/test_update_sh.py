@@ -183,6 +183,112 @@ def test_installs_newest_cached_version_from_plugin_cache(tmp_path, monkeypatch)
     assert "plugin update cockpit@khivi-cockpit" in _lines(claude_log)
 
 
+def _make_uv_shim_with_installed(tmp_path, monkeypatch, installed_version):
+    """A uv shim that logs argv and answers `tool list` with an installed
+    cockpit at `installed_version` — drives the downgrade guard."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    uv_log = tmp_path / "uv.log"
+    uv = bin_dir / "uv"
+    uv.write_text(
+        "#!/bin/bash\n"
+        f'printf "%s\\n" "$*" >> "{uv_log}"\n'
+        'if [ "$1" = "tool" ] && [ "$2" = "list" ]; then\n'
+        f'  echo "cockpit v{installed_version}"\n'
+        "fi\n"
+        "exit 0\n"
+    )
+    uv.chmod(uv.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return uv_log
+
+
+def _make_fake_cache(tmp_path, versions):
+    """Plugin-cache tree with update.sh + manifests under each version dir;
+    returns (fake_home, [version dirs])."""
+    real_repo = UPDATE_SH.resolve().parent.parent
+    fake_home = tmp_path / "home"
+    cache = fake_home / ".claude" / "plugins" / "cache" / "khivi-cockpit" / "cockpit"
+    dirs = []
+    for v in versions:
+        d = cache / v
+        (d / "bin").mkdir(parents=True)
+        shutil.copy(UPDATE_SH, d / "bin" / "update.sh")
+        shutil.copytree(real_repo / ".claude-plugin", d / ".claude-plugin")
+        dirs.append(d)
+    return fake_home, dirs
+
+
+def test_downgrade_guard_skips_install_when_running_is_newer(tmp_path, monkeypatch):
+    # Cache redirect only: if the uv-installed cockpit is NEWER than anything
+    # cached (cache refresh failed / `claude` absent), a forced reinstall would
+    # silently roll it back — and the TUI's `u` would repeat the downgrade on
+    # every relaunch. The guard must skip the install instead.
+    fake_home, (old_dir, new_dir) = _make_fake_cache(tmp_path, ["0.27.90", "0.27.91"])
+    make_shim_on_path(tmp_path, monkeypatch, "claude")
+    uv_log = _make_uv_shim_with_installed(tmp_path, monkeypatch, "0.27.95")
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    result = subprocess.run(
+        ["bash", str(old_dir / "bin" / "update.sh")],
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "skipping reinstall to avoid a downgrade" in result.stderr
+    assert not any(line.startswith("tool install") for line in _lines(uv_log))
+
+
+def test_downgrade_guard_still_installs_newer_cache(tmp_path, monkeypatch):
+    # Normal update: newest cached (0.27.91) > installed (0.27.90) → install.
+    fake_home, (old_dir, new_dir) = _make_fake_cache(tmp_path, ["0.27.90", "0.27.91"])
+    make_shim_on_path(tmp_path, monkeypatch, "claude")
+    uv_log = _make_uv_shim_with_installed(tmp_path, monkeypatch, "0.27.90")
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    result = subprocess.run(
+        ["bash", str(old_dir / "bin" / "update.sh")],
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    assert result.returncode == 0, result.stderr
+    assert any(
+        line == f"tool install --force --no-cache {new_dir}" for line in _lines(uv_log)
+    )
+
+
+def test_cache_redirect_honours_claude_config_dir(tmp_path, monkeypatch):
+    # cockpit.lib.supervisor finds the cached cockpit.sh under CLAUDE_CONFIG_DIR;
+    # the newest-cached redirect here must probe the same root, or a custom-
+    # config-dir user's `u` reinstalls the stale launch dir forever.
+    real_repo = UPDATE_SH.resolve().parent.parent
+    custom = tmp_path / "custom-claude"
+    cache = custom / "plugins" / "cache" / "khivi-cockpit" / "cockpit"
+    old_dir, new_dir = cache / "0.27.90", cache / "0.27.91"
+    for d in (old_dir, new_dir):
+        (d / "bin").mkdir(parents=True)
+        shutil.copy(UPDATE_SH, d / "bin" / "update.sh")
+        shutil.copytree(real_repo / ".claude-plugin", d / ".claude-plugin")
+
+    make_shim_on_path(tmp_path, monkeypatch, "claude")
+    uv_log = make_shim_on_path(tmp_path, monkeypatch, "uv")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(custom))
+    monkeypatch.setenv("HOME", str(tmp_path / "elsewhere"))  # ~/.claude is empty
+
+    result = subprocess.run(
+        ["bash", str(old_dir / "bin" / "update.sh")],
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    assert result.returncode == 0, result.stderr
+    assert any(
+        line == f"tool install --force --no-cache {new_dir}" for line in _lines(uv_log)
+    )
+
+
 def test_resolves_through_symlink(tmp_path, monkeypatch):
     # Invoked via a symlink (e.g. ~/bin/update.sh -> the plugin dir), repo_root
     # must follow the link to the real script location, so the plugin-cache

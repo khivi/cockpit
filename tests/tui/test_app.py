@@ -50,6 +50,9 @@ def _make_app(**kw):
         fast_tick=kw.get("fast_tick", fast),
         slow_secs=kw.get("slow_secs", 300),
         fast_secs=kw.get("fast_secs", 30),
+        # Default to supervised — the normal runtime path (launched via
+        # bin/cockpit.sh) where `u` can actually restart-to-update.
+        supervised=kw.get("supervised", True),
     )
     return app, calls
 
@@ -907,6 +910,46 @@ async def test_update_key_noop_when_no_update(monkeypatch):
     assert any("no update" in t.lower() for t in toasts)
 
 
+async def test_update_key_warns_when_unsupervised(monkeypatch):
+    # Launched outside bin/cockpit.sh: an update is available but exiting would
+    # just kill the session with no updater to catch it. `u` warns instead,
+    # pointing at the cached updater when one exists.
+    monkeypatch.setattr(
+        "cockpit.lib.supervisor.supervisor_script",
+        lambda: Path("/cache/1.0/bin/cockpit.sh"),
+    )
+    app, _ = _make_app(supervised=False)
+    toasts: list[str] = []
+    monkeypatch.setattr(app, "notify", lambda m, **k: toasts.append(m))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one(HeaderBar).update_text = "0.1 → 0.2"
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause(0.3)
+        assert app.return_code is None  # no restart requested
+    assert any("can't self-update" in t.lower() for t in toasts)
+    assert any("/cache/1.0/bin/update.sh" in t for t in toasts)
+
+
+async def test_update_key_warn_degrades_without_cache(monkeypatch):
+    # Unsupervised AND no plugin cache (wheel-only install): bin/update.sh
+    # doesn't exist anywhere, so the toast must not send the user hunting for
+    # it — point at the README instead.
+    monkeypatch.setattr("cockpit.lib.supervisor.supervisor_script", lambda: None)
+    app, _ = _make_app(supervised=False)
+    toasts: list[str] = []
+    monkeypatch.setattr(app, "notify", lambda m, **k: toasts.append(m))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one(HeaderBar).update_text = "0.1 → 0.2"
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause(0.3)
+    assert any("readme" in t.lower() for t in toasts)
+    assert not any("update.sh" in t for t in toasts)
+
+
 async def test_arrow_keys_move_row_cursor():
     app, _ = _make_app()
     async with app.run_test() as pilot:
@@ -1210,6 +1253,21 @@ async def test_footer_hides_update_until_available():
         app._set_update("0.1 → 0.2")
         await pilot.pause()
         assert "Update" in footer.global_text  # revealed once available
+
+
+async def test_footer_keeps_update_hidden_when_unsupervised():
+    # Unsupervised, `u` can only toast — advertising the key would be a lie.
+    # The header ⬆ (update_text) still shows; only the footer key stays hidden.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app(supervised=False)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        footer = app.query_one(FooterBar)
+        app._set_update("0.1 → 0.2")
+        await pilot.pause()
+        assert "Update" not in footer.global_text
+        assert app.query_one(HeaderBar).update_text  # header stays informative
 
 
 async def test_footer_groups_row_keys_left_global_right():

@@ -20,6 +20,9 @@ def test_no_args_defaults_to_watch(monkeypatch):
         seen["argv"] = argv
         return 0
 
+    # Simulate running under the supervisor so the watch path doesn't re-exec
+    # into a cached bin/cockpit.sh (which would replace the test process).
+    monkeypatch.setenv("COCKPIT_SUPERVISED", "1")
     monkeypatch.setattr("cockpit.cockpit.main", fake)
     assert cli.main([]) == 0
     assert seen["argv"] == ["--watch"]
@@ -46,9 +49,35 @@ def test_daemon_subcommands_translate_to_flags(monkeypatch, sub, flag):
         seen["argv"] = argv
         return 0
 
+    monkeypatch.setenv("COCKPIT_SUPERVISED", "1")  # don't re-exec mid-test
     monkeypatch.setattr("cockpit.cockpit.main", fake)
     assert cli.main([sub]) == 0
     assert seen["argv"] == [flag]
+
+
+def test_watch_attempts_supervisor_reexec(monkeypatch):
+    # watch routes through the supervisor re-exec (forwarding its extra args)
+    # before handing off to the daemon.
+    seen: dict[str, list[str]] = {}
+    monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 0)
+    monkeypatch.setattr(
+        "cockpit.lib.supervisor.reexec_through_supervisor",
+        lambda extra: seen.update(extra=extra),
+    )
+    assert cli.main(["watch", "--foo"]) == 0
+    assert seen["extra"] == ["--foo"]
+
+
+def test_setup_does_not_attempt_reexec(monkeypatch):
+    # Only watch self-supervises; setup must never re-exec.
+    called = []
+    monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 0)
+    monkeypatch.setattr(
+        "cockpit.lib.supervisor.reexec_through_supervisor",
+        lambda extra: called.append(extra),
+    )
+    assert cli.main(["setup"]) == 0
+    assert called == []
 
 
 def test_statusline_routes_to_statusline_module(monkeypatch):

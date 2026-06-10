@@ -196,6 +196,7 @@ class CockpitApp(App[None]):
         slow_secs: int,
         fast_secs: int,
         self_ws: str | None = None,
+        supervised: bool = False,
     ) -> None:
         super().__init__()
         self._slow_tick = slow_tick
@@ -203,6 +204,10 @@ class CockpitApp(App[None]):
         self._slow_secs = slow_secs
         self._fast_secs = fast_secs
         self._self_ws = self_ws
+        # True when launched under bin/cockpit.sh (which catches RESTART_EXIT_CODE
+        # to run the updater + relaunch). False ⇒ `u` can't self-update — exiting
+        # would just kill the session, so action_update warns instead.
+        self._supervised = supervised
         # Tick bodies are lock-free; this serializes slow vs fast so we can tell
         # "running" (holds the lock) from "waiting" (blocked on it).
         self._tick_lock = threading.Lock()
@@ -443,8 +448,11 @@ class CockpitApp(App[None]):
 
     def _set_update(self, text: str) -> None:
         self.query_one(HeaderBar).update_text = text
+        # The header ⬆ always shows (informative); the footer's `u` key only
+        # when supervised — unsupervised, the key can't actually update, and
+        # advertising a known-inert binding is worse than hiding it.
         with contextlib.suppress(Exception):
-            self.query_one(FooterBar).set_show_update(bool(text))
+            self.query_one(FooterBar).set_show_update(bool(text) and self._supervised)
 
     def _gather_inventory(self) -> Inventory:
         """Enumerate worktrees per configured repo. Runs on a worker thread —
@@ -655,6 +663,25 @@ class CockpitApp(App[None]):
         # in-process reinstall can't take effect — see RESTART_EXIT_CODE).
         if not self.query_one(HeaderBar).update_text:
             self.notify("no update available", severity="information", timeout=4.0)
+            return
+        if not self._supervised:
+            # Unsupervised: exiting would just kill the session with no update.
+            # Don't — point at a remedy that actually exists on this machine:
+            # the cached updater when there is one, the README otherwise (a
+            # wheel-only install has no bin/ anywhere to run).
+            from cockpit.lib.supervisor import supervisor_script
+
+            script = supervisor_script()
+            hint = (
+                f"run: bash {script.parent / 'update.sh'}"
+                if script
+                else "no plugin cache found — reinstall per README → Install"
+            )
+            self.notify(
+                f"can't self-update from this launch — {hint}",
+                severity="warning",
+                timeout=8.0,
+            )
             return
         self.exit(return_code=RESTART_EXIT_CODE, message="updating cockpit…")
 

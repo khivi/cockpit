@@ -138,6 +138,7 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
         return 2
 
     from cockpit.lib.daemon import claim_pidfile
+    from cockpit.lib.supervisor import is_supervised
     from cockpit.tui.app import CockpitApp
 
     claim_pidfile()  # exits 1 if a live daemon already holds it
@@ -146,12 +147,17 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
     def _slow(on_repo_done: Callable[[], None] | None = None) -> None:
         _once_with(state, on_repo_done)
 
+    # cli.reexec_through_supervisor re-execs into bin/cockpit.sh unless we're
+    # already supervised or a guard declined. So reaching here unsupervised
+    # means `u`-driven restart has nothing to catch its exit — tell the app, so
+    # `u` warns instead of silently killing the session.
     app = CockpitApp(
         slow_tick=_slow,
         fast_tick=lambda: _fast_tick(state),
         slow_secs=watch_secs,
         fast_secs=fast_secs,
         self_ws=self_ws,
+        supervised=is_supervised(),
     )
     app.run()
     # `u` exits with RESTART_EXIT_CODE so bin/cockpit.sh runs the updater and

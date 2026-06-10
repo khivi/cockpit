@@ -37,6 +37,8 @@ The daemon *is* the TUI — run it yourself (no auto-start):
 cockpit watch          # requires a TTY; run under tmux/cmux/screen to persist
 ```
 
+`cockpit watch` self-supervises — it re-execs through the bundled `bin/cockpit.sh`, so pressing `u` reinstalls and relaunches in place. (If the plugin cache is unavailable, `u` tells you to run `bin/update.sh` manually instead.)
+
 Start a task — run `/cockpit:new` inside Claude Code, from a session in any git repo:
 
 ```text

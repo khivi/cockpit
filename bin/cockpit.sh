@@ -36,6 +36,12 @@ fi
 # Must match cockpit.tui.app.RESTART_EXIT_CODE.
 RESTART_EXIT_CODE=42
 
+# Mark the session as supervised so the `cockpit watch` we launch runs the TUI
+# inline instead of re-execing back into this script (cockpit.lib.supervisor).
+# Without it: this wrapper → cockpit watch → cockpit.sh would loop. Must match
+# cockpit.lib.supervisor.SUPERVISED_ENV.
+export COCKPIT_SUPERVISED=1
+
 run_watch() {
   if command -v cockpit >/dev/null 2>&1; then
     cockpit watch "$@"

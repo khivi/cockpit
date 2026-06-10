@@ -58,6 +58,16 @@ def main(argv: list[str] | None = None) -> int:
         argv = ["watch"]
     sub, rest = argv[0], argv[1:]
 
+    # `watch` self-updates by exiting for bin/cockpit.sh to catch + relaunch
+    # (see RESTART_EXIT_CODE). The uv-installed console script has no supervisor
+    # next to it, so re-exec through the cached cockpit.sh first — unless already
+    # supervised / non-interactive / no script found, in which case this returns
+    # and watch runs inline (`u` then degrades to a toast). Process-replacing.
+    if sub == "watch":
+        from cockpit.lib.supervisor import reexec_through_supervisor
+
+        reexec_through_supervisor(rest)
+
     # watch / setup share cockpit.cockpit's argparse (require_git/gh +
     # preflight live there); translate the subcommand back to its flag.
     if sub in ("watch", "setup"):

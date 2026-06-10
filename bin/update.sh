@@ -87,16 +87,39 @@ fi
 # makes "`/plugin update` then `bin/update.sh`" sync the daemon regardless of
 # which version dir launched the script.
 install_src="${repo_root}"
+skip_install=""
+# Honour Claude Code's config-dir override — cockpit.lib.supervisor locates the
+# cached cockpit.sh under it, so the cache redirect here must probe the same
+# root or a custom-config-dir user's `u` reinstalls a stale version dir forever.
+# `:-` treats set-but-empty as unset, matching the Python side's `or` fallback.
+claude_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 case "${repo_root}" in
-"${HOME}/.claude/plugins/cache/"*)
-  cache_root="${HOME}/.claude/plugins/cache/${marketplace}/${plugin}"
+"${claude_dir}/plugins/cache/"*)
+  cache_root="${claude_dir}/plugins/cache/${marketplace}/${plugin}"
   # Version-named dirs (e.g. .../cockpit/0.27.91); newest by version sort wins.
   newest="$(find "${cache_root}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1 || true)"
   [ -n "${newest}" ] && install_src="${newest}"
+  # Downgrade guard (cache redirect only — a dev checkout install is an explicit
+  # choice of source). If the running install is NEWER than anything cached
+  # (e.g. installed from a source checkout, and the `claude plugin update`
+  # above failed or the CLI is absent so the cache never refreshed), a forced
+  # reinstall would silently roll it back — and the TUI's `u` would repeat the
+  # downgrade on every relaunch. Skip instead.
+  if [ -n "${newest}" ]; then
+    newest_ver="$(basename "${newest}")"
+    installed="$( { uv tool list 2>/dev/null || true; } | awk -v p="${plugin}" '$1 == p {print $2; exit}' | sed 's/^v//')"
+    if [ -n "${installed}" ] && [ "${installed}" != "${newest_ver}" ] \
+      && [ "$(printf '%s\n%s\n' "${installed}" "${newest_ver}" | sort -V | tail -1)" = "${installed}" ]; then
+      echo "installed ${plugin} ${installed} is newer than the newest cached ${newest_ver}; skipping reinstall to avoid a downgrade (refresh the plugin cache first)." >&2
+      skip_install=1
+    fi
+  fi
   ;;
 esac
 
-if command -v uv >/dev/null 2>&1; then
+if [ -n "${skip_install}" ]; then
+  : # downgrade guard fired above — leave the newer install in place
+elif command -v uv >/dev/null 2>&1; then
   echo "(re)installing the cockpit command from ${install_src}..."
   # --no-cache is load-bearing, not belt-and-suspenders. The wheel version is
   # read at build time from .claude-plugin/plugin.json (hatch dynamic version),
