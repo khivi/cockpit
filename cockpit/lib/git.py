@@ -353,8 +353,8 @@ def slugify(s: str, max_len: int = 30) -> str:
 # A leading base-branch segment (`master/`, `main/`) — it denotes the branch's
 # base, not anything identifying, so it is dropped from the label. The trailing
 # `/` is required so `mainframe-thing` / a branch literally named `master` are
-# never touched. Kept in sync with `cycle.MAIN_BRANCHES` (a leaf can't import the
-# orchestrator).
+# never touched. Same trunk set as `constants.MAIN_BRANCHES`, here as a
+# prefix-stripping regex rather than a membership set.
 _BASE_BRANCH_SEG_RE = re.compile(r"^(?:master|main)/")
 
 # A leading Linear-ticket (`pe-4608-`) or bare PR/issue number (`123-`) token

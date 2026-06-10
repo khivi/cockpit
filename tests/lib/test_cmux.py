@@ -395,6 +395,25 @@ def test_reconcile_workspace_names_skips_primary_checkout(tmp_path):
     assert calls == []
 
 
+def test_reconcile_workspace_names_skips_main_branch_worktree(tmp_path):
+    """A feature worktree parked on `main`/`master` is exempt even when it's NOT
+    the primary checkout — the bare-repo case where no sibling is ever
+    `is_primary`. Its `label` collapses to the branch name, so a rename would
+    clobber a sibling already named `main` and break switching."""
+    wt_a = tmp_path / "feature-on-main"
+    wt_a.mkdir()
+    # Not primary (is_primary defaults False), but sitting on `main`.
+    wts = [Worktree(path=wt_a, branch="main", branch_prefix="khivi/")]
+    names = {"workspace:1": "fix-oauth"}  # diverged custom name
+    cwds = {"workspace:1": wt_a}
+    calls: list[tuple] = []
+    with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+        renamed = reconcile_workspace_names(names, cwds, wts)
+
+    assert renamed == []
+    assert calls == []
+
+
 def test_reconcile_workspace_names_dry_reports_without_calling(tmp_path):
     wt_a = tmp_path / "feat-a"
     wt_a.mkdir()
