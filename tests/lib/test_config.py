@@ -758,6 +758,65 @@ def test_linear_done_on_merge_repo_without_key_falls_back_to_global():
     assert cockpit_config.linear_done_on_merge(cfg, {"name": "r"}) is True
 
 
+# ── orphan_nudge_grace_seconds ──────────────────────────────────────────────
+
+
+def test_orphan_nudge_grace_defaults_to_four_hours():
+    from cockpit.lib import config as cockpit_config
+
+    assert cockpit_config.orphan_nudge_grace_seconds({"repos": []}) == 4 * 3600.0
+
+
+def test_orphan_nudge_grace_global_override():
+    from cockpit.lib import config as cockpit_config
+
+    assert (
+        cockpit_config.orphan_nudge_grace_seconds({"orphan_nudge_grace_hours": 2})
+        == 2 * 3600.0
+    )
+
+
+def test_orphan_nudge_grace_zero_disables():
+    from cockpit.lib import config as cockpit_config
+
+    assert (
+        cockpit_config.orphan_nudge_grace_seconds({"orphan_nudge_grace_hours": 0})
+        == 0.0
+    )
+
+
+def test_orphan_nudge_grace_repo_overrides_global():
+    from cockpit.lib import config as cockpit_config
+
+    cfg = {"orphan_nudge_grace_hours": 8}
+    # Per-repo 0 (disable) wins over a non-zero global.
+    assert (
+        cockpit_config.orphan_nudge_grace_seconds(cfg, {"orphan_nudge_grace_hours": 0})
+        == 0.0
+    )
+    # Per-repo value wins over an absent global.
+    assert (
+        cockpit_config.orphan_nudge_grace_seconds({}, {"orphan_nudge_grace_hours": 1})
+        == 3600.0
+    )
+
+
+def test_orphan_nudge_grace_repo_without_key_falls_back_to_global():
+    from cockpit.lib import config as cockpit_config
+
+    cfg = {"orphan_nudge_grace_hours": 3}
+    assert cockpit_config.orphan_nudge_grace_seconds(cfg, {"name": "r"}) == 3 * 3600.0
+
+
+def test_orphan_nudge_grace_negative_clamped_to_zero():
+    from cockpit.lib import config as cockpit_config
+
+    assert (
+        cockpit_config.orphan_nudge_grace_seconds({"orphan_nudge_grace_hours": -5})
+        == 0.0
+    )
+
+
 # ── find_repos_by_linear_key ────────────────────────────────────────────────
 
 

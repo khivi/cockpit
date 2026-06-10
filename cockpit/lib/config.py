@@ -28,6 +28,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from .git import main_worktree_path
 
@@ -320,6 +321,39 @@ def linear_done_on_merge(
         return bool(repo_entry["linear_done_on_merge"])
     cfg = cfg if cfg is not None else load_config()
     return bool(cfg.get("linear_done_on_merge", False))
+
+
+def orphan_nudge_grace_seconds(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> float:
+    """Seconds a no-open-PR ("orphan") worktree is left un-nudged after creation
+    (default: 4 hours).
+
+    A freshly-spawned worktree (e.g. from `start-linear-ticket` / `cockpit new`)
+    has the exact shape the orphan nudge targets — branch created, no commits, no
+    PR — so without a grace window it draws the "push commits and open a PR, or
+    close the worktree if abandoned" nudge on the very next slow tick, every tick.
+    The grace measures *worktree age* (`git.worktree_age_seconds`), not branch or
+    commit age, so it answers "how long since I made this worktree" — the thing a
+    user means by "I just started it."
+
+    Resolved per-repo over global, matching `linear_done_on_merge`: an
+    `orphan_nudge_grace_hours` on the repo entry wins, otherwise the top-level
+    key, otherwise 4. `0` disables the grace entirely (immediate nudging — the
+    pre-grace behaviour). Negative / out-of-range values are clamped to 0.
+    """
+    default_hours = 4.0
+    hours: Any = default_hours
+    if repo_entry is not None and "orphan_nudge_grace_hours" in repo_entry:
+        hours = repo_entry["orphan_nudge_grace_hours"]
+    else:
+        cfg = cfg if cfg is not None else load_config()
+        if "orphan_nudge_grace_hours" in cfg:
+            hours = cfg["orphan_nudge_grace_hours"]
+    try:
+        return max(0.0, float(hours) * 3600.0)
+    except (TypeError, ValueError):
+        return default_hours * 3600.0
 
 
 def _read_current_statusline(settings_path: Path) -> str | None:
