@@ -91,12 +91,13 @@ _LOG_TAIL_LINES = 200
 # Detached output lands in `spawn.log`.
 _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
 
-# Process exit code the TUI returns when the user presses `u` to update. The
-# `bin/cockpit.sh` launcher watches for this specific code: it runs
-# `bin/update.sh` (which can't take effect in-process — it reinstalls the very
-# package the daemon is running from) and relaunches `cockpit watch`. Any value
-# outside the daemon's own exit codes (0 clean, 1 pidfile collision, 2 non-TTY)
-# works; 42 is the agreed sentinel between this module and cockpit.sh.
+# Process exit code the TUI returns when the user presses `u` to update.
+# `cli.py`'s watch branch watches for this specific code: after the TUI tears
+# down it runs the Python updater (`cockpit.lib.updater`, which can't take
+# effect in-process — it reinstalls the very package the daemon is running from)
+# and `os.execvp`s a fresh `cockpit watch`. Any value outside the daemon's own
+# exit codes (0 clean, 1 pidfile collision, 2 non-TTY) works; 42 is the agreed
+# sentinel between this module and cli.py.
 RESTART_EXIT_CODE = 42
 
 # (repo display name, sidebar_color, linear-enabled, worktrees)
@@ -651,8 +652,9 @@ class CockpitApp(App[None]):
 
     def action_update(self) -> None:
         # Only meaningful when the header advertises a newer version. Exit with
-        # the restart sentinel; bin/cockpit.sh runs the updater + relaunches (the
-        # in-process reinstall can't take effect — see RESTART_EXIT_CODE).
+        # the restart sentinel; cli.py runs the updater + re-execs `cockpit
+        # watch` (the in-process reinstall can't take effect — see
+        # RESTART_EXIT_CODE).
         if not self.query_one(HeaderBar).update_text:
             self.notify("no update available", severity="information", timeout=4.0)
             return

@@ -880,8 +880,8 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
 
 
 async def test_update_key_exits_with_restart_code():
-    # An available update + `u` exits with the sentinel so cockpit.sh updates
-    # and relaunches.
+    # An available update + `u` exits with the sentinel so cli.py runs the
+    # updater and re-execs.
     from cockpit.tui.app import RESTART_EXIT_CODE
 
     app, _ = _make_app()

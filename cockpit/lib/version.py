@@ -27,11 +27,29 @@ _PLUGIN_JSON = _PLUGIN_DIR / "plugin.json"
 _MARKETPLACE_JSON = _PLUGIN_DIR / "marketplace.json"
 
 
-def _read_version(path: Path) -> str:
+def _read_field(path: Path, key: str) -> str:
     try:
-        return str(json.loads(path.read_text()).get("version", "")).strip()
+        return str(json.loads(path.read_text()).get(key, "")).strip()
     except (OSError, json.JSONDecodeError):
         return ""
+
+
+def _read_version(path: Path) -> str:
+    return _read_field(path, "version")
+
+
+def plugin_name() -> str:
+    """The plugin's name from the bundled plugin.json, or `""` — the
+    `<plugin>` half of the `<plugin>@<marketplace>` id `claude plugin update`
+    needs, and the plugin-cache dir segment the updater installs from."""
+    return _read_field(_PLUGIN_JSON, "name")
+
+
+def marketplace_name() -> str:
+    """The marketplace's name from the bundled marketplace.json, or `""` — the
+    bare name `claude plugin marketplace update` takes, and the cache-dir
+    segment under `plugins/cache/<marketplace>/<plugin>/`."""
+    return _read_field(_MARKETPLACE_JSON, "name")
 
 
 def running_version() -> str:
@@ -95,7 +113,12 @@ def latest_version() -> str | None:
         return None
 
 
-def _parse(v: str) -> tuple[int, ...]:
+def parse_version(v: str) -> tuple[int, ...]:
+    """Dotted version → tuple of ints for ordering (non-numeric chunks → 0).
+
+    Public so the updater can pick the newest plugin-cache version dir with the
+    same comparator `is_newer` uses — the two must not disagree on which version
+    is newer."""
     parts: list[int] = []
     for chunk in v.split("."):
         try:
@@ -113,4 +136,4 @@ def is_newer(candidate: str, current: str) -> bool:
     """
     if not candidate or not current:
         return False
-    return _parse(candidate) > _parse(current)
+    return parse_version(candidate) > parse_version(current)

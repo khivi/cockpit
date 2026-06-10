@@ -45,7 +45,7 @@ STARSHIP_DEFAULT_TOML = (
 # starship.toml. Uses the running interpreter + module dispatch so it resolves
 # regardless of whether `cockpit` is on PATH in starship's render environment.
 # Invoked the normal way (the installed `cockpit` console script), `sys.executable`
-# is the stable uv-tool interpreter; `bin/update.sh` re-runs `cockpit setup` after
+# is the stable uv-tool interpreter; `cockpit update` re-runs `cockpit setup` after
 # the install so a stale pin (e.g. to a since-removed worktree venv) is re-pinned.
 STARSHIP_CMD = f"{sys.executable} -m cockpit.cli starship"
 STARSHIP_PLACEHOLDER = "__COCKPIT_STARSHIP__"

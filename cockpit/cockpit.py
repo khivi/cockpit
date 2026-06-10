@@ -154,8 +154,8 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
         self_ws=self_ws,
     )
     app.run()
-    # `u` exits with RESTART_EXIT_CODE so bin/cockpit.sh runs the updater and
-    # relaunches; a clean quit / SIGTERM leaves return_code at 0.
+    # `u` exits with RESTART_EXIT_CODE so cli.py runs the updater and re-execs;
+    # a clean quit / SIGTERM leaves return_code at 0.
     return app.return_code or 0
 
 

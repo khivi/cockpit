@@ -10,7 +10,7 @@ Cockpit is a terminal UI for juggling several PRs at once from Claude Code. Each
 - [`gh`](https://cli.github.com/), authenticated
 - Claude Code
 - A workspace backend on `PATH` — `cmux` (macOS) or `limux`
-- Optional: [`cship`](https://github.com/khivi/cship) + [`starship`](https://starship.rs/) for the statusline (set `use_cship: true`; wired automatically on `bin/update.sh`)
+- Optional: [`cship`](https://github.com/khivi/cship) + [`starship`](https://starship.rs/) for the statusline (set `use_cship: true`; wired automatically by the installer / `cockpit update`)
 
 ## Install
 
@@ -27,7 +27,7 @@ Cockpit is a terminal UI for juggling several PRs at once from Claude Code. Each
    bash ~/.claude/plugins/cache/khivi-cockpit/cockpit/*/bin/update.sh
    ```
 
-To update later, re-run that script or press `u` in the TUI when it shows "⬆ update available".
+To update later, run `cockpit update` or press `u` in the TUI when it shows "⬆ update available". Both run the same in-wheel updater — no shell needed once installed. (`cockpit update --check` reports availability without installing.)
 
 ## Use
 
