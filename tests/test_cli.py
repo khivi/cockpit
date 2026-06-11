@@ -180,6 +180,21 @@ def test_watch_restart_no_reexec_when_update_fails(monkeypatch):
     assert execs == []  # do NOT relaunch on a failed update
 
 
+def test_watch_restart_reports_exec_failure(monkeypatch, capsys):
+    monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 42)
+    monkeypatch.setattr(cli, "_running_as_installed_cockpit", lambda: True)
+    monkeypatch.setattr("cockpit.lib.updater.run_update", lambda *a, **k: 0)
+
+    def boom(file, args):
+        raise OSError("cockpit: not found")
+
+    monkeypatch.setattr(cli.os, "execvp", boom)
+
+    rc = cli.main(["watch"])
+    assert rc == 1  # exec failed → non-zero, no uncaught traceback
+    assert "relaunch failed" in capsys.readouterr().err
+
+
 def test_watch_clean_exit_does_not_self_update(monkeypatch):
     monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 0)
     called = []

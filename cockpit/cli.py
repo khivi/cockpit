@@ -157,7 +157,18 @@ def _self_update_and_reexec(watch_args: list[str]) -> int:
     # Replace this process with the just-installed cockpit. execvp resolves the
     # new binary on PATH and never returns (NoReturn) on success; the trailing
     # return is reached only if it's stubbed (tests) or somehow returns.
-    os.execvp("cockpit", ["cockpit", "watch", *watch_args])
+    try:
+        os.execvp("cockpit", ["cockpit", "watch", *watch_args])
+    except OSError as exc:
+        # exec failed (e.g. `cockpit` vanished from PATH mid-update). Print a
+        # plain message instead of letting the uncaught traceback lazily import
+        # from the just-replaced venv and render a confusing mixed-version trace.
+        print(
+            f"cockpit: relaunch failed ({exc}); update installed — "
+            "re-run `cockpit watch`.",
+            file=sys.stderr,
+        )
+        return 1
     return 0  # type: ignore[unreachable]
 
 
