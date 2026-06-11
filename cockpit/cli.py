@@ -12,12 +12,16 @@ Subcommands:
   starship <field>      starship field printer / `warm`
   new    [args]         create a worktree + workspace
   nudge  [args]         manage nudge mutes
+  update [--check]      self-update the daemon (or just report availability)
 """
 
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 _SUBCOMMANDS = (
     "watch",
@@ -26,7 +30,24 @@ _SUBCOMMANDS = (
     "starship",
     "new",
     "nudge",
+    "update",
 )
+
+
+def _running_as_installed_cockpit() -> bool:
+    """True iff this process was launched as the PATH-installed `cockpit`
+    console script (not a dev's `uv run cockpit watch` from a worktree venv).
+
+    Guards the `u`-triggered self-update + re-exec: auto-swapping a dev's
+    worktree session for the released wheel would be wrong, so when the launched
+    binary differs from `shutil.which("cockpit")` we decline."""
+    which = shutil.which("cockpit")
+    if not which:
+        return False
+    try:
+        return Path(which).resolve() == Path(sys.argv[0]).resolve()
+    except OSError:
+        return False
 
 
 def _usage() -> str:
@@ -63,7 +84,18 @@ def main(argv: list[str] | None = None) -> int:
     if sub in ("watch", "setup"):
         from cockpit.cockpit import main as daemon_main
 
-        return daemon_main([f"--{sub}", *rest])
+        rc = daemon_main([f"--{sub}", *rest])
+        # `u` in the TUI exits watch with RESTART_EXIT_CODE. The reinstall can't
+        # take effect in-process (it replaces the running package), so we run
+        # the Python updater here — after the TUI has torn down and restored the
+        # terminal — then `os.execvp` a fresh `cockpit watch` on the new version.
+        # No shell supervisor: the update logic ships in the wheel (updater.py).
+        if sub == "watch":
+            from cockpit.tui.app import RESTART_EXIT_CODE
+
+            if rc == RESTART_EXIT_CODE:
+                return _self_update_and_reexec(rest)
+        return rc
 
     # statusline + starship are the hot render path — route straight to the
     # leaf module, skipping the daemon preflight that setup/starship never run.
@@ -88,8 +120,56 @@ def main(argv: list[str] | None = None) -> int:
 
         return _run_with_argv("cockpit-new", rest, spawn_main)
 
+    if sub == "update":
+        from cockpit.lib.updater import run_update
+
+        return run_update(
+            skip_install="--skip-install" in rest,
+            check_only="--check" in rest,
+        )
+
     print(f"cockpit: unknown subcommand {sub!r}\n{_usage()}", file=sys.stderr)
     return 2
+
+
+def _self_update_and_reexec(watch_args: list[str]) -> int:
+    """Handle the TUI's `u` self-update after watch exits: run the updater, then
+    re-exec a fresh `cockpit watch` on the new version. Declines (returning 0)
+    when not running as the installed `cockpit` — a dev's `uv run` session must
+    not be auto-swapped for the released wheel."""
+    if not _running_as_installed_cockpit():
+        print(
+            "update available — run `cockpit update`, or press `u` from an "
+            "installed `cockpit watch` to self-update.",
+            file=sys.stderr,
+        )
+        return 0
+    from cockpit.lib.updater import run_update
+
+    rc = run_update()
+    if rc != 0:
+        print(
+            "cockpit: update failed; not relaunching. "
+            "Re-run `cockpit watch` on the current version.",
+            file=sys.stderr,
+        )
+        return rc
+    # Replace this process with the just-installed cockpit. execvp resolves the
+    # new binary on PATH and never returns (NoReturn) on success; the trailing
+    # return is reached only if it's stubbed (tests) or somehow returns.
+    try:
+        os.execvp("cockpit", ["cockpit", "watch", *watch_args])
+    except OSError as exc:
+        # exec failed (e.g. `cockpit` vanished from PATH mid-update). Print a
+        # plain message instead of letting the uncaught traceback lazily import
+        # from the just-replaced venv and render a confusing mixed-version trace.
+        print(
+            f"cockpit: relaunch failed ({exc}); update installed — "
+            "re-run `cockpit watch`.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0  # type: ignore[unreachable]
 
 
 if __name__ == "__main__":
