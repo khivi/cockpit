@@ -86,12 +86,27 @@ class FooterBar(Horizontal):
     # Actions never shown in the footer (handled implicitly / not key-hint worthy).
     HIDDEN_ACTIONS = frozenset({"dismiss_overlay"})
 
+    # Backend-conditional keys: a handful of row actions only make sense on one
+    # workspace backend. An action listed here renders ONLY when the resolved
+    # backend is in its set; absent actions are backend-agnostic (always shown).
+    #   - focus_row / nudge_row: cmux-only verbs (limux has no select/notify) —
+    #     they warn "requires cmux" if pressed on limux, so the hint is dead weight.
+    #   - open_workspace: limux's only way to reach a workspace (no `focus` verb).
+    #     On cmux it's redundant with `f`, so it's hidden there.
+    # Keyed by the resolved backend string ("cmux" | "limux" | "none").
+    BACKEND_ACTIONS = {
+        "focus_row": frozenset({"cmux"}),
+        "nudge_row": frozenset({"cmux"}),
+        "open_workspace": frozenset({"limux"}),
+    }
+
     def __init__(
         self,
         bindings: Iterable[object],
         *,
         show_update: bool = False,
         show_linear: bool = True,
+        backend: str = "cmux",
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -104,6 +119,7 @@ class FooterBar(Horizontal):
         ]
         self._show_update = show_update
         self._show_linear = show_linear
+        self._backend = backend
         # Last-rendered group strings, exposed for tests / introspection.
         self.row_text = ""
         self.global_text = ""
@@ -142,12 +158,16 @@ class FooterBar(Horizontal):
 
     def _skip(self, action: str) -> bool:
         # Conditional keys: update only once available; Linear only when a repo
-        # is Linear-configured; hidden actions (escape/back) never shown.
+        # is Linear-configured; backend-conditional keys only on their backend;
+        # hidden actions (escape/back) never shown.
         if action in self.HIDDEN_ACTIONS:
             return True
         if action == "update" and not self._show_update:
             return True
-        return action == "open_linear" and not self._show_linear
+        if action == "open_linear" and not self._show_linear:
+            return True
+        allowed = self.BACKEND_ACTIONS.get(action)
+        return allowed is not None and self._backend not in allowed
 
     def _rebuild(self) -> None:
         left: list[str] = []
