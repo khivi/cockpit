@@ -34,6 +34,10 @@ def _isolate(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("cockpit.lib.version.latest_version", lambda: None)
     monkeypatch.setattr("cockpit.tui.app.COCKPIT_HOME", tmp_path)
+    # Pin the workspace backend so footer/key tests are deterministic regardless
+    # of whether cmux/limux is on PATH (CI has neither → would resolve "none").
+    # Backend-specific tests override this.
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
 
 
 def _make_app(**kw):
@@ -1259,7 +1263,7 @@ async def test_footer_labels_are_one_word():
     # actions fall back to the description's first word.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
-    fb = FooterBar([])
+    fb = FooterBar([], backend="cmux")
     assert fb._label("open_pr", "Open PR") == "PR"
     assert fb._label("force_close_row", "Force close") == "Force"
     assert fb._label("sync", "Sync now") == "Sync"
@@ -1287,3 +1291,44 @@ async def test_footer_shows_linear_when_configured(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         assert "Linear" in app.query_one(FooterBar).row_text
+
+
+async def test_footer_on_cmux_shows_focus_nudge_hides_open(monkeypatch):
+    # cmux backend (the _isolate default): the cmux-only verbs are advertised,
+    # and `w`/Open is hidden because `f`/Focus already reaches the workspace.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        rt = app.query_one(FooterBar).row_text
+        assert "Focus" in rt and "Nudge" in rt
+        assert "Open" not in rt
+
+
+async def test_footer_on_limux_hides_focus_nudge_shows_open(monkeypatch):
+    # limux has no `focus`/notify verb, so Focus and Nudge would no-op — hide
+    # their help text. `w`/Open is the only way to reach a workspace, so show it.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "limux")
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        rt = app.query_one(FooterBar).row_text
+        assert "Focus" not in rt and "Nudge" not in rt
+        assert "Open" in rt
+
+
+async def test_footer_on_no_backend_hides_all_backend_keys(monkeypatch):
+    # tool=none: every workspace-backend verb is dead, so none of the three
+    # backend-conditional hints render.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "none")
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        rt = app.query_one(FooterBar).row_text
+        assert "Focus" not in rt and "Nudge" not in rt and "Open" not in rt

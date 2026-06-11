@@ -234,8 +234,14 @@ class CockpitApp(App[None]):
         yield WorktreeTable(show_linear=show_linear, id="table")
         # Grouped footer: row keys (left) vs global keys (right). The `u` update
         # key stays hidden until `_set_update` reveals it; the `l` Linear key
-        # shows only when a repo is Linear-configured.
-        yield FooterBar(self.BINDINGS, show_linear=show_linear, id="footer")
+        # shows only when a repo is Linear-configured; backend-divergent keys
+        # follow `resolve_tool()` (see FooterBar.BACKEND_ACTIONS).
+        yield FooterBar(
+            self.BINDINGS,
+            show_linear=show_linear,
+            backend=resolve_tool(),
+            id="footer",
+        )
 
     def on_mount(self) -> None:
         import sys

@@ -86,12 +86,23 @@ class FooterBar(Horizontal):
     # Actions never shown in the footer (handled implicitly / not key-hint worthy).
     HIDDEN_ACTIONS = frozenset({"dismiss_overlay"})
 
+    # Row actions that only work on one backend — rendered only when the resolved
+    # backend ("cmux" | "limux" | "none") is in the action's set. focus/nudge are
+    # cmux-only verbs; open_workspace is limux's only way to reach a workspace
+    # (redundant with focus on cmux).
+    BACKEND_ACTIONS = {
+        "focus_row": frozenset({"cmux"}),
+        "nudge_row": frozenset({"cmux"}),
+        "open_workspace": frozenset({"limux"}),
+    }
+
     def __init__(
         self,
         bindings: Iterable[object],
         *,
         show_update: bool = False,
         show_linear: bool = True,
+        backend: str,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -104,6 +115,7 @@ class FooterBar(Horizontal):
         ]
         self._show_update = show_update
         self._show_linear = show_linear
+        self._backend = backend
         # Last-rendered group strings, exposed for tests / introspection.
         self.row_text = ""
         self.global_text = ""
@@ -142,12 +154,16 @@ class FooterBar(Horizontal):
 
     def _skip(self, action: str) -> bool:
         # Conditional keys: update only once available; Linear only when a repo
-        # is Linear-configured; hidden actions (escape/back) never shown.
+        # is Linear-configured; backend-conditional keys only on their backend;
+        # hidden actions (escape/back) never shown.
         if action in self.HIDDEN_ACTIONS:
             return True
         if action == "update" and not self._show_update:
             return True
-        return action == "open_linear" and not self._show_linear
+        if action == "open_linear" and not self._show_linear:
+            return True
+        allowed = self.BACKEND_ACTIONS.get(action)
+        return allowed is not None and self._backend not in allowed
 
     def _rebuild(self) -> None:
         left: list[str] = []
