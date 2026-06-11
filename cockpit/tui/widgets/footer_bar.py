@@ -86,14 +86,10 @@ class FooterBar(Horizontal):
     # Actions never shown in the footer (handled implicitly / not key-hint worthy).
     HIDDEN_ACTIONS = frozenset({"dismiss_overlay"})
 
-    # Backend-conditional keys: a handful of row actions only make sense on one
-    # workspace backend. An action listed here renders ONLY when the resolved
-    # backend is in its set; absent actions are backend-agnostic (always shown).
-    #   - focus_row / nudge_row: cmux-only verbs (limux has no select/notify) —
-    #     they warn "requires cmux" if pressed on limux, so the hint is dead weight.
-    #   - open_workspace: limux's only way to reach a workspace (no `focus` verb).
-    #     On cmux it's redundant with `f`, so it's hidden there.
-    # Keyed by the resolved backend string ("cmux" | "limux" | "none").
+    # Row actions that only work on one backend — rendered only when the resolved
+    # backend ("cmux" | "limux" | "none") is in the action's set. focus/nudge are
+    # cmux-only verbs; open_workspace is limux's only way to reach a workspace
+    # (redundant with focus on cmux).
     BACKEND_ACTIONS = {
         "focus_row": frozenset({"cmux"}),
         "nudge_row": frozenset({"cmux"}),
@@ -106,7 +102,7 @@ class FooterBar(Horizontal):
         *,
         show_update: bool = False,
         show_linear: bool = True,
-        backend: str = "cmux",
+        backend: str,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]

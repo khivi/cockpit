@@ -1263,7 +1263,7 @@ async def test_footer_labels_are_one_word():
     # actions fall back to the description's first word.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
-    fb = FooterBar([])
+    fb = FooterBar([], backend="cmux")
     assert fb._label("open_pr", "Open PR") == "PR"
     assert fb._label("force_close_row", "Force close") == "Force"
     assert fb._label("sync", "Sync now") == "Sync"
