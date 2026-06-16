@@ -134,11 +134,17 @@ def _read_session_or_fallback(stem: str, sid: str | None) -> str:
     back to the most recently modified `stem-*` cache.
 
     Claude Code's first statusLine pings on a fresh session arrive with
-    `session_id` + `transcript_path` only — no `context_window` or
-    `rate_limits` yet. Without a fallback the session pills disappear
-    for the first few seconds of every session. Showing the previous
-    session's value is honest (it's the most recent reading we have)
-    and gets overwritten as soon as the new session's data arrives.
+    `session_id` + `transcript_path` only — no `rate_limits` yet — so
+    without a fallback the session pills disappear for the first few
+    seconds of every session.
+
+    Only sound for values that aren't strictly per-session: `rate-limit-5h`
+    is account-global (genuinely shared) and `model` is last-known-fine, so
+    borrowing the most recent reading is honest and self-corrects once the
+    new session's data arrives. Do NOT use this for a strictly per-session
+    metric like context %: a fresh session is ~0%, so another session's
+    number is wrong, not just stale (see `print_context`, which reads its
+    own cache directly).
     """
     raw = read_text(session_cache(stem, sid))
     if raw or not sid:
@@ -215,7 +221,12 @@ def _parse_sync(raw: str) -> tuple[int, int]:
 
 def print_context(sid: str | None = None) -> str:
     sid = sid or os.environ.get("CSHIP_SESSION_ID") or None
-    raw = _read_session_or_fallback("context", sid)
+    # No cross-session fallback (unlike rate-limit/model): context is strictly
+    # per-session. A fresh session's first statusLine pings carry no
+    # `context_window`, leaving `context-<sid>` empty — and a fresh session is
+    # ~0%, so borrowing another session's number is wrong, not just stale. Stay
+    # hidden until Claude Code reports this session's own context_window.
+    raw = read_text(session_cache("context", sid))
     if not raw:
         return ""
     parts = raw.split()
