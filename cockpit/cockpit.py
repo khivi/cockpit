@@ -68,7 +68,11 @@ def _build_state() -> dict:
     }
 
 
-def _once_with(state: dict, on_repo_done: Callable[[], None] | None = None) -> None:
+def _once_with(
+    state: dict,
+    on_repo_done: Callable[[], None] | None = None,
+    only_repo: str | None = None,
+) -> None:
     cfg = load_config()
     self_user = state.get("self_user") or gh_self_user()
     state["self_user"] = self_user
@@ -79,6 +83,7 @@ def _once_with(state: dict, on_repo_done: Callable[[], None] | None = None) -> N
         pr_cache=state["pr_cache"],
         pill_state=state["pill_state"],
         on_repo_done=on_repo_done,
+        only_repo=only_repo,
     )
 
 
@@ -143,8 +148,11 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
     claim_pidfile()  # exits 1 if a live daemon already holds it
     self_ws = os.environ.get("CMUX_WORKSPACE_ID")
 
-    def _slow(on_repo_done: Callable[[], None] | None = None) -> None:
-        _once_with(state, on_repo_done)
+    def _slow(
+        on_repo_done: Callable[[], None] | None = None,
+        only_repo: str | None = None,
+    ) -> None:
+        _once_with(state, on_repo_done, only_repo)
 
     app = CockpitApp(
         slow_tick=_slow,

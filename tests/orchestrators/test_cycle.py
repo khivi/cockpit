@@ -3027,3 +3027,81 @@ def test_cycle_all_callback_error_does_not_abort_remaining_repos(capsys):
     # A failing callback is swallowed (logged to stderr) — every repo still runs.
     assert processed == ["a", "b"]
     assert "on_repo_done" in capsys.readouterr().err
+
+
+# --- cycle_all only_repo scoping --------------------------------------------
+
+
+def test_cycle_all_only_repo_reconciles_just_that_repo():
+    # A TUI row keypress passes only_repo=<repo path> so the cycle reconciles
+    # only that row's repo — skipping the `gh` round-trips for every other repo.
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
+    seen: list[str] = []
+    drained: list[str] = []
+    swept: list[str] = []
+    with (
+        patch.object(cycle, "ensure_state_dirs", lambda: None),
+        patch.object(
+            cycle,
+            "_check_plugin_update",
+            lambda *_a, **_k: swept.append("plugin-update"),
+        ),
+        patch.object(
+            cycle, "_drain_close_requests", lambda *, dry: drained.append("drain")
+        ),
+        patch.object(
+            cycle,
+            "close_gone_cwd_workspaces",
+            lambda *, dry: swept.append("gone-cwd"),
+        ),
+        patch.object(
+            cycle, "_reap_workspace_orphans", lambda *_a, **_k: swept.append("reap")
+        ),
+        patch.object(
+            cycle,
+            "cycle_repo",
+            lambda repo_entry, *_a, **_k: seen.append(repo_entry["name"]),
+        ),
+    ):
+        cycle.cycle_all(
+            cfg,
+            "khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            only_repo="/b",
+        )
+    # Only repo b reconciled.
+    assert seen == ["b"]
+    # The close queue is still drained — a `c`/`C` teardown lands there and the
+    # keypress is waiting on it.
+    assert drained == ["drain"]
+    # The repo-spanning sweeps + plugin-update check are skipped for a scoped
+    # run — the next full periodic tick handles that global housekeeping.
+    assert swept == []
+
+
+def test_cycle_all_only_repo_unknown_path_reconciles_nothing():
+    cfg = {"repos": [{"name": "a", "path": "/a"}]}
+    seen: list[str] = []
+    with (
+        patch.object(cycle, "ensure_state_dirs", lambda: None),
+        patch.object(cycle, "_check_plugin_update", lambda *_a, **_k: None),
+        patch.object(cycle, "_drain_close_requests", lambda *, dry: None),
+        patch.object(cycle, "close_gone_cwd_workspaces", lambda *, dry: None),
+        patch.object(cycle, "_reap_workspace_orphans", lambda *_a, **_k: None),
+        patch.object(
+            cycle,
+            "cycle_repo",
+            lambda repo_entry, *_a, **_k: seen.append(repo_entry["name"]),
+        ),
+    ):
+        cycle.cycle_all(
+            cfg,
+            "khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            only_repo="/nonexistent",
+        )
+    assert seen == []  # no repo matched the scoped path → nothing reconciled
