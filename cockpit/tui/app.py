@@ -192,7 +192,7 @@ class CockpitApp(App[None]):
     def __init__(
         self,
         *,
-        slow_tick: Callable[[Callable[[], None]], None],
+        slow_tick: Callable[..., None],
         fast_tick: Callable[[], None],
         slow_secs: int,
         fast_secs: int,
@@ -336,12 +336,16 @@ class CockpitApp(App[None]):
 
     # ---- ticks -----------------------------------------------------------
 
-    def _kick_slow(self) -> None:
+    def _kick_slow(self, only_repo: str | None = None) -> None:
+        # `only_repo` (a repo path) scopes the kick to one repo — a row keypress
+        # refreshes just that row's repo, skipping the `gh` round-trips for every
+        # other repo. The periodic interval, SIGUSR1, startup, and the `s` sync
+        # key pass None for a full reconcile.
         if self._slow_phase != "idle":
             return
         self._slow_phase = "waiting"
         self._next_slow = time.monotonic() + self._slow_secs
-        self._run_slow()
+        self._run_slow(only_repo)
 
     def _kick_fast(self) -> None:
         if self._fast_secs <= 0 or self._fast_phase != "idle":
@@ -351,14 +355,15 @@ class CockpitApp(App[None]):
         self._run_fast()
 
     @work(thread=True, group="slow", exit_on_error=False)
-    def _run_slow(self) -> None:
+    def _run_slow(self, only_repo: str | None = None) -> None:
         try:
             with self._tick_lock:  # "waiting" until acquired, then "running"
                 self._slow_phase = "running"
                 # `_publish_inventory` republishes the table after each repo so a
                 # finished repo surfaces while later repos are still fetching `gh`,
                 # rather than all repos appearing at once when the tick returns.
-                self._slow_tick(self._publish_inventory)
+                # `only_repo` scopes a row-keypress kick to that row's repo.
+                self._slow_tick(self._publish_inventory, only_repo)
         except Exception as e:  # a tick must never take the daemon down
             print(f"slow-tick error: {e}")
         finally:
@@ -769,7 +774,9 @@ class CockpitApp(App[None]):
             self._notify(f"opened + focused {wt.label or wt.short}")
         else:
             self._notify(f"opened {wt.label or wt.short} — switch via limux")
-        self.call_from_thread(self._kick_slow)
+        self.call_from_thread(
+            self._kick_slow, str(Path(os.path.expanduser(repo["path"])))
+        )
 
     def _pr_payload_for_path(self, path_str: str) -> dict | None:
         """The cached PR payload for the row at `path_str` (resolves git), or
@@ -875,7 +882,7 @@ class CockpitApp(App[None]):
         )
         enqueue(req)
         self._notify(f"queued {'force-' if force else ''}close: {wt.label or wt.short}")
-        self.call_from_thread(self._kick_slow)
+        self.call_from_thread(self._kick_slow, str(repo_dir))
 
     @work(thread=True, group="mute", exit_on_error=False)
     def _toggle_mute(self, path_str: str) -> None:
@@ -887,7 +894,7 @@ class CockpitApp(App[None]):
         if resolved is None:
             self._notify(f"mute: no worktree at {path_str}", severity="error")
             return
-        _repo, wt = resolved
+        repo, wt = resolved
         raw = read_text(branch_cache("pr-num", wt.branch)) if wt.branch else ""
         try:
             pr = int(raw)
@@ -907,7 +914,9 @@ class CockpitApp(App[None]):
             pref.reason = "muted from TUI"
             save_pref(pr, pref)
             self._notify(f"muted {wt.label or wt.short} (#{pr})")
-        self.call_from_thread(self._kick_slow)
+        self.call_from_thread(
+            self._kick_slow, str(Path(os.path.expanduser(repo["path"])))
+        )
 
     @work(thread=True, group="nudge", exit_on_error=False)
     def _send_nudge(self, path_str: str) -> None:
@@ -988,7 +997,8 @@ class CockpitApp(App[None]):
             if logfile is not None:
                 logfile.close()
         self._notify(f"creating: {source} — surfaces on next sync")
-        self.call_from_thread(self._kick_slow)
+        # `cwd` is the chosen repo's path — scope the kick to it (None → full).
+        self.call_from_thread(self._kick_slow, cwd)
 
     # ---- cmux loop pill --------------------------------------------------
 

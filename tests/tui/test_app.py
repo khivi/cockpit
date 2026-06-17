@@ -12,6 +12,7 @@ import contextlib
 import subprocess
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -41,10 +42,11 @@ def _isolate(monkeypatch, tmp_path):
 
 
 def _make_app(**kw):
-    calls = {"slow": 0, "fast": 0}
+    calls: dict[str, Any] = {"slow": 0, "fast": 0, "only_repo": []}
 
-    def slow(on_repo_done=None):
+    def slow(on_repo_done=None, only_repo=None):
         calls["slow"] += 1
+        calls["only_repo"].append(only_repo)
 
     def fast():
         calls["fast"] += 1
@@ -98,7 +100,7 @@ async def test_table_primes_before_slow_completes(monkeypatch, tmp_path):
 
     release = threading.Event()
 
-    def slow(on_repo_done=None):
+    def slow(on_repo_done=None, only_repo=None):
         release.wait(2)  # hold the slow tick open
 
     app = CockpitApp(
@@ -135,7 +137,7 @@ async def test_slow_tick_gets_per_repo_publish_callback(monkeypatch, tmp_path):
     captured: dict = {}
     published = threading.Event()
 
-    def slow(on_repo_done=None):
+    def slow(on_repo_done=None, only_repo=None):
         captured["cb"] = on_repo_done
         on_repo_done()  # a repo finished — surface it now, not at tick end
         published.set()
@@ -161,7 +163,7 @@ async def test_slow_tick_gets_per_repo_publish_callback(monkeypatch, tmp_path):
 async def test_fast_starts_only_after_first_slow():
     order: list[str] = []
 
-    def slow(on_repo_done=None):
+    def slow(on_repo_done=None, only_repo=None):
         order.append("slow")
 
     app = CockpitApp(
@@ -193,7 +195,7 @@ async def test_phase_gate_blocks_overlapping_kick(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause(0.6)
         ran = []
-        monkeypatch.setattr(app, "_run_slow", lambda: ran.append(1))
+        monkeypatch.setattr(app, "_run_slow", lambda only_repo=None: ran.append(1))
         app._slow_phase = "running"
         app._kick_slow()
         assert ran == []  # blocked while a slow tick is waiting/running
@@ -645,6 +647,23 @@ async def test_mute_key_mutes_unmuted_pr(monkeypatch, tmp_path):
     assert pr == 123
     assert pref.muted  # muted
     assert calls["slow"] > before  # kicks the slow tick to republish pr-muted
+    # The kick is scoped to the row's repo path, not a full all-repos reconcile,
+    # so the line refreshes without round-tripping `gh` for every other repo.
+    assert calls["only_repo"][-1] == str(Path(tmp_path))
+
+
+async def test_sync_key_kicks_full_cycle_not_scoped(monkeypatch, tmp_path):
+    # The global `s` sync key reconciles *every* repo — its kick passes
+    # only_repo=None, unlike the per-row keys which scope to the cursor row.
+    _seed_one_worktree(monkeypatch, tmp_path)
+    app, calls = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.8)
+        before = calls["slow"]
+        await pilot.press("s")
+        await pilot.pause(0.6)
+    assert calls["slow"] > before
+    assert calls["only_repo"][-1] is None  # full reconcile, not scoped
 
 
 async def test_mute_key_unmutes_muted_pr(monkeypatch, tmp_path):

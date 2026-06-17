@@ -1777,6 +1777,7 @@ def cycle_all(
     pr_cache: dict,
     pill_state: dict,
     on_repo_done: Callable[[], None] | None = None,
+    only_repo: str | None = None,
 ) -> None:
     """Reconcile every managed repo, serially.
 
@@ -1785,9 +1786,16 @@ def cycle_all(
     later repos are still doing `gh` round-trips. `on_repo_done`, if given, is
     invoked after each repo (success or caught error) to let the caller republish
     the table incrementally instead of waiting for the whole tick. It is a pure
-    read-side hook — it must never write a cache cell (only the daemon does)."""
+    read-side hook — it must never write a cache cell (only the daemon does).
+
+    `only_repo` (a repo path) scopes the cycle to the single matching repo — the
+    TUI passes it so a row keypress (mute/close/spawn/open) refreshes just that
+    row's repo without round-tripping `gh` for every other repo. A scoped run
+    still drains the close queue (a `c`/`C` teardown lands there) but skips the
+    repo-spanning sweeps (`close_gone_cwd_workspaces`, `_reap_workspace_orphans`)
+    and the plugin-update check — those are global housekeeping the next full
+    periodic tick handles, not work the keypress is waiting on."""
     ensure_state_dirs()
-    _check_plugin_update(cfg, pill_state)
     repos = cfg.get("repos", [])
     if not repos:
         print(
@@ -1795,9 +1803,18 @@ def cycle_all(
             flush=True,
         )
         return
+    if only_repo is not None:
+        want = Path(os.path.expanduser(only_repo)).resolve()
+        repos = [
+            e for e in repos if Path(os.path.expanduser(e["path"])).resolve() == want
+        ]
+        if not repos:
+            return  # unknown repo path — nothing scoped to reconcile
+    else:
+        _check_plugin_update(cfg, pill_state)
     if not _cache_only(cfg):
         _drain_close_requests(dry=dry)
-    if not _cache_only(cfg):
+    if only_repo is None and not _cache_only(cfg):
         try:
             close_gone_cwd_workspaces(dry=dry)
         except CmuxUnavailable as e:
@@ -1838,7 +1855,7 @@ def cycle_all(
                     file=sys.stderr,
                     flush=True,
                 )
-    if not _cache_only(cfg):
+    if only_repo is None and not _cache_only(cfg):
         try:
             _reap_workspace_orphans(repos, self_user, dry=dry)
         except CmuxUnavailable as e:
