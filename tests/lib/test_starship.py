@@ -52,17 +52,19 @@ def test_print_context_session_scoped(cache_dir, monkeypatch):
     assert "🧠 7%/1M" in out
 
 
-def test_print_context_fresh_session_falls_back_to_latest(cache_dir, monkeypatch):
-    """Fresh-session regression: Claude Code's first statusLine ping for
-    a new session has `session_id` but no `context_window`, so
-    `context-<sid>` is never written. The pill must still render by
-    falling back to the most recent existing `context-*` cache."""
+def test_print_context_no_cross_session_fallback(cache_dir, monkeypatch):
+    """Unlike rate-limit/model, context does NOT fall back to another
+    session's cache. Context is strictly per-session: a fresh session is
+    ~0%, so borrowing the most recent `context-*` would misreport this
+    session (the cross-session-bleed bug). Claude Code's first statusLine
+    ping carries `session_id` but no `context_window`, so `context-<sid>`
+    is empty — and the pill stays hidden until this session reports its
+    own `context_window` rather than showing a neighbour's number."""
     (cache_dir / "context-OLD").write_text("33 200000")
     time.sleep(0.01)
     (cache_dir / "context-NEWER").write_text("55 1000000")
     monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH-SID-NO-CACHE-YET")
-    out = starship.print_context()
-    assert "🧠 55%/1M" in out
+    assert starship.print_context() == ""
 
 
 @pytest.mark.parametrize(
@@ -86,8 +88,8 @@ def test_print_context_tier(cache_dir, pct, color: Colorizer):
     assert out == color(f"🧠 {pct}%/1M")
 
 
-def test_print_context_fresh_session_no_history_empty(cache_dir, monkeypatch):
-    """No prior session caches exist → fall back returns empty cleanly."""
+def test_print_context_fresh_session_no_cache_empty(cache_dir, monkeypatch):
+    """This session's `context-<sid>` cache is missing → render empty."""
     monkeypatch.setenv("CSHIP_SESSION_ID", "FRESH-SID")
     assert starship.print_context() == ""
 

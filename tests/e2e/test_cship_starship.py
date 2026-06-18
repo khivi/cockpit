@@ -165,11 +165,16 @@ def test_footer_renders_session_pills_via_sid(footer_env):
     assert "9%/5h" in out, f"sid-keyed ratelimit pill missing: {out!r}"
 
 
-def test_footer_session_pills_survive_session_restart(footer_env):
+def test_footer_session_pills_diverge_on_session_restart(footer_env):
     """Fresh-session regression: when Claude Code restarts, the first
     statusLine ping has only `session_id` + `transcript_path` — no
-    `context_window` / `rate_limits`. The pills should still render by
-    falling back to the most recent prior session's cache."""
+    `context_window` / `rate_limits`. The two pills diverge:
+
+    * `rate-limit-5h` is account-global, so it still falls back to the
+      most recent prior session's cache.
+    * context is strictly per-session — a fresh session is ~0%, so it must
+      NOT borrow the prior session's number (the cross-session-bleed bug).
+      The pill stays hidden until this session reports its own usage."""
     env, cache, _cfg = footer_env
     # Prior session's cache, no cache for the new sid yet.
     (cache / "context-PRIOR").write_text("80 1000000")
@@ -178,8 +183,8 @@ def test_footer_session_pills_survive_session_restart(footer_env):
     res = _run_footer(env, stdin=blob)
     assert res.returncode == 0, res.stderr.decode()
     out = res.stdout.decode("utf-8", errors="replace")
-    assert "80%/1M" in out, f"context pill should fall back to prior session: {out!r}"
     assert "33%/5h" in out, f"ratelimit pill should fall back to prior session: {out!r}"
+    assert "80%/1M" not in out, f"context pill must not borrow prior session: {out!r}"
 
 
 def test_footer_survives_iso_string_resets_at(footer_env):
