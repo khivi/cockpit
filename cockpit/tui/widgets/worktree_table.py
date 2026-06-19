@@ -15,7 +15,7 @@ column (headed with the
 `✎` modifications glyph rather than the word "Dirty") reads the same
 daemon-written `git-status` cell the footer does (`●S ✎M ✚U`). The Ticket and
 Status columns are added only when some configured repo is Linear-enabled
-(`show_linear`); Ticket shows the delivered Linear ticket id(s) and Status shows
+(`show_tickets`); Ticket shows the delivered Linear ticket id(s) and Status shows
 one workflow-state *icon* per ticket (headed with the `📍` glyph rather than the
 word "Status", mapped from the state name via `_linear_status_icon`), both from
 the cached per-PR block, with Ticket placed right after Author and Status right
@@ -105,7 +105,7 @@ def _linear_status_icon(state: str) -> tuple[str, str]:
     return _LINEAR_STATUS_FALLBACK
 
 
-# (repo display name, sidebar_color, linear-enabled, worktrees)
+# (repo display name, sidebar_color, tickets-enabled, worktrees)
 Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
 
 # Raw `pr-state` enum → (icon shown in the PR-state column, style). The icons
@@ -128,18 +128,18 @@ _CI_STYLE = {"✓": "green", "✗": "red", "•": "yellow", "?": "grey50"}
 _DIRTY_ICON = ICON_UNSTAGED
 
 
-def column_labels(*, show_linear: bool) -> tuple[str, ...]:
+def column_labels(*, show_tickets: bool) -> tuple[str, ...]:
     """Column headers in display order. The `Author` column sits right after
     `PR` (always present — blank for self-authored PRs, the coworker login for
-    a review PR). The Linear `Ticket` column follows it; the Linear `Status`
-    column sits right after the PR-state column so the two status columns are
-    adjacent. Both Linear columns appear only when some configured repo is
-    Linear-enabled (`show_linear`)."""
+    a review PR). The `Ticket` column follows it; the ticket `Status` column
+    sits right after the PR-state column so the two status columns are adjacent.
+    Both ticket columns appear only when some configured repo has a ticket
+    provider — Linear or GitHub (`show_tickets`)."""
     cols = ["Workspace", "PR", "Author"]
-    if show_linear:
+    if show_tickets:
         cols.append("Ticket")
     cols.append(_APPROVAL_ICON)
-    if show_linear:
+    if show_tickets:
         cols.append(_STATUS_ICON)
     cols += ["CI", "💬", _DIRTY_ICON, "Title"]
     return tuple(cols)
@@ -236,13 +236,13 @@ def worktree_cells(
     wt: Worktree,
     repo_name: str,
     repo_color: str | None,
-    linear_enabled: bool,
+    tickets_enabled: bool,
     *,
-    show_linear: bool,
+    show_tickets: bool,
 ) -> list[Text]:
     """Build one row's cells (Rich Text, so colours survive), in `column_labels`
     order: the Ticket cell follows Author and the Status cell follows the
-    PR-state cell, both present only when `show_linear` (the columns exist) and
+    PR-state cell, both present only when `show_tickets` (the columns exist) and
     blank for a row whose repo isn't Linear-enabled."""
 
     def cell(stem: str) -> str:
@@ -254,7 +254,7 @@ def worktree_cells(
     author = cell("pr-author")
     state_icon, style = _STATE.get(state, (state, "white"))
     ticket, ticket_status = (
-        _linear_cells(wt, repo_name) if linear_enabled else (Text(""), Text(""))
+        _linear_cells(wt, repo_name) if tickets_enabled else (Text(""), Text(""))
     )
 
     cells = [
@@ -270,10 +270,10 @@ def worktree_cells(
         # that isn't mine".
         Text(f"@{author}", style="cyan") if author else Text(""),
     ]
-    if show_linear:
+    if show_tickets:
         cells.append(ticket)
     cells.append(Text(state_icon, style=style) if state else Text(""))
-    if show_linear:
+    if show_tickets:
         cells.append(ticket_status)
     cells += [
         Text(ci, style=_CI_STYLE.get(ci, "white")) if ci else Text(""),
@@ -301,14 +301,14 @@ class WorktreeTable(DataTable):
             self.path = path
             super().__init__()
 
-    def __init__(self, *, show_linear: bool = False, **kwargs: object) -> None:
+    def __init__(self, *, show_tickets: bool = False, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
-        self._show_linear = show_linear
+        self._show_tickets = show_tickets
 
     def on_mount(self) -> None:
         self.cursor_type = "row"
         self.zebra_stripes = True
-        self.add_columns(*column_labels(show_linear=self._show_linear))
+        self.add_columns(*column_labels(show_tickets=self._show_tickets))
 
     def current_path(self) -> str | None:
         """Worktree path (the row key) under the cursor, or None when empty."""
@@ -336,15 +336,15 @@ class WorktreeTable(DataTable):
         same row index so a refresh doesn't yank the selection away."""
         saved = self.cursor_row
         self.clear()
-        for repo_name, repo_color, linear_enabled, wts in inventory:
+        for repo_name, repo_color, tickets_enabled, wts in inventory:
             for wt in wts:
                 self.add_row(
                     *worktree_cells(
                         wt,
                         repo_name,
                         repo_color,
-                        linear_enabled,
-                        show_linear=self._show_linear,
+                        tickets_enabled,
+                        show_tickets=self._show_tickets,
                     ),
                     key=str(wt.path),
                 )

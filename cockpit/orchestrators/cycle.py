@@ -73,10 +73,10 @@ from cockpit.lib.colors import (
 from cockpit.lib.config import (
     COCKPIT_HOME,
     ensure_state_dirs,
-    linear_dev_done_state,
-    linear_done_on_merge,
     linear_merge_done_state,
+    linear_team_keys,
     orphan_nudge_grace_seconds,
+    ticket_close_on_merge,
 )
 from cockpit.lib.constants import MAIN_BRANCHES
 from cockpit.lib.gh import (
@@ -105,14 +105,19 @@ from cockpit.lib.git import (
     worktrees,
     worktrees_basic,
 )
+from cockpit.lib.github_issues import (
+    close_issue,
+    fetch_issue,
+)
+from cockpit.lib.github_issues import (
+    viewer_login as github_viewer_login,
+)
 from cockpit.lib.issue_color import issue_color
 from cockpit.lib.linear import (
     LINEAR_API_KEY_ENV,
     fetch_team_states,
     fetch_ticket_meta,
-    fetch_ticket_states,
     fetch_viewer_id,
-    parse_linear_footers,
     update_ticket_state,
 )
 from cockpit.lib.log_format import verb
@@ -120,6 +125,7 @@ from cockpit.lib.nudges import NudgePref
 from cockpit.lib.nudges import load_pref as _load_nudge_pref
 from cockpit.lib.pills import ci_glyph
 from cockpit.lib.prompts import claude_command, shell_quote
+from cockpit.lib.tickets import TicketProvider, provider_for
 from cockpit.lib.tool import is_cmux
 from cockpit.orchestrators.teardown import TeardownRequest, teardown
 
@@ -198,11 +204,30 @@ def _linear_identity_ttl_seconds(cfg: dict) -> float:
     return 12 * float(cfg.get("slow_poll_interval_seconds", 300))
 
 
+def _provider(ctx: RepoCycle) -> TicketProvider | None:
+    """The repo's ticket-provider strategy, or None for `tickets: none`."""
+    return provider_for(ctx.cfg, ctx.repo_entry)
+
+
+def _ticket_footer_ids(ctx: RepoCycle, pr: PR) -> list[str]:
+    """The ids of the tickets `pr` *delivers*, per the repo's ticket provider.
+
+    Linear → `Linear: [PE-1234](url)` footers; GitHub → `Closes #123` closing
+    keywords (resolved against the repo's own nwo). Empty for `tickets: none`.
+    The two providers share the block shape (`{"tickets": [{"id", "state"}]}`),
+    so the rest of the prefetch/devdone/merge path is provider-neutral.
+    """
+    provider = _provider(ctx)
+    if provider is None:
+        return []
+    return provider.parse_footers(pr.body, f"{ctx.owner}/{ctx.name}")
+
+
 def _decide_linear_refetch(ctx: RepoCycle, pr: PR, now: float) -> tuple[str, object]:
-    """Decide how `pr`'s Linear-delivery block resolves this cycle — pure, no
+    """Decide how `pr`'s ticket-delivery block resolves this cycle — pure, no
     network. Returns one of:
 
-      * `("skip", None)`   — repo isn't Linear-configured; leave the block None so
+      * `("skip", None)`   — repo has no ticket provider; leave the block None so
         `write_pr_cache` leaves the field untouched.
       * `("carry", block)` — the prior snapshot's footer id-set is unchanged and
         still within the TTL backstop; carry it forward verbatim.
@@ -214,9 +239,9 @@ def _decide_linear_refetch(ctx: RepoCycle, pr: PR, now: float) -> tuple[str, obj
     write loop overwrites the file), so a re-link refreshes immediately and an
     independent state transition is caught within the TTL.
     """
-    if not ctx.repo_entry.get("linear_keys"):
+    if _provider(ctx) is None:
         return "skip", None
-    ids = parse_linear_footers(pr.body)
+    ids = _ticket_footer_ids(ctx, pr)
     prior_block = (ctx.pr_payloads.get(pr.branch) or {}).get("linear")
     if prior_block:
         prior_ids = [t.get("id") for t in prior_block.get("tickets", [])]
@@ -253,14 +278,29 @@ def _prefetch_linear_blocks(ctx: RepoCycle) -> None:
             ids: list[str] = data  # type: ignore[assignment]
             builds.append((pr.branch, ids))
             due.update(ids)
-        else:  # skip — repo not Linear-configured
+        else:  # skip — repo has no ticket provider
             ctx.linear_blocks[pr.branch] = None
     if not builds:
         return
-    states = fetch_ticket_states(sorted(due)) if due else {}
+    states = _fetch_ticket_states(ctx, sorted(due)) if due else {}
     for branch, ids in builds:
         tickets = [{"id": tid, "state": states.get(tid)} for tid in ids]
         ctx.linear_blocks[branch] = {"tickets": tickets, "fetched_at": now}
+
+
+def _fetch_ticket_states(ctx: RepoCycle, ids: list[str]) -> dict[str, str | None]:
+    """Resolve `{id: dev-done-comparable state}` via the repo's provider strategy
+    (`cockpit.lib.tickets`). Returns empty when the repo has no provider."""
+    provider = _provider(ctx)
+    if provider is None:
+        return {}
+    return provider.fetch_states(
+        ids,
+        repo_nwo=f"{ctx.owner}/{ctx.name}",
+        repo_dir=str(ctx.repo_path),
+        cfg=ctx.cfg,
+        repo_entry=ctx.repo_entry,
+    )
 
 
 def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
@@ -276,13 +316,14 @@ def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
     """
     if ctx.dry:
         return
-    if not ctx.repo_entry.get("linear_keys"):
+    provider = _provider(ctx)
+    if provider is None:
         return
     tickets = (block or {}).get("tickets") or []
     if not tickets:
         apply_devdone_pill(ref, None)
         return
-    target = linear_dev_done_state(ctx.cfg).casefold()
+    target = provider.dev_done_value(ctx.cfg, ctx.repo_entry).casefold()
     done = [t for t in tickets if (t.get("state") or "").casefold() == target]
     if len(done) != len(tickets):
         apply_devdone_pill(ref, None)
@@ -476,7 +517,35 @@ def _cached_team_states(ctx: RepoCycle, team_id: str) -> dict | None:
     )
 
 
+def _cached_github_viewer(ctx: RepoCycle) -> str | None:
+    """The authenticated `gh` user's login, cached across ticks like the Linear
+    viewer id. The "only close my own issues" gate for the GitHub merge writer.
+    Keyed globally (gh auth is process-wide), reusing the identity TTL cache."""
+    return _cached_linear_identity(
+        ctx,
+        "github-viewer",
+        lambda: github_viewer_login(repo_dir=str(ctx.repo_path)),
+    )
+
+
 def _transition_merged_tickets(ctx: RepoCycle) -> None:
+    """Dispatch the opt-in done-on-merge writer to the repo's ticket provider —
+    Linear (move the ticket to the terminal state) or GitHub (close the issue).
+    Both share the `_is_post_merge_stale` trigger and the `merged-done:` marker;
+    `tickets: none` does nothing. The *one* sanctioned tracker write per provider.
+    """
+    if ctx.dry:
+        return
+    provider = _provider(ctx)
+    if provider is None:
+        return
+    if provider.name == "linear":
+        _transition_merged_linear(ctx)
+    elif provider.name == "github":
+        _transition_merged_github(ctx)
+
+
+def _transition_merged_linear(ctx: RepoCycle) -> None:
     """Opt-in: move a merged PR's delivered Linear tickets to the configured
     terminal state (`linear_merge_done_state`, default "Done").
 
@@ -508,14 +577,14 @@ def _transition_merged_tickets(ctx: RepoCycle) -> None:
     """
     if ctx.dry:
         return
-    if not linear_done_on_merge(ctx.cfg, ctx.repo_entry):
+    if not ticket_close_on_merge(ctx.cfg, ctx.repo_entry):
         return
-    if not ctx.repo_entry.get("linear_keys"):
+    if not linear_team_keys(ctx.cfg, ctx.repo_entry):
         return
     if not os.environ.get(LINEAR_API_KEY_ENV):
         return
 
-    target = linear_merge_done_state(ctx.cfg)
+    target = linear_merge_done_state(ctx.cfg, ctx.repo_entry)
     target_cf = target.casefold()
     # Viewer id resolved lazily on the first real candidate ticket (cached across
     # ticks), so a repo with nothing eligible makes zero Linear calls per tick.
@@ -578,6 +647,77 @@ def _transition_merged_tickets(ctx: RepoCycle) -> None:
                 print(
                     f"  {verb('linear', color=yellow)} {dim(tid)}: "
                     f"transition to {target!r} failed — will retry",
+                    flush=True,
+                )
+
+
+def _transition_merged_github(ctx: RepoCycle) -> None:
+    """Opt-in: close a merged PR's delivered GitHub issues — the analog of
+    `_transition_merged_linear`, but the terminal action is `gh issue close`.
+
+    Gates: `github_done_on_merge` (per-repo over global) and not dry (the
+    dispatcher already checked `dry`). GitHub auto-closes same-repo issues
+    referenced by a closing keyword on merge, so this mainly catches cross-repo
+    refs and issues that were linked but not auto-closed.
+
+    Per delivered issue (read from the cached PR snapshot — the strict closing
+    set, no extra network to discover them):
+      * skip if already evaluated this run (a `merged-done:` marker in
+        `pill_state`, shared with the Linear writer — a repo is one provider);
+      * skip unless the viewer (`gh` auth login, lazy + cached) is among the
+        issue's assignees — never close a teammate's issue;
+      * skip if it's already closed;
+      * otherwise `gh issue close`. A failure clears the marker to retry.
+    """
+    if not ticket_close_on_merge(ctx.cfg, ctx.repo_entry):
+        return
+
+    nwo = f"{ctx.owner}/{ctx.name}"
+    repo_dir = str(ctx.repo_path)
+    viewer: str | None = None
+    viewer_resolved = False
+
+    for wt in ctx.wts:
+        if wt.is_primary or wt.branch in MAIN_BRANCHES:
+            continue
+        if not _is_post_merge_stale(wt, ctx.merged_branches):
+            continue
+        payload = find_pr_payload(wt.branch, ctx.name)
+        tickets = ((payload or {}).get("linear") or {}).get("tickets") or []
+        for entry in tickets:
+            ref = entry.get("id")
+            if not ref:
+                continue
+            marker = f"merged-done:{ctx.owner}/{ctx.name}:{ref}"
+            if ctx.pill_state.get(marker):
+                continue
+            if not viewer_resolved:
+                viewer = _cached_github_viewer(ctx)
+                viewer_resolved = True
+            if not viewer:
+                # Can't confirm ownership → close nothing (fail-safe). No marker,
+                # so a transient viewer-query failure retries next tick.
+                continue
+            issue = fetch_issue(ref, repo_nwo=nwo, repo_dir=repo_dir)
+            if not issue:
+                continue  # transient failure → no marker, retry next tick
+            # Evaluated; mark so a kept merged worktree doesn't re-query each tick.
+            ctx.pill_state[marker] = True
+            if viewer not in (issue.get("assignees") or []):
+                continue
+            if issue.get("state") == "closed":
+                continue  # already done
+            if close_issue(ref, repo_nwo=nwo, repo_dir=repo_dir):
+                print(
+                    f"  {verb('github')} {ref} closed {dim(f'(merged {wt.short})')}",
+                    flush=True,
+                )
+            else:
+                # Close failed — clear the marker so a later tick retries.
+                ctx.pill_state.pop(marker, None)
+                print(
+                    f"  {verb('github', color=yellow)} {dim(ref)}: "
+                    f"close failed — will retry",
                     flush=True,
                 )
 

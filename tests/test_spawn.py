@@ -21,8 +21,9 @@ def _set_config_key(cockpit_repo, key: str, value) -> None:
     """Mutate the on-disk config.json the `cockpit_repo` fixture wrote.
 
     `load_config()` re-reads the file on every call, so an in-place edit is
-    enough — no module reload required. Used by Linear-flow tests that need
-    `use_linear: true` (the fixture defaults `use_linear` to absent → False).
+    enough — no module reload required. Used by ticket-flow tests that need
+    `tickets: linear` / `tickets: github` (the fixture defaults `tickets` to
+    absent → "none").
     """
     cfg_path = cockpit_repo.cockpit_home / "config.json"
     data = json.loads(cfg_path.read_text())
@@ -88,6 +89,37 @@ def test_linear_id_inside_path_stays_branch():
     mode, value, _ = detect_source("khivi/PE-1234-foo")
     assert mode == "branch"
     assert value == "khivi/PE-1234-foo"
+
+
+# ── gh-issue detection ──────────────────────────────────────────────────────
+
+
+def test_issue_url_returns_gh_issue_mode_with_nwo():
+    mode, value, nwo = detect_source("https://github.com/o/r/issues/42")
+    assert mode == "gh-issue"
+    assert value == "42"
+    assert nwo == "o/r"
+
+
+def test_pr_url_still_pr_not_gh_issue():
+    mode, value, nwo = detect_source("https://github.com/o/r/pull/42")
+    assert mode == "pr"
+    assert value == "42" and nwo == "o/r"
+
+
+@pytest.mark.parametrize("token", ["i#42", "gh#42", "I#42"])
+def test_issue_shorthand_returns_gh_issue_mode(token):
+    mode, value, nwo = detect_source(token)
+    assert mode == "gh-issue"
+    assert value == "42"
+    assert nwo is None
+
+
+def test_bare_hash_number_stays_pr_not_issue():
+    """`#42` is ambiguous (PR/issue share a number space) → stays PR mode."""
+    mode, value, _ = detect_source("#42")
+    assert mode == "pr"
+    assert value == "42"
 
 
 def test_actions_run_url_returns_actions_mode_and_nwo():
@@ -752,7 +784,7 @@ def test_positional_linear_lowercase_input_normalised(spawn_main):
 def test_positional_linear_prompt_instructs_mcp_fetch(
     spawn_main, cockpit_repo, monkeypatch
 ):
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
@@ -777,7 +809,7 @@ def test_positional_linear_prompt_instructs_branch_rename(
     the ticket title slug — that's how the title gets into the branch name
     without cockpit ever calling the Linear API. The prompt reads the current
     branch via git so it's robust against `-2`/`-3` collision bumping."""
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
@@ -793,7 +825,7 @@ def test_positional_linear_prompt_instructs_workspace_rename(
     """Step 3: drop the `pe-1234`-style placeholder from the cmux workspace name
     by renaming it to the same `<slug>` derived from the Linear title.
     `CMUX_WORKSPACE_ID` is the default target; `cmux identify` is the fallback."""
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
@@ -844,7 +876,7 @@ def test_linear_on_but_mcp_missing_falls_back_with_warning(
 ):
     """use_linear: true + `claude mcp list` reports no Linear entry → warn
     on stderr and seed the generic plan prompt, not the rename prompt."""
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "linear_mcp_available", lambda: False)
@@ -864,7 +896,7 @@ def test_linear_on_with_inconclusive_probe_seeds_smart_prompt(
     """use_linear: true + probe returns None (claude missing / timeout) →
     proceed with the smart flow; Claude itself STOPs on the first turn if
     the MCP is truly missing."""
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
@@ -947,7 +979,7 @@ def test_trailing_addendum_is_appended_to_seeded_prompt(
 ):
     """Trailing `-- <text>` is appended to the auto-seeded Linear/skill/plan
     prompt rather than replacing it — preserves the plan-only safety guard."""
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
@@ -1132,7 +1164,7 @@ def _add_linear_keys(cockpit_repo, keys: list[str], repo_name: str = "testrepo")
 def test_linear_key_routes_to_matching_repo_without_repo_flag(
     spawn_main, cockpit_repo, monkeypatch
 ):
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     _add_linear_keys(cockpit_repo, ["PE"])
     import cockpit.spawn as spawn
 
@@ -1143,7 +1175,7 @@ def test_linear_key_routes_to_matching_repo_without_repo_flag(
 
 
 def test_linear_key_routing_case_insensitive(spawn_main, cockpit_repo, monkeypatch):
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     _add_linear_keys(cockpit_repo, ["pe"])
     import cockpit.spawn as spawn
 
@@ -1156,7 +1188,7 @@ def test_linear_key_routing_case_insensitive(spawn_main, cockpit_repo, monkeypat
 def test_linear_key_routing_explicit_repo_wins(spawn_main, cockpit_repo, monkeypatch):
     """With `--repo testrepo` set, the team-key lookup is skipped — even
     if the lookup would otherwise route elsewhere or find nothing."""
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     # No linear_keys configured anywhere; --repo still drives the spawn.
     import cockpit.spawn as spawn
 
@@ -1186,7 +1218,7 @@ def test_linear_key_routing_multi_match_warns_and_falls_back(
 ):
     """Two repos declaring `PE` → stderr note, fall back to cwd discovery
     (which fails under tests)."""
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     cfg_path = cockpit_repo.cockpit_home / "config.json"
     data = json.loads(cfg_path.read_text())
     data["repos"][0]["linear_keys"] = ["PE"]
@@ -1217,7 +1249,7 @@ def test_linear_key_routing_no_match_falls_back_to_cwd(
 ):
     """No repo declares the key → no auto-routing, fall back to cwd
     discovery (which fails under tests)."""
-    _set_config_key(cockpit_repo, "use_linear", True)
+    _set_config_key(cockpit_repo, "tickets", "linear")
     _add_linear_keys(cockpit_repo, ["ENG"])  # different prefix
     import cockpit.spawn as spawn
 
@@ -1427,3 +1459,75 @@ def test_path_fallback_exception_is_swallowed(spawn_main, monkeypatch, cockpit_r
     assert code == 0
     # Falls through to creating a new workspace.
     assert any("new-workspace" in str(c) for c in spawn_main.cmux_calls)
+
+
+# ── gh-issue dispatch ───────────────────────────────────────────────────────
+#
+# A GitHub issue URL / `i#N` shorthand creates a worktree on `issue-<N>` and,
+# under `tickets: github`, seeds a first-turn prompt instructing Claude to read
+# the issue via `gh issue view` and rename the branch + workspace. Cockpit does
+# NOT call the GitHub API for the prompt — only prompt + branch shape + gating.
+
+
+def test_positional_gh_issue_creates_issue_branch(spawn_main):
+    code, out, _err = spawn_main(["i#42", "--repo", "testrepo"])
+    assert code == 0
+    assert "on khivi/issue-42" in out
+    call = spawn_main.cmux_calls[0]
+    assert _cmux_kwarg(call, "name") == "issue-42"
+
+
+def test_gh_issue_prompt_seeded_under_tickets_github(spawn_main, cockpit_repo):
+    _set_config_key(cockpit_repo, "tickets", "github")
+    spawn_main(["i#42", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "gh issue view 42" in cmd
+    assert "GitHub issue #42" in cmd
+    assert "PLAN ONLY" in cmd
+    assert "Closes #42" in cmd  # instructs adding the closing-keyword footer
+
+
+def test_gh_issue_url_prompt_includes_repo(spawn_main, cockpit_repo):
+    _set_config_key(cockpit_repo, "tickets", "github")
+    spawn_main(["https://github.com/o/r/issues/42", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "gh issue view 42 --repo o/r" in cmd
+    assert "o/r#42" in cmd
+
+
+def test_gh_issue_without_provider_seeds_plan_only(spawn_main, cockpit_repo):
+    """tickets unset (default none) → branch still created, generic plan prompt,
+    no `gh issue view` fetch instructions."""
+    spawn_main(["i#42", "--repo", "testrepo"])
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "gh issue view" not in cmd
+    assert "PLAN ONLY" in cmd  # is_gh_issue still seeds plan-only
+
+
+def test_gh_issue_spawn_applies_start_label(spawn_main, cockpit_repo, monkeypatch):
+    """With `tickets.start_label` set, spawning a worktree on an issue marks it
+    'work started' via `gh issue edit --add-label` (best-effort)."""
+    _set_config_key(
+        cockpit_repo, "tickets", {"provider": "github", "start_label": "accepted"}
+    )
+    import cockpit.spawn as spawn
+
+    calls = []
+    monkeypatch.setattr(
+        spawn, "add_label", lambda ref, label, **kw: calls.append((ref, label)) or True
+    )
+    spawn_main(["i#42", "--repo", "testrepo"])
+    assert calls == [("#42", "accepted")]
+
+
+def test_gh_issue_spawn_no_label_when_unset(spawn_main, cockpit_repo, monkeypatch):
+    """No `start_label` → no GitHub write on spawn."""
+    _set_config_key(cockpit_repo, "tickets", {"provider": "github"})
+    import cockpit.spawn as spawn
+
+    calls = []
+    monkeypatch.setattr(
+        spawn, "add_label", lambda ref, label, **kw: calls.append((ref, label)) or True
+    )
+    spawn_main(["i#42", "--repo", "testrepo"])
+    assert calls == []
