@@ -175,7 +175,7 @@ class CockpitApp(App[None]):
         ("f", "focus_row", "Focus"),
         ("w", "open_workspace", "Open workspace"),
         ("p", "open_pr", "Open PR"),
-        ("l", "open_ticket", "Open ticket"),
+        ("t", "open_ticket", "Open ticket"),
         ("o", "show_output", "Output"),
         ("c", "close_row", "Close"),
         ("C", "force_close_row", "Force close"),
@@ -229,18 +229,18 @@ class CockpitApp(App[None]):
         # still captured (below) so tick prints can't corrupt the screen.
         cfg = load_config()
         repos = cfg.get("repos", [])
-        # Ticket columns + the `l` "open ticket" key appear for any provider
+        # Ticket columns + the `t` "open ticket" key appear for any provider
         # (linear OR github) — the open action routes through the row's provider
         # (`tickets.provider_for`), so it's no longer Linear-specific.
         show_tickets = any(repo_tickets(cfg, r) != "none" for r in repos)
         yield HeaderBar(id="header")
         yield WorktreeTable(show_tickets=show_tickets, id="table")
         # Grouped footer: row keys (left) vs global keys (right). The `u` update
-        # key stays hidden until `_set_update` reveals it; the `l` ticket key
+        # key stays hidden until `_set_update` reveals it; the `t` ticket key
         # shows only when some repo has a ticket provider; backend-divergent keys
         # follow `resolve_tool()` (see FooterBar.BACKEND_ACTIONS). Row keys are
         # further gated per-row by the highlighted row's capabilities
-        # (`_refresh_footer_caps`): `p`/`m` need a PR, `l` needs a ticket.
+        # (`_refresh_footer_caps`): `p`/`m` need a PR, `t` needs a ticket.
         yield FooterBar(
             self.BINDINGS,
             show_tickets=show_tickets,
