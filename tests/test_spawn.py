@@ -1512,10 +1512,13 @@ def test_gh_issue_spawn_applies_start_label(spawn_main, cockpit_repo, monkeypatc
     )
     import cockpit.spawn as spawn
 
-    calls = []
-    monkeypatch.setattr(
-        spawn, "add_label", lambda ref, label, **kw: calls.append((ref, label)) or True
-    )
+    calls: list[tuple[str, str]] = []
+
+    def _record(ref, label, **kw):
+        calls.append((ref, label))
+        return True
+
+    monkeypatch.setattr(spawn, "add_label", _record)
     spawn_main(["i#42", "--repo", "testrepo"])
     assert calls == [("#42", "accepted")]
 
@@ -1525,9 +1528,12 @@ def test_gh_issue_spawn_no_label_when_unset(spawn_main, cockpit_repo, monkeypatc
     _set_config_key(cockpit_repo, "tickets", {"provider": "github"})
     import cockpit.spawn as spawn
 
-    calls = []
-    monkeypatch.setattr(
-        spawn, "add_label", lambda ref, label, **kw: calls.append((ref, label)) or True
-    )
+    calls: list[tuple[str, str]] = []
+
+    def _record(ref, label, **kw):
+        calls.append((ref, label))
+        return True
+
+    monkeypatch.setattr(spawn, "add_label", _record)
     spawn_main(["i#42", "--repo", "testrepo"])
     assert calls == []

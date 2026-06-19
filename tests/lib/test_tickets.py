@@ -69,7 +69,7 @@ def test_github_fetch_states_maps_label_to_dev_done():
 
 def test_github_fetch_states_custom_label_from_object():
     issues = {"#1": {"labels": ["qa ok"], "state": "open"}}
-    cfg = {}
+    cfg: dict = {}
     repo = {"tickets": {"provider": "github", "dev_done_label": "qa ok"}}
     with patch.object(tickets, "fetch_issues", return_value=issues):
         out = tickets.GITHUB.fetch_states(
