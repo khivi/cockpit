@@ -43,7 +43,7 @@ class FooterBar(Horizontal):
     """
 
     # Actions that operate on the selected row's workspace → left group. Anything
-    # not listed (sync, update, quit, the command palette) is global → right.
+    # not listed (sync, update, quit) is global → right.
     ROW_ACTIONS = frozenset(
         {
             "focus_row",
@@ -59,8 +59,7 @@ class FooterBar(Horizontal):
     )
 
     # Explicit render order for the global (right) group — independent of BINDINGS
-    # order. Actions not listed here render after these, in BINDINGS order. The
-    # command palette is always appended last (it has no BINDINGS entry).
+    # order. Actions not listed here render after these, in BINDINGS order.
     GLOBAL_ORDER = ("new_workspace", "sync", "show_output", "update", "quit")
 
     # One-word footer label per action — the BINDINGS descriptions are verbose
@@ -191,8 +190,6 @@ class FooterBar(Horizontal):
                 right.append((order, len(right), seg))
         right.sort()
         right_segs = [seg for _, _, seg in right]
-        # The built-in command palette has no app BINDINGS entry — surface it last.
-        right_segs.append("[@click=app.command_palette][b]^p[/b][/] Palette")
         self.row_text = "   ".join(left)
         self.global_text = "   ".join(right_segs)
         self.query_one("#footer-row", Static).update(self.row_text)
