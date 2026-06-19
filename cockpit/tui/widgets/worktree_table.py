@@ -87,6 +87,12 @@ _LINEAR_STATUS_ICONS: tuple[tuple[str, str, str], ...] = (
     ("complete", "🟢", "green"),
     ("ship", "🟢", "green"),
     ("deploy", "🟢", "green"),
+    # GitHub-issue states (the `tickets: github` provider reports open/closed
+    # when the issue lacks the dev-done label — the label itself, e.g. "ready
+    # for review", matches "review" above). Closed reads as done; open as
+    # in-progress.
+    ("closed", "🟢", "green"),
+    ("open", "🚧", "cyan"),
     ("backlog", "📋", "grey50"),
     ("triage", "🩺", "grey50"),
     ("todo", "⬜", "grey50"),
@@ -232,6 +238,30 @@ def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
     return Text(ids, style="magenta"), Text(" ").join(icons)
 
 
+def row_capabilities(
+    wt: Worktree, repo_name: str, tickets_enabled: bool
+) -> frozenset[str]:
+    """The highlighted-row capability tokens the footer gates its row keys on,
+    read from the same daemon-written cells the cells render from (no network):
+
+      * ``"pr"``     — a PR is cached for the branch (`pr-num`), so `p`/`m` apply;
+      * ``"ticket"`` — the repo has a provider and the PR delivers a ticket, so
+        `l` applies;
+      * ``"muted"``  — the PR's nudges are muted (`pr-muted`), so `m` reads
+        "Unmute".
+    """
+    caps: set[str] = set()
+    if read_text(branch_cache("pr-num", wt.branch)):
+        caps.add("pr")
+    if read_text(branch_cache("pr-muted", wt.branch)):
+        caps.add("muted")
+    if tickets_enabled and (
+        (find_pr_payload(wt.branch, repo_name) or {}).get("linear") or {}
+    ).get("tickets"):
+        caps.add("ticket")
+    return frozenset(caps)
+
+
 def worktree_cells(
     wt: Worktree,
     repo_name: str,
@@ -304,6 +334,10 @@ class WorktreeTable(DataTable):
     def __init__(self, *, show_tickets: bool = False, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._show_tickets = show_tickets
+        # worktree path → row capability tokens, rebuilt each `update_inventory`
+        # so `current_capabilities()` can gate the footer's row keys without a
+        # re-read.
+        self._row_caps: dict[str, frozenset[str]] = {}
 
     def on_mount(self) -> None:
         self.cursor_type = "row"
@@ -316,6 +350,15 @@ class WorktreeTable(DataTable):
             return None
         row_key, _ = self.coordinate_to_cell_key(self.cursor_coordinate)
         return row_key.value
+
+    def current_capabilities(self) -> frozenset[str] | None:
+        """The highlighted row's capability tokens (for footer row-key gating),
+        or None when the table is empty — so the footer shows the full legend
+        rather than gating against an empty set."""
+        path = self.current_path()
+        if path is None:
+            return None
+        return self._row_caps.get(path, frozenset())
 
     def action_request_focus(self) -> None:
         path = self.current_path()
@@ -336,6 +379,7 @@ class WorktreeTable(DataTable):
         same row index so a refresh doesn't yank the selection away."""
         saved = self.cursor_row
         self.clear()
+        self._row_caps = {}
         for repo_name, repo_color, tickets_enabled, wts in inventory:
             for wt in wts:
                 self.add_row(
@@ -347,6 +391,9 @@ class WorktreeTable(DataTable):
                         show_tickets=self._show_tickets,
                     ),
                     key=str(wt.path),
+                )
+                self._row_caps[str(wt.path)] = row_capabilities(
+                    wt, repo_name, tickets_enabled
                 )
         if self.row_count:
             self.move_cursor(row=min(saved, self.row_count - 1))

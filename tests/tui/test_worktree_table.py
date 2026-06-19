@@ -30,6 +30,7 @@ from cockpit.tui.widgets.worktree_table import (
     _comments_cell,
     _linear_status_icon,
     column_labels,
+    row_capabilities,
     worktree_cells,
 )
 
@@ -57,7 +58,7 @@ def test_cell_count_matches_columns(cache_dir):
     assert cols[0] == "Workspace" and cols[1] == "PR" and cols[2] == "Author"
     assert cols[3] == _APPROVAL_ICON
     assert cols[6] == _DIRTY_ICON  # Dirty column header is now an icon
-    # Ticket + Status columns added only when show_linear, interleaved:
+    # Ticket + Status columns added only when show_tickets, interleaved:
     # Ticket right after Author, Status right after the PR-state column.
     lin = column_labels(show_tickets=True)
     assert len(_plain(_wt(), show_tickets=True)) == len(lin) == 10
@@ -210,6 +211,9 @@ def test_ticket_and_status_columns_when_enabled(cache_dir, monkeypatch):
         ("Backlog", "📋", "grey50"),
         ("Todo", "⬜", "grey50"),
         ("Canceled", "🚫", "red"),
+        # GitHub-issue states (the `tickets: github` provider's open/closed).
+        ("closed", "🟢", "green"),
+        ("open", "🚧", "cyan"),
     ],
 )
 def test_linear_status_icon_mapping(state, icon, style):
@@ -251,8 +255,33 @@ def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
 
 
 def test_no_linear_columns_when_not_configured(cache_dir):
-    # show_linear False → no Ticket/Status cells
+    # show_tickets False → no Ticket/Status cells
     assert len(_plain(_wt(), linear=True, show_tickets=False)) == 8
+
+
+def test_row_capabilities_pr_muted_ticket(cache_dir, monkeypatch):
+    # The footer's per-row gating tokens, read from the same daemon-written cells
+    # the cells render from: `pr` (pr-num), `muted` (pr-muted), `ticket`
+    # (delivered ticket in the cached block, only when the repo is provider-on).
+    wt = _wt(branch="khivi/caps")
+    cache_mod.branch_cache("pr-num", wt.branch).write_text("7")
+    cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: {"linear": {"tickets": [{"id": "#42", "state": "open"}]}},
+    )
+    assert row_capabilities(wt, "r", True) == frozenset({"pr", "muted", "ticket"})
+    # tickets disabled for this repo → no ticket token even with a cached block
+    assert row_capabilities(wt, "r", False) == frozenset({"pr", "muted"})
+
+
+def test_row_capabilities_empty_without_pr(cache_dir, monkeypatch):
+    wt = _wt(branch="khivi/bare")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: None,
+    )
+    assert row_capabilities(wt, "r", True) == frozenset()
 
 
 def test_muted_pr_prefixes_workspace_glyph(cache_dir):

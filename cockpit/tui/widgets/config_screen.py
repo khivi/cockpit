@@ -1,10 +1,10 @@
 """Modal config viewer + command-palette commands.
 
-`ConfigScreen` is a read-only scrollable overlay that prints a JSON blob (a
-single repo's config, or the whole `config.json`). `ConfigCommands` registers
-"Show config: …" / "Edit config" entries in the built-in command palette
-(Ctrl+P): the show entries resolve the *currently selected* repo (the cursor
-row's repo) and push the screen; the edit entry opens `config.json` in $EDITOR.
+`ConfigScreen` is a read-only scrollable overlay that prints a JSON blob (the
+whole `config.json`). `ConfigCommands` registers "Show config: all repos" /
+"Edit config" entries in the built-in command palette (Ctrl+P): the show entry
+pushes the screen with the full config; the edit entry opens `config.json` in
+$EDITOR.
 
 Like the rest of the TUI the *viewer* never writes a cell — it only reads
 `load_config()`. The edit entry delegates to `app.action_edit_config`, the one
@@ -67,11 +67,6 @@ class ConfigCommands(Provider):
         matcher = self.matcher(query)
         app = self.app
         commands = (
-            (
-                "Show config: current repo",
-                "action_show_repo_config",
-                "Show the cockpit config for the selected row's repo",
-            ),
             (
                 "Show config: all repos",
                 "action_show_full_config",

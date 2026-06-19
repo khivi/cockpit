@@ -203,3 +203,19 @@ def test_add_label_unparseable_ref_no_network():
     with patch.object(gh.subprocess, "run") as run:
         assert gh.add_label("nope", "accepted", repo_nwo="o/r") is False
     run.assert_not_called()
+
+
+# ── issue_url (the `tickets: github` provider's ticket URL) ──────────────────
+
+
+def test_issue_url_same_repo_resolves_nwo():
+    assert gh.issue_url("#42", "o/r") == "https://github.com/o/r/issues/42"
+
+
+def test_issue_url_cross_repo_keeps_own_nwo():
+    assert gh.issue_url("other/x#9", "o/r") == "https://github.com/other/x/issues/9"
+
+
+def test_issue_url_none_without_nwo_or_number():
+    assert gh.issue_url("#5", None) is None
+    assert gh.issue_url("nope", "o/r") is None

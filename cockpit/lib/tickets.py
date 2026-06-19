@@ -19,12 +19,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from .config import github_dev_done_label, linear_dev_done_state, repo_tickets
+from .gh import pr_body
 from .github_issues import CONFIG_FIELDS as _GITHUB_CONFIG_FIELDS
-from .github_issues import fetch_issues, parse_github_issue_refs
+from .github_issues import fetch_issues, issue_url, parse_github_issue_refs
 from .linear import CONFIG_FIELDS as _LINEAR_CONFIG_FIELDS
-from .linear import fetch_ticket_states, parse_linear_footers
+from .linear import fetch_ticket_states, parse_linear_footer_links, parse_linear_footers
 
 # ── config-field schema (drives preflight validation) ───────────────────────
 #
@@ -94,6 +96,13 @@ class TicketProvider:
     # repo_entry)` exactly when the ticket/issue is dev-done, so
     # `_track_dev_done` is provider-neutral.
     fetch_states: Callable[..., dict[str, str | None]]
+    # (ref, *, repo_nwo, repo_dir, pr_number) → the ticket's web URL, or None.
+    # GitHub builds it deterministically from ref + repo_nwo; Linear has no
+    # constructable URL (workspace slug unknown), so it reads the PR body's
+    # `Linear: [ID](url)` footer link via repo_dir + pr_number. Both ignore the
+    # kwargs the other needs — the TUI's "open ticket" action passes all four so
+    # neither provider has to branch on the caller.
+    ticket_url: Callable[..., str | None]
 
 
 def _github_fetch_states(
@@ -122,6 +131,37 @@ def _github_fetch_states(
     return out
 
 
+def _github_ticket_url(
+    ref: str,
+    *,
+    repo_nwo: str | None = None,
+    repo_dir: str | None = None,
+    pr_number: int | None = None,
+) -> str | None:
+    """Deterministic GitHub issue URL from the delivered ref + the PR's repo nwo.
+    No network: `repo_dir`/`pr_number` are unused (kept for the uniform
+    `ticket_url` signature)."""
+    return issue_url(ref, repo_nwo)
+
+
+def _linear_ticket_url(
+    ref: str,
+    *,
+    repo_nwo: str | None = None,
+    repo_dir: str | None = None,
+    pr_number: int | None = None,
+) -> str | None:
+    """The Linear ticket URL — read from the PR body's `Linear: [ID](url)` footer
+    link (the canonical URL can't be hand-constructed; the workspace slug isn't
+    known). Needs `repo_dir` (the worktree, so `gh` resolves the repo) and
+    `pr_number`; `repo_nwo` is unused. None when the body can't be fetched or has
+    no matching footer link."""
+    if not repo_dir or not pr_number:
+        return None
+    links = dict(parse_linear_footer_links(pr_body(Path(repo_dir), pr_number)))
+    return links.get(ref.upper())
+
+
 def _linear_fetch_states(
     ids: list[str],
     *,
@@ -142,6 +182,7 @@ LINEAR = TicketProvider(
     dev_done_value=linear_dev_done_state,
     parse_footers=lambda body, _nwo: parse_linear_footers(body),
     fetch_states=_linear_fetch_states,
+    ticket_url=_linear_ticket_url,
 )
 
 GITHUB = TicketProvider(
@@ -149,6 +190,7 @@ GITHUB = TicketProvider(
     dev_done_value=github_dev_done_label,
     parse_footers=parse_github_issue_refs,
     fetch_states=_github_fetch_states,
+    ticket_url=_github_ticket_url,
 )
 
 _PROVIDERS: dict[str, TicketProvider] = {"linear": LINEAR, "github": GITHUB}

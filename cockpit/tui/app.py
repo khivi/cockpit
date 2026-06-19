@@ -71,9 +71,9 @@ from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.daemon_signal import enqueue
 from cockpit.lib.gh import PR
 from cockpit.lib.git import Worktree, worktrees
-from cockpit.lib.linear import parse_linear_footer_links
 from cockpit.lib.nudges import load_pref, save_pref
 from cockpit.lib.teardown_types import TeardownRequest
+from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
 from cockpit.orchestrators.teardown import probe_blockers, worktree_state_blockers
 from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
@@ -132,18 +132,15 @@ def _pr_from_payload(p: dict) -> PR:
     )
 
 
-def _pr_body(cwd: Path, number: int) -> str:
-    """A PR's body via `gh` (cwd = the worktree, so gh resolves the repo from
-    its git remote). Empty on any failure — the caller degrades gracefully."""
-    import subprocess
+def _nwo_from_pr_url(url: str | None) -> str | None:
+    """`owner/repo` parsed from a cached GitHub PR URL
+    (`https://github.com/owner/repo/pull/N`), or None. Resolves a same-repo
+    `#N` GitHub issue ref to its repo for the ticket-URL lookup — no network,
+    unlike `gh.repo_nwo`."""
+    import re
 
-    res = subprocess.run(
-        ["gh", "pr", "view", str(number), "--json", "body", "-q", ".body"],
-        capture_output=True,
-        text=True,
-        cwd=str(cwd),
-    )
-    return res.stdout if res.returncode == 0 else ""
+    m = re.match(r"https?://github\.com/([\w.-]+/[\w.-]+)/pull/\d+", url or "")
+    return m.group(1) if m else None
 
 
 class _QueueWriter(io.TextIOBase):
@@ -178,8 +175,7 @@ class CockpitApp(App[None]):
         ("f", "focus_row", "Focus"),
         ("w", "open_workspace", "Open workspace"),
         ("p", "open_pr", "Open PR"),
-        ("l", "open_linear", "Open Linear"),
-        ("r", "show_repo_config", "Repo config"),
+        ("l", "open_ticket", "Open ticket"),
         ("o", "show_output", "Output"),
         ("c", "close_row", "Close"),
         ("C", "force_close_row", "Force close"),
@@ -233,20 +229,21 @@ class CockpitApp(App[None]):
         # still captured (below) so tick prints can't corrupt the screen.
         cfg = load_config()
         repos = cfg.get("repos", [])
-        # Ticket columns appear for any provider (linear OR github); the `l`
-        # Linear-URL footer key stays linear-specific (a github row has no
-        # Linear URL to open).
+        # Ticket columns + the `l` "open ticket" key appear for any provider
+        # (linear OR github) — the open action routes through the row's provider
+        # (`tickets.provider_for`), so it's no longer Linear-specific.
         show_tickets = any(repo_tickets(cfg, r) != "none" for r in repos)
-        show_linear = any(repo_tickets(cfg, r) == "linear" for r in repos)
         yield HeaderBar(id="header")
         yield WorktreeTable(show_tickets=show_tickets, id="table")
         # Grouped footer: row keys (left) vs global keys (right). The `u` update
-        # key stays hidden until `_set_update` reveals it; the `l` Linear key
-        # shows only when a repo is Linear-configured; backend-divergent keys
-        # follow `resolve_tool()` (see FooterBar.BACKEND_ACTIONS).
+        # key stays hidden until `_set_update` reveals it; the `l` ticket key
+        # shows only when some repo has a ticket provider; backend-divergent keys
+        # follow `resolve_tool()` (see FooterBar.BACKEND_ACTIONS). Row keys are
+        # further gated per-row by the highlighted row's capabilities
+        # (`_refresh_footer_caps`): `p`/`m` need a PR, `l` needs a ticket.
         yield FooterBar(
             self.BINDINGS,
-            show_linear=show_linear,
+            show_tickets=show_tickets,
             backend=resolve_tool(),
             id="footer",
         )
@@ -504,6 +501,19 @@ class CockpitApp(App[None]):
             for wt in wts
         }
         self.query_one(WorktreeTable).update_inventory(inventory)
+        # A refresh can change the highlighted row's state (PR/ticket/mute) or
+        # the row set, so re-gate the footer's row keys to the current row.
+        self._refresh_footer_caps()
+
+    def _refresh_footer_caps(self) -> None:
+        """Push the highlighted row's capabilities to the footer so its row-key
+        hints follow the selection: `p`/`m` only when the row has a PR, `l` only
+        with a ticket, and `m` reads "Unmute" when the row's PR is muted. Cheap
+        (cache-cell reads) and UI-thread only. None (no row) → the footer shows
+        the full row-key set."""
+        with contextlib.suppress(Exception):
+            caps = self.query_one(WorktreeTable).current_capabilities()
+            self.query_one(FooterBar).set_row_state(caps)
 
     def _repo_config_for_path(self, path: str | None) -> dict | None:
         """The full config dict for the repo owning `path` (the cursor row).
@@ -521,15 +531,6 @@ class CockpitApp(App[None]):
                 if display == name:
                     return repo
         return repos[0] if len(repos) == 1 else None
-
-    def action_show_repo_config(self) -> None:
-        path = self.query_one(WorktreeTable).current_path()
-        repo = self._repo_config_for_path(path)
-        if repo is None:
-            self.notify("no repo selected", severity="warning", timeout=4.0)
-            return
-        name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
-        self.push_screen(ConfigScreen(f"config: {name}", json.dumps(repo, indent=2)))
 
     def action_show_full_config(self) -> None:
         cfg = load_config()
@@ -612,10 +613,10 @@ class CockpitApp(App[None]):
         if path:
             self._open_pr_url(path)
 
-    def action_open_linear(self) -> None:
+    def action_open_ticket(self) -> None:
         path = self.query_one(WorktreeTable).current_path()
         if path:
-            self._open_linear_url(path)
+            self._open_ticket_url(path)
 
     def action_close_row(self) -> None:
         path = self.query_one(WorktreeTable).current_path()
@@ -679,6 +680,11 @@ class CockpitApp(App[None]):
             self.notify("no update available", severity="information", timeout=4.0)
             return
         self.exit(return_code=RESTART_EXIT_CODE, message="updating cockpit…")
+
+    def on_data_table_row_highlighted(self, event: object) -> None:
+        # Arrow-key navigation moves the row cursor → re-gate the footer's row
+        # keys to the newly highlighted row (cache-cell reads only, no network).
+        self._refresh_footer_caps()
 
     def on_worktree_table_focus_request(
         self, event: WorktreeTable.FocusRequest
@@ -807,31 +813,40 @@ class CockpitApp(App[None]):
         self._notify(f"opening PR #{payload.get('number')}")
 
     @work(thread=True, group="open", exit_on_error=False)
-    def _open_linear_url(self, path_str: str) -> None:
-        # The cached Linear block carries only ticket ids; the canonical URL is
-        # never hand-constructed (workspace slug unknown), so fetch the PR body
-        # and open the exact `Linear: [ID](url)` footer link.
+    def _open_ticket_url(self, path_str: str) -> None:
+        # Open the row's delivered ticket — provider-neutral, routed through the
+        # repo's `TicketProvider.ticket_url` (`tickets.provider_for`). GitHub
+        # builds the URL deterministically from the ref + the PR's repo nwo;
+        # Linear reads the exact `Linear: [ID](url)` footer link out of the PR
+        # body (its canonical URL can't be hand-constructed). The cached block is
+        # stored under the (historically named) `linear` key for both providers.
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
             self._notify("no worktree for this row", severity="warning")
             return
         repo, wt = resolved
+        provider = provider_for(load_config(), repo)
+        if provider is None:
+            self._notify("tickets not enabled for this repo", severity="warning")
+            return
         repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
         payload = find_pr_payload(wt.branch, repo_name)
         tickets = ((payload or {}).get("linear") or {}).get("tickets") or []
         if not payload or not tickets:
-            self._notify("no Linear ticket for this row", severity="warning")
+            self._notify("no ticket for this row", severity="warning")
             return
-        links = dict(parse_linear_footer_links(_pr_body(wt.path, payload["number"])))
         ticket_id = str(tickets[0].get("id", ""))
-        url = links.get(ticket_id)
+        url = provider.ticket_url(
+            ticket_id,
+            repo_nwo=_nwo_from_pr_url(payload.get("url")),
+            repo_dir=wt.path,
+            pr_number=payload["number"],
+        )
         if not url:
-            self._notify(
-                f"no Linear URL in PR #{payload['number']} footer", severity="warning"
-            )
+            self._notify(f"no URL for ticket {ticket_id}", severity="warning")
             return
         self.call_from_thread(self.open_url, url)
-        self._notify(f"opening Linear {ticket_id}")
+        self._notify(f"opening ticket {ticket_id}")
 
     @work(thread=True, group="close", exit_on_error=False)
     def _close_worktree(self, path_str: str, *, force: bool = False) -> None:
