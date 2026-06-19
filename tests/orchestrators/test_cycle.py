@@ -1149,7 +1149,9 @@ def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
 # ── cycle_repo phase ordering ────────────────────────────────────────────────
 
 
-def _stub_repo_cycle(tmp_path, *, headless: bool = False):
+def _stub_repo_cycle(
+    tmp_path, *, headless: bool = False, workspace_state_ok: bool = True
+):
     return cycle.RepoCycle(
         cfg={},
         repo_path=tmp_path,
@@ -1166,12 +1168,14 @@ def _stub_repo_cycle(tmp_path, *, headless: bool = False):
         pill_state={},
         dry=False,
         headless=headless,
+        workspace_state_ok=workspace_state_ok,
     )
 
 
-def _cycle_patches(tmp_path, calls, *, headless=False):
-    ctx = _stub_repo_cycle(tmp_path, headless=headless)
+def _cycle_patches(tmp_path, calls, *, headless=False, has_backend=True, state_ok=True):
+    ctx = _stub_repo_cycle(tmp_path, headless=headless, workspace_state_ok=state_ok)
     return [
+        patch.object(cycle, "has_workspace_backend", return_value=has_backend),
         patch.object(cycle, "_prepare_cycle", return_value=ctx),
         patch.object(cycle, "_write_pr_caches"),
         patch.object(
@@ -1208,9 +1212,10 @@ def _cycle_patches(tmp_path, calls, *, headless=False):
         ),
         patch.object(
             cycle,
-            "_maybe_autoclose",
-            side_effect=lambda *_a, **_kw: calls.append("autoclose"),
+            "_reconcile_worktree_lifecycle",
+            side_effect=lambda *_a, **_kw: calls.append("teardown"),
         ),
+        patch.object(cycle, "_run_repo_skills"),
         patch.object(cycle, "log_ff_advances"),
         patch.object(cycle, "ff_default_branch_worktrees", return_value=[]),
     ]
@@ -1247,17 +1252,43 @@ def test_cycle_repo_phase_order(tmp_path):
         "apply_colors",
         "spawn_missing",
         "transition",
-        "autoclose",
+        "teardown",
     ]
 
 
-def test_cycle_repo_headless_skips_workspace_phases(tmp_path):
-    """When ctx.headless is True (cache_only backend), cycle_repo returns
-    after writing PR caches — none of the 5 workspace phases run."""
+def test_cycle_repo_limux_runs_workspace_and_agnostic_tiers_skips_pills(tmp_path):
+    """limux (headless but has a workspace backend): the workspace tier (spawn)
+    and the backend-agnostic tier (Linear transition + worktree teardown) run;
+    the cmux-only tier is skipped — that includes pills/colors AND
+    `_dedupe_workspaces`, which sorts by the PID in cmux refs (limux refs are
+    UUIDs)."""
     calls: list[str] = []
-    with _enter_all(_cycle_patches(tmp_path, calls, headless=True)):
+    with _enter_all(_cycle_patches(tmp_path, calls, headless=True, has_backend=True)):
         _run_cycle_repo()
-    assert calls == []
+    assert calls == ["spawn_missing", "transition", "teardown"]
+
+
+def test_cycle_repo_no_backend_runs_only_backend_agnostic_tier(tmp_path):
+    """tool == none (headless, no workspace backend): only the backend-agnostic
+    tier runs (Linear transition + worktree teardown); dedupe / spawn / pills are
+    all skipped — there is no workspace tool to drive them."""
+    calls: list[str] = []
+    with _enter_all(_cycle_patches(tmp_path, calls, headless=True, has_backend=False)):
+        _run_cycle_repo()
+    assert calls == ["transition", "teardown"]
+
+
+def test_cycle_repo_limux_degrade_skips_spawn_tier(tmp_path):
+    """limux with an unreliable inventory (`workspace_state` failed → degrade,
+    `ctx.workspace_state_ok=False`): the workspace tier (spawn/skills) is skipped
+    so empty-but-unreliable cwds/names can't dup-spawn live workspaces; the
+    backend-agnostic tier (transition + teardown) still runs."""
+    calls: list[str] = []
+    with _enter_all(
+        _cycle_patches(tmp_path, calls, headless=True, has_backend=True, state_ok=False)
+    ):
+        _run_cycle_repo()
+    assert calls == ["transition", "teardown"]
 
 
 # ── _transition_merged_tickets: the opt-in Linear write at OPEN→MERGED ───────
@@ -3105,3 +3136,109 @@ def test_cycle_all_only_repo_unknown_path_reconciles_nothing():
             only_repo="/nonexistent",
         )
     assert seen == []  # no repo matched the scoped path → nothing reconciled
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Backend gating: worktree teardown is backend-agnostic and must run on limux /
+# none too, not just cmux. The `test_cycle_repo_*` tiers above cover cycle_repo's
+# per-backend gating; these cover _prepare_cycle's graceful degrade and the
+# cycle_all-level drain / sweep gating. Regression guard for the bug where
+# limux's `if ctx.headless: return` stranded every merged worktree.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _prepare_cycle_with_state_failure(tmp_path, *, is_cmux: bool):
+    """Run _prepare_cycle with workspace_state raising CmuxUnavailable on a
+    has-workspace backend; return the resulting ctx (or None)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    with (
+        patch.object(cycle, "repo_nwo", return_value=("o", "n")),
+        patch.object(cycle, "prune_worktrees"),
+        patch.object(cycle, "worktrees", return_value=[]),
+        patch.object(
+            cycle, "workspace_state", side_effect=cycle.CmuxUnavailable("boom")
+        ),
+        patch.object(cycle, "fetch_merged_branches", return_value={}),
+        patch.object(cycle, "list_relevant_prs", return_value=[]),
+        patch.object(cycle, "find_cockpit_workspaces", return_value={}),
+        patch.object(cycle, "origin_head_branch", return_value="main"),
+        patch.object(cycle, "is_cmux", return_value=is_cmux),
+        patch.object(cycle, "has_workspace_backend", return_value=True),
+    ):
+        return cycle._prepare_cycle(
+            {"path": str(repo), "name": "n"},
+            "me",
+            cfg={},
+            pr_cache={},
+            pill_state={},
+            dry=False,
+        )
+
+
+def test_prepare_cycle_limux_degrades_on_workspace_state_failure(tmp_path):
+    """limux: a workspace-listing hiccup must NOT skip the repo — degrade to
+    empty cwds so cache writes + autoclose still happen."""
+    ctx = _prepare_cycle_with_state_failure(tmp_path, is_cmux=False)
+    assert ctx is not None
+    assert ctx.headless is True
+    assert ctx.cwds == {}
+    assert ctx.workspace_state_ok is False  # spawn tier will be skipped this tick
+
+
+def test_prepare_cycle_cmux_skips_on_workspace_state_failure(tmp_path):
+    """cmux: the reconcile is workspace-centric, so a failure still skips the
+    repo (unchanged behavior)."""
+    ctx = _prepare_cycle_with_state_failure(tmp_path, is_cmux=True)
+    assert ctx is None
+
+
+def _run_cycle_all(*, is_cmux: bool, has_backend: bool) -> tuple:
+    """Run cycle_all (cycle_repo stubbed) under a given backend; return the
+    (drain, close_gone, reap) collaborator mocks."""
+    with (
+        patch.object(cycle, "ensure_state_dirs"),
+        patch.object(cycle, "_check_plugin_update"),
+        patch.object(cycle, "cycle_repo"),
+        patch.object(cycle, "_drain_close_requests") as drain,
+        patch.object(cycle, "close_gone_cwd_workspaces") as close_gone,
+        patch.object(cycle, "_reap_workspace_orphans") as reap,
+        patch.object(cycle, "is_cmux", return_value=is_cmux),
+        patch.object(cycle, "has_workspace_backend", return_value=has_backend),
+    ):
+        cycle.cycle_all(
+            {"repos": [{"path": "/x", "name": "n"}]},
+            "me",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+        )
+    return drain, close_gone, reap
+
+
+def test_cycle_all_on_limux_drains_and_sweeps_dead_cwds_not_orphans():
+    """limux: the close-request drain (user-initiated) and the dead-cwd sweep
+    (`close_gone_cwd_workspaces`, no idle gate) run — but the orphan-workspace
+    reaper stays cmux-only: its `workspace_is_idle` gate can't be satisfied on
+    limux (no `idle=` pill), so running it there would only defer forever."""
+    drain, close_gone, reap = _run_cycle_all(is_cmux=False, has_backend=True)
+    drain.assert_called_once()
+    close_gone.assert_called_once()
+    reap.assert_not_called()
+
+
+def test_cycle_all_on_cmux_runs_orphan_reaper():
+    """cmux: the orphan-workspace reaper runs — its idle gate works there."""
+    drain, close_gone, reap = _run_cycle_all(is_cmux=True, has_backend=True)
+    drain.assert_called_once()
+    close_gone.assert_called_once()
+    reap.assert_called_once()
+
+
+def test_cycle_all_drains_close_but_skips_sweeps_without_backend():
+    """tool == none: drain still runs (pure git teardown), but there are no
+    workspaces to sweep."""
+    drain, close_gone, reap = _run_cycle_all(is_cmux=False, has_backend=False)
+    drain.assert_called_once()
+    close_gone.assert_not_called()
+    reap.assert_not_called()

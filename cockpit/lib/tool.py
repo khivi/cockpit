@@ -53,3 +53,13 @@ def is_cmux() -> bool:
 
 def is_limux() -> bool:
     return resolve_tool() == "limux"
+
+
+def has_workspace_backend() -> bool:
+    """True when a workspace tool (cmux or limux) is resolved — i.e. not 'none'.
+
+    Workspace + worktree lifecycle (spawn, close, reap, autoclose's best-effort
+    workspace close) works on both backends; only pills/focus/color additionally
+    require cmux (see `is_cmux`). Resolved fresh each call, like `resolve_tool`.
+    """
+    return resolve_tool() != "none"
