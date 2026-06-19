@@ -87,3 +87,39 @@ def test_linear_fetch_states_delegates():
         )
     assert out == {"PE-1": "Dev Done"}
     f.assert_called_once_with(["PE-1"])
+
+
+def test_github_ticket_url_is_deterministic():
+    # Same-repo ref resolves its nwo from repo_nwo; cross-repo ref carries its
+    # own. No PR-body fetch.
+    p = tickets.GITHUB
+    assert (
+        p.ticket_url("#42", repo_nwo="o/r", repo_dir="/x", pr_number=7)
+        == "https://github.com/o/r/issues/42"
+    )
+    assert (
+        p.ticket_url("other/x#9", repo_nwo="o/r")
+        == "https://github.com/other/x/issues/9"
+    )
+
+
+def test_github_ticket_url_none_without_nwo():
+    # A bare `#N` with no repo nwo can't be resolved to a URL.
+    assert tickets.GITHUB.ticket_url("#5", repo_nwo=None) is None
+
+
+def test_linear_ticket_url_reads_footer_link():
+    body = "Linear: [PE-9](https://linear.app/x/issue/PE-9)"
+    with patch.object(tickets, "pr_body", return_value=body) as pb:
+        url = tickets.LINEAR.ticket_url(
+            "PE-9", repo_nwo="o/r", repo_dir="/wt", pr_number=7
+        )
+    assert url == "https://linear.app/x/issue/PE-9"
+    pb.assert_called_once()
+
+
+def test_linear_ticket_url_none_without_pr_context():
+    # No repo_dir / pr_number → can't fetch the body → no URL (no network call).
+    with patch.object(tickets, "pr_body") as pb:
+        assert tickets.LINEAR.ticket_url("PE-9", repo_dir=None, pr_number=None) is None
+    pb.assert_not_called()

@@ -104,6 +104,21 @@ def short_ref(nwo: str | None, number: int, repo_nwo: str | None) -> str:
     return f"#{number}"
 
 
+def issue_url(ref: str, repo_nwo: str | None) -> str | None:
+    """The canonical web URL for a delivered issue `ref`, or None.
+
+    Deterministic — unlike Linear (whose workspace slug is unknown, forcing a
+    footer-link lookup), a GitHub issue URL is fully determined by its `owner/
+    repo` and number. A same-repo `#N` resolves its nwo from `repo_nwo` (the
+    PR's own repo); a cross-repo `owner/repo#N` carries its own. None when the
+    ref can't be parsed or no nwo is known. This is the `tickets: github`
+    provider's `ticket_url`."""
+    nwo, number = _parse_ref(ref, repo_nwo)
+    if number is None or not nwo:
+        return None
+    return f"https://github.com/{nwo}/issues/{number}"
+
+
 def parse_github_issue_refs(body: str, repo_nwo: str | None) -> list[str]:
     """Return the de-duplicated, order-preserving canonical refs the PR
     *delivers* — every issue named by a GitHub closing keyword in `body`.
