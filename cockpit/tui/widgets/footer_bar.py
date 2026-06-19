@@ -59,7 +59,7 @@ class FooterBar(Horizontal):
 
     # Row actions that only make sense for a row in a given state — gated on the
     # highlighted row's capability tokens (`set_row_state`). `p`/`m` act on a PR;
-    # `l` opens a ticket. An action absent here has no per-row requirement (shown
+    # `t` opens a ticket. An action absent here has no per-row requirement (shown
     # for any row, subject to backend / `show_tickets` gating). When the row caps
     # are unknown (`None`, e.g. an empty table) nothing is capability-gated, so
     # the footer shows the full row-key legend.

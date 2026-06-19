@@ -1142,7 +1142,7 @@ async def test_escape_back_is_noop_on_base_screen():
 
 
 async def test_open_ticket_linear_opens_footer_url(monkeypatch, tmp_path):
-    # `l` routes through the row's provider (`tickets.provider_for`). For a Linear
+    # `t` routes through the row's provider (`tickets.provider_for`). For a Linear
     # repo, the provider reads the exact `Linear: [ID](url)` footer link out of
     # the PR body (no hand-constructed URL).
     wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
@@ -1163,7 +1163,7 @@ async def test_open_ticket_linear_opens_footer_url(monkeypatch, tmp_path):
         await pilot.pause()
         app._render_table([("repo", None, True, [wt])])
         await pilot.pause()
-        await pilot.press("l")
+        await pilot.press("t")
         await pilot.pause(0.6)
     assert opened == ["https://linear.app/x/issue/PE-9"]
 
@@ -1190,7 +1190,7 @@ async def test_open_ticket_github_opens_issue_url(monkeypatch, tmp_path):
         await pilot.pause()
         app._render_table([("repo", None, True, [wt])])
         await pilot.pause()
-        await pilot.press("l")
+        await pilot.press("t")
         await pilot.pause(0.6)
     assert opened == ["https://github.com/ai-needl/repo/issues/42"]
 
@@ -1211,7 +1211,7 @@ async def test_open_ticket_no_ticket_warns(monkeypatch, tmp_path):
         await pilot.pause()
         app._render_table([("repo", None, True, [wt])])
         await pilot.pause()
-        await pilot.press("l")
+        await pilot.press("t")
         await pilot.pause(0.6)
     assert opened == []
     assert any("no ticket" in t for t in toasts)
@@ -1299,7 +1299,7 @@ async def test_footer_shows_ticket_when_configured(monkeypatch):
 
     # A legacy `linear_keys` repo resolves to the linear provider; the ticket key
     # is enabled for any provider (linear or github) — the compose-time global
-    # gate (`show_tickets`) opens, so `l` is no longer globally skipped. (Whether
+    # gate (`show_tickets`) opens, so `t` is no longer globally skipped. (Whether
     # it renders for a *given* row is the separate per-row capability gate,
     # covered by test_footer_gates_row_keys_on_capabilities — asserted here with
     # caps unset to isolate the global gate from the background tick.)
