@@ -61,6 +61,7 @@ from cockpit.lib.config import (
     CONFIG_PATH,
     ensure_state_dirs,
     load_config,
+    repo_tickets,
     reset_config_cache,
     resolve_theme,
     resolve_tui_theme,
@@ -101,6 +102,7 @@ _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
 RESTART_EXIT_CODE = 42
 
 # (repo display name, sidebar_color, linear-enabled, worktrees)
+# (repo display name, sidebar_color, tickets-enabled, worktrees)
 Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
 
 
@@ -229,9 +231,15 @@ class CockpitApp(App[None]):
     def compose(self) -> ComposeResult:
         # Log pane temporarily removed — the table runs full-width. stdout is
         # still captured (below) so tick prints can't corrupt the screen.
-        show_linear = any(r.get("linear_keys") for r in load_config().get("repos", []))
+        cfg = load_config()
+        repos = cfg.get("repos", [])
+        # Ticket columns appear for any provider (linear OR github); the `l`
+        # Linear-URL footer key stays linear-specific (a github row has no
+        # Linear URL to open).
+        show_tickets = any(repo_tickets(cfg, r) != "none" for r in repos)
+        show_linear = any(repo_tickets(cfg, r) == "linear" for r in repos)
         yield HeaderBar(id="header")
-        yield WorktreeTable(show_linear=show_linear, id="table")
+        yield WorktreeTable(show_tickets=show_tickets, id="table")
         # Grouped footer: row keys (left) vs global keys (right). The `u` update
         # key stays hidden until `_set_update` reveals it; the `l` Linear key
         # shows only when a repo is Linear-configured; backend-divergent keys
@@ -462,7 +470,8 @@ class CockpitApp(App[None]):
         """Enumerate worktrees per configured repo. Runs on a worker thread —
         `worktrees()` shells out to git (dirty/unpushed counts)."""
         out: Inventory = []
-        for repo in load_config().get("repos", []):
+        cfg = load_config()
+        for repo in cfg.get("repos", []):
             path = Path(os.path.expanduser(repo["path"]))
             if not path.is_dir():
                 continue
@@ -474,7 +483,7 @@ class CockpitApp(App[None]):
                 (
                     repo.get("name") or path.name,
                     repo.get("sidebar_color"),
-                    bool(repo.get("linear_keys")),
+                    repo_tickets(cfg, repo) != "none",
                     wts,
                 )
             )

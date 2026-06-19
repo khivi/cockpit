@@ -102,6 +102,55 @@ def _validate_use_slack(cfg: dict) -> None:
         _die(f"use_slack must be true or false, got {cfg['use_slack']!r}.")
 
 
+def _validate_tickets(cfg: dict) -> None:
+    """Validate the `tickets` config (top-level *and* per-repo).
+
+    `tickets` is the single provider selector that replaced the old boolean
+    `use_linear`. It is either the bare string ``none|linear|github`` (shorthand)
+    or an object whose accepted fields are owned by each provider — the schema
+    lives in `linear.py` / `github_issues.py` (`CONFIG_FIELDS`) and is composed +
+    type-checked by `tickets.tickets_field_errors`, which also rejects a field
+    that doesn't belong to the chosen provider (a silent typo would otherwise
+    disable that setting). Validated here so it surfaces at daemon start.
+    """
+    from .config import VALID_TICKETS
+    from .tickets import tickets_field_errors
+
+    def _check_block(val: object, where: str) -> None:
+        if isinstance(val, str):
+            provider: object = val
+            block: dict = {}
+        elif isinstance(val, dict):
+            provider = val.get("provider", "none")
+            block = val
+        else:
+            _die(
+                f"{where}: tickets must be one of {', '.join(VALID_TICKETS)} "
+                f"(or an object with a `provider`), got {val!r}."
+            )
+        if provider not in VALID_TICKETS:
+            _die(
+                f"{where}: tickets provider must be one of "
+                f"{', '.join(VALID_TICKETS)}, got {provider!r}."
+            )
+        for err in tickets_field_errors(block, str(provider)):
+            _die(f"{where}: {err}")
+
+    if "tickets" in cfg:
+        _check_block(cfg["tickets"], "tickets")
+    for repo in cfg.get("repos", []):
+        if "tickets" not in repo:
+            continue
+        name = repo.get("name") or repo.get("path", "?")
+        _check_block(repo["tickets"], f"repo {name!r}")
+
+    if "use_linear" in cfg:
+        _die(
+            "use_linear was replaced by the `tickets` config "
+            "(set `tickets: linear`, or `tickets: {provider: linear, ...}`)."
+        )
+
+
 def _validate_orphan_nudge_grace(cfg: dict) -> None:
     """Hard-fail on an `orphan_nudge_grace_hours` (top-level *or* per-repo) that
     isn't a non-negative number.
@@ -143,10 +192,12 @@ def _validate_linear_dev_done(cfg: dict) -> None:
     if state is not None and not isinstance(state, str):
         _die(f"linear_dev_done_state must be a string, got {state!r}.")
 
-    has_linear_repo = any(r.get("linear_keys") for r in cfg.get("repos", []))
+    from .config import linear_team_keys
+
+    has_linear_repo = any(linear_team_keys(cfg, r) for r in cfg.get("repos", []))
     if has_linear_repo and not os.environ.get(LINEAR_API_KEY_ENV):
         print(
-            f"{yellow('cockpit:')} a repo sets linear_keys but "
+            f"{yellow('cockpit:')} a repo sets Linear team keys but "
             f"{LINEAR_API_KEY_ENV} is unset — the Linear dev-done pill stays "
             f"off. Export {LINEAR_API_KEY_ENV} to enable it.",
             file=sys.stderr,
@@ -235,6 +286,7 @@ def preflight(cfg: dict) -> None:
     _validate_review_prs(cfg)
     _validate_check_update(cfg)
     _validate_use_slack(cfg)
+    _validate_tickets(cfg)
     _validate_orphan_nudge_grace(cfg)
     _validate_linear_dev_done(cfg)
     _validate_linear_done_on_merge(cfg)

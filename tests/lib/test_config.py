@@ -623,26 +623,150 @@ def test_seed_replaces_dangling_cship_symlink(tmp_path, monkeypatch):
     assert dest.read_text() == cockpit_config.CSHIP_DEFAULT_TOML.read_text()
 
 
-# ── use_linear reader ───────────────────────────────────────────────────────
+# ── tickets reader (replaced the old use_linear bool) ───────────────────────
 
 
-def test_use_linear_defaults_false_when_unset(tmp_path, monkeypatch):
+def test_tickets_defaults_none_when_unset(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.use_linear() is False
+    assert cockpit_config.tickets() == "none"
 
 
-def test_use_linear_returns_true_when_set(tmp_path, monkeypatch):
+def test_tickets_string_shorthand(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "use_linear": True}
+        tmp_path, monkeypatch, {"repos": [], "tickets": "github"}
     )
-    assert cockpit_config.use_linear() is True
+    assert cockpit_config.tickets() == "github"
 
 
-def test_use_linear_returns_false_when_explicitly_false(tmp_path, monkeypatch):
+def test_tickets_object_provider(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "use_linear": False}
+        tmp_path, monkeypatch, {"repos": [], "tickets": {"provider": "github"}}
     )
-    assert cockpit_config.use_linear() is False
+    assert cockpit_config.tickets() == "github"
+
+
+def test_tickets_unrecognized_falls_back_to_none(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "tickets": "jira"}
+    )
+    assert cockpit_config.tickets() == "none"
+
+
+def test_repo_tickets_repo_override_wins(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "tickets": "linear"}
+    )
+    assert (
+        cockpit_config.repo_tickets(repo_entry={"tickets": {"provider": "github"}})
+        == "github"
+    )
+
+
+def test_repo_tickets_falls_back_to_global(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "tickets": {"provider": "github"}}
+    )
+    assert cockpit_config.repo_tickets(repo_entry={}) == "github"
+
+
+def test_repo_tickets_linear_keys_back_compat(tmp_path, monkeypatch):
+    # A repo with linear_keys but no `tickets` anywhere keeps Linear (back-compat).
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.repo_tickets(repo_entry={"linear_keys": ["PE"]}) == "linear"
+
+
+def test_repo_tickets_defaults_none(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.repo_tickets(repo_entry={}) == "none"
+
+
+# ── tickets object: dev_done labels + close_on_merge ────────────────────────
+
+
+def test_github_dev_done_label_defaults(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.github_dev_done_label() == "ready for review"
+
+
+def test_github_dev_done_label_object_override(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {"repos": [], "tickets": {"provider": "github", "dev_done_label": "qa ok"}},
+    )
+    assert cockpit_config.github_dev_done_label() == "qa ok"
+
+
+def test_ticket_close_on_merge_global_default_applies(tmp_path, monkeypatch):
+    # A global tickets.close_on_merge applies to a repo whose own block omits it.
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {"repos": [], "tickets": {"close_on_merge": True}},
+    )
+    assert (
+        cockpit_config.ticket_close_on_merge(
+            repo_entry={"tickets": {"provider": "github"}}
+        )
+        is True
+    )
+
+
+def test_github_start_label_defaults_none(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.github_start_label() is None
+
+
+def test_github_start_label_from_object(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    re = {"tickets": {"provider": "github", "start_label": "accepted"}}
+    assert cockpit_config.github_start_label(repo_entry=re) == "accepted"
+
+
+def test_ticket_close_on_merge_defaults_false(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.ticket_close_on_merge() is False
+
+
+def test_ticket_close_on_merge_from_object(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert (
+        cockpit_config.ticket_close_on_merge(
+            repo_entry={"tickets": {"provider": "github", "close_on_merge": True}}
+        )
+        is True
+    )
+
+
+def test_ticket_close_on_merge_legacy_linear_flat_key(tmp_path, monkeypatch):
+    # Existing Linear configs keep working without migrating to the object form.
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "linear_done_on_merge": True}
+    )
+    assert cockpit_config.ticket_close_on_merge() is True
+
+
+def test_linear_dev_done_from_object(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    re = {"tickets": {"provider": "linear", "dev_done_state": "In Review"}}
+    assert cockpit_config.linear_dev_done_state(repo_entry=re) == "In Review"
+
+
+def test_linear_merge_done_from_object(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    re = {"tickets": {"provider": "linear", "merge_done_state": "Shipped"}}
+    assert cockpit_config.linear_merge_done_state(repo_entry=re) == "Shipped"
+
+
+def test_linear_team_keys_from_object(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    re = {"tickets": {"provider": "linear", "keys": ["PE", "ENG"]}}
+    assert cockpit_config.linear_team_keys(repo_entry=re) == ["PE", "ENG"]
+
+
+def test_linear_team_keys_legacy_flat_fallback(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.linear_team_keys(repo_entry={"linear_keys": ["PE"]}) == ["PE"]
 
 
 # ── use_slack reader ─────────────────────────────────────────────────────────
@@ -727,13 +851,13 @@ def test_linear_merge_done_state_uses_passed_cfg_and_blank_falls_back():
 def test_linear_done_on_merge_defaults_false():
     from cockpit.lib import config as cockpit_config
 
-    assert cockpit_config.linear_done_on_merge({"repos": []}) is False
+    assert cockpit_config.ticket_close_on_merge({"repos": []}) is False
 
 
 def test_linear_done_on_merge_global_true():
     from cockpit.lib import config as cockpit_config
 
-    assert cockpit_config.linear_done_on_merge({"linear_done_on_merge": True}) is True
+    assert cockpit_config.ticket_close_on_merge({"linear_done_on_merge": True}) is True
 
 
 def test_linear_done_on_merge_repo_overrides_global():
@@ -742,12 +866,12 @@ def test_linear_done_on_merge_repo_overrides_global():
     cfg = {"linear_done_on_merge": True}
     # Per-repo False wins over a True global.
     assert (
-        cockpit_config.linear_done_on_merge(cfg, {"linear_done_on_merge": False})
+        cockpit_config.ticket_close_on_merge(cfg, {"linear_done_on_merge": False})
         is False
     )
     # And per-repo True wins over a False/absent global.
     assert (
-        cockpit_config.linear_done_on_merge({}, {"linear_done_on_merge": True}) is True
+        cockpit_config.ticket_close_on_merge({}, {"linear_done_on_merge": True}) is True
     )
 
 
@@ -755,7 +879,7 @@ def test_linear_done_on_merge_repo_without_key_falls_back_to_global():
     from cockpit.lib import config as cockpit_config
 
     cfg = {"linear_done_on_merge": True}
-    assert cockpit_config.linear_done_on_merge(cfg, {"name": "r"}) is True
+    assert cockpit_config.ticket_close_on_merge(cfg, {"name": "r"}) is True
 
 
 # ── orphan_nudge_grace_seconds ──────────────────────────────────────────────
