@@ -3044,6 +3044,10 @@ def test_cycle_all_only_repo_reconciles_just_that_repo():
     swept: list[str] = []
     with (
         patch.object(cycle, "ensure_state_dirs", lambda: None),
+        # Drain is gated on a cmux backend (`not _cache_only`); pin it so the
+        # test is deterministic regardless of whether cmux is on PATH (it isn't
+        # in CI). Without this the drain is environment-dependent.
+        patch.object(cycle, "_cache_only", lambda cfg: False),
         patch.object(
             cycle,
             "_check_plugin_update",
