@@ -8,11 +8,13 @@ quotes the *initial* half into a `claude '<prompt>'` shell command.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
 import cockpit.lib.prompts as prompts
+from cockpit.lib.gh import PR
+from cockpit.lib.git import Worktree
 from cockpit.lib.prompts import (
     build_orphan_prompt,
     build_pr_prompt,
@@ -20,17 +22,38 @@ from cockpit.lib.prompts import (
     split_prompt_prefix,
 )
 
+# Field combos that make PR.display_issue derive to each _ISSUE_ACTIONS branch.
+# "clean" exercises the None fallback entry (display_issue never returns None).
+_DISPLAY_ISSUE_FIELDS: dict[str, dict[str, object]] = {
+    "comments": dict(unaddressed=3),
+    "changes-requested": dict(unaddressed=0, review_decision="CHANGES_REQUESTED"),
+    "ci": dict(ci="failed"),
+    "conflicts": dict(mergeable="CONFLICTING"),
+    "approved": dict(review_decision="APPROVED"),
+    "clean": dict(),
+}
 
-def _pr(display_issue: str | None):
-    return SimpleNamespace(
+
+def _pr(display_issue: str, **overrides) -> PR:
+    base: dict = dict(
         number=42,
         title="Fix the thing",
         branch="khivi/x",
-        author="alice",
         url="https://example/pr/42",
-        unaddressed=3,
-        display_issue=display_issue,
+        author="alice",
+        is_draft=False,
+        review_decision="REVIEW_REQUIRED",
+        mergeable="MERGEABLE",
+        ci="passed",
+        unaddressed=0,
+        total_from_others=0,
+        state="OPEN",
     )
+    base.update(_DISPLAY_ISSUE_FIELDS[display_issue])
+    base.update(overrides)
+    pr = PR(**base)
+    assert pr.display_issue == display_issue  # guard the field combo stays valid
+    return pr
 
 
 @pytest.fixture
@@ -103,8 +126,7 @@ def test_pr_prompt_header_and_action_selection():
         ("conflicts", True),
         ("changes-requested", False),
         ("approved", False),
-        (None, False),
-        ("unknown-key", False),  # falls back to the clean/None action, no authority
+        ("clean", False),  # the None fallback entry — no authority
     ],
 )
 def test_pr_prompt_authority_gating(display_issue, has_authority):
@@ -114,22 +136,12 @@ def test_pr_prompt_authority_gating(display_issue, has_authority):
 
 def test_pr_prompt_braced_title_is_not_reparsed():
     """A `{...}` in the PR title is data, never a format placeholder."""
-    p = build_pr_prompt(
-        SimpleNamespace(
-            number=1,
-            title="handle {weird} input",
-            branch="b",
-            author="a",
-            url="u",
-            unaddressed=0,
-            display_issue=None,
-        )
-    )
+    p = build_pr_prompt(_pr("clean", title="handle {weird} input"))
     assert "handle {weird} input" in p
 
 
 def test_orphan_prompt():
-    wt = SimpleNamespace(short="cosmic-otter", branch="khivi/cosmic-otter")
+    wt = Worktree(path=Path("/tmp/cosmic-otter"), branch="khivi/cosmic-otter")
     p = build_orphan_prompt(wt)
     assert "cosmic-otter" in p and "khivi/cosmic-otter" in p
     assert "no open PR" in p
