@@ -1,0 +1,1 @@
+Action: merge conflicts vs base. Plan a rebase, execute it, and force-push without asking. Report and stop when pushed or blocked.

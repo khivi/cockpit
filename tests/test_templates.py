@@ -27,6 +27,16 @@ _TEMPLATES = {
         "log_cmd",
         "plan_tail",
     },
+    # Per-PR / orphan worktree prompts (cockpit.lib.prompts).
+    "pr": {"number", "title", "branch", "author", "url", "action", "authority"},
+    "pr_authority": set(),
+    "pr_action_comments": {"unaddressed"},
+    "pr_action_changes_requested": set(),
+    "pr_action_ci": {"number"},
+    "pr_action_conflicts": set(),
+    "pr_action_approved": set(),
+    "pr_action_clean": set(),
+    "orphan": {"short", "branch"},
 }
 
 
