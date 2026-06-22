@@ -11,6 +11,7 @@ Subcommands:
   statusline            Claude Code statusLine shim (reads stdin → renders)
   starship <field>      starship field printer / `warm`
   new    [args]         create a worktree + workspace
+  close  [args]         queue a worktree + workspace teardown for the daemon
   nudge  [args]         manage nudge mutes
   update [--check]      self-update the daemon (or just report availability)
 """
@@ -29,6 +30,7 @@ _SUBCOMMANDS = (
     "statusline",
     "starship",
     "new",
+    "close",
     "nudge",
     "update",
 )
@@ -107,6 +109,11 @@ def main(argv: list[str] | None = None) -> int:
         from cockpit.starship import main as starship_main
 
         return starship_main(["cockpit-starship", *rest])
+
+    if sub == "close":
+        from cockpit.close import main as close_main
+
+        return close_main(rest)
 
     if sub == "nudge":
         from cockpit.lib.nudge_cli import main as nudge_main
