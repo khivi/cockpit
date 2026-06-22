@@ -289,6 +289,26 @@ def _pr_author(pr_info: dict) -> str:
     return str((pr_info.get("author") or {}).get("login", "unknown"))
 
 
+def _pr_fields(pr_info: dict) -> tuple[str, int, str]:
+    """`(author, number, title)` from a PR payload, with `title` falling back to
+    `PR #<n>`. The shared unpack for the plan-only + review context blocks.
+
+    (`_actions_prompt` keeps its own title handling — it wants an empty default,
+    not the `PR #<n>` one — so it reads `author`/`number` directly.)
+    """
+    number = pr_info["number"]
+    title = pr_info.get("title") or f"PR #{number}"
+    return _pr_author(pr_info), number, title
+
+
+def _scenario_prompt(name: str, **fields: object) -> str:
+    """Render a source-fetch first-turn template, auto-filling the shared
+    plan tail every such template ends with. Centralizes the one constant slot
+    so the Linear / GitHub-issue / Slack / Actions builders don't each repeat it.
+    """
+    return render(name, plan_tail=render("plan_tail"), **fields)
+
+
 def _linear_prompt(branch: str, identifier: str) -> str:
     """First-turn prompt that delegates Linear ticket fetch to the Linear MCP
     and then renames the branch to include the ticket title slug.
@@ -302,12 +322,7 @@ def _linear_prompt(branch: str, identifier: str) -> str:
 
     Prose lives in ``cockpit/prompts/linear.txt`` (see `cockpit.lib.templates`).
     """
-    return render(
-        "linear",
-        branch=branch,
-        identifier=identifier,
-        plan_tail=render("plan_tail"),
-    )
+    return _scenario_prompt("linear", branch=branch, identifier=identifier)
 
 
 def _github_issue_prompt(branch: str, number: str, nwo: str | None) -> str:
@@ -324,12 +339,8 @@ def _github_issue_prompt(branch: str, number: str, nwo: str | None) -> str:
     view_cmd = (
         f"gh issue view {number} --repo {nwo}" if nwo else f"gh issue view {number}"
     )
-    return render(
-        "github_issue",
-        branch=branch,
-        issue_ref=issue_ref,
-        view_cmd=view_cmd,
-        plan_tail=render("plan_tail"),
+    return _scenario_prompt(
+        "github_issue", branch=branch, issue_ref=issue_ref, view_cmd=view_cmd
     )
 
 
@@ -356,7 +367,7 @@ def _slack_prompt(branch: str, url: str, *, mcp_fetch: bool) -> str:
     fetch + rename steps) and ``slack_context.txt`` (read-for-context only).
     """
     name = "slack_fetch" if mcp_fetch else "slack_context"
-    return render(name, branch=branch, url=url, plan_tail=render("plan_tail"))
+    return _scenario_prompt(name, branch=branch, url=url)
 
 
 def _repo_entry_or_none(repo_name: str | None) -> dict | None:
@@ -486,9 +497,7 @@ def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
     """
     source_block = ""
     if pr_info:
-        author = _pr_author(pr_info)
-        number = pr_info["number"]
-        title = pr_info.get("title") or f"PR #{number}"
+        author, number, title = _pr_fields(pr_info)
         source_block = (
             f"\n\n**Source**: PR #{number} by @{author}"
             f"\n**Task**: {title}"
@@ -519,9 +528,7 @@ def _review_prompt(
     (or bare-branch) line fills the ``{context}`` slot.
     """
     if pr_info:
-        author = _pr_author(pr_info)
-        number = pr_info["number"]
-        title = pr_info.get("title") or f"PR #{number}"
+        author, number, title = _pr_fields(pr_info)
         context = (
             f"Reviewing PR #{number} by @{author} — {title}"
             f"\nbranch: {branch}"
@@ -600,7 +607,7 @@ def _actions_prompt(
             f"\n**Related PR**: #{pr_info['number']} by @{author} — "
             f"{pr_info.get('title', '')} ({pr_info.get('url', '')})"
         )
-    return render(
+    return _scenario_prompt(
         "actions",
         branch=branch,
         source=source,
@@ -609,7 +616,6 @@ def _actions_prompt(
         run_url=run_url,
         related_pr_block=related_pr_block,
         log_cmd=log_cmd,
-        plan_tail=render("plan_tail"),
     )
 
 

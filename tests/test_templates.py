@@ -46,6 +46,21 @@ def test_every_template_ships_as_a_txt_file():
         assert (files("cockpit.prompts") / f"{name}.txt").is_file()
 
 
+def test_no_template_escapes_the_registry():
+    """Every `.txt` on disk is declared in `_TEMPLATES` — so a newly added
+    template can't silently ship untested (the disk→dict direction the
+    `_TEMPLATES`-keyed slot tests above don't cover on their own)."""
+    on_disk = {
+        p.name[: -len(".txt")]
+        for p in files("cockpit.prompts").iterdir()
+        if p.name.endswith(".txt")
+    }
+    assert on_disk == set(_TEMPLATES), (
+        f"undeclared templates: {on_disk - set(_TEMPLATES)}; "
+        f"stale entries: {set(_TEMPLATES) - on_disk}"
+    )
+
+
 @pytest.mark.parametrize("name,slots", _TEMPLATES.items())
 def test_render_fills_every_declared_slot(name, slots):
     """Rendering with each declared slot leaves no `{...}` placeholder behind."""
