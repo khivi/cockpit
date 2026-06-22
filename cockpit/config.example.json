@@ -13,6 +13,19 @@
         "close_on_merge": false,
         "merge_done_state": "Done"
       }
+    },
+    {
+      "name": "my-github-repo",
+      "path": "/absolute/path/to/another/repo",
+      "branch_prefix": "yourusername/",
+      "default_base": "main",
+      "sidebar_color": "Green",
+      "tickets": {
+        "provider": "github",
+        "dev_done_label": "ready for review",
+        "start_label": "in progress",
+        "close_on_merge": false
+      }
     }
   ],
   "slow_poll_interval_seconds": 300,

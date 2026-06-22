@@ -60,6 +60,8 @@ Start a task — run `/cockpit:new` inside Claude Code, from a session in any gi
 /cockpit:new <branch | PR | url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--context] [-- <text...>]
 ```
 
+`url` is auto-detected: a GitHub PR URL, a **GitHub Actions run URL**, or a Slack thread permalink. These (like `--pr`) are *CLI spawn sources* you pass at workspace-creation time — they are not configuration, so they have no entry in `config.json` / `config.example.json`. The only GitHub *config* surface is the `tickets` provider (`{provider: "github", …}`); see below.
+
 ## Configuration
 
 `~/.config/cockpit/config.json` holds managed repos + tunables; `/cockpit:new` auto-registers the current repo:
