@@ -204,6 +204,133 @@ def test_preflight_ignores_absent_use_slack(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_preflight_exits_on_invalid_tickets(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "tickets": "jira"})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "tickets" in err and "'jira'" in err
+
+
+def test_preflight_exits_on_invalid_per_repo_tickets(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [{"name": "r", "tickets": "nope"}]})
+    assert exc.value.code == 2
+    assert "tickets" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_invalid_object_provider(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "tickets": {"provider": "jira"}})
+    assert exc.value.code == 2
+    assert "provider" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_leftover_use_linear(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "use_linear": True})
+    assert exc.value.code == 2
+    assert "use_linear" in capsys.readouterr().err
+
+
+def test_preflight_passes_on_valid_tickets_string(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "tickets": "github"})
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_passes_on_valid_tickets_object(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "tickets": {
+                "provider": "github",
+                "dev_done_label": "ready for review",
+                "close_on_merge": True,
+            },
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_passes_on_linear_object_with_keys(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("LINEAR_API_KEY", "k")  # silence the soft-warn
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [
+                {
+                    "name": "r",
+                    "tickets": {"provider": "linear", "keys": ["PE"]},
+                }
+            ],
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_exits_on_non_bool_close_on_merge(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {"tool": "cmux", "tickets": {"provider": "github", "close_on_merge": "yes"}}
+        )
+    assert exc.value.code == 2
+    assert "close_on_merge" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_bad_dev_done_label_type(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {"tool": "cmux", "tickets": {"provider": "github", "dev_done_label": 5}}
+        )
+    assert exc.value.code == 2
+    assert "dev_done_label" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_bad_keys_type(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "tickets": {"provider": "linear", "keys": "PE"}})
+    assert exc.value.code == 2
+    assert "keys" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_unknown_field(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {"tool": "cmux", "tickets": {"provider": "github", "dev_done_labl": "x"}}
+        )
+    assert exc.value.code == 2
+    assert "unknown field" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_linear_field_under_github(tmp_path, monkeypatch, capsys):
+    # `keys` belongs to Linear; on a github provider it's an unknown field.
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "tickets": {"provider": "github", "keys": ["PE"]}})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "unknown field" in err and "keys" in err
+
+
+def test_preflight_exits_on_bad_start_label_type(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "tickets": {"provider": "github", "start_label": 5}})
+    assert exc.value.code == 2
+    assert "start_label" in capsys.readouterr().err
+
+
 def test_preflight_exits_on_non_numeric_orphan_nudge_grace(
     tmp_path, monkeypatch, capsys
 ):

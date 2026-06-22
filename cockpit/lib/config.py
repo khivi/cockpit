@@ -184,13 +184,13 @@ def find_repo_by_name(name: str) -> dict | None:
 
 
 def find_repos_by_linear_key(identifier: str) -> list[dict]:
-    """Return configured repos whose `linear_keys` list contains the prefix
+    """Return configured repos whose Linear team keys contain the prefix
     of `identifier` (case-insensitive match on `<PREFIX>-<digits>`).
 
-    Empty list when the identifier doesn't parse as a Linear id, no repo
-    declares the prefix, or no repo has a `linear_keys` field. Callers
-    handle the empty / single / multi cases explicitly — this function
-    does not pick a winner when more than one repo matches.
+    Keys come from `tickets.keys` (or the legacy flat `linear_keys`) via
+    `linear_team_keys`. Empty list when the identifier doesn't parse as a Linear
+    id or no repo declares the prefix. Callers handle the empty / single / multi
+    cases explicitly — this function does not pick a winner on a multi match.
     """
     from .linear import LINEAR_RE_CI
 
@@ -199,7 +199,7 @@ def find_repos_by_linear_key(identifier: str) -> list[dict]:
     prefix = identifier.split("-", 1)[0].upper()
     out: list[dict] = []
     for r in load_config().get("repos", []):
-        keys = r.get("linear_keys") or []
+        keys = linear_team_keys(repo_entry=r)
         if any(str(k).upper() == prefix for k in keys):
             out.append(r)
     return out
@@ -241,23 +241,151 @@ def prompt_prefix() -> str:
     return str(load_config().get("prompt_prefix", "")).strip()
 
 
-def use_linear() -> bool:
-    """Whether the "smart" Linear flow is enabled (default: False).
+VALID_TICKETS = ("none", "linear", "github")
 
-    When False (default), `/cockpit:new PE-1234` still classifies as Linear
-    mode (so the statusline pill keeps working), but spawn skips the
-    MCP-instructing prompt — the workspace starts on `<prefix>pe-1234` with
-    the generic plan-only prompt. The positional Linear key still counts as
-    context, so plan-only is seeded (unlike a bare `--branch pe-1234`, which
-    has no source and seeds nothing); only the MCP fetch + branch/workspace
-    rename are skipped. Safer default for users without the Linear MCP configured.
+# The single label that lights the `devdone=` pill for a GitHub issue when
+# `tickets.dev_done_label` is unset — GitHub has no named workflow states, so a
+# label stands in for Linear's dev-done state. "ready for review" is the common
+# "development complete, awaiting review" label. (NB: a label like "accepted"
+# usually means *work started*, not done — that's `tickets.start_label`.)
+GITHUB_DEV_DONE_DEFAULT = "ready for review"
 
-    When True, spawn pre-flights `claude mcp list` to confirm the Linear MCP
-    is connected and only then seeds the 3-step rename prompt. If the
-    pre-flight definitively reports no Linear MCP, spawn warns once and
-    falls back to the plain-branch path.
+
+def _tickets_block(src: dict | None) -> dict:
+    """Normalize a config source's `tickets` value to a dict: a bare string
+    (shorthand) becomes ``{"provider": <str>}``, an object passes through,
+    anything else (or missing) → ``{}``."""
+    if src is None:
+        return {}
+    val = src.get("tickets")
+    if isinstance(val, str):
+        return {"provider": val}
+    if isinstance(val, dict):
+        return val
+    return {}
+
+
+def _tickets_field(
+    cfg: dict | None, repo_entry: dict | None, field: str
+) -> object | None:
+    """One `tickets` field, resolved **per-field** repo-block → global-block →
+    None. Per-field (not whole-block) so a global default for one setting — e.g.
+    `close_on_merge` — still applies to a repo whose own `tickets` block omits
+    that field but sets others.
     """
-    return bool(load_config().get("use_linear", False))
+    rb = _tickets_block(repo_entry)
+    if field in rb:
+        repo_val: object = rb[field]
+        return repo_val
+    gb = _tickets_block(cfg if cfg is not None else load_config())
+    if field in gb:
+        global_val: object = gb[field]
+        return global_val
+    return None
+
+
+def tickets(cfg: dict | None = None) -> str:
+    """Return the *global* ticket provider: ``"none" | "linear" | "github"``.
+
+    The single selector that replaced the old boolean ``use_linear``. Reads the
+    global ``tickets`` block's ``provider`` (or the bare-string shorthand). Names
+    which tracker cockpit integrates: the spawn fetch/rename prompt, the
+    `devdone=` pill, and the done-on-merge writer. Unset/unrecognized →
+    ``"none"``. Use `repo_tickets` to resolve the provider for a specific repo.
+    """
+    val = _tickets_block(cfg if cfg is not None else load_config()).get("provider")
+    return str(val) if val in VALID_TICKETS else "none"
+
+
+def repo_tickets(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """Resolve the ticket provider for one repo: ``"none" | "linear" | "github"``.
+
+    Resolution order, first match wins:
+      1. the `tickets` block's ``provider`` (per-field repo → global),
+      2. ``"linear"`` when the repo declares the legacy flat ``linear_keys`` but
+         no provider is set anywhere — back-compat so existing Linear repos keep
+         their pill without a `tickets` block,
+      3. ``"none"``.
+
+    The slow tick (devdone pill, done-on-merge) and the TUI ticket columns all
+    gate on this per-repo value rather than the global one.
+    """
+    provider = _tickets_field(cfg, repo_entry, "provider")
+    if provider in VALID_TICKETS:
+        return str(provider)
+    if repo_entry is not None and repo_entry.get("linear_keys"):
+        return "linear"
+    return "none"
+
+
+def github_dev_done_label(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> str:
+    """The single issue label that lights the `devdone=` pill under
+    ``tickets: github`` — an issue carrying it counts as dev-done.
+
+    Default ``"ready for review"``. Override with the `tickets` block's
+    ``dev_done_label`` (a string). Matched case-insensitively against each
+    delivered issue's label names — the GitHub analog of Linear's
+    ``dev_done_state``.
+    """
+    val = _tickets_field(cfg, repo_entry, "dev_done_label")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return GITHUB_DEV_DONE_DEFAULT
+
+
+def linear_team_keys(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> list[str]:
+    """The repo's Linear team-key prefixes (e.g. ``["PE"]``) — used to route a
+    `PE-1234` spawn to this repo and to gate the Linear slow-tick reads/writes.
+
+    Read from the `tickets` block's ``keys`` (per-field repo → global), falling
+    back to the legacy flat `linear_keys` field so existing configs keep working.
+    Empty when neither is set (the repo isn't Linear-configured).
+    """
+    keys = _tickets_field(cfg, repo_entry, "keys")
+    if isinstance(keys, list):
+        return [str(k) for k in keys]
+    if repo_entry is not None and isinstance(repo_entry.get("linear_keys"), list):
+        return [str(k) for k in repo_entry["linear_keys"]]
+    return []
+
+
+def github_start_label(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> str | None:
+    """Issue label cockpit applies when it spawns a worktree on a GitHub issue
+    (`tickets.start_label`, e.g. "accepted" = work started). Opt-in: None when
+    unset, so cockpit performs no GitHub write. The one spawn-time tracker write.
+    """
+    val = _tickets_field(cfg, repo_entry, "start_label")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return None
+
+
+def ticket_close_on_merge(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> bool:
+    """Whether the daemon performs its terminal tracker write when a PR merges
+    (default: False) — `gh issue close` for GitHub, the "Done" state transition
+    for Linear. Reads the `tickets` block's ``close_on_merge`` **per-field** (a
+    repo without its own value inherits a global ``tickets.close_on_merge``).
+    Opt-in because it makes the daemon a tracker *writer*.
+
+    Back-compat: falls back to the legacy flat `linear_done_on_merge` key
+    (per-repo over global) when no `tickets.close_on_merge` is set anywhere, so
+    existing Linear configs keep working without migrating to the object form.
+    """
+    val = _tickets_field(cfg, repo_entry, "close_on_merge")
+    if val is not None:
+        return bool(val)
+    if repo_entry is not None and "linear_done_on_merge" in repo_entry:
+        return bool(repo_entry["linear_done_on_merge"])
+    cfg = cfg if cfg is not None else load_config()
+    return bool(cfg.get("linear_done_on_merge", False))
 
 
 def use_slack() -> bool:
@@ -280,47 +408,36 @@ def use_slack() -> bool:
     return bool(load_config().get("use_slack", False))
 
 
-def linear_dev_done_state(cfg: dict | None = None) -> str:
+def linear_dev_done_state(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> str:
     """Name of the Linear workflow state that the `devdone=` pill keys off
     (default: "Dev Done"). Matched case-insensitively against the ticket's live
-    `state.name`. Override with `linear_dev_done_state` in config.json when your
-    team's "development complete" column is named differently (e.g. "In Review").
-
-    Accepts the already-loaded global `cfg` to avoid a redundant disk read in the
-    slow tick; falls back to `load_config()` when called standalone.
+    `state.name`. Set via the `tickets` block's ``dev_done_state`` (a string),
+    falling back to the legacy flat `linear_dev_done_state` key, then "Dev Done".
     """
+    val = _tickets_field(cfg, repo_entry, "dev_done_state")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
     cfg = cfg if cfg is not None else load_config()
     return str(cfg.get("linear_dev_done_state") or "Dev Done").strip() or "Dev Done"
 
 
-def linear_merge_done_state(cfg: dict | None = None) -> str:
+def linear_merge_done_state(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> str:
     """Name of the Linear workflow state a delivered ticket is moved to when its
     PR merges (default: "Done"). Distinct from `linear_dev_done_state` ("Dev
     Done") — that's where the passive `devdone=` pill lights up while the PR is
-    *open*; this is the terminal state the opt-in `linear_done_on_merge` writer
-    transitions to on merge. Override with `linear_merge_done_state` when your
-    team's terminal column is named differently. Matched case-insensitively.
+    *open*; this is the terminal state the `ticket_close_on_merge` writer
+    transitions to on merge. Set via the `tickets` block's ``merge_done_state``,
+    falling back to the legacy flat `linear_merge_done_state` key, then "Done".
     """
+    val = _tickets_field(cfg, repo_entry, "merge_done_state")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
     cfg = cfg if cfg is not None else load_config()
     return str(cfg.get("linear_merge_done_state") or "Done").strip() or "Done"
-
-
-def linear_done_on_merge(
-    cfg: dict | None = None, repo_entry: dict | None = None
-) -> bool:
-    """Whether the daemon moves a PR's delivered Linear tickets to
-    `linear_merge_done_state` when the PR merges (default: False).
-
-    Resolved per-repo over global: a `linear_done_on_merge` on the repo entry
-    wins (so you can enable it only on repos you own the tickets for), otherwise
-    the top-level key, otherwise False. Opt-in by default because, unlike every
-    other Linear touch in cockpit, this makes the daemon a Linear *writer* — see
-    `cycle._transition_merged_tickets`.
-    """
-    if repo_entry is not None and "linear_done_on_merge" in repo_entry:
-        return bool(repo_entry["linear_done_on_merge"])
-    cfg = cfg if cfg is not None else load_config()
-    return bool(cfg.get("linear_done_on_merge", False))
 
 
 def orphan_nudge_grace_seconds(

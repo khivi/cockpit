@@ -294,6 +294,20 @@ def resolve_pr_branch(pr_num: str, repo_dir: Path | None = None) -> str:
     return out
 
 
+def pr_body(repo_dir: Path, number: int) -> str:
+    """A PR's body via `gh` (cwd = the worktree, so gh resolves the repo from its
+    git remote). Empty on any failure — callers degrade gracefully. Used to open
+    the exact Linear footer link (the `tickets: linear` provider's `ticket_url`),
+    where the canonical URL can't be hand-constructed from the id alone."""
+    res = subprocess.run(
+        ["gh", "pr", "view", str(number), "--json", "body", "-q", ".body"],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_dir),
+    )
+    return res.stdout if res.returncode == 0 else ""
+
+
 def repo_nwo(repo_dir: Path) -> tuple[str, str]:
     """(owner, name) from `gh repo view` run inside repo_dir."""
     out = subprocess.run(

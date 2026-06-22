@@ -2333,7 +2333,7 @@ def _prefetch_one(ctx, pr):
 def test_prefetch_linear_blocks_none_when_not_configured(tmp_path):
     ctx = _devdone_ctx(tmp_path, linear_keys=None)
     pr = _devdone_pr(FOOTER)
-    with patch.object(cycle, "fetch_ticket_states") as fetch:
+    with patch("cockpit.lib.tickets.fetch_ticket_states") as fetch:
         block = _prefetch_one(ctx, pr)
     assert block is None
     fetch.assert_not_called()
@@ -2342,8 +2342,9 @@ def test_prefetch_linear_blocks_none_when_not_configured(tmp_path):
 def test_prefetch_linear_blocks_fetches_when_no_prior(tmp_path):
     ctx = _devdone_ctx(tmp_path)
     with (
-        patch.object(
-            cycle, "fetch_ticket_states", return_value={"PE-1234": "Dev Done"}
+        patch(
+            "cockpit.lib.tickets.fetch_ticket_states",
+            return_value={"PE-1234": "Dev Done"},
         ) as fetch,
         patch.object(cycle.time, "time", return_value=1000.0),
     ):
@@ -2365,7 +2366,7 @@ def test_prefetch_linear_blocks_carries_forward_when_unchanged_and_fresh(tmp_pat
     pr = _devdone_pr(FOOTER)
     ctx.pr_payloads = {pr.branch: {"linear": prior}}
     with (
-        patch.object(cycle, "fetch_ticket_states") as fetch,
+        patch("cockpit.lib.tickets.fetch_ticket_states") as fetch,
         patch.object(cycle.time, "time", return_value=1000.0),  # 100s < 900s TTL
     ):
         block = _prefetch_one(ctx, pr)
@@ -2386,8 +2387,9 @@ def test_prefetch_linear_blocks_refetches_when_footer_changed(tmp_path):
         }
     }
     with (
-        patch.object(
-            cycle, "fetch_ticket_states", return_value={"PE-1234": "In Progress"}
+        patch(
+            "cockpit.lib.tickets.fetch_ticket_states",
+            return_value={"PE-1234": "In Progress"},
         ) as fetch,
         patch.object(cycle.time, "time", return_value=1000.0),  # fresh, but ids differ
     ):
@@ -2410,8 +2412,9 @@ def test_prefetch_linear_blocks_refetches_when_stale(tmp_path):
         }
     }
     with (
-        patch.object(
-            cycle, "fetch_ticket_states", return_value={"PE-1234": "Dev Done"}
+        patch(
+            "cockpit.lib.tickets.fetch_ticket_states",
+            return_value={"PE-1234": "Dev Done"},
         ) as fetch,
         patch.object(cycle.time, "time", return_value=10_000.0),  # way past TTL
     ):
@@ -2432,7 +2435,7 @@ def test_prefetch_linear_blocks_batches_across_prs_one_call(tmp_path):
     ctx.prs = [pr_a, pr_b]
     states = {"PE-1": "Dev Done", "PE-2": "In Progress", "ENG-3": "Dev Done"}
     with (
-        patch.object(cycle, "fetch_ticket_states", return_value=states) as fetch,
+        patch("cockpit.lib.tickets.fetch_ticket_states", return_value=states) as fetch,
         patch.object(cycle.time, "time", return_value=1000.0),
     ):
         cycle._prefetch_linear_blocks(ctx)
@@ -2453,7 +2456,7 @@ def test_prefetch_linear_blocks_no_footers_no_fetch(tmp_path):
     ctx = _devdone_ctx(tmp_path)
     pr = _devdone_pr("no footer here")
     with (
-        patch.object(cycle, "fetch_ticket_states") as fetch,
+        patch("cockpit.lib.tickets.fetch_ticket_states") as fetch,
         patch.object(cycle.time, "time", return_value=1000.0),
     ):
         block = _prefetch_one(ctx, pr)
@@ -3072,6 +3075,10 @@ def test_cycle_all_only_repo_reconciles_just_that_repo():
     swept: list[str] = []
     with (
         patch.object(cycle, "ensure_state_dirs", lambda: None),
+        # Drain is gated on a cmux backend (`not _cache_only`); pin it so the
+        # test is deterministic regardless of whether cmux is on PATH (it isn't
+        # in CI). Without this the drain is environment-dependent.
+        patch.object(cycle, "_cache_only", lambda cfg: False),
         patch.object(
             cycle,
             "_check_plugin_update",
@@ -3242,3 +3249,146 @@ def test_cycle_all_drains_close_but_skips_sweeps_without_backend():
     drain.assert_called_once()
     close_gone.assert_not_called()
     reap.assert_not_called()
+
+
+# ── GitHub-issue ticket provider (tickets: github) ──────────────────────────
+
+
+def _github_devdone_ctx(tmp_path, *, dry=False, cfg=None):
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.dry = dry
+    ctx.repo_entry = {"tickets": "github"}
+    ctx.cfg = cfg if cfg is not None else {}
+    return ctx
+
+
+def test_github_prefetch_maps_label_to_devdone(tmp_path):
+    ctx = _github_devdone_ctx(tmp_path)
+    pr = _devdone_pr("Closes #5", branch="khivi/issue-5")
+    # default dev-done label is "ready for review"
+    issues = {"#5": {"labels": ["ready for review"], "state": "open"}}
+    with (
+        patch("cockpit.lib.tickets.fetch_issues", return_value=issues),
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        block = _prefetch_one(ctx, pr)
+    assert block == {
+        "tickets": [{"id": "#5", "state": "ready for review"}],
+        "fetched_at": 1000.0,
+    }
+
+
+def test_github_prefetch_unlabeled_issue_keeps_state(tmp_path):
+    ctx = _github_devdone_ctx(tmp_path)
+    pr = _devdone_pr("Closes #5", branch="khivi/issue-5")
+    issues = {"#5": {"labels": ["bug"], "state": "open"}}
+    with (
+        patch("cockpit.lib.tickets.fetch_issues", return_value=issues),
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        block = _prefetch_one(ctx, pr)
+    assert block["tickets"] == [{"id": "#5", "state": "open"}]
+
+
+def test_github_track_dev_done_lights_pill(tmp_path):
+    ctx = _github_devdone_ctx(tmp_path)
+    block = {"tickets": [{"id": "#5", "state": "ready for review"}]}
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "ws:1", block)
+    pill.assert_called_once_with("ws:1", "#5")
+
+
+def test_github_track_dev_done_clears_when_not_labeled(tmp_path):
+    ctx = _github_devdone_ctx(tmp_path)
+    block = {"tickets": [{"id": "#5", "state": "open"}]}
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "ws:1", block)
+    pill.assert_called_once_with("ws:1", None)
+
+
+def _github_merge_ctx(tmp_path, *, done_on_merge=True, dry=False):
+    return _transition_ctx(
+        tmp_path,
+        cfg={},
+        repo_entry={"tickets": {"provider": "github", "close_on_merge": done_on_merge}},
+        dry=dry,
+    )
+
+
+def _github_merge_patches(*, viewer="khivi", issue=None):
+    if issue is None:
+        issue = {"ref": "#5", "state": "open", "assignees": ["khivi"]}
+    return [
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(
+            cycle,
+            "find_pr_payload",
+            return_value={"linear": {"tickets": [{"id": "#5", "state": "open"}]}},
+        ),
+        patch.object(cycle, "github_viewer_login", return_value=viewer),
+        patch.object(cycle, "fetch_issue", return_value=issue),
+    ]
+
+
+def test_github_transition_closes_issue(tmp_path):
+    ctx = _github_merge_ctx(tmp_path)
+    with (
+        _enter_all(_github_merge_patches()),
+        patch.object(cycle, "close_issue", return_value=True) as close,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    close.assert_called_once_with("#5", repo_nwo="o/n", repo_dir=str(tmp_path))
+    assert ctx.pill_state.get("merged-done:o/n:#5") is True
+
+
+def test_github_transition_noop_when_flag_off(tmp_path):
+    ctx = _github_merge_ctx(tmp_path, done_on_merge=False)
+    with (
+        _enter_all(_github_merge_patches()),
+        patch.object(cycle, "close_issue") as close,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    close.assert_not_called()
+
+
+def test_github_transition_skips_non_assignee(tmp_path):
+    ctx = _github_merge_ctx(tmp_path)
+    issue = {"ref": "#5", "state": "open", "assignees": ["someone-else"]}
+    with (
+        _enter_all(_github_merge_patches(issue=issue)),
+        patch.object(cycle, "close_issue") as close,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    close.assert_not_called()
+    assert ctx.pill_state.get("merged-done:o/n:#5") is True  # evaluated, won't requery
+
+
+def test_github_transition_skips_already_closed(tmp_path):
+    ctx = _github_merge_ctx(tmp_path)
+    issue = {"ref": "#5", "state": "closed", "assignees": ["khivi"]}
+    with (
+        _enter_all(_github_merge_patches(issue=issue)),
+        patch.object(cycle, "close_issue") as close,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    close.assert_not_called()
+
+
+def test_github_transition_failed_close_clears_marker(tmp_path):
+    ctx = _github_merge_ctx(tmp_path)
+    with (
+        _enter_all(_github_merge_patches()),
+        patch.object(cycle, "close_issue", return_value=False),
+    ):
+        cycle._transition_merged_tickets(ctx)
+    assert "merged-done:o/n:#5" not in ctx.pill_state
+
+
+def test_github_transition_noop_when_dry(tmp_path):
+    ctx = _github_merge_ctx(tmp_path, dry=True)
+    with (
+        _enter_all(_github_merge_patches()),
+        patch.object(cycle, "close_issue") as close,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    close.assert_not_called()

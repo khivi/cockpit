@@ -12,7 +12,7 @@ combination layer — this document does. Diagrams are
 | **GitHub PR** | `gh` API → PR cache JSON (`cache.py`) | `state` ∈ {`OPEN`,`MERGED`,`CLOSED`} × `ci` × `unaddressed` × `review_decision` × `isDraft` × `mergeable` |
 | **Claude session** | cmux native `claude_code=` + statusline stdin (`claude.py`) | `Running` / `Idle` / `Needs input`; context %, rate-limit, model, cost |
 | **cmux workspace** | cmux pills + in-memory `pill_state` dict | `idle=` `devdone=` `parked=` `ci=` `comments=` `merge=` `wip=` `draft=` `approved=` `stale=` `loop=` + *does a worktree exist?* |
-| **Linear** (aux) | `gh`-style GraphQL via `LINEAR_API_KEY` (`linear.py`) | ticket workflow `state.name` (e.g. `Dev Done`) — read-only, only for the `devdone=` pill |
+| **Tickets** (aux) | the `tickets` provider (`tickets.py` → `linear.py` GraphQL or `github_issues.py` `gh`) | Linear ticket `state.name` (`Dev Done`) or GitHub issue label/state — read-only, drives the `devdone=` pill (and the opt-in done-on-merge write) |
 
 The decision functions consume these and emit actions. Everything below is a
 drill-down of one node in the orientation map.
@@ -29,7 +29,7 @@ flowchart LR
     GH["GitHub PR state<br/>gh API → PR cache JSON"]
     CL["Claude session<br/>cmux native + statusline"]
     CM["cmux workspace<br/>pills + worktree-exists?"]
-    LIN["Linear (aux)<br/>ticket state via GraphQL"]
+    LIN["Tickets (aux)<br/>Linear GraphQL / GitHub gh<br/>via tickets.py provider"]
   end
 
   subgraph DEC["Decision functions"]
@@ -292,7 +292,7 @@ a cell — it never touches a source directly.
 Why two ticks:
 
 - **Slow tick** owns every decision (spawn, nudge, devdone, teardown,
-  colors, names) and the expensive `gh` (+ optional Linear) fetch + per-PR JSON
+  colors, names) and the expensive `gh` (+ optional ticket-provider) fetch + per-PR JSON
   snapshot. It processes repos serially, writing each repo's cells before
   fetching the next, and fires an `on_repo_done` hook after each one
   (`tui/app.py::_publish_inventory`) so the table republishes per-repo — a

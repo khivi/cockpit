@@ -40,6 +40,19 @@ import urllib.request
 LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
 LINEAR_RE_CI = re.compile(r"[A-Za-z]{2,6}-[0-9]+")
 
+# The Linear-specific fields the `tickets` config block accepts, as
+# `(name, kind)` where kind ∈ {"str", "str_list", "bool"} (resolved to a
+# validator in `tickets.py`). The provider owns its own config surface; this is
+# the *specification* that drives preflight validation (common fields like
+# `provider`/`close_on_merge` are added by `tickets.py`). Keep in sync with the
+# Linear readers in `config.py` (`linear_team_keys`, `linear_dev_done_state`,
+# `linear_merge_done_state`).
+CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
+    ("keys", "str_list"),
+    ("dev_done_state", "str"),
+    ("merge_done_state", "str"),
+)
+
 # A PR *delivers* a ticket only via the explicit `Linear: [PE-1234](url)` footer
 # that `start-linear-ticket` / the morning-align cross-link step append to the PR
 # body — NOT via the branch-slug regex above (which catches predecessor /

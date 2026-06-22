@@ -950,42 +950,6 @@ async def test_arrow_keys_move_row_cursor():
         assert table.cursor_row == start + 1
 
 
-async def test_show_repo_config_pushes_screen(monkeypatch, tmp_path):
-    # The palette command resolves the cursor row's repo and shows its config.
-    repo = {"name": "myrepo", "path": str(tmp_path), "branch_prefix": "khivi/"}
-    monkeypatch.setattr(
-        "cockpit.tui.app.load_config",
-        lambda: {"repos": [repo], "check_update": False},
-    )
-    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("myrepo", None, False, [wt])])
-        await pilot.pause()
-        app.action_show_repo_config()
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, ConfigScreen)
-        assert "myrepo" in screen._title
-        assert "branch_prefix" in screen._body
-
-
-async def test_show_repo_config_no_repo_notifies(monkeypatch):
-    # Empty table → no repo to resolve → warn, don't push a screen.
-    toasts: list[str] = []
-    app, _ = _make_app()
-    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([])
-        await pilot.pause()
-        app.action_show_repo_config()
-        await pilot.pause()
-        assert not isinstance(app.screen, ConfigScreen)
-        assert any("no repo" in t for t in toasts)
-
-
 async def test_show_full_config_pushes_screen(monkeypatch, tmp_path):
     cfg = {"repos": [{"name": "a", "path": str(tmp_path)}], "check_update": False}
     monkeypatch.setattr("cockpit.tui.app.load_config", lambda: cfg)
@@ -1177,9 +1141,12 @@ async def test_escape_back_is_noop_on_base_screen():
         assert len(app.screen_stack) == depth
 
 
-async def test_open_linear_opens_footer_url(monkeypatch, tmp_path):
+async def test_open_ticket_linear_opens_footer_url(monkeypatch, tmp_path):
+    # `t` routes through the row's provider (`tickets.provider_for`). For a Linear
+    # repo, the provider reads the exact `Linear: [ID](url)` footer link out of
+    # the PR body (no hand-constructed URL).
     wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
-    repo = {"name": "repo", "path": str(tmp_path)}
+    repo = {"name": "repo", "path": str(tmp_path), "tickets": {"provider": "linear"}}
     opened: list[str] = []
     app, _ = _make_app()
     monkeypatch.setattr(app, "_resolve_worktree", lambda p: (repo, wt))
@@ -1188,25 +1155,53 @@ async def test_open_linear_opens_footer_url(monkeypatch, tmp_path):
         lambda b, name=None: {"number": 7, "linear": {"tickets": [{"id": "PE-9"}]}},
     )
     monkeypatch.setattr(
-        "cockpit.tui.app._pr_body",
+        "cockpit.lib.tickets.pr_body",
         lambda cwd, num: "Linear: [PE-9](https://linear.app/x/issue/PE-9)",
     )
     monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", None, False, [wt])])
+        app._render_table([("repo", None, True, [wt])])
         await pilot.pause()
-        await pilot.press("l")
+        await pilot.press("t")
         await pilot.pause(0.6)
     assert opened == ["https://linear.app/x/issue/PE-9"]
 
 
-async def test_open_linear_no_ticket_warns(monkeypatch, tmp_path):
+async def test_open_ticket_github_opens_issue_url(monkeypatch, tmp_path):
+    # For a GitHub-issue repo the provider builds the URL deterministically from
+    # the delivered ref + the PR's repo nwo (parsed from the cached PR URL) — no
+    # PR-body fetch.
     wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    repo = {"name": "repo", "path": str(tmp_path), "tickets": {"provider": "github"}}
+    opened: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "_resolve_worktree", lambda p: (repo, wt))
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload",
+        lambda b, name=None: {
+            "number": 7,
+            "url": "https://github.com/ai-needl/repo/pull/7",
+            "linear": {"tickets": [{"id": "#42"}]},
+        },
+    )
+    monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, True, [wt])])
+        await pilot.pause()
+        await pilot.press("t")
+        await pilot.pause(0.6)
+    assert opened == ["https://github.com/ai-needl/repo/issues/42"]
+
+
+async def test_open_ticket_no_ticket_warns(monkeypatch, tmp_path):
+    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    repo = {"name": "r", "path": str(tmp_path), "tickets": {"provider": "github"}}
     opened: list[str] = []
     toasts: list[str] = []
     app, _ = _make_app()
-    monkeypatch.setattr(app, "_resolve_worktree", lambda p: ({"name": "r"}, wt))
+    monkeypatch.setattr(app, "_resolve_worktree", lambda p: (repo, wt))
     monkeypatch.setattr(
         "cockpit.tui.app.find_pr_payload", lambda b, name=None: {"number": 7}
     )
@@ -1214,12 +1209,12 @@ async def test_open_linear_no_ticket_warns(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", None, False, [wt])])
+        app._render_table([("repo", None, True, [wt])])
         await pilot.pause()
-        await pilot.press("l")
+        await pilot.press("t")
         await pilot.pause(0.6)
     assert opened == []
-    assert any("no Linear" in t for t in toasts)
+    assert any("no ticket" in t for t in toasts)
 
 
 async def test_footer_hides_update_until_available():
@@ -1289,19 +1284,25 @@ async def test_footer_labels_are_one_word():
     assert fb._label("whatever", "Multi word thing") == "Multi"
 
 
-async def test_footer_hides_linear_when_not_configured():
+async def test_footer_hides_ticket_when_not_configured():
     from cockpit.tui.widgets.footer_bar import FooterBar
 
-    # _isolate patches load_config → repos with no linear_keys.
+    # _isolate patches load_config → repos with no ticket provider.
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert "Linear" not in app.query_one(FooterBar).row_text
+        assert "Ticket" not in app.query_one(FooterBar).row_text
 
 
-async def test_footer_shows_linear_when_configured(monkeypatch):
+async def test_footer_shows_ticket_when_configured(monkeypatch):
     from cockpit.tui.widgets.footer_bar import FooterBar
 
+    # A legacy `linear_keys` repo resolves to the linear provider; the ticket key
+    # is enabled for any provider (linear or github) — the compose-time global
+    # gate (`show_tickets`) opens, so `t` is no longer globally skipped. (Whether
+    # it renders for a *given* row is the separate per-row capability gate,
+    # covered by test_footer_gates_row_keys_on_capabilities — asserted here with
+    # caps unset to isolate the global gate from the background tick.)
     monkeypatch.setattr(
         "cockpit.tui.app.load_config",
         lambda: {"repos": [{"name": "r", "path": "/tmp", "linear_keys": ["PE"]}]},
@@ -1309,7 +1310,36 @@ async def test_footer_shows_linear_when_configured(monkeypatch):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert "Linear" in app.query_one(FooterBar).row_text
+        footer = app.query_one(FooterBar)
+        assert footer._show_tickets is True
+        footer._row_caps = None
+        assert not footer._skip("open_ticket")
+
+
+async def test_footer_gates_row_keys_on_capabilities():
+    # Per-row gating: with row caps known, `p`/`m` show only with a PR and `l`
+    # only with a ticket. Driven directly via set_row_state (the app pushes these
+    # from the highlighted row's `current_capabilities`).
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset()
+    assert fb._skip("open_pr") and fb._skip("open_ticket") and fb._skip("mute_row")
+    fb._row_caps = frozenset({"pr"})
+    assert not fb._skip("open_pr") and not fb._skip("mute_row")
+    assert fb._skip("open_ticket")
+    fb._row_caps = frozenset({"pr", "ticket"})
+    assert not fb._skip("open_ticket")
+
+
+async def test_footer_mute_label_flips_to_unmute_when_muted():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset({"pr"})
+    assert fb._label("mute_row", "Mute") == "Mute"
+    fb._row_caps = frozenset({"pr", "muted"})
+    assert fb._label("mute_row", "Mute") == "Unmute"
 
 
 async def test_footer_on_cmux_shows_focus_nudge_hides_open(monkeypatch):

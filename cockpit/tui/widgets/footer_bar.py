@@ -43,14 +43,13 @@ class FooterBar(Horizontal):
     """
 
     # Actions that operate on the selected row's workspace → left group. Anything
-    # not listed (sync, update, quit, the command palette) is global → right.
+    # not listed (sync, update, quit) is global → right.
     ROW_ACTIONS = frozenset(
         {
             "focus_row",
             "open_workspace",
             "open_pr",
-            "open_linear",
-            "show_repo_config",
+            "open_ticket",
             "close_row",
             "force_close_row",
             "mute_row",
@@ -58,9 +57,20 @@ class FooterBar(Horizontal):
         }
     )
 
+    # Row actions that only make sense for a row in a given state — gated on the
+    # highlighted row's capability tokens (`set_row_state`). `p`/`m` act on a PR;
+    # `t` opens a ticket. An action absent here has no per-row requirement (shown
+    # for any row, subject to backend / `show_tickets` gating). When the row caps
+    # are unknown (`None`, e.g. an empty table) nothing is capability-gated, so
+    # the footer shows the full row-key legend.
+    ACTION_REQUIRES = {
+        "open_pr": "pr",
+        "mute_row": "pr",
+        "open_ticket": "ticket",
+    }
+
     # Explicit render order for the global (right) group — independent of BINDINGS
-    # order. Actions not listed here render after these, in BINDINGS order. The
-    # command palette is always appended last (it has no BINDINGS entry).
+    # order. Actions not listed here render after these, in BINDINGS order.
     GLOBAL_ORDER = ("new_workspace", "sync", "show_output", "update", "quit")
 
     # One-word footer label per action — the BINDINGS descriptions are verbose
@@ -71,8 +81,7 @@ class FooterBar(Horizontal):
         "focus_row": "Focus",
         "open_workspace": "Open",
         "open_pr": "PR",
-        "open_linear": "Linear",
-        "show_repo_config": "Repo",
+        "open_ticket": "Ticket",
         "show_output": "Output",
         "close_row": "Close",
         "force_close_row": "Force",
@@ -101,7 +110,7 @@ class FooterBar(Horizontal):
         bindings: Iterable[object],
         *,
         show_update: bool = False,
-        show_linear: bool = True,
+        show_tickets: bool = True,
         backend: str,
         **kwargs: object,
     ) -> None:
@@ -114,13 +123,21 @@ class FooterBar(Horizontal):
             if isinstance(b, tuple) and len(b) >= 3
         ]
         self._show_update = show_update
-        self._show_linear = show_linear
+        self._show_tickets = show_tickets
         self._backend = backend
+        # The highlighted row's capability tokens (e.g. {"pr", "ticket",
+        # "muted"}), or None when no row is selected — drives per-row gating of
+        # the row keys and the Mute/Unmute label.
+        self._row_caps: frozenset[str] | None = None
         # Last-rendered group strings, exposed for tests / introspection.
         self.row_text = ""
         self.global_text = ""
 
     def _label(self, action: str, desc: str) -> str:
+        # Mute flips to Unmute when the highlighted row's PR is already muted, so
+        # the key hint reflects what pressing `m` will actually do.
+        if action == "mute_row" and self._row_caps and "muted" in self._row_caps:
+            return "Unmute"
         return self.LABELS.get(action) or (desc.split()[0] if desc else action)
 
     def _seg(self, key: str, action: str, desc: str) -> str:
@@ -152,18 +169,35 @@ class FooterBar(Horizontal):
             if self.is_mounted:
                 self._rebuild()
 
+    def set_row_state(self, caps: frozenset[str] | None) -> None:
+        """Set the highlighted row's capability tokens and re-render. `None` (no
+        row selected) shows the full row-key legend; a set gates the row keys per
+        `ACTION_REQUIRES` and drives the Mute/Unmute label."""
+        if caps != self._row_caps:
+            self._row_caps = caps
+            if self.is_mounted:
+                self._rebuild()
+
     def _skip(self, action: str) -> bool:
-        # Conditional keys: update only once available; Linear only when a repo
-        # is Linear-configured; backend-conditional keys only on their backend;
+        # Conditional keys: update only once available; the ticket key only when
+        # some repo has a ticket provider; backend-conditional keys only on their
+        # backend; per-row keys only when the highlighted row supports them;
         # hidden actions (escape/back) never shown.
         if action in self.HIDDEN_ACTIONS:
             return True
         if action == "update" and not self._show_update:
             return True
-        if action == "open_linear" and not self._show_linear:
+        if action == "open_ticket" and not self._show_tickets:
             return True
         allowed = self.BACKEND_ACTIONS.get(action)
-        return allowed is not None and self._backend not in allowed
+        if allowed is not None and self._backend not in allowed:
+            return True
+        # Per-row gating: when row caps are known, hide a row key whose required
+        # capability the highlighted row lacks. Unknown caps (None) → no gating.
+        req = self.ACTION_REQUIRES.get(action)
+        return (
+            req is not None and self._row_caps is not None and req not in self._row_caps
+        )
 
     def _rebuild(self) -> None:
         left: list[str] = []
@@ -191,8 +225,6 @@ class FooterBar(Horizontal):
                 right.append((order, len(right), seg))
         right.sort()
         right_segs = [seg for _, _, seg in right]
-        # The built-in command palette has no app BINDINGS entry — surface it last.
-        right_segs.append("[@click=app.command_palette][b]^p[/b][/] Palette")
         self.row_text = "   ".join(left)
         self.global_text = "   ".join(right_segs)
         self.query_one("#footer-row", Static).update(self.row_text)

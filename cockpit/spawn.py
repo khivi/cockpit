@@ -58,17 +58,23 @@ Positional detection:
   and the user states the task in the live session.
 
   Linear mode creates a fresh branch `<branch_prefix><id-lower>` (e.g.
-  `khivi/pe-1234`). With `use_linear: true` and the Linear MCP detected
+  `khivi/pe-1234`). With `tickets: linear` and the Linear MCP detected
   via `claude mcp list`, cockpit seeds a plan-only prompt that instructs
   Claude to fetch the ticket via the Linear MCP and rename the branch +
   workspace to include the ticket title slug. Otherwise the workspace
   starts with the generic plan prompt.
 
-  With `use_linear: true` and no `--repo`, cockpit also routes the spawn
+  With `tickets: linear` and no `--repo`, cockpit also routes the spawn
   to the repo whose per-repo `linear_keys` list contains the Linear key
   prefix (e.g. `PE-1234` → the repo declaring `"linear_keys": ["PE"]`).
   A unique match wins; zero matches falls back to cwd discovery; multiple
   matches print a note and also fall back. `--repo <name>` always wins.
+
+  GitHub-issue mode (`tickets: github`) creates a fresh branch `issue-<N>`
+  from an issue URL or the `i#N` / `gh#N` shorthand, then seeds a plan-only
+  prompt instructing Claude to read the issue via `gh issue view` and rename
+  the branch + workspace to include the issue title slug. The issue URL's
+  `owner/repo` routes to the matching configured repo.
 
 Behaviour:
   - For positional/--branch/--pr without --repo: walk up from cwd to match a
@@ -104,9 +110,10 @@ from cockpit.lib.config import (
     find_repo_by_name,
     find_repo_by_nwo,
     find_repos_by_linear_key,
+    github_start_label,
 )
 from cockpit.lib.config import (
-    use_linear as cfg_use_linear,
+    tickets as cfg_tickets,
 )
 from cockpit.lib.config import (
     use_slack as cfg_use_slack,
@@ -126,6 +133,11 @@ from cockpit.lib.git import (
     create_worktree,
     slugify,
     worktree_for_branch,
+)
+from cockpit.lib.github_issues import (
+    GITHUB_ISSUE_SHORTHAND_RE,
+    GITHUB_ISSUE_URL_RE,
+    add_label,
 )
 from cockpit.lib.linear import LINEAR_RE_CI, linear_mcp_available
 from cockpit.lib.prompts import claude_command
@@ -210,6 +222,10 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
 
     Modes:
       - `pr`      : GitHub PR URL or `#N`. Bare integers stay `branch`.
+      - `gh-issue`: GitHub issue URL, or the `i#N` / `gh#N` shorthand. `value`
+                    is the issue number; `nwo_hint` is `<owner>/<repo>` for the
+                    URL form (the shorthand carries no repo, routed via --repo/cwd).
+                    A bare `#N` stays `pr` (PRs and issues share a number space).
       - `actions` : GitHub Actions run URL (optionally job-scoped).
                     `value` is `<run_id>` or `<run_id>:<job_id>`.
       - `slack`   : Slack message/thread permalink. `value` is the URL verbatim
@@ -221,6 +237,9 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
     m = re.match(r"https?://github\.com/([^/]+/[^/]+)/pull/(\d+)", value)
     if m:
         return "pr", m.group(2), m.group(1)
+    m = GITHUB_ISSUE_URL_RE.fullmatch(value)
+    if m:
+        return "gh-issue", m.group(2), m.group(1)
     m = re.match(
         r"https?://github\.com/([^/]+/[^/]+)/actions/runs/(\d+)"
         r"(?:/attempts/\d+)?(?:/job/(\d+))?",
@@ -231,6 +250,9 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
         return "actions", f"{run_id}:{job_id}" if job_id else run_id, m.group(1)
     if SLACK_URL_RE.match(value):
         return "slack", value, None
+    m = GITHUB_ISSUE_SHORTHAND_RE.fullmatch(value)
+    if m:
+        return "gh-issue", m.group(1), None
     if re.fullmatch(r"#\d+", value):
         return "pr", value.lstrip("#"), None
     if LINEAR_RE_CI.fullmatch(value):
@@ -315,6 +337,59 @@ def _linear_prompt(branch: str, identifier: str) -> str:
     return "\n".join(lines + _PLAN_TAIL)
 
 
+def _github_issue_prompt(branch: str, number: str, nwo: str | None) -> str:
+    """First-turn prompt for a GitHub-issue source (`tickets: github`).
+
+    The GitHub analog of `_linear_prompt`, but the transport is the `gh` CLI
+    (already authenticated) rather than an MCP — so there's no retry-on-handshake
+    dance, just `gh issue view`. spawn creates the worktree on `issue-<N>` and the
+    spawned Claude reads the issue, then renames the branch to
+    `issue-<N>-<title-slug>` and the workspace to the same slug. cockpit re-reads
+    `git worktree list` each cycle, so the rename surfaces in `cockpit watch`.
+    """
+    issue_ref = f"{nwo}#{number}" if nwo else f"#{number}"
+    view_cmd = (
+        f"gh issue view {number} --repo {nwo}" if nwo else f"gh issue view {number}"
+    )
+    lines = [
+        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
+        "",
+        f"**Source**: GitHub issue {issue_ref}",
+        "",
+        "**Step 1 (REQUIRED)** — Read the issue with the `gh` CLI:",
+        f"- Run `{view_cmd} --comments` to read the title, body, and discussion.",
+        "- If `gh` reports the issue does not exist or you lack access, STOP and "
+        "report that to the user; do not guess the task from the number alone.",
+        "",
+        "**Step 2 (REQUIRED)** — Derive a slug and rename the branch:",
+        "- Derive `<slug>` from the issue title: lowercase, non-alphanumerics → `-`, "
+        "trim leading/trailing `-`, cap at 30 chars. Use the SAME `<slug>` in step 3.",
+        "- Read the current branch: `CUR=$(git branch --show-current)`.",
+        '- Run: `git branch -m "$CUR" "$CUR-<slug>"` (append `-<slug>` to whatever '
+        "the current branch is — cockpit may have bumped it to `-2`/`-3` to avoid a collision).",
+        "- Verify with `git branch --show-current` — it should now end with `-<slug>`.",
+        "- If the rename fails (target already exists, etc.), keep the original "
+        "branch and note it in your plan.",
+        "",
+        "**Step 3 (REQUIRED)** — Rename the cmux workspace to drop the `issue-<N>` placeholder:",
+        f"- The workspace was created with cockpit's placeholder name (`{branch}`). "
+        "Replace it with the SAME `<slug>` from step 2 — no `issue-` prefix.",
+        '- Run: `cmux workspace-action --action rename --title "<slug>"`. '
+        "Defaults to the current workspace via `$CMUX_WORKSPACE_ID` (always set "
+        "inside a cmux-spawned shell).",
+        "- If `$CMUX_WORKSPACE_ID` is unset for any reason, run `cmux identify` "
+        "first to discover the workspace ref, then pass `--workspace <ref>` explicitly.",
+        "- Cockpit's next reconcile cycle reads `cmux list-workspaces`, so the renamed "
+        "workspace surfaces in the `cockpit watch` table automatically.",
+        "- Do not push or change anything else in this step.",
+        "",
+        "When you open the PR for this work, add a `Closes "
+        f"{issue_ref}` line to the PR body so cockpit links the issue to the PR "
+        "(drives the dev-done pill and close-on-merge).",
+    ]
+    return "\n".join(lines + _PLAN_TAIL)
+
+
 def _slack_prompt(branch: str, url: str, *, mcp_fetch: bool) -> str:
     """First-turn prompt for a Slack-thread source.
 
@@ -393,6 +468,15 @@ def _slack_prompt(branch: str, url: str, *, mcp_fetch: bool) -> str:
             "do not guess the task from the URL alone.",
         ]
     return "\n".join(lines + _PLAN_TAIL)
+
+
+def _repo_entry_or_none(repo_name: str | None) -> dict | None:
+    """The resolved repo config entry, or None — the non-raising form of
+    `select_repo` (used for best-effort reads like the start-label lookup, where
+    an unknown repo should just skip, not abort the spawn)."""
+    if repo_name:
+        return find_repo_by_name(repo_name)
+    return discover_repo()
 
 
 def select_repo(repo_name: str | None) -> dict:
@@ -707,6 +791,8 @@ def main() -> int:
     from_name = False
     is_linear = False  # positional classified as a Linear key (any context → plan)
     is_slack = False  # positional classified as a Slack URL (any context → plan)
+    is_gh_issue = False  # positional classified as a GitHub issue (any context → plan)
+    gh_issue_value: str | None = None  # the issue number, for the start_label write
 
     prompt: str | None = None
     seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
@@ -753,11 +839,27 @@ def main() -> int:
             # absent connector in-session instead. The thread URL is always
             # seeded as context regardless, since it's the entire source.
             seeded_prompt = _slack_prompt(branch, value, mcp_fetch=cfg_use_slack())
+        elif mode == "gh-issue":
+            # `value` is the issue number; the worktree lands on `issue-<N>` and
+            # the spawned Claude reads the issue via `gh issue view`, then renames
+            # the branch + workspace to append a title slug (see
+            # `_github_issue_prompt`). `nwo_hint` (URL form) routes to the right
+            # repo below; the `i#N`/`gh#N` shorthand relies on --repo/cwd.
+            branch = f"issue-{value}"
+            from_name = True
+            is_gh_issue = True
+            gh_issue_value = value
+            # No `claude mcp list` pre-flight — the transport is the `gh` CLI, not
+            # an MCP. Seed the fetch+rename prompt only when GitHub is the active
+            # provider; otherwise the issue still seeds plan-only (via is_gh_issue)
+            # with the number as context.
+            if cfg_tickets() == "github":
+                seeded_prompt = _github_issue_prompt(branch, value, nwo_hint)
         elif mode == "linear":
             branch = value.lower()
             from_name = True
             is_linear = True
-            if cfg_use_linear() and not args.repo:
+            if cfg_tickets() == "linear" and not args.repo:
                 matches = find_repos_by_linear_key(value)
                 if len(matches) == 1:
                     args.repo = matches[0]["name"]
@@ -769,7 +871,7 @@ def main() -> int:
                         f"Pass --repo <name> to disambiguate.",
                         file=sys.stderr,
                     )
-            if cfg_use_linear():
+            if cfg_tickets() == "linear":
                 mcp = linear_mcp_available()
                 if mcp is False:
                     print(
@@ -867,6 +969,7 @@ def main() -> int:
             pr_info
             or is_linear
             or is_slack
+            or is_gh_issue
             or args.context_text
             or args.claude_addendum
         ):
@@ -929,6 +1032,16 @@ def main() -> int:
         prefix = f"workspace {ws_name} spawned at {wt}"
     suffix = f" on {branch_display}" if branch_display else " (no worktree)"
     print(f"{prefix}{suffix}")
+
+    # Mark the issue "work started" with the configured `tickets.start_label`
+    # (opt-in; the one spawn-time GitHub write). Best-effort: a failed label
+    # never blocks the spawn. Run inside the worktree so `gh` infers the repo.
+    if is_gh_issue and gh_issue_value and wt is not None:
+        start_label = github_start_label(repo_entry=_repo_entry_or_none(args.repo))
+        if start_label and add_label(
+            f"#{gh_issue_value}", start_label, repo_dir=str(wt)
+        ):
+            print(f"note: labeled issue #{gh_issue_value} '{start_label}'")
 
     kick_running(quiet=True)
     return 0
