@@ -198,7 +198,7 @@ Key gates (all from `cycle.py`):
   (the order is identical across backends, so cmux behaves exactly as before;
   non-cmux backends just skip the tiers they can't run):
   - **Backend-agnostic** (cmux, limux, **and** none) — pure git + Linear:
-    `_transition_merged_tickets` (`linear_done_on_merge`),
+    `_transition_merged_tickets` (`tickets.close_on_merge`),
     `_reconcile_worktree_lifecycle` (autoclose-on-merge + stale-branch-ref reap),
     and the main-branch fast-forward. `cycle_all`'s close-request drain
     (`_drain_close_requests` — the TUI `c`/`C` path) is likewise unconditional.
