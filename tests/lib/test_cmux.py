@@ -255,9 +255,42 @@ def test_workspace_cwds_parses_limux_json():
     # that must come before the command.
     with (
         patch("cockpit.lib.tool.resolve_tool", return_value="limux"),
+        patch("cockpit.lib.cmux.shutil.which", return_value="/usr/bin/limux"),
         patch("cockpit.lib.cmux.run", return_value=payload),
     ):
         assert workspace_cwds() == {"workspace:abc-def": Path("/tmp/wt")}
+
+
+def test_workspace_cwds_limux_raises_cmux_unavailable_when_binary_absent():
+    """tool=limux but the binary isn't on PATH: degrade via the catchable
+    CmuxUnavailable, NOT run()'s sys.exit (which would crash the tick)."""
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="limux"),
+        patch("cockpit.lib.cmux.shutil.which", return_value=None),
+        pytest.raises(CmuxUnavailable, match="not found on PATH"),
+    ):
+        workspace_cwds()
+
+
+def test_workspace_cwds_cmux_raises_cmux_unavailable_when_binary_absent():
+    """cmux backend, binary absent: cmux() raises FileNotFoundError, which must
+    be converted to CmuxUnavailable (not leak past the degrade)."""
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.cmux", side_effect=FileNotFoundError("cmux")),
+        pytest.raises(CmuxUnavailable, match="rpc workspace.list failed"),
+    ):
+        workspace_cwds()
+
+
+def test_workspace_names_raises_cmux_unavailable_when_binary_absent():
+    """Missing backend binary: cmux() raises FileNotFoundError; workspace_names
+    must surface it as CmuxUnavailable so callers' degrade catches it."""
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=FileNotFoundError("limux")),
+        pytest.raises(CmuxUnavailable, match="list-workspaces failed"),
+    ):
+        workspace_names()
 
 
 def test_spawn_workspace_limux_parses_ref_and_renames():

@@ -37,8 +37,8 @@ flowchart LR
     SM["_spawn_missing_workspaces<br/>cycle.py:1388"]
     NI["nudge_if_idle<br/>cmux.py:373"]
     DD["_track_dev_done<br/>cycle.py:265"]
-    AC["_maybe_autoclose<br/>cycle.py:584"]
-    BR["_reap_branch_refs<br/>cycle.py:725"]
+    AC["_maybe_autoclose<br/>cycle.py:586"]
+    BR["_reap_branch_refs<br/>cycle.py:727"]
   end
 
   subgraph ACT["Actions"]
@@ -183,6 +183,29 @@ Key gates (all from `cycle.py`):
   `merged_branches_deep`) with no post-merge commits, or has no remote and is
   contained in `origin/<default>`. Keeps unique-commit, open-PR, main/default, and
   unverifiable branches. Unconditional cleanup, like `_maybe_autoclose`.
+- **`cycle_repo` runs three capability tiers, gated per step in one fixed order**
+  (the order is identical across backends, so cmux behaves exactly as before;
+  non-cmux backends just skip the tiers they can't run):
+  - **Backend-agnostic** (cmux, limux, **and** none) — pure git + Linear:
+    `_transition_merged_tickets` (`linear_done_on_merge`),
+    `_reconcile_worktree_lifecycle` (autoclose-on-merge + stale-branch-ref reap),
+    and the main-branch fast-forward. `cycle_all`'s close-request drain
+    (`_drain_close_requests` — the TUI `c`/`C` path) is likewise unconditional.
+  - **Workspace-capable** (`has_workspace_backend` → cmux + limux, not none):
+    `_spawn_missing_workspaces` (+ `review_prs` discovery), `_run_repo_skills`,
+    and the dead-cwd sweep `close_gone_cwd_workspaces`. These need a tool's
+    spawn/close (best-effort, `check=False`) but not pills — limux has both verbs.
+  - **cmux-only** (`not ctx.headless` ⇔ `is_cmux`): pills
+    (`_refresh_tracked_pills`, orphan/wip/stale), colors (`_apply_repo_colors`),
+    `_dedupe_workspaces` (sorts by the PID in cmux `workspace:<pid>` refs — limux
+    refs are UUIDs), focus, nudges, and the orphan-workspace reaper
+    (`_reap_workspace_orphans` — its idle-safety gate reads the cmux-only `idle=`
+    pill, so on limux it could only ever defer).
+
+  So a limux daemon does everything except render pills/colors and nudge/focus.
+  (Before, `cycle_repo`'s single `if ctx.headless: return` ran *before* all of
+  this, so limux wrote only the statusline cache — every merged worktree, Linear
+  transition, and fast-forward was stranded.)
 
 ---
 

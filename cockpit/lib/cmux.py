@@ -450,7 +450,8 @@ def workspace_names() -> dict[str, str]:
     """
     try:
         out = cmux("list-workspaces", check=True)
-    except RuntimeError as e:
+    except (RuntimeError, FileNotFoundError) as e:
+        # cmux() raises FileNotFoundError when the backend binary is absent.
         raise CmuxUnavailable(f"list-workspaces failed: {e}") from e
     names: dict[str, str] = {}
     for line in out.splitlines():
@@ -473,6 +474,12 @@ def workspace_cwds() -> dict[str, Path]:
     if tool.is_limux():
         cwd_key = "cwd"
         label = "limux --json list-workspaces"
+        # This path uses raw run() (not the cmux() wrapper, which which-checks the
+        # binary), so guard explicitly: run() sys.exit(2)s when the binary is
+        # absent — a SystemExit that neither this except nor the daemon's degrade
+        # would catch, crashing the tick instead of degrading gracefully.
+        if shutil.which("limux") is None:
+            raise CmuxUnavailable(f"{label}: limux not found on PATH")
         try:
             out = run(["limux", "--json", "list-workspaces"], check=True)
         except RuntimeError as e:
@@ -482,7 +489,8 @@ def workspace_cwds() -> dict[str, Path]:
         label = "rpc workspace.list"
         try:
             out = cmux("rpc", "workspace.list", "{}", check=True)
-        except RuntimeError as e:
+        except (RuntimeError, FileNotFoundError) as e:
+            # cmux() raises FileNotFoundError when the binary is absent.
             raise CmuxUnavailable(f"{label} failed: {e}") from e
 
     try:

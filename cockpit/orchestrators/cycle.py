@@ -126,7 +126,7 @@ from cockpit.lib.nudges import load_pref as _load_nudge_pref
 from cockpit.lib.pills import ci_glyph
 from cockpit.lib.prompts import claude_command, shell_quote
 from cockpit.lib.tickets import TicketProvider, provider_for
-from cockpit.lib.tool import is_cmux
+from cockpit.lib.tool import has_workspace_backend, is_cmux
 from cockpit.orchestrators.teardown import TeardownRequest, teardown
 
 # Cutoff for the *deep* merged-branches fetch that feeds the branch-ref reaper.
@@ -148,8 +148,9 @@ _NUDGE_DESC = {
 
 
 def _cache_only(cfg: dict) -> bool:
-    """Skip pill / cmux-only verbs this cycle? True whenever the resolved
-    workspace backend isn't cmux (limux can't do pills; 'none' = headless).
+    """True when the cmux-only tier must be skipped — the backend isn't cmux.
+    Drives `ctx.headless`; gates pills/colors/focus/nudges + the orphan-reaper
+    only. Teardown and the workspace tier have their own gates (see `cycle_repo`).
     """
     return not is_cmux()
 
@@ -987,6 +988,10 @@ class RepoCycle:
     pill_state: dict
     dry: bool
     headless: bool
+    # False when the workspace-state fetch failed (limux degrade): cwds/names are
+    # empty-but-unreliable, so the workspace-capable tier (spawn/skills) is skipped
+    # to avoid re-spawning duplicates of live-but-unlisted workspaces.
+    workspace_state_ok: bool = True
     default_branch: str | None = None
     prefs: dict[int, NudgePref] = field(default_factory=dict)
     base_distance: dict[str, int] = field(default_factory=dict)
@@ -1041,9 +1046,13 @@ def _prepare_cycle(
     prune_worktrees(repo_path)
 
     headless = _cache_only(cfg)
+    workspace_state_ok = True  # cleared by the limux degrade below; see the field
     with ThreadPoolExecutor(max_workers=4) as ex:
         wts_fut = ex.submit(worktrees, repo_path, repo_entry.get("branch_prefix", ""))
-        state_fut = None if headless else ex.submit(workspace_state)
+        # cmux AND limux can list workspaces ('none' has no tool). Fetch the cwd
+        # map on limux too — autoclose uses it to close the merged worktree's
+        # workspace by ref in the same tick, not just remove the worktree.
+        state_fut = ex.submit(workspace_state) if has_workspace_backend() else None
         merged_fut = ex.submit(
             fetch_merged_branches,
             owner,
@@ -1060,11 +1069,22 @@ def _prepare_cycle(
         try:
             names, cwds = ({}, {}) if state_fut is None else state_fut.result()
         except CmuxUnavailable as e:
+            if not headless:
+                # cmux: the whole reconcile is workspace-centric — skip the repo.
+                print(
+                    f"  {yellow('skip')} {owner}/{name}: cmux unavailable: {e}",
+                    flush=True,
+                )
+                return None
+            # limux: a listing hiccup shouldn't skip the repo — degrade to empty
+            # cwds (autoclose still reaps) and mark the inventory unreliable.
             print(
-                f"  {yellow('skip')} {owner}/{name}: cmux unavailable: {e}",
+                f"  {yellow('warn')} {owner}/{name}: workspace state unavailable: {e}",
+                file=sys.stderr,
                 flush=True,
             )
-            return None
+            names, cwds = {}, {}
+            workspace_state_ok = False
         merged_branches = merged_fut.result()
         merged_branches_deep = merged_deep_fut.result()
 
@@ -1085,8 +1105,10 @@ def _prepare_cycle(
     # spawn phase can create review worktrees for ones we don't track yet. The
     # daemon's normal query is `author:self` + per-worktree aliases, so without
     # this the daemon never sees a coworker's PR until a local worktree exists.
+    # Gated on a workspace backend (cmux + limux), matching the spawn phase that
+    # consumes it — `none` can't create the review workspace, so don't fetch.
     review_candidates: list[OpenPRHead] = []
-    if repo_entry.get("review_prs") and not headless:
+    if repo_entry.get("review_prs") and has_workspace_backend():
         try:
             review_candidates = list_open_pr_heads(owner, name)
         except RuntimeError as e:
@@ -1130,6 +1152,7 @@ def _prepare_cycle(
         pill_state=pill_state,
         dry=dry,
         headless=headless,
+        workspace_state_ok=workspace_state_ok,
         default_branch=origin_head_branch(repo_path),
         prefs=prefs,
         review_candidates=review_candidates,
@@ -1718,6 +1741,24 @@ def _apply_repo_colors(ctx: RepoCycle, repo_entry: dict, keep_refs: set[str]) ->
         ctx.pill_state[f"color:{ref}"] = color
 
 
+def _reconcile_worktree_lifecycle(ctx: RepoCycle, *, dry: bool) -> None:
+    """Backend-agnostic worktree teardown: reap merged-clean worktrees + stale
+    local branch refs. Runs on every backend — git + a best-effort workspace
+    close (`check=False`: real on cmux/limux, no-op on 'none'); its lone pill
+    side effect (`apply_devdone_pill`) no-ops on limux.
+    """
+    _maybe_autoclose(
+        ctx.repo_path,
+        ctx.name,
+        ctx.wts,
+        ctx.merged_branches,
+        ctx.cwds,
+        prs=ctx.prs,
+        dry=dry,
+    )
+    _reap_branch_refs(ctx)
+
+
 def cycle_repo(
     repo_entry: dict,
     self_user: str,
@@ -1738,33 +1779,35 @@ def cycle_repo(
     if ctx is None:
         return
     _write_pr_caches(ctx)
-    if ctx.headless:
-        return
-    keep_refs = _dedupe_workspaces(ctx)
-    printed_refresh, mine_items, others_items = _refresh_tracked_pills(ctx, keep_refs)
-    if ctx.tracked and not printed_refresh:
-        _print_tracked_summary(ctx, mine_items, others_items)
-    _handle_orphans_and_close_stale(ctx, keep_refs)
-    _apply_repo_colors(ctx, repo_entry, keep_refs)
-    _spawn_missing_workspaces(ctx, repo_entry)
+
+    # Per-step backend gating in one fixed order (identical to pre-limux cmux
+    # behaviour; non-cmux backends just skip tiers they can't run). Three tiers —
+    # full rationale in docs/state-machine.md:
+    #   • cmux-only (`not ctx.headless`): pills / colors / dedup (cmux PID refs).
+    #   • workspace-capable (`workspaces_ready`): spawn / skills (cmux + limux).
+    #   • backend-agnostic (unconditional): Linear / autoclose / reap / ff.
+    workspaces_ready = has_workspace_backend() and ctx.workspace_state_ok
+    if not ctx.headless:
+        keep_refs = _dedupe_workspaces(ctx)
+        printed_refresh, mine_items, others_items = _refresh_tracked_pills(
+            ctx, keep_refs
+        )
+        if ctx.tracked and not printed_refresh:
+            _print_tracked_summary(ctx, mine_items, others_items)
+        _handle_orphans_and_close_stale(ctx, keep_refs)
+        _apply_repo_colors(ctx, repo_entry, keep_refs)
+    if workspaces_ready:
+        _spawn_missing_workspaces(ctx, repo_entry)
     _transition_merged_tickets(ctx)
-    _maybe_autoclose(
-        ctx.repo_path,
-        ctx.name,
-        ctx.wts,
-        ctx.merged_branches,
-        ctx.cwds,
-        prs=ctx.prs,
-        dry=dry,
-    )
-    _reap_branch_refs(ctx)
+    _reconcile_worktree_lifecycle(ctx, dry=dry)
     log_ff_advances(
         ff_default_branch_worktrees(
             ctx.repo_path, ctx.wts, default=ctx.default_branch, dry=dry
         ),
         dry=dry,
     )
-    _run_repo_skills(repo_entry, dry=dry)
+    if workspaces_ready:
+        _run_repo_skills(repo_entry, dry=dry)
 
 
 def _drain_close_requests(dry: bool) -> None:
@@ -1952,9 +1995,10 @@ def cycle_all(
             return  # unknown repo path — nothing scoped to reconcile
     else:
         _check_plugin_update(cfg, pill_state)
-    if not _cache_only(cfg):
-        _drain_close_requests(dry=dry)
-    if only_repo is None and not _cache_only(cfg):
+    # Worktree teardown drains on every backend — the TUI `c`/`C` close path
+    # (which enqueues here) was dead on limux/none until now.
+    _drain_close_requests(dry=dry)
+    if only_repo is None and has_workspace_backend():
         try:
             close_gone_cwd_workspaces(dry=dry)
         except CmuxUnavailable as e:
@@ -1995,6 +2039,11 @@ def cycle_all(
                     file=sys.stderr,
                     flush=True,
                 )
+    # Orphan-workspace reap stays cmux-only: its idle-safety gate
+    # (`workspace_is_idle`) reads the `idle=` pill that only cmux's Stop hook
+    # writes, so on limux it is always absent and the reaper would defer every
+    # orphan forever. `close_gone_cwd_workspaces` (cwd-existence, no idle gate)
+    # is the limux-safe workspace reaper; this one needs the idle signal.
     if only_repo is None and not _cache_only(cfg):
         try:
             _reap_workspace_orphans(repos, self_user, dry=dry)
