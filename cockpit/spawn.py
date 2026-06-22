@@ -106,6 +106,7 @@ from cockpit.lib.cmux import (
 )
 from cockpit.lib.codename import codename
 from cockpit.lib.config import (
+    REVIEW_COMMAND_DEFAULT,
     discover_repo,
     find_repo_by_name,
     find_repo_by_nwo,
@@ -191,8 +192,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--review",
         action="store_true",
-        help="seed the worktree's first turn with `/review` instead of the "
-        "plan-only prompt (used by the daemon's per-repo `review_prs`)",
+        help="seed the worktree's first turn with a review slash command "
+        "instead of the plan-only prompt (used by the daemon's per-repo "
+        "`review_prs`)",
+    )
+    p.add_argument(
+        "--review-command",
+        default=REVIEW_COMMAND_DEFAULT,
+        help="the review slash command seeded under --review (default "
+        f"`{REVIEW_COMMAND_DEFAULT}`); the daemon passes the per-repo "
+        "`review_command`, e.g. `/review` or `/pr-review`",
     )
     p.add_argument(
         "--context-text",
@@ -617,16 +626,25 @@ def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
     return "\n".join(lines)
 
 
-def _review_prompt(branch: str, pr_info: dict | None = None) -> str:
+def _review_prompt(
+    branch: str, pr_info: dict | None = None, command: str = REVIEW_COMMAND_DEFAULT
+) -> str:
     """First-turn prompt for an auto-spawned review worktree (per-repo
     `review_prs`).
 
-    Leads with the literal `/review` slash command so Claude Code runs the
-    built-in PR review against the PR checked out on this branch; the PR
-    context block follows for the human reading the transcript. Mirrors the
-    `--skill` path, which also delivers a bare slash command as the first turn.
+    Leads with ``command`` — a review slash command — so Claude Code runs that
+    review against the PR checked out on this branch; the PR context block
+    follows for the human reading the transcript. Mirrors the `--skill` path,
+    which also delivers a bare slash command as the first turn. ``command``
+    defaults to cockpit's `/cockpit:review` plugin command; the daemon passes
+    the per-repo `review_command` (e.g. `/review` or `/pr-review`) via
+    `--review-command`.
+
+    The closing line keeps the worktree dry-run: report findings, then stop
+    before posting comments or submitting an approve / request-changes verdict —
+    a human authorizes those, never the auto-spawn.
     """
-    lines = ["/review", ""]
+    lines = [command, ""]
     if pr_info:
         author = _pr_author(pr_info)
         number = pr_info["number"]
@@ -640,7 +658,8 @@ def _review_prompt(branch: str, pr_info: dict | None = None) -> str:
         lines.append(f"Reviewing the open PR on branch `{branch}`.")
     lines += [
         "",
-        "Report findings. Do not post review comments unless explicitly authorized.",
+        "Report findings. Ask before posting any review comments or submitting "
+        "an approve / request-changes verdict.",
     ]
     return "\n".join(lines)
 
@@ -964,7 +983,7 @@ def main() -> int:
         if actions_run_info is not None:
             prompt = _actions_prompt(branch, actions_run_info, actions_job_id, pr_info)
         elif args.review:
-            prompt = _review_prompt(branch, pr_info)
+            prompt = _review_prompt(branch, pr_info, command=args.review_command)
         elif prompt is None and (
             pr_info
             or is_linear

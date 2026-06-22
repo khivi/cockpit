@@ -250,6 +250,15 @@ VALID_TICKETS = ("none", "linear", "github")
 # usually means *work started*, not done — that's `tickets.start_label`.)
 GITHUB_DEV_DONE_DEFAULT = "ready for review"
 
+# Slash command seeded as the first turn of an auto-spawned `review_prs`
+# worktree. Defaults to cockpit's own `/cockpit:review` plugin command — it
+# ships with the plugin, so every cockpit user has it in every spawned review
+# workspace (unlike a personal global skill, which only resolves for its owner),
+# and it reviews against the *target repo's* documented conventions. Override
+# per-repo (or globally) with `review_command` (e.g. the built-in `/review`, or
+# a personal `/pr-review`).
+REVIEW_COMMAND_DEFAULT = "/cockpit:review"
+
 
 def _tickets_block(src: dict | None) -> dict:
     """Normalize a config source's `tickets` value to a dict: a bare string
@@ -386,6 +395,30 @@ def ticket_close_on_merge(
         return bool(repo_entry["linear_done_on_merge"])
     cfg = cfg if cfg is not None else load_config()
     return bool(cfg.get("linear_done_on_merge", False))
+
+
+def review_command(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The slash command seeded as the first turn of an auto-spawned review
+    worktree (per-repo `review_prs`).
+
+    Default ``"/cockpit:review"`` — cockpit's own plugin command, available in
+    every spawned review workspace because the plugin is installed alongside the
+    daemon (a personal global skill would only resolve for its owner). It reviews
+    against the *target repo's* documented conventions, so it stays portable
+    across watched repos. Override per-repo (or globally) with a `review_command`
+    string — e.g. the built-in ``"/review"`` or a personal ``"/pr-review"``.
+    Resolved repo-block → global-block → default; a non-string/blank value falls
+    through to the next level.
+    """
+    if repo_entry is not None:
+        rv = repo_entry.get("review_command")
+        if isinstance(rv, str) and rv.strip():
+            return rv.strip()
+    cfg = cfg if cfg is not None else load_config()
+    gv = cfg.get("review_command")
+    if isinstance(gv, str) and gv.strip():
+        return gv.strip()
+    return REVIEW_COMMAND_DEFAULT
 
 
 def use_slack() -> bool:

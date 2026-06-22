@@ -160,6 +160,42 @@ def test_preflight_ignores_repo_without_review_prs(tmp_path, monkeypatch, capsys
     assert capsys.readouterr().err == ""
 
 
+def test_preflight_exits_on_non_slash_review_command_repo(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {"tool": "cmux", "repos": [{"name": "r", "review_command": "pr-review"}]}
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "review_command" in err
+    assert "'pr-review'" in err
+
+
+def test_preflight_exits_on_non_string_review_command_global(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [], "review_command": True})
+    assert exc.value.code == 2
+    assert "review_command" in capsys.readouterr().err
+
+
+def test_preflight_passes_on_valid_review_command(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "review_command": "/review",
+            "repos": [{"name": "r", "review_command": "/pr-review"}],
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
 def test_preflight_exits_on_non_bool_check_update(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
