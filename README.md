@@ -37,7 +37,24 @@ The daemon *is* the TUI — run it yourself (no auto-start):
 cockpit watch          # requires a TTY; run under tmux/cmux/screen to persist
 ```
 
-Start a task — run `/cockpit:new` inside Claude Code, from a session in any git repo:
+Drive the table by keystroke — most keys act on the highlighted row, and the footer hints adapt to that row's state and your backend (e.g. `p`/`m` hide on a row with no PR):
+
+| Key | Action |
+|---|---|
+| `f` | Focus the row's workspace (cmux) |
+| `w` | Open/spawn the row's workspace (works on limux too) |
+| `p` | Open the PR in a browser |
+| `t` | Open the linked ticket (Linear/GitHub) |
+| `c` / `C` | Close (refuses dirty/unpushed/open-PR) / force-close (overrides the open-PR block only) |
+| `m` | Mute / unmute the row's nudge |
+| `N` | Nudge the row now (honours the idle gate) |
+| `n` | New workspace (branch / PR / URL / Linear id / Slack thread) |
+| `s` | Sync (full reconcile now) |
+| `o` | Show tick output / logs |
+| `u` | Self-update (shown when "⬆ update available") |
+| `q` | Quit |
+
+Start a task — run `/cockpit:new` inside Claude Code, from a session in any git repo (or press `n` in the TUI):
 
 ```text
 /cockpit:new <branch | PR | url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--context] [-- <text...>]
