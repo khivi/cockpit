@@ -72,6 +72,32 @@ def _validate_review_prs(cfg: dict) -> None:
             )
 
 
+def _validate_review_command(cfg: dict) -> None:
+    """Hard-fail on a `review_command` (global or per-repo) that isn't a slash
+    command string.
+
+    `review_command` overrides the `/review` first-turn seeded into a
+    `review_prs` worktree (e.g. `/pr-review`). It is delivered verbatim as the
+    workspace's opening prompt, so a non-string or a value missing the leading
+    `/` would silently seed a non-command — rejected at start like `review_prs`.
+    """
+
+    def _check(val: object, where: str) -> None:
+        if not isinstance(val, str) or not val.startswith("/"):
+            _die(
+                f"{where}: review_command must be a slash command string "
+                f"(e.g. '/review'), got {val!r}."
+            )
+
+    if "review_command" in cfg:
+        _check(cfg["review_command"], "review_command")
+    for repo in cfg.get("repos", []):
+        if "review_command" not in repo:
+            continue
+        name = repo.get("name") or repo.get("path", "?")
+        _check(repo["review_command"], f"repo {name!r}: review_command")
+
+
 def _validate_check_update(cfg: dict) -> None:
     """Hard-fail on a top-level `check_update` that isn't a bool.
 
@@ -284,6 +310,7 @@ def preflight(cfg: dict) -> None:
 
     _validate_sidebar_colors(cfg)
     _validate_review_prs(cfg)
+    _validate_review_command(cfg)
     _validate_check_update(cfg)
     _validate_use_slack(cfg)
     _validate_tickets(cfg)

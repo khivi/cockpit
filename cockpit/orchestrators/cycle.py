@@ -76,6 +76,7 @@ from cockpit.lib.config import (
     linear_merge_done_state,
     linear_team_keys,
     orphan_nudge_grace_seconds,
+    review_command,
     ticket_close_on_merge,
 )
 from cockpit.lib.constants import MAIN_BRANCHES
@@ -1495,8 +1496,11 @@ _SPAWN_INFLIGHT_TTL_SECONDS = 600
 def _bg_spawn_pr(
     ctx: RepoCycle, repo_name: str | None, number: int, branch: str, *, review: bool
 ) -> None:
-    """Fire `cockpit new --pr <n> [--repo <name>] [--review]` detached so the
-    slow tick never blocks on `git fetch` + worktree add.
+    """Fire `cockpit new --pr <n> [--repo <name>] [--review --review-command …]`
+    detached so the slow tick never blocks on `git fetch` + worktree add.
+
+    Under `review=True` the per-repo `review_command` (default `/review`,
+    e.g. `/pr-review`) rides along so the worktree's first turn runs that review.
 
     Invoked via module dispatch (`python -m cockpit.cli new …`), NOT `spawn.py`
     by path: a path invocation puts the package dir on `sys.path[0]`, where
@@ -1524,7 +1528,7 @@ def _bg_spawn_pr(
     if repo_name:
         cmd += ["--repo", repo_name]
     if review:
-        cmd.append("--review")
+        cmd += ["--review", "--review-command", review_command(ctx.cfg, ctx.repo_entry)]
     logfile: IO[bytes] | None = None
     try:
         logfile = open(_SPAWN_LOG, "ab")  # noqa: SIM115 — handle is passed to a detached Popen and must outlive this scope

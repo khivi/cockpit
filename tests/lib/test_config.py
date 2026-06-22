@@ -680,6 +680,39 @@ def test_repo_tickets_defaults_none(tmp_path, monkeypatch):
     assert cockpit_config.repo_tickets(repo_entry={}) == "none"
 
 
+# ── review_command (review_prs first-turn slash command) ────────────────────
+
+
+def test_review_command_defaults_to_plugin_command(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.review_command() == "/cockpit:review"
+
+
+def test_review_command_repo_override_wins(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "review_command": "/review"}
+    )
+    assert (
+        cockpit_config.review_command(repo_entry={"review_command": "/pr-review"})
+        == "/pr-review"
+    )
+
+
+def test_review_command_falls_back_to_global(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "review_command": "/pr-review"}
+    )
+    assert cockpit_config.review_command(repo_entry={}) == "/pr-review"
+
+
+def test_review_command_blank_falls_through_to_default(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert (
+        cockpit_config.review_command(repo_entry={"review_command": "  "})
+        == "/cockpit:review"
+    )
+
+
 # ── tickets object: dev_done labels + close_on_merge ────────────────────────
 
 

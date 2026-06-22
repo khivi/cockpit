@@ -1856,8 +1856,30 @@ def test_bg_spawn_pr_launches_records_and_guards(tmp_path, monkeypatch):
     argv = popen.call_args.args[0]
     assert "--auto" not in argv
     assert argv[1:4] == ["-m", "cockpit.cli", "new"]  # module dispatch, not spawn.py
-    assert argv[4:] == ["--pr", "9", "--repo", "n", "--review"]
+    # review=True rides the per-repo review_command (default /cockpit:review).
+    assert argv[4:] == [
+        "--pr",
+        "9",
+        "--repo",
+        "n",
+        "--review",
+        "--review-command",
+        "/cockpit:review",
+    ]
     assert ctx.pill_state["spawn:o/n:coworker/x"] == 100.0
+
+
+def test_bg_spawn_pr_passes_custom_review_command(tmp_path, monkeypatch):
+    monkeypatch.setattr(cycle, "_SPAWN_LOG", tmp_path / "spawn.log")
+    ctx = _spawn_ctx(tmp_path)
+    ctx.repo_entry = {"review_command": "/pr-review"}
+    with (
+        patch.object(cycle.subprocess, "Popen") as popen,
+        patch.object(cycle.time, "monotonic", return_value=1.0),
+    ):
+        cycle._bg_spawn_pr(ctx, "n", 9, "coworker/x", review=True)
+    argv = popen.call_args.args[0]
+    assert argv[-2:] == ["--review-command", "/pr-review"]
 
 
 def test_bg_spawn_pr_retries_after_ttl(tmp_path, monkeypatch):

@@ -489,7 +489,7 @@ def test_pr_author_falls_back_when_author_null_or_absent():
 # ── --review (per-repo review_prs) ─────────────────────────────────────────
 
 
-def test_review_prompt_leads_with_slash_review():
+def test_review_prompt_leads_with_default_review_command():
     import cockpit.spawn as spawn
 
     p = spawn._review_prompt(
@@ -501,20 +501,53 @@ def test_review_prompt_leads_with_slash_review():
             "url": "https://github.com/o/n/pull/7",
         },
     )
-    assert p.startswith("/review")
+    assert p.startswith("/cockpit:review")  # the plugin-command default
     assert "#7" in p and "coworker" in p and "fix the thing" in p
-    assert "Do not post" in p
+    assert "Ask before posting" in p
 
 
 def test_review_prompt_without_pr_info_mentions_branch():
     import cockpit.spawn as spawn
 
     p = spawn._review_prompt("coworker/x", None)
-    assert p.startswith("/review")
+    assert p.startswith("/cockpit:review")
     assert "coworker/x" in p
 
 
-def test_review_branch_mode_seeds_review_command(spawn_main, push_branch, monkeypatch):
+def test_review_prompt_uses_custom_command():
+    import cockpit.spawn as spawn
+
+    p = spawn._review_prompt("coworker/x", None, command="/pr-review")
+    assert p.startswith("/pr-review")
+    assert "/review\n" not in p  # the built-in default isn't seeded
+
+
+def test_review_branch_mode_seeds_custom_review_command(
+    spawn_main, push_branch, monkeypatch
+):
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    push_branch("khivi/reviewme")
+    code, _out, _err = spawn_main(
+        [
+            "--branch",
+            "khivi/reviewme",
+            "--repo",
+            "testrepo",
+            "--review",
+            "--review-command",
+            "/pr-review",
+        ]
+    )
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "/pr-review" in cmd
+
+
+def test_review_branch_mode_seeds_default_review_command(
+    spawn_main, push_branch, monkeypatch
+):
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
@@ -524,7 +557,7 @@ def test_review_branch_mode_seeds_review_command(spawn_main, push_branch, monkey
     )
     assert code == 0
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
-    assert "/review" in cmd
+    assert "/cockpit:review" in cmd  # --review-command omitted → plugin-command default
     assert "PLAN ONLY" not in cmd
 
 
