@@ -81,10 +81,15 @@ GitHub handle.
 ### 2a. Live PRs — track & spawn
 
 Leads on "does a worktree exist?" so the two PR×author dimensions don't fan out.
+An `in_place` repo (registered by bare `cockpit new`) never reaches this tree —
+`_spawn_missing_workspaces` early-returns, so no PR/review/orphan worktree is
+auto-spawned; its row still renders from `git worktree list` + the cell writers.
 
 ```mermaid
 flowchart TD
-  P["PR (any state)"] --> WT{"worktree<br/>exists?"}
+  P["PR (any state)"] --> IP{"repo in_place?"}
+  IP -->|yes| SKIP["skip: no auto-spawn<br/>(row still renders)"]
+  IP -->|no| WT{"worktree<br/>exists?"}
 
   WT -->|yes| REUSE{"merged/closed PR but<br/>HEAD past head_oid?<br/>(branch reused)"}
   REUSE -->|yes| SUP["suppress: clear pills +<br/>blank PR cells (show no PR)"]

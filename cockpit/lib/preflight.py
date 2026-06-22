@@ -72,6 +72,24 @@ def _validate_review_prs(cfg: dict) -> None:
             )
 
 
+def _validate_in_place(cfg: dict) -> None:
+    """Hard-fail on a repo `in_place` that isn't a bool.
+
+    `in_place: true` (set by bare `cockpit new`) makes the daemon skip all
+    worktree auto-spawning for the repo — a non-bool (e.g. a stray string) would
+    be silently truthy, so it's rejected at start like `review_prs`.
+    """
+    for repo in cfg.get("repos", []):
+        if "in_place" not in repo:
+            continue
+        if not isinstance(repo["in_place"], bool):
+            name = repo.get("name") or repo.get("path", "?")
+            _die(
+                f"repo {name!r}: in_place must be true or false, "
+                f"got {repo['in_place']!r}."
+            )
+
+
 def _validate_review_command(cfg: dict) -> None:
     """Hard-fail on a `review_command` (global or per-repo) that isn't a slash
     command string.
@@ -304,6 +322,7 @@ def validate_config(cfg: dict) -> None:
     """
     _validate_sidebar_colors(cfg)
     _validate_review_prs(cfg)
+    _validate_in_place(cfg)
     _validate_review_command(cfg)
     _validate_check_update(cfg)
     _validate_use_slack(cfg)

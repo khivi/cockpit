@@ -26,6 +26,13 @@
         "start_label": "in progress",
         "close_on_merge": false
       }
+    },
+    {
+      "name": "scratch",
+      "path": "/absolute/path/to/inplace/repo",
+      "branch_prefix": "yourusername/",
+      "default_base": "main",
+      "in_place": true
     }
   ],
   "slow_poll_interval_seconds": 300,

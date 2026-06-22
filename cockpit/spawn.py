@@ -7,9 +7,11 @@ Usage:
   spawn.py --name <short>  (--repo <n> | --cwd <path>)  # new branch (--repo) or workspace at path (--cwd)
   spawn.py --skill <name>  (--repo <n> | --cwd <path>)  # spawn workspace running a skill
   spawn.py --cwd <path>                                 # arbitrary dir (no repo, no branch)
+  spawn.py                                              # bare: register cwd's git repo (in_place) + in-place workspace
 
 Sources are strictly mutex: pick exactly one of
-  {positional, --branch, --pr, --name, --skill} — or --cwd alone.
+  {positional, --branch, --pr, --name, --skill} — or --cwd alone, or nothing
+  (bare: in-place workspace on the cwd repo, see below).
 
 --name and --skill require an explicit location: --repo <n> or --cwd <path>.
   --name <s> --repo R  → new branch <prefix><s> in R, workspace short = s
@@ -78,16 +80,22 @@ Positional detection:
 
 Behaviour:
   - For positional/--branch/--pr without --repo: walk up from cwd to match a
-    registered repo in ~/.config/cockpit/config.json (or register_cwd() if
-    unmatched). --repo <n> bypasses discovery.
+    registered repo in ~/.config/cockpit/config.json; an unmatched repo errors
+    (pass --repo, or run bare `cockpit new` to register it). --repo <n> bypasses
+    discovery.
+  - Bare (no source, no --cwd, no --repo): `register_cwd(in_place=True)` appends
+    the cwd's git repo to config.json (marked `in_place: true`, so the daemon
+    never auto-spawns worktrees for it) and opens an in-place workspace on the
+    current branch — no worktree. Errors (exit 1) if cwd is not a git repo.
   - Worktree path: dirname(repo)/<name>, with -2/-3/... on collision.
   - --cwd <path> must exist (errors if not).
   - Idempotent: existing worktree+workspace for the branch -> attach, don't error.
+    An already-registered repo is reused as-is by the bare path (not re-flagged).
 
 Exit codes:
   0 = ok (created or attached)
-  1 = usage / config error
-  2 = no managed repo and register_cwd failed
+  1 = usage / config error (incl. bare run outside a git repo)
+  2 = worktree resolution failed (no managed repo for the source)
 """
 
 from __future__ import annotations
@@ -143,6 +151,7 @@ from cockpit.lib.github_issues import (
 )
 from cockpit.lib.linear import LINEAR_RE_CI, linear_mcp_available
 from cockpit.lib.prompts import claude_command, split_prompt_prefix
+from cockpit.lib.registry import register_cwd
 from cockpit.lib.repos import repo_names
 from cockpit.lib.slack import SLACK_URL_RE, slack_seed
 
@@ -783,6 +792,22 @@ def main() -> int:
             "at most one of positional, --branch, --pr, --name, --skill "
             f"may be given (got: {', '.join(chosen)})"
         )
+    # Bare `cockpit new` (no source, no --cwd, no --repo): register the cwd's
+    # git repo for an in-place, no-worktree workspace on the current branch, then
+    # flow through the --cwd path below. The daemon shows the repo's row but
+    # never auto-spawns worktrees for it (`in_place: true`). Off-GitHub and
+    # master-only repos register fine — `register_cwd` defaults the prefix empty
+    # and `default_branch` falls back to git symbolic-ref / "main".
+    if not chosen and not cwd and not args.repo:
+        try:
+            entry = register_cwd(in_place=True)
+        except RuntimeError as e:
+            return _die(
+                f"{e}. Bare `cockpit new` registers the current git repo for an "
+                "in-place (no-worktree) workspace; for an arbitrary directory "
+                "use `cockpit new --cwd <path>` instead."
+            )
+        cwd = entry["path"]
     if not chosen and not cwd:
         return _die(
             "one of positional, --branch, --pr, --name, --skill, or --cwd is required"
