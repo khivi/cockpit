@@ -521,7 +521,7 @@ async def test_open_workspace_noop_when_tool_none(monkeypatch, tmp_path):
 
 async def test_close_key_enqueues_when_clean(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.probe_blockers", lambda *a, **k: [])
+    monkeypatch.setattr("cockpit.tui.app.resolve_pr_state", lambda *a, **k: ("", None))
     enq: list = []
     monkeypatch.setattr("cockpit.tui.app.enqueue", lambda req: enq.append(req))
     app, _ = _make_app()
@@ -541,9 +541,7 @@ async def test_close_key_enqueues_when_clean(monkeypatch, tmp_path):
 
 async def test_close_key_refuses_on_blockers(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        "cockpit.tui.app.probe_blockers", lambda *a, **k: ["PR #1 is OPEN"]
-    )
+    monkeypatch.setattr("cockpit.tui.app.resolve_pr_state", lambda *a, **k: ("OPEN", 1))
     enq: list = []
     monkeypatch.setattr("cockpit.tui.app.enqueue", lambda req: enq.append(req))
     app, _ = _make_app()
@@ -561,9 +559,7 @@ async def test_force_close_key_overrides_open_pr(monkeypatch, tmp_path):
     # blockers (the seeded path isn't a real worktree).
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.worktree_state_blockers", lambda *a, **k: [])
-    monkeypatch.setattr(
-        "cockpit.tui.app.probe_blockers", lambda *a, **k: ["PR #1 is OPEN"]
-    )
+    monkeypatch.setattr("cockpit.tui.app.resolve_pr_state", lambda *a, **k: ("OPEN", 1))
     enq: list = []
     monkeypatch.setattr("cockpit.tui.app.enqueue", lambda req: enq.append(req))
     app, _ = _make_app()
@@ -594,6 +590,36 @@ async def test_force_close_key_still_refuses_hard_blockers(monkeypatch, tmp_path
         await pilot.press("C")
         await pilot.pause(0.6)
     assert enq == []  # hard blocker stands even under force
+
+
+async def test_close_key_merge_aware_clears_hard_unpushed(monkeypatch, tmp_path):
+    # The squash-merge fix at the TUI layer: an out-of-band merge resolved live
+    # as MERGED feeds pr_merged=True into the *hard* gate, so the false-positive
+    # unpushed block is skipped and the close enqueues (with delete_branch set).
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "cockpit.tui.app.resolve_pr_state", lambda *a, **k: ("MERGED", 7)
+    )
+    seen: list = []
+
+    def _spy_blockers(path, *, branch=None, is_mine=True, pr_merged=False):
+        seen.append(pr_merged)
+        # Mirror the real gate: a merged PR skips the unpushed check.
+        return [] if pr_merged else ["3 unpushed commit(s)"]
+
+    monkeypatch.setattr("cockpit.tui.app.worktree_state_blockers", _spy_blockers)
+    enq: list = []
+    monkeypatch.setattr("cockpit.tui.app.enqueue", lambda req: enq.append(req))
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause(0.6)
+    assert seen == [True]  # MERGED flowed into the hard gate
+    assert len(enq) == 1
+    assert enq[0].delete_branch is True  # merged → local ref is reaped
 
 
 async def test_focus_shows_notification(monkeypatch, tmp_path):
