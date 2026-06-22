@@ -16,7 +16,7 @@ permissions:
 # workflow-wide. SKIP is honoured by both `pre-commit/action` and bare
 # `pre-commit run`.
 env:
-  SKIP: "no-commit-to-branch"
+  SKIP: "no-commit-to-branch,version-bump-pre-push"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
