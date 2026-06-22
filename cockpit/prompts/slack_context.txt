@@ -1,0 +1,7 @@
+You are starting a fresh task in a new worktree on branch `{branch}`.
+
+**Source**: Slack thread {url}
+
+**Step 1** — Read the thread for context: use the Slack MCP `slack_read_thread` tool on {url} if the connector is available. If the Slack MCP is not connected, ask the user to paste the thread contents — do not guess the task from the URL alone.
+
+{plan_tail}

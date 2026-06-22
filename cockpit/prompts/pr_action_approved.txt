@@ -1,0 +1,1 @@
+PR is approved and ready to merge. Report current state (CI, mergeability) and exit; the human will run `gh pr merge` when ready.

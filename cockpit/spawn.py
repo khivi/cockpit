@@ -154,6 +154,7 @@ from cockpit.lib.prompts import claude_command, split_prompt_prefix
 from cockpit.lib.registry import register_cwd
 from cockpit.lib.repos import repo_names
 from cockpit.lib.slack import SLACK_URL_RE, slack_seed
+from cockpit.lib.templates import render
 
 
 def _die(msg: str, code: int = 1) -> int:
@@ -279,19 +280,6 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
     return "branch", value, None
 
 
-_PLAN_TAIL = [
-    "",
-    "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
-    "- DO NOT edit files, write code, run tests, or commit anything.",
-    "- You MAY use Read, Grep, Glob for context (re-fetch the source where relevant).",
-    "- Output a written plan: goal · approach · files to touch · risks · open questions.",
-    "- Ask clarifying questions if the task is ambiguous.",
-    "- Wait for the user to approve or refine before implementing.",
-    "",
-    "Begin by fetching the source above, then write the plan.",
-]
-
-
 def _pr_author(pr_info: dict) -> str:
     """Login of a PR's author, or "unknown" when the author object is null/absent.
 
@@ -299,6 +287,26 @@ def _pr_author(pr_info: dict) -> str:
     nested lookup rather than assuming a dict.
     """
     return str((pr_info.get("author") or {}).get("login", "unknown"))
+
+
+def _pr_fields(pr_info: dict) -> tuple[str, int, str]:
+    """`(author, number, title)` from a PR payload, with `title` falling back to
+    `PR #<n>`. The shared unpack for the plan-only + review context blocks.
+
+    (`_actions_prompt` keeps its own title handling — it wants an empty default,
+    not the `PR #<n>` one — so it reads `author`/`number` directly.)
+    """
+    number = pr_info["number"]
+    title = pr_info.get("title") or f"PR #{number}"
+    return _pr_author(pr_info), number, title
+
+
+def _scenario_prompt(name: str, **fields: object) -> str:
+    """Render a source-fetch first-turn template, auto-filling the shared
+    plan tail every such template ends with. Centralizes the one constant slot
+    so the Linear / GitHub-issue / Slack / Actions builders don't each repeat it.
+    """
+    return render(name, plan_tail=render("plan_tail"), **fields)
 
 
 def _linear_prompt(branch: str, identifier: str) -> str:
@@ -311,49 +319,10 @@ def _linear_prompt(branch: str, identifier: str) -> str:
     Workspace name + worktree directory stay on the original short slug;
     cockpit's reconciliation re-reads `git worktree list` each cycle, so the
     rename surfaces in the `cockpit watch` table without further action.
+
+    Prose lives in ``cockpit/prompts/linear.txt`` (see `cockpit.lib.templates`).
     """
-    lines = [
-        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
-        "",
-        f"**Source**: Linear ticket {identifier}",
-        "",
-        "**Step 1 (REQUIRED)** — Fetch the ticket via the Linear MCP:",
-        f"- Use the Linear MCP tool to read issue `{identifier}` (title, description, comments).",
-        "- If the tool call fails because the MCP server is still connecting (tools "
-        "show as unavailable or return a connection error), the in-session connector "
-        "is still completing its handshake — this is common when several worktrees "
-        "spawn at once. Immediately retry the SAME MCP tool call up to three times "
-        "(do not switch tools, do not insert shell `sleep` waits — they are blocked "
-        "in some environments and do not help); the connector usually finishes its "
-        "handshake within a couple of attempts.",
-        "- If the MCP is still unavailable after all retries, STOP. Report to the user "
-        "that the Linear connector did not finish connecting and that running `/mcp` "
-        "to reconnect, then re-invoking this session, will resolve it. Exit without "
-        "writing a plan; do not fall back to guessing from the ticket id alone.",
-        "",
-        "**Step 2 (REQUIRED)** — Derive a slug and rename the branch:",
-        "- Derive `<slug>` from the ticket title: lowercase, non-alphanumerics → `-`, "
-        "trim leading/trailing `-`, cap at 30 chars. Use the SAME `<slug>` in step 3.",
-        "- Read the current branch: `CUR=$(git branch --show-current)`.",
-        '- Run: `git branch -m "$CUR" "$CUR-<slug>"` (append `-<slug>` to whatever '
-        "the current branch is — cockpit may have bumped it to `-2`/`-3` to avoid a collision).",
-        "- Verify with `git branch --show-current` — it should now end with `-<slug>`.",
-        "- If the rename fails (target already exists, etc.), keep the original "
-        "branch and note it in your plan.",
-        "",
-        "**Step 3 (REQUIRED)** — Rename the cmux workspace to drop the `<id>`-style placeholder:",
-        "- The workspace was created with cockpit's placeholder name (e.g. `pe-1234`). "
-        "Replace it with the SAME `<slug>` from step 2 — no id prefix.",
-        '- Run: `cmux workspace-action --action rename --title "<slug>"`. '
-        "Defaults to the current workspace via `$CMUX_WORKSPACE_ID` (always set "
-        "inside a cmux-spawned shell).",
-        "- If `$CMUX_WORKSPACE_ID` is unset for any reason, run `cmux identify` "
-        "first to discover the workspace ref, then pass `--workspace <ref>` explicitly.",
-        "- Cockpit's next reconcile cycle reads `cmux list-workspaces`, so the renamed "
-        "workspace surfaces in the `cockpit watch` table automatically.",
-        "- Do not push or change anything else in this step.",
-    ]
-    return "\n".join(lines + _PLAN_TAIL)
+    return _scenario_prompt("linear", branch=branch, identifier=identifier)
 
 
 def _github_issue_prompt(branch: str, number: str, nwo: str | None) -> str:
@@ -370,43 +339,9 @@ def _github_issue_prompt(branch: str, number: str, nwo: str | None) -> str:
     view_cmd = (
         f"gh issue view {number} --repo {nwo}" if nwo else f"gh issue view {number}"
     )
-    lines = [
-        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
-        "",
-        f"**Source**: GitHub issue {issue_ref}",
-        "",
-        "**Step 1 (REQUIRED)** — Read the issue with the `gh` CLI:",
-        f"- Run `{view_cmd} --comments` to read the title, body, and discussion.",
-        "- If `gh` reports the issue does not exist or you lack access, STOP and "
-        "report that to the user; do not guess the task from the number alone.",
-        "",
-        "**Step 2 (REQUIRED)** — Derive a slug and rename the branch:",
-        "- Derive `<slug>` from the issue title: lowercase, non-alphanumerics → `-`, "
-        "trim leading/trailing `-`, cap at 30 chars. Use the SAME `<slug>` in step 3.",
-        "- Read the current branch: `CUR=$(git branch --show-current)`.",
-        '- Run: `git branch -m "$CUR" "$CUR-<slug>"` (append `-<slug>` to whatever '
-        "the current branch is — cockpit may have bumped it to `-2`/`-3` to avoid a collision).",
-        "- Verify with `git branch --show-current` — it should now end with `-<slug>`.",
-        "- If the rename fails (target already exists, etc.), keep the original "
-        "branch and note it in your plan.",
-        "",
-        "**Step 3 (REQUIRED)** — Rename the cmux workspace to drop the `issue-<N>` placeholder:",
-        f"- The workspace was created with cockpit's placeholder name (`{branch}`). "
-        "Replace it with the SAME `<slug>` from step 2 — no `issue-` prefix.",
-        '- Run: `cmux workspace-action --action rename --title "<slug>"`. '
-        "Defaults to the current workspace via `$CMUX_WORKSPACE_ID` (always set "
-        "inside a cmux-spawned shell).",
-        "- If `$CMUX_WORKSPACE_ID` is unset for any reason, run `cmux identify` "
-        "first to discover the workspace ref, then pass `--workspace <ref>` explicitly.",
-        "- Cockpit's next reconcile cycle reads `cmux list-workspaces`, so the renamed "
-        "workspace surfaces in the `cockpit watch` table automatically.",
-        "- Do not push or change anything else in this step.",
-        "",
-        "When you open the PR for this work, add a `Closes "
-        f"{issue_ref}` line to the PR body so cockpit links the issue to the PR "
-        "(drives the dev-done pill and close-on-merge).",
-    ]
-    return "\n".join(lines + _PLAN_TAIL)
+    return _scenario_prompt(
+        "github_issue", branch=branch, issue_ref=issue_ref, view_cmd=view_cmd
+    )
 
 
 def _slack_prompt(branch: str, url: str, *, mcp_fetch: bool) -> str:
@@ -427,66 +362,12 @@ def _slack_prompt(branch: str, url: str, *, mcp_fetch: bool) -> str:
     the URL so the thread is available as context (read it best-effort, no
     rename) — the URL is the whole point of a Slack source, so it is always
     seeded regardless of the flag.
+
+    The two modes are two templates — ``cockpit/prompts/slack_fetch.txt`` (the
+    fetch + rename steps) and ``slack_context.txt`` (read-for-context only).
     """
-    lines = [
-        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
-        "",
-        f"**Source**: Slack thread {url}",
-    ]
-    if mcp_fetch:
-        lines += [
-            "",
-            "**Step 1 (REQUIRED)** — Read the thread via the Slack MCP:",
-            f"- Use the Slack MCP `slack_read_thread` tool to read the thread at {url} "
-            "(the parent message and every reply). The channel id and message "
-            "timestamp are encoded in the URL.",
-            "- If the tool call fails because the MCP server is still connecting (tools "
-            "show as unavailable or return a connection error), the in-session connector "
-            "is still completing its handshake — common when several worktrees spawn at "
-            "once. Immediately retry the SAME MCP tool call up to three times (do not "
-            "switch tools, do not insert shell `sleep` waits — they are blocked in some "
-            "environments and do not help); the connector usually finishes within a "
-            "couple of attempts.",
-            "- If the MCP is still unavailable after all retries, STOP. Report that the "
-            "Slack connector did not finish connecting and that running `/mcp` to "
-            "reconnect, then re-invoking this session, will resolve it. Exit without "
-            "writing a plan; do not guess the task from the URL alone.",
-            "",
-            "**Step 2 (REQUIRED)** — Derive a topic slug and rename the branch:",
-            "- From the thread's subject/ask, derive `<slug>`: lowercase, "
-            "non-alphanumerics → `-`, trim leading/trailing `-`, cap at 30 chars. "
-            "Use the SAME `<slug>` in step 3.",
-            "- Read the current branch: `CUR=$(git branch --show-current)`.",
-            '- Run: `git branch -m "$CUR" "$CUR-<slug>"` (append `-<slug>` to whatever '
-            "the current branch is — cockpit may have bumped the codename to `-2`/`-3` "
-            "to avoid a collision). The codename prefix stays; the slug adds context.",
-            "- Verify with `git branch --show-current` — it should now end with `-<slug>`.",
-            "- If the rename fails (target already exists, etc.), keep the original "
-            "branch and note it in your plan.",
-            "",
-            "**Step 3 (REQUIRED)** — Rename the cmux workspace to match:",
-            "- Replace the codename-only workspace name with `<codename>-<slug>` (the "
-            "branch's name after the `branch_prefix`, i.e. the same value the branch now "
-            "ends with).",
-            '- Run: `cmux workspace-action --action rename --title "<codename>-<slug>"`. '
-            "Defaults to the current workspace via `$CMUX_WORKSPACE_ID` (always set "
-            "inside a cmux-spawned shell).",
-            "- If `$CMUX_WORKSPACE_ID` is unset for any reason, run `cmux identify` "
-            "first to discover the workspace ref, then pass `--workspace <ref>` "
-            "explicitly.",
-            "- Cockpit's next reconcile cycle reads the workspace list, so the rename "
-            "surfaces in the `cockpit watch` table automatically. Do not push or change "
-            "anything else in this step.",
-        ]
-    else:
-        lines += [
-            "",
-            "**Step 1** — Read the thread for context: use the Slack MCP "
-            f"`slack_read_thread` tool on {url} if the connector is available. If the "
-            "Slack MCP is not connected, ask the user to paste the thread contents — "
-            "do not guess the task from the URL alone.",
-        ]
-    return "\n".join(lines + _PLAN_TAIL)
+    name = "slack_fetch" if mcp_fetch else "slack_context"
+    return _scenario_prompt(name, branch=branch, url=url)
 
 
 def _repo_entry_or_none(repo_name: str | None) -> dict | None:
@@ -609,31 +490,20 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
 
 
 def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
-    """Plan-only first-turn prompt. PR context block is included when `pr_info` is set."""
-    lines = [f"You are starting a fresh task in a new worktree on branch `{branch}`."]
+    """Plan-only first-turn prompt. PR context block is included when `pr_info` is set.
+
+    Prose lives in ``cockpit/prompts/plan_only.txt``; the optional PR block is
+    interpolated into its ``{source_block}`` slot.
+    """
+    source_block = ""
     if pr_info:
-        author = _pr_author(pr_info)
-        number = pr_info["number"]
-        title = pr_info.get("title") or f"PR #{number}"
-        lines += [
-            "",
-            f"**Source**: PR #{number} by @{author}",
-            f"**Task**: {title}",
-            "",
-            f"**Context**: {pr_info.get('url', '')}",
-        ]
-    lines += [
-        "",
-        "**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:",
-        "- DO NOT edit files, write code, run tests, or commit anything.",
-        "- You MAY use Read, Grep, Glob for context (re-fetch the linked ticket/thread where relevant).",
-        "- Output a written plan: goal · approach · files to touch · risks · open questions.",
-        "- Ask clarifying questions if the task is ambiguous.",
-        "- Wait for the user to approve or refine before implementing.",
-        "",
-        "Begin by writing the plan.",
-    ]
-    return "\n".join(lines)
+        author, number, title = _pr_fields(pr_info)
+        source_block = (
+            f"\n\n**Source**: PR #{number} by @{author}"
+            f"\n**Task**: {title}"
+            f"\n\n**Context**: {pr_info.get('url', '')}"
+        )
+    return render("plan_only", branch=branch, source_block=source_block)
 
 
 def _review_prompt(
@@ -653,25 +523,20 @@ def _review_prompt(
     The closing line keeps the worktree dry-run: report findings, then stop
     before posting comments or submitting an approve / request-changes verdict —
     a human authorizes those, never the auto-spawn.
+
+    Prose lives in ``cockpit/prompts/review.txt``; ``command`` leads and the PR
+    (or bare-branch) line fills the ``{context}`` slot.
     """
-    lines = [command, ""]
     if pr_info:
-        author = _pr_author(pr_info)
-        number = pr_info["number"]
-        title = pr_info.get("title") or f"PR #{number}"
-        lines += [
-            f"Reviewing PR #{number} by @{author} — {title}",
-            f"branch: {branch}",
-            pr_info.get("url", ""),
-        ]
+        author, number, title = _pr_fields(pr_info)
+        context = (
+            f"Reviewing PR #{number} by @{author} — {title}"
+            f"\nbranch: {branch}"
+            f"\n{pr_info.get('url', '')}"
+        )
     else:
-        lines.append(f"Reviewing the open PR on branch `{branch}`.")
-    lines += [
-        "",
-        "Report findings. Ask before posting any review comments or submitting "
-        "an approve / request-changes verdict.",
-    ]
-    return "\n".join(lines)
+        context = f"Reviewing the open PR on branch `{branch}`."
+    return render("review", command=command, context=context)
 
 
 def _actions_short_name(run_info: dict, job_id: str | None) -> str:
@@ -735,35 +600,23 @@ def _actions_prompt(
         log_cmd = f"gh run view {run_id} --log-failed"
 
     head_branch = run_info.get("headBranch") or ""
-    lines = [
-        f"You are starting a fresh task in a new worktree on branch `{branch}`.",
-        "",
-        f"**Source**: {source}",
-        f"**Conclusion**: {conclusion}",
-        f"**Head branch (where CI ran)**: `{head_branch}`",
-        f"**Run URL**: {run_url}",
-    ]
+    related_pr_block = ""
     if pr_info:
         author = _pr_author(pr_info)
-        lines.append(
-            f"**Related PR**: #{pr_info['number']} by @{author} — "
+        related_pr_block = (
+            f"\n**Related PR**: #{pr_info['number']} by @{author} — "
             f"{pr_info.get('title', '')} ({pr_info.get('url', '')})"
         )
-    lines += [
-        "",
-        "**Step 1 (REQUIRED)** — Fetch the failed-step logs:",
-        f"- Run: `{log_cmd}`. This pulls only failing steps; full logs "
-        "(`--log`) are usually too large for context.",
-        "- If the output is still large, pipe through `tail -n 200` or `rg` "
-        "for the actual error lines.",
-        "",
-        "**Step 2 (REQUIRED)** — Identify the root cause:",
-        "- Locate the failing step and its command in the workflow YAML "
-        "under `.github/workflows/`.",
-        "- Reproduce locally where possible (run the same command against "
-        "the current branch).",
-    ]
-    return "\n".join(lines + _PLAN_TAIL)
+    return _scenario_prompt(
+        "actions",
+        branch=branch,
+        source=source,
+        conclusion=conclusion,
+        head_branch=head_branch,
+        run_url=run_url,
+        related_pr_block=related_pr_block,
+        log_cmd=log_cmd,
+    )
 
 
 def main() -> int:

@@ -1,0 +1,1 @@
+Action: CI is failing. Run `gh pr checks {number}` and `gh run view --log-failed` on failing runs to investigate. Fix, commit, and push without asking. Report and stop when CI is re-running or you're blocked.

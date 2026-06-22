@@ -1,0 +1,5 @@
+{command}
+
+{context}
+
+Report findings. Ask before posting any review comments or submitting an approve / request-changes verdict.

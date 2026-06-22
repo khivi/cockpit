@@ -1,0 +1,16 @@
+You are starting a fresh task in a new worktree on branch `{branch}`.
+
+**Source**: {source}
+**Conclusion**: {conclusion}
+**Head branch (where CI ran)**: `{head_branch}`
+**Run URL**: {run_url}{related_pr_block}
+
+**Step 1 (REQUIRED)** — Fetch the failed-step logs:
+- Run: `{log_cmd}`. This pulls only failing steps; full logs (`--log`) are usually too large for context.
+- If the output is still large, pipe through `tail -n 200` or `rg` for the actual error lines.
+
+**Step 2 (REQUIRED)** — Identify the root cause:
+- Locate the failing step and its command in the workflow YAML under `.github/workflows/`.
+- Reproduce locally where possible (run the same command against the current branch).
+
+{plan_tail}

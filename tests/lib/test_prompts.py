@@ -8,10 +8,52 @@ quotes the *initial* half into a `claude '<prompt>'` shell command.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import cockpit.lib.prompts as prompts
-from cockpit.lib.prompts import claude_command, split_prompt_prefix
+from cockpit.lib.gh import PR
+from cockpit.lib.git import Worktree
+from cockpit.lib.prompts import (
+    build_orphan_prompt,
+    build_pr_prompt,
+    claude_command,
+    split_prompt_prefix,
+)
+
+# Field combos that make PR.display_issue derive to each _ISSUE_ACTIONS branch.
+# "clean" exercises the None fallback entry (display_issue never returns None).
+_DISPLAY_ISSUE_FIELDS: dict[str, dict[str, object]] = {
+    "comments": dict(unaddressed=3),
+    "changes-requested": dict(unaddressed=0, review_decision="CHANGES_REQUESTED"),
+    "ci": dict(ci="failed"),
+    "conflicts": dict(mergeable="CONFLICTING"),
+    "approved": dict(review_decision="APPROVED"),
+    "clean": dict(),
+}
+
+
+def _pr(display_issue: str, **overrides) -> PR:
+    base: dict = dict(
+        number=42,
+        title="Fix the thing",
+        branch="khivi/x",
+        url="https://example/pr/42",
+        author="alice",
+        is_draft=False,
+        review_decision="REVIEW_REQUIRED",
+        mergeable="MERGEABLE",
+        ci="passed",
+        unaddressed=0,
+        total_from_others=0,
+        state="OPEN",
+    )
+    base.update(_DISPLAY_ISSUE_FIELDS[display_issue])
+    base.update(overrides)
+    pr = PR(**base)
+    assert pr.display_issue == display_issue  # guard the field combo stays valid
+    return pr
 
 
 @pytest.fixture
@@ -67,3 +109,39 @@ def test_claude_command_escapes_single_quotes():
 
 def test_claude_command_none_is_bare_claude():
     assert claude_command(None) == "claude"
+
+
+def test_pr_prompt_header_and_action_selection():
+    p = build_pr_prompt(_pr("comments"))
+    # Header is the structural PR block; body is the per-issue action template.
+    assert p.startswith("PR #42 — Fix the thing\nbranch: khivi/x\nauthor: @alice\n")
+    assert "address 3 unresolved review thread(s)" in p
+
+
+@pytest.mark.parametrize(
+    "display_issue,has_authority",
+    [
+        ("comments", True),
+        ("ci", True),
+        ("conflicts", True),
+        ("changes-requested", False),
+        ("approved", False),
+        ("clean", False),  # the None fallback entry — no authority
+    ],
+)
+def test_pr_prompt_authority_gating(display_issue, has_authority):
+    p = build_pr_prompt(_pr(display_issue))
+    assert ("Authority: commit and push" in p) is has_authority
+
+
+def test_pr_prompt_braced_title_is_not_reparsed():
+    """A `{...}` in the PR title is data, never a format placeholder."""
+    p = build_pr_prompt(_pr("clean", title="handle {weird} input"))
+    assert "handle {weird} input" in p
+
+
+def test_orphan_prompt():
+    wt = Worktree(path=Path("/tmp/cosmic-otter"), branch="khivi/cosmic-otter")
+    p = build_orphan_prompt(wt)
+    assert "cosmic-otter" in p and "khivi/cosmic-otter" in p
+    assert "no open PR" in p

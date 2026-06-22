@@ -1,0 +1,6 @@
+PR #{number} — {title}
+branch: {branch}
+author: @{author}
+url: {url}
+
+{action}{authority}

@@ -1,0 +1,1 @@
+This worktree ({short}, branch {branch}) has no open PR. Resume work and push a PR when ready, or close the worktree if abandoned.

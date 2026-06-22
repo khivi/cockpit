@@ -1,11 +1,17 @@
-"""Per-PR / orphan-worktree Claude prompts + shell quoting."""
+"""Per-PR / orphan-worktree Claude prompts + shell quoting.
+
+The prompt prose lives in packaged templates (`cockpit/prompts/*.txt`, rendered
+via `cockpit.lib.templates`); this module owns the control flow — picking the
+per-`display_issue` action template and deciding whether the author-mode
+authority block applies. Mirrors the spawn first-turn prompts.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .config import prompt_prefix
+from .templates import render
 
 if TYPE_CHECKING:
     from .gh import PR
@@ -50,49 +56,15 @@ def claude_command(prompt: str | None) -> str:
     return f"claude {shell_quote(prompt)}"
 
 
-_AUTHORITY = (
-    "Authority: commit and push to this PR's branch (including force-push after rebase) "
-    "without asking. Ask y/n only before posting external writes — GitHub PR/review "
-    "comments, etc. When you finish or hit a blocker, report state and stop; do not "
-    "idle for follow-up unless a y/n is genuinely pending."
-)
-
-_ISSUE_ACTIONS: dict[str | None, tuple[str | Callable[[PR], str], bool]] = {
-    "comments": (
-        lambda pr: (
-            f"Action: address {pr.unaddressed} unresolved review thread(s). Draft replies; "
-            "ask y/n before posting. Code changes, commits, and pushes are pre-authorized."
-        ),
-        True,
-    ),
-    "changes-requested": (
-        "All review threads are resolved; reviewer hasn't dismissed CHANGES_REQUESTED "
-        "yet. No action for you — report current state and exit.",
-        False,
-    ),
-    "ci": (
-        lambda pr: (
-            f"Action: CI is failing. Run `gh pr checks {pr.number}` and "
-            "`gh run view --log-failed` on failing runs to investigate. Fix, commit, and "
-            "push without asking. Report and stop when CI is re-running or you're blocked."
-        ),
-        True,
-    ),
-    "conflicts": (
-        "Action: merge conflicts vs base. Plan a rebase, execute it, and force-push "
-        "without asking. Report and stop when pushed or blocked.",
-        True,
-    ),
-    "approved": (
-        "PR is approved and ready to merge. Report current state (CI, mergeability) "
-        "and exit; the human will run `gh pr merge` when ready.",
-        False,
-    ),
-    None: (
-        "PR looks clean (CI green, no unaddressed comments, mergeable). Report current state "
-        "and exit without changes.",
-        False,
-    ),
+# Maps a PR's `display_issue` onto its action template (`pr_action_*.txt`) and
+# whether the author-mode authority block (`pr_authority.txt`) is appended.
+_ISSUE_ACTIONS: dict[str | None, tuple[str, bool]] = {
+    "comments": ("pr_action_comments", True),
+    "changes-requested": ("pr_action_changes_requested", False),
+    "ci": ("pr_action_ci", True),
+    "conflicts": ("pr_action_conflicts", True),
+    "approved": ("pr_action_approved", False),
+    None: ("pr_action_clean", False),
 }
 
 
@@ -100,19 +72,22 @@ def build_pr_prompt(pr: PR) -> str:
     """Per-PR Claude prompt in author-mode. A local worktree on a PR's branch
     implies the user intends to author/collaborate.
     """
-    base = (
-        f"PR #{pr.number} — {pr.title}\n"
-        f"branch: {pr.branch}\n"
-        f"author: @{pr.author}\n"
-        f"url: {pr.url}\n\n"
+    template, with_authority = _ISSUE_ACTIONS.get(
+        pr.display_issue, _ISSUE_ACTIONS[None]
     )
-    action, with_authority = _ISSUE_ACTIONS.get(pr.display_issue, _ISSUE_ACTIONS[None])
-    text = action(pr) if callable(action) else action
-    return base + text + (f"\n\n{_AUTHORITY}" if with_authority else "")
+    action = render(template, number=pr.number, unaddressed=pr.unaddressed)
+    authority = f"\n\n{render('pr_authority')}" if with_authority else ""
+    return render(
+        "pr",
+        number=pr.number,
+        title=pr.title,
+        branch=pr.branch,
+        author=pr.author,
+        url=pr.url,
+        action=action,
+        authority=authority,
+    )
 
 
 def build_orphan_prompt(wt: Worktree) -> str:
-    return (
-        f"This worktree ({wt.short}, branch {wt.branch}) has no open PR. "
-        "Resume work and push a PR when ready, or close the worktree if abandoned."
-    )
+    return render("orphan", short=wt.short, branch=wt.branch)

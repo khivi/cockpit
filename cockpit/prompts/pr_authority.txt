@@ -1,0 +1,1 @@
+Authority: commit and push to this PR's branch (including force-push after rebase) without asking. Ask y/n only before posting external writes — GitHub PR/review comments, etc. When you finish or hit a blocker, report state and stop; do not idle for follow-up unless a y/n is genuinely pending.

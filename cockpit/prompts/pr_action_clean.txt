@@ -1,0 +1,1 @@
+PR looks clean (CI green, no unaddressed comments, mergeable). Report current state and exit without changes.
