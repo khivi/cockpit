@@ -33,12 +33,12 @@ flowchart LR
   end
 
   subgraph DEC["Decision functions"]
-    MW["match_worktrees<br/>cycle.py:293"]
-    SM["_spawn_missing_workspaces<br/>cycle.py:1388"]
-    NI["nudge_if_idle<br/>cmux.py:373"]
-    DD["_track_dev_done<br/>cycle.py:265"]
-    AC["_maybe_autoclose<br/>cycle.py:586"]
-    BR["_reap_branch_refs<br/>cycle.py:727"]
+    MW["match_worktrees<br/>cycle.py"]
+    SM["_spawn_missing_workspaces<br/>cycle.py"]
+    NI["nudge_if_idle<br/>cmux.py"]
+    DD["_track_dev_done<br/>cycle.py"]
+    AC["_maybe_autoclose<br/>cycle.py"]
+    BR["_reap_branch_refs<br/>cycle.py"]
   end
 
   subgraph ACT["Actions"]
@@ -198,7 +198,7 @@ Key gates (all from `cycle.py`):
   (the order is identical across backends, so cmux behaves exactly as before;
   non-cmux backends just skip the tiers they can't run):
   - **Backend-agnostic** (cmux, limux, **and** none) — pure git + Linear:
-    `_transition_merged_tickets` (`linear_done_on_merge`),
+    `_transition_merged_tickets` (`tickets.close_on_merge`),
     `_reconcile_worktree_lifecycle` (autoclose-on-merge + stale-branch-ref reap),
     and the main-branch fast-forward. `cycle_all`'s close-request drain
     (`_drain_close_requests` — the TUI `c`/`C` path) is likewise unconditional.
@@ -220,7 +220,7 @@ Key gates (all from `cycle.py`):
 
 ---
 
-## 3. Nudge idle-gate (`nudge_if_idle`, `cmux.py:373`)
+## 3. Nudge idle-gate (`nudge_if_idle`, `cmux.py`)
 
 Five sequential guards decide whether it is safe to `send` a nudge. The subtle
 rule: cmux native `Needs input` is **deliberately untrusted** — it is the same
@@ -229,7 +229,7 @@ type into the confirmation. Do not "simplify" the gate to trust it.
 
 ```mermaid
 flowchart TD
-  IN["nudge_if_idle(ref, msg,<br/>pr_number, category)"] --> G1{"PR-attached &<br/>PR muted?"}
+  IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pr_number)"] --> G1{"PR-attached &<br/>PR muted?"}
   G1 -->|yes| F1["return False<br/>(user mute, survives restart)"]
   G1 -->|"no / orphan nudge"| G2{"native ==<br/>Running?"}
 
@@ -244,7 +244,7 @@ flowchart TD
 
   HEAL -->|yes| SELFHEAL["re-assert idle= pill<br/>(self-heal dropped Stop-hook write)"]
   HEAL -->|no| FIRE
-  SELFHEAL --> FIRE["send msg + send-key enter<br/>→ record_nudge(pr, category)<br/>→ return True"]
+  SELFHEAL --> FIRE["send msg + send-key enter<br/>→ record_nudge(pr_number)<br/>→ return True"]
 ```
 
 There is **no time-based throttle**; the slow-tick cadence is the implicit rate

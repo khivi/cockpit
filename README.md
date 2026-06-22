@@ -54,31 +54,26 @@ Start a task — run `/cockpit:new` inside Claude Code, from a session in any gi
       "name": "myrepo",
       "path": "/abs/path",
       "branch_prefix": "you/",
-      "default_base": "main",
-      "linear_keys": ["TEAM"],
-      "sidebar_color": "Blue"
+      "default_base": "main"
     }
   ],
-  "slow_poll_interval_seconds": 300,
-  "fast_poll_interval_seconds": 30,
-  "use_cship": false,
-  "use_linear": false,
   "tool": "auto"
 }
 ```
 
+That minimal block is enough to start; every other knob has a sane default. The most common ones:
+
 | Knob | Default | Notes |
 |---|---|---|
+| `tool` | `auto` | workspace backend: `cmux` \| `limux` \| `none` \| `auto` |
+| per-repo `sidebar_color` | — | `cmux` color tint (Red/Orange/Green/Blue/…); an invalid name refuses to start |
+| per-repo `tickets` | `none` | ticket integration: `{provider: linear\|github, …}` (see below) |
 | `slow_poll_interval_seconds` | 300 | full GitHub reconcile |
 | `fast_poll_interval_seconds` | 30 | network-free git-state republish |
-| `tool` | `auto` | `cmux` \| `limux` \| `none` \| `auto` |
-| `autoclose_age_days` | 14 | PR-less worktrees older than this become auto-close eligible |
-| `prompt_prefix` | — | prepended to every new workspace's first turn |
-| `use_linear` | off | `/cockpit:new PE-1234` fetches the ticket via the Linear MCP, then renames branch + workspace to the title slug |
-| per-repo `sidebar_color` | — | `cmux` color tint (Red/Orange/Green/Blue/…); an invalid name refuses to start |
-| `check_update` | on | hourly version check → header indicator |
 
-Full schema: [`config.example.json`](config.example.json). Cleanup on merge is unconditional — a MERGED PR with a clean, pushed worktree is always reaped; nothing else is touched.
+**Full annotated schema — every knob, with defaults — lives in [`cockpit/config.example.json`](cockpit/config.example.json)**, which is also the file copied as your config on first run and is validated in CI, so it can't drift from what the daemon accepts. That file is the source of truth; this table is just the day-one subset.
+
+Cleanup on merge is unconditional — a MERGED PR with a clean, pushed worktree is always reaped; nothing else is touched.
 
 ## Claude Code statusline (optional)
 
