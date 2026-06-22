@@ -308,6 +308,7 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
     import cockpit.spawn as spawn
 
     cmux_calls: list[tuple] = []
+    followup_calls: list[tuple[str, str]] = []
 
     def fake_cmux(*args, **kwargs):
         cmux_calls.append(args)
@@ -317,10 +318,15 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
         cmux_calls.append(
             ("new-workspace", "--name", name, "--cwd", str(cwd), "--command", command)
         )
-        return None
+        return "ws:test"
+
+    def fake_deliver_followup(ref, text):
+        followup_calls.append((ref, text))
+        return True
 
     monkeypatch.setattr(spawn, "cmux", fake_cmux)
     monkeypatch.setattr(spawn, "spawn_workspace", fake_spawn_workspace)
+    monkeypatch.setattr(spawn, "deliver_followup", fake_deliver_followup)
     monkeypatch.setattr(spawn, "workspace_names", lambda: {})
     monkeypatch.setattr(spawn, "workspace_cwds", lambda: {})
     monkeypatch.setattr(spawn, "kick_running", lambda *a, **kw: None)
@@ -336,6 +342,7 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
         return code, captured.out, captured.err
 
     _run.cmux_calls = cmux_calls  # type: ignore[attr-defined]
+    _run.followup_calls = followup_calls  # type: ignore[attr-defined]
     return _run
 
 
@@ -1062,6 +1069,60 @@ def test_blank_spawn_still_applies_prompt_prefix(spawn_main, cockpit_repo, monke
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "/session-coordination" in cmd
     assert "PLAN ONLY" not in cmd  # prefix only, no plan guidance
+
+
+def test_prefix_and_body_split_into_two_sends(spawn_main, cockpit_repo, monkeypatch):
+    """With a `prompt_prefix` configured AND a seeded body (here a PR plan
+    prompt), the prefix slash command rides in as the initial `claude` command
+    on its own, and the body is delivered as a SEPARATE follow-up submission —
+    so the skill and the task don't collapse onto one slash-command line."""
+    import cockpit.spawn as spawn
+
+    _set_config_key(cockpit_repo, "prompt_prefix", "/session-coordination")
+    monkeypatch.setattr(
+        spawn,
+        "pr_for_branch",
+        lambda *_a, **_kw: {
+            "number": 99,
+            "title": "fix the thing",
+            "author": {"login": "someone"},
+            "url": "https://github.com/owner/repo/pull/99",
+        },
+    )
+    spawn_main(["has-a-pr", "--repo", "testrepo"])
+
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    # Initial command is the prefix alone — body text is NOT collapsed onto it.
+    assert cmd == "claude '/session-coordination'"
+    assert "PLAN ONLY" not in cmd
+    assert "#99" not in cmd
+    # The body arrives as a single separate follow-up send.
+    assert len(spawn_main.followup_calls) == 1
+    _ref, body = spawn_main.followup_calls[0]
+    assert "PLAN ONLY" in body
+    assert "#99" in body
+
+
+def test_body_only_no_prefix_stays_single_send(spawn_main, monkeypatch):
+    """No `prompt_prefix` configured → the body rides in as the initial command
+    and there is NO follow-up send (unchanged single-send behavior)."""
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(
+        spawn,
+        "pr_for_branch",
+        lambda *_a, **_kw: {
+            "number": 99,
+            "title": "fix the thing",
+            "author": {"login": "someone"},
+            "url": "https://github.com/owner/repo/pull/99",
+        },
+    )
+    spawn_main(["has-a-pr", "--repo", "testrepo"])
+
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "PLAN ONLY" in cmd  # body in the initial command, as before
+    assert spawn_main.followup_calls == []
 
 
 def test_pr_spawn_still_seeds_plan_prompt(spawn_main, monkeypatch):

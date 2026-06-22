@@ -48,6 +48,7 @@ from cockpit.lib.cmux import (
     close_gone_cwd_workspaces,
     cmux,
     cmux_close_workspace_best_effort,
+    deliver_followup,
     find_cockpit_workspaces,
     nudge_if_idle,
     rename_workspace_if_needed,
@@ -125,7 +126,7 @@ from cockpit.lib.log_format import verb
 from cockpit.lib.nudges import NudgePref
 from cockpit.lib.nudges import load_pref as _load_nudge_pref
 from cockpit.lib.pills import ci_glyph
-from cockpit.lib.prompts import claude_command, shell_quote
+from cockpit.lib.prompts import claude_command, shell_quote, split_prompt_prefix
 from cockpit.lib.tickets import TicketProvider, provider_for
 from cockpit.lib.tool import has_workspace_backend, is_cmux
 from cockpit.orchestrators.teardown import TeardownRequest, teardown
@@ -1696,13 +1697,18 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
         ws_name = f"skill-{skill}"
         if ws_name in existing:
             continue
+        initial, followup = split_prompt_prefix(prompt)
         if dry:
+            extra = f" + followup {followup!r}" if followup else ""
             print(
-                f"  dry: spawn workspace {ws_name!r} with {claude_command(prompt)!r}",
+                f"  dry: spawn workspace {ws_name!r} with "
+                f"{claude_command(initial)!r}{extra}",
                 flush=True,
             )
             continue
-        spawn_workspace(ws_name, repo_path, claude_command(prompt))
+        ref = spawn_workspace(ws_name, repo_path, claude_command(initial))
+        if ref is not None and followup:
+            deliver_followup(ref, followup)
 
 
 def _repo_owned_refs(ctx: RepoCycle, keep_refs: set[str]) -> list[str]:
