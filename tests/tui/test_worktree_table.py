@@ -27,6 +27,7 @@ from cockpit.tui.widgets.worktree_table import (
     DEVDONE_ICON,
     ICON_PR_MUTED,
     ICON_PR_NUDGE,
+    Inventory,
     _colliding_labels,
     _comments_cell,
     _linear_status_icon,
@@ -358,7 +359,7 @@ def test_dirty_column_blank_when_cell_missing(cache_dir):
 
 def test_colliding_labels_flags_cross_repo_dupes():
     # Two repos each have a `master` worktree; one repo also has a unique branch.
-    inv = [
+    inv: Inventory = [
         ("Cockpit", "Aqua", False, [_wt(path="/a", branch="master")]),
         ("dotfiles", "Green", False, [_wt(path="/b", branch="master")]),
         ("Cockpit", "Aqua", False, [_wt(path="/c", branch="khivi/solo")]),
@@ -370,7 +371,7 @@ def test_colliding_labels_flags_cross_repo_dupes():
 def test_colliding_labels_ignores_same_repo_dupes():
     # The same label twice within ONE repo isn't a cross-repo collision (a
     # `repo/` prefix couldn't disambiguate it), so it's not flagged.
-    inv = [
+    inv: Inventory = [
         (
             "Cockpit",
             None,
