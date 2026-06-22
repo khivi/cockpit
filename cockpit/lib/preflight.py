@@ -293,6 +293,26 @@ def _warn_cockpit_not_on_path() -> None:
         )
 
 
+def validate_config(cfg: dict) -> None:
+    """Run every config-shape validator (no binary/PATH checks).
+
+    Split out of `preflight` so the shipped `config.example.json` — which is
+    both the documented schema *and* the file copied as a new user's config on
+    first run (`config.py`) — can be asserted valid in CI without a real
+    toolchain on PATH. Add a new `_validate_*` here and the example-config test
+    covers it automatically.
+    """
+    _validate_sidebar_colors(cfg)
+    _validate_review_prs(cfg)
+    _validate_review_command(cfg)
+    _validate_check_update(cfg)
+    _validate_use_slack(cfg)
+    _validate_tickets(cfg)
+    _validate_orphan_nudge_grace(cfg)
+    _validate_linear_dev_done(cfg)
+    _validate_linear_done_on_merge(cfg)
+
+
 def preflight(cfg: dict) -> None:
     for binary in REQUIRED_BINARIES:
         if shutil.which(binary) is None:
@@ -308,15 +328,7 @@ def preflight(cfg: dict) -> None:
                     f"Install {binary} or set use_cship=false in your config."
                 )
 
-    _validate_sidebar_colors(cfg)
-    _validate_review_prs(cfg)
-    _validate_review_command(cfg)
-    _validate_check_update(cfg)
-    _validate_use_slack(cfg)
-    _validate_tickets(cfg)
-    _validate_orphan_nudge_grace(cfg)
-    _validate_linear_dev_done(cfg)
-    _validate_linear_done_on_merge(cfg)
+    validate_config(cfg)
 
     if cfg.get("tool", "auto") == "auto":
         resolved = resolve_tool()

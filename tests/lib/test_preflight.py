@@ -7,9 +7,12 @@ on missing workspace backend.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from cockpit.lib.preflight import preflight
+from cockpit.lib.config import CONFIG_EXAMPLE
+from cockpit.lib.preflight import preflight, validate_config
 from tests.fixtures import make_bin_on_path
 
 
@@ -530,3 +533,24 @@ def test_preflight_silent_when_done_on_merge_disabled_without_key(
     monkeypatch.delenv("LINEAR_API_KEY", raising=False)
     preflight({"tool": "cmux", "linear_done_on_merge": False, "repos": []})
     assert capsys.readouterr().err == ""
+
+
+# ── shipped config.example.json must be accepted ─────────────────────────────
+
+
+def test_config_example_passes_validation():
+    # config.example.json is BOTH the documented schema and the file copied as a
+    # new user's config on first run, so a key the daemon rejects (e.g. the
+    # removed `use_linear`) breaks every fresh install. Running it through the
+    # real validators here makes that drift a CI failure, not a bug report.
+    cfg = json.loads(CONFIG_EXAMPLE.read_text())
+    validate_config(cfg)  # raises SystemExit on any rejected key
+
+
+def test_config_example_would_catch_a_dead_key():
+    # Guard the guard: prove validate_config actually rejects the key we removed,
+    # so a future re-introduction of `use_linear` (or similar) can't slip past.
+    cfg = json.loads(CONFIG_EXAMPLE.read_text())
+    cfg["use_linear"] = False
+    with pytest.raises(SystemExit):
+        validate_config(cfg)
