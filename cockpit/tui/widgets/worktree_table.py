@@ -8,7 +8,10 @@ back to its workspace for focus / close.
 
 Repos are distinguished by colour, not a column: the workspace name is tinted
 with the repo's `sidebar_color` via the same `CMUX_COLOR_ANSI` colorizer cmux
-uses, so the table and the cmux sidebar agree. The Author column (right after
+uses, so the table and the cmux sidebar agree. Colour alone can't disambiguate
+same-named worktrees (every repo's `master`) — and an `in_place` repo may have
+no colour at all — so a label that appears in 2+ repos is rendered `repo/label`
+(`_colliding_labels`); unique labels stay bare. The Author column (right after
 PR) shows the PR author's login prefixed with `@`, populated by the daemon only
 for other-authored PRs (coworker / review PRs) and blank for my own. The Dirty
 column (headed with the
@@ -151,15 +154,44 @@ def column_labels(*, show_tickets: bool) -> tuple[str, ...]:
     return tuple(cols)
 
 
+def _display_label(wt: Worktree) -> str:
+    """The bare workspace label shown in the Workspace column (before any repo
+    prefix or status glyph) — the branch-derived `label`, falling back to the
+    dir basename."""
+    return wt.label or wt.short
+
+
+def _colliding_labels(inventory: Inventory) -> set[str]:
+    """Display labels that appear in 2+ distinct repos. Those rows get a
+    `repo/` prefix so same-named worktrees (e.g. every repo's `master`) stay
+    distinguishable when colour alone isn't enough; unique labels render bare."""
+    repos_by_label: dict[str, set[str]] = {}
+    for repo_name, _color, _tickets, wts in inventory:
+        for wt in wts:
+            repos_by_label.setdefault(_display_label(wt), set()).add(repo_name)
+    return {label for label, repos in repos_by_label.items() if len(repos) > 1}
+
+
 def _workspace_cell(
-    wt: Worktree, repo_color: str | None, *, muted: bool, nudge: bool
+    wt: Worktree,
+    repo_color: str | None,
+    *,
+    muted: bool,
+    nudge: bool,
+    repo_prefix: str | None = None,
 ) -> Text:
     """The workspace name, tinted with the repo's cmux colour when set and
     prefixed with a status glyph: 🔇 when the PR's nudges are muted, else 🔔 when
     the PR has an actionable, unmuted nudge condition (failing CI / unresolved
     threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute wins: a muted
-    PR fires no nudge, so it shows 🔇, never 🔔. No glyph when neither holds."""
-    label = wt.label or wt.short
+    PR fires no nudge, so it shows 🔇, never 🔔. No glyph when neither holds.
+
+    When `repo_prefix` is set (the label collides across repos), the name is
+    rendered `repo/label` so same-named worktrees are distinguishable; the
+    prefix shares the repo's colour, reinforcing the tint."""
+    label = _display_label(wt)
+    if repo_prefix:
+        label = f"{repo_prefix}/{label}"
     colorizer = CMUX_COLOR_ANSI.get(repo_color or "")
     if colorizer is not None:
         # Reuse the exact cmux colorizer (the source of truth) → parse its ANSI.
@@ -269,11 +301,14 @@ def worktree_cells(
     tickets_enabled: bool,
     *,
     show_tickets: bool,
+    repo_prefix: str | None = None,
 ) -> list[Text]:
     """Build one row's cells (Rich Text, so colours survive), in `column_labels`
     order: the Ticket cell follows Author and the Status cell follows the
     PR-state cell, both present only when `show_tickets` (the columns exist) and
-    blank for a row whose repo isn't Linear-enabled."""
+    blank for a row whose repo isn't Linear-enabled. `repo_prefix` (set by
+    `update_inventory` only when the label collides across repos) renders the
+    Workspace cell as `repo/label`."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
@@ -293,6 +328,7 @@ def worktree_cells(
             repo_color,
             muted=bool(cell("pr-muted")),
             nudge=bool(cell("pr-nudge")),
+            repo_prefix=repo_prefix,
         ),
         Text(f"#{num}") if num else Text(""),
         # Author is populated by the daemon only for other-authored (coworker /
@@ -380,8 +416,10 @@ class WorktreeTable(DataTable):
         saved = self.cursor_row
         self.clear()
         self._row_caps = {}
+        collisions = _colliding_labels(inventory)
         for repo_name, repo_color, tickets_enabled, wts in inventory:
             for wt in wts:
+                prefix = repo_name if _display_label(wt) in collisions else None
                 self.add_row(
                     *worktree_cells(
                         wt,
@@ -389,6 +427,7 @@ class WorktreeTable(DataTable):
                         repo_color,
                         tickets_enabled,
                         show_tickets=self._show_tickets,
+                        repo_prefix=prefix,
                     ),
                     key=str(wt.path),
                 )

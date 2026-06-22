@@ -27,6 +27,7 @@ from cockpit.tui.widgets.worktree_table import (
     DEVDONE_ICON,
     ICON_PR_MUTED,
     ICON_PR_NUDGE,
+    _colliding_labels,
     _comments_cell,
     _linear_status_icon,
     column_labels,
@@ -353,3 +354,52 @@ def test_dirty_column_blank_when_cell_missing(cache_dir):
     wt = _wt(path="/tmp/coldwt", branch="khivi/cold")
     dirty = worktree_cells(wt, "r", None, False, show_tickets=False)[6]
     assert dirty.plain == ""
+
+
+def test_colliding_labels_flags_cross_repo_dupes():
+    # Two repos each have a `master` worktree; one repo also has a unique branch.
+    inv = [
+        ("Cockpit", "Aqua", False, [_wt(path="/a", branch="master")]),
+        ("dotfiles", "Green", False, [_wt(path="/b", branch="master")]),
+        ("Cockpit", "Aqua", False, [_wt(path="/c", branch="khivi/solo")]),
+    ]
+    # `master` appears in 2 distinct repos → collides; the unique branch doesn't.
+    assert _colliding_labels(inv) == {"master"}
+
+
+def test_colliding_labels_ignores_same_repo_dupes():
+    # The same label twice within ONE repo isn't a cross-repo collision (a
+    # `repo/` prefix couldn't disambiguate it), so it's not flagged.
+    inv = [
+        (
+            "Cockpit",
+            None,
+            False,
+            [_wt(path="/a", branch="x"), _wt(path="/b", branch="x")],
+        ),
+    ]
+    assert _colliding_labels(inv) == set()
+
+
+def test_repo_prefix_renders_repo_slash_label(cache_dir):
+    wt = _wt(branch="master")
+    cell = worktree_cells(
+        wt, "Cockpit", None, False, show_tickets=False, repo_prefix="Cockpit"
+    )[0]
+    assert cell.plain == "Cockpit/master"
+
+
+def test_no_repo_prefix_leaves_label_bare(cache_dir):
+    wt = _wt(branch="master")
+    cell = worktree_cells(wt, "Cockpit", None, False, show_tickets=False)[0]
+    assert cell.plain == "master"
+
+
+def test_repo_prefix_composes_with_mute_glyph(cache_dir):
+    # The mute glyph still leads; the repo prefix sits inside it: 🔇 repo/label.
+    wt = _wt(branch="master")
+    cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
+    cell = worktree_cells(
+        wt, "dotfiles", None, False, show_tickets=False, repo_prefix="dotfiles"
+    )[0]
+    assert cell.plain == f"{ICON_PR_MUTED} dotfiles/master"
