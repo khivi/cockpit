@@ -1756,6 +1756,21 @@ def test_spawn_missing_bg_spawns_my_pr_without_worktree(tmp_path):
     sp.assert_not_called()
 
 
+def test_spawn_missing_in_place_repo_never_auto_spawns(tmp_path):
+    """An `in_place` repo (bare `cockpit new`) opts out of all auto-spawning,
+    even with a matching open PR that would otherwise be created."""
+    ctx = _spawn_ctx(tmp_path, prs=[_pr_n(7, "khivi/feat")], wts=[])
+    with (
+        patch.object(cycle, "_bg_spawn_pr") as bg,
+        patch.object(cycle, "spawn_pr_workspace") as sp,
+        patch.object(cycle, "spawn_orphan_workspace") as so,
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n", "in_place": True})
+    bg.assert_not_called()
+    sp.assert_not_called()
+    so.assert_not_called()
+
+
 def test_spawn_missing_orphan_skips_name_clash_different_path(tmp_path, capsys):
     """A PR-less orphan whose branch label is already used by a workspace rooted
     at a different, existing path is a cross-repo clash → skip + log, never

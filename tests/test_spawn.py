@@ -421,6 +421,78 @@ def test_cwd_alone_with_existing_dir(spawn_main, tmp_path):
     assert _cmux_kwarg(call, "name") == "freestanding"
 
 
+# ── bare `cockpit new` (no args): register cwd repo + in-place workspace ─────
+
+
+def _init_git_repo(path) -> None:
+    path.mkdir()
+    subprocess.run(["git", "-C", str(path), "init", "-b", "main"], check=True)
+    (path / "README.md").write_text("seed\n")
+    subprocess.run(["git", "-C", str(path), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(path),
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-m",
+            "seed",
+        ],
+        check=True,
+    )
+
+
+def test_bare_registers_in_place_and_spawns_no_worktree(
+    spawn_main, cockpit_repo, tmp_path, monkeypatch
+):
+    import cockpit.lib.registry as registry
+
+    monkeypatch.setattr(registry, "gh_self_user", lambda: "khivi")
+    monkeypatch.setattr(registry, "default_branch", lambda _r: "main")
+    proj = tmp_path / "proj"
+    _init_git_repo(proj)
+    monkeypatch.chdir(proj)
+
+    code, out, _err = spawn_main([])
+    assert code == 0
+    assert "(no worktree)" in out
+    call = spawn_main.cmux_calls[0]
+    assert _cmux_kwarg(call, "cwd") == str(proj.resolve())
+    assert _cmux_kwarg(call, "name") == "proj"
+
+    cfg = json.loads((cockpit_repo.cockpit_home / "config.json").read_text())
+    entry = next(r for r in cfg["repos"] if r["path"] == str(proj.resolve()))
+    assert entry["in_place"] is True
+
+
+def test_bare_outside_git_repo_errors(spawn_main, tmp_path, monkeypatch):
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+    monkeypatch.chdir(plain)
+    code, _out, err = spawn_main([])
+    assert code == 1
+    assert "not in a git repo" in err
+    assert "--cwd" in err  # points at the arbitrary-dir escape hatch
+
+
+def test_bare_in_managed_repo_does_not_reflag_in_place(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    # cwd is the already-configured `testrepo` (no in_place). Bare spawn opens an
+    # in-place workspace but must NOT mutate the existing entry.
+    monkeypatch.chdir(cockpit_repo.repo)
+    code, out, _err = spawn_main([])
+    assert code == 0
+    assert "(no worktree)" in out
+    cfg = json.loads((cockpit_repo.cockpit_home / "config.json").read_text())
+    entry = next(r for r in cfg["repos"] if r["name"] == "testrepo")
+    assert "in_place" not in entry
+
+
 # ── --name semantics ───────────────────────────────────────────────────────
 
 

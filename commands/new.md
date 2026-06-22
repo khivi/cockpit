@@ -30,6 +30,7 @@ After you report the spawn result, STOP — end your turn. The task runs in the 
 - Slack thread permalinks (`https://<workspace>.slack.com/archives/<CH>/p<TS>` or the `app.slack.com/client/...` deep link) spawn a worktree on a deterministic codename branch (`<prefix><adj>-<noun>`, e.g. `khivi/cosmic-otter`, derived from the thread's stable identity so re-spawning the same URL is idempotent). With `use_slack: true` the first-turn prompt instructs Claude to read the thread via the Slack MCP and rename the branch + workspace to append a topic slug (`cosmic-otter` → `cosmic-otter-fix-oauth`); the thread URL is seeded as context either way.
 - `--branch <name>` / `--pr <num>` — explicit input; strictly mutex with each other, with the positional source, `--name`, and `--skill` (pick exactly one source)
 - `--name <short>` — workspace short name; alone, also seeds a new branch name
+- *(no arguments)* — bare spawn registers the **current git repo** in `~/.config/cockpit/config.json` (marked `in_place: true`, so the daemon shows its row but never auto-spawns worktrees for it) and opens an in-place workspace on the current branch — **no worktree**. The "cd into a dir and go" path for repos you don't want worktrees for (master-only or off-GitHub work). Off-GitHub and master-only repos register fine (empty branch prefix, base falls back to git `symbolic-ref` / `main`). Errors if cwd is not a git repo (use `--cwd <path>` for an arbitrary non-repo dir). An already-registered repo is reused as-is — a bare spawn in a normal managed repo does NOT flip it to `in_place`.
 - `--cwd <path>` — arbitrary dir, no repo or worktree
 - `--skill <name>` — run a global (`~/.claude/skills/`) or repo (`<repo>/.claude/skills/`) skill; cwd defaults to `$HOME` (global) or the repo path (repo skill)
 - `--repo <name>` — universal override targeting a configured repo by name. With `--skill`, sets workspace cwd to that repo's path even when the global skill wins resolution
@@ -48,6 +49,7 @@ Plan-only is seeded only when there's something to study first — a PR, a Linea
 /cockpit:new https://github.com/org/repo/actions/runs/123/job/456  # Actions failure by URL
 /cockpit:new https://acme.slack.com/archives/C0123/p1700000000123  # Slack thread → codename branch
 /cockpit:new --pr 12345 --repo myrepo                # PR by number in a named repo
+/cockpit:new                                         # bare: register cwd's repo (in_place) + in-place workspace, no worktree
 /cockpit:new --cwd ~/scratch/spike                   # arbitrary dir, no repo
 /cockpit:new --skill <skill-name>                    # global skill, cwd = $HOME
 /cockpit:new --skill <skill-name> --repo myrepo      # skill + cwd = myrepo

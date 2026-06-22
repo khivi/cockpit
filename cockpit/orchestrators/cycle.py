@@ -1572,7 +1572,14 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
     3. `review_prs`: every other-authored open PR without a worktree → create a
        review worktree (`spawn.py --review`) in the background. Uncapped.
     4. My-prefix orphan worktrees not yet covered by any workspace → spawn one.
+
+    An `in_place` repo (registered via bare `cockpit new`) opts out of all
+    auto-spawning: its row still renders from `git worktree list` + the cell
+    writers, but the user works in-place on the main worktree and never wants
+    cockpit creating PR/orphan worktrees for it, so this returns early.
     """
+    if repo_entry.get("in_place"):
+        return
     repo_name = repo_entry.get("name")
     matched, skipped_self = match_worktrees(ctx.prs, ctx.wts, ctx.self_user)
     for pr in skipped_self:
