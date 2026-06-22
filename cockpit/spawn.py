@@ -99,6 +99,7 @@ from pathlib import Path
 
 from cockpit.lib.cmux import (
     cmux,
+    deliver_followup,
     require_workspace_binary,
     spawn_workspace,
     workspace_cwds,
@@ -141,7 +142,7 @@ from cockpit.lib.github_issues import (
     add_label,
 )
 from cockpit.lib.linear import LINEAR_RE_CI, linear_mcp_available
-from cockpit.lib.prompts import claude_command
+from cockpit.lib.prompts import claude_command, split_prompt_prefix
 from cockpit.lib.repos import repo_names
 from cockpit.lib.slack import SLACK_URL_RE, slack_seed
 
@@ -1031,7 +1032,14 @@ def main() -> int:
             pass
     attached_ws = existing_ref is not None
     if existing_ref is None:
-        spawn_workspace(ws_name, wt, claude_command(prompt))
+        # A configured `prompt_prefix` (e.g. a session-setup slash command)
+        # rides in as the initial turn; the task body, if any, is delivered as
+        # a SEPARATE second submission so the two don't collapse onto one
+        # slash-command line.
+        initial, followup = split_prompt_prefix(prompt)
+        new_ref = spawn_workspace(ws_name, wt, claude_command(initial))
+        if new_ref is not None and followup:
+            deliver_followup(new_ref, followup)
     elif prompt:
         # The worktree's Claude is already running, so the prompt can't ride in
         # on `--command`. Deliver it into the live session: type the text into

@@ -16,15 +16,35 @@ def shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def claude_command(prompt: str | None) -> str:
-    """Build the `claude [prompt]` shell command, applying any configured
-    `prompt_prefix` (e.g. a personal session-setup slash command) as the first line.
+def split_prompt_prefix(prompt: str | None) -> tuple[str | None, str | None]:
+    """Split a seeded prompt into ``(initial, followup)`` so a configured
+    `prompt_prefix` slash command runs as its **own** first turn and the task
+    body arrives as a **separate** second submission.
+
+    Embedding both as one `claude '<prefix>\\n\\nbody'` argument collapses the
+    body onto the slash command's `$ARGUMENTS` line — the skill and the task
+    render as one message. Delivering them as two sends keeps the skill
+    invocation and the task on distinct lines.
+
+    - prefix + body → ``(prefix, body)``   skill first, body delivered after
+    - prefix only   → ``(prefix, None)``
+    - body only     → ``(body, None)``     no prefix configured: unchanged
     """
     prefix = prompt_prefix()
     if prefix and prompt:
-        prompt = f"{prefix}\n\n{prompt}"
-    elif prefix:
-        prompt = prefix
+        return prefix, prompt
+    if prefix:
+        return prefix, None
+    return prompt, None
+
+
+def claude_command(prompt: str | None) -> str:
+    """Build the `claude [prompt]` shell command for the *initial* turn.
+
+    Prefix handling lives in `split_prompt_prefix` — pass it the ``initial``
+    half (the prefix when one is configured, else the body). A `None` prompt
+    yields a bare `claude`.
+    """
     if prompt is None:
         return "claude"
     return f"claude {shell_quote(prompt)}"
