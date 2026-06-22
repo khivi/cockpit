@@ -33,12 +33,12 @@ flowchart LR
   end
 
   subgraph DEC["Decision functions"]
-    MW["match_worktrees<br/>cycle.py:293"]
-    SM["_spawn_missing_workspaces<br/>cycle.py:1388"]
-    NI["nudge_if_idle<br/>cmux.py:373"]
-    DD["_track_dev_done<br/>cycle.py:265"]
-    AC["_maybe_autoclose<br/>cycle.py:586"]
-    BR["_reap_branch_refs<br/>cycle.py:727"]
+    MW["match_worktrees<br/>cycle.py:336"]
+    SM["_spawn_missing_workspaces<br/>cycle.py:1561"]
+    NI["nudge_if_idle<br/>cmux.py:377"]
+    DD["_track_dev_done<br/>cycle.py:307"]
+    AC["_maybe_autoclose<br/>cycle.py:726"]
+    BR["_reap_branch_refs<br/>cycle.py:867"]
   end
 
   subgraph ACT["Actions"]
@@ -220,7 +220,7 @@ Key gates (all from `cycle.py`):
 
 ---
 
-## 3. Nudge idle-gate (`nudge_if_idle`, `cmux.py:373`)
+## 3. Nudge idle-gate (`nudge_if_idle`, `cmux.py:377`)
 
 Five sequential guards decide whether it is safe to `send` a nudge. The subtle
 rule: cmux native `Needs input` is **deliberately untrusted** — it is the same
@@ -229,7 +229,7 @@ type into the confirmation. Do not "simplify" the gate to trust it.
 
 ```mermaid
 flowchart TD
-  IN["nudge_if_idle(ref, msg,<br/>pr_number, category)"] --> G1{"PR-attached &<br/>PR muted?"}
+  IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pr_number)"] --> G1{"PR-attached &<br/>PR muted?"}
   G1 -->|yes| F1["return False<br/>(user mute, survives restart)"]
   G1 -->|"no / orphan nudge"| G2{"native ==<br/>Running?"}
 
@@ -244,7 +244,7 @@ flowchart TD
 
   HEAL -->|yes| SELFHEAL["re-assert idle= pill<br/>(self-heal dropped Stop-hook write)"]
   HEAL -->|no| FIRE
-  SELFHEAL --> FIRE["send msg + send-key enter<br/>→ record_nudge(pr, category)<br/>→ return True"]
+  SELFHEAL --> FIRE["send msg + send-key enter<br/>→ record_nudge(pr_number)<br/>→ return True"]
 ```
 
 There is **no time-based throttle**; the slow-tick cadence is the implicit rate
