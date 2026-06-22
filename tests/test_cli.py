@@ -87,6 +87,18 @@ def test_nudge_passes_rest(monkeypatch):
     assert seen["argv"] == ["mute", "ci"]
 
 
+def test_close_passes_rest(monkeypatch):
+    seen = {}
+
+    def fake(argv):
+        seen["argv"] = argv
+        return 0
+
+    monkeypatch.setattr("cockpit.close.main", fake)
+    assert cli.main(["close", "khivi/foo", "--force"]) == 0
+    assert seen["argv"] == ["khivi/foo", "--force"]
+
+
 @pytest.mark.parametrize(
     "sub,mod,prog",
     [
