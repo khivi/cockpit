@@ -1030,6 +1030,10 @@ def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, cap
     monkeypatch.setattr(cycle, "worktrees", lambda _p, _prefix="": [])
     monkeypatch.setattr(cycle, "fetch_merged_branches", lambda *_a, **_k: {})
     monkeypatch.setattr(cycle, "is_cmux", lambda: True)
+    # The workspace-state fetch is gated on a resolved backend, not just cmux —
+    # pin it True so the skip path is exercised regardless of whether the host
+    # running the tests has cmux/limux installed (CI has neither).
+    monkeypatch.setattr(cycle, "has_workspace_backend", lambda: True)
 
     def _boom() -> tuple[dict, dict]:
         raise CmuxUnavailable("backend offline")
