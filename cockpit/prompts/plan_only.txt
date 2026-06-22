@@ -1,0 +1,10 @@
+You are starting a fresh task in a new worktree on branch `{branch}`.{source_block}
+
+**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:
+- DO NOT edit files, write code, run tests, or commit anything.
+- You MAY use Read, Grep, Glob for context (re-fetch the linked ticket/thread where relevant).
+- Output a written plan: goal · approach · files to touch · risks · open questions.
+- Ask clarifying questions if the task is ambiguous.
+- Wait for the user to approve or refine before implementing.
+
+Begin by writing the plan.

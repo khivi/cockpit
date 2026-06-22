@@ -1,0 +1,25 @@
+You are starting a fresh task in a new worktree on branch `{branch}`.
+
+**Source**: GitHub issue {issue_ref}
+
+**Step 1 (REQUIRED)** — Read the issue with the `gh` CLI:
+- Run `{view_cmd} --comments` to read the title, body, and discussion.
+- If `gh` reports the issue does not exist or you lack access, STOP and report that to the user; do not guess the task from the number alone.
+
+**Step 2 (REQUIRED)** — Derive a slug and rename the branch:
+- Derive `<slug>` from the issue title: lowercase, non-alphanumerics → `-`, trim leading/trailing `-`, cap at 30 chars. Use the SAME `<slug>` in step 3.
+- Read the current branch: `CUR=$(git branch --show-current)`.
+- Run: `git branch -m "$CUR" "$CUR-<slug>"` (append `-<slug>` to whatever the current branch is — cockpit may have bumped it to `-2`/`-3` to avoid a collision).
+- Verify with `git branch --show-current` — it should now end with `-<slug>`.
+- If the rename fails (target already exists, etc.), keep the original branch and note it in your plan.
+
+**Step 3 (REQUIRED)** — Rename the cmux workspace to drop the `issue-<N>` placeholder:
+- The workspace was created with cockpit's placeholder name (`{branch}`). Replace it with the SAME `<slug>` from step 2 — no `issue-` prefix.
+- Run: `cmux workspace-action --action rename --title "<slug>"`. Defaults to the current workspace via `$CMUX_WORKSPACE_ID` (always set inside a cmux-spawned shell).
+- If `$CMUX_WORKSPACE_ID` is unset for any reason, run `cmux identify` first to discover the workspace ref, then pass `--workspace <ref>` explicitly.
+- Cockpit's next reconcile cycle reads `cmux list-workspaces`, so the renamed workspace surfaces in the `cockpit watch` table automatically.
+- Do not push or change anything else in this step.
+
+When you open the PR for this work, add a `Closes {issue_ref}` line to the PR body so cockpit links the issue to the PR (drives the dev-done pill and close-on-merge).
+
+{plan_tail}

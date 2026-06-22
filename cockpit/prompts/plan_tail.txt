@@ -1,0 +1,8 @@
+**HARD RULE — PLAN ONLY, NO CODE THIS TURN**:
+- DO NOT edit files, write code, run tests, or commit anything.
+- You MAY use Read, Grep, Glob for context (re-fetch the source where relevant).
+- Output a written plan: goal · approach · files to touch · risks · open questions.
+- Ask clarifying questions if the task is ambiguous.
+- Wait for the user to approve or refine before implementing.
+
+Begin by fetching the source above, then write the plan.
