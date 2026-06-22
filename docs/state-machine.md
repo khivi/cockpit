@@ -33,12 +33,12 @@ flowchart LR
   end
 
   subgraph DEC["Decision functions"]
-    MW["match_worktrees<br/>cycle.py:336"]
-    SM["_spawn_missing_workspaces<br/>cycle.py:1561"]
-    NI["nudge_if_idle<br/>cmux.py:377"]
-    DD["_track_dev_done<br/>cycle.py:307"]
-    AC["_maybe_autoclose<br/>cycle.py:726"]
-    BR["_reap_branch_refs<br/>cycle.py:867"]
+    MW["match_worktrees<br/>cycle.py"]
+    SM["_spawn_missing_workspaces<br/>cycle.py"]
+    NI["nudge_if_idle<br/>cmux.py"]
+    DD["_track_dev_done<br/>cycle.py"]
+    AC["_maybe_autoclose<br/>cycle.py"]
+    BR["_reap_branch_refs<br/>cycle.py"]
   end
 
   subgraph ACT["Actions"]
@@ -220,7 +220,7 @@ Key gates (all from `cycle.py`):
 
 ---
 
-## 3. Nudge idle-gate (`nudge_if_idle`, `cmux.py:377`)
+## 3. Nudge idle-gate (`nudge_if_idle`, `cmux.py`)
 
 Five sequential guards decide whether it is safe to `send` a nudge. The subtle
 rule: cmux native `Needs input` is **deliberately untrusted** — it is the same
