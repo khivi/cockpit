@@ -23,6 +23,7 @@ from cockpit.lib.cmux import (
     apply_devdone_pill,
     apply_pills,
     cmux_close_workspace_best_effort,
+    deliver_followup,
     nudge_if_idle,
     reconcile_workspace_names,
     rename_workspace_if_needed,
@@ -342,6 +343,72 @@ def test_spawn_workspace_cmux_polls_for_new_ref():
         ref = spawn_workspace("feat", Path("/tmp/wt"), "claude")
 
     assert ref == "workspace:2"
+
+
+# ── deliver_followup (two-send prompt_prefix flow) ───────────────────────────
+
+
+def test_deliver_followup_sends_text_then_enter_when_ready():
+    """Once claude reports a `claude_code=` state (TUI up), the body is typed
+    into the workspace and submitted with Enter."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-status":
+            return "claude_code=Idle icon=x color=#fff\n"
+        return ""
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+    ):
+        ok = deliver_followup("workspace:1", "the task body")
+
+    assert ok is True
+    send = next(c for c in calls if c[0] == "send")
+    assert "--workspace" in send and "workspace:1" in send
+    assert "the task body" in send
+    assert any(c[0] == "send-key" and "enter" in c for c in calls)
+
+
+def test_deliver_followup_polls_until_claude_boots():
+    """Keystrokes wait for the TUI: poll `list-status` until claude registers a
+    state, sleeping between polls, so the body isn't dropped mid-boot."""
+    statuses = iter(["", "", "claude_code=Running icon=x\n"])
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return next(statuses)
+        return ""
+
+    sleeps: list[float] = []
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.time.sleep", side_effect=sleeps.append),
+    ):
+        ok = deliver_followup("workspace:1", "body")
+
+    assert ok is True
+    assert len(sleeps) == 2  # slept after the first two not-ready polls
+
+
+def test_deliver_followup_send_failure_returns_false():
+    """A send failure (e.g. broken pipe) is logged, not raised."""
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return "claude_code=Idle\n"
+        if args[0] == "send":
+            raise RuntimeError("broken pipe")
+        return ""
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+    ):
+        assert deliver_followup("workspace:1", "body") is False
 
 
 # ── rename_workspace_if_needed / reconcile_workspace_names ───────────────────

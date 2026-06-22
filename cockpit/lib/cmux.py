@@ -30,7 +30,12 @@ from .issue_color import issue_color
 from .log_format import verb
 from .nudges import NudgePref
 from .pills import decide_pills
-from .prompts import build_orphan_prompt, build_pr_prompt, claude_command
+from .prompts import (
+    build_orphan_prompt,
+    build_pr_prompt,
+    claude_command,
+    split_prompt_prefix,
+)
 
 GREEN = "#16a34a"
 RED = "#eb445a"
@@ -307,6 +312,51 @@ def spawn_workspace(name: str, cwd: Path, command: str) -> str | None:
         "false",
     )
     return wait_for_new_workspace_ref(before)
+
+
+# How long to wait for a freshly-spawned claude to register a `claude_code=`
+# status before delivering the follow-up submission. The prefix's first turn is
+# an LLM turn, so claude reports state within a few seconds; the cap is a
+# backstop so a never-booting session doesn't hang the caller indefinitely.
+_FOLLOWUP_READY_TIMEOUT_SECONDS = 20.0
+_FOLLOWUP_POLL_INTERVAL_SECONDS = 0.5
+
+
+def _claude_ready(ref: str) -> bool:
+    """True once the workspace's claude has registered any `claude_code=` state
+    — i.e. its TUI is up, so typed input queues instead of being dropped into a
+    not-yet-rendered terminal.
+    """
+    lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
+    return _native_claude_state(lines) is not None
+
+
+def deliver_followup(ref: str, text: str) -> bool:
+    """Deliver `text` as a SEPARATE submission into an already-spawned
+    workspace's claude — the second half of the two-send `prompt_prefix` flow
+    (the prefix slash command rides in as the initial `--command`, the task body
+    follows here).
+
+    Waits (bounded) for claude to boot so the keystrokes aren't lost into a
+    not-yet-rendered TUI, then types the text and submits with Enter — the same
+    primitive the attach path and `nudge_if_idle` use. Best-effort: a send
+    failure is logged, never raised.
+    """
+    deadline = time.monotonic() + _FOLLOWUP_READY_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if _claude_ready(ref):
+            break
+        time.sleep(_FOLLOWUP_POLL_INTERVAL_SECONDS)
+    try:
+        cmux("send", "--workspace", ref, text, check=True)
+        cmux("send-key", "--workspace", ref, "enter", check=True)
+    except (RuntimeError, FileNotFoundError) as e:
+        print(
+            f"  warn: {tool.resolve_tool()} followup send failed for {ref}: {e}",
+            flush=True,
+        )
+        return False
+    return True
 
 
 def rename_workspace_if_needed(
@@ -757,7 +807,8 @@ def spawn_pr_workspace(
         for key, value, _ in status_pills(pr, wt, self_user, pref):
             print(f"  [dry]   pill {key}={value}", flush=True)
         return None
-    ref = spawn_workspace(wt.label, wt.path, claude_command(build_pr_prompt(pr)))
+    initial, followup = split_prompt_prefix(build_pr_prompt(pr))
+    ref = spawn_workspace(wt.label, wt.path, claude_command(initial))
     if ref is None:
         print(
             f"  warn: could not resolve new workspace ref for {wt.short}",
@@ -765,6 +816,8 @@ def spawn_pr_workspace(
             flush=True,
         )
         return None
+    if followup:
+        deliver_followup(ref, followup)
     apply_pills(ref, pr, wt, self_user, pref)
     print(
         f"  {verb('spawned')} {bold(wt.short)} ({ref})  #{pr.number}"
@@ -779,7 +832,8 @@ def spawn_orphan_workspace(wt: Worktree, *, dry: bool = False) -> str | None:
     if dry:
         print(f"  [dry] orphan spawn {wt.short}  cwd={wt.path}", flush=True)
         return None
-    ref = spawn_workspace(wt.label, wt.path, claude_command(build_orphan_prompt(wt)))
+    initial, followup = split_prompt_prefix(build_orphan_prompt(wt))
+    ref = spawn_workspace(wt.label, wt.path, claude_command(initial))
     if ref is None:
         print(
             f"  warn: could not resolve orphan workspace ref for {wt.short}",
@@ -787,6 +841,8 @@ def spawn_orphan_workspace(wt: Worktree, *, dry: bool = False) -> str | None:
             flush=True,
         )
         return None
+    if followup:
+        deliver_followup(ref, followup)
     _set_status(ref, ORPHAN_KEY, ORPHAN_ICON, ORANGE)
     apply_wip_pill(ref, wt.dirty_count)
     print(
