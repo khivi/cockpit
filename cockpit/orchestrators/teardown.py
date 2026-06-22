@@ -24,6 +24,7 @@ from pathlib import Path
 from cockpit.lib.cache import delete_pr_caches_for_branch, find_pr_payload
 from cockpit.lib.cmux import cmux_close_workspace_best_effort
 from cockpit.lib.colors import dim
+from cockpit.lib.gh import fetch_pr_state_for_branch
 from cockpit.lib.git import (
     _count_unpushed,
     commits_only_local,
@@ -41,6 +42,7 @@ from cockpit.lib.teardown_types import TeardownRequest
 __all__ = [
     "TeardownRequest",
     "probe_blockers",
+    "resolve_pr_state",
     "teardown",
     "worktree_state_blockers",
 ]
@@ -66,14 +68,14 @@ def worktree_state_blockers(
     flagged, leaving only the soft open-PR blocker that `--force` can override.
     Commits that exist only locally still block, regardless of ownership.
 
-    `pr_merged=True` (the cached PR payload reports state MERGED) skips the
-    unpushed check entirely: `_count_unpushed` over-counts both squash-merges
-    (N commits collapse to one upstream patch-id matching none of the originals)
-    and non-default-base merges (it baselines on `origin/<default>`, but the PR
-    landed on e.g. `origin/stage`). A merged PR's work is safe on the remote, so
-    only the dirty check needs to stand. Callers establish the merge via the
-    cache (see `probe_blockers`), mirroring how autoclose uses
-    `is_ancestor(wt, headRefOid)` instead of the commit count.
+    `pr_merged=True` (the PR is MERGED) skips the unpushed check entirely:
+    `_count_unpushed` over-counts both squash-merges (N commits collapse to one
+    upstream patch-id matching none of the originals) and non-default-base
+    merges (it baselines on `origin/<default>`, but the PR landed on e.g.
+    `origin/stage`). A merged PR's work is safe on the remote, so only the dirty
+    check needs to stand. Callers establish the merge via `resolve_pr_state`
+    (cache first, then one live `gh` lookup — see `probe_blockers`), mirroring
+    how autoclose uses `is_ancestor(wt, headRefOid)` instead of the commit count.
     """
     blockers: list[str] = []
     if worktree_path is None or not worktree_path.is_dir():
@@ -94,6 +96,49 @@ def worktree_state_blockers(
     return blockers
 
 
+def resolve_pr_state(
+    worktree_path: Path | None,
+    branch: str | None,
+    repo_name: str | None,
+) -> tuple[str, int | None]:
+    """Newest PR's `(state, number)` for `branch` — cache first, one live fallback.
+
+    Reads the slow tick's cached PR payload (`find_pr_payload`); when that does
+    not already report MERGED and a worktree dir is on hand to anchor `gh`, does
+    ONE live `fetch_pr_state_for_branch` lookup and lets the live result win.
+
+    The live fallback is what makes manual close squash/rebase-merge aware: a PR
+    merged out-of-band (e.g. via `gh`, never discovered by the slow tick) has no
+    cached MERGED payload, so the unpushed gate would otherwise fall through to
+    `_count_unpushed` — which a squash defeats — producing a false-positive HARD
+    block that `--force` cannot override. Live `gh pr list --state all` reports
+    `state == "MERGED"` regardless of merge strategy. `("", None)` when no PR is
+    known from either source (the caller then trusts the git-based unpushed
+    count). The lookup is skipped when the worktree is gone — there is nothing
+    left to close, and `gh` needs a working tree as its cwd.
+    """
+    payload = (
+        find_pr_payload(branch, repo_name=repo_name)
+        if branch is not None and repo_name is not None
+        else None
+    )
+    state = str(payload.get("state", "")).upper() if payload else ""
+    number = payload.get("number") if payload else None
+    if (
+        state != "MERGED"
+        and branch
+        and worktree_path is not None
+        and worktree_path.is_dir()
+    ):
+        live = fetch_pr_state_for_branch(branch, worktree_path)
+        if live:
+            live_state = str(live.get("state", "")).upper()
+            if live_state:
+                state = live_state
+                number = live.get("number", number)
+    return state, number
+
+
 def probe_blockers(
     worktree_path: Path | None,
     branch: str | None,
@@ -105,19 +150,17 @@ def probe_blockers(
 
     Combines `worktree_state_blockers` (dirty is hard; unpushed is hard only for
     our own branches, and is skipped once the PR is MERGED — see that function)
-    and the open-PR check (soft — `--force` overrides).
+    and the open-PR check (soft — `--force` overrides). The MERGED/OPEN state is
+    resolved via `resolve_pr_state` (cache first, one live `gh` fallback), so an
+    out-of-band squash/rebase merge is recognized here too — not only the
+    in-cache MERGED case.
     """
-    payload = (
-        find_pr_payload(branch, repo_name=repo_name)
-        if branch is not None and repo_name is not None
-        else None
-    )
-    state = str(payload.get("state", "")).upper() if payload else ""
+    state, number = resolve_pr_state(worktree_path, branch, repo_name)
     blockers = worktree_state_blockers(
         worktree_path, branch=branch, is_mine=is_mine, pr_merged=state == "MERGED"
     )
-    if payload and state == "OPEN":
-        blockers.append(f"PR #{payload['number']} is OPEN")
+    if state == "OPEN" and number is not None:
+        blockers.append(f"PR #{number} is OPEN")
     return blockers
 
 

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +22,7 @@ from cockpit.lib.gh import (
     _graphql,
     _relevant_pr_query,
     fetch_merged_branches,
+    fetch_pr_state_for_branch,
     list_open_pr_heads,
     require_gh,
 )
@@ -403,3 +406,39 @@ def test_nudge_issue_matches_display_issue_when_actionable():
     nudge message can't diverge)."""
     pr = _issue_pr(ci="failed:lint")
     assert pr.nudge_issue == pr.display_issue == "ci"
+
+
+# ── fetch_pr_state_for_branch: any-state live lookup for the close path ──────
+
+
+def _completed(stdout="", returncode=0):
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout)
+
+
+def test_fetch_pr_state_for_branch_merged():
+    rows = '[{"state": "MERGED", "number": 7}]'
+    with patch("cockpit.lib.gh.subprocess.run", return_value=_completed(rows)) as run:
+        out = fetch_pr_state_for_branch("khivi/x", Path("/tmp/wt"))
+    assert out == {"state": "MERGED", "number": 7}
+    # any-state query (not open-only) + scoped to the branch head
+    args = run.call_args[0][0]
+    assert args[:3] == ["gh", "pr", "list"]
+    assert "--state" in args and args[args.index("--state") + 1] == "all"
+    assert "--head" in args and args[args.index("--head") + 1] == "khivi/x"
+
+
+def test_fetch_pr_state_for_branch_no_pr_returns_none():
+    with patch("cockpit.lib.gh.subprocess.run", return_value=_completed("[]")):
+        assert fetch_pr_state_for_branch("khivi/x", Path("/tmp/wt")) is None
+
+
+def test_fetch_pr_state_for_branch_gh_failure_returns_none():
+    with patch(
+        "cockpit.lib.gh.subprocess.run", return_value=_completed("", returncode=1)
+    ):
+        assert fetch_pr_state_for_branch("khivi/x", Path("/tmp/wt")) is None
+
+
+def test_fetch_pr_state_for_branch_unparseable_returns_none():
+    with patch("cockpit.lib.gh.subprocess.run", return_value=_completed("not json")):
+        assert fetch_pr_state_for_branch("khivi/x", Path("/tmp/wt")) is None

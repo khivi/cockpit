@@ -75,7 +75,7 @@ from cockpit.lib.nudges import load_pref, save_pref
 from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
-from cockpit.orchestrators.teardown import probe_blockers, worktree_state_blockers
+from cockpit.orchestrators.teardown import resolve_pr_state, worktree_state_blockers
 from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
@@ -864,10 +864,12 @@ class CockpitApp(App[None]):
         prefix = repo.get("branch_prefix", "")
         is_mine = wt.branch.startswith(prefix) if (prefix and wt.branch) else True
 
-        payload = find_pr_payload(wt.branch, repo_name=repo_name) if wt.branch else None
-        pr_is_merged = (
-            payload is not None and str(payload.get("state", "")).upper() == "MERGED"
-        )
+        # Resolve the PR state ONCE (cache first, one live `gh` fallback) so an
+        # out-of-band squash/rebase merge the slow tick never cached as MERGED
+        # doesn't false-flag the branch as unpushed — a HARD block `C` can't
+        # override. Both the hard gate and the open-PR soft gate read this.
+        state, pr_number = resolve_pr_state(wt.path, wt.branch, repo_name)
+        pr_is_merged = state == "MERGED"
 
         # Hard blockers (dirty/unpushed) refuse even under force.
         hard = worktree_state_blockers(
@@ -881,16 +883,13 @@ class CockpitApp(App[None]):
                 severity="warning",
             )
             return
-        if not force:
-            blockers = probe_blockers(wt.path, wt.branch, repo_name, is_mine=is_mine)
-            if blockers:
-                self._notify(
-                    f"close refused {wt.label or wt.short}: "
-                    + "; ".join(blockers)
-                    + " — press C to force",
-                    severity="warning",
-                )
-                return
+        if not force and state == "OPEN" and pr_number is not None:
+            self._notify(
+                f"close refused {wt.label or wt.short}: "
+                f"PR #{pr_number} is OPEN — press C to force",
+                severity="warning",
+            )
+            return
 
         ref = self._workspace_ref(wt)
         names = workspace_names()

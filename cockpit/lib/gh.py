@@ -227,6 +227,47 @@ def pr_for_branch(branch: str, repo_dir: Path) -> dict | None:
     return rows[0] if rows else None
 
 
+def fetch_pr_state_for_branch(branch: str, repo_dir: Path) -> dict | None:
+    """Newest PR on `branch` as `{state, number}`, ANY state — or None.
+
+    The any-state companion to `pr_for_branch` (open-only). The manual-close
+    path (`teardown.probe_blockers`) uses it to recognize an out-of-band squash-
+    or rebase-merge the slow tick never cached as MERGED: `gh pr list --state
+    all` reports `state == "MERGED"` regardless of merge strategy, where
+    `git cherry` (`_count_unpushed`) cannot — a squash collapses N commits into
+    one upstream commit whose patch-id matches none of the originals, so the
+    branch false-reads as "unpushed" and hard-blocks a close that `--force`
+    can't override. One `gh` call, on a deliberate keypress only — never on a
+    tick. None on gh failure / unparsable output / no PR, so the caller
+    degrades to the git-based unpushed count.
+    """
+    res = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "all",
+            "--limit",
+            "1",
+            "--json",
+            "state,number",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_dir),
+    )
+    if res.returncode != 0:
+        return None
+    try:
+        rows = json.loads(res.stdout)
+    except json.JSONDecodeError:
+        return None
+    return rows[0] if rows else None
+
+
 def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:
     """Fetch {number, title, author, url, headRefName} for a PR."""
     fields = "number,title,author,url,headRefName"

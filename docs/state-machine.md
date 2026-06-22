@@ -150,6 +150,17 @@ Key gates (all from `cycle.py`):
   the local branch ref. The unpushed / open-PR gate lives in `probe_blockers` (the
   TUI `c` close path), where `C` force overrides the open-PR soft block but never
   uncommitted/unpushed work.
+- **Manual close is squash/rebase-merge aware** — the merged/open state both the
+  hard unpushed gate and the soft open-PR gate read comes from
+  `teardown.resolve_pr_state`: the cached PR payload first, then ONE live
+  `gh pr list --head <branch> --state all` (`gh.fetch_pr_state_for_branch`) when
+  the cache doesn't already say MERGED. This catches an out-of-band squash/rebase
+  merge the slow tick never discovered — `git cherry` (`_count_unpushed`) can't
+  recognize a squash (N commits → one upstream patch-id), so without the live
+  lookup the branch false-reads as unpushed, a HARD block `C` cannot override.
+  The live call runs only on a deliberate `c`/`C` keypress (and the daemon's
+  re-check in `teardown`), never per tick — mirroring how `_maybe_autoclose` uses
+  `is_ancestor(wt, headRefOid)` rather than the commit count.
 - **A merged PR is the only reaper**: `_handle_orphans_and_close_stale` never
   closes a worktree — a no-open-PR worktree (research/planning, or a coworker
   branch reviewed locally) gets orphan pills and lives until the user closes it
