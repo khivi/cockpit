@@ -149,6 +149,12 @@ pre-commit run --hook-stage pre-push --all-files
 
 Handled by the pre-push hook — bumps `.claude-plugin/plugin.json`'s `version` automatically. No manual action needed.
 
+## Commit / PR-title convention
+
+We squash-merge, so the **PR title** becomes the squash commit subject on `main` (the `type(scope): summary (#N)` lines in `git log`). Use [Conventional Commits](https://www.conventionalcommits.org/) for the PR title: `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert`, optional scope. Local WIP commit messages are unconstrained — they get squashed away.
+
+Enforced by `.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`, commitlint's `config-conventional` ruleset) as the required `lint-pr-title` status check on `main`. It runs alone (not in `ci.yml`) so a title edit re-checks the title without re-triggering pytest/mypy. Branch protection requires `lint-pr-title` + `pre-commit` + `ci`; admins are exempt (`gh pr merge --admin` still works).
+
 ## Test layout
 
 New modules get their own `test_<name>.py` — don't append tests for a new source file to an unrelated test module. Shell hooks under `hooks/` are the exception: they live as `tests/test_<hook>.py` with no Python source mirror.

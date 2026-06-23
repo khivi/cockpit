@@ -1,0 +1,22 @@
+name: pr-title
+
+# The repo squash-merges, so the PR title becomes the squash commit subject on
+# main (the `type(scope): summary (#N)` lines in `git log`). This lints that
+# title against commitlint's config-conventional ruleset. `edited` re-checks
+# when the title is changed; it runs alone (not in ci.yml) so a title tweak
+# doesn't re-trigger pytest/mypy.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint-pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
