@@ -151,7 +151,13 @@ def _self_update_and_reexec(watch_args: list[str]) -> int:
             file=sys.stderr,
         )
         return 0
+    from cockpit.lib import version
     from cockpit.lib.updater import run_update
+
+    # Capture the version we're leaving *before* run_update overwrites the
+    # on-disk plugin.json; the re-exec'd `cockpit watch` reads it to show
+    # release notes for what just landed.
+    prev_version = version.running_version()
 
     rc = run_update()
     if rc != 0:
@@ -164,6 +170,8 @@ def _self_update_and_reexec(watch_args: list[str]) -> int:
     # Replace this process with the just-installed cockpit. execvp resolves the
     # new binary on PATH and never returns (NoReturn) on success; the trailing
     # return is reached only if it's stubbed (tests) or somehow returns.
+    if prev_version:
+        os.environ["COCKPIT_PREV_VERSION"] = prev_version
     try:
         os.execvp("cockpit", ["cockpit", "watch", *watch_args])
     except OSError as exc:

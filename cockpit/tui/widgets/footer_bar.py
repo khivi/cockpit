@@ -71,7 +71,14 @@ class FooterBar(Horizontal):
 
     # Explicit render order for the global (right) group — independent of BINDINGS
     # order. Actions not listed here render after these, in BINDINGS order.
-    GLOBAL_ORDER = ("new_workspace", "sync", "show_output", "update", "quit")
+    GLOBAL_ORDER = (
+        "new_workspace",
+        "sync",
+        "show_output",
+        "show_release_notes",
+        "update",
+        "quit",
+    )
 
     # One-word footer label per action — the BINDINGS descriptions are verbose
     # ("Sync now", "Force close") and two open_* actions would both first-word to
@@ -83,6 +90,7 @@ class FooterBar(Horizontal):
         "open_pr": "PR",
         "open_ticket": "Ticket",
         "show_output": "Output",
+        "show_release_notes": "Notes",
         "close_row": "Close",
         "force_close_row": "Force",
         "mute_row": "Mute",
