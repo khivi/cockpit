@@ -76,7 +76,11 @@ from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
 from cockpit.orchestrators.teardown import resolve_pr_state, worktree_state_blockers
-from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
+from cockpit.tui.widgets.config_screen import (
+    ConfigCommands,
+    ConfigScreen,
+    ReleaseNotesScreen,
+)
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.log_pane import LogPane
@@ -590,10 +594,17 @@ class CockpitApp(App[None]):
         self.push_screen(ConfigScreen("slow / fast output", body))
 
     def action_show_release_notes(self) -> None:
-        # Read-only: fetch recent merged-PR subjects off the UI thread (gh api,
-        # like _check_update) and show them in the generic text modal. `r` shows
-        # the recent window; the post-update auto-show passes the prior version.
-        self._load_release_notes(None)
+        # `r`: the ChangeLog overlay. Lazy-paginated — it pulls one page of
+        # merged-PR subjects per scroll-to-bottom (gh api, off the UI thread in
+        # the screen's own worker), so the first paint is quick and history is
+        # only fetched as far as you scroll. The post-update auto-show
+        # (_load_release_notes, prior version) keeps the bounded single-shot
+        # ConfigScreen — it's scoped to the version gap, nothing to paginate.
+        from cockpit.lib import release_notes
+
+        self.push_screen(
+            ReleaseNotesScreen(release_notes.recent_title(), release_notes.recent_page)
+        )
 
     @work(thread=True, group="notes", exit_on_error=False)
     def _load_release_notes(self, prev: str | None) -> None:

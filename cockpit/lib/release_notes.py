@@ -17,18 +17,20 @@ from cockpit.lib import version
 
 _RECENT = 15  # on-demand `r` (no prior version): a recent window
 _MAX = 30  # hard cap on rendered lines, whatever the version gap
+PER_PAGE = 15  # `r` ChangeLog screen: one lazy-loaded page per scroll
 
 
-def _subjects(repo: str, limit: int) -> list[str]:
-    """First lines of the last `limit` commits that touched plugin.json on the
-    default branch — one per merged PR (each squash-bumps the version), newest
-    first. `[]` on any gh/network/parse failure."""
+def _raw_subjects(repo: str, per_page: int, page: int = 1) -> list[str]:
+    """First lines of `per_page` commits (page `page`, 1-indexed) that touched
+    plugin.json on the default branch — one per merged PR, newest first.
+    Unfiltered. `[]` on any gh/network/parse failure."""
     try:
         out = subprocess.run(
             [
                 "gh",
                 "api",
-                f"repos/{repo}/commits?path=.claude-plugin/plugin.json&per_page={limit}",
+                f"repos/{repo}/commits?path=.claude-plugin/plugin.json"
+                f"&per_page={per_page}&page={page}",
                 "--jq",
                 r'.[].commit.message | split("\n")[0]',
             ],
@@ -39,11 +41,34 @@ def _subjects(repo: str, limit: int) -> list[str]:
         ).stdout
     except (subprocess.SubprocessError, OSError):
         return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _subjects(repo: str, limit: int) -> list[str]:
+    """Filtered (no auto-bump commits) first page of subjects, newest first."""
     return [
-        line.strip()
-        for line in out.splitlines()
-        if line.strip() and not line.startswith("chore: bump version")
+        s for s in _raw_subjects(repo, limit) if not s.startswith("chore: bump version")
     ]
+
+
+def recent_title() -> str:
+    """Title for the on-demand ChangeLog screen (no network)."""
+    return f"recent changes (v{version.running_version()})"
+
+
+def recent_page(page: int, per_page: int = PER_PAGE) -> tuple[list[str], bool]:
+    """One page of recent merged-PR subjects for the lazy-scroll ChangeLog,
+    plus an `exhausted` flag (True once GitHub returns a short/empty page, so
+    the screen stops fetching). `([], True)` on no-repo or any failure. The
+    "chore: bump version" auto-bumps are filtered out, but `exhausted` keys off
+    the *raw* count so filtering can't fake an early end mid-history."""
+    repo = version.install_repo()
+    if not repo:
+        return [], True
+    raw = _raw_subjects(repo, per_page, page)
+    exhausted = len(raw) < per_page
+    subjects = [s for s in raw if not s.startswith("chore: bump version")]
+    return subjects, exhausted
 
 
 def _gap(prev: str, current: str) -> int:
