@@ -18,7 +18,13 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Static
 
-from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
+from cockpit.tui.widgets.config_screen import (
+    ConfigCommands,
+    ConfigScreen,
+    ReleaseNotesScreen,
+    _commit_color,
+    _LazyScroll,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -80,6 +86,95 @@ async def test_palette_offers_edit_config():
         provider = ConfigCommands(app.screen)
         hits = [h async for h in provider.search("edit config")]
         assert any("Edit config" in str(h.text) for h in hits)
+
+
+async def test_release_notes_loads_first_page_on_mount():
+    pages = {1: (["feat: a", "fix: b"], True)}
+    calls: list[int] = []
+
+    def fetch(page: int) -> tuple[list[str], bool]:
+        calls.append(page)
+        return pages.get(page, ([], True))
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        screen = ReleaseNotesScreen("t", fetch)
+        await app.push_screen(screen)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls == [1]
+        assert screen._subjects == ["feat: a", "fix: b"]
+        assert screen._exhausted is True
+
+
+async def test_release_notes_fetches_next_page_near_bottom():
+    pages = {
+        1: ([f"feat: {i}" for i in range(15)], False),
+        2: (["fix: last"], True),
+    }
+    calls: list[int] = []
+
+    def fetch(page: int) -> tuple[list[str], bool]:
+        calls.append(page)
+        return pages.get(page, ([], True))
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        screen = ReleaseNotesScreen("t", fetch)
+        await app.push_screen(screen)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls == [1] and screen._exhausted is False
+
+        lazy = screen.query_one(_LazyScroll)
+        lazy.post_message(_LazyScroll.NearBottom())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls == [1, 2]
+        assert screen._subjects[-1] == "fix: last"
+        assert screen._exhausted is True
+
+        # Exhausted: a further scroll fires no more fetches.
+        lazy.post_message(_LazyScroll.NearBottom())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert calls == [1, 2]
+
+
+async def test_commit_color_by_type():
+    assert _commit_color("feat(tui): add x") == "green"
+    assert _commit_color("fix: bug") == "red"
+    assert _commit_color("docs: readme") == "blue"
+    assert _commit_color("chore: bump") == "dim"  # unlisted → dim
+    assert _commit_color("not a conventional subject") == "dim"
+
+
+async def test_release_notes_body_is_colored_text():
+    app = _Host()
+    async with app.run_test() as pilot:
+        screen = ReleaseNotesScreen("t", lambda page: (["feat: a", "fix: b"], True))
+        await app.push_screen(screen)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        body = screen.query_one("#rn-body", Static)
+        content = body._Static__content  # type: ignore[attr-defined]
+        assert isinstance(content, Text)
+        # `[` `]` would be markup-consumed by a raw string; the styled Text keeps
+        # them literal and carries the per-type colours.
+        styles = {str(s.style) for s in content.spans}
+        assert "green" in styles and "red" in styles
+
+
+async def test_release_notes_empty_shows_hint():
+    app = _Host()
+    async with app.run_test() as pilot:
+        screen = ReleaseNotesScreen("t", lambda page: ([], True))
+        await app.push_screen(screen)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        hint = screen.query_one("#rn-hint", Static)
+        assert "no release notes available" in str(hint._Static__content)  # type: ignore[attr-defined]
 
 
 async def test_plain_json_body_is_unstyled():

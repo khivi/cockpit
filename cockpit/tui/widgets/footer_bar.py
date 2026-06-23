@@ -90,7 +90,7 @@ class FooterBar(Horizontal):
         "open_pr": "PR",
         "open_ticket": "Ticket",
         "show_output": "Output",
-        "show_release_notes": "Notes",
+        "show_release_notes": "ChangeLog",
         "close_row": "Close",
         "force_close_row": "Force",
         "mute_row": "Mute",
