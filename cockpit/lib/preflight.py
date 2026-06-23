@@ -54,40 +54,28 @@ def _validate_sidebar_colors(cfg: dict) -> None:
             )
 
 
-def _validate_review_prs(cfg: dict) -> None:
-    """Hard-fail on a repo `review_prs` that isn't a bool.
+def _validate_repo_bool(cfg: dict, key: str) -> None:
+    """Hard-fail on a per-repo `key` that's present but isn't a bool.
 
-    `review_prs: true` makes the daemon create a review worktree for every
-    other-authored open PR in the repo — a non-bool (e.g. a stray string) would
-    be silently truthy, so it's rejected at start like `sidebar_color`.
+    These per-repo switches (`review_prs` spawns review worktrees, `in_place`
+    skips all auto-spawning) gate daemon behavior, so a non-bool (e.g. a stray
+    string) would be silently truthy — rejected at start like `sidebar_color`.
     """
     for repo in cfg.get("repos", []):
-        if "review_prs" not in repo:
-            continue
-        if not isinstance(repo["review_prs"], bool):
+        if key in repo and not isinstance(repo[key], bool):
             name = repo.get("name") or repo.get("path", "?")
-            _die(
-                f"repo {name!r}: review_prs must be true or false, "
-                f"got {repo['review_prs']!r}."
-            )
+            _die(f"repo {name!r}: {key} must be true or false, got {repo[key]!r}.")
 
 
-def _validate_in_place(cfg: dict) -> None:
-    """Hard-fail on a repo `in_place` that isn't a bool.
+def _validate_global_bool(cfg: dict, key: str) -> None:
+    """Hard-fail on a top-level `key` that's present but isn't a bool.
 
-    `in_place: true` (set by bare `cockpit new`) makes the daemon skip all
-    worktree auto-spawning for the repo — a non-bool (e.g. a stray string) would
-    be silently truthy, so it's rejected at start like `review_prs`.
+    `check_update` (gates the new-version log line) and `use_slack` (gates the
+    Slack-MCP-fetch spawn prompt) both default true/false and gate daemon
+    behavior, so a non-bool would be silently truthy — rejected like `review_prs`.
     """
-    for repo in cfg.get("repos", []):
-        if "in_place" not in repo:
-            continue
-        if not isinstance(repo["in_place"], bool):
-            name = repo.get("name") or repo.get("path", "?")
-            _die(
-                f"repo {name!r}: in_place must be true or false, "
-                f"got {repo['in_place']!r}."
-            )
+    if key in cfg and not isinstance(cfg[key], bool):
+        _die(f"{key} must be true or false, got {cfg[key]!r}.")
 
 
 def _validate_review_command(cfg: dict) -> None:
@@ -114,36 +102,6 @@ def _validate_review_command(cfg: dict) -> None:
             continue
         name = repo.get("name") or repo.get("path", "?")
         _check(repo["review_command"], f"repo {name!r}: review_command")
-
-
-def _validate_check_update(cfg: dict) -> None:
-    """Hard-fail on a top-level `check_update` that isn't a bool.
-
-    `check_update` (default true) gates the slow-tick log line that fires when a
-    newer cockpit is published on the install repo's default branch. A non-bool
-    (e.g. a stray string) would be silently truthy, so it's rejected at start
-    like `review_prs`.
-    """
-    if "check_update" not in cfg:
-        return
-    if not isinstance(cfg["check_update"], bool):
-        _die(f"check_update must be true or false, got {cfg['check_update']!r}.")
-
-
-def _validate_use_slack(cfg: dict) -> None:
-    """Hard-fail on a top-level `use_slack` that isn't a bool.
-
-    `use_slack` (default false) gates whether spawn seeds the Slack-MCP-fetch
-    prompt for a Slack-permalink source. A non-bool (e.g. a stray string) would
-    be silently truthy, so it's rejected at start like `check_update`. No
-    API-key warning: cockpit never calls Slack itself — the spawned Claude
-    fetches the thread via the Slack MCP — so there's nothing to soft-degrade
-    here.
-    """
-    if "use_slack" not in cfg:
-        return
-    if not isinstance(cfg["use_slack"], bool):
-        _die(f"use_slack must be true or false, got {cfg['use_slack']!r}.")
 
 
 def _validate_tickets(cfg: dict) -> None:
@@ -321,11 +279,11 @@ def validate_config(cfg: dict) -> None:
     covers it automatically.
     """
     _validate_sidebar_colors(cfg)
-    _validate_review_prs(cfg)
-    _validate_in_place(cfg)
+    _validate_repo_bool(cfg, "review_prs")
+    _validate_repo_bool(cfg, "in_place")
     _validate_review_command(cfg)
-    _validate_check_update(cfg)
-    _validate_use_slack(cfg)
+    _validate_global_bool(cfg, "check_update")
+    _validate_global_bool(cfg, "use_slack")
     _validate_tickets(cfg)
     _validate_orphan_nudge_grace(cfg)
     _validate_linear_dev_done(cfg)
