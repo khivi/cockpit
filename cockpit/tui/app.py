@@ -177,6 +177,7 @@ class CockpitApp(App[None]):
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
         ("o", "show_output", "Output"),
+        ("r", "show_release_notes", "What's new"),
         ("c", "close_row", "Close"),
         ("C", "force_close_row", "Force close"),
         ("m", "mute_row", "Mute"),
@@ -283,6 +284,13 @@ class CockpitApp(App[None]):
         # the PR caches (so the first fast republish isn't a no-op).
         self._check_update()
         self._kick_slow()
+
+        # Just self-updated via `u`? cli.py threaded the prior version through
+        # the re-exec env; show what landed once, then drop it so a later manual
+        # restart in the same shell doesn't repeat it.
+        prev = os.environ.pop("COCKPIT_PREV_VERSION", "")
+        if prev and prev != version.running_version():
+            self._load_release_notes(prev)
 
     def _apply_saved_theme(self) -> None:
         """Apply the persisted `tui_theme`, then persist any later palette pick.
@@ -580,6 +588,29 @@ class CockpitApp(App[None]):
         # (ConfigScreen is a generic text modal). Snapshot, not live.
         body = "\n".join(self._log_tail) or "(no tick output yet)"
         self.push_screen(ConfigScreen("slow / fast output", body))
+
+    def action_show_release_notes(self) -> None:
+        # Read-only: fetch recent merged-PR subjects off the UI thread (gh api,
+        # like _check_update) and show them in the generic text modal. `r` shows
+        # the recent window; the post-update auto-show passes the prior version.
+        self._load_release_notes(None)
+
+    @work(thread=True, group="notes", exit_on_error=False)
+    def _load_release_notes(self, prev: str | None) -> None:
+        from cockpit.lib import release_notes
+
+        body = release_notes.notes(prev)
+        if body:
+            self.call_from_thread(self.push_screen, ConfigScreen("what's new", body))
+        elif prev is None:
+            # Toast only for the explicit `r` press; a silent post-update miss
+            # (no network, nothing new) is fine.
+            self.call_from_thread(
+                self.notify,
+                "no release notes available",
+                severity="information",
+                timeout=4.0,
+            )
 
     def action_dismiss_overlay(self) -> None:
         # Escape: close the help panel if open, else pop a modal back toward the
