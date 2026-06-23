@@ -297,17 +297,13 @@ def read_text(path: Path) -> str:
         return ""
 
 
-def _branch_key(branch: str) -> str:
-    return branch.replace("/", "-")
-
-
 def session_cache(stem: str, sid: str | None) -> Path:
     suffix = f"-{sid}" if sid else ""
     return _ensure_flat_cache_dir() / f"{stem}{suffix}"
 
 
 def branch_cache(stem: str, branch: str) -> Path:
-    return _ensure_flat_cache_dir() / f"{stem}-{_branch_key(branch)}"
+    return _ensure_flat_cache_dir() / f"{stem}-{branch.replace('/', '-')}"
 
 
 def _cwd_key(cwd: os.PathLike[str] | str) -> str:

@@ -12,7 +12,6 @@ the per-PR JSON snapshots), so no renderer-side refresh fork exists.
 
 from __future__ import annotations
 
-import calendar
 import json
 import os
 import time
@@ -25,6 +24,7 @@ from .cache import (
     read_text,
     session_cache,
 )
+from .claude import iso_to_epoch
 from .colors import (
     Colorizer,
     amber,
@@ -260,7 +260,7 @@ def print_session_time(sid: str | None = None) -> str:
     first_ts = _first_timestamp(transcript_path)
     if not first_ts:
         return ""
-    start_epoch = _parse_iso_epoch(first_ts)
+    start_epoch = iso_to_epoch(first_ts)
     if start_epoch is None:
         return ""
     total = int(time.time()) - start_epoch
@@ -316,21 +316,6 @@ def _find_first_timestamp(obj) -> str | None:
             if found:
                 return found
     return None
-
-
-def _parse_iso_epoch(ts: str) -> int | None:
-    """Parse an ISO 8601 timestamp into a UTC epoch seconds int.
-
-    Strips fractional seconds and trailing 'Z' so `time.strptime` accepts
-    both `2024-01-02T03:04:05Z` and `2024-01-02T03:04:05.123Z`. Uses
-    `calendar.timegm` (inverse of `time.gmtime`) so the timestamp is
-    interpreted as UTC regardless of the host's local timezone.
-    """
-    clean = ts.split(".", 1)[0].rstrip("Z")
-    try:
-        return calendar.timegm(time.strptime(clean, "%Y-%m-%dT%H:%M:%S"))
-    except (ValueError, TypeError):
-        return None
 
 
 def print_rate_limit(sid: str | None = None) -> str:

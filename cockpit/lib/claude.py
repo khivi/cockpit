@@ -104,7 +104,7 @@ def stash_from_stdin(blob: bytes) -> tuple[bytes, str | None]:
             # ISO string when it expects u64. Coerce ISO → epoch in the
             # outgoing blob so cship can't blackout the footer.
             if isinstance(resets, str):
-                epoch = _iso_to_epoch(resets)
+                epoch = iso_to_epoch(resets)
                 if epoch is not None:
                     five["resets_at"] = epoch
                     mutated = True
@@ -114,9 +114,14 @@ def stash_from_stdin(blob: bytes) -> tuple[bytes, str | None]:
     return json.dumps(data).encode("utf-8"), sid
 
 
-def _iso_to_epoch(ts: str) -> int | None:
-    """Parse `2026-05-22T15:00:00Z` (with optional fractional seconds) to
-    a UTC epoch int. Returns None on any parse failure."""
+def iso_to_epoch(ts: str) -> int | None:
+    """Parse `2026-05-22T15:00:00Z` (with optional fractional seconds) to a UTC
+    epoch int. Returns None on any parse failure.
+
+    Strips fractional seconds and trailing 'Z' so `time.strptime` accepts both
+    `...05Z` and `...05.123Z`, and `calendar.timegm` (inverse of `time.gmtime`)
+    fixes the result as UTC regardless of the host timezone.
+    """
     clean = ts.split(".", 1)[0].rstrip("Z")
     try:
         return calendar.timegm(time.strptime(clean, "%Y-%m-%dT%H:%M:%S"))
