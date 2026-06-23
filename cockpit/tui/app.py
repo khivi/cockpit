@@ -610,9 +610,14 @@ class CockpitApp(App[None]):
     def _load_release_notes(self, prev: str | None) -> None:
         from cockpit.lib import release_notes
 
-        body = release_notes.notes(prev)
-        if body:
-            self.call_from_thread(self.push_screen, ConfigScreen("what's new", body))
+        result = release_notes.notes(prev)
+        if result:
+            from cockpit.tui.widgets.config_screen import render_changelog
+
+            title, items = result
+            self.call_from_thread(
+                self.push_screen, ConfigScreen(title, render_changelog(items))
+            )
         elif prev is None:
             # Toast only for the explicit `r` press; a silent post-update miss
             # (no network, nothing new) is fine.

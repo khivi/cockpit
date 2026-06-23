@@ -24,6 +24,7 @@ from cockpit.tui.widgets.config_screen import (
     ReleaseNotesScreen,
     _commit_color,
     _LazyScroll,
+    render_changelog,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -89,10 +90,10 @@ async def test_palette_offers_edit_config():
 
 
 async def test_release_notes_loads_first_page_on_mount():
-    pages = {1: (["feat: a", "fix: b"], True)}
+    pages = {1: ([("feat: a", "today"), ("fix: b", "today")], True)}
     calls: list[int] = []
 
-    def fetch(page: int) -> tuple[list[str], bool]:
+    def fetch(page: int) -> tuple[list[tuple[str, str]], bool]:
         calls.append(page)
         return pages.get(page, ([], True))
 
@@ -103,18 +104,18 @@ async def test_release_notes_loads_first_page_on_mount():
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert calls == [1]
-        assert screen._subjects == ["feat: a", "fix: b"]
+        assert screen._items == [("feat: a", "today"), ("fix: b", "today")]
         assert screen._exhausted is True
 
 
 async def test_release_notes_fetches_next_page_near_bottom():
     pages = {
-        1: ([f"feat: {i}" for i in range(15)], False),
-        2: (["fix: last"], True),
+        1: ([(f"feat: {i}", "today") for i in range(15)], False),
+        2: ([("fix: last", "today")], True),
     }
     calls: list[int] = []
 
-    def fetch(page: int) -> tuple[list[str], bool]:
+    def fetch(page: int) -> tuple[list[tuple[str, str]], bool]:
         calls.append(page)
         return pages.get(page, ([], True))
 
@@ -132,7 +133,7 @@ async def test_release_notes_fetches_next_page_near_bottom():
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert calls == [1, 2]
-        assert screen._subjects[-1] == "fix: last"
+        assert screen._items[-1] == ("fix: last", "today")
 
         # Exhausted (short page 2): a further scroll fires no more fetches.
         lazy.post_message(_LazyScroll.NearBottom())
@@ -152,7 +153,9 @@ async def test_commit_color_by_type():
 async def test_release_notes_body_is_colored_text():
     app = _Host()
     async with app.run_test() as pilot:
-        screen = ReleaseNotesScreen("t", lambda page: (["feat: a", "fix: b"], True))
+        screen = ReleaseNotesScreen(
+            "t", lambda page: ([("feat: a", "today"), ("fix: b", "today")], True)
+        )
         await app.push_screen(screen)
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -165,10 +168,64 @@ async def test_release_notes_body_is_colored_text():
         assert "green" in styles and "red" in styles
 
 
+async def test_render_changelog_groups_by_bucket():
+    # Shared renderer (ChangeLog screen + post-update modal): a dim age header
+    # when the bucket changes, then each subject tinted by commit type.
+    items = [("feat: a", "today"), ("fix: b", "today"), ("docs: c", "last week")]
+    text = render_changelog(items)
+    assert text.plain == "today\n• feat: a\n• fix: b\n\nlast week\n• docs: c"
+    styles = {str(s.style) for s in text.spans}
+    assert {"green", "red", "blue", "dim"} <= styles
+
+
+async def test_post_update_modal_renders_colored_text():
+    # `_load_release_notes` passes a pre-styled Text; ConfigScreen renders it
+    # as-is (not re-parsed through from_ansi).
+    app = _Host()
+    async with app.run_test() as pilot:
+        body = render_changelog([("feat: a", "today")])
+        await app.push_screen(ConfigScreen("what's new", body))
+        await pilot.pause()
+        content = _body_content(app.screen)
+        assert isinstance(content, Text)
+        assert "green" in {str(s.style) for s in content.spans}
+
+
+async def test_release_notes_fills_until_overflow_on_tall_terminal():
+    # First page fits on a tall terminal (no overflow) → watch_scroll_y never
+    # fires; _fill_if_short must keep pulling until the view overflows so older
+    # history isn't stranded behind a non-scrolling page.
+    pages = {
+        1: ([(f"feat: {i}", "today") for i in range(15)], False),
+        2: ([(f"fix: {i}", "today") for i in range(15)], False),
+        3: ([(f"docs: {i}", "today") for i in range(15)], False),
+    }
+    calls: list[int] = []
+
+    def fetch(page: int) -> tuple[list[tuple[str, str]], bool]:
+        calls.append(page)
+        return pages.get(page, ([], True))
+
+    app = _Host()
+    async with app.run_test(size=(100, 60)) as pilot:
+        screen = ReleaseNotesScreen("t", fetch)
+        await app.push_screen(screen)
+        for _ in range(6):
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        # Pulled past page 1 on its own until content overflowed the tall view.
+        assert calls[0] == 1 and len(calls) >= 2
+        assert screen.query_one(_LazyScroll).max_scroll_y > 0
+
+
 async def test_release_notes_empty_shows_hint():
     app = _Host()
     async with app.run_test() as pilot:
-        screen = ReleaseNotesScreen("t", lambda page: ([], True))
+
+        def empty(page: int) -> tuple[list[tuple[str, str]], bool]:
+            return [], True
+
+        screen = ReleaseNotesScreen("t", empty)
         await app.push_screen(screen)
         await app.workers.wait_for_complete()
         await pilot.pause()

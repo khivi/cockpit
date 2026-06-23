@@ -45,7 +45,7 @@ class ConfigScreen(ModalScreen[None]):
 
     BINDINGS = [Binding("escape,q", "dismiss", "Close")]
 
-    def __init__(self, title: str, body: str) -> None:
+    def __init__(self, title: str, body: str | Text) -> None:
         super().__init__()
         self._title = title
         self._body = body
@@ -53,14 +53,20 @@ class ConfigScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll():
             yield Static(self._title, classes="config-title")
-            # Parse the body with `Text.from_ansi` (not a raw markup string): the
-            # captured tick output carries ANSI colour codes and stray brackets
-            # (`[clean]`, `[timestamp]`), and JSON config bodies contain `[` `]`
-            # array delimiters — both of which Textual's markup parser mangles
-            # into garbled cream-highlighted boxes. `from_ansi` decodes the colour
-            # codes and disables markup interpretation; on a body with no ANSI
-            # (the JSON views) it yields plain, unstyled text.
-            yield Static(Text.from_ansi(self._body))
+            # A pre-styled `Text` (the colourised post-update changelog) renders
+            # as-is. A raw `str` body goes through `Text.from_ansi` (not a markup
+            # string): the captured tick output carries ANSI colour codes and
+            # stray brackets (`[clean]`, `[timestamp]`), and JSON config bodies
+            # contain `[` `]` array delimiters — both of which Textual's markup
+            # parser mangles into garbled cream-highlighted boxes. `from_ansi`
+            # decodes the colour codes and disables markup interpretation; on a
+            # body with no ANSI (the JSON views) it yields plain, unstyled text.
+            body = (
+                self._body
+                if isinstance(self._body, Text)
+                else Text.from_ansi(self._body)
+            )
+            yield Static(body)
             yield Static("esc / q to close", classes="config-hint")
 
 
@@ -81,6 +87,32 @@ def _commit_color(subject: str) -> str:
     return _TYPE_COLORS.get(typ, "dim")
 
 
+def _append_subject(text: Text, subject: str) -> None:
+    """One `• <subject>` line: dim bullet + subject tinted by commit type."""
+    text.append("• ", style="dim")
+    text.append(subject, style=_commit_color(subject))
+
+
+def render_changelog(items: list[tuple[str, str]]) -> Text:
+    """Render `(subject, bucket)` entries as the shared ChangeLog body: a dim
+    relative-age header (today / yesterday / this week / …) whenever the bucket
+    changes, then each subject tinted by commit type. Used by both the paginated
+    `r` ChangeLog screen and the post-update modal so they render identically."""
+    out = Text()
+    last_bucket: str | None = None
+    for subject, bucket in items:
+        if bucket != last_bucket:
+            if last_bucket is not None:
+                out.append("\n\n")  # blank line between age groups
+            out.append(bucket, style="dim")
+            out.append("\n")
+            last_bucket = bucket
+        else:
+            out.append("\n")
+        _append_subject(out, subject)
+    return out
+
+
 class _LazyScroll(VerticalScroll):
     """A VerticalScroll that fires `NearBottom` as the view nears its end, so a
     paginated screen can fetch the next page just-in-time instead of up front."""
@@ -97,9 +129,9 @@ class _LazyScroll(VerticalScroll):
 
 class ReleaseNotesScreen(ModalScreen[None]):
     """The `r` ChangeLog overlay: scrollable, loading one page of merged-PR
-    subjects per scroll-to-bottom so the first paint is quick and history is
+    entries per scroll-to-bottom so the first paint is quick and history is
     only fetched as far as you scroll. `fetch(page)` runs in a thread worker
-    (it shells `gh`) and returns `(subjects, exhausted)`."""
+    (it shells `gh`) and returns `([(subject, bucket), …], exhausted)`."""
 
     DEFAULT_CSS = """
     ReleaseNotesScreen { align: center middle; }
@@ -118,7 +150,9 @@ class ReleaseNotesScreen(ModalScreen[None]):
     BINDINGS = [Binding("escape,q", "dismiss", "Close")]
 
     def __init__(
-        self, title: str, fetch: Callable[[int], tuple[list[str], bool]]
+        self,
+        title: str,
+        fetch: Callable[[int], tuple[list[tuple[str, str]], bool]],
     ) -> None:
         super().__init__()
         self._title = title
@@ -126,7 +160,7 @@ class ReleaseNotesScreen(ModalScreen[None]):
         self._page = 0
         self._loading = False
         self._exhausted = False
-        self._subjects: list[str] = []
+        self._items: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
         with _LazyScroll():
@@ -148,24 +182,18 @@ class ReleaseNotesScreen(ModalScreen[None]):
 
     @work(thread=True, exit_on_error=False)
     def _fetch_page(self, page: int) -> None:
-        subjects, exhausted = self._fetch(page)
-        self.app.call_from_thread(self._append, page, subjects, exhausted)
+        items, exhausted = self._fetch(page)
+        self.app.call_from_thread(self._append, page, items, exhausted)
 
-    def _append(self, page: int, subjects: list[str], exhausted: bool) -> None:
+    def _append(self, page: int, items: list[tuple[str, str]], exhausted: bool) -> None:
         self._loading = False
         self._exhausted = self._exhausted or exhausted
-        if subjects:
+        if items:
             self._page = page
-            self._subjects.extend(subjects)
-            # Build a styled Text (append, never markup) so each line is coloured
-            # by its conventional-commit type and stray `[` `]` stay literal.
-            body = Text()
-            for i, s in enumerate(self._subjects):
-                if i:
-                    body.append("\n")
-                body.append("• ", style="dim")
-                body.append(s, style=_commit_color(s))
-            self.query_one("#rn-body", Static).update(body)
+            self._items.extend(items)
+            # Shared renderer (append, never markup): per-type colours, dim
+            # age headers, and stray `[` `]` stay literal.
+            self.query_one("#rn-body", Static).update(render_changelog(self._items))
         hint = self.query_one("#rn-hint", Static)
         if self._exhausted:
             hint.update(
@@ -173,6 +201,15 @@ class ReleaseNotesScreen(ModalScreen[None]):
             )
         else:
             hint.update("scroll for more · esc / q to close")
+            # A page that fits without overflow never fires `watch_scroll_y`, so
+            # on a tall terminal the loader would stall after page 1 with older
+            # history unreachable. Pull the next page until the view overflows
+            # (max_scroll_y > 0) or history is exhausted.
+            self.call_after_refresh(self._fill_if_short)
+
+    def _fill_if_short(self) -> None:
+        if not self._exhausted and self.query_one(_LazyScroll).max_scroll_y == 0:
+            self._load_next()
 
 
 class ConfigCommands(Provider):
