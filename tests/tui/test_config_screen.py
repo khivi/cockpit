@@ -124,7 +124,7 @@ async def test_release_notes_fetches_next_page_near_bottom():
         await app.push_screen(screen)
         await app.workers.wait_for_complete()
         await pilot.pause()
-        assert calls == [1] and screen._exhausted is False
+        assert calls == [1]  # only the first page so far
 
         lazy = screen.query_one(_LazyScroll)
         lazy.post_message(_LazyScroll.NearBottom())
@@ -133,9 +133,8 @@ async def test_release_notes_fetches_next_page_near_bottom():
         await pilot.pause()
         assert calls == [1, 2]
         assert screen._subjects[-1] == "fix: last"
-        assert screen._exhausted is True
 
-        # Exhausted: a further scroll fires no more fetches.
+        # Exhausted (short page 2): a further scroll fires no more fetches.
         lazy.post_message(_LazyScroll.NearBottom())
         await pilot.pause()
         await app.workers.wait_for_complete()
