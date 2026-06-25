@@ -74,6 +74,9 @@ from cockpit.lib.colors import (
 from cockpit.lib.config import (
     COCKPIT_HOME,
     ensure_state_dirs,
+    jira_email,
+    jira_merge_done_status,
+    jira_site_url,
     linear_merge_done_state,
     linear_team_keys,
     orphan_nudge_grace_seconds,
@@ -115,6 +118,18 @@ from cockpit.lib.github_issues import (
     viewer_login as github_viewer_login,
 )
 from cockpit.lib.issue_color import issue_color
+from cockpit.lib.jira import (
+    JIRA_API_TOKEN_ENV,
+)
+from cockpit.lib.jira import (
+    fetch_issue_meta as jira_fetch_issue_meta,
+)
+from cockpit.lib.jira import (
+    fetch_myself as jira_fetch_myself,
+)
+from cockpit.lib.jira import (
+    transition_issue as jira_transition_issue,
+)
 from cockpit.lib.linear import (
     LINEAR_API_KEY_ENV,
     fetch_team_states,
@@ -546,6 +561,8 @@ def _transition_merged_tickets(ctx: RepoCycle) -> None:
         _transition_merged_linear(ctx)
     elif provider.name == "github":
         _transition_merged_github(ctx)
+    elif provider.name == "jira":
+        _transition_merged_jira(ctx)
 
 
 def _transition_merged_linear(ctx: RepoCycle) -> None:
@@ -721,6 +738,98 @@ def _transition_merged_github(ctx: RepoCycle) -> None:
                 print(
                     f"  {verb('github', color=yellow)} {dim(ref)}: "
                     f"close failed — will retry",
+                    flush=True,
+                )
+
+
+def _cached_jira_viewer(ctx: RepoCycle, site: str, email: str) -> str | None:
+    """The authenticated Jira user's `accountId`, cached across ticks like the
+    Linear/GitHub viewers — the "only transition my own issues" gate. Keyed by a
+    non-secret fingerprint of `$JIRA_API_TOKEN` so rotating the token invalidates
+    the entry (the raw token is never stored in `pill_state`)."""
+    raw = os.environ.get(JIRA_API_TOKEN_ENV) or ""
+    fp = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    return _cached_linear_identity(
+        ctx,
+        f"jira-viewer:{fp}",
+        lambda: jira_fetch_myself(site_url=site, email=email),
+    )
+
+
+def _transition_merged_jira(ctx: RepoCycle) -> None:
+    """Opt-in: transition a merged PR's delivered Jira issues to the terminal
+    status (`jira_merge_done_status`, default "Done") — the Jira analog of
+    `_transition_merged_linear`, the terminal action being a Jira workflow
+    transition.
+
+    Gates, all of which must hold: `close_on_merge` enabled (per-repo over
+    global), a configured `site_url` + `email`, `$JIRA_API_TOKEN` set. (The
+    dispatcher already checked `dry`.)
+
+    Per delivered issue (read from the cached PR snapshot — the strict footer
+    set, no extra network to discover them):
+      * skip if already evaluated this run (the shared `merged-done:` marker — a
+        repo is one provider, so it can't collide with Linear/GitHub markers);
+      * skip unless the issue is assigned to me (my `accountId`, lazy + cached) —
+        never move a teammate's issue;
+      * skip if it's already at the target status;
+      * otherwise fire the transition. A failure clears the marker to retry.
+    """
+    if not ticket_close_on_merge(ctx.cfg, ctx.repo_entry):
+        return
+    site = jira_site_url(ctx.cfg, ctx.repo_entry)
+    email = jira_email(ctx.cfg, ctx.repo_entry)
+    if not site or not email or not os.environ.get(JIRA_API_TOKEN_ENV):
+        return
+
+    target = jira_merge_done_status(ctx.cfg, ctx.repo_entry)
+    target_cf = target.casefold()
+    # Viewer id resolved lazily on the first real candidate (cached across ticks),
+    # so a repo with nothing eligible makes zero Jira calls per tick.
+    viewer: str | None = None
+    viewer_resolved = False
+
+    for wt in ctx.wts:
+        if wt.is_primary or wt.branch in MAIN_BRANCHES:
+            continue
+        if not _is_post_merge_stale(wt, ctx.merged_branches):
+            continue
+        payload = find_pr_payload(wt.branch, ctx.name)
+        tickets = ((payload or {}).get("linear") or {}).get("tickets") or []
+        for entry in tickets:
+            key = entry.get("id")
+            if not key:
+                continue
+            marker = f"merged-done:{ctx.owner}/{ctx.name}:{key}"
+            if ctx.pill_state.get(marker):
+                continue
+            if not viewer_resolved:
+                viewer = _cached_jira_viewer(ctx, site, email)
+                viewer_resolved = True
+            if not viewer:
+                # Can't confirm ownership → move nothing (fail-safe). No marker,
+                # so a transient viewer-query failure retries next tick.
+                continue
+            meta = jira_fetch_issue_meta(key, site_url=site, email=email)
+            if not meta:
+                continue  # transient failure → no marker, retry next tick
+            # Evaluated; mark so a kept merged worktree doesn't re-query each tick.
+            ctx.pill_state[marker] = True
+            if meta.get("assignee_id") != viewer:
+                continue
+            if (meta.get("status") or "").casefold() == target_cf:
+                continue  # already done
+            if jira_transition_issue(key, target, site_url=site, email=email):
+                print(
+                    f"  {verb('jira')} {key} → {target} {dim(f'(merged {wt.short})')}",
+                    flush=True,
+                )
+            else:
+                # Transition failed — clear the marker so a later tick retries.
+                ctx.pill_state.pop(marker, None)
+                print(
+                    f"  {verb('jira', color=yellow)} {dim(key)}: "
+                    f"transition to {target!r} failed — will retry",
                     flush=True,
                 )
 

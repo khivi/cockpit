@@ -12,6 +12,7 @@ from cockpit.lib import templates
 _TEMPLATES = {
     "plan_tail": {},
     "linear": {"branch", "identifier", "plan_tail"},
+    "jira": {"branch", "identifier", "plan_tail"},
     "github_issue": {"branch", "issue_ref", "view_cmd", "plan_tail"},
     "slack_fetch": {"branch", "url", "plan_tail"},
     "slack_context": {"branch", "url", "plan_tail"},

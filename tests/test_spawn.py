@@ -914,6 +914,25 @@ def test_positional_linear_prompt_instructs_mcp_fetch(
     assert "/mcp" in cmd  # STOP message points the user at the reconnect fix
 
 
+def test_positional_jira_prompt_instructs_mcp_fetch(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """Under `tickets: jira`, a ticket-shaped positional seeds the Jira fetch
+    prompt (delegated to the Atlassian/Jira MCP) — no `claude mcp list`
+    pre-flight, mirroring Slack. Branch is the lowercased key."""
+    _set_config_key(cockpit_repo, "tickets", "jira")
+    code, out, _err = spawn_main(["PROJ-1234", "--repo", "testrepo"])
+    assert code == 0
+    assert "on khivi/proj-1234" in out
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "PROJ-1234" in cmd
+    assert "Atlassian/Jira MCP" in cmd
+    assert "STOP" in cmd
+    assert "PLAN ONLY" in cmd
+    assert "retry the SAME MCP tool call up to three times" in cmd
+    assert "/mcp" in cmd
+
+
 def test_positional_linear_prompt_instructs_branch_rename(
     spawn_main, cockpit_repo, monkeypatch
 ):

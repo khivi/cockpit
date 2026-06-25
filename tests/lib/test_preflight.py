@@ -262,10 +262,10 @@ def test_preflight_ignores_absent_use_slack(tmp_path, monkeypatch, capsys):
 def test_preflight_exits_on_invalid_tickets(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "tickets": "jira"})
+        preflight({"tool": "cmux", "tickets": "gitlab"})
     assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert "tickets" in err and "'jira'" in err
+    assert "tickets" in err and "'gitlab'" in err
 
 
 def test_preflight_exits_on_invalid_per_repo_tickets(tmp_path, monkeypatch, capsys):
@@ -279,9 +279,37 @@ def test_preflight_exits_on_invalid_per_repo_tickets(tmp_path, monkeypatch, caps
 def test_preflight_exits_on_invalid_object_provider(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "tickets": {"provider": "jira"}})
+        preflight({"tool": "cmux", "tickets": {"provider": "gitlab"}})
     assert exc.value.code == 2
     assert "provider" in capsys.readouterr().err
+
+
+def test_preflight_passes_on_valid_jira_object(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "tickets": {
+                "provider": "jira",
+                "site_url": "https://acme.atlassian.net",
+                "email": "me@acme.com",
+                "dev_done_status": "Dev Done",
+                "merge_done_status": "Done",
+                "close_on_merge": True,
+            },
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_exits_on_unknown_jira_field(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {"tool": "cmux", "tickets": {"provider": "jira", "dev_done_label": "x"}}
+        )
+    assert exc.value.code == 2
+    assert "dev_done_label" in capsys.readouterr().err
 
 
 def test_preflight_exits_on_leftover_use_linear(tmp_path, monkeypatch, capsys):
