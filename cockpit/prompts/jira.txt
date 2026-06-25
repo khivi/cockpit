@@ -1,0 +1,24 @@
+You are starting a fresh task in a new worktree on branch `{branch}`.
+
+**Source**: Jira issue {identifier}
+
+**Step 1 (REQUIRED)** — Fetch the issue via the Atlassian/Jira MCP:
+- Use the Atlassian (Jira) MCP tool to read issue `{identifier}` (summary, description, comments).
+- If the tool call fails because the MCP server is still connecting (tools show as unavailable or return a connection error), the in-session connector is still completing its handshake — this is common when several worktrees spawn at once. Immediately retry the SAME MCP tool call up to three times (do not switch tools, do not insert shell `sleep` waits — they are blocked in some environments and do not help); the connector usually finishes its handshake within a couple of attempts.
+- If the MCP is still unavailable after all retries, STOP. Report to the user that the Atlassian/Jira connector did not finish connecting and that running `/mcp` to reconnect, then re-invoking this session, will resolve it. Exit without writing a plan; do not fall back to guessing from the issue key alone.
+
+**Step 2 (REQUIRED)** — Derive a slug and rename the branch:
+- Derive `<slug>` from the issue summary: lowercase, non-alphanumerics → `-`, trim leading/trailing `-`, cap at 30 chars. Use the SAME `<slug>` in step 3.
+- Read the current branch: `CUR=$(git branch --show-current)`.
+- Run: `git branch -m "$CUR" "$CUR-<slug>"` (append `-<slug>` to whatever the current branch is — cockpit may have bumped it to `-2`/`-3` to avoid a collision).
+- Verify with `git branch --show-current` — it should now end with `-<slug>`.
+- If the rename fails (target already exists, etc.), keep the original branch and note it in your plan.
+
+**Step 3 (REQUIRED)** — Rename the cmux workspace to drop the `<key>`-style placeholder:
+- The workspace was created with cockpit's placeholder name (e.g. `proj-123`). Replace it with the SAME `<slug>` from step 2 — no key prefix.
+- Run: `cmux workspace-action --action rename --title "<slug>"`. Defaults to the current workspace via `$CMUX_WORKSPACE_ID` (always set inside a cmux-spawned shell).
+- If `$CMUX_WORKSPACE_ID` is unset for any reason, run `cmux identify` first to discover the workspace ref, then pass `--workspace <ref>` explicitly.
+- Cockpit's next reconcile cycle reads `cmux list-workspaces`, so the renamed workspace surfaces in the `cockpit watch` table automatically.
+- Do not push or change anything else in this step.
+
+{plan_tail}

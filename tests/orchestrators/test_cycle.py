@@ -1625,6 +1625,143 @@ def test_transition_viewer_and_team_states_fetched_once(tmp_path, monkeypatch):
     assert upd.call_count == 2
 
 
+# ── _transition_merged_jira: the opt-in Jira transition at OPEN→MERGED ───────
+
+_JIRA_CFG = {
+    "tickets": {
+        "provider": "jira",
+        "site_url": "https://acme.atlassian.net",
+        "email": "me@acme.com",
+        "close_on_merge": True,
+    }
+}
+
+
+def _jira_transition_ctx(tmp_path, *, cfg=None, branch="khivi/feat"):
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir(exist_ok=True)
+    wt = Worktree(path=wt_path, branch=branch, dirty_count=0, is_primary=False)
+    return cycle.RepoCycle(
+        cfg=cfg if cfg is not None else dict(_JIRA_CFG),
+        repo_path=tmp_path,
+        owner="o",
+        name="n",
+        self_user="khivi",
+        wts=[wt],
+        prs=[],
+        tracked={},
+        names={},
+        cwds={},
+        merged_branches={branch: "deadbeef"},
+        merged_branches_deep={},
+        pill_state={},
+        dry=False,
+        headless=False,
+        repo_entry=None,
+    )
+
+
+def _jira_patches(*, myself="acc-me", meta=None, payload=None):
+    if payload is None:
+        payload = {"linear": {"tickets": [{"id": "PROJ-1", "state": "Dev Done"}]}}
+    if meta is None:
+        meta = {"status": "Dev Done", "assignee_id": "acc-me"}
+    return [
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "find_pr_payload", return_value=payload),
+        patch.object(cycle, "jira_fetch_myself", return_value=myself),
+        patch.object(cycle, "jira_fetch_issue_meta", return_value=meta),
+    ]
+
+
+def test_jira_transition_happy_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("JIRA_API_TOKEN", "tok")
+    ctx = _jira_transition_ctx(tmp_path)
+    with (
+        _enter_all(_jira_patches()),
+        patch.object(cycle, "jira_transition_issue", return_value=True) as tr,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    tr.assert_called_once_with(
+        "PROJ-1", "Done", site_url="https://acme.atlassian.net", email="me@acme.com"
+    )
+    assert ctx.pill_state.get("merged-done:o/n:PROJ-1") is True
+
+
+def test_jira_transition_noop_when_flag_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("JIRA_API_TOKEN", "tok")
+    cfg = {"tickets": {**_JIRA_CFG["tickets"], "close_on_merge": False}}
+    ctx = _jira_transition_ctx(tmp_path, cfg=cfg)
+    with (
+        _enter_all(_jira_patches()),
+        patch.object(cycle, "jira_transition_issue") as tr,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    tr.assert_not_called()
+
+
+def test_jira_transition_noop_when_no_token(tmp_path, monkeypatch):
+    monkeypatch.delenv("JIRA_API_TOKEN", raising=False)
+    ctx = _jira_transition_ctx(tmp_path)
+    with (
+        _enter_all(_jira_patches()),
+        patch.object(cycle, "jira_transition_issue") as tr,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    tr.assert_not_called()
+
+
+def test_jira_transition_skips_other_assignee(tmp_path, monkeypatch):
+    monkeypatch.setenv("JIRA_API_TOKEN", "tok")
+    ctx = _jira_transition_ctx(tmp_path)
+    meta = {"status": "Dev Done", "assignee_id": "acc-other"}
+    with (
+        _enter_all(_jira_patches(meta=meta)),
+        patch.object(cycle, "jira_transition_issue") as tr,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    tr.assert_not_called()
+    # Evaluated → marker set so a kept merged worktree doesn't re-query.
+    assert ctx.pill_state.get("merged-done:o/n:PROJ-1") is True
+
+
+def test_jira_transition_skips_already_at_target(tmp_path, monkeypatch):
+    monkeypatch.setenv("JIRA_API_TOKEN", "tok")
+    ctx = _jira_transition_ctx(tmp_path)
+    meta = {"status": "Done", "assignee_id": "acc-me"}
+    with (
+        _enter_all(_jira_patches(meta=meta)),
+        patch.object(cycle, "jira_transition_issue") as tr,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    tr.assert_not_called()
+
+
+def test_jira_transition_failed_clears_marker(tmp_path, monkeypatch):
+    monkeypatch.setenv("JIRA_API_TOKEN", "tok")
+    ctx = _jira_transition_ctx(tmp_path)
+    with (
+        _enter_all(_jira_patches()),
+        patch.object(cycle, "jira_transition_issue", return_value=False),
+    ):
+        cycle._transition_merged_tickets(ctx)
+    # Marker cleared so a later tick retries.
+    assert "merged-done:o/n:PROJ-1" not in ctx.pill_state
+
+
+def test_jira_transition_skips_when_myself_none(tmp_path, monkeypatch):
+    monkeypatch.setenv("JIRA_API_TOKEN", "tok")
+    ctx = _jira_transition_ctx(tmp_path)
+    with (
+        _enter_all(_jira_patches(myself=None)),
+        patch.object(cycle, "jira_transition_issue") as tr,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    tr.assert_not_called()
+    # No marker → transient identity failure retries next tick.
+    assert "merged-done:o/n:PROJ-1" not in ctx.pill_state
+
+
 # ── _cached_linear_identity / _cached_viewer_id — cross-tick identity cache ──
 
 

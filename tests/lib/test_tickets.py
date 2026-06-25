@@ -123,3 +123,79 @@ def test_linear_ticket_url_none_without_pr_context():
     with patch.object(tickets, "pr_body") as pb:
         assert tickets.LINEAR.ticket_url("PE-9", repo_dir=None, pr_number=None) is None
     pb.assert_not_called()
+
+
+# ── jira provider ───────────────────────────────────────────────────────────
+
+
+def test_provider_for_jira():
+    p = tickets.provider_for({"tickets": "jira"}, {})
+    assert p is not None and p.name == "jira"
+
+
+def test_provider_for_jira_object():
+    p = tickets.provider_for({"tickets": {"provider": "jira"}}, {})
+    assert p is not None and p.name == "jira"
+
+
+def test_jira_parse_footers_ignores_nwo():
+    p = tickets.JIRA
+    assert p.parse_footers("Jira: [PROJ-1](u)", "o/r") == ["PROJ-1"]
+
+
+def test_jira_dev_done_value_default():
+    assert tickets.JIRA.dev_done_value({}, None) == "Dev Done"
+
+
+def test_jira_dev_done_value_custom():
+    repo = {"tickets": {"provider": "jira", "dev_done_status": "In Review"}}
+    assert tickets.JIRA.dev_done_value({}, repo) == "In Review"
+
+
+def test_jira_fetch_states_delegates_with_site_and_email():
+    cfg = {"tickets": {"provider": "jira", "site_url": "https://x.atlassian.net"}}
+    repo = {"tickets": {"email": "me@x.com"}}
+    with patch.object(
+        tickets, "fetch_issue_statuses", return_value={"PROJ-1": "Done"}
+    ) as f:
+        out = tickets.JIRA.fetch_states(
+            ["PROJ-1"], repo_nwo="o/r", repo_dir="/", cfg=cfg, repo_entry=repo
+        )
+    assert out == {"PROJ-1": "Done"}
+    f.assert_called_once_with(
+        ["PROJ-1"], site_url="https://x.atlassian.net", email="me@x.com"
+    )
+
+
+def test_jira_fetch_states_all_none_when_unconfigured():
+    # No site/email → feature off → all None, no REST call.
+    with patch.object(tickets, "fetch_issue_statuses") as f:
+        out = tickets.JIRA.fetch_states(
+            ["PROJ-1"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=None
+        )
+    assert out == {"PROJ-1": None}
+    f.assert_not_called()
+
+
+def test_jira_ticket_url_reads_footer_link():
+    body = "Jira: [PROJ-9](https://acme.atlassian.net/browse/PROJ-9)"
+    with patch.object(tickets, "pr_body", return_value=body) as pb:
+        url = tickets.JIRA.ticket_url(
+            "proj-9", repo_nwo="o/r", repo_dir="/wt", pr_number=7
+        )
+    assert url == "https://acme.atlassian.net/browse/PROJ-9"
+    pb.assert_called_once()
+
+
+def test_jira_ticket_url_none_without_pr_context():
+    with patch.object(tickets, "pr_body") as pb:
+        assert tickets.JIRA.ticket_url("PROJ-9", repo_dir=None, pr_number=None) is None
+    pb.assert_not_called()
+
+
+def test_jira_config_fields_rejected_for_other_provider():
+    # A jira-only field under github must be flagged (and vice versa).
+    errs = tickets.tickets_field_errors(
+        {"provider": "github", "site_url": "x"}, "github"
+    )
+    assert errs and "site_url" in errs[0]

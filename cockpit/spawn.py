@@ -325,6 +325,20 @@ def _linear_prompt(branch: str, identifier: str) -> str:
     return _scenario_prompt("linear", branch=branch, identifier=identifier)
 
 
+def _jira_prompt(branch: str, identifier: str) -> str:
+    """First-turn prompt that delegates Jira issue fetch to the Atlassian/Jira
+    MCP and then renames the branch to include the issue summary slug.
+
+    The Jira analog of `_linear_prompt`: cockpit doesn't call the Jira API at
+    spawn time — spawn creates the worktree on `<key-lower>` (e.g. `proj-123`) and
+    the spawned Claude does the MCP fetch and the post-fetch `git branch -m` to
+    `<key-lower>-<summary-slug>`. The daemon's direct REST calls (the `devdone=`
+    pill, the merge transition) are a separate, headless path. Prose lives in
+    ``cockpit/prompts/jira.txt`` (see `cockpit.lib.templates`).
+    """
+    return _scenario_prompt("jira", branch=branch, identifier=identifier)
+
+
 def _github_issue_prompt(branch: str, number: str, nwo: str | None) -> str:
     """First-turn prompt for a GitHub-issue source (`tickets: github`).
 
@@ -779,6 +793,16 @@ def main() -> int:
                     )
                 else:
                     seeded_prompt = _linear_prompt(branch, value)
+            elif cfg_tickets() == "jira":
+                # Jira keys share Linear's `[A-Z]{2,6}-N` shape, so detect_source
+                # classifies them as `linear` mode; the active provider picks the
+                # prompt. No `claude mcp list` pre-flight — the Atlassian connector
+                # is claude.ai-managed (that probe is unreliable; the prompt's own
+                # retry-then-STOP logic handles a truly-absent MCP, mirroring
+                # Slack). ponytail: a project key with digits or >6 letters won't
+                # match LINEAR_RE_CI and falls to plain branch mode (worktree still
+                # created, just unseeded) — broaden detect_source if that bites.
+                seeded_prompt = _jira_prompt(branch, value)
         else:
             branch = value
         if nwo_hint and not args.repo:

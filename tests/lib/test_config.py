@@ -647,7 +647,7 @@ def test_tickets_object_provider(tmp_path, monkeypatch):
 
 def test_tickets_unrecognized_falls_back_to_none(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "tickets": "jira"}
+        tmp_path, monkeypatch, {"repos": [], "tickets": "gitlab"}
     )
     assert cockpit_config.tickets() == "none"
 
@@ -754,6 +754,44 @@ def test_github_start_label_from_object(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     re = {"tickets": {"provider": "github", "start_label": "accepted"}}
     assert cockpit_config.github_start_label(repo_entry=re) == "accepted"
+
+
+def test_jira_readers_defaults(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.jira_site_url() == ""
+    assert cockpit_config.jira_email() == ""
+    assert cockpit_config.jira_dev_done_status() == "Dev Done"
+    assert cockpit_config.jira_merge_done_status() == "Done"
+
+
+def test_jira_site_url_strips_trailing_slash(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repos": [],
+            "tickets": {
+                "provider": "jira",
+                "site_url": "https://acme.atlassian.net/",
+            },
+        },
+    )
+    assert cockpit_config.jira_site_url() == "https://acme.atlassian.net"
+
+
+def test_jira_status_overrides_from_object(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    re = {
+        "tickets": {
+            "provider": "jira",
+            "email": "me@acme.com",
+            "dev_done_status": "In Review",
+            "merge_done_status": "Closed",
+        }
+    }
+    assert cockpit_config.jira_email(repo_entry=re) == "me@acme.com"
+    assert cockpit_config.jira_dev_done_status(repo_entry=re) == "In Review"
+    assert cockpit_config.jira_merge_done_status(repo_entry=re) == "Closed"
 
 
 def test_ticket_close_on_merge_defaults_false(tmp_path, monkeypatch):

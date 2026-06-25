@@ -1,5 +1,5 @@
 """Ticket-provider abstraction — the single place that maps the `tickets` enum
-(``none | linear | github``) onto the per-provider functions.
+(``none | linear | github | jira``) onto the per-provider functions.
 
 Without this, the slow tick would sprinkle `provider == "github" ? github_x :
 linear_x` ternaries across the prefetch / devdone path. `provider_for(cfg,
@@ -21,10 +21,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import github_dev_done_label, linear_dev_done_state, repo_tickets
+from .config import (
+    github_dev_done_label,
+    jira_dev_done_status,
+    jira_email,
+    jira_site_url,
+    linear_dev_done_state,
+    repo_tickets,
+)
 from .gh import pr_body
 from .github_issues import CONFIG_FIELDS as _GITHUB_CONFIG_FIELDS
 from .github_issues import fetch_issues, issue_url, parse_github_issue_refs
+from .jira import CONFIG_FIELDS as _JIRA_CONFIG_FIELDS
+from .jira import fetch_issue_statuses, parse_jira_footer_links, parse_jira_footers
 from .linear import CONFIG_FIELDS as _LINEAR_CONFIG_FIELDS
 from .linear import fetch_ticket_states, parse_linear_footer_links, parse_linear_footers
 
@@ -50,6 +59,7 @@ _COMMON_CONFIG_FIELDS: tuple[tuple[str, str], ...] = (("close_on_merge", "bool")
 _PROVIDER_CONFIG_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
     "linear": _LINEAR_CONFIG_FIELDS,
     "github": _GITHUB_CONFIG_FIELDS,
+    "jira": _JIRA_CONFIG_FIELDS,
 }
 
 
@@ -177,12 +187,58 @@ def _linear_fetch_states(
     return fetch_ticket_states(ids)
 
 
+def _jira_fetch_states(
+    ids: list[str],
+    *,
+    repo_nwo: str,
+    repo_dir: str,
+    cfg: dict,
+    repo_entry: dict | None = None,
+) -> dict[str, str | None]:
+    """`{key: status name}` via the Jira REST API (one GET per key). `site_url`
+    and `email` come from the `tickets` config block; the token from
+    `$JIRA_API_TOKEN`. The repo_nwo/repo_dir kwargs are unused — Jira keys off
+    the global site/email/token — but kept for a uniform `fetch_states` signature.
+    All keys map to None when the site or email is unconfigured (feature off)."""
+    site = jira_site_url(cfg, repo_entry)
+    email = jira_email(cfg, repo_entry)
+    if not site or not email:
+        return {i: None for i in ids}
+    return fetch_issue_statuses(ids, site_url=site, email=email)
+
+
+def _jira_ticket_url(
+    ref: str,
+    *,
+    repo_nwo: str | None = None,
+    repo_dir: str | None = None,
+    pr_number: int | None = None,
+) -> str | None:
+    """The Jira issue URL — read from the PR body's `Jira: [PROJ-123](url)` footer
+    link, uniform with Linear's `_linear_ticket_url` (the cfg-less `ticket_url`
+    signature can't thread `site_url`, and the delivery footer carries the URL
+    anyway). Needs `repo_dir` + `pr_number`; None when the body can't be fetched
+    or has no matching footer link."""
+    if not repo_dir or not pr_number:
+        return None
+    links = dict(parse_jira_footer_links(pr_body(Path(repo_dir), pr_number)))
+    return links.get(ref.upper())
+
+
 LINEAR = TicketProvider(
     name="linear",
     dev_done_value=linear_dev_done_state,
     parse_footers=lambda body, _nwo: parse_linear_footers(body),
     fetch_states=_linear_fetch_states,
     ticket_url=_linear_ticket_url,
+)
+
+JIRA = TicketProvider(
+    name="jira",
+    dev_done_value=jira_dev_done_status,
+    parse_footers=lambda body, _nwo: parse_jira_footers(body),
+    fetch_states=_jira_fetch_states,
+    ticket_url=_jira_ticket_url,
 )
 
 GITHUB = TicketProvider(
@@ -193,7 +249,11 @@ GITHUB = TicketProvider(
     ticket_url=_github_ticket_url,
 )
 
-_PROVIDERS: dict[str, TicketProvider] = {"linear": LINEAR, "github": GITHUB}
+_PROVIDERS: dict[str, TicketProvider] = {
+    "linear": LINEAR,
+    "github": GITHUB,
+    "jira": JIRA,
+}
 
 
 def provider_for(

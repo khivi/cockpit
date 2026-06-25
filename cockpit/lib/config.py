@@ -241,7 +241,7 @@ def prompt_prefix() -> str:
     return str(load_config().get("prompt_prefix", "")).strip()
 
 
-VALID_TICKETS = ("none", "linear", "github")
+VALID_TICKETS = ("none", "linear", "github", "jira")
 
 # The single label that lights the `devdone=` pill for a GitHub issue when
 # `tickets.dev_done_label` is unset — GitHub has no named workflow states, so a
@@ -249,6 +249,12 @@ VALID_TICKETS = ("none", "linear", "github")
 # "development complete, awaiting review" label. (NB: a label like "accepted"
 # usually means *work started*, not done — that's `tickets.start_label`.)
 GITHUB_DEV_DONE_DEFAULT = "ready for review"
+
+# The Jira status name that lights the `devdone=` pill when `tickets
+# .dev_done_status` is unset. Jira boards vary, so this is just a sensible
+# convention — a dedicated "dev complete, awaiting review" lane distinct from the
+# terminal "Done" (the Jira analog of Linear's "Dev Done" default).
+JIRA_DEV_DONE_DEFAULT = "Dev Done"
 
 # Slash command seeded as the first turn of an auto-spawned `review_prs`
 # worktree. Defaults to cockpit's own `/cockpit:review` plugin command — it
@@ -471,6 +477,60 @@ def linear_merge_done_state(
         return val.strip()
     cfg = cfg if cfg is not None else load_config()
     return str(cfg.get("linear_merge_done_state") or "Done").strip() or "Done"
+
+
+def jira_site_url(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The Jira Cloud site base URL (e.g. ``https://acme.atlassian.net``) used by
+    the `tickets: jira` provider's REST calls. Read from the `tickets` block's
+    ``site_url`` (per-field repo → global), trailing slash stripped so the daemon
+    never builds a ``//rest`` 404. Empty when unset — the provider then makes no
+    REST call (feature off), same as Linear with no `LINEAR_API_KEY`.
+    """
+    val = _tickets_field(cfg, repo_entry, "site_url")
+    if isinstance(val, str) and val.strip():
+        return val.strip().rstrip("/")
+    return ""
+
+
+def jira_email(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The Jira account email paired with ``$JIRA_API_TOKEN`` for HTTP Basic auth.
+    Read from the `tickets` block's ``email`` (per-field repo → global). Empty
+    when unset (the provider then makes no REST call). Not a secret — the token
+    is the credential — so it lives in config, not the env.
+    """
+    val = _tickets_field(cfg, repo_entry, "email")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return ""
+
+
+def jira_dev_done_status(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> str:
+    """Name of the Jira status that the `devdone=` pill keys off (default
+    "Dev Done"). Matched case-insensitively against the issue's live status name
+    — the Jira analog of `linear_dev_done_state`. Set via the `tickets` block's
+    ``dev_done_status`` (a string).
+    """
+    val = _tickets_field(cfg, repo_entry, "dev_done_status")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return JIRA_DEV_DONE_DEFAULT
+
+
+def jira_merge_done_status(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> str:
+    """Name of the Jira status a delivered issue is transitioned to when its PR
+    merges (default "Done"). Distinct from `jira_dev_done_status` ("Dev Done") —
+    that's the passive pill while the PR is *open*; this is the terminal status
+    the opt-in `ticket_close_on_merge` writer moves to on merge. Set via the
+    `tickets` block's ``merge_done_status`` (a string).
+    """
+    val = _tickets_field(cfg, repo_entry, "merge_done_status")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return "Done"
 
 
 def orphan_nudge_grace_seconds(
