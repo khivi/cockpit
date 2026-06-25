@@ -1657,7 +1657,7 @@ def _jira_transition_ctx(tmp_path, *, cfg=None, branch="khivi/feat"):
         pill_state={},
         dry=False,
         headless=False,
-        repo_entry=None,
+        repo_entry={},
     )
 
 
