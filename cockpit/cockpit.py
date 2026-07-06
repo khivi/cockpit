@@ -116,11 +116,15 @@ def _fast_tick(state: dict) -> None:
         if not repo_path.is_dir():
             continue
         try:
-            wts = worktrees(repo_path, repo_entry.get("branch_prefix", ""))
+            wts = worktrees(
+                repo_path,
+                repo_entry.get("branch_prefix", ""),
+                repo_entry.get("name", ""),
+            )
         except (RuntimeError, OSError):
             continue
         for wt in wts:
-            write_git_state_cache(wt.path)
+            write_git_state_cache(wt.path, wt.repo_name)
         if cwds:
             reconcile_workspace_names(names, cwds, wts)
     republish_pr_caches_from_disk()

@@ -440,6 +440,22 @@ def test_git_state_cache_read_skips_live_git(cache_dir, tmp_path, monkeypatch):
     assert orange("↓5") in status
 
 
+def test_print_repo_reads_git_repo_cell(cache_dir, tmp_path, monkeypatch):
+    """`print_repo` renders the daemon-written git-repo cell as `📁 <repo>`."""
+    import cockpit.lib.cache as cache_mod
+
+    monkeypatch.chdir(tmp_path)
+    slug = cache_mod._cwd_key(tmp_path)
+    (cache_dir / f"git-repo-{slug}").write_text("cockpit")
+    assert slate("📁 cockpit") in starship.print_repo()
+
+
+def test_print_repo_blank_when_unset(cache_dir, tmp_path, monkeypatch):
+    """No git-repo cell (cold start / repo with no name) → empty string."""
+    monkeypatch.chdir(tmp_path)
+    assert starship.print_repo() == ""
+
+
 def test_git_state_cold_start_renders_blank(
     _clean_git_env, cache_dir, tmp_path, monkeypatch
 ):

@@ -27,6 +27,7 @@ format = """\
 ${custom.model}\
 ${custom.context}\
 ${custom.ratelimit}\
+${custom.repo}\
 ${custom.branch_identity}\
 ${custom.worktree_status}\
 ${custom.permission_mode}\
@@ -109,6 +110,15 @@ command     = "__COCKPIT_STARSHIP__ rate-limit"
 when        = "true"
 format      = "(   $output)"
 description = "Anthropic rolling 5h usage limit"
+
+# Owning repo name (e.g. "📁 cockpit") so a session shows which repo it's in.
+# Reads the daemon-written git-repo cell; hidden when unset. Slate ANSI is
+# emitted by the Python output.
+[custom.repo]
+command     = "__COCKPIT_STARSHIP__ repo"
+when        = "true"
+format      = "(   $output)"
+description = "Owning repo name for the current worktree"
 
 # Branch identity + ahead-of-* counts (e.g. "⎇ khivi/feature ↑3 ↗9").
 # Per-segment ANSI is emitted by the Python output so each marker carries its own color.

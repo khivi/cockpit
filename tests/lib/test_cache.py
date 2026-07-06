@@ -397,6 +397,20 @@ def test_write_git_state_cache_writes_ahead(_clean_git_env, cache_dir, tmp_path)
     assert (cache_dir / f"git-sync-{slug}").read_text() == "3 0"
 
 
+def test_write_git_state_cache_writes_repo_name(_clean_git_env, cache_dir, tmp_path):
+    """The owning repo name rides the git-state writer into the git-repo cell,
+    even outside a repo (so a stale value can't survive a cwd leaving a repo)."""
+    from tests.fixtures import make_git_repo
+
+    repo = make_git_repo(tmp_path, branch="main")
+    cache_mod.write_git_state_cache(repo, "cockpit")
+    slug = cache_mod._cwd_key(repo)
+    assert (cache_dir / f"git-repo-{slug}").read_text() == "cockpit"
+    # Empty repo_name clears the cell.
+    cache_mod.write_git_state_cache(repo, "")
+    assert (cache_dir / f"git-repo-{slug}").read_text() == ""
+
+
 def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch):
     """Daemon-side fast-tick republisher: walks the per-PR JSON snapshots and
     re-writes pr-state / pr-num / pr-title / pr-muted / pr-checks. Replaces
