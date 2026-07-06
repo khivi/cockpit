@@ -11,6 +11,7 @@ Subcommands:
   model                — Claude model display name
   cost                 — running session spend in USD
   permission-mode      — current permission mode (hidden when default)
+  repo                 — owning repo name (hidden when unset)
   branch-identity      — current branch + ahead-of-origin + ahead-of-base
   worktree-status      — staged/unstaged/untracked + behind-origin + base-staleness
   linear               — Linear ticket ID from branch name
@@ -45,6 +46,7 @@ from cockpit.lib.starship import (
     print_pr_state,
     print_pr_title,
     print_rate_limit,
+    print_repo,
     print_session_time,
     print_worktree_status,
 )
@@ -73,6 +75,8 @@ def main(argv: list[str]) -> int:
             return _emit(print_cost())
         if cmd == "permission-mode":
             return _emit(print_permission_mode())
+        if cmd == "repo":
+            return _emit(print_repo())
         if cmd == "branch-identity":
             return _emit(print_branch_identity())
         if cmd == "worktree-status":

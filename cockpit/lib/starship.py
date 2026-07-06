@@ -53,6 +53,7 @@ POWERLINE_BRANCH = ""  # nf-pl-branch separator (Nerd Font powerline)
 
 # Statusline glyphs. One module-level constant per icon so a rename or palette
 # refresh has a single touch point. cship pills (cmux.py) follow the same pattern.
+ICON_REPO = "📁"  # 📁 owning repo name
 ICON_CONTEXT = "🧠"  # 🧠 context-usage gauge
 ICON_SESSION = "⌛"  # ⌛ session 5h-bucket usage
 ICON_BRANCH = "⎇"  # ⎇ current branch
@@ -364,6 +365,19 @@ def print_permission_mode(sid: str | None = None) -> str:
     if not label:
         return ""
     return f"{ICON_PERMISSION_MODE} {label}"
+
+
+def print_repo() -> str:
+    """`📁 <repo>` — the owning repo name, so a session shows which repo it's in.
+
+    Reads the daemon-written `git-repo-<cwd-slug>` cell (see
+    `cache.write_git_state_cache`). Empty when the cell is unset (cold start
+    before the first tick, or a repo with no configured name).
+    """
+    raw = read_text(cwd_cache("git-repo", os.getcwd()))
+    if not raw:
+        return ""
+    return slate(f"{ICON_REPO} {raw}")
 
 
 def print_branch_identity() -> str:

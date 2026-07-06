@@ -1027,7 +1027,7 @@ def test_prepare_cycle_skips_repo_on_cmux_unavailable(tmp_path, monkeypatch, cap
     repo_entry = {"path": str(repo_path), "name": "repo"}
 
     monkeypatch.setattr(cycle, "repo_nwo", lambda _p: ("ai-needl", "repo"))
-    monkeypatch.setattr(cycle, "worktrees", lambda _p, _prefix="": [])
+    monkeypatch.setattr(cycle, "worktrees", lambda _p, _prefix="", _name="": [])
     monkeypatch.setattr(cycle, "fetch_merged_branches", lambda *_a, **_k: {})
     monkeypatch.setattr(cycle, "is_cmux", lambda: True)
     # The workspace-state fetch is gated on a resolved backend, not just cmux —
@@ -1068,7 +1068,7 @@ def test_prepare_cycle_prunes_worktrees_before_listing(tmp_path, monkeypatch):
     def _record_prune(_p):
         calls.append("prune")
 
-    def _record_list(_p, _prefix=""):
+    def _record_list(_p, _prefix="", _name=""):
         calls.append("list")
         return []
 

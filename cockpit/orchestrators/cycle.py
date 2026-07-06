@@ -468,8 +468,8 @@ def _teardown_worktree(
     delete_branch: bool = False,
 ) -> None:
     # Path match is the primary route; the fallback closes by workspace *name*,
-    # which is `wt.label` (the branch-derived name), not the dir basename.
-    ref = _workspace_ref_for_path(wt.path, cwds) or wt.label
+    # which is `wt.workspace_name` (`[<repo>] <branch>`), not the dir basename.
+    ref = _workspace_ref_for_path(wt.path, cwds) or wt.workspace_name
     teardown(
         TeardownRequest(
             ref=ref,
@@ -1159,7 +1159,12 @@ def _prepare_cycle(
     headless = _cache_only(cfg)
     workspace_state_ok = True  # cleared by the limux degrade below; see the field
     with ThreadPoolExecutor(max_workers=4) as ex:
-        wts_fut = ex.submit(worktrees, repo_path, repo_entry.get("branch_prefix", ""))
+        wts_fut = ex.submit(
+            worktrees,
+            repo_path,
+            repo_entry.get("branch_prefix", ""),
+            repo_entry.get("name", ""),
+        )
         # cmux AND limux can list workspaces ('none' has no tool). Fetch the cwd
         # map on limux too — autoclose uses it to close the merged worktree's
         # workspace by ref in the same tick, not just remove the worktree.
@@ -1288,7 +1293,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
         ctx.repo_path, ctx.wts, ctx.default_branch
     )
     for wt in ctx.wts:
-        write_git_state_cache(wt.path)
+        write_git_state_cache(wt.path, wt.repo_name)
     wt_by_branch = {wt.branch: wt for wt in ctx.wts}
     open_branches = {p.branch for p in ctx.prs if p.state == "OPEN"}
     # Resolve every PR's Linear-delivery block in one batched pass BEFORE the
@@ -1421,19 +1426,19 @@ def _refresh_tracked_pills(
     for group_label, group in (("mine", mine_items), ("coworkers", others_items)):
         group_header_printed = False
         for ref, pr, wt in group:
-            # `label` is the workspace's *current* cmux name; `wt.label` is the
-            # branch-derived name we re-assert it to.
+            # `label` is the workspace's *current* cmux name; `wt.workspace_name`
+            # is the `[<repo>] <branch>` name we re-assert it to.
             label = ctx.names.get(ref, ref)
-            if rename_workspace_if_needed(ref, wt.label, label, dry=ctx.dry):
+            if rename_workspace_if_needed(ref, wt.workspace_name, label, dry=ctx.dry):
                 if not group_header_printed:
                     print(f"  {dim(group_label)}", flush=True)
                     group_header_printed = True
                 print(
-                    f"    {verb('renamed')} {cyan(label)} → {cyan(wt.label)}",
+                    f"    {verb('renamed')} {cyan(label)} → {cyan(wt.workspace_name)}",
                     flush=True,
                 )
                 printed_refresh = True
-                label = wt.label  # corrected name for this cycle's log lines
+                label = wt.workspace_name  # corrected name for this cycle's log lines
             pref = ctx.prefs.get(pr.number)
             pr_payload = ctx.pr_payloads.get(pr.branch)
             if pr_payload and pr_payload.get("reusedBranch"):
@@ -1521,7 +1526,7 @@ def _handle_orphans_and_close_stale(ctx: RepoCycle, keep_refs: set[str]) -> None
     nudge; coworker branches (someone else's PR I'm reviewing locally) get the
     pills only — nudging a coworker branch to open a PR makes no sense.
     """
-    wt_by_name = {wt.label: wt for wt in ctx.wts}
+    wt_by_name = {wt.workspace_name: wt for wt in ctx.wts}
     wt_by_path = {wt.path.resolve(): wt for wt in ctx.wts}
     pr_branches = {pr.branch for pr in ctx.prs}
     my_prefix = f"{ctx.self_user}/"
@@ -1548,12 +1553,12 @@ def _refresh_orphan(
             flush=True,
         )
         return
-    if rename_workspace_if_needed(ref, wt.label, ws_name, dry=ctx.dry):
+    if rename_workspace_if_needed(ref, wt.workspace_name, ws_name, dry=ctx.dry):
         print(
-            f"  {verb('renamed')} {cyan(ws_name)} → {cyan(wt.label)}",
+            f"  {verb('renamed')} {cyan(ws_name)} → {cyan(wt.workspace_name)}",
             flush=True,
         )
-        ws_name = wt.label
+        ws_name = wt.workspace_name
     behind_base = ctx.base_distance.get(wt.branch, 0)
     if not ctx.dry:
         cmux(
@@ -1740,11 +1745,11 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
                 flush=True,
             )
             continue
-        clash = name_to_paths.get(wt.label, set()) - {wt.path.resolve()}
+        clash = name_to_paths.get(wt.workspace_name, set()) - {wt.path.resolve()}
         if clash:
             other = sorted(str(p) for p in clash)[0]
             print(
-                f"  {verb('skip')} {dim(f'orphan-spawn {wt.label} — workspace name already used by {other}')}",
+                f"  {verb('skip')} {dim(f'orphan-spawn {wt.workspace_name} — workspace name already used by {other}')}",
                 flush=True,
             )
             continue
@@ -1985,14 +1990,16 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
         registered_roots[repo_path.resolve()] = (repo_name, repo_path)
         try:
             # Identity only (path/branch) — skip the dirty/unpushed stat forks.
-            for wt in worktrees_basic(repo_path, entry.get("branch_prefix", "")):
+            for wt in worktrees_basic(
+                repo_path, entry.get("branch_prefix", ""), entry.get("name", "")
+            ):
                 all_wts.append(wt)
                 repo_lookup[wt.path.resolve()] = (repo_name, repo_path)
         except RuntimeError:
             continue
 
     wt_by_path = {wt.path.resolve(): wt for wt in all_wts}
-    wt_by_name = {wt.label: wt for wt in all_wts}
+    wt_by_name = {wt.workspace_name: wt for wt in all_wts}
 
     names, cwds = workspace_state()
     my_prefix = f"{self_user}/"

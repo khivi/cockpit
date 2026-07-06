@@ -49,6 +49,7 @@ class Worktree:
     unpushed: int = 0
     is_primary: bool = False
     branch_prefix: str = ""
+    repo_name: str = ""
 
     @property
     def short(self) -> str:
@@ -67,6 +68,22 @@ class Worktree:
         construction (`worktrees`/`worktrees_basic`) from the repo config.
         """
         return branch_label(self.branch, self.branch_prefix)
+
+    @property
+    def workspace_name(self) -> str:
+        """cmux workspace name — `label` prefixed with `[<repo>]` so a session's
+        tab/sidebar shows which repo it belongs to.
+
+        Distinct from `label` (the bare branch slug the TUI table renders and
+        tints by `sidebar_color`): only the workspace-naming paths (spawn +
+        `reconcile_workspace_names`) use this. Falls back to `label` when
+        `repo_name` is unset (a repo-less caller) or `label` is empty (detached),
+        so those cases are unchanged. `repo_name` is threaded in at construction
+        from the repo config, like `branch_prefix`.
+        """
+        if not self.repo_name or not self.label:
+            return self.label
+        return f"[{self.repo_name}] {self.label}"
 
     @property
     def dirty(self) -> bool:
@@ -183,7 +200,9 @@ def _rebase_head_name(gitdir: Path) -> str | None:
     return None
 
 
-def worktrees_basic(repo_dir: Path, branch_prefix: str = "") -> list[Worktree]:
+def worktrees_basic(
+    repo_dir: Path, branch_prefix: str = "", repo_name: str = ""
+) -> list[Worktree]:
     """List worktrees by structure only — path/branch/rebasing/merging/is_primary.
 
     `dirty_count` and `unpushed` are left at 0; this skips the per-worktree
@@ -192,7 +211,8 @@ def worktrees_basic(repo_dir: Path, branch_prefix: str = "") -> list[Worktree]:
 
     `branch_prefix` (the repo's configured prefix) is stored on each Worktree so
     its `label` strips the prefix cleanly; callers that don't render a label can
-    leave it "".
+    leave it "". `repo_name` is stored likewise for `workspace_name` and can be
+    left "" by callers that don't name workspaces.
     """
     out = run(["git", "-C", str(repo_dir), "worktree", "list", "--porcelain"])
     blocks = [b for b in out.split("\n\n") if b.strip()]
@@ -234,20 +254,24 @@ def worktrees_basic(repo_dir: Path, branch_prefix: str = "") -> list[Worktree]:
                     merging=merging,
                     is_primary=is_primary,
                     branch_prefix=branch_prefix,
+                    repo_name=repo_name,
                 )
             )
     return wts
 
 
-def worktrees(repo_dir: Path, branch_prefix: str = "") -> list[Worktree]:
+def worktrees(
+    repo_dir: Path, branch_prefix: str = "", repo_name: str = ""
+) -> list[Worktree]:
     """Full worktree listing with dirty/unpushed counts filled in.
 
     Layers the per-worktree `count_dirty` + `_count_unpushed` stats (run in
     parallel) onto `worktrees_basic`. Callers that don't need the counts
-    should use `worktrees_basic` to skip those forks. `branch_prefix` is passed
-    through to `worktrees_basic` for the `label` strip.
+    should use `worktrees_basic` to skip those forks. `branch_prefix` and
+    `repo_name` are passed through to `worktrees_basic` (label strip +
+    `workspace_name`).
     """
-    wts = worktrees_basic(repo_dir, branch_prefix)
+    wts = worktrees_basic(repo_dir, branch_prefix, repo_name)
 
     def _stats(w: Worktree) -> tuple[int, int]:
         return count_dirty(w.path), _count_unpushed(w.path)

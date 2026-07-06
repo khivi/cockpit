@@ -438,12 +438,16 @@ def refresh_pr_checks(branch: str) -> None:
     atomic_write(cache, _ci_glyph(str(data.get("ci") or "")))
 
 
-def write_git_state_cache(cwd: os.PathLike[str] | str) -> None:
+def write_git_state_cache(cwd: os.PathLike[str] | str, repo_name: str = "") -> None:
     """Snapshot `cwd`'s local git state (branch + status counts + ahead/behind
-    of origin) into three flat cells. Reader-side replacement for the
-    `git rev-parse` / `git status` / `git rev-list` calls that the footer's
-    branch_identity / worktree_status / linear printers otherwise make on
-    every render.
+    of origin, plus the owning repo name) into flat cells. Reader-side
+    replacement for the `git rev-parse` / `git status` / `git rev-list` calls
+    that the footer's branch_identity / worktree_status / linear / repo printers
+    otherwise make on every render.
+
+    `repo_name` (the config repo name) is cached in the `git-repo` cell for the
+    footer's `print_repo`. It rides this writer because the daemon already knows
+    it per worktree; readers can't derive it (no git).
 
     Daemon-only writer. Called from:
       - slow tick: `_write_pr_caches` in `orchestrators.cycle` (once per
@@ -471,6 +475,8 @@ def write_git_state_cache(cwd: os.PathLike[str] | str) -> None:
     branch_path = cwd_cache("git-branch", cwd)
     status_path = cwd_cache("git-status", cwd)
     sync_path = cwd_cache("git-sync", cwd)
+    repo_path = cwd_cache("git-repo", cwd)
+    atomic_write(repo_path, repo_name or "")
 
     branch = current_branch(cwd)
     if not branch:

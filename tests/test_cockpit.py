@@ -108,8 +108,8 @@ def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
     )
-    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="": [wt])
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: (names, cwds))
     monkeypatch.setattr(
         cockpit,
@@ -143,8 +143,8 @@ def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
     )
-    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="": [wt])
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "workspace_state", _boom)
     monkeypatch.setattr(
         cockpit,
