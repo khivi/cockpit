@@ -1,0 +1,54 @@
+name: dependabot-version-bump
+
+# Every merge to main must increment .claude-plugin/plugin.json's version — it
+# drives the self-update path (latest_version() reads it; `u` / `cockpit update`
+# only offer an update when it changes). Human PRs bump it via the local
+# pre-push hook (.githooks/version-bump.py). Dependabot never runs local hooks,
+# and CI skips that hook (it can't commit — see ci.yml's SKIP), so a dependabot
+# branch merges with an unbumped version and the change never propagates.
+#
+# This workflow runs the same hook on dependabot PRs and pushes the resulting
+# bump commit back to the branch, so the merge increments the version. The push
+# needs a token with contents:write because dependabot-triggered runs get a
+# read-only GITHUB_TOKEN. It's stored as a *Dependabot* secret (regular Actions
+# secrets are empty in dependabot runs).
+#
+# GitHub App swap: replace the checkout `token:` with a create-github-app-token
+# step's output and store APP_ID / APP_PRIVATE_KEY as Dependabot secrets instead
+# of DEPENDABOT_VERSION_BUMP_TOKEN.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.DEPENDABOT_VERSION_BUMP_TOKEN }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: pip install semver
+
+      - name: Bump version and push if needed
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          before=$(git rev-parse HEAD)
+          # The hook exits 1 after creating a bump commit, 0 if already ahead.
+          python .githooks/version-bump.py || true
+          if [ "$(git rev-parse HEAD)" != "$before" ]; then
+            git push origin "HEAD:$HEAD_REF"
+          fi

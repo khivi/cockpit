@@ -148,7 +148,9 @@ pre-commit run --hook-stage pre-push --all-files
 
 ## Release versioning
 
-Handled by the pre-push hook — bumps `.claude-plugin/plugin.json`'s `version` automatically. No manual action needed.
+Handled by the pre-push hook (`.githooks/version-bump.py`) — bumps `.claude-plugin/plugin.json`'s `version` automatically. No manual action needed. Every merge to `main` must increment it: it drives self-update (`latest_version()` reads it; `u` / `cockpit update` only offer an update when it changes).
+
+CI **skips** this hook (`ci.yml`'s `SKIP`) — it can't commit (no git identity → `git commit` exit 128) and there's nothing to push. Human PRs bump locally on `git push`, so they reach CI already ahead of `main`. Dependabot never runs local hooks, so `.github/workflows/dependabot-version-bump.yml` runs the same hook on dependabot PRs and pushes the bump commit back to the branch, so the merge increments the version. That push needs a `contents:write` token (dependabot runs get a read-only `GITHUB_TOKEN`), stored as the **Dependabot** secret `DEPENDABOT_VERSION_BUMP_TOKEN` (regular Actions secrets are empty in dependabot runs).
 
 ## Commit / PR-title convention
 
