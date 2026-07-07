@@ -521,13 +521,14 @@ class CockpitApp(App[None]):
             self.query_one(FooterBar).set_row_state(caps)
 
     def _repo_config_for_path(self, path: str | None) -> dict | None:
-        """The full config dict for the repo owning `path` (the cursor row).
+        """The full config dict for the repo owning `path` (the cursor row)."""
+        return self._repo_config_by_name(self._path_repo_name.get(path or ""))
 
-        Matches the row's repo *display name* (as `_gather_inventory` derives it)
-        back to a `load_config()` entry. Falls back to the sole repo when only
+    def _repo_config_by_name(self, name: str | None) -> dict | None:
+        """The full config dict for the repo whose display name is `name` (as
+        `_gather_inventory` derives it). Falls back to the sole repo when only
         one is configured, so the command works even before the first render."""
         repos: list[dict] = load_config().get("repos", []) or []
-        name = self._path_repo_name.get(path or "")
         if name is not None:
             for repo in repos:
                 display = (
@@ -666,8 +667,10 @@ class CockpitApp(App[None]):
             )
             for repo in load_config().get("repos", []) or []
         ]
-        default_repo = self._repo_config_for_path(
-            self.query_one(WorktreeTable).current_path()
+        # Default to the cursor row's repo — resolved by repo name so a group-
+        # header row (where `current_path()` is None) still preselects its repo.
+        default_repo = self._repo_config_by_name(
+            self.query_one(WorktreeTable).current_repo_name()
         )
         default_path = (
             str(Path(os.path.expanduser(default_repo["path"])))

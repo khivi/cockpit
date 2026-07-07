@@ -381,6 +381,10 @@ class WorktreeTable(DataTable):
         # so `current_capabilities()` can gate the footer's row keys without a
         # re-read.
         self._row_caps: dict[str, frozenset[str]] = {}
+        # row key (worktree path OR header sentinel) → owning repo display name,
+        # so `current_repo_name()` resolves the cursor row's repo even on a
+        # group-header row (where `current_path()` is None).
+        self._row_repo: dict[str, str] = {}
 
     def on_mount(self) -> None:
         self.cursor_type = "row"
@@ -402,6 +406,14 @@ class WorktreeTable(DataTable):
         if key is None or key.startswith(HEADER_KEY_PREFIX):
             return None
         return key
+
+    def current_repo_name(self) -> str | None:
+        """The repo display name owning the cursor row — the header's own repo on
+        a group-header row, or the worktree's repo on a worktree row. None on an
+        empty table. Used to default the `n` new-workspace modal's repo picker to
+        the row under the cursor even when that row is a header."""
+        key = self._current_row_key()
+        return self._row_repo.get(key) if key is not None else None
 
     def current_capabilities(self) -> frozenset[str] | None:
         """The highlighted row's capability tokens (for footer row-key gating),
@@ -434,11 +446,13 @@ class WorktreeTable(DataTable):
         saved = self.cursor_row
         self.clear()
         self._row_caps = {}
+        self._row_repo = {}
         ncols = len(column_labels(show_tickets=self._show_tickets))
         for repo_name, repo_color, tickets_enabled, wts in inventory:
             hkey = f"{HEADER_KEY_PREFIX}{repo_name}"
             self.add_row(*_header_cells(repo_name, repo_color, ncols), key=hkey)
             self._row_caps[hkey] = frozenset({HEADER_CAP})
+            self._row_repo[hkey] = repo_name
             for wt in wts:
                 self.add_row(
                     *worktree_cells(
@@ -453,6 +467,7 @@ class WorktreeTable(DataTable):
                 self._row_caps[str(wt.path)] = row_capabilities(
                     wt, repo_name, tickets_enabled
                 )
+                self._row_repo[str(wt.path)] = repo_name
         if self.row_count:
             target = min(saved, self.row_count - 1)
             self.move_cursor(row=target)
