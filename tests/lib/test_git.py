@@ -133,9 +133,9 @@ def test_worktrees_basic_threads_branch_prefix(cockpit_repo):
     assert all(wt.branch_prefix == "khivi/" for wt in wts)
 
 
-def test_workspace_name_prefixes_repo(tmp_path):
-    """`workspace_name` prefixes `[<repo>]` onto the branch label; `label`
-    stays bare (the TUI table renders that)."""
+def test_workspace_name_is_bare_label(tmp_path):
+    """`workspace_name` is the bare branch label — no `[<repo>]` prefix (the
+    repo is conveyed by `sidebar_color`, so the two never double up)."""
     wt = Worktree(
         path=tmp_path / "pe-4516",
         branch="khivi/pe-4608-understand-dag-builder",
@@ -143,23 +143,14 @@ def test_workspace_name_prefixes_repo(tmp_path):
         repo_name="cockpit",
     )
     assert wt.label == "understand-dag-builder"
-    assert wt.workspace_name == "[cockpit] understand-dag-builder"
-
-
-def test_workspace_name_falls_back_without_repo(tmp_path):
-    """No `repo_name` (repo-less caller) or empty `label` (detached) → the bare
-    label, so those callers are unchanged."""
-    no_repo = Worktree(
-        path=tmp_path / "d", branch="khivi/feature", branch_prefix="khivi/"
-    )
-    assert no_repo.workspace_name == "feature"
+    assert wt.workspace_name == "understand-dag-builder"
     detached = Worktree(path=tmp_path / "d", branch="", repo_name="cockpit")
     assert detached.workspace_name == ""
 
 
 def test_worktrees_basic_threads_repo_name(cockpit_repo):
-    """`worktrees_basic` stamps the passed repo name onto each Worktree so
-    `workspace_name` can prefix it."""
+    """`worktrees_basic` stamps the passed repo name onto each Worktree for the
+    `git-repo` cell."""
     wts = worktrees_basic(cockpit_repo.repo, "khivi/", "cockpit")
     assert all(wt.repo_name == "cockpit" for wt in wts)
 

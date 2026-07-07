@@ -483,7 +483,7 @@ def _teardown_worktree(
     delete_branch: bool = False,
 ) -> None:
     # Path match is the primary route; the fallback closes by workspace *name*,
-    # which is `wt.workspace_name` (`[<repo>] <branch>`), not the dir basename.
+    # which is `wt.workspace_name` (the branch label), not the dir basename.
     ref = _workspace_ref_for_path(wt.path, cwds) or wt.workspace_name
     teardown(
         TeardownRequest(
