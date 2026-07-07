@@ -934,6 +934,48 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
     assert launched["cwd"] == str(repo_b)  # chosen repo, not the cursor row's
 
 
+async def test_new_box_defaults_to_cursor_header_repo(monkeypatch, tmp_path):
+    # Cursor resting on a group-header row (current_path() is None there) still
+    # preselects that header's repo in the modal — the Select opens on repo b.
+    from textual.widgets import Select
+
+    from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
+    from cockpit.tui.widgets.worktree_table import WorktreeTable
+
+    repo_a = tmp_path / "a"
+    repo_b = tmp_path / "b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    wt_a = Worktree(path=repo_a / "wt-a", branch="khivi/feat-a")
+    wt_b = Worktree(path=repo_b / "wt-b", branch="khivi/feat-b")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [
+                {"name": "a", "path": str(repo_a)},
+                {"name": "b", "path": str(repo_b)},
+            ],
+            "check_update": False,
+        },
+    )
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("a", None, False, [wt_a]), ("b", None, False, [wt_b])])
+        await pilot.pause()
+        # Rows: header-a(0), wt-a(1), header-b(2). Park the cursor on header-b.
+        table = app.query_one(WorktreeTable)
+        table.move_cursor(row=2)
+        assert table.current_path() is None  # header row carries no workspace
+        assert table.current_repo_name() == "b"
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, NewWorkspaceScreen)
+        assert app.screen.query_one(Select).value == str(repo_b)
+
+
 async def test_update_key_exits_with_restart_code():
     # An available update + `u` exits with the sentinel so cli.py runs the
     # updater and re-execs.
