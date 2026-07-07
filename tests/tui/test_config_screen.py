@@ -178,19 +178,6 @@ async def test_render_changelog_groups_by_bucket():
     assert {"green", "red", "blue", "dim"} <= styles
 
 
-async def test_config_screen_renders_colored_text():
-    # A pre-styled `Text` body (e.g. a rendered changelog) is rendered as-is by
-    # ConfigScreen — not re-parsed through from_ansi.
-    app = _Host()
-    async with app.run_test() as pilot:
-        body = render_changelog([("feat: a", "today")])
-        await app.push_screen(ConfigScreen("what's new", body))
-        await pilot.pause()
-        content = _body_content(app.screen)
-        assert isinstance(content, Text)
-        assert "green" in {str(s.style) for s in content.spans}
-
-
 async def test_release_notes_fills_until_overflow_on_tall_terminal():
     # First page fits on a tall terminal (no overflow) → watch_scroll_y never
     # fires; _fill_if_short must keep pulling until the view overflows so older

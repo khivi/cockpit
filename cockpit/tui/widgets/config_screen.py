@@ -45,7 +45,7 @@ class ConfigScreen(ModalScreen[None]):
 
     BINDINGS = [Binding("escape,q", "dismiss", "Close")]
 
-    def __init__(self, title: str, body: str | Text) -> None:
+    def __init__(self, title: str, body: str) -> None:
         super().__init__()
         self._title = title
         self._body = body
@@ -53,20 +53,14 @@ class ConfigScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll():
             yield Static(self._title, classes="config-title")
-            # A pre-styled `Text` (the colourised post-update changelog) renders
-            # as-is. A raw `str` body goes through `Text.from_ansi` (not a markup
-            # string): the captured tick output carries ANSI colour codes and
-            # stray brackets (`[clean]`, `[timestamp]`), and JSON config bodies
-            # contain `[` `]` array delimiters — both of which Textual's markup
-            # parser mangles into garbled cream-highlighted boxes. `from_ansi`
-            # decodes the colour codes and disables markup interpretation; on a
-            # body with no ANSI (the JSON views) it yields plain, unstyled text.
-            body = (
-                self._body
-                if isinstance(self._body, Text)
-                else Text.from_ansi(self._body)
-            )
-            yield Static(body)
+            # The body goes through `Text.from_ansi` (not a markup string): the
+            # captured tick output carries ANSI colour codes and stray brackets
+            # (`[clean]`, `[timestamp]`), and JSON config bodies contain `[` `]`
+            # array delimiters — both of which Textual's markup parser mangles
+            # into garbled cream-highlighted boxes. `from_ansi` decodes the
+            # colour codes and disables markup interpretation; on a body with no
+            # ANSI (the JSON views) it yields plain, unstyled text.
+            yield Static(Text.from_ansi(self._body))
             yield Static("esc / q to close", classes="config-hint")
 
 
