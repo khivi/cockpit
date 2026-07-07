@@ -1484,47 +1484,49 @@ def _ref_pid(ref: str) -> int:
 
 
 def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
-    """Close duplicate cmux workspaces (same name, or same feature-worktree
-    path), keeping the lowest-PID per group. Returns the surviving refs.
+    """Close duplicate cmux workspaces, keeping the lowest-PID per group.
+    Returns the surviving refs.
+
+    Group key is the workspace's live feature-worktree path when it sits on one,
+    else its name. A workspace correctly rooted on its own worktree is the
+    canonical workspace for that worktree — never a duplicate of a same-named
+    workspace on a DIFFERENT worktree. `workspace_name` truncates to 30 chars,
+    so two long branches sharing a 30-char prefix collide (dependabot
+    `json5-1.0.2` vs `json5-and-laravel-mix-…` both → `[beta]
+    dependabot-npm-and-yarn-json5-`); name-keying closed one every cycle, the
+    matched-PR spawn re-created it next cycle, churning spawn→close→respawn.
+    Path-keying stops that while still deduping true duplicates: same-worktree
+    double-spawns (same OR different name) share the path key, and workspaces
+    with no live worktree fall back to the name key.
     """
 
-    def _close_extras(refs_sorted: list[str], reason: str) -> None:
+    def _close_extras(refs_sorted: list[str]) -> None:
         keep_name = ctx.names.get(refs_sorted[0], refs_sorted[0])
         for extra in refs_sorted[1:]:
             extra_name = ctx.names.get(extra, extra)
             print(
-                f"  {verb('duplicate')} {extra_name} → {extra}  "
-                f"({reason.format(keep=keep_name, first=refs_sorted[0])})",
+                f"  {verb('duplicate')} {extra_name} → {extra}  (keeping {keep_name})",
                 flush=True,
             )
             if not ctx.dry:
                 cmux_close_workspace_best_effort(extra)
 
-    by_name: dict[str, list[str]] = {}
+    feature_wt_paths = {wt.path.resolve() for wt in ctx.wts if not wt.is_primary}
+
+    def _group_key(ref: str, ws_name: str) -> object:
+        cwd = ctx.cwds.get(ref)
+        if cwd is not None and cwd.resolve() in feature_wt_paths:
+            return cwd.resolve()
+        return ws_name
+
+    groups: dict[object, list[str]] = {}
     for ref, ws_name in ctx.names.items():
-        by_name.setdefault(ws_name, []).append(ref)
+        groups.setdefault(_group_key(ref, ws_name), []).append(ref)
     keep_refs: set[str] = set()
-    for refs in by_name.values():
+    for refs in groups.values():
         refs_sorted = sorted(refs, key=_ref_pid)
         keep_refs.add(refs_sorted[0])
-        _close_extras(refs_sorted, "keeping {first}")
-
-    feature_wt_paths = {wt.path.resolve() for wt in ctx.wts if not wt.is_primary}
-    by_wt_path: dict[Path, list[str]] = {}
-    for ref in keep_refs:
-        cwd = ctx.cwds.get(ref)
-        if cwd is None:
-            continue
-        resolved = cwd.resolve()
-        if resolved in feature_wt_paths:
-            by_wt_path.setdefault(resolved, []).append(ref)
-    for refs in by_wt_path.values():
-        if len(refs) <= 1:
-            continue
-        refs_sorted = sorted(refs, key=_ref_pid)
-        for extra in refs_sorted[1:]:
-            keep_refs.discard(extra)
-        _close_extras(refs_sorted, "same worktree as {keep}")
+        _close_extras(refs_sorted)
     return keep_refs
 
 

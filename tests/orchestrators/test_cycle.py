@@ -1295,6 +1295,82 @@ def test_cycle_repo_limux_degrade_skips_spawn_tier(tmp_path):
     assert calls == ["transition", "teardown"]
 
 
+# ── _dedupe_workspaces: path-keyed so name collisions don't churn ────────────
+
+
+def _dedupe_ctx(tmp_path, wts, names, cwds):
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.wts = wts
+    ctx.names = names
+    ctx.cwds = cwds
+    return ctx
+
+
+def test_dedupe_keeps_same_name_workspaces_on_different_worktrees(tmp_path):
+    """Two dependabot bumps whose 30-char `workspace_name` collides (`json5-1.0.2`
+    vs `json5-and-laravel-mix-…` both → `[beta] dependabot-npm-and-yarn-json5-`)
+    sit on DIFFERENT live worktrees. They are not duplicates — name-keyed dedup
+    closed one every cycle and the matched-PR spawn re-created it, churning
+    spawn→close→respawn. Both must survive; nothing is closed."""
+    a = tmp_path / "json5-1-0-2"
+    b = tmp_path / "json5-and-laravel-mix-and-reso"
+    a.mkdir()
+    b.mkdir()
+    wts = [
+        Worktree(
+            path=a, branch="dependabot/npm_and_yarn/json5-1.0.2", is_primary=False
+        ),
+        Worktree(
+            path=b, branch="dependabot/npm_and_yarn/json5-and-x", is_primary=False
+        ),
+    ]
+    name = "[beta] dependabot-npm-and-yarn-json5-"
+    ctx = _dedupe_ctx(
+        tmp_path,
+        wts,
+        names={"workspace:25": name, "workspace:272": name},
+        cwds={"workspace:25": a, "workspace:272": b},
+    )
+    with patch.object(cycle, "cmux_close_workspace_best_effort") as close_mock:
+        keep = cycle._dedupe_workspaces(ctx)
+    close_mock.assert_not_called()
+    assert keep == {"workspace:25", "workspace:272"}
+
+
+def test_dedupe_closes_double_spawn_on_same_worktree(tmp_path):
+    """Two workspaces rooted on the SAME worktree (a real double-spawn) are
+    duplicates regardless of name — the higher-PID one is closed, lowest kept."""
+    wt_path = tmp_path / "feat"
+    wt_path.mkdir()
+    wts = [Worktree(path=wt_path, branch="khivi/feat", is_primary=False)]
+    ctx = _dedupe_ctx(
+        tmp_path,
+        wts,
+        names={"workspace:5": "[n] feat", "workspace:9": "[n] feat-ticketed"},
+        cwds={"workspace:5": wt_path, "workspace:9": wt_path},
+    )
+    with patch.object(cycle, "cmux_close_workspace_best_effort") as close_mock:
+        keep = cycle._dedupe_workspaces(ctx)
+    close_mock.assert_called_once_with("workspace:9")
+    assert keep == {"workspace:5"}
+
+
+def test_dedupe_closes_same_name_workspaces_without_live_worktree(tmp_path):
+    """Same-name workspaces with no live worktree (dead cwds) still dedupe by
+    name — the survivor is left for the orphan reaper."""
+    dead = tmp_path / "gone"  # never created
+    ctx = _dedupe_ctx(
+        tmp_path,
+        wts=[],
+        names={"workspace:3": "[n] feat", "workspace:8": "[n] feat"},
+        cwds={"workspace:3": dead, "workspace:8": dead},
+    )
+    with patch.object(cycle, "cmux_close_workspace_best_effort") as close_mock:
+        keep = cycle._dedupe_workspaces(ctx)
+    close_mock.assert_called_once_with("workspace:8")
+    assert keep == {"workspace:3"}
+
+
 # ── _transition_merged_tickets: the opt-in Linear write at OPEN→MERGED ───────
 
 
