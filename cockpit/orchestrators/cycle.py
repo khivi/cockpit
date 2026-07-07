@@ -986,16 +986,29 @@ def _reap_branch_refs(ctx: RepoCycle) -> None:
 
     Always kept: `MAIN_BRANCHES` / the repo's default branch, any branch with a
     live worktree, any branch with an open PR, and anything whose safety can't be
-    verified. Worktree branches are read from `ctx.wts`, the start-of-cycle
-    snapshot — a branch whose worktree `_maybe_autoclose` just removed still
-    appears here, so it is conservatively skipped this tick and reaped on the
-    next (when the snapshot no longer lists it). No double-delete, no error.
+    verified.
+
+    Worktree-presence is read **fresh** here (`worktrees_basic`), NOT from the
+    start-of-cycle `ctx.wts` snapshot — this is a destructive `git branch -D`
+    decision, and it must not straddle two git reads taken at different instants.
+    `git worktree add -b` creates the branch ref and the worktree atomically, so
+    a fresh worktree read is guaranteed consistent with the fresh
+    `list_local_branches` enumeration below: a branch visible to one is visible
+    to the other. The snapshot broke that atomicity — `_spawn_missing_workspaces`
+    runs earlier in the same `cycle_repo` and its detached `git worktree add`
+    lands *after* the snapshot, so a brand-new never-pushed branch (trivially
+    "no remote, contained in default") was invisible to `ctx.wts` and drew a
+    `git branch -D` every spawn cycle (git refused it, kept the worktree, but
+    the reap misfired). The snapshot's only claimed value — deferring a
+    just-removed worktree's branch by one tick — is redundant: every case
+    `_branch_reap_reason` clears is provably recoverable (in origin or merged
+    history), so reaping it the same tick loses nothing. No double-delete.
 
     Runs every slow tick — worktree teardown is unconditional cockpit behavior,
     the same as `_maybe_autoclose`.
     """
     default = origin_head_branch(ctx.repo_path)
-    wt_branches = {wt.branch for wt in ctx.wts}
+    wt_branches = {wt.branch for wt in worktrees_basic(ctx.repo_path)}
     open_pr_branches = {pr.branch for pr in ctx.prs if pr.state == "OPEN"}
     for branch in list_local_branches(ctx.repo_path):
         if branch in MAIN_BRANCHES or branch == default:
