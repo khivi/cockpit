@@ -114,7 +114,7 @@ async def test_table_primes_before_slow_completes(monkeypatch, tmp_path):
                 if table.row_count >= 1:
                     break
                 await pilot.pause(0.1)
-            assert table.row_count == 1  # primed without waiting for slow
+            assert table.row_count == 2  # repo header + 1 worktree; primed early
             assert app._slow_phase in ("waiting", "running")  # slow still open
     finally:
         release.set()
@@ -157,7 +157,7 @@ async def test_slow_tick_gets_per_repo_publish_callback(monkeypatch, tmp_path):
             if table.row_count >= 1:
                 break
             await pilot.pause(0.1)
-        assert table.row_count == 1  # published from the per-repo callback
+        assert table.row_count == 2  # repo header + 1 worktree, per-repo callback
 
 
 async def test_fast_starts_only_after_first_slow():
@@ -271,7 +271,7 @@ async def test_log_file_bounded_to_tail():
     assert lines[-1] == "line 299"  # newest kept
 
 
-async def test_render_table_adds_one_row_per_worktree():
+async def test_render_table_adds_header_plus_one_row_per_worktree():
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -281,7 +281,10 @@ async def test_render_table_adds_one_row_per_worktree():
         ]
         app._render_table([("repo", None, False, wts)])
         await pilot.pause()
-        assert app.query_one(WorktreeTable).row_count == 2
+        table = app.query_one(WorktreeTable)
+        assert table.row_count == 3  # one repo header + two worktrees
+        # Cursor auto-skips off the header onto the first worktree row.
+        assert table.current_path() == "/tmp/a"
 
 
 async def test_render_table_empty_inventory_has_no_rows():
@@ -304,7 +307,8 @@ async def test_current_path_returns_cursor_row_key():
         app._render_table([("repo", None, False, wts)])
         await pilot.pause()
         table = app.query_one(WorktreeTable)
-        table.move_cursor(row=1)
+        # Row 0 is the repo header; the worktrees follow, so /tmp/b is row 2.
+        table.move_cursor(row=2)
         assert table.current_path() == "/tmp/b"
 
 
@@ -382,7 +386,9 @@ async def test_focus_via_double_click(monkeypatch, tmp_path):
         await pilot.pause()
         app._render_table([("repo", None, False, [wt])])
         await pilot.pause()
-        await pilot.click(WorktreeTable, offset=(2, 1), times=2)
+        # Row 1 (y=2 incl. the column header) is the worktree; row 1 is the repo
+        # group header.
+        await pilot.click(WorktreeTable, offset=(2, 2), times=2)
         await pilot.pause(0.6)
     assert refs == ["ws1"]
 
@@ -1356,6 +1362,18 @@ async def test_footer_gates_row_keys_on_capabilities():
     assert fb._skip("open_ticket")
     fb._row_caps = frozenset({"pr", "ticket"})
     assert not fb._skip("open_ticket")
+
+
+async def test_footer_hides_all_row_keys_on_group_header():
+    # A repo group-header row hands the footer the HEADER_CAP sentinel; every
+    # row-targeted key hides, global keys stay.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.worktree_table import HEADER_CAP
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset({HEADER_CAP})
+    assert all(fb._skip(a) for a in FooterBar.ROW_ACTIONS)
+    assert not fb._skip("sync") and not fb._skip("quit")
 
 
 async def test_footer_mute_label_flips_to_unmute_when_muted():

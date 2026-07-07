@@ -6,12 +6,13 @@ preserving the daemon-is-sole-writer invariant. Rows are keyed by worktree path
 so the app's `f`/`c` keybindings can resolve the cursor row (`current_path`)
 back to its workspace for focus / close.
 
-Repos are distinguished by colour, not a column: the workspace name is tinted
-with the repo's `sidebar_color` via the same `CMUX_COLOR_ANSI` colorizer cmux
-uses, so the table and the cmux sidebar agree. Colour alone can't disambiguate
-same-named worktrees (every repo's `master`) — and an `in_place` repo may have
-no colour at all — so a label that appears in 2+ repos is rendered `repo/label`
-(`_colliding_labels`); unique labels stay bare. The Author column (right after
+Repos are grouped under a per-repo *header row* (`HEADER_KEY_PREFIX`, `▸ <repo>`
+tinted with the repo's `sidebar_color`), so same-named worktrees (every repo's
+`master`) are disambiguated structurally by which header they sit under — no
+`repo/label` prefix needed. The worktree rows below each header keep the same
+`sidebar_color` tint on their label (matching the cmux sidebar). Header rows
+carry no workspace, so `current_path()` returns None on them and every row
+action no-ops there. The Author column (right after
 PR) shows the PR author's login prefixed with `@`, populated by the daemon only
 for other-authored PRs (coworker / review PRs) and blank for my own. The Dirty
 column (headed with the
@@ -117,6 +118,17 @@ def _linear_status_icon(state: str) -> tuple[str, str]:
 # (repo display name, sidebar_color, tickets-enabled, worktrees)
 Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
 
+# Row-key prefix marking a repo *group header* row (repo name, no workspace).
+# Real worktree keys are absolute filesystem paths, so this NUL-led sentinel
+# can never collide with one. `current_path()` returns None on these rows so
+# every row action no-ops there.
+HEADER_KEY_PREFIX = "\x00hdr:"
+
+# Capability sentinel handed to the footer when the highlighted row is a group
+# header: it hides every row-targeted key (nothing to act on) while keeping the
+# global keys (`n`/New, `s`/Sync, …). See `FooterBar._skip`.
+HEADER_CAP = "header"
+
 # Raw `pr-state` enum → (icon shown in the PR-state column, style). The icons
 # reuse the sidebar's `_PR_STATE_ICON` vocabulary (single source of truth) so the
 # table and the statusline never disagree; the style is kept for the few terminals
@@ -161,15 +173,18 @@ def _display_label(wt: Worktree) -> str:
     return wt.label or wt.short
 
 
-def _colliding_labels(inventory: Inventory) -> set[str]:
-    """Display labels that appear in 2+ distinct repos. Those rows get a
-    `repo/` prefix so same-named worktrees (e.g. every repo's `master`) stay
-    distinguishable when colour alone isn't enough; unique labels render bare."""
-    repos_by_label: dict[str, set[str]] = {}
-    for repo_name, _color, _tickets, wts in inventory:
-        for wt in wts:
-            repos_by_label.setdefault(_display_label(wt), set()).add(repo_name)
-    return {label for label, repos in repos_by_label.items() if len(repos) > 1}
+def _header_cells(repo_name: str, repo_color: str | None, ncols: int) -> list[Text]:
+    """A repo group-header row: `▸ <repo>` in the Workspace column (bold, tinted
+    with the repo's cmux colour when set), the rest blank. `ncols` is the live
+    column count so the blank tail matches whatever `show_tickets` produced."""
+    label = f"▸ {repo_name}"
+    colorizer = CMUX_COLOR_ANSI.get(repo_color or "")
+    if colorizer is not None:
+        head = Text.from_ansi(colorizer(label))
+        head.stylize("bold")
+    else:
+        head = Text(label, style="bold")
+    return [head, *(Text("") for _ in range(ncols - 1))]
 
 
 def _workspace_cell(
@@ -178,7 +193,6 @@ def _workspace_cell(
     *,
     muted: bool,
     nudge: bool,
-    repo_prefix: str | None = None,
 ) -> Text:
     """The workspace name, tinted with the repo's cmux colour when set and
     prefixed with a status glyph: 🔇 when the PR's nudges are muted, else 🔔 when
@@ -186,12 +200,9 @@ def _workspace_cell(
     threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute wins: a muted
     PR fires no nudge, so it shows 🔇, never 🔔. No glyph when neither holds.
 
-    When `repo_prefix` is set (the label collides across repos), the name is
-    rendered `repo/label` so same-named worktrees are distinguishable; the
-    prefix shares the repo's colour, reinforcing the tint."""
+    Same-named worktrees across repos are disambiguated by their group-header
+    row, not a `repo/` prefix, so the label renders bare."""
     label = _display_label(wt)
-    if repo_prefix:
-        label = f"{repo_prefix}/{label}"
     colorizer = CMUX_COLOR_ANSI.get(repo_color or "")
     if colorizer is not None:
         # Reuse the exact cmux colorizer (the source of truth) → parse its ANSI.
@@ -301,14 +312,11 @@ def worktree_cells(
     tickets_enabled: bool,
     *,
     show_tickets: bool,
-    repo_prefix: str | None = None,
 ) -> list[Text]:
     """Build one row's cells (Rich Text, so colours survive), in `column_labels`
     order: the Ticket cell follows Author and the Status cell follows the
     PR-state cell, both present only when `show_tickets` (the columns exist) and
-    blank for a row whose repo isn't Linear-enabled. `repo_prefix` (set by
-    `update_inventory` only when the label collides across repos) renders the
-    Workspace cell as `repo/label`."""
+    blank for a row whose repo isn't Linear-enabled."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
@@ -328,7 +336,6 @@ def worktree_cells(
             repo_color,
             muted=bool(cell("pr-muted")),
             nudge=bool(cell("pr-nudge")),
-            repo_prefix=repo_prefix,
         ),
         Text(f"#{num}") if num else Text(""),
         # Author is populated by the daemon only for other-authored (coworker /
@@ -380,21 +387,31 @@ class WorktreeTable(DataTable):
         self.zebra_stripes = True
         self.add_columns(*column_labels(show_tickets=self._show_tickets))
 
-    def current_path(self) -> str | None:
-        """Worktree path (the row key) under the cursor, or None when empty."""
+    def _current_row_key(self) -> str | None:
+        """The raw row key under the cursor (a worktree path or a header
+        sentinel), or None when the table is empty."""
         if not self.row_count:
             return None
         row_key, _ = self.coordinate_to_cell_key(self.cursor_coordinate)
         return row_key.value
 
+    def current_path(self) -> str | None:
+        """Worktree path under the cursor, or None on an empty table or a repo
+        group-header row (which carries no workspace, so row actions no-op)."""
+        key = self._current_row_key()
+        if key is None or key.startswith(HEADER_KEY_PREFIX):
+            return None
+        return key
+
     def current_capabilities(self) -> frozenset[str] | None:
         """The highlighted row's capability tokens (for footer row-key gating),
         or None when the table is empty — so the footer shows the full legend
-        rather than gating against an empty set."""
-        path = self.current_path()
-        if path is None:
+        rather than gating against an empty set. A header row returns
+        `{HEADER_CAP}`, which the footer reads to hide every row-targeted key."""
+        key = self._current_row_key()
+        if key is None:
             return None
-        return self._row_caps.get(path, frozenset())
+        return self._row_caps.get(key, frozenset())
 
     def action_request_focus(self) -> None:
         path = self.current_path()
@@ -412,14 +429,17 @@ class WorktreeTable(DataTable):
 
     def update_inventory(self, inventory: Inventory) -> None:
         """Rebuild rows from the worktree inventory, keeping the cursor on the
-        same row index so a refresh doesn't yank the selection away."""
+        same row index so a refresh doesn't yank the selection away. Each repo
+        gets a group-header row followed by its worktree rows."""
         saved = self.cursor_row
         self.clear()
         self._row_caps = {}
-        collisions = _colliding_labels(inventory)
+        ncols = len(column_labels(show_tickets=self._show_tickets))
         for repo_name, repo_color, tickets_enabled, wts in inventory:
+            hkey = f"{HEADER_KEY_PREFIX}{repo_name}"
+            self.add_row(*_header_cells(repo_name, repo_color, ncols), key=hkey)
+            self._row_caps[hkey] = frozenset({HEADER_CAP})
             for wt in wts:
-                prefix = repo_name if _display_label(wt) in collisions else None
                 self.add_row(
                     *worktree_cells(
                         wt,
@@ -427,7 +447,6 @@ class WorktreeTable(DataTable):
                         repo_color,
                         tickets_enabled,
                         show_tickets=self._show_tickets,
-                        repo_prefix=prefix,
                     ),
                     key=str(wt.path),
                 )
@@ -435,4 +454,15 @@ class WorktreeTable(DataTable):
                     wt, repo_name, tickets_enabled
                 )
         if self.row_count:
-            self.move_cursor(row=min(saved, self.row_count - 1))
+            target = min(saved, self.row_count - 1)
+            self.move_cursor(row=target)
+            # Don't leave the cursor resting on a group header when a worktree
+            # row is selectable just below — the common single-repo first render
+            # would otherwise open with the header (and every row key hidden).
+            key = self._current_row_key()
+            if (
+                key
+                and key.startswith(HEADER_KEY_PREFIX)
+                and target + 1 < self.row_count
+            ):
+                self.move_cursor(row=target + 1)
