@@ -169,6 +169,13 @@ class _QueueWriter(io.TextIOBase):
 class CockpitApp(App[None]):
     CSS = """
     #table { width: 1fr; height: 1fr; }
+    /* Highlight the cursor row with a translucent tint rather than DataTable's
+       default solid fill — a solid background forces an auto-contrast
+       foreground that clobbers the repo's ANSI color painted into the
+       Workspace cell (see WorktreeTable._workspace_cell). No `color:` here:
+       WorktreeTable passes cursor_foreground_priority="renderable" so the
+       cell's own Rich Text color always wins over this component style. */
+    #table > .datatable--cursor { background: $accent 30%; }
     """
 
     # Add "Show config: …" to the built-in command palette (Ctrl+P).
@@ -239,7 +246,11 @@ class CockpitApp(App[None]):
         # (`tickets.provider_for`), so it's no longer Linear-specific.
         show_tickets = any(repo_tickets(cfg, r) != "none" for r in repos)
         yield HeaderBar(id="header")
-        yield WorktreeTable(show_tickets=show_tickets, id="table")
+        yield WorktreeTable(
+            show_tickets=show_tickets,
+            id="table",
+            cursor_foreground_priority="renderable",
+        )
         # Grouped footer: row keys (left) vs global keys (right). The `u` update
         # key stays hidden until `_set_update` reveals it; the `t` ticket key
         # shows only when some repo has a ticket provider; backend-divergent keys

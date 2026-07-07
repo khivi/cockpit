@@ -69,6 +69,17 @@ async def test_mounts_with_header_and_table():
         assert app.query_one(WorktreeTable) is not None
 
 
+async def test_table_cursor_preserves_repo_color():
+    # DataTable's default cursor style forces its own foreground onto every
+    # cell, clobbering the repo color painted into the Workspace cell
+    # (WorktreeTable._workspace_cell). "renderable" priority is what keeps the
+    # cell's own Rich Text color on the highlighted row.
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one(WorktreeTable).cursor_foreground_priority == "renderable"
+
+
 async def test_header_shows_running_version(monkeypatch):
     # The header's top-left displays the running plugin version on mount.
     monkeypatch.setattr("cockpit.tui.app.version.running_version", lambda: "9.9.9")
