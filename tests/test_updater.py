@@ -123,6 +123,28 @@ def test_full_update_refreshes_installs_newest_and_runs_setup(tmp_path, monkeypa
     assert fake.ran("/usr/bin/cockpit", "setup")
 
 
+def test_update_subprocesses_are_tty_detached(tmp_path, monkeypatch):
+    # Every update subprocess must run off the controlling TTY (stdin=DEVNULL,
+    # own session) so a child can't grab the foreground pgrp / block on a read
+    # and leave the re-exec'd TUI stopped — the blank frozen-screen `u` bug.
+    _make_cache(tmp_path, monkeypatch, ["0.27.91"])
+    seen: list[dict] = []
+
+    def capture(cmd, **kwargs):
+        seen.append(kwargs)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(updater.subprocess, "run", capture)
+    monkeypatch.setattr(updater.shutil, "which", _which_all)
+    monkeypatch.setattr(updater.version, "running_version", lambda: "0.27.90")
+
+    assert updater.run_update() == 0
+    assert seen  # sanity: subprocesses actually ran
+    for kw in seen:
+        assert kw.get("stdin") is subprocess.DEVNULL
+        assert kw.get("start_new_session") is True
+
+
 def test_install_failure_is_fatal(tmp_path, monkeypatch):
     _make_cache(tmp_path, monkeypatch, ["0.27.91"])
     fake = FakeRun(fail_on=lambda cmd: "install" in cmd and "uv" in cmd)
