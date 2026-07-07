@@ -187,6 +187,27 @@ def test_non_slack_url_is_branch():
     assert mode == "branch"
 
 
+def test_trello_card_url_returns_trello_mode_verbatim():
+    url = "https://trello.com/c/aB3dZ9"
+    mode, value, nwo = detect_source(url)
+    assert mode == "trello"
+    assert value == url  # passed through untouched — Claude reads it via the MCP
+    assert nwo is None  # no GitHub owner/repo to route to
+
+
+def test_trello_card_url_with_tail_and_query_still_trello():
+    url = "https://trello.com/c/aB3dZ9/42-fix-oauth?filter=x"
+    mode, value, _nwo = detect_source(url)
+    assert mode == "trello"
+    assert value == url
+
+
+def test_trello_board_url_is_branch_not_trello():
+    # A board URL (`/b/`) is not a card (`/c/`) — must not classify as trello.
+    mode, _value, _nwo = detect_source("https://trello.com/b/aB3dZ9/my-board")
+    assert mode == "branch"
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # resolve_worktree (real tmp repo via cockpit_repo)
 # ────────────────────────────────────────────────────────────────────────────
@@ -1096,6 +1117,70 @@ def test_slack_on_seeds_fetch_and_rename(spawn_main, cockpit_repo):
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert _SLACK_URL in cmd
     assert "slack_read_thread" in cmd
+    assert 'git branch -m "$CUR" "$CUR-<slug>"' in cmd
+    assert "cmux workspace-action --action rename" in cmd
+    assert "STOP" in cmd
+    assert "retry the SAME MCP tool call up to three times" in cmd
+    assert "sleep" not in cmd or "do not insert shell `sleep`" in cmd
+    assert "/mcp" in cmd
+    assert "PLAN ONLY" in cmd
+
+
+# ── trello dispatch ────────────────────────────────────────────────────────
+#
+# A Trello card URL has no human name, so spawn synthesizes a deterministic
+# codename branch from the card's short link (same shape as Slack) and — when
+# `tickets: trello` — seeds a prompt delegating the card read to the Trello MCP.
+# Cockpit never calls the Trello API at spawn time; no `claude mcp list` probe.
+
+_TRELLO_URL = "https://trello.com/c/aB3dZ9"
+
+
+def test_positional_trello_creates_codename_branch(spawn_main):
+    from cockpit.lib.codename import codename
+    from cockpit.lib.trello import trello_seed
+
+    expected = codename(trello_seed(_TRELLO_URL))
+    code, out, _err = spawn_main([_TRELLO_URL, "--repo", "testrepo"])
+    assert code == 0
+    assert f"on khivi/{expected}" in out
+    assert _cmux_kwarg(spawn_main.cmux_calls[0], "name") == expected
+
+
+def test_trello_branch_is_deterministic_across_tail_and_query(spawn_main):
+    """The same card linked with a slug tail / query resolves to the same
+    codename branch — the seed is the card short link, not the full URL."""
+    from cockpit.lib.codename import codename
+    from cockpit.lib.trello import trello_seed
+
+    plain = codename(trello_seed(_TRELLO_URL))
+    with_tail = codename(trello_seed(_TRELLO_URL + "/7-slug?filter=x"))
+    assert plain == with_tail
+
+
+def test_trello_non_provider_seeds_plan_only_no_rename(spawn_main):
+    """Default (tickets != trello) → codename branch + plan-only, no MCP-fetch
+    or rename instructions (mirrors the gh-issue non-provider path)."""
+    code, _out, _err = spawn_main([_TRELLO_URL, "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Trello card" not in cmd
+    assert 'git branch -m "$CUR" "$CUR-<slug>"' not in cmd
+    assert "cmux workspace-action" not in cmd
+    assert "PLAN ONLY" in cmd
+
+
+def test_trello_provider_seeds_fetch_and_rename(spawn_main, cockpit_repo):
+    """tickets: trello → full prompt: read via the Trello MCP, append a topic
+    slug to the codename branch, rename the workspace. Mirrors the Slack/Jira
+    flow, including the immediate-retry (no shell `sleep`) and /mcp STOP guard."""
+    _set_config_key(cockpit_repo, "tickets", "trello")
+    code, _out, _err = spawn_main([_TRELLO_URL, "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert _TRELLO_URL in cmd
+    assert "Trello card" in cmd
+    assert "Trello MCP" in cmd
     assert 'git branch -m "$CUR" "$CUR-<slug>"' in cmd
     assert "cmux workspace-action --action rename" in cmd
     assert "STOP" in cmd

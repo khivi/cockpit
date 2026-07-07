@@ -82,6 +82,7 @@ from cockpit.lib.config import (
     orphan_nudge_grace_seconds,
     review_command,
     ticket_close_on_merge,
+    trello_merge_done_list,
 )
 from cockpit.lib.constants import MAIN_BRANCHES
 from cockpit.lib.gh import (
@@ -144,6 +145,19 @@ from cockpit.lib.pills import ci_glyph
 from cockpit.lib.prompts import claude_command, shell_quote, split_prompt_prefix
 from cockpit.lib.tickets import TicketProvider, provider_for
 from cockpit.lib.tool import has_workspace_backend, is_cmux
+from cockpit.lib.trello import (
+    TRELLO_API_KEY_ENV,
+    TRELLO_API_TOKEN_ENV,
+)
+from cockpit.lib.trello import (
+    fetch_card_meta as trello_fetch_card_meta,
+)
+from cockpit.lib.trello import (
+    fetch_myself as trello_fetch_myself,
+)
+from cockpit.lib.trello import (
+    move_card as trello_move_card,
+)
 from cockpit.orchestrators.teardown import TeardownRequest, teardown
 
 # Cutoff for the *deep* merged-branches fetch that feeds the branch-ref reaper.
@@ -548,8 +562,9 @@ def _cached_github_viewer(ctx: RepoCycle) -> str | None:
 
 def _transition_merged_tickets(ctx: RepoCycle) -> None:
     """Dispatch the opt-in done-on-merge writer to the repo's ticket provider —
-    Linear (move the ticket to the terminal state) or GitHub (close the issue).
-    Both share the `_is_post_merge_stale` trigger and the `merged-done:` marker;
+    Linear (move the ticket to the terminal state), GitHub (close the issue),
+    Jira (workflow transition), or Trello (move the card to the terminal list).
+    All share the `_is_post_merge_stale` trigger and the `merged-done:` marker;
     `tickets: none` does nothing. The *one* sanctioned tracker write per provider.
     """
     if ctx.dry:
@@ -563,6 +578,8 @@ def _transition_merged_tickets(ctx: RepoCycle) -> None:
         _transition_merged_github(ctx)
     elif provider.name == "jira":
         _transition_merged_jira(ctx)
+    elif provider.name == "trello":
+        _transition_merged_trello(ctx)
 
 
 def _transition_merged_linear(ctx: RepoCycle) -> None:
@@ -830,6 +847,101 @@ def _transition_merged_jira(ctx: RepoCycle) -> None:
                 print(
                     f"  {verb('jira', color=yellow)} {dim(key)}: "
                     f"transition to {target!r} failed — will retry",
+                    flush=True,
+                )
+
+
+def _cached_trello_viewer(ctx: RepoCycle) -> str | None:
+    """The authenticated Trello member's id, cached across ticks like the
+    Linear/GitHub/Jira viewers — the "only move my own cards" gate. Keyed by a
+    non-secret fingerprint of `$TRELLO_API_TOKEN` so rotating the token
+    invalidates the entry (the raw token is never stored in `pill_state`)."""
+    raw = os.environ.get(TRELLO_API_TOKEN_ENV) or ""
+    fp = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    return _cached_linear_identity(
+        ctx,
+        f"trello-viewer:{fp}",
+        trello_fetch_myself,
+    )
+
+
+def _transition_merged_trello(ctx: RepoCycle) -> None:
+    """Opt-in: move a merged PR's delivered Trello cards to the terminal list
+    (`trello_merge_done_list`) — the Trello analog of `_transition_merged_jira`,
+    the terminal action being a card move to another board column.
+
+    Gates, all of which must hold: `close_on_merge` enabled (per-repo over
+    global), a configured `merge_done_list` (no default — an unset value leaves
+    the move off), `$TRELLO_API_KEY` + `$TRELLO_API_TOKEN` set. (The dispatcher
+    already checked `dry`.)
+
+    Per delivered card (read from the cached PR snapshot — the strict footer set,
+    no extra network to discover them):
+      * skip if already evaluated this run (the shared `merged-done:` marker — a
+        repo is one provider, so it can't collide with the other providers');
+      * skip unless I'm a member of the card (my member id, lazy + cached) —
+        never move a teammate's card;
+      * skip if it's already on the target list;
+      * otherwise fire the move. A failure clears the marker to retry.
+    """
+    if not ticket_close_on_merge(ctx.cfg, ctx.repo_entry):
+        return
+    target = trello_merge_done_list(ctx.cfg, ctx.repo_entry)
+    if not target:
+        return
+    if not os.environ.get(TRELLO_API_KEY_ENV) or not os.environ.get(
+        TRELLO_API_TOKEN_ENV
+    ):
+        return
+
+    target_cf = target.casefold()
+    # Viewer id resolved lazily on the first real candidate (cached across ticks),
+    # so a repo with nothing eligible makes zero Trello calls per tick.
+    viewer: str | None = None
+    viewer_resolved = False
+
+    for wt in ctx.wts:
+        if wt.is_primary or wt.branch in MAIN_BRANCHES:
+            continue
+        if not _is_post_merge_stale(wt, ctx.merged_branches):
+            continue
+        payload = find_pr_payload(wt.branch, ctx.name)
+        tickets = ((payload or {}).get("linear") or {}).get("tickets") or []
+        for entry in tickets:
+            ref = entry.get("id")
+            if not ref:
+                continue
+            marker = f"merged-done:{ctx.owner}/{ctx.name}:{ref}"
+            if ctx.pill_state.get(marker):
+                continue
+            if not viewer_resolved:
+                viewer = _cached_trello_viewer(ctx)
+                viewer_resolved = True
+            if not viewer:
+                # Can't confirm ownership → move nothing (fail-safe). No marker,
+                # so a transient viewer-query failure retries next tick.
+                continue
+            meta = trello_fetch_card_meta(ref)
+            if not meta:
+                continue  # transient failure → no marker, retry next tick
+            # Evaluated; mark so a kept merged worktree doesn't re-query each tick.
+            ctx.pill_state[marker] = True
+            if viewer not in (meta.get("members") or []):
+                continue
+            if (meta.get("list") or "").casefold() == target_cf:
+                continue  # already done
+            if trello_move_card(ref, target):
+                print(
+                    f"  {verb('trello')} {ref} → {target} "
+                    f"{dim(f'(merged {wt.short})')}",
+                    flush=True,
+                )
+            else:
+                # Move failed — clear the marker so a later tick retries.
+                ctx.pill_state.pop(marker, None)
+                print(
+                    f"  {verb('trello', color=yellow)} {dim(ref)}: "
+                    f"move to {target!r} failed — will retry",
                     flush=True,
                 )
 

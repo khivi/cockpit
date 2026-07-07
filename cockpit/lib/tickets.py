@@ -28,6 +28,7 @@ from .config import (
     jira_site_url,
     linear_dev_done_state,
     repo_tickets,
+    trello_dev_done_list,
 )
 from .gh import pr_body
 from .github_issues import CONFIG_FIELDS as _GITHUB_CONFIG_FIELDS
@@ -36,6 +37,8 @@ from .jira import CONFIG_FIELDS as _JIRA_CONFIG_FIELDS
 from .jira import fetch_issue_statuses, parse_jira_footer_links, parse_jira_footers
 from .linear import CONFIG_FIELDS as _LINEAR_CONFIG_FIELDS
 from .linear import fetch_ticket_states, parse_linear_footer_links, parse_linear_footers
+from .trello import CONFIG_FIELDS as _TRELLO_CONFIG_FIELDS
+from .trello import fetch_card_lists, parse_trello_footer_links, parse_trello_footers
 
 # ── config-field schema (drives preflight validation) ───────────────────────
 #
@@ -60,6 +63,7 @@ _PROVIDER_CONFIG_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
     "linear": _LINEAR_CONFIG_FIELDS,
     "github": _GITHUB_CONFIG_FIELDS,
     "jira": _JIRA_CONFIG_FIELDS,
+    "trello": _TRELLO_CONFIG_FIELDS,
 }
 
 
@@ -225,6 +229,40 @@ def _jira_ticket_url(
     return links.get(ref.upper())
 
 
+def _trello_fetch_states(
+    ids: list[str],
+    *,
+    repo_nwo: str,
+    repo_dir: str,
+    cfg: dict,
+    repo_entry: dict | None = None,
+) -> dict[str, str | None]:
+    """`{short_link: list-name}` via the Trello REST API (one GET per card). The
+    repo_nwo/repo_dir/cfg/repo_entry kwargs are unused — Trello keys off the
+    global `TRELLO_API_KEY`/`TRELLO_API_TOKEN` — but kept for a uniform
+    `fetch_states` signature. All ids map to None when creds are unset (feature
+    off)."""
+    return fetch_card_lists(ids)
+
+
+def _trello_ticket_url(
+    ref: str,
+    *,
+    repo_nwo: str | None = None,
+    repo_dir: str | None = None,
+    pr_number: int | None = None,
+) -> str | None:
+    """The Trello card URL — read from the PR body's `Trello: [title](url)` footer
+    link (uniform with Linear/Jira; a card URL can't be hand-constructed from the
+    short link without the board/card slug). Needs `repo_dir` + `pr_number`; None
+    when the body can't be fetched or has no matching footer link. The short link
+    is case-sensitive, so the lookup keys on `ref` verbatim (no upper/lower)."""
+    if not repo_dir or not pr_number:
+        return None
+    links = dict(parse_trello_footer_links(pr_body(Path(repo_dir), pr_number)))
+    return links.get(ref)
+
+
 LINEAR = TicketProvider(
     name="linear",
     dev_done_value=linear_dev_done_state,
@@ -249,10 +287,19 @@ GITHUB = TicketProvider(
     ticket_url=_github_ticket_url,
 )
 
+TRELLO = TicketProvider(
+    name="trello",
+    dev_done_value=trello_dev_done_list,
+    parse_footers=lambda body, _nwo: parse_trello_footers(body),
+    fetch_states=_trello_fetch_states,
+    ticket_url=_trello_ticket_url,
+)
+
 _PROVIDERS: dict[str, TicketProvider] = {
     "linear": LINEAR,
     "github": GITHUB,
     "jira": JIRA,
+    "trello": TRELLO,
 }
 
 

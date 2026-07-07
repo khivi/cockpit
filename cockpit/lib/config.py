@@ -241,7 +241,7 @@ def prompt_prefix() -> str:
     return str(load_config().get("prompt_prefix", "")).strip()
 
 
-VALID_TICKETS = ("none", "linear", "github", "jira")
+VALID_TICKETS = ("none", "linear", "github", "jira", "trello")
 
 # The single label that lights the `devdone=` pill for a GitHub issue when
 # `tickets.dev_done_label` is unset — GitHub has no named workflow states, so a
@@ -531,6 +531,36 @@ def jira_merge_done_status(
     if isinstance(val, str) and val.strip():
         return val.strip()
     return "Done"
+
+
+def trello_dev_done_list(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> str:
+    """Name of the Trello list (board column) that lights the `devdone=` pill —
+    the Trello analog of `jira_dev_done_status`, matched case-insensitively
+    against the card's current list name. Set via the `tickets` block's
+    ``dev_done_list``. **No default** — Trello boards name their lists
+    arbitrarily, so an unset value (empty string) means the pill never lights
+    (feature off), never a guessed list name.
+    """
+    val = _tickets_field(cfg, repo_entry, "dev_done_list")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return ""
+
+
+def trello_merge_done_list(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> str:
+    """Name of the Trello list a delivered card is moved to when its PR merges —
+    the Trello analog of `jira_merge_done_status`. Set via the `tickets` block's
+    ``merge_done_list``. **No default** — an unset value (empty string) leaves
+    the opt-in merge-move off, never guessing a list name.
+    """
+    val = _tickets_field(cfg, repo_entry, "merge_done_list")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return ""
 
 
 def orphan_nudge_grace_seconds(
