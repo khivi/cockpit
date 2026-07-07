@@ -3139,16 +3139,21 @@ def _reap_ctx(
     )
 
 
-def _run_reap(ctx, *, local_branches, has_remote=False, ahead=0, delete_ok=True):
+def _run_reap(
+    ctx, *, local_branches, has_remote=False, ahead=0, delete_ok=True, live_wts=None
+):
     """Enter the git-leaf patches _reap_branch_refs consults, run it, and return
     the delete_local_branch mock for assertion. `ahead` is the return of
     branch_commits_ahead for every call (merged-head or origin/default baseline).
+    `live_wts` is the fresh `worktrees_basic` read (default none — the reaper
+    unions it with ctx.wts to guard mid-cycle-spawned worktree branches).
     """
     patches = [
         patch.object(cycle, "origin_head_branch", return_value="main"),
         patch.object(cycle, "list_local_branches", return_value=local_branches),
         patch.object(cycle, "has_remote_branch", return_value=has_remote),
         patch.object(cycle, "branch_commits_ahead", return_value=ahead),
+        patch.object(cycle, "worktrees_basic", return_value=live_wts or []),
     ]
     with (
         _enter_all(patches),
@@ -3200,11 +3205,33 @@ def test_reap_skips_main_default_worktree_and_open_pr_branches(tmp_path):
     ctx = _reap_ctx(
         tmp_path,
         merged_deep={"main": "x", "khivi/has-wt": "x", "khivi/open": "x"},
-        wts=[Worktree(path=tmp_path / "wt", branch="khivi/has-wt")],
         prs=[_pr("khivi/open", state="OPEN")],
     )
+    # has-wt is guarded by the fresh worktree read (worktrees_basic), not the
+    # start-of-cycle snapshot — see _reap_branch_refs' atomicity rationale.
     dele = _run_reap(
-        ctx, local_branches=["main", "khivi/has-wt", "khivi/open"], ahead=0
+        ctx,
+        local_branches=["main", "khivi/has-wt", "khivi/open"],
+        ahead=0,
+        live_wts=[Worktree(path=tmp_path / "wt", branch="khivi/has-wt")],
+    )
+    dele.assert_not_called()
+
+
+def test_reap_skips_branch_with_live_worktree_created_mid_cycle(tmp_path):
+    """A brand-new never-pushed branch spawned mid-cycle has a live worktree that
+    the start-of-cycle ctx.wts snapshot never saw. Its reason reads "no remote,
+    contained in default", but the fresh worktrees_basic read guards it —
+    regression: the reaper used to consult the stale snapshot and tried
+    `git branch -D` on a live worktree every spawn cycle (git refused; the
+    workspace survived but the reap misfired)."""
+    ctx = _reap_ctx(tmp_path, wts=[])  # snapshot is irrelevant now — read is fresh
+    dele = _run_reap(
+        ctx,
+        local_branches=["khivi/new1"],
+        has_remote=False,
+        ahead=0,
+        live_wts=[Worktree(path=tmp_path / "new1", branch="khivi/new1")],
     )
     dele.assert_not_called()
 
