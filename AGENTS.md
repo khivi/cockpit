@@ -139,13 +139,18 @@ pytest
 # Type-check:
 mypy cockpit/
 
-# Lint + format (both also enforced by pre-commit):
-ruff check --fix cockpit/ tests/
-ruff format cockpit/ tests/
-
-# Run the full pre-push gate locally (version-bump + pytest):
-pre-commit run --hook-stage pre-push --all-files
+# Lint + format — ALWAYS via the pinned pre-commit hook, scoped to your files:
+pre-commit run ruff ruff-format --files <changed paths>
 ```
+
+**Never lint/format with `uvx ruff` (or a globally-installed `ruff`).** `uvx`
+pulls the **latest** ruff, whose rules drift from the version pinned in
+`.pre-commit-config.yaml` — running it (especially tree-wide, `ruff format
+cockpit/ tests/`) rewrites pre-existing lines in files you never touched to the
+newer style, producing unrelated churn that the pinned pre-commit hook then
+fights on commit. Bare `ruff` isn't installed here on purpose; the pinned hook
+*is* the formatter, and it's what CI enforces. Format only your changed paths
+with `pre-commit run ... --files`, not the whole tree.
 
 ## Release versioning
 
