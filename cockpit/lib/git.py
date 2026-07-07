@@ -71,19 +71,17 @@ class Worktree:
 
     @property
     def workspace_name(self) -> str:
-        """cmux workspace name — `label` prefixed with `[<repo>]` so a session's
-        tab/sidebar shows which repo it belongs to.
+        """cmux workspace name — the bare branch `label`.
 
-        Distinct from `label` (the bare branch slug the TUI table renders and
-        tints by `sidebar_color`): only the workspace-naming paths (spawn +
-        `reconcile_workspace_names`) use this. Falls back to `label` when
-        `repo_name` is unset (a repo-less caller) or `label` is empty (detached),
-        so those cases are unchanged. `repo_name` is threaded in at construction
-        from the repo config, like `branch_prefix`.
+        Kept as its own property (rather than folding call sites onto `label`)
+        so the workspace-naming paths (spawn + `reconcile_workspace_names`) have
+        one seam to change: the repo is conveyed by `sidebar_color`, not a
+        `[<repo>]` name prefix, so the two never double up in the sidebar. The
+        prefix used to disambiguate same-label branches across repos; cockpit
+        resolves workspaces by cwd→path (never by name), so the collision is
+        cosmetic — the one exception being orphan-auto-spawn's name-clash skip.
         """
-        if not self.repo_name or not self.label:
-            return self.label
-        return f"[{self.repo_name}] {self.label}"
+        return self.label
 
     @property
     def dirty(self) -> bool:
@@ -211,8 +209,8 @@ def worktrees_basic(
 
     `branch_prefix` (the repo's configured prefix) is stored on each Worktree so
     its `label` strips the prefix cleanly; callers that don't render a label can
-    leave it "". `repo_name` is stored likewise for `workspace_name` and can be
-    left "" by callers that don't name workspaces.
+    leave it "". `repo_name` is stored likewise for the `git-repo` cell
+    (`write_git_state_cache`) and can be left "" by callers that don't cache it.
     """
     out = run(["git", "-C", str(repo_dir), "worktree", "list", "--porcelain"])
     blocks = [b for b in out.split("\n\n") if b.strip()]
