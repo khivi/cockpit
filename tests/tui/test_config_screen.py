@@ -178,9 +178,9 @@ async def test_render_changelog_groups_by_bucket():
     assert {"green", "red", "blue", "dim"} <= styles
 
 
-async def test_post_update_modal_renders_colored_text():
-    # `_load_release_notes` passes a pre-styled Text; ConfigScreen renders it
-    # as-is (not re-parsed through from_ansi).
+async def test_config_screen_renders_colored_text():
+    # A pre-styled `Text` body (e.g. a rendered changelog) is rendered as-is by
+    # ConfigScreen — not re-parsed through from_ansi.
     app = _Host()
     async with app.run_test() as pilot:
         body = render_changelog([("feat: a", "today")])

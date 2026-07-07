@@ -289,13 +289,6 @@ class CockpitApp(App[None]):
         self._check_update()
         self._kick_slow()
 
-        # Just self-updated via `u`? cli.py threaded the prior version through
-        # the re-exec env; show what landed once, then drop it so a later manual
-        # restart in the same shell doesn't repeat it.
-        prev = os.environ.pop("COCKPIT_PREV_VERSION", "")
-        if prev and prev != version.running_version():
-            self._load_release_notes(prev)
-
     def _apply_saved_theme(self) -> None:
         """Apply the persisted `tui_theme`, then persist any later palette pick.
 
@@ -597,36 +590,12 @@ class CockpitApp(App[None]):
         # `r`: the ChangeLog overlay. Lazy-paginated — it pulls one page of
         # merged-PR subjects per scroll-to-bottom (gh api, off the UI thread in
         # the screen's own worker), so the first paint is quick and history is
-        # only fetched as far as you scroll. The post-update auto-show
-        # (_load_release_notes, prior version) keeps the bounded single-shot
-        # ConfigScreen — it's scoped to the version gap, nothing to paginate.
+        # only fetched as far as you scroll.
         from cockpit.lib import release_notes
 
         self.push_screen(
             ReleaseNotesScreen(release_notes.recent_title(), release_notes.recent_page)
         )
-
-    @work(thread=True, group="notes", exit_on_error=False)
-    def _load_release_notes(self, prev: str | None) -> None:
-        from cockpit.lib import release_notes
-
-        result = release_notes.notes(prev)
-        if result:
-            from cockpit.tui.widgets.config_screen import render_changelog
-
-            title, items = result
-            self.call_from_thread(
-                self.push_screen, ConfigScreen(title, render_changelog(items))
-            )
-        elif prev is None:
-            # Toast only for the explicit `r` press; a silent post-update miss
-            # (no network, nothing new) is fine.
-            self.call_from_thread(
-                self.notify,
-                "no release notes available",
-                severity="information",
-                timeout=4.0,
-            )
 
     def action_dismiss_overlay(self) -> None:
         # Escape: close the help panel if open, else pop a modal back toward the
