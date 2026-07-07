@@ -155,6 +155,7 @@ from cockpit.lib.registry import register_cwd
 from cockpit.lib.repos import repo_names
 from cockpit.lib.slack import SLACK_URL_RE, slack_seed
 from cockpit.lib.templates import render
+from cockpit.lib.trello import TRELLO_CARD_URL_RE, trello_seed
 
 
 def _die(msg: str, code: int = 1) -> int:
@@ -250,6 +251,9 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
                     `value` is `<run_id>` or `<run_id>:<job_id>`.
       - `slack`   : Slack message/thread permalink. `value` is the URL verbatim
                     (the spawned Claude reads the thread via the Slack MCP).
+      - `trello`  : Trello card URL (`trello.com/c/<shortLink>`). `value` is the
+                    URL verbatim (the spawned Claude reads the card via the
+                    Trello MCP; the branch is a codename, like `slack`).
       - `linear`  : whole positional matches `[A-Z]{2,6}-\\d+` (case-insensitive).
                     Normalised to uppercase in `value`.
       - `branch`  : anything else; local/remote/new resolved by create_worktree.
@@ -270,6 +274,8 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
         return "actions", f"{run_id}:{job_id}" if job_id else run_id, m.group(1)
     if SLACK_URL_RE.match(value):
         return "slack", value, None
+    if TRELLO_CARD_URL_RE.match(value):
+        return "trello", value, None
     m = GITHUB_ISSUE_SHORTHAND_RE.fullmatch(value)
     if m:
         return "gh-issue", m.group(1), None
@@ -382,6 +388,24 @@ def _slack_prompt(branch: str, url: str, *, mcp_fetch: bool) -> str:
     """
     name = "slack_fetch" if mcp_fetch else "slack_context"
     return _scenario_prompt(name, branch=branch, url=url)
+
+
+def _trello_prompt(branch: str, url: str) -> str:
+    """First-turn prompt for a Trello-card source (`tickets: trello`).
+
+    Cockpit never calls the Trello API at spawn time: a card URL carries no
+    human-readable name, so spawn creates the worktree on a deterministic
+    codename branch (e.g. `khivi/cosmic-otter`, seeded from the card's short
+    link so re-spawning the same URL is idempotent) and the spawned Claude reads
+    the card via the official Trello MCP, then renames the branch + workspace to
+    append a topic slug (`cosmic-otter` → `cosmic-otter-fix-oauth`). The daemon's
+    direct REST calls (the `devdone=` pill, the merge move) are a separate,
+    headless path. Mirrors `_slack_prompt`'s codename-then-rename shape and
+    `_jira_prompt`'s MCP retry-then-STOP handling — no `claude mcp list`
+    pre-flight (that probe is unreliable for managed connectors). Prose lives in
+    ``cockpit/prompts/trello.txt``.
+    """
+    return _scenario_prompt("trello", branch=branch, url=url)
 
 
 def _repo_entry_or_none(repo_name: str | None) -> dict | None:
@@ -703,6 +727,7 @@ def main() -> int:
     from_name = False
     is_linear = False  # positional classified as a Linear key (any context → plan)
     is_slack = False  # positional classified as a Slack URL (any context → plan)
+    is_trello = False  # positional classified as a Trello card URL (any context → plan)
     is_gh_issue = False  # positional classified as a GitHub issue (any context → plan)
     gh_issue_value: str | None = None  # the issue number, for the start_label write
 
@@ -751,6 +776,22 @@ def main() -> int:
             # absent connector in-session instead. The thread URL is always
             # seeded as context regardless, since it's the entire source.
             seeded_prompt = _slack_prompt(branch, value, mcp_fetch=cfg_use_slack())
+        elif mode == "trello":
+            # A Trello card URL carries no human name, so synthesize a codename
+            # branch (deterministic from the card's short link, so re-spawning
+            # the same URL is idempotent) — same shape as Slack. The spawned
+            # Claude reads the card via the Trello MCP and renames the branch to
+            # append a topic slug (see `_trello_prompt`). No `claude mcp list`
+            # pre-flight (unreliable for managed connectors); the prompt's own
+            # retry-then-STOP logic handles a genuinely absent connector. Seed the
+            # fetch+rename prompt only when Trello is the active provider;
+            # otherwise the card still seeds plan-only (via is_trello) with the
+            # URL as context.
+            branch = codename(trello_seed(value))
+            from_name = True
+            is_trello = True
+            if cfg_tickets() == "trello":
+                seeded_prompt = _trello_prompt(branch, value)
         elif mode == "gh-issue":
             # `value` is the issue number; the worktree lands on `issue-<N>` and
             # the spawned Claude reads the issue via `gh issue view`, then renames
@@ -891,6 +932,7 @@ def main() -> int:
             pr_info
             or is_linear
             or is_slack
+            or is_trello
             or is_gh_issue
             or args.context_text
             or args.claude_addendum

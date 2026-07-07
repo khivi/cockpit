@@ -16,6 +16,7 @@ _TEMPLATES = {
     "github_issue": {"branch", "issue_ref", "view_cmd", "plan_tail"},
     "slack_fetch": {"branch", "url", "plan_tail"},
     "slack_context": {"branch", "url", "plan_tail"},
+    "trello": {"branch", "url", "plan_tail"},
     "plan_only": {"branch", "source_block"},
     "review": {"command", "context"},
     "actions": {

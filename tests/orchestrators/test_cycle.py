@@ -1762,6 +1762,161 @@ def test_jira_transition_skips_when_myself_none(tmp_path, monkeypatch):
     assert "merged-done:o/n:PROJ-1" not in ctx.pill_state
 
 
+# ── _transition_merged_trello: the opt-in Trello card move at OPEN→MERGED ────
+
+_TRELLO_CFG = {
+    "tickets": {
+        "provider": "trello",
+        "merge_done_list": "Done",
+        "close_on_merge": True,
+    }
+}
+
+
+def _trello_transition_ctx(tmp_path, *, cfg=None, branch="khivi/feat"):
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir(exist_ok=True)
+    wt = Worktree(path=wt_path, branch=branch, dirty_count=0, is_primary=False)
+    return cycle.RepoCycle(
+        cfg=cfg if cfg is not None else dict(_TRELLO_CFG),
+        repo_path=tmp_path,
+        owner="o",
+        name="n",
+        self_user="khivi",
+        wts=[wt],
+        prs=[],
+        tracked={},
+        names={},
+        cwds={},
+        merged_branches={branch: "deadbeef"},
+        merged_branches_deep={},
+        pill_state={},
+        dry=False,
+        headless=False,
+        repo_entry={},
+    )
+
+
+def _trello_patches(*, myself="mem-me", meta=None, payload=None):
+    if payload is None:
+        payload = {"linear": {"tickets": [{"id": "aB3dZ9", "state": "Doing"}]}}
+    if meta is None:
+        meta = {"list": "Doing", "board": "b1", "members": ["mem-me"]}
+    return [
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "find_pr_payload", return_value=payload),
+        patch.object(cycle, "trello_fetch_myself", return_value=myself),
+        patch.object(cycle, "trello_fetch_card_meta", return_value=meta),
+    ]
+
+
+def _trello_env(monkeypatch):
+    monkeypatch.setenv("TRELLO_API_KEY", "k")
+    monkeypatch.setenv("TRELLO_API_TOKEN", "tok")
+
+
+def test_trello_transition_happy_path(tmp_path, monkeypatch):
+    _trello_env(monkeypatch)
+    ctx = _trello_transition_ctx(tmp_path)
+    with (
+        _enter_all(_trello_patches()),
+        patch.object(cycle, "trello_move_card", return_value=True) as mv,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    mv.assert_called_once_with("aB3dZ9", "Done")
+    assert ctx.pill_state.get("merged-done:o/n:aB3dZ9") is True
+
+
+def test_trello_transition_noop_when_flag_off(tmp_path, monkeypatch):
+    _trello_env(monkeypatch)
+    cfg = {"tickets": {**_TRELLO_CFG["tickets"], "close_on_merge": False}}
+    ctx = _trello_transition_ctx(tmp_path, cfg=cfg)
+    with (
+        _enter_all(_trello_patches()),
+        patch.object(cycle, "trello_move_card") as mv,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    mv.assert_not_called()
+
+
+def test_trello_transition_noop_when_no_target_list(tmp_path, monkeypatch):
+    # No merge_done_list configured → the move is inert (no safe default).
+    _trello_env(monkeypatch)
+    cfg = {"tickets": {"provider": "trello", "close_on_merge": True}}
+    ctx = _trello_transition_ctx(tmp_path, cfg=cfg)
+    with (
+        _enter_all(_trello_patches()),
+        patch.object(cycle, "trello_move_card") as mv,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    mv.assert_not_called()
+
+
+def test_trello_transition_noop_when_no_creds(tmp_path, monkeypatch):
+    monkeypatch.delenv("TRELLO_API_KEY", raising=False)
+    monkeypatch.delenv("TRELLO_API_TOKEN", raising=False)
+    ctx = _trello_transition_ctx(tmp_path)
+    with (
+        _enter_all(_trello_patches()),
+        patch.object(cycle, "trello_move_card") as mv,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    mv.assert_not_called()
+
+
+def test_trello_transition_skips_other_member(tmp_path, monkeypatch):
+    _trello_env(monkeypatch)
+    ctx = _trello_transition_ctx(tmp_path)
+    meta = {"list": "Doing", "board": "b1", "members": ["mem-other"]}
+    with (
+        _enter_all(_trello_patches(meta=meta)),
+        patch.object(cycle, "trello_move_card") as mv,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    mv.assert_not_called()
+    # Evaluated → marker set so a kept merged worktree doesn't re-query.
+    assert ctx.pill_state.get("merged-done:o/n:aB3dZ9") is True
+
+
+def test_trello_transition_skips_already_on_target_list(tmp_path, monkeypatch):
+    _trello_env(monkeypatch)
+    ctx = _trello_transition_ctx(tmp_path)
+    meta = {"list": "Done", "board": "b1", "members": ["mem-me"]}
+    with (
+        _enter_all(_trello_patches(meta=meta)),
+        patch.object(cycle, "trello_move_card") as mv,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    mv.assert_not_called()
+
+
+def test_trello_transition_failed_clears_marker(tmp_path, monkeypatch):
+    _trello_env(monkeypatch)
+    ctx = _trello_transition_ctx(tmp_path)
+    with (
+        _enter_all(_trello_patches()),
+        patch.object(cycle, "trello_move_card", return_value=False),
+    ):
+        cycle._transition_merged_tickets(ctx)
+    # Marker cleared so a later tick retries.
+    assert "merged-done:o/n:aB3dZ9" not in ctx.pill_state
+
+
+def test_trello_transition_skips_when_myself_none(tmp_path, monkeypatch):
+    _trello_env(monkeypatch)
+    ctx = _trello_transition_ctx(tmp_path)
+    with (
+        _enter_all(_trello_patches(myself=None)),
+        patch.object(cycle, "trello_fetch_card_meta") as meta_mock,
+        patch.object(cycle, "trello_move_card") as mv,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    meta_mock.assert_not_called()
+    mv.assert_not_called()
+    # No marker → transient identity failure retries next tick.
+    assert "merged-done:o/n:aB3dZ9" not in ctx.pill_state
+
+
 # ── _cached_linear_identity / _cached_viewer_id — cross-tick identity cache ──
 
 
