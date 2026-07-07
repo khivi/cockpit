@@ -7,6 +7,7 @@
       "default_base": "main",
       "sidebar_color": "Blue",
       "review_prs": false,
+      "dependabot": false,
       "tickets": {
         "provider": "linear",
         "keys": ["TEAM"],

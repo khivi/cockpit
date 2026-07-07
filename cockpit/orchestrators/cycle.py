@@ -89,6 +89,7 @@ from cockpit.lib.gh import (
     PR,
     OpenPRHead,
     fetch_merged_branches,
+    is_dependabot,
     list_open_pr_heads,
     list_relevant_prs,
     repo_nwo,
@@ -1834,10 +1835,16 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
                 dry=ctx.dry,
             )
     if ctx.review_candidates:
+        # Dependabot PRs are coworker-authored, so they'd flow through the
+        # review-spawn path — but auto-creating a review worktree per dep bump is
+        # noise. Opt in per-repo with `dependabot: true`; default is to skip them.
+        allow_dependabot = bool(repo_entry.get("dependabot"))
         existing_branches = {w.branch for w in ctx.wts}
         for cand in ctx.review_candidates:
             if cand.author == ctx.self_user:
                 continue  # mine — handled by skipped_self above
+            if not allow_dependabot and is_dependabot(cand.author):
+                continue  # dependabot PR, `dependabot` flag off — don't spawn
             if cand.branch in existing_branches:
                 continue  # already have a worktree — tracked via the matched path
             _bg_spawn_pr(ctx, repo_name, cand.number, cand.branch, review=True)

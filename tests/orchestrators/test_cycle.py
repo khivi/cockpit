@@ -2140,6 +2140,28 @@ def test_spawn_missing_review_candidates_filtered(tmp_path):
     assert review_calls[0].args == (ctx, "n", 20, "coworker/new")
 
 
+def test_spawn_missing_review_skips_dependabot_by_default(tmp_path):
+    """A dependabot PR is a review candidate, but the default `dependabot: false`
+    skips it; `dependabot: true` opts back in."""
+    from cockpit.lib.gh import OpenPRHead
+
+    def _run(repo_entry):
+        ctx = _spawn_ctx(
+            tmp_path,
+            review_candidates=[OpenPRHead(30, "dependabot/npm/x", "dependabot")],
+        )
+        with (
+            patch.object(cycle, "_bg_spawn_pr") as bg,
+            patch.object(cycle, "spawn_pr_workspace"),
+            patch.object(cycle, "spawn_orphan_workspace"),
+        ):
+            cycle._spawn_missing_workspaces(ctx, repo_entry)
+        return [c for c in bg.call_args_list if c.kwargs.get("review")]
+
+    assert _run({"name": "n"}) == []
+    assert len(_run({"name": "n", "dependabot": True})) == 1
+
+
 def test_bg_spawn_pr_dry_run_does_not_launch(tmp_path, capsys):
     ctx = _spawn_ctx(tmp_path, dry=True)
     with patch.object(cycle.subprocess, "Popen") as popen:
