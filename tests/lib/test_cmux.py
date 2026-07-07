@@ -241,6 +241,26 @@ def test_workspace_names_parses_limux_uuid_refs():
         )
 
 
+def test_workspace_names_keeps_repo_prefixed_multiword_names():
+    # Real cmux output: 2-space column gaps, `[repo] label` names (with an
+    # internal space), and a trailing `[selected]` flag. A `\S+` parse truncated
+    # these to `[Cockpit]`/`[beta]`, collapsing every repo's workspaces into one
+    # dedupe group → spawn/rename/dedupe churned every tick.
+    output = (
+        "  workspace:2  cockpit\n"
+        "* workspace:140  [Cockpit] trello  [selected]\n"
+        "  workspace:141  [Cockpit] race\n"
+        "  workspace:210  [beta] dependabot-npm-and-yarn-qs-and\n"
+    )
+    with patch("cockpit.lib.cmux.cmux", return_value=output):
+        assert workspace_names() == {
+            "workspace:2": "cockpit",
+            "workspace:140": "[Cockpit] trello",
+            "workspace:141": "[Cockpit] race",
+            "workspace:210": "[beta] dependabot-npm-and-yarn-qs-and",
+        }
+
+
 def test_workspace_cwds_parses_ok_when_cmux_ok():
     payload = '{"workspaces":[{"ref":"workspace:1","current_directory":"/tmp/wt"}]}'
     with (

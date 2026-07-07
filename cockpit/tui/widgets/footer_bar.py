@@ -20,6 +20,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
 
+from cockpit.tui.widgets.worktree_table import HEADER_CAP
+
 
 class FooterBar(Horizontal):
     DEFAULT_CSS = """
@@ -192,6 +194,14 @@ class FooterBar(Horizontal):
         # backend; per-row keys only when the highlighted row supports them;
         # hidden actions (escape/back) never shown.
         if action in self.HIDDEN_ACTIONS:
+            return True
+        # A repo group-header row carries no workspace, so hide every
+        # row-targeted key — only the global keys stay.
+        if (
+            action in self.ROW_ACTIONS
+            and self._row_caps is not None
+            and HEADER_CAP in self._row_caps
+        ):
             return True
         if action == "update" and not self._show_update:
             return True

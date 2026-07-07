@@ -506,9 +506,16 @@ def workspace_names() -> dict[str, str]:
         raise CmuxUnavailable(f"list-workspaces failed: {e}") from e
     names: dict[str, str] = {}
     for line in out.splitlines():
-        m = re.search(r"(workspace:[\w-]+)\s+(\S+)", line)
+        # `list-workspaces` is `[*] workspace:<ref>  <name>  [flag]…`. The name
+        # may contain spaces (`[repo] label`) and is followed by zero or more
+        # bracketed status flags (`[selected]`). Capture the whole tail, then
+        # strip the trailing flags — a bare `\S+` truncated `[repo] label` to
+        # `[repo]`, collapsing every repo's workspaces into one dedupe group and
+        # thrashing spawn/rename/dedupe every tick.
+        m = re.search(r"(workspace:[\w-]+)\s+(.+)", line)
         if m:
-            names[m.group(1)] = m.group(2)
+            name = re.sub(r"(?:\s+\[[^\]]*\])+\s*$", "", m.group(2)).strip()
+            names[m.group(1)] = name
     return names
 
 

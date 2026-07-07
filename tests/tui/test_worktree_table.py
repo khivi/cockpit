@@ -5,8 +5,9 @@ cells the daemon writes, then asserts the per-column Rich Text. Columns are
 Workspace | PR | Author | (Ticket) | 🔀 | (Status) | CI | comments | ✎ | Title —
 the Author column is always present (blank for self-authored PRs, the coworker
 login for a review PR); the Linear Ticket/Status columns appear only when
-configured, Ticket after Author and Status right after the PR-state column. The repo is conveyed
-by tinting the workspace name (not a column). The Dirty column (icon header)
+configured, Ticket after Author and Status right after the PR-state column. The
+repo is conveyed by a group-header row plus a tint on the workspace name (not a
+column). The Dirty column (icon header)
 reads the per-cwd `git-status` cell (`"<staged> <unstaged> <untracked>"`).
 """
 
@@ -25,11 +26,11 @@ from cockpit.tui.widgets.worktree_table import (
     _PR_STATE_ICON,
     _STATUS_ICON,
     DEVDONE_ICON,
+    HEADER_KEY_PREFIX,
     ICON_PR_MUTED,
     ICON_PR_NUDGE,
-    Inventory,
-    _colliding_labels,
     _comments_cell,
+    _header_cells,
     _linear_status_icon,
     column_labels,
     row_capabilities,
@@ -357,50 +358,36 @@ def test_dirty_column_blank_when_cell_missing(cache_dir):
     assert dirty.plain == ""
 
 
-def test_colliding_labels_flags_cross_repo_dupes():
-    # Two repos each have a `master` worktree; one repo also has a unique branch.
-    inv: Inventory = [
-        ("Cockpit", "Aqua", False, [_wt(path="/a", branch="master")]),
-        ("dotfiles", "Green", False, [_wt(path="/b", branch="master")]),
-        ("Cockpit", "Aqua", False, [_wt(path="/c", branch="khivi/solo")]),
-    ]
-    # `master` appears in 2 distinct repos → collides; the unique branch doesn't.
-    assert _colliding_labels(inv) == {"master"}
-
-
-def test_colliding_labels_ignores_same_repo_dupes():
-    # The same label twice within ONE repo isn't a cross-repo collision (a
-    # `repo/` prefix couldn't disambiguate it), so it's not flagged.
-    inv: Inventory = [
-        (
-            "Cockpit",
-            None,
-            False,
-            [_wt(path="/a", branch="x"), _wt(path="/b", branch="x")],
-        ),
-    ]
-    assert _colliding_labels(inv) == set()
-
-
-def test_repo_prefix_renders_repo_slash_label(cache_dir):
+def test_label_stays_bare_across_repos(cache_dir):
+    # Same-named worktrees in different repos render bare — the group-header row
+    # disambiguates them, not a `repo/` prefix.
     wt = _wt(branch="master")
-    cell = worktree_cells(
-        wt, "Cockpit", None, False, show_tickets=False, repo_prefix="Cockpit"
-    )[0]
-    assert cell.plain == "Cockpit/master"
+    assert worktree_cells(wt, "Cockpit", None, False, show_tickets=False)[0].plain == (
+        "master"
+    )
+    assert worktree_cells(wt, "dotfiles", None, False, show_tickets=False)[0].plain == (
+        "master"
+    )
 
 
-def test_no_repo_prefix_leaves_label_bare(cache_dir):
-    wt = _wt(branch="master")
-    cell = worktree_cells(wt, "Cockpit", None, False, show_tickets=False)[0]
-    assert cell.plain == "master"
+def test_header_cells_repo_name_and_blank_tail():
+    ncols = len(column_labels(show_tickets=False))
+    cells = _header_cells("Cockpit", None, ncols)
+    assert len(cells) == ncols
+    assert cells[0].plain == "▸ Cockpit"
+    assert "bold" in str(cells[0].style)
+    assert all(c.plain == "" for c in cells[1:])
 
 
-def test_repo_prefix_composes_with_mute_glyph(cache_dir):
-    # The mute glyph still leads; the repo prefix sits inside it: 🔇 repo/label.
-    wt = _wt(branch="master")
-    cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
-    cell = worktree_cells(
-        wt, "dotfiles", None, False, show_tickets=False, repo_prefix="dotfiles"
-    )[0]
-    assert cell.plain == f"{ICON_PR_MUTED} dotfiles/master"
+def test_header_cells_tinted_by_repo_color():
+    ncols = len(column_labels(show_tickets=False))
+    tinted = _header_cells("Cockpit", "Blue", ncols)[0]
+    plain = _header_cells("Cockpit", None, ncols)[0]
+    assert tinted.plain == plain.plain == "▸ Cockpit"
+    assert tinted.spans  # colorizer ANSI → colour spans
+    assert not plain.spans
+
+
+def test_header_key_prefix_is_nul_led():
+    # The sentinel must never collide with a real worktree path key.
+    assert HEADER_KEY_PREFIX.startswith("\x00")
