@@ -281,6 +281,7 @@ def validate_config(cfg: dict) -> None:
     _validate_sidebar_colors(cfg)
     _validate_repo_bool(cfg, "review_prs")
     _validate_repo_bool(cfg, "in_place")
+    _validate_repo_bool(cfg, "dependabot")
     _validate_review_command(cfg)
     _validate_global_bool(cfg, "check_update")
     _validate_global_bool(cfg, "use_slack")

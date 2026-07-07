@@ -145,6 +145,17 @@ _OPEN_PR_HEADS_QUERY = (
 )
 
 
+# Dependabot's author login varies by API surface: GraphQL `author.login`
+# (what `list_open_pr_heads` reads) returns bare `dependabot`; REST returns
+# `app/dependabot`; older payloads use `dependabot[bot]`. Match all three.
+_DEPENDABOT_LOGINS = {"dependabot", "dependabot[bot]", "app/dependabot"}
+
+
+def is_dependabot(login: str) -> bool:
+    """True if `login` is Dependabot under any of gh's login spellings."""
+    return login in _DEPENDABOT_LOGINS
+
+
 @dataclass(frozen=True)
 class OpenPRHead:
     """Minimal identity for an open PR: enough to fetch its head and decide
