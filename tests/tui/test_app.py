@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -1467,3 +1468,42 @@ async def test_footer_on_no_backend_hides_all_backend_keys(monkeypatch):
         await pilot.pause()
         rt = app.query_one(FooterBar).row_text
         assert "Focus" not in rt and "Nudge" not in rt and "Open" not in rt
+
+
+async def test_mount_does_not_block_loop_on_update_check(monkeypatch):
+    # The startup update check (`_check_update` → `version.latest_version` →
+    # `gh api`) must not stall the first paint: it's dispatched off the loop via
+    # `@work(thread=True)`. Guard that a *slow* update check leaves the app
+    # interactive within the fast-tick horizon anyway. A bounded event stands in
+    # for a slow `gh` so a regression (making the check synchronous in on_mount)
+    # can't hang the suite. NOTE: this pins the non-blocking-mount invariant only
+    # — it does NOT reproduce the `u` self-update freeze, which is a real-TTY /
+    # execvp fd-inheritance issue outside the headless PipeDriver's reach.
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [], "check_update": True},
+    )
+    monkeypatch.setattr("cockpit.tui.app.version.running_version", lambda: "0.1")
+    release = threading.Event()
+    entered = threading.Event()
+
+    def blocking_latest():
+        entered.set()
+        release.wait(5)  # bounded: a bug can't hang the suite, only slow it
+        return "9.9.9"
+
+    monkeypatch.setattr("cockpit.lib.version.latest_version", blocking_latest)
+
+    app, _ = _make_app()
+    try:
+        start = time.monotonic()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            ready = time.monotonic() - start
+            # Interactive well before the 5s block clears → the check ran on a
+            # worker, not the loop. A synchronous on_mount call would push this
+            # past 5s (the freeze the re-exec'd TUI shows, in miniature).
+            assert ready < 2.0, f"mount blocked {ready:.1f}s on the update check"
+            assert entered.is_set()  # the check did start (off-thread)
+    finally:
+        release.set()

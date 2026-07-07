@@ -18,6 +18,7 @@ Subcommands:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import sys
@@ -87,11 +88,10 @@ def main(argv: list[str] | None = None) -> int:
         from cockpit.cockpit import main as daemon_main
 
         rc = daemon_main([f"--{sub}", *rest])
-        # `u` in the TUI exits watch with RESTART_EXIT_CODE. The reinstall can't
-        # take effect in-process (it replaces the running package), so we run
-        # the Python updater here — after the TUI has torn down and restored the
-        # terminal — then `os.execvp` a fresh `cockpit watch` on the new version.
-        # No shell supervisor: the update logic ships in the wheel (updater.py).
+        # `u` in the TUI exits watch with RESTART_EXIT_CODE. Run the update in a
+        # fresh subprocess (not in-process, where the just-torn-down Textual
+        # would share fds/signals with the terminal-touching update), then
+        # re-exec a fresh `cockpit watch` on the new version.
         if sub == "watch":
             from cockpit.tui.app import RESTART_EXIT_CODE
 
@@ -140,10 +140,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _self_update_and_reexec(watch_args: list[str]) -> int:
-    """Handle the TUI's `u` self-update after watch exits: run the updater, then
-    re-exec a fresh `cockpit watch` on the new version. Declines (returning 0)
-    when not running as the installed `cockpit` — a dev's `uv run` session must
-    not be auto-swapped for the released wheel."""
+    """The TUI exited via `u`. Run the update as a fresh `cockpit update`
+    subprocess — a cooked, pre-TUI process, the exact state manual `cockpit
+    update` runs in — so the heavy, terminal-touching update work never runs in
+    this process that just tore Textual down, then re-exec onto the new version.
+
+    Declines (returning 0) when not running as the installed `cockpit` — a dev's
+    `uv run` session must not be auto-swapped for the released wheel."""
     if not _running_as_installed_cockpit():
         print(
             "update available — run `cockpit update`, or press `u` from an "
@@ -151,25 +154,23 @@ def _self_update_and_reexec(watch_args: list[str]) -> int:
             file=sys.stderr,
         )
         return 0
-    from cockpit.lib.updater import run_update
+    import subprocess
 
-    rc = run_update()
-    if rc != 0:
+    if subprocess.run(["cockpit", "update"]).returncode != 0:
         print(
-            "cockpit: update failed; not relaunching. "
-            "Re-run `cockpit watch` on the current version.",
+            "cockpit: update failed; not relaunching. Re-run `cockpit watch`.",
             file=sys.stderr,
         )
-        return rc
-    # Replace this process with the just-installed cockpit. execvp resolves the
-    # new binary on PATH and never returns (NoReturn) on success; the trailing
-    # return is reached only if it's stubbed (tests) or somehow returns.
+        return 1
+    # The update's subprocesses can leave the controlling terminal's foreground
+    # process group dangling; re-assert ours before re-exec so the new Textual
+    # isn't stopped on SIGTTIN/SIGTTOU (blank frozen screen).
+    _restore_terminal_foreground()
+    # Replace this process with the just-installed cockpit; execvp never returns
+    # on success (the trailing return is reached only if stubbed in tests).
     try:
         os.execvp("cockpit", ["cockpit", "watch", *watch_args])
     except OSError as exc:
-        # exec failed (e.g. `cockpit` vanished from PATH mid-update). Print a
-        # plain message instead of letting the uncaught traceback lazily import
-        # from the just-replaced venv and render a confusing mixed-version trace.
         print(
             f"cockpit: relaunch failed ({exc}); update installed — "
             "re-run `cockpit watch`.",
@@ -177,6 +178,31 @@ def _self_update_and_reexec(watch_args: list[str]) -> int:
         )
         return 1
     return 0  # type: ignore[unreachable]
+
+
+def _restore_terminal_foreground() -> None:
+    """Re-assert this process group as the controlling terminal's foreground
+    before re-exec'ing the TUI. A no-op unless something (an update subprocess)
+    left the foreground pgrp elsewhere; without it the re-exec'd Textual reads
+    stdin from the background and is stopped on SIGTTIN. No-op without a TTY."""
+    import signal
+
+    try:
+        if not sys.stdin.isatty():
+            return
+    except (OSError, ValueError):
+        return
+    prev = signal.getsignal(signal.SIGTTOU)
+    try:
+        # tcsetpgrp from a background pgrp raises SIGTTOU at us; ignore it for
+        # the reclaim so we don't stop ourselves doing it.
+        signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+        os.tcsetpgrp(sys.stdin.fileno(), os.getpgrp())
+    except (OSError, ValueError):
+        pass
+    finally:
+        with contextlib.suppress(OSError, ValueError, TypeError):
+            signal.signal(signal.SIGTTOU, prev)
 
 
 if __name__ == "__main__":

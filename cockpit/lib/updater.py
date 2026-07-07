@@ -22,9 +22,12 @@ expose. `--skip-install` runs only the refresh + setup steps: the bootstrap
 PATH, so the updater must not reinstall (which would redirect to the newest
 cached dir and could differ from the version just bootstrapped).
 
-The `u` self-update calls `run_update()` (full) from `cli.py` after the TUI
-tears down, then `os.execvp`s a fresh `cockpit watch` — the reinstall lands on
-disk before the exec loads it.
+The `u` self-update runs this via a fresh `subprocess.run(["cockpit", "update"])`
+from `cli.py`'s `_self_update_and_reexec` — a cooked, pre-TUI process, the exact
+state this manual path runs in — then `os.execvp`s onto the new version. The
+reinstall lands on disk before the exec loads it. Subprocesses run tty-detached
+(`_TTY_SAFE`) so a child can't mangle the controlling terminal's job control
+under the re-exec'd TUI.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 from cockpit.lib import version
 
@@ -42,6 +46,19 @@ from cockpit.lib import version
 UPDATE_AVAILABLE_EXIT = 10
 
 _UV_INSTALL_URL = "https://astral.sh/uv/install.sh"
+
+
+# Run every update subprocess detached from the controlling terminal: stdin off
+# the TTY so a child can't SIGTTIN-block on a read, and its own session so it
+# can't grab the TTY foreground process group. A child that mangled job control
+# would otherwise leave the re-exec'd TUI stopped on SIGTTIN/SIGTTOU — the blank
+# frozen-screen `u` self-update bug. (These are batch, non-interactive tools.)
+class _TtySafe(TypedDict):
+    stdin: int
+    start_new_session: bool
+
+
+_TTY_SAFE: _TtySafe = {"stdin": subprocess.DEVNULL, "start_new_session": True}
 
 
 def _claude_home() -> Path:
@@ -57,7 +74,9 @@ def _ensure_uv() -> bool:
         return True
     print("uv not found — installing it...")
     try:
-        subprocess.run(f"curl -LsSf {_UV_INSTALL_URL} | sh", shell=True, check=True)
+        subprocess.run(
+            f"curl -LsSf {_UV_INSTALL_URL} | sh", shell=True, check=True, **_TTY_SAFE
+        )
     except (subprocess.SubprocessError, OSError):
         return False
     local_bin = Path.home() / ".local" / "bin"
@@ -87,14 +106,18 @@ def _refresh_plugin() -> None:
     print(f"refreshing marketplace {market}...")
     try:
         subprocess.run(
-            ["claude", "plugin", "marketplace", "update", market], check=False
+            ["claude", "plugin", "marketplace", "update", market],
+            check=False,
+            **_TTY_SAFE,
         )
     except OSError:
         print("marketplace refresh failed; continuing.", file=sys.stderr)
     print(f"updating plugin {plugin}@{market}...")
     try:
         subprocess.run(
-            ["claude", "plugin", "update", f"{plugin}@{market}"], check=False
+            ["claude", "plugin", "update", f"{plugin}@{market}"],
+            check=False,
+            **_TTY_SAFE,
         )
     except OSError:
         print("plugin refresh failed; continuing.", file=sys.stderr)
@@ -149,6 +172,7 @@ def _do_install() -> int:
         subprocess.run(
             ["uv", "tool", "install", "--force", "--no-cache", str(src)],
             check=True,
+            **_TTY_SAFE,
         )
     except (subprocess.SubprocessError, OSError) as exc:
         print(f"error: uv tool install failed: {exc}", file=sys.stderr)
@@ -165,7 +189,7 @@ def _run_setup() -> None:
         return
     print("re-pinning footer config (cockpit setup)...")
     try:
-        subprocess.run([cockpit, "setup"], check=False)
+        subprocess.run([cockpit, "setup"], check=False, **_TTY_SAFE)
     except OSError:
         print("cockpit setup failed; footer config left as-is.", file=sys.stderr)
 

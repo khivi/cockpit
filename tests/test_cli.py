@@ -13,6 +13,19 @@ import pytest
 import cockpit.cli as cli
 
 
+@pytest.fixture(autouse=True)
+def _no_real_self_update(monkeypatch):
+    # `_self_update_and_reexec` shells out to `cockpit update`. The
+    # `_running_as_installed_cockpit` gate already declines under pytest (argv[0]
+    # isn't `cockpit`), but as defense-in-depth make a real subprocess fail
+    # loudly — no cli test should ever reinstall cockpit on the dev's machine.
+    # Update-path tests override subprocess.run with their own recorder.
+    def _boom(cmd, *a, **k):
+        raise AssertionError(f"cli test shelled out for real: {cmd!r}")
+
+    monkeypatch.setattr("subprocess.run", _boom)
+
+
 def test_no_args_defaults_to_watch(monkeypatch):
     seen = {}
 
@@ -143,59 +156,69 @@ def test_update_routes_with_flags(monkeypatch, argv, expected):
     assert seen == expected
 
 
-# --- `u` self-update: watch exits 42 → update + re-exec --------------------
+# --- `u` self-update: run `cockpit update` in a subprocess, then re-exec ----
 
 
-def test_watch_restart_triggers_update_and_reexec(monkeypatch):
+class _Completed:
+    def __init__(self, returncode: int) -> None:
+        self.returncode = returncode
+
+
+def test_watch_restart_updates_in_subprocess_then_reexecs(monkeypatch):
+    order: list = []
     monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 42)
     monkeypatch.setattr(cli, "_running_as_installed_cockpit", lambda: True)
-    updated = []
+    monkeypatch.setattr(
+        cli, "_restore_terminal_foreground", lambda: order.append("restore")
+    )
 
-    def fake_update(*a, **k):
-        updated.append(True)
-        return 0
+    def _run(cmd, *a, **k):
+        order.append(("run", cmd))
+        return _Completed(0)
 
-    monkeypatch.setattr("cockpit.lib.updater.run_update", fake_update)
-    execs = []
-    monkeypatch.setattr(cli.os, "execvp", lambda file, args: execs.append((file, args)))
+    monkeypatch.setattr("subprocess.run", _run)
+    monkeypatch.setattr(cli.os, "execvp", lambda f, a: order.append(("exec", f, a)))
 
     rc = cli.main(["watch", "--once"])
-    assert updated == [True]
-    assert execs == [("cockpit", ["cockpit", "watch", "--once"])]
+    # Update ran as a fresh `cockpit update` subprocess (not in this process),
+    # then the tty foreground is reclaimed, then re-exec onto the new version
+    # preserving the watch args — in that order.
+    assert order == [
+        ("run", ["cockpit", "update"]),
+        "restore",
+        ("exec", "cockpit", ["cockpit", "watch", "--once"]),
+    ]
     assert rc == 0  # execvp mocked → falls through to the unreachable return
 
 
 def test_watch_restart_declines_when_not_installed(monkeypatch, capsys):
     monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 42)
     monkeypatch.setattr(cli, "_running_as_installed_cockpit", lambda: False)
-    called = []
-
-    def fake(*a, **k):
-        called.append(True)
-        return 0
-
-    monkeypatch.setattr("cockpit.lib.updater.run_update", fake)
+    execs = []
+    monkeypatch.setattr(cli.os, "execvp", lambda f, a: execs.append((f, a)))
 
     assert cli.main(["watch"]) == 0  # decline cleanly, leave the dev a shell
-    assert called == []  # updater never invoked
+    assert execs == []  # no re-exec, no `cockpit update` subprocess (would raise)
     assert "cockpit update" in capsys.readouterr().err
 
 
-def test_watch_restart_no_reexec_when_update_fails(monkeypatch):
+def test_watch_restart_no_reexec_when_update_fails(monkeypatch, capsys):
     monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 42)
     monkeypatch.setattr(cli, "_running_as_installed_cockpit", lambda: True)
-    monkeypatch.setattr("cockpit.lib.updater.run_update", lambda *a, **k: 1)
+    monkeypatch.setattr("subprocess.run", lambda cmd, *a, **k: _Completed(1))
     execs = []
-    monkeypatch.setattr(cli.os, "execvp", lambda file, args: execs.append((file, args)))
+    monkeypatch.setattr(cli.os, "execvp", lambda f, a: execs.append((f, a)))
 
     assert cli.main(["watch"]) == 1  # surface the failure
-    assert execs == []  # do NOT relaunch on a failed update
+    assert execs == []  # a failed update does NOT relaunch
+    assert "update failed" in capsys.readouterr().err
 
 
 def test_watch_restart_reports_exec_failure(monkeypatch, capsys):
     monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 42)
     monkeypatch.setattr(cli, "_running_as_installed_cockpit", lambda: True)
-    monkeypatch.setattr("cockpit.lib.updater.run_update", lambda *a, **k: 0)
+    monkeypatch.setattr(cli, "_restore_terminal_foreground", lambda: None)
+    monkeypatch.setattr("subprocess.run", lambda cmd, *a, **k: _Completed(0))
 
     def boom(file, args):
         raise OSError("cockpit: not found")
@@ -209,12 +232,8 @@ def test_watch_restart_reports_exec_failure(monkeypatch, capsys):
 
 def test_watch_clean_exit_does_not_self_update(monkeypatch):
     monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 0)
-    called = []
-
-    def fake(*a, **k):
-        called.append(True)
-        return 0
-
-    monkeypatch.setattr("cockpit.lib.updater.run_update", fake)
+    execs = []
+    monkeypatch.setattr(cli.os, "execvp", lambda f, a: execs.append((f, a)))
+    # subprocess.run is the autouse raiser; a clean exit must not reach it.
     assert cli.main(["watch"]) == 0
-    assert called == []
+    assert execs == []  # no re-exec
