@@ -283,8 +283,12 @@ def _ensure_flat_cache_dir() -> Path:
 
 
 def atomic_write(path: Path, payload: str) -> None:
-    """Write `payload` to `path` atomically via .tmp + rename."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    """Write `payload` to `path` via a PID-suffixed tmp + rename.
+
+    The PID suffix keeps concurrent writers (daemon + a renderer-spawned
+    refresher) from racing on the same tmp name — mirrors `_atomic_write_json`.
+    """
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(payload)
     os.replace(tmp, path)
 

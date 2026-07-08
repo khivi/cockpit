@@ -1371,6 +1371,32 @@ def test_dedupe_closes_same_name_workspaces_without_live_worktree(tmp_path):
     assert keep == {"workspace:3"}
 
 
+def test_dedupe_excludes_foreign_repo_workspace_from_name_collision(tmp_path):
+    """Regression: `ctx.names`/`ctx.cwds` are the GLOBAL cmux workspace state
+    (every watched repo, not just this one — `workspace_state()` returns the
+    whole-machine snapshot every time it's refetched per-repo). Workspace names
+    are bare branch labels with no repo prefix, so a coworker repo's workspace
+    on a same-named branch collides on the name-key group. It must never be
+    grouped or closed as a "duplicate" — only a genuine in-repo duplicate
+    (same dead cwd, no live worktree) should still be closed."""
+    dead = tmp_path / "gone"  # this repo's dead cwd, never created
+    foreign = tmp_path.parent / "some-other-repo" / "feat"  # a different repo entirely
+    ctx = _dedupe_ctx(
+        tmp_path,
+        wts=[],
+        names={
+            "workspace:3": "[n] feat",
+            "workspace:8": "[n] feat",
+            "workspace:50": "[n] feat",
+        },
+        cwds={"workspace:3": dead, "workspace:8": dead, "workspace:50": foreign},
+    )
+    with patch.object(cycle, "cmux_close_workspace_best_effort") as close_mock:
+        keep = cycle._dedupe_workspaces(ctx)
+    close_mock.assert_called_once_with("workspace:8")
+    assert keep == {"workspace:3"}
+
+
 # ── _transition_merged_tickets: the opt-in Linear write at OPEN→MERGED ───────
 
 

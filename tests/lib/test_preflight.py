@@ -583,10 +583,10 @@ def test_preflight_silent_when_done_on_merge_disabled_without_key(
 
 
 def test_config_example_passes_validation():
-    # config.example.json is BOTH the documented schema and the file copied as a
-    # new user's config on first run, so a key the daemon rejects (e.g. the
-    # removed `use_linear`) breaks every fresh install. Running it through the
-    # real validators here makes that drift a CI failure, not a bug report.
+    # config.example.json is the documented schema users copy settings from, so
+    # a key the daemon rejects (e.g. the removed `use_linear`) turns the docs
+    # into a trap. Running it through the real validators here makes that drift
+    # a CI failure, not a bug report.
     cfg = json.loads(CONFIG_EXAMPLE.read_text())
     validate_config(cfg)  # raises SystemExit on any rejected key
 

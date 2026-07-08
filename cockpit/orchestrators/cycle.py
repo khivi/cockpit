@@ -1487,6 +1487,16 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
     """Close duplicate cmux workspaces, keeping the lowest-PID per group.
     Returns the surviving refs.
 
+    `ctx.names`/`ctx.cwds` are the GLOBAL cmux workspace state (every repo
+    watched, not just this one) — `workspace_state()` is refetched per-repo but
+    returns the same whole-machine snapshot every time. A workspace whose cwd
+    doesn't resolve under THIS repo (a different repo entirely, or unresolvable)
+    is excluded from grouping altogether: it must never fall back to the
+    name-key group, or two repos with the same branch label (workspace names
+    are bare branch labels, no repo prefix — see `wt.workspace_name`) collide on
+    that key and a live, unrelated workspace from the other repo gets closed as
+    a "duplicate".
+
     Group key is the workspace's live feature-worktree path when it sits on one,
     else its name. A workspace correctly rooted on its own worktree is the
     canonical workspace for that worktree — never a duplicate of a same-named
@@ -1497,7 +1507,8 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
     matched-PR spawn re-created it next cycle, churning spawn→close→respawn.
     Path-keying stops that while still deduping true duplicates: same-worktree
     double-spawns (same OR different name) share the path key, and workspaces
-    with no live worktree fall back to the name key.
+    with no live worktree (but still rooted somewhere under this repo) fall
+    back to the name key.
     """
 
     def _close_extras(refs_sorted: list[str]) -> None:
@@ -1512,6 +1523,16 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
                 cmux_close_workspace_best_effort(extra)
 
     feature_wt_paths = {wt.path.resolve() for wt in ctx.wts if not wt.is_primary}
+    # Root-membership test mirrors `_repo_owned_refs`: repo_path plus every
+    # `git worktree list` path for this repo (primary included — that command
+    # reports every worktree tied to this repo, even a bare repo's siblings
+    # living outside `repo_path`). A cwd under none of these belongs to some
+    # other watched repo (or is unresolvable).
+    own_roots = {ctx.repo_path.resolve()} | {wt.path.resolve() for wt in ctx.wts}
+
+    def _is_own_repo(cwd: Path) -> bool:
+        resolved = cwd.resolve()
+        return any(parent in own_roots for parent in (resolved, *resolved.parents))
 
     def _group_key(ref: str, ws_name: str) -> object:
         cwd = ctx.cwds.get(ref)
@@ -1521,6 +1542,12 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
 
     groups: dict[object, list[str]] = {}
     for ref, ws_name in ctx.names.items():
+        cwd = ctx.cwds.get(ref)
+        if cwd is None or not _is_own_repo(cwd):
+            # Missing cwd, or resolves outside this repo entirely — belongs to
+            # another repo (or is unresolvable). Never group it by name, so it
+            # can never masquerade as a duplicate of one of ours.
+            continue
         groups.setdefault(_group_key(ref, ws_name), []).append(ref)
     keep_refs: set[str] = set()
     for refs in groups.values():

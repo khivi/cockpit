@@ -1,4 +1,4 @@
-"""Tests for the CLI→daemon signaling channel: kick/stop signals + close-request queue."""
+"""Tests for the CLI→daemon signaling channel: kick signal + close-request queue."""
 
 from __future__ import annotations
 
@@ -169,68 +169,11 @@ def test_kick_running_permission_error_surfaces(signal_mod, monkeypatch, capsys)
     assert "not permitted" in err
 
 
-def test_stop_running_no_pidfile_returns_zero(signal_mod, capsys):
-    assert signal_mod.stop_running() == 0
-    assert "no cockpit running" in capsys.readouterr().out
-
-
-def test_stop_running_stale_pidfile_cleans_up(signal_mod, monkeypatch, capsys):
-    from cockpit.lib.config import PID_FILE
-
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text("4242")
-
-    def boom(_pid, _sig):
-        raise ProcessLookupError
-
-    monkeypatch.setattr(os, "kill", boom)
-    assert signal_mod.stop_running() == 0
-    assert not PID_FILE.exists()
-    assert "stale pidfile" in capsys.readouterr().out
-
-
-def test_stop_running_signals_and_waits_for_pidfile_removal(
-    signal_mod, monkeypatch, capsys
-):
-    from cockpit.lib.config import PID_FILE
-
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text("4242")
-    sent: list[tuple[int, int]] = []
-
-    def fake_kill(pid, sig):
-        sent.append((pid, sig))
-        PID_FILE.unlink()
-
-    monkeypatch.setattr(os, "kill", fake_kill)
-    assert signal_mod.stop_running() == 0
-    assert sent == [(4242, signal.SIGTERM)]
-    assert "stopped cockpit pid=4242" in capsys.readouterr().out
-
-
-def test_sync_kicks_when_running(signal_mod, monkeypatch):
-    monkeypatch.setattr(signal_mod, "kick_running", lambda: True)
-    fallback_calls: list[int] = []
-
-    def fallback() -> int:
-        fallback_calls.append(1)
-        return 7
-
-    assert signal_mod.sync(fallback) == 0
-    assert fallback_calls == []
-
-
-def test_sync_falls_back_when_not_running(signal_mod, monkeypatch):
-    monkeypatch.setattr(signal_mod, "kick_running", lambda: False)
-    assert signal_mod.sync(lambda: 7) == 7
-
-
 # ── real-subprocess signal validation (no os.kill mocks) ────────────────────
 
 import subprocess  # noqa: E402
 import sys  # noqa: E402
 import textwrap  # noqa: E402
-import threading  # noqa: E402
 
 
 def _wait_for(path, timeout: float = 5.0) -> bool:
@@ -285,31 +228,3 @@ def test_kick_running_signals_real_process(signal_mod, tmp_path):
     finally:
         proc.terminate()
         proc.wait(timeout=5.0)
-
-
-def test_stop_running_terminates_real_process(signal_mod, tmp_path):
-    from cockpit.lib.config import PID_FILE
-
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    proc, _, term_marker = _spawn_trap(tmp_path)
-    try:
-        PID_FILE.write_text(str(proc.pid))
-
-        # The trap subprocess doesn't unlink the pidfile itself (that's
-        # run_watcher's `finally:` cleanup). Help stop_running observe a
-        # "clean shutdown" by clearing the pidfile shortly after SIGTERM.
-        def _cleanup_pidfile():
-            time.sleep(0.05)
-            PID_FILE.unlink(missing_ok=True)
-
-        threading.Thread(target=_cleanup_pidfile, daemon=True).start()
-
-        rc = signal_mod.stop_running()
-        assert rc == 0
-        assert _wait_for(term_marker), "subprocess never received SIGTERM"
-        assert proc.wait(timeout=5.0) == 0
-        assert not PID_FILE.exists()
-    finally:
-        if proc.poll() is None:
-            proc.terminate()
-            proc.wait(timeout=5.0)

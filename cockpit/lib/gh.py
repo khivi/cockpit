@@ -114,7 +114,7 @@ def fetch_merged_branches(
             variables["cursor"] = cursor
         try:
             data = _graphql(_MERGED_BRANCHES_QUERY, variables)
-        except subprocess.CalledProcessError:
+        except RuntimeError:
             return {}
         try:
             page = data["data"]["search"]
@@ -191,7 +191,7 @@ def list_open_pr_heads(owner: str, name: str) -> list[OpenPRHead]:
             variables["cursor"] = cursor
         try:
             data = _graphql(_OPEN_PR_HEADS_QUERY, variables)
-        except subprocess.CalledProcessError:
+        except RuntimeError:
             return []
         try:
             page = data["data"]["search"]
@@ -701,7 +701,7 @@ def _identify_stale(
     stale: list[int] = []
     for num, updated in light_by_number.items():
         prev = cache.get(num)
-        if prev is None or prev[1] != updated or prev[0].ci == "pending":
+        if prev is None or prev[1] != updated or prev[0].ci in ("pending", "unknown"):
             stale.append(num)
     return stale
 
@@ -749,7 +749,9 @@ def list_relevant_prs(
 
     Two-phase fetch when `cache` is given: a cheap (number, updatedAt) query
     first, then full detail only for PRs whose updatedAt changed (or whose
-    cached CI was `pending` — CI updates don't bump updatedAt). Steady-state
+    cached CI was `pending` or `unknown` — CI updates don't bump updatedAt, and
+    `unknown` can result from a transient checkSuites null that never gets a
+    chance to refresh otherwise). Steady-state
     cycles where nothing moved cost one cheap GraphQL call instead of the
     heavy one.
     """

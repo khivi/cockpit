@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from textual.app import App, ComposeResult
 
 import cockpit.lib.cache as cache_mod
 from cockpit.lib.git import Worktree
@@ -29,6 +30,7 @@ from cockpit.tui.widgets.worktree_table import (
     HEADER_KEY_PREFIX,
     ICON_PR_MUTED,
     ICON_PR_NUDGE,
+    WorktreeTable,
     _comments_cell,
     _header_cells,
     _linear_status_icon,
@@ -391,3 +393,27 @@ def test_header_cells_tinted_by_repo_color():
 def test_header_key_prefix_is_nul_led():
     # The sentinel must never collide with a real worktree path key.
     assert HEADER_KEY_PREFIX.startswith("\x00")
+
+
+class _Host(App[None]):
+    def compose(self) -> ComposeResult:
+        yield WorktreeTable(id="table")
+
+
+@pytest.mark.asyncio
+async def test_cursor_skips_past_consecutive_header_rows(cache_dir):
+    # Regression: with rows [header(A), header(B), wt] the cursor auto-skip
+    # only advanced one row off a header, landing on header(B) instead of the
+    # worktree row below it — a header row hides every row-targeted footer key.
+    wt = _wt(path="/tmp/consecutive-headers-wt", branch="khivi/feat-x")
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory(
+            [
+                ("A", None, False, []),  # empty repo -> header row only
+                ("B", None, False, [wt]),  # header row followed by one worktree
+            ]
+        )
+        await pilot.pause()
+        assert table.current_path() == str(wt.path)

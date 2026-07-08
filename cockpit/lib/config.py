@@ -157,8 +157,13 @@ def reset_config_cache() -> None:
 def ensure_state_dirs() -> None:
     for p in (COCKPIT_HOME, CACHE_DIR):
         p.mkdir(parents=True, exist_ok=True)
-    if not CONFIG_PATH.exists() and CONFIG_EXAMPLE.exists():
-        shutil.copy(CONFIG_EXAMPLE, CONFIG_PATH)
+    if not CONFIG_PATH.exists():
+        # Seed an empty, valid config rather than copying config.example.json:
+        # the example's placeholder repos (fake /absolute/path/to/... paths)
+        # used to land verbatim in a fresh install, erroring every daemon tick
+        # forever since registry.register_cwd only appends. config.example.json
+        # itself stays untouched as documentation of the schema.
+        CONFIG_PATH.write_text(json.dumps({"repos": []}, indent=2) + "\n")
 
 
 def discover_repo() -> dict | None:

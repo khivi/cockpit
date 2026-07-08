@@ -474,10 +474,15 @@ class WorktreeTable(DataTable):
             # Don't leave the cursor resting on a group header when a worktree
             # row is selectable just below — the common single-repo first render
             # would otherwise open with the header (and every row key hidden).
+            # Consecutive headers (e.g. an empty repo followed by another
+            # repo's header) need more than one hop, so keep advancing until
+            # the cursor is off every header or the rows run out.
             key = self._current_row_key()
-            if (
+            while (
                 key
                 and key.startswith(HEADER_KEY_PREFIX)
                 and target + 1 < self.row_count
             ):
-                self.move_cursor(row=target + 1)
+                target += 1
+                self.move_cursor(row=target)
+                key = self._current_row_key()

@@ -20,6 +20,7 @@ from cockpit.lib.gh import (
     _PR_LIGHT_FIELDS,
     OpenPRHead,
     _graphql,
+    _identify_stale,
     _relevant_pr_query,
     fetch_merged_branches,
     fetch_pr_state_for_branch,
@@ -241,20 +242,25 @@ def test_list_open_pr_heads_null_author_becomes_empty_string():
 
 
 def test_list_open_pr_heads_empty_on_graphql_failure():
-    import subprocess
-
+    """Degrades per its documented contract. The call chain (`_graphql` →
+    `gh_json` → `run()`) raises RuntimeError on a `gh` failure, never
+    CalledProcessError — the except clause must match what's actually raised
+    or this degrade path is dead and a transient gh failure aborts the whole
+    repo cycle instead.
+    """
     with patch(
         "cockpit.lib.gh._graphql",
-        side_effect=subprocess.CalledProcessError(1, "gh"),
+        side_effect=RuntimeError("gh api graphql failed"),
     ):
         assert list_open_pr_heads("o", "n") == []
 
 
 def test_fetch_merged_branches_graphql_failure_returns_empty_map():
-    import subprocess as _sp
-
-    err = _sp.CalledProcessError(1, ["gh", "api", "graphql"])
-    with patch("cockpit.lib.gh._graphql", side_effect=err):
+    """Same dead-path concern as list_open_pr_heads: `run()` raises
+    RuntimeError, so that's what fetch_merged_branches must catch."""
+    with patch(
+        "cockpit.lib.gh._graphql", side_effect=RuntimeError("gh api graphql failed")
+    ):
         assert fetch_merged_branches("o", "n") == {}
 
 
@@ -347,6 +353,19 @@ def test_pr_fields_query_includes_head_ref_oid():
     from cockpit.lib.gh import _PR_FIELDS
 
     assert "headRefOid" in _PR_FIELDS
+
+
+# ── _identify_stale — force a refetch on cached ci="unknown" ────────────────
+
+
+def test_identify_stale_refetches_unknown_ci_even_when_updated_at_unchanged():
+    """`_pr_from_node` can cache ci="unknown" on a transient checkSuites null.
+    CI changes don't bump updatedAt, so without treating "unknown" like
+    "pending" here, an unknown-CI PR would never refresh."""
+    pr = _issue_pr(ci="unknown")
+    cache = {1: (pr, "2025-01-01")}
+    stale = _identify_stale({1: "2025-01-01"}, cache)
+    assert stale == [1]
 
 
 # ── PR.nudge_issue — single source for the nudge decision + TUI 🔔 ──────────

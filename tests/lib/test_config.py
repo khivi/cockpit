@@ -322,6 +322,41 @@ from tests.fixtures import (  # noqa: E402
 _STATUSLINE_CMD = "/path/to/footer.py"
 
 
+# ── ensure_state_dirs first-run seeding ─────────────────────────────────────
+
+
+def test_ensure_state_dirs_seeds_empty_repos_on_first_run(tmp_path, monkeypatch):
+    # First run must NOT copy config.example.json — its placeholder repos
+    # (fake /absolute/path/to/... paths) would error on every daemon tick
+    # forever, since registry.register_cwd only appends.
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "cockpit"))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    import importlib
+
+    importlib.reload(config_mod)
+
+    config_mod.ensure_state_dirs()
+
+    on_disk = json.loads((tmp_path / "cockpit" / "config.json").read_text())
+    assert on_disk == {"repos": []}
+
+
+def test_ensure_state_dirs_never_overwrites_existing_config(tmp_path, monkeypatch):
+    cockpit_home = tmp_path / "cockpit"
+    cockpit_home.mkdir()
+    (cockpit_home / "config.json").write_text(json.dumps({"repos": [{"name": "a"}]}))
+    monkeypatch.setenv("COCKPIT_HOME", str(cockpit_home))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    import importlib
+
+    importlib.reload(config_mod)
+
+    config_mod.ensure_state_dirs()
+
+    on_disk = json.loads((cockpit_home / "config.json").read_text())
+    assert on_disk == {"repos": [{"name": "a"}]}
+
+
 # ── use_cship gating ────────────────────────────────────────────────────────
 
 

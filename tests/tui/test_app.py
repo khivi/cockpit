@@ -199,6 +199,34 @@ async def test_fast_starts_only_after_first_slow():
         assert app._fast_started
 
 
+async def test_run_slow_starts_fast_even_if_publish_raises(monkeypatch):
+    # Regression: `_run_slow`'s `finally` used to call `_publish_inventory()`
+    # unprotected before `call_from_thread(self._start_fast)` — a failure on
+    # the very first slow tick (e.g. a bad worktree read) would raise before
+    # `_start_fast` was ever reached, silently stranding the fast-tick loop.
+    order: list[str] = []
+
+    def slow(on_repo_done=None, only_repo=None):
+        order.append("slow")
+
+    app = CockpitApp(
+        slow_tick=slow,
+        fast_tick=lambda: order.append("fast"),
+        slow_secs=300,
+        fast_secs=30,
+    )
+
+    def _boom() -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(app, "_publish_inventory", _boom)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.8)
+        assert order[0] == "slow"
+        assert "fast" in order  # fast still started despite the publish failure
+        assert app._fast_started
+
+
 async def test_sync_key_kicks_slow_tick():
     app, calls = _make_app()
     async with app.run_test() as pilot:
@@ -221,6 +249,27 @@ async def test_phase_gate_blocks_overlapping_kick(monkeypatch):
         app._slow_phase = "idle"
         app._kick_slow()
         assert ran == [1]  # runs once the phase clears
+
+
+async def test_scoped_kick_does_not_reset_header_countdown(monkeypatch):
+    # Regression: `_kick_slow` used to reset `_next_slow` unconditionally, but
+    # the real cadence is the `set_interval` timer from on_mount (always
+    # only_repo=None) — a repo-scoped row-action kick must not desync the
+    # header countdown from that timer.
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.6)
+        monkeypatch.setattr(app, "_run_slow", lambda only_repo=None: None)
+
+        stale = time.monotonic() + 999
+        app._next_slow = stale
+        app._slow_phase = "idle"
+        app._kick_slow("/some/repo")
+        assert app._next_slow == stale  # scoped kick leaves the countdown alone
+
+        app._slow_phase = "idle"
+        app._kick_slow(None)
+        assert app._next_slow != stale  # full-cycle kick does reset it
 
 
 async def test_waiting_on_lock_shows_waiting_not_running():
@@ -271,7 +320,7 @@ async def test_update_check_re_runs_on_each_slow_tick(monkeypatch):
 
 
 async def test_tick_output_written_to_bounded_log_file():
-    # No LogPane in the layout; tick output lands in the bounded watch.log.
+    # No log pane widget exists; tick output lands in the bounded watch.log.
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause(0.5)  # mount prints "slow-tick: …" → drained to file
