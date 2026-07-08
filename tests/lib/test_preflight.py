@@ -170,15 +170,16 @@ def test_warn_unresolvable_base_warns_for_bare_clone(cockpit_repo, tmp_path, cap
     assert "remote.origin.fetch" in err  # the fix is spelled out
 
 
-def test_warn_unresolvable_base_skips_in_place_repo(cockpit_repo, tmp_path, capsys):
-    """An `in_place` repo never spawns worktrees and may be off-GitHub with no
-    origin — it must not trip the warning even when origin/main is absent."""
+def test_warn_unresolvable_base_skips_no_worktree_repo(cockpit_repo, tmp_path, capsys):
+    """A `use_worktree: false` repo never spawns worktrees and may be off-GitHub
+    with no origin — it must not trip the warning even when origin/main is
+    absent."""
     bare = tmp_path / "bare.git"
     subprocess.run(
         ["git", "clone", "--bare", str(cockpit_repo.origin), str(bare)], check=True
     )
     _warn_unresolvable_base(
-        {"repos": [{"name": "beta", "path": str(bare), "in_place": True}]}
+        {"repos": [{"name": "beta", "path": str(bare), "use_worktree": False}]}
     )
     assert capsys.readouterr().err == ""
 
@@ -232,19 +233,19 @@ def test_preflight_ignores_repo_without_review_external(tmp_path, monkeypatch, c
     assert capsys.readouterr().err == ""
 
 
-def test_preflight_exits_on_non_bool_in_place(tmp_path, monkeypatch, capsys):
+def test_preflight_exits_on_non_bool_use_worktree(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "repos": [{"name": "r", "in_place": "yes"}]})
+        preflight({"tool": "cmux", "repos": [{"name": "r", "use_worktree": "yes"}]})
     assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert "in_place" in err
+    assert "use_worktree" in err
     assert "'yes'" in err
 
 
-def test_preflight_passes_on_bool_in_place(tmp_path, monkeypatch, capsys):
+def test_preflight_passes_on_bool_use_worktree(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
-    preflight({"tool": "cmux", "repos": [{"name": "r", "in_place": True}]})
+    preflight({"tool": "cmux", "repos": [{"name": "r", "use_worktree": False}]})
     assert capsys.readouterr().err == ""
 
 

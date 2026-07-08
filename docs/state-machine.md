@@ -81,15 +81,16 @@ GitHub handle.
 ### 2a. Live PRs — track & spawn
 
 Leads on "does a worktree exist?" so the two PR×author dimensions don't fan out.
-An `in_place` repo (registered by bare `cockpit new`) never reaches this tree —
-`_spawn_missing_workspaces` early-returns, so no PR/review/orphan worktree is
-auto-spawned; its row still renders from `git worktree list` + the cell writers.
+A `use_worktree: false` repo (registered by bare `cockpit new`) never reaches
+this tree — `_spawn_missing_workspaces` early-returns, so no PR/review/orphan
+worktree is auto-spawned; its row still renders from `git worktree list` + the
+cell writers.
 
 ```mermaid
 flowchart TD
-  P["PR (any state)"] --> IP{"repo in_place?"}
-  IP -->|yes| SKIP["skip: no auto-spawn<br/>(row still renders)"]
-  IP -->|no| WT{"worktree<br/>exists?"}
+  P["PR (any state)"] --> IP{"repo<br/>use_worktree?"}
+  IP -->|"false"| SKIP["skip: no auto-spawn<br/>(row still renders)"]
+  IP -->|"true"| WT{"worktree<br/>exists?"}
 
   WT -->|yes| REUSE{"merged/closed PR but<br/>HEAD past head_oid?<br/>(branch reused)"}
   REUSE -->|yes| SUP["suppress: clear pills +<br/>blank PR cells (show no PR)"]
@@ -156,12 +157,12 @@ Key gates (all from `cycle.py`):
   TUI `c` close path), where `C` force overrides the open-PR soft block but never
   uncommitted/unpushed work.
 - **Primary-checkout close is workspace-only** — a manual `c`/`C` on a primary
-  checkout (an `in_place` `master`, `worktree_path == repo_path` / `wt.is_primary`)
+  checkout (a `use_worktree: false` `master`, `worktree_path == repo_path` / `wt.is_primary`)
   closes only the workspace: `teardown` skips `git worktree remove` (git refuses it
   on a primary checkout, and the user works there in place), and the unpushed guard
   relaxes (`worktree_state_blockers(is_primary=True)` — the checkout stays, so
   unpushed commits are safe), leaving only the dirty guard. This is a *manual* path
-  only; the autoclose tree above never reaches an `in_place` repo.
+  only; the autoclose tree above never reaches a `use_worktree: false` repo.
 - **Manual close is squash/rebase-merge aware** — the merged/open state both the
   hard unpushed gate and the soft open-PR gate read comes from
   `teardown.resolve_pr_state`: the cached PR payload first, then ONE live

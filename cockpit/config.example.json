@@ -61,7 +61,7 @@
       "path": "/absolute/path/to/inplace/repo",
       "branch_prefix": "yourusername/",
       "default_base": "main",
-      "in_place": true
+      "use_worktree": false
     }
   ],
   "slow_poll_interval_seconds": 300,

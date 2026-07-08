@@ -28,7 +28,7 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `review_command` | string | `/cockpit:review` | Slash command seeded as the first turn of an auto-spawned review worktree. No-op unless `review_prs`. |
 | `review_external` | bool | `false` | Also auto-spawn review worktrees for non-collaborator (fork) PRs. Off by default — untrusted content reaching a Bash-capable agent is a prompt-injection risk. |
 | `dependabot` | bool | `false` | Include Dependabot PRs in `review_prs` auto-spawn. Excluded by default. |
-| `in_place` | bool | `false` | User works directly in the main checkout; cockpit never spawns PR/review/orphan worktrees. Set by bare `cockpit new`. |
+| `use_worktree` | bool | `true` | When `false`, the user works directly in the main checkout and cockpit never spawns PR/review/orphan worktrees for the repo (and `n` on its row creates a single named workspace on the checkout, no worktree). Absent = `true` = normal worktree-managed repo. Set to `false` by bare `cockpit new`. |
 | `orphan_nudge_grace_hours` | number | `4` | Grace before a no-PR ("orphan") worktree draws the push-or-close nudge. `0` disables. Also a top-level default. |
 | `tickets` | object\|string | `{}` | Ticket-provider block (below). Bare string `"github"` == `{"provider": "github"}`. |
 

@@ -69,28 +69,36 @@ def fresh_repo(tmp_path, monkeypatch):
     return repo, home
 
 
-def test_register_cwd_in_place_writes_entry(fresh_repo):
+def test_register_cwd_no_worktree_writes_entry(fresh_repo):
     repo, home = fresh_repo
-    entry = register_cwd(in_place=True)
+    entry = register_cwd(use_worktree=False)
 
     assert entry["name"] == "proj"
     assert entry["path"] == str(repo.resolve())
-    assert entry["in_place"] is True
+    assert entry["use_worktree"] is False
     assert entry["branch_prefix"] == "khivi/"
     assert entry["default_base"] == "main"
 
     on_disk = json.loads((home / "config.json").read_text())
-    assert on_disk["repos"][0]["in_place"] is True
+    assert on_disk["repos"][0]["use_worktree"] is False
     assert on_disk["repos"][0]["path"] == str(repo.resolve())
 
 
-def test_register_cwd_in_place_is_idempotent(fresh_repo, capsys):
+def test_register_cwd_default_omits_use_worktree_key(fresh_repo, monkeypatch):
+    # The normal (worktree-managed) registration path leaves the key absent —
+    # absent means True, so the daemon auto-spawns as usual.
+    monkeypatch.setattr(registry, "_prompt_branch_prefix", lambda d: d)
+    entry = register_cwd()  # use_worktree defaults True
+    assert "use_worktree" not in entry
+
+
+def test_register_cwd_no_worktree_is_idempotent(fresh_repo, capsys):
     repo, home = fresh_repo
-    register_cwd(in_place=True)
+    register_cwd(use_worktree=False)
     capsys.readouterr()  # drop the "added repo" line
 
-    again = register_cwd(in_place=True)
-    assert again["in_place"] is True
+    again = register_cwd(use_worktree=False)
+    assert again["use_worktree"] is False
     assert "already managed" in capsys.readouterr().out
 
     on_disk = json.loads((home / "config.json").read_text())
@@ -103,18 +111,18 @@ def test_register_cwd_off_github_empty_prefix(fresh_repo, monkeypatch):
     monkeypatch.setattr(
         registry, "gh_self_user", lambda: (_ for _ in ()).throw(RuntimeError("no gh"))
     )
-    entry = register_cwd(in_place=True)
+    entry = register_cwd(use_worktree=False)
     assert entry["branch_prefix"] == ""
-    assert entry["in_place"] is True
+    assert entry["use_worktree"] is False
 
 
-def test_register_cwd_in_place_skips_prefix_prompt(fresh_repo, monkeypatch):
+def test_register_cwd_no_worktree_skips_prefix_prompt(fresh_repo, monkeypatch):
     repo, _home = fresh_repo
-    # in_place must NOT prompt even on a TTY — fail loudly if it tries to.
+    # use_worktree=False must NOT prompt even on a TTY — fail loudly if it tries.
     monkeypatch.setattr(
         registry, "_prompt_branch_prefix", lambda _d: pytest.fail("prompted")
     )
-    entry = register_cwd(in_place=True)
+    entry = register_cwd(use_worktree=False)
     assert entry["branch_prefix"] == "khivi/"
 
 
@@ -133,4 +141,4 @@ def test_register_cwd_non_git_raises(tmp_path, monkeypatch):
     plain.mkdir()
     monkeypatch.chdir(plain)
     with pytest.raises(RuntimeError, match="not in a git repo"):
-        register_cwd(in_place=True)
+        register_cwd(use_worktree=False)

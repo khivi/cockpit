@@ -678,14 +678,27 @@ class CockpitApp(App[None]):
         # Spawn a worktree + workspace from the typed source (the `/cockpit:new`
         # path). The modal offers a repo picker (when more than one is
         # configured) so a bare branch name can be routed to any repo; it
-        # defaults to the cursor row's repo, which sets spawn.py's cwd.
+        # defaults to the cursor row's repo, which sets spawn.py's cwd. A
+        # `use_worktree: false` repo instead gets one named checkout workspace —
+        # the modal prefills its name and blocks a second once one exists.
+        cfg_repos = load_config().get("repos", []) or []
         repos = [
             (
                 repo.get("name") or Path(os.path.expanduser(repo["path"])).name,
                 str(Path(os.path.expanduser(repo["path"]))),
             )
-            for repo in load_config().get("repos", []) or []
+            for repo in cfg_repos
         ]
+        live = self._live_workspace_paths()
+        no_worktree_paths: set[str] = set()
+        busy_paths: set[str] = set()
+        for repo in cfg_repos:
+            if repo.get("use_worktree", True):
+                continue
+            path = str(Path(os.path.expanduser(repo["path"])))
+            no_worktree_paths.add(path)
+            if Path(path).resolve() in live:
+                busy_paths.add(path)
         # Default to the cursor row's repo — resolved by repo name so a group-
         # header row (where `current_path()` is None) still preselects its repo.
         default_repo = self._repo_config_by_name(
@@ -696,18 +709,47 @@ class CockpitApp(App[None]):
             if default_repo
             else None
         )
-        self.push_screen(NewWorkspaceScreen(repos, default_path), self._spawn_new)
+        self.push_screen(
+            NewWorkspaceScreen(
+                repos,
+                default_path,
+                no_worktree_paths=no_worktree_paths,
+                busy_paths=busy_paths,
+            ),
+            self._spawn_new,
+        )
+
+    def _repo_config_by_path(self, path: str | None) -> dict | None:
+        """The full config dict for the repo whose path resolves to `path`."""
+        if not path:
+            return None
+        target = Path(path).resolve()
+        repos: list[dict] = load_config().get("repos", []) or []
+        for repo in repos:
+            if Path(os.path.expanduser(repo["path"])).resolve() == target:
+                return repo
+        return None
 
     def _spawn_new(self, result: tuple[str, str | None] | None) -> None:
         # Modal callback (UI thread): `(source, repo_path)` or `None`/blank when
         # cancelled. The repo_path the user chose becomes spawn.py's cwd, so its
-        # cwd-based discovery routes a bare name into the selected repo.
+        # cwd-based discovery routes a bare name into the selected repo. For a
+        # `use_worktree: false` repo the source IS a workspace name → spawn a
+        # named checkout workspace (`--cwd <path> --name <name>`), no worktree.
         if not result:
             return
+        import shlex
+
         source, cwd = result
         if not source or not source.strip():
             return
-        self._launch_spawn(source.strip(), cwd)
+        name = source.strip()
+        repo = self._repo_config_by_path(cwd)
+        if repo is not None and not repo.get("use_worktree", True) and cwd:
+            spawn_source = f"--cwd {shlex.quote(cwd)} --name {shlex.quote(name)}"
+        else:
+            spawn_source = name
+        self._launch_spawn(spawn_source, cwd)
 
     def action_update(self) -> None:
         # Only meaningful when the header advertises a newer version. Exit with
@@ -791,13 +833,14 @@ class CockpitApp(App[None]):
         repo, wt = resolved
         repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
         # Re-read live workspaces just before spawning to shrink the window in
-        # which the slow tick could spawn the same workspace concurrently. An
-        # `in_place` repo's main checkout can host several sessions all rooted at
-        # the same cwd, so cwd-matching can't single out "the repo's session" —
-        # its canonical session is the one named after the repo. Prefer that name
-        # match there, falling back to the cwd match (and, if none, a spawn).
+        # which the slow tick could spawn the same workspace concurrently. A
+        # `use_worktree: false` repo's main checkout can host several sessions all
+        # rooted at the same cwd, so cwd-matching can't single out "the repo's
+        # session" — its canonical session is the one named after the repo. Prefer
+        # that name match there, falling back to the cwd match (and, if none, a
+        # spawn).
         ref = None
-        if repo.get("in_place"):
+        if not repo.get("use_worktree", True):
             ref = self._workspace_ref_by_name(repo_name)
         if ref is None:
             ref = self._workspace_ref(wt)
@@ -905,7 +948,7 @@ class CockpitApp(App[None]):
         pr_is_merged = state == "MERGED"
 
         # Hard blockers (dirty/unpushed) refuse even under force. A primary
-        # checkout (in_place `master`) relaxes the unpushed guard — its close is
+        # checkout (a `use_worktree: false` `master`) relaxes the unpushed guard — its close is
         # workspace-only, so the checkout and any unpushed commits stay put; only
         # the dirty guard stands. `teardown` skips `git worktree remove` for it.
         hard = worktree_state_blockers(

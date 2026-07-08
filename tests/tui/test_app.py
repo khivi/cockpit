@@ -583,15 +583,16 @@ async def test_focus_noop_when_tool_none(monkeypatch, tmp_path):
     assert cap["orphan"] == [] and cap["pr"] == [] and cap["select"] == []
 
 
-async def test_focus_in_place_switches_by_repo_name(monkeypatch, tmp_path):
-    # An `in_place` repo's checkout can host several sessions rooted at the same
-    # cwd, so `f` there resolves the session by REPO NAME, not cwd — switching to
-    # a workspace named after the repo even when the cwd match would miss.
+async def test_focus_no_worktree_repo_switches_by_repo_name(monkeypatch, tmp_path):
+    # A `use_worktree: false` repo's checkout can host several sessions rooted at
+    # the same cwd, so `f` there resolves the session by REPO NAME, not cwd —
+    # switching to a workspace named after the repo even when the cwd match would
+    # miss.
     wt = Worktree(path=tmp_path, branch="master")
     monkeypatch.setattr(
         "cockpit.tui.app.load_config",
         lambda: {
-            "repos": [{"name": "myrepo", "path": str(tmp_path), "in_place": True}],
+            "repos": [{"name": "myrepo", "path": str(tmp_path), "use_worktree": False}],
             "check_update": False,
         },
     )
@@ -1027,6 +1028,52 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
         await pilot.pause(0.6)
     assert launched["cmd"][-1] == "fix-login"
     assert launched["cwd"] == str(repo_b)  # chosen repo, not the cursor row's
+
+
+async def test_new_box_no_worktree_repo_spawns_named_checkout(monkeypatch, tmp_path):
+    # `n` on a `use_worktree: false` repo → one named workspace on the checkout:
+    # `cockpit new --cwd <path> --name <name>`, no worktree. The name prefills to
+    # the repo name and rides through to `--name`.
+    from textual.widgets import Input
+
+    from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
+
+    repo = tmp_path / "scratch"
+    repo.mkdir()
+    wt = Worktree(path=repo, branch="master")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [{"name": "scratch", "path": str(repo), "use_worktree": False}],
+            "check_update": False,
+        },
+    )
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {})
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
+
+    launched: dict = {}
+    monkeypatch.setattr(
+        "subprocess.Popen",
+        lambda cmd, **kw: launched.update(cmd=cmd, cwd=kw.get("cwd")) or object(),
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("scratch", None, False, [wt])])
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, NewWorkspaceScreen)
+        # Name prefilled to the repo name; accept it as-is.
+        assert app.screen.query_one("#nw-input", Input).value == "scratch"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    cmd = launched["cmd"]
+    assert "--cwd" in cmd and cmd[cmd.index("--cwd") + 1] == str(repo)
+    assert "--name" in cmd and cmd[cmd.index("--name") + 1] == "scratch"
+    assert launched["cwd"] == str(repo)
 
 
 async def test_new_box_defaults_to_cursor_header_repo(monkeypatch, tmp_path):
@@ -1562,7 +1609,7 @@ async def test_footer_on_no_backend_hides_all_backend_keys():
 
 
 async def test_footer_hides_close_on_workspaceless_primary_checkout():
-    # A primary checkout (in_place `master`) can only be closed workspace-only;
+    # A primary checkout (a `use_worktree: false` `master`) can only be closed workspace-only;
     # with no workspace there's nothing to close, so `c`/`C` hide. A feature row
     # (no `primary` cap) keeps `c` regardless — it also removes the worktree.
     from cockpit.tui.widgets.footer_bar import FooterBar

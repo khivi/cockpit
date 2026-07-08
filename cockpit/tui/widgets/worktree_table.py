@@ -310,11 +310,11 @@ def row_capabilities(
         `t` applies;
       * ``"muted"``     — the PR's nudges are muted (`pr-muted`), so `m` reads
         "Unmute";
-      * ``"workspace"`` — the row has a live workspace, so `f`/`N` apply and `w`
-        (spawn) hides;
-      * ``"primary"``   — the row is the repo's primary checkout (an in_place
-        `master`); it can't be torn down as a worktree, so `c`/`C` reduce to a
-        workspace-only close.
+      * ``"workspace"`` — the row has a live workspace, so `N` (nudge) applies
+        (`f` shows regardless — it focuses an existing session or spawns one);
+      * ``"primary"``   — the row is the repo's primary checkout (a
+        `use_worktree: false` `master`); it can't be torn down as a worktree, so
+        `c`/`C` reduce to a workspace-only close.
     """
     caps: set[str] = set()
     if read_text(branch_cache("pr-num", wt.branch)):

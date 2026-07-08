@@ -78,7 +78,7 @@ def worktree_state_blockers(
     (cache first, then one live `gh` lookup — see `probe_blockers`), mirroring
     how autoclose uses `is_ancestor(wt, headRefOid)` instead of the commit count.
 
-    `is_primary=True` (an in_place `master` — the repo's primary checkout)
+    `is_primary=True` (a `use_worktree: false` `master` — the repo's primary checkout)
     likewise skips the unpushed check: its close never removes the worktree
     (`teardown` refuses `git worktree remove` on a primary checkout anyway), so
     the checkout and any unpushed commits stay put. Only the dirty guard stands.
@@ -187,14 +187,14 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
     nothing was changed. Callers should log the refusal and decide whether
     to drop the request or surface it for user attention.
 
-    Exception: a **primary checkout** (`worktree_path == repo_path`, an in_place
-    `master`) does a *workspace-only* close — the session is closed but
+    Exception: a **primary checkout** (`worktree_path == repo_path`, a
+    `use_worktree: false` `master`) does a *workspace-only* close — the session is closed but
     `git worktree remove` is skipped (git refuses it on a primary checkout, and
     the user works there in place). The dirty guard still applies; unpushed does
     not (nothing is removed).
     """
     label = req.name or req.ref
-    # A primary checkout (in_place `master`: worktree path == repo root) can't be
+    # A primary checkout (a `use_worktree: false` `master`: worktree path == repo root) can't be
     # removed as a worktree, so its close is workspace-only — close the session,
     # leave the checkout. `probe_blockers`/`worktree_state_blockers` relax the
     # unpushed guard for it (dirty still refuses), and the removal below is

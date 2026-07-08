@@ -7,7 +7,7 @@ Usage:
   spawn.py --name <short>  (--repo <n> | --cwd <path>)  # new branch (--repo) or workspace at path (--cwd)
   spawn.py --skill <name>  (--repo <n> | --cwd <path>)  # spawn workspace running a skill
   spawn.py --cwd <path>                                 # arbitrary dir (no repo, no branch)
-  spawn.py                                              # bare: register cwd's git repo (in_place) + in-place workspace
+  spawn.py                                              # bare: register cwd's git repo (use_worktree:false) + in-place workspace
 
 Sources are strictly mutex: pick exactly one of
   {positional, --branch, --pr, --name, --skill} — or --cwd alone, or nothing
@@ -83,9 +83,9 @@ Behaviour:
     registered repo in ~/.config/cockpit/config.json; an unmatched repo errors
     (pass --repo, or run bare `cockpit new` to register it). --repo <n> bypasses
     discovery.
-  - Bare (no source, no --cwd, no --repo): `register_cwd(in_place=True)` appends
-    the cwd's git repo to config.json (marked `in_place: true`, so the daemon
-    never auto-spawns worktrees for it) and opens an in-place workspace on the
+  - Bare (no source, no --cwd, no --repo): `register_cwd(use_worktree=False)`
+    appends the cwd's git repo to config.json (marked `use_worktree: false`, so
+    the daemon never auto-spawns worktrees for it) and opens an in-place workspace on the
     current branch — no worktree. Errors (exit 1) if cwd is not a git repo.
   - Worktree path: dirname(repo)/<name>, with -2/-3/... on collision.
   - --cwd <path> must exist (errors if not).
@@ -686,12 +686,12 @@ def main() -> int:
     # Bare `cockpit new` (no source, no --cwd, no --repo): register the cwd's
     # git repo for an in-place, no-worktree workspace on the current branch, then
     # flow through the --cwd path below. The daemon shows the repo's row but
-    # never auto-spawns worktrees for it (`in_place: true`). Off-GitHub and
+    # never auto-spawns worktrees for it (`use_worktree: false`). Off-GitHub and
     # master-only repos register fine — `register_cwd` defaults the prefix empty
     # and `default_branch` falls back to git symbolic-ref / "main".
     if not chosen and not cwd and not args.repo:
         try:
-            entry = register_cwd(in_place=True)
+            entry = register_cwd(use_worktree=False)
         except RuntimeError as e:
             return _die(
                 f"{e}. Bare `cockpit new` registers the current git repo for an "

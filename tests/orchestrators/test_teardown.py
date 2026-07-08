@@ -114,7 +114,7 @@ def test_worktree_state_blockers_flags_unverifiable_push_state(tmp_path):
 
 
 def test_worktree_state_blockers_primary_skips_unpushed_keeps_dirty(tmp_path):
-    # A primary checkout (in_place `master`) closes workspace-only, so unpushed
+    # A primary checkout (a `use_worktree: false` `master`) closes workspace-only, so unpushed
     # commits are safe (the checkout stays) — skip that guard. Dirty still holds.
     wt = tmp_path / "wt"
     wt.mkdir()
@@ -220,7 +220,7 @@ def test_teardown_no_worktree_skips_remove(tmp_path):
 
 
 def test_teardown_primary_checkout_closes_workspace_only(tmp_path):
-    """worktree_path == repo_path (in_place `master`): the session is closed but
+    """worktree_path == repo_path (a `use_worktree: false` `master`): the session is closed but
     `git worktree remove` is skipped — git refuses it on a primary checkout."""
     req = TeardownRequest(
         ref="ws:1",

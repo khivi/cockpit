@@ -46,7 +46,7 @@ Drive the table by keystroke — most keys act on the highlighted row, and the f
 | `f` | Focus the row's workspace, spawning one first if it has none | any backend (hidden only on `tool=none`) |
 | `p` | Open the PR in a browser | the row has a PR |
 | `t` | Open the linked ticket (Linear/GitHub/Jira/Trello) | the row has a delivered ticket |
-| `c` / `C` | Close / force-close. Feature worktree: close workspace + remove worktree (refuses dirty/unpushed/open-PR; `C` overrides the open-PR block only). Primary checkout (an `in_place` `master`): **workspace-only close** — closes the session, keeps the checkout, gated on dirty ("all committed") | feature row: always · primary checkout: only when it has a workspace |
+| `c` / `C` | Close / force-close. Feature worktree: close workspace + remove worktree (refuses dirty/unpushed/open-PR; `C` overrides the open-PR block only). Primary checkout (a `use_worktree: false` `master`): **workspace-only close** — closes the session, keeps the checkout, gated on dirty ("all committed") | feature row: always · primary checkout: only when it has a workspace |
 | `m` | Mute / unmute the row's nudge | the row has a PR |
 | `N` | Nudge the row now (honours the idle gate) | cmux **and** the row has a workspace |
 | `n` | New workspace (branch / PR / URL / Linear id / Slack thread) | always (global — not row-scoped) |

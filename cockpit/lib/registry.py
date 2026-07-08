@@ -41,16 +41,17 @@ def _prompt_branch_prefix(default: str) -> str:
     return resp
 
 
-def register_cwd(in_place: bool = False) -> dict:
+def register_cwd(use_worktree: bool = True) -> dict:
     """Append cwd's repo to config.json if not already present. Returns the entry.
 
-    `in_place=True` marks the entry `"in_place": true` and skips the interactive
-    branch-prefix prompt (an in-place repo never has worktree branches spawned
-    for it, so the prefix is irrelevant). It's the bare-`cockpit new` path: the
-    daemon shows the repo's row but `_spawn_missing_workspaces` early-returns,
-    never auto-creating worktrees. An already-registered repo is returned
-    untouched — bare `cockpit new` in a normal managed repo does NOT flip it to
-    in-place.
+    `use_worktree=False` marks the entry `"use_worktree": false` and skips the
+    interactive branch-prefix prompt (such a repo never has worktree branches
+    spawned for it, so the prefix is irrelevant). It's the bare-`cockpit new`
+    path: the daemon shows the repo's row but `_spawn_missing_workspaces`
+    early-returns, never auto-creating worktrees. An already-registered repo is
+    returned untouched — bare `cockpit new` in a normal managed repo does NOT
+    flip it to work-in-place. The key is written only when False; absent (the
+    default) means the usual worktree-managed repo.
     """
     ensure_state_dirs()
     repo = repo_root().resolve()
@@ -80,7 +81,7 @@ def register_cwd(in_place: bool = False) -> dict:
 
     default_prefix = f"{gh_user}/" if gh_user else ""
     branch_prefix = (
-        default_prefix if in_place else _prompt_branch_prefix(default_prefix)
+        _prompt_branch_prefix(default_prefix) if use_worktree else default_prefix
     )
 
     entry: dict = {
@@ -89,8 +90,8 @@ def register_cwd(in_place: bool = False) -> dict:
         "branch_prefix": branch_prefix,
         "default_base": base,
     }
-    if in_place:
-        entry["in_place"] = True
+    if not use_worktree:
+        entry["use_worktree"] = False
     repos.append(entry)
     with config.CONFIG_PATH.open("w") as f:
         json.dump(cfg, f, indent=2)

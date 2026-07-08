@@ -305,7 +305,7 @@ def test_row_capabilities_empty_without_pr(cache_dir, monkeypatch):
 
 def test_row_capabilities_workspace_and_primary(cache_dir, monkeypatch):
     # `workspace` reflects live state passed in by the app; `primary` marks the
-    # repo's primary checkout (an in_place `master`), read off the Worktree.
+    # repo's primary checkout (a `use_worktree: false` `master`), read off the Worktree.
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
         lambda branch, repo: None,

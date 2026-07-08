@@ -214,7 +214,7 @@ class FooterBar(Horizontal):
         allowed = self.BACKEND_ACTIONS.get(action)
         if allowed is not None and self._backend not in allowed:
             return True
-        # A primary checkout (in_place `master`) can't be removed as a worktree,
+        # A primary checkout (a `use_worktree: false` `master`) can't be removed as a worktree,
         # so `c`/`C` reduce to a workspace-only close — pointless with no
         # workspace. Hide them there (feature rows keep `c`, which also removes
         # the worktree, workspace or not).

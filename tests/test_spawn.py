@@ -467,7 +467,7 @@ def _init_git_repo(path) -> None:
     )
 
 
-def test_bare_registers_in_place_and_spawns_no_worktree(
+def test_bare_registers_no_worktree_repo_and_spawns_no_worktree(
     spawn_main, cockpit_repo, tmp_path, monkeypatch
 ):
     import cockpit.lib.registry as registry
@@ -487,7 +487,7 @@ def test_bare_registers_in_place_and_spawns_no_worktree(
 
     cfg = json.loads((cockpit_repo.cockpit_home / "config.json").read_text())
     entry = next(r for r in cfg["repos"] if r["path"] == str(proj.resolve()))
-    assert entry["in_place"] is True
+    assert entry["use_worktree"] is False
 
 
 def test_bare_outside_git_repo_errors(spawn_main, tmp_path, monkeypatch):
@@ -500,18 +500,18 @@ def test_bare_outside_git_repo_errors(spawn_main, tmp_path, monkeypatch):
     assert "--cwd" in err  # points at the arbitrary-dir escape hatch
 
 
-def test_bare_in_managed_repo_does_not_reflag_in_place(
+def test_bare_in_managed_repo_does_not_reflag_use_worktree(
     spawn_main, cockpit_repo, monkeypatch
 ):
-    # cwd is the already-configured `testrepo` (no in_place). Bare spawn opens an
-    # in-place workspace but must NOT mutate the existing entry.
+    # cwd is the already-configured `testrepo` (worktree-managed). Bare spawn
+    # opens an in-place workspace but must NOT mutate the existing entry.
     monkeypatch.chdir(cockpit_repo.repo)
     code, out, _err = spawn_main([])
     assert code == 0
     assert "(no worktree)" in out
     cfg = json.loads((cockpit_repo.cockpit_home / "config.json").read_text())
     entry = next(r for r in cfg["repos"] if r["name"] == "testrepo")
-    assert "in_place" not in entry
+    assert "use_worktree" not in entry
 
 
 # ── --name semantics ───────────────────────────────────────────────────────

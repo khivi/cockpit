@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     state, pr_number = resolve_pr_state(wt.path, branch, repo_name)
     pr_is_merged = state == "MERGED"
 
-    # A primary checkout (in_place `master`) relaxes the unpushed guard — its
+    # A primary checkout (a `use_worktree: false` `master`) relaxes the unpushed guard — its
     # close is workspace-only (teardown skips `git worktree remove`), so unpushed
     # commits stay put; only the dirty guard stands.
     hard = worktree_state_blockers(
