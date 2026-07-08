@@ -276,7 +276,16 @@ def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
     ids = ", ".join(str(t.get("id", "?")) for t in tickets)
     icons = []
     for t in tickets:
-        icon, style = _linear_status_icon(str(t.get("state", "")))
+        state = t.get("state")
+        if not state:
+            # Provider is configured and the PR delivered this ticket, but the
+            # fetch couldn't resolve a state (unreachable / missing creds /
+            # unknown id — every provider degrades a failed fetch to None). Flag
+            # it red rather than the neutral ◎, which reads as "known but
+            # unmapped". A successful fetch always yields a non-empty name.
+            icons.append(Text("!", style="bold red"))
+            continue
+        icon, style = _linear_status_icon(str(state))
         icons.append(Text(icon, style=style))
     return Text(ids, style="magenta"), Text(" ").join(icons)
 
