@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from pathlib import Path
 from typing import NoReturn
 
 from .colors import yellow
@@ -271,6 +272,42 @@ def _warn_cockpit_not_on_path() -> None:
         )
 
 
+def _warn_unresolvable_base(cfg: dict) -> None:
+    """Soft-warn when a managed repo's `origin/{default_base}` doesn't resolve.
+
+    Cockpit cuts new worktrees from `origin/{base}` (`create_worktree`). A
+    `git clone --bare` writes an empty fetch refspec, so it has no
+    `refs/remotes/origin/*` and `origin/main` is an invalid reference — spawning
+    a worktree then fails, and the failure only lands in `spawn.log`, never the
+    TUI. Warn once at start with the exact fix so it isn't a silent mystery.
+
+    `in_place` repos are skipped (they never spawn worktrees and may be
+    off-GitHub with no origin). A missing path is skipped too — not this check's
+    concern. Purely local (no network); runs at daemon start, not per statusline.
+    """
+    from .git import origin_base_resolves
+
+    for repo in cfg.get("repos", []):
+        if repo.get("in_place") or not repo.get("path"):
+            continue
+        path = Path(repo["path"]).expanduser()
+        if not path.exists():
+            continue
+        base = repo.get("default_base", "main")
+        if origin_base_resolves(path, base):
+            continue
+        name = repo.get("name") or repo.get("path", "?")
+        print(
+            f"{yellow('cockpit:')} repo {name!r}: origin/{base} does not resolve "
+            "(looks like `git clone --bare` — no origin/* tracking refs). "
+            "Spawning worktrees will fail. Fix: "
+            f"git -C {path} config remote.origin.fetch "
+            f"'+refs/heads/*:refs/remotes/origin/*' && git -C {path} fetch origin",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def validate_config(cfg: dict) -> None:
     """Run every config-shape validator (no binary/PATH checks).
 
@@ -310,6 +347,7 @@ def preflight(cfg: dict) -> None:
                 )
 
     validate_config(cfg)
+    _warn_unresolvable_base(cfg)
 
     if cfg.get("tool", "auto") == "auto":
         resolved = resolve_tool()

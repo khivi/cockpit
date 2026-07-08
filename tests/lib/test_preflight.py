@@ -8,11 +8,16 @@ on missing workspace backend.
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
 from cockpit.lib.config import CONFIG_EXAMPLE
-from cockpit.lib.preflight import preflight, validate_config
+from cockpit.lib.preflight import (
+    _warn_unresolvable_base,
+    preflight,
+    validate_config,
+)
 from tests.fixtures import make_bin_on_path
 
 
@@ -138,6 +143,48 @@ def test_preflight_passes_on_valid_sidebar_color(tmp_path, monkeypatch, capsys):
 def test_preflight_ignores_repo_without_sidebar_color(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     preflight({"tool": "cmux", "repos": [{"name": "r", "path": "/x"}]})
+    assert capsys.readouterr().err == ""
+
+
+# ── _warn_unresolvable_base (bare-clone / empty-refspec detection) ──────────
+# Tested directly (not via full preflight()) so it runs against real git repos
+# rather than the stubbed `git` binary the preflight PATH tests install.
+
+
+def test_warn_unresolvable_base_silent_for_normal_clone(cockpit_repo, capsys):
+    cfg = {"repos": [{"name": "r", "path": str(cockpit_repo.repo)}]}
+    _warn_unresolvable_base(cfg)
+    assert capsys.readouterr().err == ""
+
+
+def test_warn_unresolvable_base_warns_for_bare_clone(cockpit_repo, tmp_path, capsys):
+    bare = tmp_path / "bare.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(cockpit_repo.origin), str(bare)], check=True
+    )
+    _warn_unresolvable_base({"repos": [{"name": "beta", "path": str(bare)}]})
+    err = capsys.readouterr().err
+    assert "beta" in err
+    assert "origin/main does not resolve" in err
+    assert "git clone --bare" in err
+    assert "remote.origin.fetch" in err  # the fix is spelled out
+
+
+def test_warn_unresolvable_base_skips_in_place_repo(cockpit_repo, tmp_path, capsys):
+    """An `in_place` repo never spawns worktrees and may be off-GitHub with no
+    origin — it must not trip the warning even when origin/main is absent."""
+    bare = tmp_path / "bare.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(cockpit_repo.origin), str(bare)], check=True
+    )
+    _warn_unresolvable_base(
+        {"repos": [{"name": "beta", "path": str(bare), "in_place": True}]}
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_warn_unresolvable_base_skips_missing_path(capsys):
+    _warn_unresolvable_base({"repos": [{"name": "gone", "path": "/no/such/repo"}]})
     assert capsys.readouterr().err == ""
 
 
