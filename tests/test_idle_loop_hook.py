@@ -81,6 +81,21 @@ def _poll_lines(log: Path, expected: int, timeout: float = 1.5) -> list[str]:
     return [ln for ln in log.read_text().splitlines() if ln] if log.exists() else []
 
 
+def _wait_quiet(log: Path, timeout: float = 1.5) -> bool:
+    """Wait out the full `timeout` deadline, then report whether `log` stayed
+    empty/absent — used to prove a noop (nothing was ever written), where a
+    poll-until-true helper doesn't apply since there's no positive event to
+    wait for. Mirrors `_poll_lines`'s deadline so a slow async subshell write
+    that would land within that window isn't missed by a shorter fixed sleep.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if log.exists() and log.read_text():
+            return False
+        time.sleep(0.02)
+    return not (log.exists() and log.read_text())
+
+
 def _transcript_with(tmp_path: Path, tool_names: list[str]) -> Path:
     t = tmp_path / "transcript.jsonl"
     turn = {
@@ -244,8 +259,7 @@ def test_no_workspace_id_is_noop(tmp_path, monkeypatch):
     log = make_shim_on_path(tmp_path, monkeypatch, "cmux")
     monkeypatch.delenv("CMUX_WORKSPACE_ID", raising=False)
     subprocess.run([str(HOOK), "loop-set"], check=True)
-    time.sleep(0.1)
-    assert not log.exists() or log.read_text() == ""
+    assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
 def test_dead_workspace_is_noop(tmp_path, monkeypatch):
@@ -256,8 +270,7 @@ def test_dead_workspace_is_noop(tmp_path, monkeypatch):
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
     subprocess.run([str(HOOK), "loop-set"], check=True)
-    time.sleep(0.15)
-    assert not log.exists() or log.read_text() == ""
+    assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
 def test_substring_workspace_id_does_not_match(tmp_path, monkeypatch):
@@ -267,8 +280,7 @@ def test_substring_workspace_id_does_not_match(tmp_path, monkeypatch):
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:9")
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
     subprocess.run([str(HOOK), "loop-set"], check=True)
-    time.sleep(0.15)
-    assert not log.exists() or log.read_text() == ""
+    assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
 def test_live_workspace_passes_through(fake_cmux):

@@ -58,8 +58,10 @@ def _validate_repo_bool(cfg: dict, key: str) -> None:
     """Hard-fail on a per-repo `key` that's present but isn't a bool.
 
     These per-repo switches (`review_prs` spawns review worktrees, `in_place`
-    skips all auto-spawning) gate daemon behavior, so a non-bool (e.g. a stray
-    string) would be silently truthy — rejected at start like `sidebar_color`.
+    skips all auto-spawning, `dependabot`/`review_external` opt a `review_prs`
+    repo into spawning for dependabot / non-collaborator PRs) gate daemon
+    behavior, so a non-bool (e.g. a stray string) would be silently truthy —
+    rejected at start like `sidebar_color`.
     """
     for repo in cfg.get("repos", []):
         if key in repo and not isinstance(repo[key], bool):
@@ -282,6 +284,7 @@ def validate_config(cfg: dict) -> None:
     _validate_repo_bool(cfg, "review_prs")
     _validate_repo_bool(cfg, "in_place")
     _validate_repo_bool(cfg, "dependabot")
+    _validate_repo_bool(cfg, "review_external")
     _validate_review_command(cfg)
     _validate_global_bool(cfg, "check_update")
     _validate_global_bool(cfg, "use_slack")

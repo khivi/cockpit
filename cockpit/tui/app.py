@@ -83,7 +83,6 @@ from cockpit.tui.widgets.config_screen import (
 )
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
-from cockpit.tui.widgets.log_pane import LogPane
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
 from cockpit.tui.widgets.worktree_table import WorktreeTable
 
@@ -229,10 +228,6 @@ class CockpitApp(App[None]):
         self._log_path = COCKPIT_HOME / "watch.log"
         self._saved_stdout: object | None = None
         self._saved_stderr: object | None = None
-        # worktree path → repo *display name*, rebuilt each render so the config
-        # palette command can resolve the cursor row back to its repo without
-        # shelling out to git.
-        self._path_repo_name: dict[str, str] = {}
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -365,7 +360,12 @@ class CockpitApp(App[None]):
         if self._slow_phase != "idle":
             return
         self._slow_phase = "waiting"
-        self._next_slow = time.monotonic() + self._slow_secs
+        if only_repo is None:
+            # Only a full-cycle kick resets the header countdown — the real
+            # cadence is the `set_interval` timer from on_mount, which always
+            # calls with only_repo=None. A repo-scoped row-action kick must not
+            # desync the header from that timer.
+            self._next_slow = time.monotonic() + self._slow_secs
         self._run_slow(only_repo)
 
     def _kick_fast(self) -> None:
@@ -389,13 +389,25 @@ class CockpitApp(App[None]):
             print(f"slow-tick error: {e}")
         finally:
             self._slow_phase = "idle"
-            self._publish_inventory()
-            # First slow tick done → the PR caches exist; safe to start fast.
-            self.call_from_thread(self._start_fast)
-            # Re-check for a newer release on every slow tick (network-light gh
-            # api). `exclusive` coalesces a manual `s`/SIGUSR1 kick that lands
-            # on top of an in-flight check.
-            self.call_from_thread(self._check_update)
+            # Each step below is independently guarded: a failure in one (e.g.
+            # the very first publish) must never stop `_start_fast` from being
+            # reached, or the fast-tick loop would silently never start.
+            try:
+                self._publish_inventory()
+            except Exception as e:
+                print(f"slow-tick error: publish failed: {e}")
+            try:
+                # First slow tick done → the PR caches exist; safe to start fast.
+                self.call_from_thread(self._start_fast)
+            except Exception as e:
+                print(f"slow-tick error: start_fast failed: {e}")
+            try:
+                # Re-check for a newer release on every slow tick (network-light
+                # gh api). `exclusive` coalesces a manual `s`/SIGUSR1 kick that
+                # lands on top of an in-flight check.
+                self.call_from_thread(self._check_update)
+            except Exception as e:
+                print(f"slow-tick error: check_update failed: {e}")
 
     @work(thread=True, group="prime", exit_on_error=False)
     def _prime_table(self) -> None:
@@ -456,9 +468,8 @@ class CockpitApp(App[None]):
             )
 
     def _drain_log(self) -> None:
-        # Drain queued tick output into the bounded on-disk tail and any mounted
-        # LogPane. The pane is currently out of the layout, so the file is the
-        # only sink.
+        # Drain queued tick output into the bounded on-disk tail — the only
+        # sink now that the log pane is out of the layout (and gone entirely).
         new: list[str] = []
         while True:
             try:
@@ -468,9 +479,6 @@ class CockpitApp(App[None]):
         if not new:
             return
         self._log_tail.extend(new)
-        for pane in self.query(LogPane):
-            for line in new:
-                pane.append(line)
         with contextlib.suppress(OSError):
             self._log_path.write_text("\n".join(self._log_tail) + "\n")
 
@@ -511,11 +519,6 @@ class CockpitApp(App[None]):
         self.call_from_thread(self._render_table, inv)
 
     def _render_table(self, inventory: Inventory) -> None:
-        self._path_repo_name = {
-            str(wt.path): repo_name
-            for repo_name, _color, _linear, wts in inventory
-            for wt in wts
-        }
         self.query_one(WorktreeTable).update_inventory(inventory)
         # A refresh can change the highlighted row's state (PR/ticket/mute) or
         # the row set, so re-gate the footer's row keys to the current row.
@@ -530,10 +533,6 @@ class CockpitApp(App[None]):
         with contextlib.suppress(Exception):
             caps = self.query_one(WorktreeTable).current_capabilities()
             self.query_one(FooterBar).set_row_state(caps)
-
-    def _repo_config_for_path(self, path: str | None) -> dict | None:
-        """The full config dict for the repo owning `path` (the cursor row)."""
-        return self._repo_config_by_name(self._path_repo_name.get(path or ""))
 
     def _repo_config_by_name(self, name: str | None) -> dict | None:
         """The full config dict for the repo whose display name is `name` (as

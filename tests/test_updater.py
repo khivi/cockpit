@@ -201,7 +201,7 @@ def test_downgrade_guard_skips_install(tmp_path, monkeypatch):
     monkeypatch.setattr(updater.shutil, "which", _which_all)
     monkeypatch.setattr(updater.version, "running_version", lambda: "0.27.91")
 
-    assert updater.run_update() == 0
+    assert updater.run_update() == updater.UPDATE_SKIPPED_NOOP_EXIT
     assert not fake.ran("uv", "tool", "install")
 
 

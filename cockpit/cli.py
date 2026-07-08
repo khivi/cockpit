@@ -155,8 +155,25 @@ def _self_update_and_reexec(watch_args: list[str]) -> int:
         )
         return 0
     import subprocess
+    import time
 
-    if subprocess.run(["cockpit", "update"]).returncode != 0:
+    from cockpit.lib.updater import UPDATE_SKIPPED_NOOP_EXIT
+
+    rc = subprocess.run(["cockpit", "update"]).returncode
+    if rc == UPDATE_SKIPPED_NOOP_EXIT:
+        # The local plugin cache had nothing newer than the running version —
+        # not the same claim as "up to date" (the header's indicator compares
+        # against GitHub directly, which can be ahead of the local cache after
+        # a network hiccup or propagation lag). Relaunch anyway (the user quit
+        # the TUI; leaving them at a shell is worse) but explain, and hold the
+        # message on screen for a moment — this is a cooked, pre-exec terminal.
+        print(
+            "cockpit: plugin cache not yet refreshed; nothing new to install. "
+            "The header may still show an update — retry `u` shortly.",
+            file=sys.stderr,
+        )
+        time.sleep(2)
+    elif rc != 0:
         print(
             "cockpit: update failed; not relaunching. Re-run `cockpit watch`.",
             file=sys.stderr,

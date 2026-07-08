@@ -121,6 +121,13 @@ def test_fetch_issue_cross_repo_ref_uses_embedded_nwo():
     assert "other/repo" in run.call_args[0][0]
 
 
+def test_fetch_issue_malformed_json_returns_none():
+    # `gh` exits 0 but the body isn't valid JSON — `_gh_json` must degrade to
+    # None like any other failure, not raise json.JSONDecodeError.
+    with patch.object(gh.subprocess, "run", return_value=_run("not json {")):
+        assert gh.fetch_issue("#1", repo_nwo="o/r") is None
+
+
 def test_fetch_issue_gh_failure_returns_none():
     with patch.object(gh.subprocess, "run", return_value=_run("", returncode=1)):
         assert gh.fetch_issue("#1", repo_nwo="o/r") is None

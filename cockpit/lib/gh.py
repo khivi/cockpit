@@ -114,7 +114,7 @@ def fetch_merged_branches(
             variables["cursor"] = cursor
         try:
             data = _graphql(_MERGED_BRANCHES_QUERY, variables)
-        except subprocess.CalledProcessError:
+        except RuntimeError:
             return {}
         try:
             page = data["data"]["search"]
@@ -139,7 +139,8 @@ _OPEN_PR_HEADS_QUERY = (
     "query ($search: String!, $cursor: String) {\n"
     "  search(query: $search, type: ISSUE, first: 100, after: $cursor) {\n"
     "    pageInfo { endCursor hasNextPage }\n"
-    "    nodes { ... on PullRequest { number headRefName author { login } } }\n"
+    "    nodes { ... on PullRequest { number headRefName author { login } "
+    "authorAssociation } }\n"
     "  }\n"
     "}"
 )
@@ -160,16 +161,23 @@ def is_dependabot(login: str) -> bool:
 class OpenPRHead:
     """Minimal identity for an open PR: enough to fetch its head and decide
     whether a review worktree already exists. Deliberately lighter than `PR` —
-    the `review_prs` spawn decision only needs (number, branch, author).
+    the `review_prs` spawn decision only needs (number, branch, author,
+    author_association).
     """
 
     number: int
     branch: str
     author: str
+    # GitHub's relationship of `author` to this repo (e.g. "OWNER", "MEMBER",
+    # "COLLABORATOR", "CONTRIBUTOR", "NONE"). Empty string when the API omits
+    # it (mirrors the null-author "" contract). Used by the `review_prs` spawn
+    # gate to skip external contributors by default — see cycle.py.
+    author_association: str = ""
 
 
 def list_open_pr_heads(owner: str, name: str) -> list[OpenPRHead]:
-    """Every open PR in the repo as (number, head branch, author login).
+    """Every open PR in the repo as (number, head branch, author login,
+    authorAssociation).
 
     Used only by the per-repo `review_prs` spawn decision in the daemon's slow
     tick — the daemon's normal PR query is `author:self` plus per-worktree
@@ -191,7 +199,7 @@ def list_open_pr_heads(owner: str, name: str) -> list[OpenPRHead]:
             variables["cursor"] = cursor
         try:
             data = _graphql(_OPEN_PR_HEADS_QUERY, variables)
-        except subprocess.CalledProcessError:
+        except RuntimeError:
             return []
         try:
             page = data["data"]["search"]
@@ -199,7 +207,10 @@ def list_open_pr_heads(owner: str, name: str) -> list[OpenPRHead]:
                 if not node:
                     continue
                 author = (node.get("author") or {}).get("login") or ""
-                out.append(OpenPRHead(node["number"], node["headRefName"], author))
+                association = node.get("authorAssociation") or ""
+                out.append(
+                    OpenPRHead(node["number"], node["headRefName"], author, association)
+                )
             info = page["pageInfo"]
             if not info["hasNextPage"]:
                 break
@@ -701,7 +712,7 @@ def _identify_stale(
     stale: list[int] = []
     for num, updated in light_by_number.items():
         prev = cache.get(num)
-        if prev is None or prev[1] != updated or prev[0].ci == "pending":
+        if prev is None or prev[1] != updated or prev[0].ci in ("pending", "unknown"):
             stale.append(num)
     return stale
 
@@ -749,7 +760,9 @@ def list_relevant_prs(
 
     Two-phase fetch when `cache` is given: a cheap (number, updatedAt) query
     first, then full detail only for PRs whose updatedAt changed (or whose
-    cached CI was `pending` — CI updates don't bump updatedAt). Steady-state
+    cached CI was `pending` or `unknown` — CI updates don't bump updatedAt, and
+    `unknown` can result from a transient checkSuites null that never gets a
+    chance to refresh otherwise). Steady-state
     cycles where nothing moved cost one cheap GraphQL call instead of the
     heavy one.
     """

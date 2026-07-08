@@ -29,6 +29,32 @@
       }
     },
     {
+      "name": "my-jira-repo",
+      "path": "/absolute/path/to/a/third/repo",
+      "branch_prefix": "yourusername/",
+      "default_base": "main",
+      "tickets": {
+        "provider": "jira",
+        "site_url": "https://yourteam.atlassian.net",
+        "email": "you@example.com",
+        "dev_done_status": "Dev Done",
+        "merge_done_status": "Done",
+        "close_on_merge": false
+      }
+    },
+    {
+      "name": "my-trello-repo",
+      "path": "/absolute/path/to/a/fourth/repo",
+      "branch_prefix": "yourusername/",
+      "default_base": "main",
+      "tickets": {
+        "provider": "trello",
+        "dev_done_list": "Review",
+        "merge_done_list": "Done",
+        "close_on_merge": false
+      }
+    },
+    {
       "name": "scratch",
       "path": "/absolute/path/to/inplace/repo",
       "branch_prefix": "yourusername/",

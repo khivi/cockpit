@@ -1,1 +1,1 @@
-"""TUI widgets: header countdowns, log pane, workspace cards."""
+"""TUI widgets: header countdowns, workspace cards."""

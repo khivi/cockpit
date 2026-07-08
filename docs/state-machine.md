@@ -213,8 +213,10 @@ Key gates (all from `cycle.py`):
     spawn/close (best-effort, `check=False`) but not pills — limux has both verbs.
   - **cmux-only** (`not ctx.headless` ⇔ `is_cmux`): pills
     (`_refresh_tracked_pills`, orphan/wip/stale), colors (`_apply_repo_colors`),
-    `_dedupe_workspaces` (sorts by the PID in cmux `workspace:<pid>` refs — limux
-    refs are UUIDs), focus, nudges, and the orphan-workspace reaper
+    `_dedupe_workspaces` (scoped to workspaces whose cwd resolves under this
+    repo's worktrees — a foreign repo's same-named workspace is never grouped or
+    closed; sorts by the PID in cmux `workspace:<pid>` refs — limux refs are
+    UUIDs), focus, nudges, and the orphan-workspace reaper
     (`_reap_workspace_orphans` — its idle-safety gate reads the cmux-only `idle=`
     pill, so on limux it could only ever defer).
 

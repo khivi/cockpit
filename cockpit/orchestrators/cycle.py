@@ -81,6 +81,7 @@ from cockpit.lib.config import (
     linear_team_keys,
     orphan_nudge_grace_seconds,
     review_command,
+    review_external,
     ticket_close_on_merge,
     trello_merge_done_list,
 )
@@ -1487,6 +1488,16 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
     """Close duplicate cmux workspaces, keeping the lowest-PID per group.
     Returns the surviving refs.
 
+    `ctx.names`/`ctx.cwds` are the GLOBAL cmux workspace state (every repo
+    watched, not just this one) — `workspace_state()` is refetched per-repo but
+    returns the same whole-machine snapshot every time. A workspace whose cwd
+    doesn't resolve under THIS repo (a different repo entirely, or unresolvable)
+    is excluded from grouping altogether: it must never fall back to the
+    name-key group, or two repos with the same branch label (workspace names
+    are bare branch labels, no repo prefix — see `wt.workspace_name`) collide on
+    that key and a live, unrelated workspace from the other repo gets closed as
+    a "duplicate".
+
     Group key is the workspace's live feature-worktree path when it sits on one,
     else its name. A workspace correctly rooted on its own worktree is the
     canonical workspace for that worktree — never a duplicate of a same-named
@@ -1497,7 +1508,8 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
     matched-PR spawn re-created it next cycle, churning spawn→close→respawn.
     Path-keying stops that while still deduping true duplicates: same-worktree
     double-spawns (same OR different name) share the path key, and workspaces
-    with no live worktree fall back to the name key.
+    with no live worktree (but still rooted somewhere under this repo) fall
+    back to the name key.
     """
 
     def _close_extras(refs_sorted: list[str]) -> None:
@@ -1512,6 +1524,16 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
                 cmux_close_workspace_best_effort(extra)
 
     feature_wt_paths = {wt.path.resolve() for wt in ctx.wts if not wt.is_primary}
+    # Root-membership test mirrors `_repo_owned_refs`: repo_path plus every
+    # `git worktree list` path for this repo (primary included — that command
+    # reports every worktree tied to this repo, even a bare repo's siblings
+    # living outside `repo_path`). A cwd under none of these belongs to some
+    # other watched repo (or is unresolvable).
+    own_roots = {ctx.repo_path.resolve()} | {wt.path.resolve() for wt in ctx.wts}
+
+    def _is_own_repo(cwd: Path) -> bool:
+        resolved = cwd.resolve()
+        return any(parent in own_roots for parent in (resolved, *resolved.parents))
 
     def _group_key(ref: str, ws_name: str) -> object:
         cwd = ctx.cwds.get(ref)
@@ -1521,6 +1543,12 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
 
     groups: dict[object, list[str]] = {}
     for ref, ws_name in ctx.names.items():
+        cwd = ctx.cwds.get(ref)
+        if cwd is None or not _is_own_repo(cwd):
+            # Missing cwd, or resolves outside this repo entirely — belongs to
+            # another repo (or is unresolvable). Never group it by name, so it
+            # can never masquerade as a duplicate of one of ours.
+            continue
         groups.setdefault(_group_key(ref, ws_name), []).append(ref)
     keep_refs: set[str] = set()
     for refs in groups.values():
@@ -1805,6 +1833,11 @@ def _bg_spawn_pr(
     )
 
 
+# `authorAssociation` values (from `list_open_pr_heads`) that count as a repo
+# collaborator for the `review_prs` external-contributor gate below.
+_COLLABORATOR_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+
 def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
     """Spawn/create the workspaces and worktrees a cycle is missing:
 
@@ -1812,7 +1845,8 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
     2. My open PRs with no local worktree → create worktree + workspace in the
        background (replaces the old "create one with /cockpit:new" warning).
     3. `review_prs`: every other-authored open PR without a worktree → create a
-       review worktree (`spawn.py --review`) in the background. Uncapped.
+       review worktree (`spawn.py --review`) in the background. Uncapped, but
+       gated to repo collaborators by default (see `review_external` below).
     4. My-prefix orphan worktrees not yet covered by any workspace → spawn one.
 
     An `in_place` repo (registered via bare `cockpit new`) opts out of all
@@ -1841,12 +1875,22 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
         # review-spawn path — but auto-creating a review worktree per dep bump is
         # noise. Opt in per-repo with `dependabot: true`; default is to skip them.
         allow_dependabot = bool(repo_entry.get("dependabot"))
+        # External (non-collaborator) PRs carry untrusted body/diff content that
+        # would reach a Bash-capable auto-spawned agent — a prompt-injection risk
+        # on a public repo. Skip unless the author's `authorAssociation` is
+        # OWNER/MEMBER/COLLABORATOR, or the repo opts in with `review_external`.
+        allow_external = review_external(repo_entry)
         existing_branches = {w.branch for w in ctx.wts}
         for cand in ctx.review_candidates:
             if cand.author == ctx.self_user:
                 continue  # mine — handled by skipped_self above
             if not allow_dependabot and is_dependabot(cand.author):
                 continue  # dependabot PR, `dependabot` flag off — don't spawn
+            if (
+                not allow_external
+                and cand.author_association not in _COLLABORATOR_ASSOCIATIONS
+            ):
+                continue  # external contributor, `review_external` off — don't spawn
             if cand.branch in existing_branches:
                 continue  # already have a worktree — tracked via the matched path
             _bg_spawn_pr(ctx, repo_name, cand.number, cand.branch, review=True)

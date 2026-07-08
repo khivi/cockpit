@@ -1371,6 +1371,32 @@ def test_dedupe_closes_same_name_workspaces_without_live_worktree(tmp_path):
     assert keep == {"workspace:3"}
 
 
+def test_dedupe_excludes_foreign_repo_workspace_from_name_collision(tmp_path):
+    """Regression: `ctx.names`/`ctx.cwds` are the GLOBAL cmux workspace state
+    (every watched repo, not just this one — `workspace_state()` returns the
+    whole-machine snapshot every time it's refetched per-repo). Workspace names
+    are bare branch labels with no repo prefix, so a coworker repo's workspace
+    on a same-named branch collides on the name-key group. It must never be
+    grouped or closed as a "duplicate" — only a genuine in-repo duplicate
+    (same dead cwd, no live worktree) should still be closed."""
+    dead = tmp_path / "gone"  # this repo's dead cwd, never created
+    foreign = tmp_path.parent / "some-other-repo" / "feat"  # a different repo entirely
+    ctx = _dedupe_ctx(
+        tmp_path,
+        wts=[],
+        names={
+            "workspace:3": "[n] feat",
+            "workspace:8": "[n] feat",
+            "workspace:50": "[n] feat",
+        },
+        cwds={"workspace:3": dead, "workspace:8": dead, "workspace:50": foreign},
+    )
+    with patch.object(cycle, "cmux_close_workspace_best_effort") as close_mock:
+        keep = cycle._dedupe_workspaces(ctx)
+    close_mock.assert_called_once_with("workspace:8")
+    assert keep == {"workspace:3"}
+
+
 # ── _transition_merged_tickets: the opt-in Linear write at OPEN→MERGED ───────
 
 
@@ -2200,9 +2226,13 @@ def test_spawn_missing_review_candidates_filtered(tmp_path):
         prs=[],
         wts=[Worktree(path=tmp_path / "wt", branch="coworker/has-wt")],
         review_candidates=[
-            OpenPRHead(20, "coworker/new", "coworker"),  # → review spawn
-            OpenPRHead(21, "khivi/mine", "khivi"),  # skip: mine
-            OpenPRHead(22, "coworker/has-wt", "coworker"),  # skip: worktree exists
+            OpenPRHead(
+                20, "coworker/new", "coworker", "COLLABORATOR"
+            ),  # → review spawn
+            OpenPRHead(21, "khivi/mine", "khivi", "COLLABORATOR"),  # skip: mine
+            OpenPRHead(
+                22, "coworker/has-wt", "coworker", "COLLABORATOR"
+            ),  # skip: worktree exists
         ],
     )
     with (
@@ -2224,7 +2254,9 @@ def test_spawn_missing_review_skips_dependabot_by_default(tmp_path):
     def _run(repo_entry):
         ctx = _spawn_ctx(
             tmp_path,
-            review_candidates=[OpenPRHead(30, "dependabot/npm/x", "dependabot")],
+            review_candidates=[
+                OpenPRHead(30, "dependabot/npm/x", "dependabot", "COLLABORATOR")
+            ],
         )
         with (
             patch.object(cycle, "_bg_spawn_pr") as bg,
@@ -2236,6 +2268,32 @@ def test_spawn_missing_review_skips_dependabot_by_default(tmp_path):
 
     assert _run({"name": "n"}) == []
     assert len(_run({"name": "n", "dependabot": True})) == 1
+
+
+def test_spawn_missing_review_skips_external_by_default(tmp_path):
+    """A PR from a non-collaborator (authorAssociation not in
+    OWNER/MEMBER/COLLABORATOR) is skipped by default — untrusted external
+    content shouldn't reach an auto-spawned Bash-capable review agent.
+    `review_external: true` opts back in; MEMBER/OWNER/COLLABORATOR always spawn."""
+    from cockpit.lib.gh import OpenPRHead
+
+    def _run(repo_entry, candidates):
+        ctx = _spawn_ctx(tmp_path, review_candidates=candidates)
+        with (
+            patch.object(cycle, "_bg_spawn_pr") as bg,
+            patch.object(cycle, "spawn_pr_workspace"),
+            patch.object(cycle, "spawn_orphan_workspace"),
+        ):
+            cycle._spawn_missing_workspaces(ctx, repo_entry)
+        return [c for c in bg.call_args_list if c.kwargs.get("review")]
+
+    external = [OpenPRHead(40, "outside/x", "rando", "CONTRIBUTOR")]
+    assert _run({"name": "n"}, external) == []
+    assert len(_run({"name": "n", "review_external": True}, external)) == 1
+
+    for assoc in ("OWNER", "MEMBER", "COLLABORATOR"):
+        cand = [OpenPRHead(41, "outside/y", "coworker", assoc)]
+        assert len(_run({"name": "n"}, cand)) == 1
 
 
 def test_bg_spawn_pr_dry_run_does_not_launch(tmp_path, capsys):

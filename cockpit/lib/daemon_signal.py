@@ -6,7 +6,7 @@ The daemon-side runtime (pidfile + watch loop) lives in `lib/daemon.py`.
 
 Two channels live here because they're two halves of the same conversation:
 
-  - **Signal**: `kick_running` (SIGUSR1 to wake), `stop_running` (SIGTERM to halt).
+  - **Signal**: `kick_running` (SIGUSR1 to wake).
   - **Queue**: `enqueue` / `iter_pending` / `pop` / `prune_stale` — durable
     JSON markers under `$COCKPIT_HOME/state/close-requests/<repo>/<ref>.json`.
     The TUI's close action writes a marker when the daemon is up; the daemon
@@ -23,7 +23,6 @@ import os
 import signal
 import sys
 import time
-from collections.abc import Callable
 from pathlib import Path
 
 from .config import COCKPIT_HOME, PID_FILE
@@ -63,40 +62,6 @@ def kick_running(*, quiet: bool = False) -> bool:
     if not quiet:
         print(f"kicked cockpit pid={pid}")
     return True
-
-
-def sync(once_fn: Callable[[], int]) -> int:
-    """USR1-kick a running watcher; if none, run `once_fn` inline."""
-    return 0 if kick_running() else once_fn()
-
-
-def stop_running() -> int:
-    """SIGTERM the watcher and wait up to 5s for clean shutdown. Returns exit code."""
-    if not PID_FILE.exists():
-        print("no cockpit running (no pidfile)")
-        return 0
-    try:
-        pid = int(PID_FILE.read_text().strip())
-    except (ValueError, OSError) as e:
-        print(f"unreadable pidfile: {e}", file=sys.stderr)
-        return 1
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        PID_FILE.unlink(missing_ok=True)
-        print(f"cockpit pid={pid} was not running; removed stale pidfile")
-        return 0
-    deadline = time.time() + 5.0
-    while time.time() < deadline and PID_FILE.exists():
-        time.sleep(0.1)
-    if PID_FILE.exists():
-        print(
-            f"sent SIGTERM to pid={pid} but pidfile still present after 5s",
-            file=sys.stderr,
-        )
-        return 1
-    print(f"stopped cockpit pid={pid}")
-    return 0
 
 
 STATE_DIR = COCKPIT_HOME / "state" / "close-requests"

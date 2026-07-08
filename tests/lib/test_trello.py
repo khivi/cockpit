@@ -155,6 +155,17 @@ def test_fetch_card_lists_failure_isolated_per_card():
     assert out == {"okCard": "Done", "BADCARD": None}
 
 
+def test_fetch_card_lists_malformed_json_is_none():
+    # A 200 with an unparsable body must degrade like any other failure, not
+    # raise json.JSONDecodeError out of `_request`.
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen",
+        return_value=_FakeResp(raw=b"not json {"),
+    ):
+        out = fetch_card_lists(["aB3dZ9"], key=KEY, token=TOKEN)
+    assert out == {"aB3dZ9": None}
+
+
 def test_fetch_card_lists_http_error_is_none():
     err = urllib.error.HTTPError("u", 401, "unauthorized", {}, BytesIO(b""))  # type: ignore[arg-type]
     with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=err):

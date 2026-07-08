@@ -9,7 +9,9 @@ Cockpit is a terminal UI for juggling several PRs at once from Claude Code. Each
 - `uv`, `git ≥ 2.30`, Python ≥ 3.12
 - [`gh`](https://cli.github.com/), authenticated
 - Claude Code
-- A workspace backend on `PATH` — `cmux` (macOS) or `limux`
+- A workspace backend on `PATH` — a "workspace backend" is the terminal app that gives each worktree its own tab/session cockpit can spawn, focus, and close. Without one, cockpit runs in cache-only mode: the footer/statusline still work, but the side panel and slash-command spawning are disabled.
+  - [`cmux`](https://github.com/manaflow-ai/cmux) ([cmux.dev](https://cmux.dev)) — an open-source, Ghostty-based macOS terminal with vertical-tab workspaces built for AI coding agents. `brew install --cask cmux`.
+  - [`limux`](https://github.com/am-will/limux) — a GPU-accelerated Linux port of cmux (GTK4 over libghostty, tracks cmux parity). AppImage/`.deb` from [releases](https://github.com/am-will/limux/releases), or AUR `limux-bin`. Cockpit's Linux backend: it can spawn/close workspaces but lacks cmux's focus/pill/sidebar-color verbs, which degrade gracefully.
 - Optional: [`cship`](https://github.com/khivi/cship) + [`starship`](https://starship.rs/) for the statusline (set `use_cship: true`; wired automatically by the installer / `cockpit update`)
 
 ## Install
@@ -86,11 +88,29 @@ That minimal block is enough to start; every other knob has a sane default. The 
 |---|---|---|
 | `tool` | `auto` | workspace backend: `cmux` \| `limux` \| `none` \| `auto` |
 | per-repo `sidebar_color` | — | `cmux` color tint (Red/Orange/Green/Blue/…); an invalid name refuses to start |
-| per-repo `tickets` | `none` | ticket integration: `{provider: linear\|github, …}` (see below) |
+| per-repo `tickets` | `none` | ticket integration: `{provider: linear\|github\|jira\|trello, …}` (see below) |
+| per-repo `review_prs` | `false` | auto-spawn a review worktree for coworkers' open PRs (see below) |
 | `slow_poll_interval_seconds` | 300 | full GitHub reconcile |
 | `fast_poll_interval_seconds` | 30 | network-free git-state republish |
 
-**Full annotated schema — every knob, with defaults — lives in [`cockpit/config.example.json`](cockpit/config.example.json)**, which is also the file copied as your config on first run and is validated in CI, so it can't drift from what the daemon accepts. That file is the source of truth; this table is just the day-one subset.
+**Every knob, with defaults, lives in [`cockpit/config.example.json`](cockpit/config.example.json)** — a plain-JSON example config (not annotated; this README table is the field documentation), validated in CI so it can't drift from what the daemon accepts. It is *not* copied as your config on first run: a fresh install seeds an empty `{"repos": []}` instead, and repos are registered by running `/cockpit:new` (or `cockpit new`) in a repo, or by adding a `repos` entry to `~/.config/cockpit/config.json` by hand.
+
+### Ticket providers
+
+`tickets` links a PR to an external ticket via a footer in the PR body (`Linear: [...]`, `Closes #123`, `Jira: [...]`, `Trello: [...]`) and can transition that ticket on merge (`close_on_merge`, opt-in, off by default). Four providers:
+
+| Provider | Config fields | Env |
+|---|---|---|
+| `linear` | `keys` (team prefixes), `dev_done_state`, `merge_done_state` (default `"Done"`) | `LINEAR_API_KEY` |
+| `github` | `dev_done_label` (default `"ready for review"`), `start_label` | none (uses `gh`) |
+| `jira` | `site_url`, `email`, `dev_done_status` (default `"Dev Done"`), `merge_done_status` (default `"Done"`) | `JIRA_API_TOKEN` |
+| `trello` | `dev_done_list`, `merge_done_list` (no defaults — Trello list names are board-specific) | `TRELLO_API_KEY`, `TRELLO_API_TOKEN` |
+
+All providers also accept the shared `close_on_merge: bool`. See `cockpit/config.example.json` for full examples of each block.
+
+### Auto-review security posture
+
+`review_prs: true` (per-repo) auto-spawns a review worktree + agent for coworkers' open PRs. By default this only fires for PRs from repo collaborators/members. Set `"review_external": true` (per-repo) to opt in to auto-reviewing external contributors' PRs too — external PR content (title, description, diff) reaches an auto-spawned agent, so only enable this if you trust that exposure for the repo.
 
 Cleanup on merge is unconditional — a MERGED PR with a clean, pushed worktree is always reaped; nothing else is touched.
 

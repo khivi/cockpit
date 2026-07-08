@@ -22,6 +22,14 @@ expose. `--skip-install` runs only the refresh + setup steps: the bootstrap
 PATH, so the updater must not reinstall (which would redirect to the newest
 cached dir and could differ from the version just bootstrapped).
 
+A plain `cockpit update` exits 0 (installed or nothing pending), 1 (fatal
+failure), or `UPDATE_SKIPPED_NOOP_EXIT` (11) when the reinstall step found
+nothing newer in the *local* plugin cache — distinct from 0 because the local
+cache can legitimately lag GitHub's default-branch `plugin.json` (the value
+`--check`'s `latest_version()` compares against), so "nothing to install" is
+not the same claim as "up to date". `cli.py`'s `_self_update_and_reexec` reads
+this to avoid reporting a no-op reinstall as a successful update.
+
 The `u` self-update runs this via a fresh `subprocess.run(["cockpit", "update"])`
 from `cli.py`'s `_self_update_and_reexec` — a cooked, pre-TUI process, the exact
 state this manual path runs in — then `os.execvp`s onto the new version. The
@@ -44,6 +52,14 @@ from cockpit.lib import version
 # `--check` exit code: an update is available. Matches the contract the former
 # `bin/update.sh --check` exposed (0 = current, 10 = available, 1 = can't run).
 UPDATE_AVAILABLE_EXIT = 10
+
+# Plain `cockpit update` exit code: the reinstall step was skipped because the
+# local plugin cache had nothing newer than the running version — distinct from
+# 0 (a real install happened) so a caller (the TUI's `u` self-update) can tell
+# "nothing to do" apart from "installed". This can legitimately fire even when
+# GitHub's default branch is ahead of the local cache (network hiccup, missing
+# `claude` CLI, or plugin-cache propagation lag) — it does NOT mean up to date.
+UPDATE_SKIPPED_NOOP_EXIT = 11
 
 _UV_INSTALL_URL = "https://astral.sh/uv/install.sh"
 
@@ -162,7 +178,7 @@ def _do_install() -> int:
             f"already at {running} (newest cached: {src.name}); "
             "skipping reinstall to avoid a downgrade."
         )
-        return 0
+        return UPDATE_SKIPPED_NOOP_EXIT
     print(f"(re)installing the cockpit command from {src}...")
     # --no-cache is load-bearing: the wheel version is read from plugin.json at
     # build time, but uv keys its build cache on the source *path*, so a
@@ -207,8 +223,10 @@ def _check() -> int:
 def run_update(skip_install: bool = False, check_only: bool = False) -> int:
     """Run the update flow. See module docstring for the step breakdown.
 
-    Returns a process exit code: 0 on success, 1 on a fatal failure, or (for
-    `check_only`) 10 when an update is available."""
+    Returns a process exit code: 0 on success, 1 on a fatal failure,
+    `UPDATE_SKIPPED_NOOP_EXIT` (11) when the reinstall was skipped because the
+    local plugin cache had nothing newer, or (for `check_only`) 10 when an
+    update is available."""
     if check_only:
         return _check()
     if not _ensure_uv():

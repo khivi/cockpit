@@ -322,6 +322,41 @@ from tests.fixtures import (  # noqa: E402
 _STATUSLINE_CMD = "/path/to/footer.py"
 
 
+# ── ensure_state_dirs first-run seeding ─────────────────────────────────────
+
+
+def test_ensure_state_dirs_seeds_empty_repos_on_first_run(tmp_path, monkeypatch):
+    # First run must NOT copy config.example.json — its placeholder repos
+    # (fake /absolute/path/to/... paths) would error on every daemon tick
+    # forever, since registry.register_cwd only appends.
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "cockpit"))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    import importlib
+
+    importlib.reload(config_mod)
+
+    config_mod.ensure_state_dirs()
+
+    on_disk = json.loads((tmp_path / "cockpit" / "config.json").read_text())
+    assert on_disk == {"repos": []}
+
+
+def test_ensure_state_dirs_never_overwrites_existing_config(tmp_path, monkeypatch):
+    cockpit_home = tmp_path / "cockpit"
+    cockpit_home.mkdir()
+    (cockpit_home / "config.json").write_text(json.dumps({"repos": [{"name": "a"}]}))
+    monkeypatch.setenv("COCKPIT_HOME", str(cockpit_home))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    import importlib
+
+    importlib.reload(config_mod)
+
+    config_mod.ensure_state_dirs()
+
+    on_disk = json.loads((cockpit_home / "config.json").read_text())
+    assert on_disk == {"repos": [{"name": "a"}]}
+
+
 # ── use_cship gating ────────────────────────────────────────────────────────
 
 
@@ -680,6 +715,89 @@ def test_repo_tickets_defaults_none(tmp_path, monkeypatch):
     assert cockpit_config.repo_tickets(repo_entry={}) == "none"
 
 
+def test_repo_tickets_explicit_provider_wins_over_legacy_linear_keys(
+    tmp_path, monkeypatch
+):
+    """A repo with BOTH the legacy flat `linear_keys` AND an explicit
+    `tickets.provider` must resolve to the explicit provider — `repo_tickets`
+    only falls back to the `linear_keys` back-compat guess when no provider is
+    set anywhere (see its docstring's resolution order)."""
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    re = {"linear_keys": ["PE"], "tickets": {"provider": "github"}}
+    assert cockpit_config.repo_tickets(repo_entry=re) == "github"
+
+
+# ── find_repo_by_nwo (owner/name → registered repo, via origin remote) ──────
+
+
+def _git_repo_with_remote(tmp_path: Path, monkeypatch, url: str) -> Path:
+    import subprocess
+
+    from tests.conftest import _GIT_ENV_LEAKS
+
+    # Strip GIT_DIR etc. from the whole test process — under a pre-push hook
+    # they point every git call (ours AND find_repo_by_nwo's) at the OUTER
+    # cockpit repo, not the tmp_path repo.
+    for var in _GIT_ENV_LEAKS:
+        monkeypatch.delenv(var, raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", url], check=True)
+    return repo
+
+
+def test_find_repo_by_nwo_matches_ssh_remote(tmp_path, monkeypatch):
+    repo = _git_repo_with_remote(tmp_path, monkeypatch, "git@github.com:Owner/Repo.git")
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [{"name": "r", "path": str(repo)}]}
+    )
+    found = cockpit_config.find_repo_by_nwo("Owner/Repo")
+    assert found is not None
+    assert found["name"] == "r"
+
+
+def test_find_repo_by_nwo_matches_https_remote_no_git_suffix(tmp_path, monkeypatch):
+    repo = _git_repo_with_remote(tmp_path, monkeypatch, "https://github.com/owner/repo")
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [{"name": "r", "path": str(repo)}]}
+    )
+    found = cockpit_config.find_repo_by_nwo("owner/repo")
+    assert found is not None
+    assert found["name"] == "r"
+
+
+def test_find_repo_by_nwo_case_insensitive(tmp_path, monkeypatch):
+    repo = _git_repo_with_remote(
+        tmp_path, monkeypatch, "https://github.com/Owner/Repo.git"
+    )
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [{"name": "r", "path": str(repo)}]}
+    )
+    assert cockpit_config.find_repo_by_nwo("owner/REPO") is not None
+
+
+def test_find_repo_by_nwo_no_match_returns_none(tmp_path, monkeypatch):
+    repo = _git_repo_with_remote(
+        tmp_path, monkeypatch, "https://github.com/owner/repo.git"
+    )
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [{"name": "r", "path": str(repo)}]}
+    )
+    assert cockpit_config.find_repo_by_nwo("someone/else") is None
+
+
+def test_find_repo_by_nwo_skips_missing_path(tmp_path, monkeypatch):
+    """A configured repo whose path no longer exists on disk is skipped rather
+    than raising from the `git config` subprocess call."""
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {"repos": [{"name": "r", "path": str(tmp_path / "gone")}]},
+    )
+    assert cockpit_config.find_repo_by_nwo("owner/repo") is None
+
+
 # ── review_command (review_prs first-turn slash command) ────────────────────
 
 
@@ -792,6 +910,54 @@ def test_jira_status_overrides_from_object(tmp_path, monkeypatch):
     assert cockpit_config.jira_email(repo_entry=re) == "me@acme.com"
     assert cockpit_config.jira_dev_done_status(repo_entry=re) == "In Review"
     assert cockpit_config.jira_merge_done_status(repo_entry=re) == "Closed"
+
+
+def test_trello_readers_default_to_empty_string(tmp_path, monkeypatch):
+    # No default list name to guess — an unset value means the feature is off.
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.trello_dev_done_list() == ""
+    assert cockpit_config.trello_merge_done_list() == ""
+
+
+def test_trello_readers_repo_override_wins(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repos": [],
+            "tickets": {
+                "provider": "trello",
+                "dev_done_list": "Global Ready",
+                "merge_done_list": "Global Done",
+            },
+        },
+    )
+    re = {
+        "tickets": {
+            "provider": "trello",
+            "dev_done_list": "Ready for Review",
+            "merge_done_list": "Shipped",
+        }
+    }
+    assert cockpit_config.trello_dev_done_list(repo_entry=re) == "Ready for Review"
+    assert cockpit_config.trello_merge_done_list(repo_entry=re) == "Shipped"
+
+
+def test_trello_readers_fall_back_to_global(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repos": [],
+            "tickets": {
+                "provider": "trello",
+                "dev_done_list": "Global Ready",
+                "merge_done_list": "Global Done",
+            },
+        },
+    )
+    assert cockpit_config.trello_dev_done_list(repo_entry={}) == "Global Ready"
+    assert cockpit_config.trello_merge_done_list(repo_entry={}) == "Global Done"
 
 
 def test_ticket_close_on_merge_defaults_false(tmp_path, monkeypatch):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -350,7 +351,39 @@ def test_write_base_relative_no_branch_noop(cache_dir, writer):
     assert not any(cache_dir.iterdir())
 
 
-# ── write_git_state_cache (lib.cache) ──────────────────────────────────────
+# ── atomic_write (lib.cache) ────────────────────────────────────────────────
+
+
+def test_atomic_write_tmp_name_embeds_pid(cache_dir, monkeypatch):
+    """The tmp filename must embed the writer's pid so two concurrent writers
+    (daemon + a renderer-spawned `warm`) never race on the same tmp path —
+    mirrors `_atomic_write_json`'s already-fixed pattern."""
+    seen_tmp: list[Path] = []
+    real_replace = os.replace
+
+    def _spy_replace(src, dst):
+        seen_tmp.append(Path(src))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(cache_mod.os, "replace", _spy_replace)
+    target = cache_dir / "pr-state-khivi-feature"
+    cache_mod.atomic_write(target, "hello")
+
+    assert len(seen_tmp) == 1
+    assert seen_tmp[0].name == f"pr-state-khivi-feature.tmp.{os.getpid()}"
+    assert target.read_text() == "hello"
+    # No stray tmp file left behind after the rename.
+    assert list(cache_dir.iterdir()) == [target]
+
+
+def test_atomic_write_sequential_writers_leave_no_stray_tmp(cache_dir):
+    """Two sequential writes (simulating daemon then `warm`) each clean up
+    their own pid-suffixed tmp file and the final content wins."""
+    target = cache_dir / "pr-state-khivi-feature"
+    cache_mod.atomic_write(target, "first")
+    cache_mod.atomic_write(target, "second")
+    assert target.read_text() == "second"
+    assert list(cache_dir.iterdir()) == [target]
 
 
 def test_cwd_key_slug_shape():
