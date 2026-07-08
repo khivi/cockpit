@@ -184,7 +184,6 @@ class CockpitApp(App[None]):
     BINDINGS = [
         ("s", "sync", "Sync now"),
         ("f", "focus_row", "Focus"),
-        ("w", "open_workspace", "Open workspace"),
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
         ("o", "show_output", "Output"),
@@ -645,11 +644,6 @@ class CockpitApp(App[None]):
         if path:
             self._focus_worktree(path)
 
-    def action_open_workspace(self) -> None:
-        path = self.query_one(WorktreeTable).current_path()
-        if path:
-            self._open_workspace(path)
-
     def action_open_pr(self) -> None:
         path = self.query_one(WorktreeTable).current_path()
         if path:
@@ -764,6 +758,10 @@ class CockpitApp(App[None]):
             None,
         )
 
+    @staticmethod
+    def _workspace_ref_by_name(name: str) -> str | None:
+        return next((ref for ref, n in workspace_names().items() if n == name), None)
+
     def _notify(self, message: str, *, severity: str = "information") -> None:
         """Toast feedback, safe from a worker thread. The log pane is removed,
         so a `print` is invisible — a notification is the only on-screen cue."""
@@ -771,35 +769,17 @@ class CockpitApp(App[None]):
 
     @work(thread=True, group="focus", exit_on_error=False)
     def _focus_worktree(self, path_str: str) -> None:
-        if not is_cmux():
-            self._notify("focus requires cmux", severity="warning")
-            return
-        resolved = self._resolve_worktree(path_str)
-        if resolved is None:
-            self._notify(f"focus: no worktree at {path_str}", severity="error")
-            return
-        _repo, wt = resolved
-        ref = self._workspace_ref(wt)
-        if ref is None:
-            self._notify(
-                f"focus: no workspace for {wt.label or wt.short}", severity="warning"
-            )
-            return
-        select_workspace(ref)
-        self._notify(f"focused {wt.label or wt.short}")
-
-    @work(thread=True, group="focus", exit_on_error=False)
-    def _open_workspace(self, path_str: str) -> None:
-        # `w`: ensure the row's worktree has a workspace, spawning one when it
-        # doesn't, then focus it. Unlike `f` (focus-only, cmux-only), this works
-        # on limux too — limux can spawn a workspace but has no select verb, so
-        # there it just creates the workspace and the user switches via limux's
-        # own UI. The spawn reuses the daemon's exact spawn+pill helpers, so a
-        # `w`-spawned workspace is indistinguishable from a daemon-spawned one;
-        # the next tick adopts it by cwd (path-keyed, not pill-keyed) so it is
-        # never double-spawned, and `_dedupe_workspaces` reaps any same-path
-        # dupe from a rare race with the slow tick. Spawning is not a cache
-        # write, so the daemon-is-sole-writer invariant still holds.
+        # `f`: get me into this row's session. Focus the row's workspace,
+        # spawning one first when it doesn't have one — a single "take me there"
+        # verb (the former `w`/open key folds in here: focus was just spawn's
+        # trailing step). On cmux it focuses; on limux (which can spawn but has
+        # no select verb) it spawns and the user switches via limux's own UI. The
+        # spawn reuses the daemon's exact spawn+pill helpers, so an `f`-spawned
+        # workspace is indistinguishable from a daemon-spawned one; the next tick
+        # adopts it by cwd (path-keyed, not pill-keyed) so it is never
+        # double-spawned, and `_dedupe_workspaces` reaps any same-path dupe from
+        # a rare race with the slow tick. Spawning is not a cache write, so the
+        # daemon-is-sole-writer invariant still holds.
         backend = resolve_tool()
         if backend == "none":
             self._notify("open: no workspace backend (tool=none)", severity="warning")
@@ -809,16 +789,25 @@ class CockpitApp(App[None]):
             self._notify(f"open: no worktree at {path_str}", severity="error")
             return
         repo, wt = resolved
+        repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
         # Re-read live workspaces just before spawning to shrink the window in
-        # which the slow tick could spawn the same workspace concurrently.
-        if (ref := self._workspace_ref(wt)) is not None:
+        # which the slow tick could spawn the same workspace concurrently. An
+        # `in_place` repo's main checkout can host several sessions all rooted at
+        # the same cwd, so cwd-matching can't single out "the repo's session" —
+        # its canonical session is the one named after the repo. Prefer that name
+        # match there, falling back to the cwd match (and, if none, a spawn).
+        ref = None
+        if repo.get("in_place"):
+            ref = self._workspace_ref_by_name(repo_name)
+        if ref is None:
+            ref = self._workspace_ref(wt)
+        if ref is not None:
             if backend == "cmux":
                 select_workspace(ref)
                 self._notify(f"focused {wt.label or wt.short}")
             else:
                 self._notify(f"workspace already open: {wt.label or wt.short}")
             return
-        repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
         payload = find_pr_payload(wt.branch, repo_name) if wt.branch else None
         if payload:
             pr = _pr_from_payload(payload)

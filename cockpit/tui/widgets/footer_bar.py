@@ -49,7 +49,6 @@ class FooterBar(Horizontal):
     ROW_ACTIONS = frozenset(
         {
             "focus_row",
-            "open_workspace",
             "open_pr",
             "open_ticket",
             "close_row",
@@ -69,17 +68,11 @@ class FooterBar(Horizontal):
         "open_pr": "pr",
         "mute_row": "pr",
         "open_ticket": "ticket",
-        # `f` (focus) and `N` (nudge) reach an *existing* workspace — they no-op
-        # on a workspace-less row, so only advertise them when one is live.
-        "focus_row": "workspace",
+        # `N` (nudge) reaches an *existing* workspace — it no-ops on a
+        # workspace-less row, so only advertise it when one is live. `f` is NOT
+        # gated: it focuses an existing workspace or spawns one first, so it's
+        # meaningful on any backed row.
         "nudge_row": "workspace",
-    }
-
-    # Row actions hidden when the highlighted row *has* a capability — the
-    # inverse of ACTION_REQUIRES. `w` (open/spawn) is the workspace-less row's
-    # verb; once a workspace exists `f` covers reaching it, so `w`'s hint hides.
-    ACTION_FORBIDS = {
-        "open_workspace": "workspace",
     }
 
     # Explicit render order for the global (right) group — independent of BINDINGS
@@ -99,7 +92,6 @@ class FooterBar(Horizontal):
     LABELS = {
         "sync": "Sync",
         "focus_row": "Focus",
-        "open_workspace": "Open",
         "open_pr": "PR",
         "open_ticket": "Ticket",
         "show_output": "Output",
@@ -117,16 +109,14 @@ class FooterBar(Horizontal):
     HIDDEN_ACTIONS = frozenset({"dismiss_overlay"})
 
     # Row actions that only work on one backend — rendered only when the resolved
-    # backend ("cmux" | "limux" | "none") is in the action's set. focus/nudge are
-    # focus/nudge are cmux-only verbs. open_workspace works on cmux AND limux
-    # (both can spawn) but not "none" (no backend to spawn into); within those it
-    # is further gated on workspace *absence* (ACTION_FORBIDS), so a
-    # workspace-less row advertises `w` on cmux too — the only key that can reach
-    # it there (`f` focuses nothing).
+    # backend ("cmux" | "limux" | "none") is in the action's set. `f` (focus)
+    # both spawns a missing workspace and focuses an existing one; spawning works
+    # on cmux AND limux (focus is the cmux-only bonus — on limux `f` spawns and
+    # the user switches via limux's own UI), so it's hidden only on "none" (no
+    # backend to spawn into). `N` (nudge) is a cmux-only verb.
     BACKEND_ACTIONS = {
-        "focus_row": frozenset({"cmux"}),
+        "focus_row": frozenset({"cmux", "limux"}),
         "nudge_row": frozenset({"cmux"}),
-        "open_workspace": frozenset({"cmux", "limux"}),
     }
 
     def __init__(
@@ -236,14 +226,10 @@ class FooterBar(Horizontal):
         ):
             return True
         # Per-row gating: when row caps are known, hide a row key whose required
-        # capability the highlighted row lacks, or whose forbidden capability it
-        # has. Unknown caps (None) → no gating.
+        # capability the highlighted row lacks. Unknown caps (None) → no gating.
         if self._row_caps is not None:
             req = self.ACTION_REQUIRES.get(action)
             if req is not None and req not in self._row_caps:
-                return True
-            forbid = self.ACTION_FORBIDS.get(action)
-            if forbid is not None and forbid in self._row_caps:
                 return True
         return False
 

@@ -407,7 +407,7 @@ def _seed_one_worktree(monkeypatch, tmp_path, *, branch="khivi/feat-a"):
 
 async def test_focus_key_focuses_workspace(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
     refs: list[str] = []
     monkeypatch.setattr(
         "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
@@ -425,7 +425,7 @@ async def test_focus_key_focuses_workspace(monkeypatch, tmp_path):
 async def test_focus_via_enter_key(monkeypatch, tmp_path):
     # Enter on the focused row selects it → focuses (single click does not).
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
     refs: list[str] = []
     monkeypatch.setattr(
         "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
@@ -444,7 +444,7 @@ async def test_focus_via_enter_key(monkeypatch, tmp_path):
 
 async def test_focus_via_double_click(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
     refs: list[str] = []
     monkeypatch.setattr(
         "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
@@ -463,7 +463,7 @@ async def test_focus_via_double_click(monkeypatch, tmp_path):
 
 async def test_single_click_does_not_focus(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
     refs: list[str] = []
     monkeypatch.setattr(
         "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
@@ -478,9 +478,11 @@ async def test_single_click_does_not_focus(monkeypatch, tmp_path):
     assert refs == []  # single click only moves the cursor
 
 
-async def test_focus_key_noop_on_limux(monkeypatch, tmp_path):
+async def test_focus_existing_does_not_select_on_limux(monkeypatch, tmp_path):
+    # limux has no select verb: `f` on a row that already has a workspace just
+    # reports it's open — it never spawns a duplicate and never selects.
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "limux")
     refs: list[str] = []
     monkeypatch.setattr(
         "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
@@ -495,11 +497,11 @@ async def test_focus_key_noop_on_limux(monkeypatch, tmp_path):
     assert refs == []
 
 
-def _patch_open_workspace(monkeypatch, *, backend, has_ws):
-    """Wire `w`'s leaves: `resolve_tool` → backend, `workspace_cwds`/`names`
-    so the row's worktree either already has a workspace (`has_ws`) or not, and
-    capturing stubs for both spawn helpers + `select_workspace`. Returns the
-    capture dicts."""
+def _patch_focus(monkeypatch, *, backend, has_ws):
+    """Wire `f`'s leaves: `resolve_tool` → backend, `workspace_cwds`/`names` so
+    the row's worktree either already has a workspace (`has_ws`) or not, and
+    capturing stubs for both spawn helpers + `select_workspace`. `f` is the one
+    "focus, spawning if missing" verb, so these cover the whole open path."""
     monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: backend)
     cwds = {"ws1": Path("/x")}  # placeholder; the test sets the real path below
     monkeypatch.setattr(
@@ -526,71 +528,94 @@ def _patch_open_workspace(monkeypatch, *, backend, has_ws):
     return cap, cwds
 
 
-async def _press_open(app, wt):
+async def _press_focus(app, wt):
     async with app.run_test() as pilot:
         await pilot.pause()
         app._render_table([("repo", None, False, [wt])])
         await pilot.pause()
-        await pilot.press("w")
+        await pilot.press("f")
         await pilot.pause(0.6)
 
 
-async def test_open_workspace_focuses_existing_on_cmux(monkeypatch, tmp_path):
-    # Workspace already exists → `w` just focuses it (no spawn), like `f`.
+async def test_focus_spawns_orphan_when_missing(monkeypatch, tmp_path):
+    # No workspace + no cached PR → `f` spawns an orphan workspace, then focuses.
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    cap, cwds = _patch_open_workspace(monkeypatch, backend="cmux", has_ws=True)
-    cwds.clear()
-    cwds["ws1"] = wt.path
+    cap, _ = _patch_focus(monkeypatch, backend="cmux", has_ws=False)
     app, _ = _make_app()
-    await _press_open(app, wt)
-    assert cap["select"] == ["ws1"]
-    assert cap["orphan"] == [] and cap["pr"] == []
-
-
-async def test_open_workspace_spawns_orphan_when_missing(monkeypatch, tmp_path):
-    # No workspace + no cached PR → spawn an orphan workspace, then focus it.
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    cap, _ = _patch_open_workspace(monkeypatch, backend="cmux", has_ws=False)
-    app, _ = _make_app()
-    await _press_open(app, wt)
+    await _press_focus(app, wt)
     assert cap["orphan"] == [wt.branch]
     assert cap["pr"] == []
     assert cap["select"] == ["ws2"]
 
 
-async def test_open_workspace_spawns_pr_when_payload(monkeypatch, tmp_path):
+async def test_focus_spawns_pr_when_payload(monkeypatch, tmp_path):
     # No workspace but a cached PR → reconstruct it and spawn a PR workspace.
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    cap, _ = _patch_open_workspace(monkeypatch, backend="cmux", has_ws=False)
+    cap, _ = _patch_focus(monkeypatch, backend="cmux", has_ws=False)
     monkeypatch.setattr(
         "cockpit.tui.app.find_pr_payload",
         lambda *a, **k: {"number": 42, "title": "t", "branch": wt.branch},
     )
     monkeypatch.setattr("cockpit.tui.app.load_pref", lambda n: None)
     app, _ = _make_app()
-    await _press_open(app, wt)
+    await _press_focus(app, wt)
     assert cap["pr"] == [42]
     assert cap["orphan"] == []
     assert cap["select"] == ["ws2"]
 
 
-async def test_open_workspace_spawns_without_focus_on_limux(monkeypatch, tmp_path):
-    # limux can spawn but not select — create the workspace, never focus it.
+async def test_focus_spawns_without_select_on_limux(monkeypatch, tmp_path):
+    # limux can spawn but not select — `f` creates the workspace, never focuses.
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    cap, _ = _patch_open_workspace(monkeypatch, backend="limux", has_ws=False)
+    cap, _ = _patch_focus(monkeypatch, backend="limux", has_ws=False)
     app, _ = _make_app()
-    await _press_open(app, wt)
+    await _press_focus(app, wt)
     assert cap["orphan"] == [wt.branch]
     assert cap["select"] == []
 
 
-async def test_open_workspace_noop_when_tool_none(monkeypatch, tmp_path):
-    # tool=none → no backend, so `w` neither spawns nor focuses.
+async def test_focus_noop_when_tool_none(monkeypatch, tmp_path):
+    # tool=none → no backend, so `f` neither spawns nor focuses.
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    cap, _ = _patch_open_workspace(monkeypatch, backend="none", has_ws=False)
+    cap, _ = _patch_focus(monkeypatch, backend="none", has_ws=False)
     app, _ = _make_app()
-    await _press_open(app, wt)
+    await _press_focus(app, wt)
     assert cap["orphan"] == [] and cap["pr"] == [] and cap["select"] == []
+
+
+async def test_focus_in_place_switches_by_repo_name(monkeypatch, tmp_path):
+    # An `in_place` repo's checkout can host several sessions rooted at the same
+    # cwd, so `f` there resolves the session by REPO NAME, not cwd — switching to
+    # a workspace named after the repo even when the cwd match would miss.
+    wt = Worktree(path=tmp_path, branch="master")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [{"name": "myrepo", "path": str(tmp_path), "in_place": True}],
+            "check_update": False,
+        },
+    )
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
+    # The repo-named workspace lives at a DIFFERENT cwd, so a cwd match misses;
+    # only the name match ("myrepo") can find it.
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: {"wsX": Path("/elsewhere")}
+    )
+    monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {"wsX": "myrepo"})
+    refs: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
+    )
+    spawned: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.spawn_orphan_workspace", lambda wt, **k: spawned.append(wt)
+    )
+    app, _ = _make_app()
+    await _press_focus(app, wt)
+    assert refs == ["wsX"]
+    assert spawned == []  # switched to the existing named session, no spawn
 
 
 async def test_close_key_enqueues_when_clean(monkeypatch, tmp_path):
@@ -701,7 +726,7 @@ async def test_close_key_merge_aware_clears_hard_unpushed(monkeypatch, tmp_path)
 async def test_focus_shows_notification(monkeypatch, tmp_path):
     # The log pane is removed, so a toast is the only on-screen feedback.
     wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
     monkeypatch.setattr("cockpit.tui.app.select_workspace", lambda ref, **k: None)
     toasts: list[str] = []
     app, _ = _make_app()
@@ -1498,39 +1523,35 @@ async def test_footer_mute_label_flips_to_unmute_when_muted():
     assert fb._label("mute_row", "Mute") == "Unmute"
 
 
-async def test_footer_cmux_gates_focus_nudge_open_on_workspace_presence():
-    # cmux: `f`/Focus and `N`/Nudge reach an existing workspace (require the
-    # `workspace` cap); `w`/Open spawns one (hidden once a workspace exists).
+async def test_footer_cmux_shows_focus_gates_nudge_on_workspace():
+    # cmux: `f`/Focus is the single "focus, spawning if missing" verb, so it
+    # shows on any row regardless of workspace presence. `N`/Nudge reaches an
+    # *existing* workspace, so it's gated on the `workspace` cap.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
     fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
-    # Row WITH a workspace: reach-verbs shown, spawn hidden.
     fb._row_caps = frozenset({"workspace"})
     assert not fb._skip("focus_row") and not fb._skip("nudge_row")
-    assert fb._skip("open_workspace")
-    # Row WITHOUT a workspace: spawn shown, reach-verbs hidden.
     fb._row_caps = frozenset()
-    assert fb._skip("focus_row") and fb._skip("nudge_row")
-    assert not fb._skip("open_workspace")
+    assert not fb._skip("focus_row")  # `f` still shown — it spawns
+    assert fb._skip("nudge_row")  # nothing to nudge
 
 
-async def test_footer_limux_hides_focus_nudge_gates_open_on_workspace():
-    # limux has no `focus`/notify verb, so Focus/Nudge always hide. `w`/Open is
-    # the only way to reach a workspace and spawns when none exists, so it shows
-    # on a workspace-less row and hides once one exists.
+async def test_footer_limux_shows_focus_hides_nudge():
+    # limux can spawn (so `f` shows — it spawns then the user switches via limux)
+    # but has no nudge verb, so `N`/Nudge always hides.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
     fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="limux")
-    fb._row_caps = frozenset()
-    assert fb._skip("focus_row") and fb._skip("nudge_row")
-    assert not fb._skip("open_workspace")
-    fb._row_caps = frozenset({"workspace"})
-    assert fb._skip("open_workspace")
+    for caps in (frozenset(), frozenset({"workspace"})):
+        fb._row_caps = caps
+        assert not fb._skip("focus_row")
+        assert fb._skip("nudge_row")
 
 
 async def test_footer_on_no_backend_hides_all_backend_keys():
     # tool=none: every workspace-backend verb is dead (no backend to spawn into
-    # or reach), so none of the three render regardless of workspace presence.
+    # or reach), so neither renders regardless of workspace presence.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
     fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="none")
@@ -1538,7 +1559,6 @@ async def test_footer_on_no_backend_hides_all_backend_keys():
         fb._row_caps = caps
         assert fb._skip("focus_row")
         assert fb._skip("nudge_row")
-        assert fb._skip("open_workspace")
 
 
 async def test_footer_hides_close_on_workspaceless_primary_checkout():
