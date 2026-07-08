@@ -58,6 +58,13 @@ def _make_app(**kw):
         slow_secs=kw.get("slow_secs", 300),
         fast_secs=kw.get("fast_secs", 30),
     )
+    # Startup spawns worker threads (_prime_table + the slow/fast tick finallys)
+    # that render the table off the git-derived inventory via call_from_thread.
+    # These tests drive _render_table explicitly, so neutralize the background
+    # render — otherwise a late worker render can clobber the controlled table
+    # (order-dependent flake under pytest-randomly). The dedicated priming tests
+    # build CockpitApp directly, not via _make_app, so they keep the real render.
+    app._publish_inventory = lambda: None  # type: ignore[method-assign]
     return app, calls
 
 
