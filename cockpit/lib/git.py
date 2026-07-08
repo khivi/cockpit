@@ -516,6 +516,24 @@ def list_local_branches(repo: Path) -> list[str]:
     return [line.strip() for line in res.stdout.splitlines() if line.strip()]
 
 
+def origin_base_resolves(repo: Path, base: str) -> bool:
+    """True if the tracking ref `origin/{base}` resolves locally.
+
+    This is the start-point cockpit cuts new worktrees from — both
+    `create_worktree` and `create_new_branch_worktree` pass `origin/{base}` to
+    `git worktree add`. A `git clone --bare` writes an empty fetch refspec, so it
+    has no `refs/remotes/origin/*` and this returns False even though
+    `refs/heads/{base}` exists — the "worktree silently not created" setup that
+    `preflight._warn_unresolvable_base` surfaces. Purely local: no network.
+    """
+    return (
+        _git(
+            repo, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{base}"
+        ).returncode
+        == 0
+    )
+
+
 def create_worktree(
     repo: Path,
     branch: str,

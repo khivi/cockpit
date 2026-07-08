@@ -28,6 +28,7 @@ from cockpit.lib.git import (
     has_remote_branch,
     is_ancestor,
     list_local_branches,
+    origin_base_resolves,
     prune_worktrees,
     require_git,
     slugify,
@@ -393,6 +394,28 @@ def test_create_worktree_creates_fresh_when_no_prefixed_branch(cockpit_repo):
     assert branch == "khivi/freshfeat"
     assert wt_path.exists()
     assert _has_local_branch(repo, "khivi/freshfeat") is True
+
+
+# ── origin_base_resolves ───────────────────────────────────────────────────
+
+
+def test_origin_base_resolves_true_for_normal_clone(cockpit_repo):
+    """A normal clone has the standard fetch refspec, so origin/main resolves."""
+    assert origin_base_resolves(cockpit_repo.repo, "main") is True
+    assert origin_base_resolves(cockpit_repo.repo, "no-such-base") is False
+
+
+def test_origin_base_resolves_false_for_bare_clone(cockpit_repo, tmp_path):
+    """`git clone --bare` writes an empty fetch refspec — no
+    refs/remotes/origin/* — so origin/main does NOT resolve even though
+    refs/heads/main exists. This is the setup that silently breaks worktree
+    spawning; the preflight warning keys off exactly this."""
+    bare = tmp_path / "bare.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(cockpit_repo.origin), str(bare)], check=True
+    )
+    assert _has_local_branch(bare, "main") is True  # branch is there…
+    assert origin_base_resolves(bare, "main") is False  # …but origin/main isn't
 
 
 # ── remove_worktree: double-force + lock-reason logging ────────────────────
