@@ -152,6 +152,17 @@ def test_fetch_issue_statuses_failure_isolated_per_key():
     assert out == {"OK-1": "Done", "BAD-9": None}
 
 
+def test_fetch_issue_statuses_malformed_json_is_none():
+    # A 200 with an unparsable body must degrade like any other failure, not
+    # raise json.JSONDecodeError out of `_request`.
+    with patch(
+        "cockpit.lib.jira.urllib.request.urlopen",
+        return_value=_FakeResp(None, raw=b"not json {"),
+    ):
+        out = fetch_issue_statuses(["PROJ-1"], site_url=SITE, email=EMAIL, token=TOKEN)
+    assert out == {"PROJ-1": None}
+
+
 def test_fetch_issue_statuses_http_error_is_none():
     err = urllib.error.HTTPError("u", 401, "unauthorized", {}, BytesIO(b""))  # type: ignore[arg-type]
     with patch("cockpit.lib.jira.urllib.request.urlopen", side_effect=err):

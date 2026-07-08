@@ -143,14 +143,30 @@ def test_stale_pidfile_replaced(tmp_path, cockpit_home):
         proc.wait(timeout=5.0)
 
 
+def _signal_until(pid: int, sig: int, marker: Path, tries: int = 5) -> bool:
+    """Send `sig` and poll for `marker`, resending if it hasn't landed yet.
+
+    The signal handler is installed before the first tick runs, so a signal
+    sent any time after the first tick log line is safe to deliver — no fixed
+    pre-signal sleep is needed. Retrying (rather than a single fire-and-hope)
+    guards against the rare case of the signal arriving while the process
+    isn't yet parked in its sleep-wait loop.
+    """
+    for _ in range(tries):
+        os.kill(pid, sig)
+        if _wait_for(marker, timeout=1.0):
+            return True
+    return False
+
+
 def test_sigusr1_triggers_wake(tmp_path, cockpit_home):
     driver = _write_driver(tmp_path, watch_secs=60)
     proc = _launch(driver, cockpit_home)
     try:
         assert _wait_for(tmp_path / "ticks.log"), "no initial tick"
-        time.sleep(0.3)
-        os.kill(proc.pid, signal.SIGUSR1)
-        assert _wait_for(tmp_path / "wake.log"), "wake marker never appeared"
+        assert _signal_until(
+            proc.pid, signal.SIGUSR1, tmp_path / "wake.log"
+        ), "wake marker never appeared"
     finally:
         proc.send_signal(signal.SIGTERM)
         proc.wait(timeout=5.0)

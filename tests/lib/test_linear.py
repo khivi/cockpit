@@ -232,8 +232,8 @@ def test_parse_footer_links_empty():
 class _FakeResp:
     """Minimal context-manager stand-in for urlopen's return."""
 
-    def __init__(self, payload: dict):
-        self._body = json.dumps(payload).encode()
+    def __init__(self, payload: dict | None = None, *, raw: bytes | None = None):
+        self._body = raw if raw is not None else json.dumps(payload or {}).encode()
 
     def __enter__(self):
         return self
@@ -283,6 +283,17 @@ def test_fetch_ticket_state_no_matching_issue_is_none():
         return_value=_FakeResp({"data": {"issues": {"nodes": []}}}),
     ):
         assert fetch_ticket_state("PE-9", api_key="k") is None
+
+
+def test_fetch_ticket_state_malformed_json_is_none():
+    # A 200 with an unparsable body must degrade like any other failure —
+    # `fetch_ticket_state` keeps its own inlined request (predates
+    # `_post_graphql`), so its json.loads is covered separately here.
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_FakeResp(raw=b"not json {"),
+    ):
+        assert fetch_ticket_state("PE-1", api_key="k") is None
 
 
 def test_fetch_ticket_state_http_error_is_none():
@@ -444,6 +455,16 @@ def test_fetch_viewer_id_happy_path():
 
 def test_fetch_viewer_id_error_is_none():
     with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
+        assert fetch_viewer_id(api_key="k") is None
+
+
+def test_fetch_viewer_id_malformed_json_is_none():
+    # A 200 with an unparsable body — exercises `_post_graphql`'s own
+    # json.loads (shared by all the merge-transition helpers below).
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_FakeResp(raw=b"not json {"),
+    ):
         assert fetch_viewer_id(api_key="k") is None
 
 

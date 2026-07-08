@@ -2226,9 +2226,13 @@ def test_spawn_missing_review_candidates_filtered(tmp_path):
         prs=[],
         wts=[Worktree(path=tmp_path / "wt", branch="coworker/has-wt")],
         review_candidates=[
-            OpenPRHead(20, "coworker/new", "coworker"),  # → review spawn
-            OpenPRHead(21, "khivi/mine", "khivi"),  # skip: mine
-            OpenPRHead(22, "coworker/has-wt", "coworker"),  # skip: worktree exists
+            OpenPRHead(
+                20, "coworker/new", "coworker", "COLLABORATOR"
+            ),  # → review spawn
+            OpenPRHead(21, "khivi/mine", "khivi", "COLLABORATOR"),  # skip: mine
+            OpenPRHead(
+                22, "coworker/has-wt", "coworker", "COLLABORATOR"
+            ),  # skip: worktree exists
         ],
     )
     with (
@@ -2250,7 +2254,9 @@ def test_spawn_missing_review_skips_dependabot_by_default(tmp_path):
     def _run(repo_entry):
         ctx = _spawn_ctx(
             tmp_path,
-            review_candidates=[OpenPRHead(30, "dependabot/npm/x", "dependabot")],
+            review_candidates=[
+                OpenPRHead(30, "dependabot/npm/x", "dependabot", "COLLABORATOR")
+            ],
         )
         with (
             patch.object(cycle, "_bg_spawn_pr") as bg,
@@ -2262,6 +2268,32 @@ def test_spawn_missing_review_skips_dependabot_by_default(tmp_path):
 
     assert _run({"name": "n"}) == []
     assert len(_run({"name": "n", "dependabot": True})) == 1
+
+
+def test_spawn_missing_review_skips_external_by_default(tmp_path):
+    """A PR from a non-collaborator (authorAssociation not in
+    OWNER/MEMBER/COLLABORATOR) is skipped by default — untrusted external
+    content shouldn't reach an auto-spawned Bash-capable review agent.
+    `review_external: true` opts back in; MEMBER/OWNER/COLLABORATOR always spawn."""
+    from cockpit.lib.gh import OpenPRHead
+
+    def _run(repo_entry, candidates):
+        ctx = _spawn_ctx(tmp_path, review_candidates=candidates)
+        with (
+            patch.object(cycle, "_bg_spawn_pr") as bg,
+            patch.object(cycle, "spawn_pr_workspace"),
+            patch.object(cycle, "spawn_orphan_workspace"),
+        ):
+            cycle._spawn_missing_workspaces(ctx, repo_entry)
+        return [c for c in bg.call_args_list if c.kwargs.get("review")]
+
+    external = [OpenPRHead(40, "outside/x", "rando", "CONTRIBUTOR")]
+    assert _run({"name": "n"}, external) == []
+    assert len(_run({"name": "n", "review_external": True}, external)) == 1
+
+    for assoc in ("OWNER", "MEMBER", "COLLABORATOR"):
+        cand = [OpenPRHead(41, "outside/y", "coworker", assoc)]
+        assert len(_run({"name": "n"}, cand)) == 1
 
 
 def test_bg_spawn_pr_dry_run_does_not_launch(tmp_path, capsys):

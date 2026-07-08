@@ -191,6 +191,39 @@ def test_watch_restart_updates_in_subprocess_then_reexecs(monkeypatch):
     assert rc == 0  # execvp mocked → falls through to the unreachable return
 
 
+def test_watch_restart_reexecs_with_hint_when_update_skipped_noop(monkeypatch, capsys):
+    # `cockpit update` found nothing newer in the local plugin cache (it can lag
+    # GitHub's default-branch plugin.json). Not the same as "up to date" — still
+    # relaunch (quitting the TUI shouldn't strand the user at a shell) but print
+    # a hint explaining the header may still say an update is available.
+    from cockpit.lib.updater import UPDATE_SKIPPED_NOOP_EXIT
+
+    order: list = []
+    monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 42)
+    monkeypatch.setattr(cli, "_running_as_installed_cockpit", lambda: True)
+    monkeypatch.setattr(
+        cli, "_restore_terminal_foreground", lambda: order.append("restore")
+    )
+    monkeypatch.setattr("time.sleep", lambda s: order.append(("sleep", s)))
+
+    def _run(cmd, *a, **k):
+        order.append(("run", cmd))
+        return _Completed(UPDATE_SKIPPED_NOOP_EXIT)
+
+    monkeypatch.setattr("subprocess.run", _run)
+    monkeypatch.setattr(cli.os, "execvp", lambda f, a: order.append(("exec", f, a)))
+
+    rc = cli.main(["watch", "--once"])
+    assert order == [
+        ("run", ["cockpit", "update"]),
+        ("sleep", 2),
+        "restore",
+        ("exec", "cockpit", ["cockpit", "watch", "--once"]),
+    ]
+    assert rc == 0
+    assert "retry" in capsys.readouterr().err.lower()
+
+
 def test_watch_restart_declines_when_not_installed(monkeypatch, capsys):
     monkeypatch.setattr("cockpit.cockpit.main", lambda argv: 42)
     monkeypatch.setattr(cli, "_running_as_installed_cockpit", lambda: False)

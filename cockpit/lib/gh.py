@@ -139,7 +139,8 @@ _OPEN_PR_HEADS_QUERY = (
     "query ($search: String!, $cursor: String) {\n"
     "  search(query: $search, type: ISSUE, first: 100, after: $cursor) {\n"
     "    pageInfo { endCursor hasNextPage }\n"
-    "    nodes { ... on PullRequest { number headRefName author { login } } }\n"
+    "    nodes { ... on PullRequest { number headRefName author { login } "
+    "authorAssociation } }\n"
     "  }\n"
     "}"
 )
@@ -160,16 +161,23 @@ def is_dependabot(login: str) -> bool:
 class OpenPRHead:
     """Minimal identity for an open PR: enough to fetch its head and decide
     whether a review worktree already exists. Deliberately lighter than `PR` —
-    the `review_prs` spawn decision only needs (number, branch, author).
+    the `review_prs` spawn decision only needs (number, branch, author,
+    author_association).
     """
 
     number: int
     branch: str
     author: str
+    # GitHub's relationship of `author` to this repo (e.g. "OWNER", "MEMBER",
+    # "COLLABORATOR", "CONTRIBUTOR", "NONE"). Empty string when the API omits
+    # it (mirrors the null-author "" contract). Used by the `review_prs` spawn
+    # gate to skip external contributors by default — see cycle.py.
+    author_association: str = ""
 
 
 def list_open_pr_heads(owner: str, name: str) -> list[OpenPRHead]:
-    """Every open PR in the repo as (number, head branch, author login).
+    """Every open PR in the repo as (number, head branch, author login,
+    authorAssociation).
 
     Used only by the per-repo `review_prs` spawn decision in the daemon's slow
     tick — the daemon's normal PR query is `author:self` plus per-worktree
@@ -199,7 +207,10 @@ def list_open_pr_heads(owner: str, name: str) -> list[OpenPRHead]:
                 if not node:
                     continue
                 author = (node.get("author") or {}).get("login") or ""
-                out.append(OpenPRHead(node["number"], node["headRefName"], author))
+                association = node.get("authorAssociation") or ""
+                out.append(
+                    OpenPRHead(node["number"], node["headRefName"], author, association)
+                )
             info = page["pageInfo"]
             if not info["hasNextPage"]:
                 break

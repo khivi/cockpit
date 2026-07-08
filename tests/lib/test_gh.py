@@ -191,12 +191,17 @@ def test_fetch_merged_branches_empty_search_returns_empty_map():
 # ── list_open_pr_heads ───────────────────────────────────────────────────────
 
 
-def _pr_head_node(num: int, branch: str, author: str | None) -> dict:
-    return {
+def _pr_head_node(
+    num: int, branch: str, author: str | None, association: str | None = None
+) -> dict:
+    node = {
         "number": num,
         "headRefName": branch,
         "author": {"login": author} if author is not None else None,
     }
+    if association is not None:
+        node["authorAssociation"] = association
+    return node
 
 
 def test_list_open_pr_heads_single_page():
@@ -239,6 +244,34 @@ def test_list_open_pr_heads_null_author_becomes_empty_string():
     with patch("cockpit.lib.gh._graphql", side_effect=pages):
         result = list_open_pr_heads("o", "n")
     assert result == [OpenPRHead(5, "dependabot/x", "")]
+
+
+def test_list_open_pr_heads_returns_author_association():
+    """`authorAssociation` is fetched and threaded onto each candidate — the
+    `review_prs` spawn gate needs it to skip non-collaborator PRs."""
+    pages = [
+        _page(
+            [
+                _pr_head_node(1, "coworker/a", "coworker", "COLLABORATOR"),
+                _pr_head_node(2, "outside/b", "rando", "CONTRIBUTOR"),
+            ]
+        )
+    ]
+    with patch("cockpit.lib.gh._graphql", side_effect=pages):
+        result = list_open_pr_heads("o", "n")
+    assert result == [
+        OpenPRHead(1, "coworker/a", "coworker", "COLLABORATOR"),
+        OpenPRHead(2, "outside/b", "rando", "CONTRIBUTOR"),
+    ]
+
+
+def test_list_open_pr_heads_missing_author_association_becomes_empty_string():
+    """A node without `authorAssociation` (e.g. an older gh/API shape) reports
+    "" rather than raising — mirrors the null-author "" contract."""
+    pages = [_page([_pr_head_node(6, "coworker/c", "coworker")])]
+    with patch("cockpit.lib.gh._graphql", side_effect=pages):
+        result = list_open_pr_heads("o", "n")
+    assert result == [OpenPRHead(6, "coworker/c", "coworker", "")]
 
 
 def test_list_open_pr_heads_empty_on_graphql_failure():

@@ -163,6 +163,28 @@ def test_preflight_ignores_repo_without_review_prs(tmp_path, monkeypatch, capsys
     assert capsys.readouterr().err == ""
 
 
+def test_preflight_exits_on_non_bool_review_external(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [{"name": "r", "review_external": "yes"}]})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "review_external" in err
+    assert "'yes'" in err
+
+
+def test_preflight_passes_on_bool_review_external(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "repos": [{"name": "r", "review_external": True}]})
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_ignores_repo_without_review_external(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "repos": [{"name": "r", "path": "/x"}]})
+    assert capsys.readouterr().err == ""
+
+
 def test_preflight_exits_on_non_bool_in_place(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
@@ -308,6 +330,71 @@ def test_preflight_exits_on_unknown_jira_field(tmp_path, monkeypatch, capsys):
         preflight(
             {"tool": "cmux", "tickets": {"provider": "jira", "dev_done_label": "x"}}
         )
+    assert exc.value.code == 2
+    assert "dev_done_label" in capsys.readouterr().err
+
+
+def test_preflight_passes_on_valid_trello_object(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "tickets": {
+                "provider": "trello",
+                "dev_done_list": "Ready for Review",
+                "merge_done_list": "Done",
+                "close_on_merge": True,
+            },
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_exits_on_wrong_provider_field_under_trello(
+    tmp_path, monkeypatch, capsys
+):
+    """`keys` is a Linear-only field — rejected under `provider: trello` the
+    same way `dev_done_label` (GitHub-only) is rejected under `provider: jira`."""
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "tickets": {"provider": "trello", "keys": ["PE"]}})
+    assert exc.value.code == 2
+    assert "keys" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_bad_trello_dev_done_list_type(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {"tool": "cmux", "tickets": {"provider": "trello", "dev_done_list": 5}}
+        )
+    assert exc.value.code == 2
+    assert "dev_done_list" in capsys.readouterr().err
+
+
+def test_preflight_passes_on_tickets_object_without_provider_key(
+    tmp_path, monkeypatch, capsys
+):
+    """A `tickets` object with fields but no `provider` key defaults the
+    provider to "none" (`_check_block`'s `val.get("provider", "none")`) rather
+    than rejecting the block outright. `close_on_merge` is a common field valid
+    under every provider (including "none"), so it passes."""
+    _all_required(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "tickets": {"close_on_merge": True}})
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_exits_on_provider_specific_field_without_provider_key(
+    tmp_path, monkeypatch, capsys
+):
+    """Confirms the no-`provider`-key default really is "none" (not some
+    permissive catch-all): a GitHub-only field (`dev_done_label`) is rejected
+    exactly as it would be under an explicit `provider: none`/unset provider."""
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "tickets": {"dev_done_label": "x"}})
     assert exc.value.code == 2
     assert "dev_done_label" in capsys.readouterr().err
 

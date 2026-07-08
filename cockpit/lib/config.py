@@ -432,6 +432,20 @@ def review_command(cfg: dict | None = None, repo_entry: dict | None = None) -> s
     return REVIEW_COMMAND_DEFAULT
 
 
+def review_external(repo_entry: dict) -> bool:
+    """Whether `review_prs` also auto-spawns a review workspace for a PR
+    authored by someone who isn't a repo collaborator (default: False).
+
+    `list_open_pr_heads` reports each candidate's `authorAssociation`; the
+    `_spawn_missing_workspaces` gate only spawns OWNER/MEMBER/COLLABORATOR by
+    default — an external/fork PR's body and diff are untrusted content that
+    would otherwise reach a Bash-capable auto-spawned agent (prompt-injection
+    risk on a public repo). Opt in per-repo with `review_external: true`, same
+    shape as the `dependabot` per-repo bool.
+    """
+    return bool(repo_entry.get("review_external"))
+
+
 def use_slack() -> bool:
     """Whether Slack-thread spawn sources are enabled (default: False).
 

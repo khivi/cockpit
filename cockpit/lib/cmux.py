@@ -197,7 +197,11 @@ def require_workspace_binary() -> None:
     msg = (
         "cockpit: tool=none in config — workspace commands disabled"
         if backend == "none"
-        else f"cockpit: '{backend}' not found on PATH"
+        else (
+            f"cockpit: '{backend}' not found on PATH — install cmux "
+            "(https://github.com/manaflow-ai/cmux) or limux "
+            "(https://github.com/am-will/limux)"
+        )
     )
     print(msg, file=sys.stderr)
     sys.exit(2)
