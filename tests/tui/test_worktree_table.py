@@ -248,6 +248,20 @@ def test_status_cell_one_icon_per_ticket(cache_dir, monkeypatch):
     assert status.plain == "🔍 🟢"  # one icon per ticket, space-joined
 
 
+def test_status_cell_unresolved_state_flags_red(cache_dir, monkeypatch):
+    # Provider configured + ticket delivered, but the fetch couldn't resolve a
+    # state (state=None, how every provider degrades an unreachable/creds-missing
+    # fetch) → red "!", distinct from the neutral ◎ an unmapped real state gets.
+    wt = _wt(branch="khivi/down")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: {"linear": {"tickets": [{"id": "PE-1", "state": None}]}},
+    )
+    status = worktree_cells(wt, "r", None, True, show_tickets=True)[5]
+    assert status.plain == "!"
+    assert any("red" in str(s.style) for s in status.spans)
+
+
 def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
     wt = _wt(branch="khivi/nl")
     monkeypatch.setattr(
