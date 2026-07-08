@@ -113,6 +113,25 @@ def test_worktree_state_blockers_flags_unverifiable_push_state(tmp_path):
     assert any("could not verify" in b for b in blockers)
 
 
+def test_worktree_state_blockers_primary_skips_unpushed_keeps_dirty(tmp_path):
+    # A primary checkout (in_place `master`) closes workspace-only, so unpushed
+    # commits are safe (the checkout stays) — skip that guard. Dirty still holds.
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=5),
+    ):
+        assert worktree_state_blockers(wt, is_primary=True) == []
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=2),
+        patch.object(teardown_mod, "_count_unpushed", return_value=5),
+    ):
+        blockers = worktree_state_blockers(wt, is_primary=True)
+    assert any("2 uncommitted" in b for b in blockers)
+    assert not any("unpushed" in b for b in blockers)
+
+
 def test_worktree_state_blockers_skips_missing_path():
     assert worktree_state_blockers(Path("/nope/missing")) == []
 
@@ -198,6 +217,34 @@ def test_teardown_no_worktree_skips_remove(tmp_path):
     close_mock.assert_called_once()
     rm_mock.assert_not_called()
     cache_mock.assert_not_called()
+
+
+def test_teardown_primary_checkout_closes_workspace_only(tmp_path):
+    """worktree_path == repo_path (in_place `master`): the session is closed but
+    `git worktree remove` is skipped — git refuses it on a primary checkout."""
+    req = TeardownRequest(
+        ref="ws:1",
+        worktree_path=tmp_path,
+        branch="master",
+        repo_path=tmp_path,  # == worktree_path → primary checkout
+        repo_name="repo",
+    )
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=4),
+        patch.object(teardown_mod, "find_pr_payload", return_value=None),
+        patch.object(teardown_mod, "fetch_pr_state_for_branch", return_value=None),
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as rm_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "log_ff_advances"),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+    ):
+        ok, blockers = teardown(req)
+    assert ok and blockers == []
+    close_mock.assert_called_once()  # workspace closed
+    rm_mock.assert_not_called()  # checkout left in place (unpushed didn't block)
 
 
 def test_teardown_remove_failure_returns_error(tmp_path):

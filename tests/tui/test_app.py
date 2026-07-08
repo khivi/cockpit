@@ -676,7 +676,9 @@ async def test_close_key_merge_aware_clears_hard_unpushed(monkeypatch, tmp_path)
     )
     seen: list = []
 
-    def _spy_blockers(path, *, branch=None, is_mine=True, pr_merged=False):
+    def _spy_blockers(
+        path, *, branch=None, is_mine=True, pr_merged=False, is_primary=False
+    ):
         seen.append(pr_merged)
         # Mirror the real gate: a merged PR skips the unpushed check.
         return [] if pr_merged else ["3 unpushed commit(s)"]
@@ -1496,45 +1498,62 @@ async def test_footer_mute_label_flips_to_unmute_when_muted():
     assert fb._label("mute_row", "Mute") == "Unmute"
 
 
-async def test_footer_on_cmux_shows_focus_nudge_hides_open(monkeypatch):
-    # cmux backend (the _isolate default): the cmux-only verbs are advertised,
-    # and `w`/Open is hidden because `f`/Focus already reaches the workspace.
+async def test_footer_cmux_gates_focus_nudge_open_on_workspace_presence():
+    # cmux: `f`/Focus and `N`/Nudge reach an existing workspace (require the
+    # `workspace` cap); `w`/Open spawns one (hidden once a workspace exists).
     from cockpit.tui.widgets.footer_bar import FooterBar
 
-    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        rt = app.query_one(FooterBar).row_text
-        assert "Focus" in rt and "Nudge" in rt
-        assert "Open" not in rt
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    # Row WITH a workspace: reach-verbs shown, spawn hidden.
+    fb._row_caps = frozenset({"workspace"})
+    assert not fb._skip("focus_row") and not fb._skip("nudge_row")
+    assert fb._skip("open_workspace")
+    # Row WITHOUT a workspace: spawn shown, reach-verbs hidden.
+    fb._row_caps = frozenset()
+    assert fb._skip("focus_row") and fb._skip("nudge_row")
+    assert not fb._skip("open_workspace")
 
 
-async def test_footer_on_limux_hides_focus_nudge_shows_open(monkeypatch):
-    # limux has no `focus`/notify verb, so Focus and Nudge would no-op — hide
-    # their help text. `w`/Open is the only way to reach a workspace, so show it.
+async def test_footer_limux_hides_focus_nudge_gates_open_on_workspace():
+    # limux has no `focus`/notify verb, so Focus/Nudge always hide. `w`/Open is
+    # the only way to reach a workspace and spawns when none exists, so it shows
+    # on a workspace-less row and hides once one exists.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
-    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "limux")
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        rt = app.query_one(FooterBar).row_text
-        assert "Focus" not in rt and "Nudge" not in rt
-        assert "Open" in rt
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="limux")
+    fb._row_caps = frozenset()
+    assert fb._skip("focus_row") and fb._skip("nudge_row")
+    assert not fb._skip("open_workspace")
+    fb._row_caps = frozenset({"workspace"})
+    assert fb._skip("open_workspace")
 
 
-async def test_footer_on_no_backend_hides_all_backend_keys(monkeypatch):
-    # tool=none: every workspace-backend verb is dead, so none of the three
-    # backend-conditional hints render.
+async def test_footer_on_no_backend_hides_all_backend_keys():
+    # tool=none: every workspace-backend verb is dead (no backend to spawn into
+    # or reach), so none of the three render regardless of workspace presence.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
-    monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "none")
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        rt = app.query_one(FooterBar).row_text
-        assert "Focus" not in rt and "Nudge" not in rt and "Open" not in rt
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="none")
+    for caps in (frozenset(), frozenset({"workspace"})):
+        fb._row_caps = caps
+        assert fb._skip("focus_row")
+        assert fb._skip("nudge_row")
+        assert fb._skip("open_workspace")
+
+
+async def test_footer_hides_close_on_workspaceless_primary_checkout():
+    # A primary checkout (in_place `master`) can only be closed workspace-only;
+    # with no workspace there's nothing to close, so `c`/`C` hide. A feature row
+    # (no `primary` cap) keeps `c` regardless — it also removes the worktree.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset({"primary"})
+    assert fb._skip("close_row") and fb._skip("force_close_row")
+    fb._row_caps = frozenset({"primary", "workspace"})
+    assert not fb._skip("close_row") and not fb._skip("force_close_row")
+    fb._row_caps = frozenset()  # feature row, no workspace
+    assert not fb._skip("close_row") and not fb._skip("force_close_row")
 
 
 async def test_mount_does_not_block_loop_on_update_check(monkeypatch):

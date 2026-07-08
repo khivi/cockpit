@@ -155,6 +155,13 @@ Key gates (all from `cycle.py`):
   the local branch ref. The unpushed / open-PR gate lives in `probe_blockers` (the
   TUI `c` close path), where `C` force overrides the open-PR soft block but never
   uncommitted/unpushed work.
+- **Primary-checkout close is workspace-only** — a manual `c`/`C` on a primary
+  checkout (an `in_place` `master`, `worktree_path == repo_path` / `wt.is_primary`)
+  closes only the workspace: `teardown` skips `git worktree remove` (git refuses it
+  on a primary checkout, and the user works there in place), and the unpushed guard
+  relaxes (`worktree_state_blockers(is_primary=True)` — the checkout stays, so
+  unpushed commits are safe), leaving only the dirty guard. This is a *manual* path
+  only; the autoclose tree above never reaches an `in_place` repo.
 - **Manual close is squash/rebase-merge aware** — the merged/open state both the
   hard unpushed gate and the soft open-PR gate read comes from
   `teardown.resolve_pr_state`: the cached PR payload first, then ONE live

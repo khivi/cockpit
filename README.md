@@ -39,22 +39,22 @@ The daemon *is* the TUI — run it yourself (no auto-start):
 cockpit watch          # requires a TTY; run under tmux/cmux/screen to persist
 ```
 
-Drive the table by keystroke — most keys act on the highlighted row, and the footer hints adapt to that row's state and your backend (e.g. `p`/`m` hide on a row with no PR):
+Drive the table by keystroke — most keys act on the highlighted row, and the footer hints adapt to that row's state, its live workspace, and your backend. The reach-verbs (`f`/`N`) show only when the row *has* a workspace; `w` (spawn) shows only when it *doesn't*; `p`/`m` hide on a row with no PR:
 
-| Key | Action |
-|---|---|
-| `f` | Focus the row's workspace (cmux) |
-| `w` | Open/spawn the row's workspace (works on limux too) |
-| `p` | Open the PR in a browser |
-| `t` | Open the linked ticket (Linear/GitHub) |
-| `c` / `C` | Close (refuses dirty/unpushed/open-PR) / force-close (overrides the open-PR block only) |
-| `m` | Mute / unmute the row's nudge |
-| `N` | Nudge the row now (honours the idle gate) |
-| `n` | New workspace (branch / PR / URL / Linear id / Slack thread) |
-| `s` | Sync (full reconcile now) |
-| `o` | Show tick output / logs |
-| `u` | Self-update (shown when "⬆ update available") |
-| `q` | Quit |
+| Key | Action | Hint shown when |
+|---|---|---|
+| `f` | Focus the row's workspace | cmux **and** the row has a workspace |
+| `w` | Open/spawn the row's workspace | the row has **no** workspace (cmux or limux) |
+| `p` | Open the PR in a browser | the row has a PR |
+| `t` | Open the linked ticket (Linear/GitHub/Jira/Trello) | the row has a delivered ticket |
+| `c` / `C` | Close / force-close. Feature worktree: close workspace + remove worktree (refuses dirty/unpushed/open-PR; `C` overrides the open-PR block only). Primary checkout (an `in_place` `master`): **workspace-only close** — closes the session, keeps the checkout, gated on dirty ("all committed") | feature row: always · primary checkout: only when it has a workspace |
+| `m` | Mute / unmute the row's nudge | the row has a PR |
+| `N` | Nudge the row now (honours the idle gate) | cmux **and** the row has a workspace |
+| `n` | New workspace (branch / PR / URL / Linear id / Slack thread) | always (global — not row-scoped) |
+| `s` | Sync (full reconcile now) | always |
+| `o` | Show tick output / logs | always |
+| `u` | Self-update | when "⬆ update available" |
+| `q` | Quit | always |
 
 Start a task — run `/cockpit:new` inside Claude Code, from a session in any git repo (or press `n` in the TUI):
 

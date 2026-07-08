@@ -116,7 +116,7 @@ def test_merged_pr_sets_delete_branch(repo_cfg, captured, monkeypatch):
     # and delete_branch opts in.
     seen = {}
 
-    def blockers(path, *, branch, is_mine, pr_merged):
+    def blockers(path, *, branch, is_mine, pr_merged, is_primary=False):
         seen["pr_merged"] = pr_merged
         return []
 

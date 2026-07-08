@@ -48,6 +48,7 @@ from cockpit.lib.cmux import (
     BLUE,
     LOOP_ICON,
     LOOP_KEY,
+    CmuxUnavailable,
     cmux,
     nudge_if_idle,
     select_workspace,
@@ -510,16 +511,30 @@ class CockpitApp(App[None]):
             )
         return out
 
+    @staticmethod
+    def _live_workspace_paths() -> set[Path]:
+        """Resolved cwds that currently have a live workspace — one
+        `workspace_cwds()` read per refresh, feeding the row `"workspace"` cap.
+        Degrades to empty when the backend is absent/erroring (tool=none, cmux
+        hiccup), so those rows simply advertise `w` (spawn) rather than crash."""
+        try:
+            return {p.resolve() for p in workspace_cwds().values()}
+        except CmuxUnavailable:
+            return set()
+
     def _publish_inventory(self) -> None:
         """Re-gather worktrees and refresh the table. Safe to call from a worker
         thread (the slow tick's per-repo `on_repo_done` hook): `_gather_inventory`
         is a pure git + cache-cell read, and `call_from_thread` marshals the
         render onto the UI thread — the same two steps the tick's `finally` runs."""
         inv = self._gather_inventory()
-        self.call_from_thread(self._render_table, inv)
+        ws_paths = self._live_workspace_paths()
+        self.call_from_thread(self._render_table, inv, ws_paths)
 
-    def _render_table(self, inventory: Inventory) -> None:
-        self.query_one(WorktreeTable).update_inventory(inventory)
+    def _render_table(
+        self, inventory: Inventory, workspace_paths: set[Path] | None = None
+    ) -> None:
+        self.query_one(WorktreeTable).update_inventory(inventory, workspace_paths)
         # A refresh can change the highlighted row's state (PR/ticket/mute) or
         # the row set, so re-gate the footer's row keys to the current row.
         self._refresh_footer_caps()
@@ -900,9 +915,16 @@ class CockpitApp(App[None]):
         state, pr_number = resolve_pr_state(wt.path, wt.branch, repo_name)
         pr_is_merged = state == "MERGED"
 
-        # Hard blockers (dirty/unpushed) refuse even under force.
+        # Hard blockers (dirty/unpushed) refuse even under force. A primary
+        # checkout (in_place `master`) relaxes the unpushed guard — its close is
+        # workspace-only, so the checkout and any unpushed commits stay put; only
+        # the dirty guard stands. `teardown` skips `git worktree remove` for it.
         hard = worktree_state_blockers(
-            wt.path, branch=wt.branch, is_mine=is_mine, pr_merged=pr_is_merged
+            wt.path,
+            branch=wt.branch,
+            is_mine=is_mine,
+            pr_merged=pr_is_merged,
+            is_primary=wt.is_primary,
         )
         if hard:
             self._notify(

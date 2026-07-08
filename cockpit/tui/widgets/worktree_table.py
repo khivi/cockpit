@@ -38,6 +38,8 @@ threads resolve / the PR merges.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.text import Text
 from textual import events
 from textual.binding import Binding
@@ -291,16 +293,28 @@ def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
 
 
 def row_capabilities(
-    wt: Worktree, repo_name: str, tickets_enabled: bool
+    wt: Worktree,
+    repo_name: str,
+    tickets_enabled: bool,
+    *,
+    has_workspace: bool = False,
 ) -> frozenset[str]:
-    """The highlighted-row capability tokens the footer gates its row keys on,
-    read from the same daemon-written cells the cells render from (no network):
+    """The highlighted-row capability tokens the footer gates its row keys on.
+    Read from the same daemon-written cells the cells render from (no network),
+    except ``"workspace"``, which reflects live cmux/limux state passed in by the
+    app (`has_workspace`) — a single `workspace_cwds()` read per inventory
+    refresh, cached here so per-keystroke footer gating stays a pure set lookup:
 
-      * ``"pr"``     — a PR is cached for the branch (`pr-num`), so `p`/`m` apply;
-      * ``"ticket"`` — the repo has a provider and the PR delivers a ticket, so
-        `l` applies;
-      * ``"muted"``  — the PR's nudges are muted (`pr-muted`), so `m` reads
-        "Unmute".
+      * ``"pr"``        — a PR is cached for the branch (`pr-num`), so `p`/`m` apply;
+      * ``"ticket"``    — the repo has a provider and the PR delivers a ticket, so
+        `t` applies;
+      * ``"muted"``     — the PR's nudges are muted (`pr-muted`), so `m` reads
+        "Unmute";
+      * ``"workspace"`` — the row has a live workspace, so `f`/`N` apply and `w`
+        (spawn) hides;
+      * ``"primary"``   — the row is the repo's primary checkout (an in_place
+        `master`); it can't be torn down as a worktree, so `c`/`C` reduce to a
+        workspace-only close.
     """
     caps: set[str] = set()
     if read_text(branch_cache("pr-num", wt.branch)):
@@ -311,6 +325,10 @@ def row_capabilities(
         (find_pr_payload(wt.branch, repo_name) or {}).get("linear") or {}
     ).get("tickets"):
         caps.add("ticket")
+    if has_workspace:
+        caps.add("workspace")
+    if wt.is_primary:
+        caps.add("primary")
     return frozenset(caps)
 
 
@@ -448,10 +466,17 @@ class WorktreeTable(DataTable):
             if path:
                 self.post_message(self.FocusRequest(path))
 
-    def update_inventory(self, inventory: Inventory) -> None:
+    def update_inventory(
+        self, inventory: Inventory, workspace_paths: set[Path] | None = None
+    ) -> None:
         """Rebuild rows from the worktree inventory, keeping the cursor on the
         same row index so a refresh doesn't yank the selection away. Each repo
-        gets a group-header row followed by its worktree rows."""
+        gets a group-header row followed by its worktree rows.
+
+        `workspace_paths` is the set of resolved cwds that currently have a live
+        workspace (from the app's per-refresh `workspace_cwds()` read); a row
+        whose path is in it gets the `"workspace"` cap."""
+        ws = workspace_paths or set()
         saved = self.cursor_row
         self.clear()
         self._row_caps = {}
@@ -474,7 +499,10 @@ class WorktreeTable(DataTable):
                     key=str(wt.path),
                 )
                 self._row_caps[str(wt.path)] = row_capabilities(
-                    wt, repo_name, tickets_enabled
+                    wt,
+                    repo_name,
+                    tickets_enabled,
+                    has_workspace=wt.path.resolve() in ws,
                 )
                 self._row_repo[str(wt.path)] = repo_name
         if self.row_count:
