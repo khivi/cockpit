@@ -48,6 +48,7 @@ from cockpit.lib.cmux import (
     BLUE,
     LOOP_ICON,
     LOOP_KEY,
+    CmuxUnavailable,
     cmux,
     nudge_if_idle,
     select_workspace,
@@ -183,7 +184,6 @@ class CockpitApp(App[None]):
     BINDINGS = [
         ("s", "sync", "Sync now"),
         ("f", "focus_row", "Focus"),
-        ("w", "open_workspace", "Open workspace"),
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
         ("o", "show_output", "Output"),
@@ -510,16 +510,30 @@ class CockpitApp(App[None]):
             )
         return out
 
+    @staticmethod
+    def _live_workspace_paths() -> set[Path]:
+        """Resolved cwds that currently have a live workspace — one
+        `workspace_cwds()` read per refresh, feeding the row `"workspace"` cap.
+        Degrades to empty when the backend is absent/erroring (tool=none, cmux
+        hiccup), so those rows simply advertise `w` (spawn) rather than crash."""
+        try:
+            return {p.resolve() for p in workspace_cwds().values()}
+        except CmuxUnavailable:
+            return set()
+
     def _publish_inventory(self) -> None:
         """Re-gather worktrees and refresh the table. Safe to call from a worker
         thread (the slow tick's per-repo `on_repo_done` hook): `_gather_inventory`
         is a pure git + cache-cell read, and `call_from_thread` marshals the
         render onto the UI thread — the same two steps the tick's `finally` runs."""
         inv = self._gather_inventory()
-        self.call_from_thread(self._render_table, inv)
+        ws_paths = self._live_workspace_paths()
+        self.call_from_thread(self._render_table, inv, ws_paths)
 
-    def _render_table(self, inventory: Inventory) -> None:
-        self.query_one(WorktreeTable).update_inventory(inventory)
+    def _render_table(
+        self, inventory: Inventory, workspace_paths: set[Path] | None = None
+    ) -> None:
+        self.query_one(WorktreeTable).update_inventory(inventory, workspace_paths)
         # A refresh can change the highlighted row's state (PR/ticket/mute) or
         # the row set, so re-gate the footer's row keys to the current row.
         self._refresh_footer_caps()
@@ -630,11 +644,6 @@ class CockpitApp(App[None]):
         if path:
             self._focus_worktree(path)
 
-    def action_open_workspace(self) -> None:
-        path = self.query_one(WorktreeTable).current_path()
-        if path:
-            self._open_workspace(path)
-
     def action_open_pr(self) -> None:
         path = self.query_one(WorktreeTable).current_path()
         if path:
@@ -669,14 +678,27 @@ class CockpitApp(App[None]):
         # Spawn a worktree + workspace from the typed source (the `/cockpit:new`
         # path). The modal offers a repo picker (when more than one is
         # configured) so a bare branch name can be routed to any repo; it
-        # defaults to the cursor row's repo, which sets spawn.py's cwd.
+        # defaults to the cursor row's repo, which sets spawn.py's cwd. A
+        # `use_worktree: false` repo instead gets one named checkout workspace —
+        # the modal prefills its name and blocks a second once one exists.
+        cfg_repos = load_config().get("repos", []) or []
         repos = [
             (
                 repo.get("name") or Path(os.path.expanduser(repo["path"])).name,
                 str(Path(os.path.expanduser(repo["path"]))),
             )
-            for repo in load_config().get("repos", []) or []
+            for repo in cfg_repos
         ]
+        live = self._live_workspace_paths()
+        no_worktree_paths: set[str] = set()
+        busy_paths: set[str] = set()
+        for repo in cfg_repos:
+            if repo.get("use_worktree", True):
+                continue
+            path = str(Path(os.path.expanduser(repo["path"])))
+            no_worktree_paths.add(path)
+            if Path(path).resolve() in live:
+                busy_paths.add(path)
         # Default to the cursor row's repo — resolved by repo name so a group-
         # header row (where `current_path()` is None) still preselects its repo.
         default_repo = self._repo_config_by_name(
@@ -687,18 +709,47 @@ class CockpitApp(App[None]):
             if default_repo
             else None
         )
-        self.push_screen(NewWorkspaceScreen(repos, default_path), self._spawn_new)
+        self.push_screen(
+            NewWorkspaceScreen(
+                repos,
+                default_path,
+                no_worktree_paths=no_worktree_paths,
+                busy_paths=busy_paths,
+            ),
+            self._spawn_new,
+        )
+
+    def _repo_config_by_path(self, path: str | None) -> dict | None:
+        """The full config dict for the repo whose path resolves to `path`."""
+        if not path:
+            return None
+        target = Path(path).resolve()
+        repos: list[dict] = load_config().get("repos", []) or []
+        for repo in repos:
+            if Path(os.path.expanduser(repo["path"])).resolve() == target:
+                return repo
+        return None
 
     def _spawn_new(self, result: tuple[str, str | None] | None) -> None:
         # Modal callback (UI thread): `(source, repo_path)` or `None`/blank when
         # cancelled. The repo_path the user chose becomes spawn.py's cwd, so its
-        # cwd-based discovery routes a bare name into the selected repo.
+        # cwd-based discovery routes a bare name into the selected repo. For a
+        # `use_worktree: false` repo the source IS a workspace name → spawn a
+        # named checkout workspace (`--cwd <path> --name <name>`), no worktree.
         if not result:
             return
+        import shlex
+
         source, cwd = result
         if not source or not source.strip():
             return
-        self._launch_spawn(source.strip(), cwd)
+        name = source.strip()
+        repo = self._repo_config_by_path(cwd)
+        if repo is not None and not repo.get("use_worktree", True) and cwd:
+            spawn_source = f"--cwd {shlex.quote(cwd)} --name {shlex.quote(name)}"
+        else:
+            spawn_source = name
+        self._launch_spawn(spawn_source, cwd)
 
     def action_update(self) -> None:
         # Only meaningful when the header advertises a newer version. Exit with
@@ -749,6 +800,10 @@ class CockpitApp(App[None]):
             None,
         )
 
+    @staticmethod
+    def _workspace_ref_by_name(name: str) -> str | None:
+        return next((ref for ref, n in workspace_names().items() if n == name), None)
+
     def _notify(self, message: str, *, severity: str = "information") -> None:
         """Toast feedback, safe from a worker thread. The log pane is removed,
         so a `print` is invisible — a notification is the only on-screen cue."""
@@ -756,35 +811,17 @@ class CockpitApp(App[None]):
 
     @work(thread=True, group="focus", exit_on_error=False)
     def _focus_worktree(self, path_str: str) -> None:
-        if not is_cmux():
-            self._notify("focus requires cmux", severity="warning")
-            return
-        resolved = self._resolve_worktree(path_str)
-        if resolved is None:
-            self._notify(f"focus: no worktree at {path_str}", severity="error")
-            return
-        _repo, wt = resolved
-        ref = self._workspace_ref(wt)
-        if ref is None:
-            self._notify(
-                f"focus: no workspace for {wt.label or wt.short}", severity="warning"
-            )
-            return
-        select_workspace(ref)
-        self._notify(f"focused {wt.label or wt.short}")
-
-    @work(thread=True, group="focus", exit_on_error=False)
-    def _open_workspace(self, path_str: str) -> None:
-        # `w`: ensure the row's worktree has a workspace, spawning one when it
-        # doesn't, then focus it. Unlike `f` (focus-only, cmux-only), this works
-        # on limux too — limux can spawn a workspace but has no select verb, so
-        # there it just creates the workspace and the user switches via limux's
-        # own UI. The spawn reuses the daemon's exact spawn+pill helpers, so a
-        # `w`-spawned workspace is indistinguishable from a daemon-spawned one;
-        # the next tick adopts it by cwd (path-keyed, not pill-keyed) so it is
-        # never double-spawned, and `_dedupe_workspaces` reaps any same-path
-        # dupe from a rare race with the slow tick. Spawning is not a cache
-        # write, so the daemon-is-sole-writer invariant still holds.
+        # `f`: get me into this row's session. Focus the row's workspace,
+        # spawning one first when it doesn't have one — a single "take me there"
+        # verb (the former `w`/open key folds in here: focus was just spawn's
+        # trailing step). On cmux it focuses; on limux (which can spawn but has
+        # no select verb) it spawns and the user switches via limux's own UI. The
+        # spawn reuses the daemon's exact spawn+pill helpers, so an `f`-spawned
+        # workspace is indistinguishable from a daemon-spawned one; the next tick
+        # adopts it by cwd (path-keyed, not pill-keyed) so it is never
+        # double-spawned, and `_dedupe_workspaces` reaps any same-path dupe from
+        # a rare race with the slow tick. Spawning is not a cache write, so the
+        # daemon-is-sole-writer invariant still holds.
         backend = resolve_tool()
         if backend == "none":
             self._notify("open: no workspace backend (tool=none)", severity="warning")
@@ -794,16 +831,26 @@ class CockpitApp(App[None]):
             self._notify(f"open: no worktree at {path_str}", severity="error")
             return
         repo, wt = resolved
+        repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
         # Re-read live workspaces just before spawning to shrink the window in
-        # which the slow tick could spawn the same workspace concurrently.
-        if (ref := self._workspace_ref(wt)) is not None:
+        # which the slow tick could spawn the same workspace concurrently. A
+        # `use_worktree: false` repo's main checkout can host several sessions all
+        # rooted at the same cwd, so cwd-matching can't single out "the repo's
+        # session" — its canonical session is the one named after the repo. Prefer
+        # that name match there, falling back to the cwd match (and, if none, a
+        # spawn).
+        ref = None
+        if not repo.get("use_worktree", True):
+            ref = self._workspace_ref_by_name(repo_name)
+        if ref is None:
+            ref = self._workspace_ref(wt)
+        if ref is not None:
             if backend == "cmux":
                 select_workspace(ref)
                 self._notify(f"focused {wt.label or wt.short}")
             else:
                 self._notify(f"workspace already open: {wt.label or wt.short}")
             return
-        repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
         payload = find_pr_payload(wt.branch, repo_name) if wt.branch else None
         if payload:
             pr = _pr_from_payload(payload)
@@ -900,9 +947,16 @@ class CockpitApp(App[None]):
         state, pr_number = resolve_pr_state(wt.path, wt.branch, repo_name)
         pr_is_merged = state == "MERGED"
 
-        # Hard blockers (dirty/unpushed) refuse even under force.
+        # Hard blockers (dirty/unpushed) refuse even under force. A primary
+        # checkout (a `use_worktree: false` `master`) relaxes the unpushed guard — its close is
+        # workspace-only, so the checkout and any unpushed commits stay put; only
+        # the dirty guard stands. `teardown` skips `git worktree remove` for it.
         hard = worktree_state_blockers(
-            wt.path, branch=wt.branch, is_mine=is_mine, pr_merged=pr_is_merged
+            wt.path,
+            branch=wt.branch,
+            is_mine=is_mine,
+            pr_merged=pr_is_merged,
+            is_primary=wt.is_primary,
         )
         if hard:
             self._notify(

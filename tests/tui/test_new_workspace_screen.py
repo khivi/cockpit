@@ -118,3 +118,59 @@ async def test_multi_repo_selected_path_rides_dismiss():
         await pilot.press("enter")
         await pilot.pause()
     assert result == [("fix-login", "/tmp/b")]  # chosen repo, not the default
+
+
+async def test_no_worktree_repo_option_label_flags_open():
+    # A `use_worktree: false` repo with an existing workspace is tagged in the
+    # picker so the user sees why a second `n` is refused (Textual Select has no
+    # per-option disable, so we label + reject rather than disable).
+    screen = NewWorkspaceScreen(_TWO, busy_paths={"/tmp/a"})
+    assert screen._option_label("repo-a", "/tmp/a").endswith(
+        NewWorkspaceScreen.BUSY_SUFFIX
+    )
+    assert screen._option_label("repo-b", "/tmp/b") == "repo-b"
+
+
+async def test_no_worktree_repo_prefills_name_with_repo_name():
+    # (c) On a `use_worktree: false` repo the name Input defaults to the repo name
+    # (its one addressable session is named after it); a worktree repo stays blank.
+    app = _Host()
+    async with app.run_test() as pilot:
+        await app.push_screen(
+            NewWorkspaceScreen([("scratch", "/tmp/s")], no_worktree_paths={"/tmp/s"})
+        )
+        await pilot.pause()
+        assert app.screen.query_one(Input).value == "scratch"
+
+
+async def test_worktree_repo_name_starts_blank():
+    app = _Host()
+    async with app.run_test() as pilot:
+        await app.push_screen(NewWorkspaceScreen([("repo", "/tmp/r")]))
+        await pilot.pause()
+        assert app.screen.query_one(Input).value == ""
+
+
+async def test_busy_no_worktree_repo_submit_is_rejected():
+    # (b) A `use_worktree: false` repo that already has its one workspace refuses a
+    # second create — the modal stays open with an error; `f` focuses the existing.
+    app = _Host()
+    result: list = []
+    async with app.run_test() as pilot:
+        await app.push_screen(
+            NewWorkspaceScreen(
+                _TWO,
+                default_path="/tmp/a",
+                no_worktree_paths={"/tmp/a"},
+                busy_paths={"/tmp/a"},
+            ),
+            result.append,
+        )
+        await pilot.pause()
+        app.screen.query_one(Input).value = "whatever"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert result == []  # not dismissed
+        assert isinstance(app.screen, NewWorkspaceScreen)
+        err = app.screen.query_one("#nw-error", Static)
+        assert "already has a workspace" in str(err.render())

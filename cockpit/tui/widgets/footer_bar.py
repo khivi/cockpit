@@ -49,7 +49,6 @@ class FooterBar(Horizontal):
     ROW_ACTIONS = frozenset(
         {
             "focus_row",
-            "open_workspace",
             "open_pr",
             "open_ticket",
             "close_row",
@@ -69,6 +68,11 @@ class FooterBar(Horizontal):
         "open_pr": "pr",
         "mute_row": "pr",
         "open_ticket": "ticket",
+        # `N` (nudge) reaches an *existing* workspace — it no-ops on a
+        # workspace-less row, so only advertise it when one is live. `f` is NOT
+        # gated: it focuses an existing workspace or spawns one first, so it's
+        # meaningful on any backed row.
+        "nudge_row": "workspace",
     }
 
     # Explicit render order for the global (right) group — independent of BINDINGS
@@ -88,7 +92,6 @@ class FooterBar(Horizontal):
     LABELS = {
         "sync": "Sync",
         "focus_row": "Focus",
-        "open_workspace": "Open",
         "open_pr": "PR",
         "open_ticket": "Ticket",
         "show_output": "Output",
@@ -106,13 +109,14 @@ class FooterBar(Horizontal):
     HIDDEN_ACTIONS = frozenset({"dismiss_overlay"})
 
     # Row actions that only work on one backend — rendered only when the resolved
-    # backend ("cmux" | "limux" | "none") is in the action's set. focus/nudge are
-    # cmux-only verbs; open_workspace is limux's only way to reach a workspace
-    # (redundant with focus on cmux).
+    # backend ("cmux" | "limux" | "none") is in the action's set. `f` (focus)
+    # both spawns a missing workspace and focuses an existing one; spawning works
+    # on cmux AND limux (focus is the cmux-only bonus — on limux `f` spawns and
+    # the user switches via limux's own UI), so it's hidden only on "none" (no
+    # backend to spawn into). `N` (nudge) is a cmux-only verb.
     BACKEND_ACTIONS = {
-        "focus_row": frozenset({"cmux"}),
+        "focus_row": frozenset({"cmux", "limux"}),
         "nudge_row": frozenset({"cmux"}),
-        "open_workspace": frozenset({"limux"}),
     }
 
     def __init__(
@@ -210,12 +214,24 @@ class FooterBar(Horizontal):
         allowed = self.BACKEND_ACTIONS.get(action)
         if allowed is not None and self._backend not in allowed:
             return True
+        # A primary checkout (a `use_worktree: false` `master`) can't be removed as a worktree,
+        # so `c`/`C` reduce to a workspace-only close — pointless with no
+        # workspace. Hide them there (feature rows keep `c`, which also removes
+        # the worktree, workspace or not).
+        if (
+            action in ("close_row", "force_close_row")
+            and self._row_caps is not None
+            and "primary" in self._row_caps
+            and "workspace" not in self._row_caps
+        ):
+            return True
         # Per-row gating: when row caps are known, hide a row key whose required
         # capability the highlighted row lacks. Unknown caps (None) → no gating.
-        req = self.ACTION_REQUIRES.get(action)
-        return (
-            req is not None and self._row_caps is not None and req not in self._row_caps
-        )
+        if self._row_caps is not None:
+            req = self.ACTION_REQUIRES.get(action)
+            if req is not None and req not in self._row_caps:
+                return True
+        return False
 
     def _rebuild(self) -> None:
         left: list[str] = []

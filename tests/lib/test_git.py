@@ -13,6 +13,7 @@ import subprocess
 import pytest
 
 import cockpit.lib.git as gitlib
+from cockpit.lib.constants import MAIN_BRANCHES
 from cockpit.lib.git import (
     Worktree,
     _fetch_remote_branch,
@@ -416,6 +417,49 @@ def test_origin_base_resolves_false_for_bare_clone(cockpit_repo, tmp_path):
     )
     assert _has_local_branch(bare, "main") is True  # branch is there…
     assert origin_base_resolves(bare, "main") is False  # …but origin/main isn't
+
+
+# ── bare repo: no worktree is is_primary ───────────────────────────────────
+
+
+def test_bare_repo_main_worktree_is_not_primary(cockpit_repo, tmp_path):
+    """A **main worktree in a bare repo is not `is_primary`** — and is therefore
+    a fully removable linked worktree, exempted from renaming only by the
+    `MAIN_BRANCHES` half of the guard, never by `is_primary`.
+
+    This pins the regression vector behind two downstream teardown behaviours
+    that both key off `is_primary`: the `git worktree remove` gate
+    (`teardown.py`, `not is_primary`) and the unpushed-commit-guard relaxation
+    (`probe_blockers(is_primary=…)`). If someone ever collapses the naming guard
+    `is_primary or branch in MAIN_BRANCHES` down to just `is_primary` (reasoning
+    "the primary IS the main branch"), a bare repo's `main` worktree would flip
+    to `is_primary=True`, teardown would skip its removal (stale worktree) and
+    the pre-check would wave through a close with unpushed commits that teardown
+    then deletes. A bare repo has NO primary checkout — nothing sits at the bare
+    dir, and the bare dir has no working tree — so every worktree is removable.
+    """
+    bare = tmp_path / "bare.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(cockpit_repo.origin), str(bare)], check=True
+    )
+    wt = tmp_path / "main-wt"
+    subprocess.run(
+        ["git", "-C", str(bare), "worktree", "add", str(wt), "main"], check=True
+    )
+
+    wts = worktrees_basic(bare)
+
+    # The bare dir itself is skipped (its `worktree list` block has no `branch`
+    # line); only the linked `main` worktree surfaces.
+    assert [w.branch for w in wts] == ["main"]
+    main_wt = wts[0]
+    assert main_wt.is_primary is False  # ← the invariant
+    assert main_wt.branch in MAIN_BRANCHES  # exempt from rename via THIS, not primary
+
+    # And it is genuinely removable — the `not is_primary` teardown gate must be
+    # able to run `git worktree remove` on it, or the worktree leaks on disk.
+    subprocess.run(["git", "-C", str(bare), "worktree", "remove", str(wt)], check=True)
+    assert not wt.exists()
 
 
 # ── remove_worktree: double-force + lock-reason logging ────────────────────

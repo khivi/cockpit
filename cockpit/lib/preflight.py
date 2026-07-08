@@ -58,8 +58,8 @@ def _validate_sidebar_colors(cfg: dict) -> None:
 def _validate_repo_bool(cfg: dict, key: str) -> None:
     """Hard-fail on a per-repo `key` that's present but isn't a bool.
 
-    These per-repo switches (`review_prs` spawns review worktrees, `in_place`
-    skips all auto-spawning, `dependabot`/`review_external` opt a `review_prs`
+    These per-repo switches (`review_prs` spawns review worktrees, `use_worktree`
+    false skips all auto-spawning, `dependabot`/`review_external` opt a `review_prs`
     repo into spawning for dependabot / non-collaborator PRs) gate daemon
     behavior, so a non-bool (e.g. a stray string) would be silently truthy —
     rejected at start like `sidebar_color`.
@@ -281,14 +281,15 @@ def _warn_unresolvable_base(cfg: dict) -> None:
     a worktree then fails, and the failure only lands in `spawn.log`, never the
     TUI. Warn once at start with the exact fix so it isn't a silent mystery.
 
-    `in_place` repos are skipped (they never spawn worktrees and may be
-    off-GitHub with no origin). A missing path is skipped too — not this check's
-    concern. Purely local (no network); runs at daemon start, not per statusline.
+    `use_worktree: false` repos are skipped (they never spawn worktrees and may
+    be off-GitHub with no origin). A missing path is skipped too — not this
+    check's concern. Purely local (no network); runs at daemon start, not per
+    statusline.
     """
     from .git import origin_base_resolves
 
     for repo in cfg.get("repos", []):
-        if repo.get("in_place") or not repo.get("path"):
+        if not repo.get("use_worktree", True) or not repo.get("path"):
             continue
         path = Path(repo["path"]).expanduser()
         if not path.exists():
@@ -319,7 +320,7 @@ def validate_config(cfg: dict) -> None:
     """
     _validate_sidebar_colors(cfg)
     _validate_repo_bool(cfg, "review_prs")
-    _validate_repo_bool(cfg, "in_place")
+    _validate_repo_bool(cfg, "use_worktree")
     _validate_repo_bool(cfg, "dependabot")
     _validate_repo_bool(cfg, "review_external")
     _validate_review_command(cfg)

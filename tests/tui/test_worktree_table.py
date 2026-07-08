@@ -303,6 +303,25 @@ def test_row_capabilities_empty_without_pr(cache_dir, monkeypatch):
     assert row_capabilities(wt, "r", True) == frozenset()
 
 
+def test_row_capabilities_workspace_and_primary(cache_dir, monkeypatch):
+    # `workspace` reflects live state passed in by the app; `primary` marks the
+    # repo's primary checkout (a `use_worktree: false` `master`), read off the Worktree.
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: None,
+    )
+    wt = _wt(branch="khivi/live")
+    assert row_capabilities(wt, "r", False) == frozenset()
+    assert row_capabilities(wt, "r", False, has_workspace=True) == frozenset(
+        {"workspace"}
+    )
+    primary = _wt(branch="master", is_primary=True)
+    assert row_capabilities(primary, "r", False) == frozenset({"primary"})
+    assert row_capabilities(primary, "r", False, has_workspace=True) == frozenset(
+        {"primary", "workspace"}
+    )
+
+
 def test_muted_pr_prefixes_workspace_glyph(cache_dir):
     wt = _wt(branch="khivi/silence", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")

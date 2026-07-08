@@ -54,6 +54,7 @@ def worktree_state_blockers(
     branch: str | None = None,
     is_mine: bool = True,
     pr_merged: bool = False,
+    is_primary: bool = False,
 ) -> list[str]:
     """Dirty + unpushed checks.
 
@@ -76,6 +77,11 @@ def worktree_state_blockers(
     check needs to stand. Callers establish the merge via `resolve_pr_state`
     (cache first, then one live `gh` lookup — see `probe_blockers`), mirroring
     how autoclose uses `is_ancestor(wt, headRefOid)` instead of the commit count.
+
+    `is_primary=True` (a `use_worktree: false` `master` — the repo's primary checkout)
+    likewise skips the unpushed check: its close never removes the worktree
+    (`teardown` refuses `git worktree remove` on a primary checkout anyway), so
+    the checkout and any unpushed commits stay put. Only the dirty guard stands.
     """
     blockers: list[str] = []
     if worktree_path is None or not worktree_path.is_dir():
@@ -84,6 +90,11 @@ def worktree_state_blockers(
     if dirty > 0:
         blockers.append(f"{dirty} uncommitted file(s)")
     if pr_merged:
+        return blockers
+    if is_primary:
+        # A primary checkout's close is workspace-only — the worktree stays, so
+        # unpushed commits are never at risk. Only the dirty guard (above)
+        # stands, honouring "close, but make sure it's all committed".
         return blockers
     if not is_mine and branch:
         unpushed = commits_only_local(worktree_path, branch)
@@ -145,6 +156,7 @@ def probe_blockers(
     repo_name: str | None,
     *,
     is_mine: bool = True,
+    is_primary: bool = False,
 ) -> list[str]:
     """Read-only check: reasons to refuse close. Empty list = safe to close.
 
@@ -157,7 +169,11 @@ def probe_blockers(
     """
     state, number = resolve_pr_state(worktree_path, branch, repo_name)
     blockers = worktree_state_blockers(
-        worktree_path, branch=branch, is_mine=is_mine, pr_merged=state == "MERGED"
+        worktree_path,
+        branch=branch,
+        is_mine=is_mine,
+        pr_merged=state == "MERGED",
+        is_primary=is_primary,
     )
     if state == "OPEN" and number is not None:
         blockers.append(f"PR #{number} is OPEN")
@@ -170,10 +186,28 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
     Returns `(ok, blockers)`. On `ok=False`, `blockers` is non-empty and
     nothing was changed. Callers should log the refusal and decide whether
     to drop the request or surface it for user attention.
+
+    Exception: a **primary checkout** (`worktree_path == repo_path`, a
+    `use_worktree: false` `master`) does a *workspace-only* close — the session is closed but
+    `git worktree remove` is skipped (git refuses it on a primary checkout, and
+    the user works there in place). The dirty guard still applies; unpushed does
+    not (nothing is removed).
     """
     label = req.name or req.ref
+    # A primary checkout (a `use_worktree: false` `master`: worktree path == repo root) can't be
+    # removed as a worktree, so its close is workspace-only — close the session,
+    # leave the checkout. `probe_blockers`/`worktree_state_blockers` relax the
+    # unpushed guard for it (dirty still refuses), and the removal below is
+    # skipped.
+    is_primary = (
+        req.worktree_path is not None
+        and req.repo_path is not None
+        and req.worktree_path.resolve() == req.repo_path.resolve()
+    )
     if not req.forced:
-        blockers = probe_blockers(req.worktree_path, req.branch, req.repo_name)
+        blockers = probe_blockers(
+            req.worktree_path, req.branch, req.repo_name, is_primary=is_primary
+        )
         if blockers:
             return False, blockers
 
@@ -186,7 +220,8 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
     cmux_close_workspace_best_effort(req.ref)
 
     if (
-        req.worktree_path is not None
+        not is_primary
+        and req.worktree_path is not None
         and req.worktree_path.exists()
         and req.repo_path is not None
     ):

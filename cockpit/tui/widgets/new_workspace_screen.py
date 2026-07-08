@@ -12,6 +12,14 @@ When more than one repo is configured the screen shows a `Select` so a bare
 branch name can be routed to any repo (defaulting to the cursor row's repo);
 with a single repo there's nothing to pick and only a static hint is shown.
 
+A `use_worktree: false` repo (`no_worktree_paths`) behaves differently: `n`
+there creates one *named workspace on the checkout*, not a worktree. Two things
+follow — the name Input prefills with the repo name (the one addressable session
+per such repo; editable), and once that session exists (`busy_paths`) the repo is
+labelled "(open — use f)" and a submit against it is rejected: focusing the lone
+session is `f`'s job, not a second `n`. The app maps the dismissed `(source,
+path)` onto `cockpit new --cwd <path> --name <source>` for these repos.
+
 Like the rest of the TUI this screen never writes a cell: the spawn it triggers
 runs detached in the app and the new worktree surfaces on the next slow tick, so
 the daemon stays the sole cache writer.
@@ -52,16 +60,38 @@ class NewWorkspaceScreen(ModalScreen["tuple[str, str | None] | None"]):
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
+    #: Suffix on a `use_worktree: false` repo that already has its one workspace.
+    BUSY_SUFFIX = "  (open — use f)"
+
     def __init__(
         self,
         repos: list[tuple[str, str]] | None = None,
         default_path: str | None = None,
+        *,
+        no_worktree_paths: set[str] | None = None,
+        busy_paths: set[str] | None = None,
     ) -> None:
         super().__init__()
         self._repos = list(repos or [])
         self._default_path = default_path
         # Only worth a picker when there's more than one repo to choose from.
         self._has_select = len(self._repos) > 1
+        # `use_worktree: false` repos: `n` makes a named checkout workspace (not a
+        # worktree). `busy` = one already exists → block a second (use `f`).
+        self._no_worktree = set(no_worktree_paths or ())
+        self._busy = set(busy_paths or ())
+        self._name_by_path = {path: name for name, path in self._repos}
+
+    def _default_name(self, path: str | None) -> str:
+        """Prefill for the name Input: the repo name for a `use_worktree: false`
+        repo (its single session is named after it), else blank (a worktree
+        repo's source is a branch/PR/URL the user types)."""
+        if path is not None and path in self._no_worktree:
+            return self._name_by_path.get(path, "")
+        return ""
+
+    def _option_label(self, name: str, path: str) -> str:
+        return f"{name}{self.BUSY_SUFFIX}" if path in self._busy else name
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -80,19 +110,43 @@ class NewWorkspaceScreen(ModalScreen["tuple[str, str | None] | None"]):
                     else self._repos[0][1]
                 )
                 yield Select(
-                    [(name, path) for name, path in self._repos],
+                    [
+                        (self._option_label(name, path), path)
+                        for name, path in self._repos
+                    ],
                     value=value,
                     allow_blank=False,
                     id="nw-repo",
                 )
             elif self._repos:
-                yield Static(f"  (repo: {self._repos[0][0]})", classes="nw-hint")
+                yield Static(
+                    f"  (repo: {self._option_label(*self._repos[0])})",
+                    classes="nw-hint",
+                )
             yield Input(placeholder="fix-login  |  #1234  |  PE-1234", id="nw-input")
+            yield Static("", id="nw-error", classes="nw-hint")
             yield Static("enter to create · esc to cancel", classes="nw-hint")
 
     def on_mount(self) -> None:
         # Typing the name is the primary action; Tab reaches the repo Select.
         self.query_one(Input).focus()
+        # Seed the name from the initially-selected repo (repo name for a
+        # `use_worktree: false` repo, blank otherwise).
+        self.query_one("#nw-input", Input).value = self._default_name(
+            self._selected_repo_path()
+        )
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        # Switching to a `use_worktree: false` repo seeds its name; switching to a
+        # worktree repo leaves the box untouched (no default, and clobbering a
+        # typed branch/PR would be hostile).
+        if event.select.id != "nw-repo":
+            return
+        path = None if event.value is Select.BLANK else str(event.value)
+        default = self._default_name(path)
+        if default:
+            self.query_one("#nw-input", Input).value = default
+        self.query_one("#nw-error", Static).update("")
 
     def _selected_repo_path(self) -> str | None:
         if self._has_select:
@@ -107,7 +161,16 @@ class NewWorkspaceScreen(ModalScreen["tuple[str, str | None] | None"]):
         if not source:
             self.dismiss(None)
             return
-        self.dismiss((source, self._selected_repo_path()))
+        path = self._selected_repo_path()
+        # A `use_worktree: false` repo allows just one addressable workspace;
+        # once it exists, reject a second here — `f` focuses the existing one.
+        if path in self._busy:
+            name = self._name_by_path.get(path, path)
+            self.query_one("#nw-error", Static).update(
+                f"[b]{name}[/b] already has a workspace — press f to focus it"
+            )
+            return
+        self.dismiss((source, path))
 
     def action_cancel(self) -> None:
         self.dismiss(None)
