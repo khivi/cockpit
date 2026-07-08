@@ -730,9 +730,16 @@ def test_repo_tickets_explicit_provider_wins_over_legacy_linear_keys(
 # ── find_repo_by_nwo (owner/name → registered repo, via origin remote) ──────
 
 
-def _git_repo_with_remote(tmp_path: Path, url: str) -> Path:
+def _git_repo_with_remote(tmp_path: Path, monkeypatch, url: str) -> Path:
     import subprocess
 
+    from tests.conftest import _GIT_ENV_LEAKS
+
+    # Strip GIT_DIR etc. from the whole test process — under a pre-push hook
+    # they point every git call (ours AND find_repo_by_nwo's) at the OUTER
+    # cockpit repo, not the tmp_path repo.
+    for var in _GIT_ENV_LEAKS:
+        monkeypatch.delenv(var, raising=False)
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
@@ -741,7 +748,7 @@ def _git_repo_with_remote(tmp_path: Path, url: str) -> Path:
 
 
 def test_find_repo_by_nwo_matches_ssh_remote(tmp_path, monkeypatch):
-    repo = _git_repo_with_remote(tmp_path, "git@github.com:Owner/Repo.git")
+    repo = _git_repo_with_remote(tmp_path, monkeypatch, "git@github.com:Owner/Repo.git")
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [{"name": "r", "path": str(repo)}]}
     )
@@ -751,7 +758,7 @@ def test_find_repo_by_nwo_matches_ssh_remote(tmp_path, monkeypatch):
 
 
 def test_find_repo_by_nwo_matches_https_remote_no_git_suffix(tmp_path, monkeypatch):
-    repo = _git_repo_with_remote(tmp_path, "https://github.com/owner/repo")
+    repo = _git_repo_with_remote(tmp_path, monkeypatch, "https://github.com/owner/repo")
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [{"name": "r", "path": str(repo)}]}
     )
@@ -761,7 +768,9 @@ def test_find_repo_by_nwo_matches_https_remote_no_git_suffix(tmp_path, monkeypat
 
 
 def test_find_repo_by_nwo_case_insensitive(tmp_path, monkeypatch):
-    repo = _git_repo_with_remote(tmp_path, "https://github.com/Owner/Repo.git")
+    repo = _git_repo_with_remote(
+        tmp_path, monkeypatch, "https://github.com/Owner/Repo.git"
+    )
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [{"name": "r", "path": str(repo)}]}
     )
@@ -769,7 +778,9 @@ def test_find_repo_by_nwo_case_insensitive(tmp_path, monkeypatch):
 
 
 def test_find_repo_by_nwo_no_match_returns_none(tmp_path, monkeypatch):
-    repo = _git_repo_with_remote(tmp_path, "https://github.com/owner/repo.git")
+    repo = _git_repo_with_remote(
+        tmp_path, monkeypatch, "https://github.com/owner/repo.git"
+    )
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [{"name": "r", "path": str(repo)}]}
     )
