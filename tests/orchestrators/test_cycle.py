@@ -1150,6 +1150,106 @@ def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
     assert "no such remote" in err
 
 
+def test_refresh_base_distance_uses_per_pr_base_and_remote(tmp_path):
+    """A worktree with an open PR into `stage` is fetched/counted against
+    `<base_remote>/stage`, not the repo default `main`; the base_remote arg
+    swaps the fetched remote."""
+    from cockpit.lib.git import Worktree
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat")
+
+    ok = type("Res", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+    with (
+        patch.object(cycle.subprocess, "run", return_value=ok) as run,
+        patch.object(cycle, "behind_of_base", return_value=1) as bob,
+        patch.object(cycle, "ahead_of_base", return_value=2) as aob,
+        patch.object(cycle, "write_base_distance") as wbd,
+        patch.object(cycle, "write_base_ahead") as wba,
+    ):
+        distances = cycle._refresh_base_distance(
+            repo_path,
+            [wt],
+            "main",
+            base_remote="upstream",
+            pr_bases={"khivi/feat": "stage"},
+        )
+
+    assert distances == {"khivi/feat": 1}
+    # Fetched upstream/stage, not origin/main.
+    assert run.call_args.args[0] == [
+        "git",
+        "-C",
+        str(repo_path),
+        "fetch",
+        "--quiet",
+        "upstream",
+        "stage",
+    ]
+    bob.assert_called_once_with(wt.path, "stage", remote="upstream")
+    aob.assert_called_once_with(wt.path, "stage", remote="upstream")
+    wbd.assert_called_once_with("khivi/feat", 1)
+    wba.assert_called_once_with("khivi/feat", 2)
+
+
+def test_refresh_base_distance_falls_back_to_default_without_pr(tmp_path):
+    """No PR base for the worktree → measured against the repo default base
+    on the default `origin` remote."""
+    from cockpit.lib.git import Worktree
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    wt = Worktree(path=tmp_path / "wt", branch="khivi/feat")
+
+    ok = type("Res", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+    with (
+        patch.object(cycle.subprocess, "run", return_value=ok) as run,
+        patch.object(cycle, "behind_of_base", return_value=0),
+        patch.object(cycle, "ahead_of_base", return_value=5),
+        patch.object(cycle, "write_base_distance"),
+        patch.object(cycle, "write_base_ahead") as wba,
+    ):
+        cycle._refresh_base_distance(repo_path, [wt], "main")
+
+    assert run.call_args.args[0][-2:] == ["origin", "main"]
+    wba.assert_called_once_with("khivi/feat", 5)
+
+
+def test_refresh_base_distance_invalidates_only_failing_base(tmp_path):
+    """Two worktrees on different bases; the base whose fetch fails invalidates
+    only its own worktree — the other still gets a real count."""
+    from cockpit.lib.git import Worktree
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    good = Worktree(path=tmp_path / "g", branch="khivi/good")
+    bad = Worktree(path=tmp_path / "b", branch="khivi/bad")
+
+    def _run(cmd, **kw):
+        base = cmd[-1]
+        rc = 128 if base == "prod" else 0
+        return type("Res", (), {"returncode": rc, "stderr": "nope", "stdout": ""})()
+
+    with (
+        patch.object(cycle.subprocess, "run", side_effect=_run),
+        patch.object(cycle, "behind_of_base", return_value=1),
+        patch.object(cycle, "ahead_of_base", return_value=1),
+        patch.object(cycle, "write_base_distance") as wbd,
+        patch.object(cycle, "write_base_ahead"),
+    ):
+        distances = cycle._refresh_base_distance(
+            repo_path,
+            [good, bad],
+            "main",
+            pr_bases={"khivi/good": "stage", "khivi/bad": "prod"},
+        )
+
+    assert distances == {"khivi/good": 1}
+    wbd.assert_any_call("khivi/good", 1)
+    wbd.assert_any_call("khivi/bad", -1)
+
+
 # ── cycle_repo phase ordering ────────────────────────────────────────────────
 
 

@@ -279,6 +279,52 @@ def test_ahead_of_base_zero_when_base_unknown(cockpit_repo):
     assert ahead_of_base(cockpit_repo.repo, "no-such-base") == 0
 
 
+def test_ahead_of_base_counts_against_named_remote(cockpit_repo, tmp_path):
+    """Fork scenario: `origin/main` is a stale mirror, `upstream/main` current.
+    A branch cut off the current main + 1 commit reads ahead==1 against
+    upstream but ahead>1 against the stale origin — proving the `remote` arg
+    swaps which remote the count baselines against."""
+    import os
+
+    repo = cockpit_repo.repo
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+    }
+
+    def _git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(repo), *args], check=True, env=env)
+
+    # Second bare repo = the real upstream. origin already has main at seed.
+    upstream = tmp_path / "upstream.git"
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "init", "--bare", str(upstream)], check=True
+    )
+    _git("remote", "add", "upstream", str(upstream))
+    # Advance main by 2 commits and push ONLY to upstream — origin/main stays stale.
+    for f in ("u1", "u2"):
+        (repo / f).write_text(f)
+        _git("add", f)
+        _git("commit", "-q", "-m", f)
+    _git("push", "-q", "upstream", "main")
+    # Branch off the current main and add one real commit.
+    _git("checkout", "-q", "-b", "khivi/feat")
+    (repo / "mine").write_text("mine")
+    _git("add", "mine")
+    _git("commit", "-q", "-m", "mine")
+    _git("fetch", "-q", "origin", "main")
+
+    # Stale origin/main is 2 behind, so ahead-of-origin conflates drift + work.
+    assert ahead_of_base(repo, "main", remote="origin") == 3
+    # Against the current upstream/main, only the one real commit counts.
+    assert ahead_of_base(repo, "main", remote="upstream") == 1
+    # And staleness vs upstream is 0 (branch is on top of it).
+    assert behind_of_base(repo, "main", remote="upstream") == 0
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Branch-ref reaper leaves: list_local_branches / has_remote_branch /
 # branch_commits_ahead (operate on branch refs, no checked-out worktree).
