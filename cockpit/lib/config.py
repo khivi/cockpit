@@ -432,6 +432,31 @@ def review_command(cfg: dict | None = None, repo_entry: dict | None = None) -> s
     return REVIEW_COMMAND_DEFAULT
 
 
+def base_remote(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The git remote the footer ahead/staleness count measures against.
+
+    Default ``"origin"``. On a fork whose `origin/<default>` is a stale mirror of
+    the real upstream, the `↗` ahead-of-base count is dominated by that drift
+    rather than the branch's own commits. Point this at the remote that carries
+    upstream history (e.g. `"upstream"`) so `<remote>/<base>..HEAD` reflects the
+    true delta. The base *branch* is still the PR's base (or the repo default);
+    this only swaps the remote half of `<remote>/<branch>`. Worktree creation and
+    push stay on `origin` — this is a read-only measurement knob.
+
+    Resolved repo-block → global-block → default; a non-string/blank value falls
+    through to the next level.
+    """
+    if repo_entry is not None:
+        rv = repo_entry.get("base_remote")
+        if isinstance(rv, str) and rv.strip():
+            return rv.strip()
+    cfg = cfg if cfg is not None else load_config()
+    gv = cfg.get("base_remote")
+    if isinstance(gv, str) and gv.strip():
+        return gv.strip()
+    return "origin"
+
+
 def review_external(repo_entry: dict) -> bool:
     """Whether `review_prs` also auto-spawns a review workspace for a PR
     authored by someone who isn't a repo collaborator (default: False).

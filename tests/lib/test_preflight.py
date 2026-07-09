@@ -285,6 +285,36 @@ def test_preflight_passes_on_valid_review_command(tmp_path, monkeypatch, capsys)
     assert capsys.readouterr().err == ""
 
 
+def test_preflight_exits_on_blank_base_remote_repo(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [{"name": "r", "base_remote": "  "}]})
+    assert exc.value.code == 2
+    assert "base_remote" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_non_string_base_remote_global(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [], "base_remote": 3})
+    assert exc.value.code == 2
+    assert "base_remote" in capsys.readouterr().err
+
+
+def test_preflight_passes_on_valid_base_remote(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "base_remote": "upstream",
+            "repos": [{"name": "r", "base_remote": "origin"}],
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
 def test_preflight_exits_on_non_bool_check_update(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:

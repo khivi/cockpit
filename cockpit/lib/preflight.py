@@ -107,6 +107,26 @@ def _validate_review_command(cfg: dict) -> None:
         _check(repo["review_command"], f"repo {name!r}: review_command")
 
 
+def _validate_base_remote(cfg: dict) -> None:
+    """Hard-fail on a `base_remote` (global or per-repo) that isn't a non-empty
+    string. It names the git remote the footer ahead/staleness count measures
+    against (default `origin`); a blank or non-string value would build a broken
+    `/<base>` ref, so it's rejected at start like `review_command`.
+    """
+
+    def _check(val: object, where: str) -> None:
+        if not isinstance(val, str) or not val.strip():
+            _die(f"{where}: base_remote must be a non-empty string, got {val!r}.")
+
+    if "base_remote" in cfg:
+        _check(cfg["base_remote"], "base_remote")
+    for repo in cfg.get("repos", []):
+        if "base_remote" not in repo:
+            continue
+        name = repo.get("name") or repo.get("path", "?")
+        _check(repo["base_remote"], f"repo {name!r}: base_remote")
+
+
 def _validate_tickets(cfg: dict) -> None:
     """Validate the `tickets` config (top-level *and* per-repo).
 
@@ -324,6 +344,7 @@ def validate_config(cfg: dict) -> None:
     _validate_repo_bool(cfg, "dependabot")
     _validate_repo_bool(cfg, "review_external")
     _validate_review_command(cfg)
+    _validate_base_remote(cfg)
     _validate_global_bool(cfg, "check_update")
     _validate_global_bool(cfg, "use_slack")
     _validate_tickets(cfg)

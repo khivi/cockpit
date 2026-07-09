@@ -73,6 +73,7 @@ from cockpit.lib.colors import (
 )
 from cockpit.lib.config import (
     COCKPIT_HOME,
+    base_remote,
     ensure_state_dirs,
     jira_email,
     jira_merge_done_status,
@@ -1146,62 +1147,87 @@ def _reap_branch_refs(ctx: RepoCycle) -> None:
 
 
 def _refresh_base_distance(
-    repo_path: Path, wts: list[Worktree], default: str | None
+    repo_path: Path,
+    wts: list[Worktree],
+    default: str | None,
+    *,
+    base_remote: str = "origin",
+    pr_bases: dict[str, str] | None = None,
 ) -> dict[str, int]:
-    """Fetch `origin/<default>` once per repo, then compute and cache both
-    rebase-staleness (`HEAD..origin/<default>`) and ahead-of-base
-    (`origin/<default>..HEAD`) for each feature worktree.
+    """Fetch each distinct base branch once per repo, then compute and cache
+    both rebase-staleness (`HEAD..<remote>/<base>`) and ahead-of-base
+    (`<remote>/<base>..HEAD`) for each feature worktree.
 
-    Returns a `{branch: behind_count}` map for the caller to consume (e.g.
-    orphan pill staleness). On any failure (no origin/HEAD, fetch error)
-    all feature worktrees get an empty cache so stale readings don't
-    survive.
+    The base a worktree is measured against is its open PR's base branch
+    (`pr_bases[branch]`, GraphQL `baseRefName`) when it has one, else the repo
+    `default` (`origin/HEAD`) — so a PR targeting stage/prod is counted against
+    that branch, not main. `base_remote` (default `origin`) is the remote half;
+    a fork points it at `upstream` so a stale `origin/main` mirror doesn't
+    inflate the count.
 
-    `git fetch` is run with `--quiet` from the main repo path; refs are
-    shared across worktrees, so fetching once per repo is sufficient.
+    Returns a `{branch: behind_count}` map for the caller (orphan pill
+    staleness). A worktree with no resolvable base, or one whose base fails to
+    fetch, gets an invalidated cache (-1) so stale readings don't survive; a
+    fetch failure isolates to the worktrees on that base.
+
+    `git fetch` is run with `--quiet` from the main repo path; refs are shared
+    across worktrees, so fetching each base once per repo is sufficient.
     """
     feature = [w for w in wts if not w.is_primary]
     distances: dict[str, int] = {}
     if not feature:
         return distances
+    pr_bases = pr_bases or {}
 
-    def _invalidate() -> dict[str, int]:
-        for wt in feature:
+    def _invalidate(targets: list[Worktree]) -> None:
+        for wt in targets:
             write_base_distance(wt.branch, -1)
             write_base_ahead(wt.branch, -1)
-        return distances
 
-    if not default:
-        return _invalidate()
-    try:
-        res = subprocess.run(
-            ["git", "-C", str(repo_path), "fetch", "--quiet", "origin", default],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError) as e:
-        print(
-            f"  {yellow('skip')} base-distance refresh for {repo_path.name}: {e}",
-            file=sys.stderr,
-            flush=True,
-        )
-        return _invalidate()
-    if res.returncode != 0:
-        print(
-            f"  {yellow('skip')} base-distance refresh for {repo_path.name}: "
-            f"fetch origin {default} exited {res.returncode}: "
-            f"{res.stderr.strip()}",
-            file=sys.stderr,
-            flush=True,
-        )
-        return _invalidate()
+    # Group feature worktrees by the base branch they measure against, skipping
+    # any with no resolvable base (no PR base and no repo default).
+    by_base: dict[str, list[Worktree]] = {}
     for wt in feature:
-        n = behind_of_base(wt.path, default)
-        distances[wt.branch] = n
-        write_base_distance(wt.branch, n)
-        write_base_ahead(wt.branch, ahead_of_base(wt.path, default))
+        base = pr_bases.get(wt.branch) or default
+        if not base:
+            _invalidate([wt])
+            continue
+        by_base.setdefault(base, []).append(wt)
+
+    for base, group in by_base.items():
+        try:
+            res = subprocess.run(
+                ["git", "-C", str(repo_path), "fetch", "--quiet", base_remote, base],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            print(
+                f"  {yellow('skip')} base-distance refresh for {repo_path.name}: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
+            _invalidate(group)
+            continue
+        if res.returncode != 0:
+            print(
+                f"  {yellow('skip')} base-distance refresh for {repo_path.name}: "
+                f"fetch {base_remote} {base} exited {res.returncode}: "
+                f"{res.stderr.strip()}",
+                file=sys.stderr,
+                flush=True,
+            )
+            _invalidate(group)
+            continue
+        for wt in group:
+            n = behind_of_base(wt.path, base, remote=base_remote)
+            distances[wt.branch] = n
+            write_base_distance(wt.branch, n)
+            write_base_ahead(
+                wt.branch, ahead_of_base(wt.path, base, remote=base_remote)
+            )
     return distances
 
 
@@ -1417,7 +1443,11 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     if ctx.dry:
         return
     ctx.base_distance = _refresh_base_distance(
-        ctx.repo_path, ctx.wts, ctx.default_branch
+        ctx.repo_path,
+        ctx.wts,
+        ctx.default_branch,
+        base_remote=base_remote(ctx.cfg, ctx.repo_entry),
+        pr_bases={p.branch: p.base for p in ctx.prs if p.state == "OPEN" and p.base},
     )
     for wt in ctx.wts:
         write_git_state_cache(wt.path, wt.repo_name)

@@ -34,6 +34,7 @@ def _node(check_runs=None, legacy_contexts=None, required_contexts=None):
         "url": "u",
         "isDraft": False,
         "headRefName": "khivi/b",
+        "baseRefName": "main",
         "mergeable": "MERGEABLE",
         "reviewDecision": "REVIEW_REQUIRED",
         "updatedAt": "",
@@ -65,6 +66,22 @@ def test_no_checks_yields_none():
     pr = _pr_from_node(_node())
     assert pr is not None
     assert pr.ci == "none"
+
+
+def test_base_ref_parsed_from_node():
+    node = _node()
+    node["baseRefName"] = "stage"
+    pr = _pr_from_node(node)
+    assert pr is not None
+    assert pr.base == "stage"
+
+
+def test_base_ref_empty_when_absent():
+    node = _node()
+    del node["baseRefName"]
+    pr = _pr_from_node(node)
+    assert pr is not None
+    assert pr.base == ""
 
 
 def test_all_passing():

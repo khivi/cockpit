@@ -413,6 +413,11 @@ class PR:
     # pill). Empty when unfetched — only the relevant-PR query selects it.
     body: str = ""
     head_oid: str | None = None
+    # The branch this PR merges INTO (GraphQL `baseRefName`), e.g. main / stage /
+    # prod. Drives the footer ahead/staleness count so a PR targeting a non-default
+    # base is measured against its own base, not the repo's `origin/HEAD`. Empty
+    # when unfetched (light query) — callers fall back to the repo default base.
+    base: str = ""
 
     @property
     def primary_issue(self) -> str:
@@ -454,7 +459,7 @@ class PR:
 
 
 _PR_FIELDS = """
-  number title body url isDraft headRefName headRefOid mergeable reviewDecision updatedAt state
+  number title body url isDraft headRefName baseRefName headRefOid mergeable reviewDecision updatedAt state
   author { login __typename }
   baseRef { branchProtectionRule { requiredStatusChecks { context } } }
   reviewThreads(first: 100) {
@@ -616,6 +621,7 @@ def _pr_from_node(n: dict) -> PR | None:
         updated_at=n.get("updatedAt") or "",
         body=n.get("body") or "",
         head_oid=n.get("headRefOid"),
+        base=n.get("baseRefName") or "",
     )
 
 

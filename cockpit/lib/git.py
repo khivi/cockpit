@@ -727,25 +727,26 @@ def behind_of_origin(cwd: str | os.PathLike, branch: str) -> int:
     return _rev_list_count(cwd, f"HEAD..origin/{branch}")
 
 
-def behind_of_base(cwd: str | os.PathLike, base: str) -> int:
-    """Commits HEAD is behind `origin/{base}` — rebase-staleness vs the
-    default branch. Returns 0 on any failure (no remote ref, base unknown,
-    git error). Caller is responsible for fetching `origin/{base}` first;
-    this function does not hit the network.
+def behind_of_base(cwd: str | os.PathLike, base: str, remote: str = "origin") -> int:
+    """Commits HEAD is behind `{remote}/{base}` — rebase-staleness vs the
+    base branch. Returns 0 on any failure (no remote ref, base unknown,
+    git error). Caller is responsible for fetching `{remote}/{base}` first;
+    this function does not hit the network. `remote` defaults to `origin`;
+    a fork can point it at `upstream` (see `config.base_remote`).
     """
     if not base:
         return 0
-    return _rev_list_count(cwd, f"HEAD..origin/{base}")
+    return _rev_list_count(cwd, f"HEAD..{remote}/{base}")
 
 
-def ahead_of_base(cwd: str | os.PathLike, base: str) -> int:
-    """Commits HEAD is ahead of `origin/{base}` — branch divergence from
-    the default branch. Returns 0 on any failure. Like `behind_of_base`,
+def ahead_of_base(cwd: str | os.PathLike, base: str, remote: str = "origin") -> int:
+    """Commits HEAD is ahead of `{remote}/{base}` — branch divergence from
+    the base branch. Returns 0 on any failure. Like `behind_of_base`,
     this is a local rev-list; caller is responsible for any prior fetch.
     """
     if not base:
         return 0
-    return _rev_list_count(cwd, f"origin/{base}..HEAD")
+    return _rev_list_count(cwd, f"{remote}/{base}..HEAD")
 
 
 class GitStatusCounts(NamedTuple):

@@ -831,6 +831,32 @@ def test_review_command_blank_falls_through_to_default(tmp_path, monkeypatch):
     )
 
 
+def test_base_remote_defaults_to_origin(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.base_remote() == "origin"
+
+
+def test_base_remote_repo_override_wins(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "base_remote": "up-global"}
+    )
+    assert (
+        cockpit_config.base_remote(repo_entry={"base_remote": "upstream"}) == "upstream"
+    )
+
+
+def test_base_remote_falls_back_to_global(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "base_remote": "upstream"}
+    )
+    assert cockpit_config.base_remote(repo_entry={}) == "upstream"
+
+
+def test_base_remote_blank_falls_through_to_default(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.base_remote(repo_entry={"base_remote": "  "}) == "origin"
+
+
 # ── tickets object: dev_done labels + close_on_merge ────────────────────────
 
 
