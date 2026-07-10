@@ -12,7 +12,7 @@ than one of these belong in `orchestrators/` instead.
   - lib.colors    — ANSI terminal colors
   - lib.prompts   — Claude prompt builders + shell quoting
   - lib.registry  — register cwd's repo into config.json
-  - lib.daemon    — pidfile + signals + sleep/wake loop
+  - lib.daemon    — pidfile claim/release primitive
   - lib.git       — worktree dataclass, listing, slug + path helpers
   - lib.gh        — gh CLI/GraphQL, PR dataclass
   - lib.cmux      — cmux wrapper, workspace queries, status pills

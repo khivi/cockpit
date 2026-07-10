@@ -22,7 +22,6 @@ import contextlib
 import os
 import shutil
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
 _SUBCOMMANDS = (
@@ -58,17 +57,6 @@ def _usage() -> str:
         "usage: cockpit <" + " | ".join(_SUBCOMMANDS) + "> [args]"
         "  (no subcommand defaults to watch)"
     )
-
-
-def _run_with_argv(prog: str, rest: list[str], main_fn: Callable[[], int]) -> int:
-    """Run a module `main()` that parses sys.argv, with argv reshaped to its own
-    args (prog name + rest, no subcommand token), restoring argv afterward."""
-    saved = sys.argv
-    sys.argv = [prog, *rest]
-    try:
-        return main_fn()
-    finally:
-        sys.argv = saved
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -120,12 +108,10 @@ def main(argv: list[str] | None = None) -> int:
 
         return nudge_main(rest)
 
-    # new parses sys.argv internally; reshape it so its argparse sees only its
-    # own args (prog name + rest, no subcommand token).
     if sub == "new":
         from cockpit.spawn import main as spawn_main
 
-        return _run_with_argv("cockpit-new", rest, spawn_main)
+        return spawn_main(rest)
 
     if sub == "update":
         from cockpit.lib.updater import run_update

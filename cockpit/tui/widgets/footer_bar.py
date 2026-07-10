@@ -123,7 +123,6 @@ class FooterBar(Horizontal):
         self,
         bindings: Iterable[object],
         *,
-        show_update: bool = False,
         show_tickets: bool = True,
         backend: str,
         **kwargs: object,
@@ -136,7 +135,7 @@ class FooterBar(Horizontal):
             for b in bindings
             if isinstance(b, tuple) and len(b) >= 3
         ]
-        self._show_update = show_update
+        self._show_update = False
         self._show_tickets = show_tickets
         self._backend = backend
         # The highlighted row's capability tokens (e.g. {"pr", "ticket",

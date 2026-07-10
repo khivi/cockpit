@@ -290,7 +290,7 @@ def _decide_linear_refetch(ctx: RepoCycle, pr: PR, now: float) -> tuple[str, obj
 
 def _prefetch_linear_blocks(ctx: RepoCycle) -> None:
     """Populate `ctx.linear_blocks` for every PR in one batched Linear round-trip
-    per team, replacing a per-PR `fetch_ticket_state` fan-out.
+    per team, replacing a per-PR fan-out.
 
     Two passes: first decide each PR's outcome (`_decide_linear_refetch`, pure) —
     carrying unchanged blocks forward and collecting the union of ticket ids that
@@ -535,12 +535,19 @@ def _cached_linear_identity[T](
     return value
 
 
+def _env_fingerprint(env_var: str) -> str:
+    """Non-secret sha256[:12] fingerprint of an env var's value (empty string
+    when unset), used to key identity caches so rotating the credential
+    invalidates the entry without ever storing the raw value."""
+    raw = os.environ.get(env_var) or ""
+    return hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
 def _cached_viewer_id(ctx: RepoCycle) -> str | None:
     """The API key's `viewer` id, cached across ticks. Keyed by a non-secret
     fingerprint of the key so rotating `LINEAR_API_KEY` invalidates the entry
     (the raw key is never stored in `pill_state`)."""
-    raw = os.environ.get(LINEAR_API_KEY_ENV) or ""
-    fp = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    fp = _env_fingerprint(LINEAR_API_KEY_ENV)
     return _cached_linear_identity(ctx, f"linear-viewer:{fp}", fetch_viewer_id)
 
 
@@ -767,8 +774,7 @@ def _cached_jira_viewer(ctx: RepoCycle, site: str, email: str) -> str | None:
     Linear/GitHub viewers — the "only transition my own issues" gate. Keyed by a
     non-secret fingerprint of `$JIRA_API_TOKEN` so rotating the token invalidates
     the entry (the raw token is never stored in `pill_state`)."""
-    raw = os.environ.get(JIRA_API_TOKEN_ENV) or ""
-    fp = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    fp = _env_fingerprint(JIRA_API_TOKEN_ENV)
     return _cached_linear_identity(
         ctx,
         f"jira-viewer:{fp}",
@@ -859,8 +865,7 @@ def _cached_trello_viewer(ctx: RepoCycle) -> str | None:
     Linear/GitHub/Jira viewers — the "only move my own cards" gate. Keyed by a
     non-secret fingerprint of `$TRELLO_API_TOKEN` so rotating the token
     invalidates the entry (the raw token is never stored in `pill_state`)."""
-    raw = os.environ.get(TRELLO_API_TOKEN_ENV) or ""
-    fp = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    fp = _env_fingerprint(TRELLO_API_TOKEN_ENV)
     return _cached_linear_identity(
         ctx,
         f"trello-viewer:{fp}",
@@ -1509,11 +1514,6 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     ctx.pr_payloads = load_pr_payloads_by_branch(ctx.name)
 
 
-def _ref_pid(ref: str) -> int:
-    """PID embedded in a cmux `workspace:<pid>` ref (the sort key for dedup)."""
-    return int(ref.split(":")[1])
-
-
 def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
     """Close duplicate cmux workspaces, keeping the lowest-PID per group.
     Returns the surviving refs.
@@ -1582,7 +1582,7 @@ def _dedupe_workspaces(ctx: RepoCycle) -> set[str]:
         groups.setdefault(_group_key(ref, ws_name), []).append(ref)
     keep_refs: set[str] = set()
     for refs in groups.values():
-        refs_sorted = sorted(refs, key=_ref_pid)
+        refs_sorted = sorted(refs, key=lambda r: int(r.split(":")[1]))
         keep_refs.add(refs_sorted[0])
         _close_extras(refs_sorted)
     return keep_refs

@@ -121,6 +121,7 @@ from cockpit.lib.config import (
     find_repo_by_nwo,
     find_repos_by_linear_key,
     github_start_label,
+    load_config,
 )
 from cockpit.lib.config import (
     tickets as cfg_tickets,
@@ -152,7 +153,6 @@ from cockpit.lib.github_issues import (
 from cockpit.lib.linear import LINEAR_RE_CI, linear_mcp_available
 from cockpit.lib.prompts import claude_command, split_prompt_prefix
 from cockpit.lib.registry import register_cwd
-from cockpit.lib.repos import repo_names
 from cockpit.lib.slack import SLACK_URL_RE, slack_seed
 from cockpit.lib.templates import render
 from cockpit.lib.trello import TRELLO_CARD_URL_RE, trello_seed
@@ -161,6 +161,11 @@ from cockpit.lib.trello import TRELLO_CARD_URL_RE, trello_seed
 def _die(msg: str, code: int = 1) -> int:
     print(f"ERROR: {msg}", file=sys.stderr)
     return code
+
+
+def _repo_names() -> list[str]:
+    """Names of all configured repos, in config order."""
+    return [r.get("name", "") for r in load_config().get("repos", []) if r.get("name")]
 
 
 def _format_configured_repos(names: list[str]) -> str:
@@ -173,7 +178,7 @@ def _format_configured_repos(names: list[str]) -> str:
 
 
 def _unknown_repo_msg(name: str) -> str:
-    listed = _format_configured_repos(repo_names())
+    listed = _format_configured_repos(_repo_names())
     if listed:
         return (
             f"--repo {name!r}: no configured repo with that name. Configured: {listed}."
@@ -185,9 +190,11 @@ def _unknown_repo_msg(name: str) -> str:
     )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+        prog="cockpit new",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("positional", nargs="?", metavar="branch|PR|url")
     p.add_argument("--branch")
@@ -222,7 +229,7 @@ def parse_args() -> argparse.Namespace:
         "/cockpit:new skill fills this from `--context` by summarizing the live "
         "session before invoking spawn.py.",
     )
-    raw = sys.argv[1:]
+    raw = sys.argv[1:] if argv is None else argv
     if "--" in raw:
         idx = raw.index("--")
         pre, post = raw[:idx], raw[idx + 1 :]
@@ -425,7 +432,7 @@ def select_repo(repo_name: str | None) -> dict:
         return repo_cfg
     repo_cfg = discover_repo()
     if repo_cfg is None:
-        listed = _format_configured_repos(repo_names())
+        listed = _format_configured_repos(_repo_names())
         hint = f" Configured repos: {listed}." if listed else ""
         raise ValueError(
             "cannot determine repo from cwd; pass --repo <name> or run from "
@@ -657,8 +664,8 @@ def _actions_prompt(
     )
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
 
     if args.repo is not None and find_repo_by_name(args.repo) is None:
         return _die(_unknown_repo_msg(args.repo))
