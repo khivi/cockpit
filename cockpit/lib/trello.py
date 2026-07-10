@@ -76,7 +76,7 @@ _API_BASE = "https://api.trello.com/1"
 
 def card_short_link(url: str) -> str | None:
     """The card short link in `url` (`trello.com/c/<shortLink>`), or None."""
-    m = TRELLO_CARD_URL_RE.match(url) or TRELLO_CARD_URL_RE.search(url)
+    m = TRELLO_CARD_URL_RE.search(url)
     return m.group(1) if m else None
 
 

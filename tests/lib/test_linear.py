@@ -1,18 +1,16 @@
 """Tests for cockpit/lib/linear.py — regex, extract_ticket, footer parsing,
-and the one network surface (`fetch_ticket_state`).
+and the direct GraphQL network surface (`fetch_ticket_states` and friends).
 
 The Linear ticket *body* (title, description) is still fetched by Claude via the
 Linear MCP from the spawned workspace; see `test_spawn.py` for the spawn-side
-dispatch. The daemon's only direct Linear call is `fetch_ticket_state`, exercised
-below with a mocked `urlopen`.
+dispatch. The daemon's direct Linear calls are exercised below with a mocked
+`urlopen`.
 """
 
 from __future__ import annotations
 
 import json
 import subprocess
-import urllib.error
-from io import BytesIO
 from unittest.mock import patch
 
 from cockpit.lib.linear import (
@@ -21,7 +19,6 @@ from cockpit.lib.linear import (
     extract_ticket,
     fetch_team_states,
     fetch_ticket_meta,
-    fetch_ticket_state,
     fetch_ticket_states,
     fetch_viewer_id,
     linear_mcp_available,
@@ -225,7 +222,8 @@ def test_parse_footer_links_empty():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# fetch_ticket_state — Linear GraphQL (mocked urlopen)
+# fetch_ticket_states — Linear GraphQL, batched form (one query per team,
+# mocked urlopen)
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -243,88 +241,6 @@ class _FakeResp:
 
     def read(self):
         return self._body
-
-
-def _state_payload(state_name: str) -> dict:
-    return {
-        "data": {
-            "issues": {"nodes": [{"identifier": "PE-1", "state": {"name": state_name}}]}
-        }
-    }
-
-
-def test_fetch_ticket_state_no_key_skips_network():
-    """No LINEAR_API_KEY (and no override) → None, and urlopen is never called."""
-    with (
-        patch.dict("os.environ", {}, clear=True),
-        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
-    ):
-        assert fetch_ticket_state("PE-1") is None
-    urlopen.assert_not_called()
-
-
-def test_fetch_ticket_state_happy_path():
-    with patch(
-        "cockpit.lib.linear.urllib.request.urlopen",
-        return_value=_FakeResp(_state_payload("Dev Done")),
-    ):
-        assert fetch_ticket_state("PE-1234", api_key="lin_xxx") == "Dev Done"
-
-
-def test_fetch_ticket_state_rejects_non_ticket():
-    with patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen:
-        assert fetch_ticket_state("not-a-ticket", api_key="k") is None
-    urlopen.assert_not_called()
-
-
-def test_fetch_ticket_state_no_matching_issue_is_none():
-    with patch(
-        "cockpit.lib.linear.urllib.request.urlopen",
-        return_value=_FakeResp({"data": {"issues": {"nodes": []}}}),
-    ):
-        assert fetch_ticket_state("PE-9", api_key="k") is None
-
-
-def test_fetch_ticket_state_malformed_json_is_none():
-    # A 200 with an unparsable body must degrade like any other failure —
-    # `fetch_ticket_state` keeps its own inlined request (predates
-    # `_post_graphql`), so its json.loads is covered separately here.
-    with patch(
-        "cockpit.lib.linear.urllib.request.urlopen",
-        return_value=_FakeResp(raw=b"not json {"),
-    ):
-        assert fetch_ticket_state("PE-1", api_key="k") is None
-
-
-def test_fetch_ticket_state_http_error_is_none():
-    err = urllib.error.HTTPError("u", 401, "unauthorized", {}, BytesIO(b""))  # type: ignore[arg-type]
-    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=err):
-        assert fetch_ticket_state("PE-1", api_key="k") is None
-
-
-def test_fetch_ticket_state_timeout_is_none():
-    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
-        assert fetch_ticket_state("PE-1", api_key="k") is None
-
-
-def test_fetch_ticket_state_sends_team_and_number_variables():
-    captured: dict = {}
-
-    def fake_urlopen(req, timeout=None):
-        captured["body"] = json.loads(req.data.decode())
-        captured["auth"] = req.headers.get("Authorization")
-        return _FakeResp(_state_payload("In Progress"))
-
-    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
-        fetch_ticket_state("eng-42", api_key="secret-key")
-
-    assert captured["auth"] == "secret-key"  # raw key, no Bearer prefix
-    assert captured["body"]["variables"] == {"team": "ENG", "number": 42.0}
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# fetch_ticket_states — batched form (one query per team, mocked urlopen)
-# ────────────────────────────────────────────────────────────────────────────
 
 
 def _batch_resp(nodes: list[dict]) -> _FakeResp:

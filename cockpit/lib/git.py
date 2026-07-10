@@ -480,8 +480,12 @@ def _fetch_remote_branch(repo: Path, branch: str) -> bool:
     return exists
 
 
-def _has_remote_branch(repo: Path, branch: str) -> bool:
-    """True if `refs/heads/{branch}` exists on origin (exact match)."""
+def has_remote_branch(repo: Path, branch: str) -> bool:
+    """True if `refs/heads/{branch}` exists on origin (exact match).
+
+    Public surface for the daemon's branch-ref reaper; also shared by
+    `branch_exists`.
+    """
     return (
         _git(
             repo,
@@ -493,15 +497,6 @@ def _has_remote_branch(repo: Path, branch: str) -> bool:
         ).returncode
         == 0
     )
-
-
-def has_remote_branch(repo: Path, branch: str) -> bool:
-    """True if `refs/heads/{branch}` exists on origin (exact match).
-
-    Public surface for the daemon's branch-ref reaper; thin pass-through over
-    the internal check `branch_exists` also shares.
-    """
-    return _has_remote_branch(repo, branch)
 
 
 def list_local_branches(repo: Path) -> list[str]:
@@ -598,7 +593,7 @@ def create_worktree(
 
 def branch_exists(repo: Path, branch: str) -> bool:
     """True if `branch` exists locally or on origin (exact ref match)."""
-    return _has_local_branch(repo, branch) or _has_remote_branch(repo, branch)
+    return _has_local_branch(repo, branch) or has_remote_branch(repo, branch)
 
 
 def create_new_branch_worktree(

@@ -742,7 +742,9 @@ def _starship_user_config_path() -> Path:
     return _xdg_config_path("starship.toml")
 
 
-def _seed_default_toml(src: Path, dest: Path, label: str) -> None:
+def _seed_default_toml(
+    src: Path, dest: Path, label: str, payload: bytes | None = None
+) -> None:
     """Copy `src` to `dest`, replacing a symlink at `dest` with a real file.
 
     If `dest` is a symlink, its current target is backed up (when the target
@@ -752,6 +754,10 @@ def _seed_default_toml(src: Path, dest: Path, label: str) -> None:
     scenario that broke this chain in the first place. Regular files are
     compared byte-for-byte against the bundled default; identical files are
     left in place and reported as `unchanged` rather than re-written.
+
+    `payload`, if given, is written instead of `src`'s raw bytes (e.g. after
+    token substitution, as `install_starship_default_config` does) — `src`
+    still names the source file in the installed/unchanged status line.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.is_symlink():
@@ -765,7 +771,9 @@ def _seed_default_toml(src: Path, dest: Path, label: str) -> None:
             target.rename(backup)
             print(f"backed up {label} symlink target -> {backup}")
         dest.unlink()
-    _write_if_changed(dest, src.read_bytes(), label, src)
+    _write_if_changed(
+        dest, payload if payload is not None else src.read_bytes(), label, src
+    )
 
 
 def install_cship_default_config() -> None:
@@ -808,22 +816,11 @@ def install_starship_default_config() -> None:
         return
     if not STARSHIP_DEFAULT_TOML.exists():
         return
-    dest = _starship_user_config_path()
     payload = (
         STARSHIP_DEFAULT_TOML.read_text()
         .replace(STARSHIP_PLACEHOLDER, STARSHIP_CMD)
         .replace(STARSHIP_THEME_PLACEHOLDER, resolve_theme())
+    ).encode()
+    _seed_default_toml(
+        STARSHIP_DEFAULT_TOML, _starship_user_config_path(), "starship", payload
     )
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.is_symlink():
-        target = Path(os.readlink(dest))
-        if not target.is_absolute():
-            target = dest.parent / target
-        if target.exists():
-            backup = target.with_name(
-                f"{target.name}.bak.{datetime.now():%Y%m%d%H%M%S}"
-            )
-            target.rename(backup)
-            print(f"backed up starship symlink target -> {backup}")
-        dest.unlink()
-    _write_if_changed(dest, payload.encode(), "starship", STARSHIP_DEFAULT_TOML)

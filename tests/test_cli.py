@@ -1,12 +1,10 @@
 """Tests for the `cockpit` console dispatcher (cockpit/cli.py).
 
 Mocks each leaf module's `main` at the dispatch boundary and asserts routing +
-argv reshaping. The leaf behaviour is covered by each module's own tests.
+argv passing. The leaf behaviour is covered by each module's own tests.
 """
 
 from __future__ import annotations
-
-import sys
 
 import pytest
 
@@ -112,25 +110,16 @@ def test_close_passes_rest(monkeypatch):
     assert seen["argv"] == ["khivi/foo", "--force"]
 
 
-@pytest.mark.parametrize(
-    "sub,mod,prog",
-    [
-        ("new", "spawn", "cockpit-new"),
-    ],
-)
-def test_argv_subcommands_reshape_and_restore(monkeypatch, sub, mod, prog):
+def test_new_passes_rest(monkeypatch):
     seen = {}
 
-    def fake():
-        seen["argv"] = list(sys.argv)
+    def fake(argv):
+        seen["argv"] = argv
         return 0
 
-    monkeypatch.setattr(f"cockpit.{mod}.main", fake)
-    before = list(sys.argv)
-    assert cli.main([sub, "x", "--force"]) == 0
-    assert seen["argv"] == [prog, "x", "--force"]
-    # argv is restored after dispatch — no leak into the caller / next test.
-    assert sys.argv == before
+    monkeypatch.setattr("cockpit.spawn.main", fake)
+    assert cli.main(["new", "x", "--force"]) == 0
+    assert seen["argv"] == ["x", "--force"]
 
 
 # --- update routing --------------------------------------------------------

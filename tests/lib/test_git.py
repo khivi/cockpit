@@ -18,7 +18,6 @@ from cockpit.lib.git import (
     Worktree,
     _fetch_remote_branch,
     _has_local_branch,
-    _has_remote_branch,
     ahead_of_base,
     behind_of_base,
     branch_commits_ahead,
@@ -159,7 +158,7 @@ def test_worktrees_basic_threads_repo_name(cockpit_repo):
 
 def test_has_remote_branch_exact_match(cockpit_repo, push_branch):
     push_branch("khivi/cship")
-    assert _has_remote_branch(cockpit_repo.repo, "khivi/cship") is True
+    assert has_remote_branch(cockpit_repo.repo, "khivi/cship") is True
 
 
 def test_has_remote_branch_returns_false_for_unrelated_suffix(
@@ -168,11 +167,11 @@ def test_has_remote_branch_returns_false_for_unrelated_suffix(
     """`refs/heads/khivi/foo/cship` exists on origin; querying for bare
     `cship` must return False."""
     push_branch("khivi/foo/cship")
-    assert _has_remote_branch(cockpit_repo.repo, "cship") is False
+    assert has_remote_branch(cockpit_repo.repo, "cship") is False
 
 
 def test_has_remote_branch_false_when_missing(cockpit_repo):
-    assert _has_remote_branch(cockpit_repo.repo, "no-such-branch") is False
+    assert has_remote_branch(cockpit_repo.repo, "no-such-branch") is False
 
 
 def test_fetch_remote_branch_does_not_match_suffix(cockpit_repo, push_branch):

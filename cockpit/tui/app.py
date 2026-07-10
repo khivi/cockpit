@@ -639,40 +639,33 @@ class CockpitApp(App[None]):
         print("kick: manual sync — running cycle now")
         self._kick_slow()
 
-    def action_focus_row(self) -> None:
+    def _row_act(self, fn: Callable[[str], object]) -> None:
+        # Shared by the action_*_row methods below: resolve the highlighted
+        # row's path once and invoke `fn` on it, no-op when no row is selected.
         path = self.query_one(WorktreeTable).current_path()
         if path:
-            self._focus_worktree(path)
+            fn(path)
+
+    def action_focus_row(self) -> None:
+        self._row_act(self._focus_worktree)
 
     def action_open_pr(self) -> None:
-        path = self.query_one(WorktreeTable).current_path()
-        if path:
-            self._open_pr_url(path)
+        self._row_act(self._open_pr_url)
 
     def action_open_ticket(self) -> None:
-        path = self.query_one(WorktreeTable).current_path()
-        if path:
-            self._open_ticket_url(path)
+        self._row_act(self._open_ticket_url)
 
     def action_close_row(self) -> None:
-        path = self.query_one(WorktreeTable).current_path()
-        if path:
-            self._close_worktree(path)
+        self._row_act(self._close_worktree)
 
     def action_force_close_row(self) -> None:
-        path = self.query_one(WorktreeTable).current_path()
-        if path:
-            self._close_worktree(path, force=True)
+        self._row_act(lambda path: self._close_worktree(path, force=True))
 
     def action_mute_row(self) -> None:
-        path = self.query_one(WorktreeTable).current_path()
-        if path:
-            self._toggle_mute(path)
+        self._row_act(self._toggle_mute)
 
     def action_nudge_row(self) -> None:
-        path = self.query_one(WorktreeTable).current_path()
-        if path:
-            self._send_nudge(path)
+        self._row_act(self._send_nudge)
 
     def action_new_workspace(self) -> None:
         # Spawn a worktree + workspace from the typed source (the `/cockpit:new`

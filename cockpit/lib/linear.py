@@ -15,8 +15,8 @@ The Linear ticket *body* (title, description) is still fetched by Claude
 itself via the Linear MCP on the first turn of a spawned workspace — the
 daemon can't reach the MCP. But the daemon *does* make direct GraphQL calls:
 
-  * read-only — `fetch_ticket_state` and its batched form `fetch_ticket_states`
-    (the `devdone=` pill), plus `fetch_viewer_id` / `fetch_ticket_meta` /
+  * read-only — `fetch_ticket_states` (the `devdone=` pill), plus
+    `fetch_viewer_id` / `fetch_ticket_meta` /
     `fetch_team_states` (the merge-transition eligibility checks);
   * the one *write* — `update_ticket_state`, the `issueUpdate` mutation that
     moves a ticket's workflow state. It is reached only by the opt-in
@@ -82,15 +82,7 @@ LINEAR_API_KEY_ENV = "LINEAR_API_KEY"
 # other failure.
 _TICKET_STATE_TIMEOUT_SECONDS = 10
 
-# Filter by team key + issue number rather than the opaque UUID `issue(id:)`
-# wants — we only have the human identifier (`PE-1234`) from the branch name.
-_TICKET_STATE_QUERY = (
-    "query($team:String!,$number:Float!){"
-    "issues(filter:{team:{key:{eq:$team}},number:{eq:$number}}){"
-    "nodes{identifier state{name}}}}"
-)
-
-# The batched form of the above: a whole team's worth of ticket numbers in one
+# One query per team: a whole team's worth of ticket numbers in one
 # round-trip (`number:{in:[…]}` instead of `{eq:…}`). The slow tick collects
 # every ticket due for a state refresh across all of a repo's open PRs and
 # resolves them with one query per team rather than one per ticket.
@@ -160,14 +152,7 @@ def parse_linear_footers(body: str) -> list[str]:
     """
     if not body:
         return []
-    seen: set[str] = set()
-    out: list[str] = []
-    for tid in LINEAR_FOOTER_RE.findall(body):
-        tid = tid.upper()
-        if tid not in seen:
-            seen.add(tid)
-            out.append(tid)
-    return out
+    return list(dict.fromkeys(tid.upper() for tid in LINEAR_FOOTER_RE.findall(body)))
 
 
 def parse_linear_footer_links(body: str) -> list[tuple[str, str]]:
@@ -216,61 +201,11 @@ def linear_mcp_available() -> bool | None:
     return "linear" in res.stdout.lower()
 
 
-def fetch_ticket_state(ticket_id: str, *, api_key: str | None = None) -> str | None:
-    """Return the Linear workflow-state *name* for `ticket_id` (e.g. "Dev Done",
-    "In Progress"), or None when it can't be determined.
-
-    Returns None — never raises — when:
-      * `LINEAR_API_KEY` is unset (and no `api_key` override given): the feature
-        is simply off, so no network call is made.
-      * `ticket_id` doesn't parse as a Linear id.
-      * the GraphQL request fails, times out, or returns no matching issue.
-
-    Callers treat None as "not in the dev-done state" → no pill. The raw key is
-    sent in the `Authorization` header and never logged.
-    """
-    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
-    if not key:
-        return None
-    if not LINEAR_RE_CI.fullmatch(ticket_id or ""):
-        return None
-    team, _, num = ticket_id.partition("-")
-    try:
-        number = float(int(num))
-    except ValueError:
-        return None
-
-    body = json.dumps(
-        {
-            "query": _TICKET_STATE_QUERY,
-            "variables": {"team": team.upper(), "number": number},
-        }
-    ).encode()
-    req = urllib.request.Request(
-        LINEAR_API_URL,
-        data=body,
-        headers={"Authorization": key, "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=_TICKET_STATE_TIMEOUT_SECONDS) as resp:
-            payload = json.loads(resp.read().decode())
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
-        return None
-
-    nodes = (((payload or {}).get("data") or {}).get("issues") or {}).get("nodes")
-    if not nodes:
-        return None
-    state = (nodes[0].get("state") or {}).get("name")
-    return state or None
-
-
 def _post_graphql(query: str, variables: dict, *, api_key: str, timeout: float):
     """POST a GraphQL `query`/`variables` to Linear; return the `data` dict or
     None on any failure. Never raises. The raw key authenticates in the
     `Authorization` header (no `Bearer` prefix) and is never logged. Shared by
-    the merge-transition helpers below; `fetch_ticket_state` predates it and
-    keeps its own inlined request.
+    every read/write helper below.
     """
     body = json.dumps({"query": query, "variables": variables}).encode()
     req = urllib.request.Request(
@@ -291,7 +226,7 @@ def fetch_ticket_states(
     ticket_ids: list[str], *, api_key: str | None = None
 ) -> dict[str, str | None]:
     """Return a `{ticket_id: state_name_or_None}` map covering every id in
-    `ticket_ids` — the batched form of `fetch_ticket_state`.
+    `ticket_ids`.
 
     Ids are grouped by team key and each team is resolved in a single
     `number:{in:[…]}` query, so a repo's whole crop of due tickets costs one

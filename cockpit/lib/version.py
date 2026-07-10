@@ -119,13 +119,7 @@ def parse_version(v: str) -> tuple[int, ...]:
     Public so the updater can pick the newest plugin-cache version dir with the
     same comparator `is_newer` uses — the two must not disagree on which version
     is newer."""
-    parts: list[int] = []
-    for chunk in v.split("."):
-        try:
-            parts.append(int(chunk))
-        except ValueError:
-            parts.append(0)
-    return tuple(parts)
+    return tuple(int(chunk) if chunk.isdigit() else 0 for chunk in v.split("."))
 
 
 def is_newer(candidate: str, current: str) -> bool:

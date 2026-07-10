@@ -74,14 +74,7 @@ def parse_jira_footers(body: str) -> list[str]:
     """
     if not body:
         return []
-    seen: set[str] = set()
-    out: list[str] = []
-    for key in JIRA_FOOTER_RE.findall(body):
-        key = key.upper()
-        if key not in seen:
-            seen.add(key)
-            out.append(key)
-    return out
+    return list(dict.fromkeys(key.upper() for key in JIRA_FOOTER_RE.findall(body)))
 
 
 def parse_jira_footer_links(body: str) -> list[tuple[str, str]]:

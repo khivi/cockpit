@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn
 
@@ -81,6 +82,34 @@ def _validate_global_bool(cfg: dict, key: str) -> None:
         _die(f"{key} must be true or false, got {cfg[key]!r}.")
 
 
+def _validate_field(
+    cfg: dict,
+    key: str,
+    check: Callable[[object, str], None],
+    *,
+    per_repo_key_suffix: bool = True,
+) -> None:
+    """Shared top-level-then-per-repo traversal for a scalar config field.
+
+    Runs `check(value, where)` on `cfg[key]` if present, then on `repo[key]`
+    for every repo that sets it — the pattern `_validate_review_command` /
+    `_validate_base_remote` / `_validate_orphan_nudge_grace` all repeat.
+    `check` owns the predicate and the `_die` message; `where` is the
+    location prefix ("key" at top level, "repo {name!r}[: key]" per repo).
+    `per_repo_key_suffix=False` matches `_validate_orphan_nudge_grace`'s
+    existing per-repo `where` (its message already names the key, so the
+    `where` prefix omits it to avoid duplication).
+    """
+    if key in cfg:
+        check(cfg[key], key)
+    for repo in cfg.get("repos", []):
+        if key not in repo:
+            continue
+        name = repo.get("name") or repo.get("path", "?")
+        where = f"repo {name!r}: {key}" if per_repo_key_suffix else f"repo {name!r}"
+        check(repo[key], where)
+
+
 def _validate_review_command(cfg: dict) -> None:
     """Hard-fail on a `review_command` (global or per-repo) that isn't a slash
     command string.
@@ -98,13 +127,7 @@ def _validate_review_command(cfg: dict) -> None:
                 f"(e.g. '/review'), got {val!r}."
             )
 
-    if "review_command" in cfg:
-        _check(cfg["review_command"], "review_command")
-    for repo in cfg.get("repos", []):
-        if "review_command" not in repo:
-            continue
-        name = repo.get("name") or repo.get("path", "?")
-        _check(repo["review_command"], f"repo {name!r}: review_command")
+    _validate_field(cfg, "review_command", _check)
 
 
 def _validate_base_remote(cfg: dict) -> None:
@@ -118,13 +141,7 @@ def _validate_base_remote(cfg: dict) -> None:
         if not isinstance(val, str) or not val.strip():
             _die(f"{where}: base_remote must be a non-empty string, got {val!r}.")
 
-    if "base_remote" in cfg:
-        _check(cfg["base_remote"], "base_remote")
-    for repo in cfg.get("repos", []):
-        if "base_remote" not in repo:
-            continue
-        name = repo.get("name") or repo.get("path", "?")
-        _check(repo["base_remote"], f"repo {name!r}: base_remote")
+    _validate_field(cfg, "base_remote", _check)
 
 
 def _validate_tickets(cfg: dict) -> None:
@@ -193,13 +210,7 @@ def _validate_orphan_nudge_grace(cfg: dict) -> None:
         if val < 0:
             _die(f"{where}: orphan_nudge_grace_hours must be >= 0, got {val!r}.")
 
-    if "orphan_nudge_grace_hours" in cfg:
-        _check(cfg["orphan_nudge_grace_hours"], "orphan_nudge_grace_hours")
-    for repo in cfg.get("repos", []):
-        if "orphan_nudge_grace_hours" not in repo:
-            continue
-        name = repo.get("name") or repo.get("path", "?")
-        _check(repo["orphan_nudge_grace_hours"], f"repo {name!r}")
+    _validate_field(cfg, "orphan_nudge_grace_hours", _check, per_repo_key_suffix=False)
 
 
 def _validate_linear_dev_done(cfg: dict) -> None:

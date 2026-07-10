@@ -64,9 +64,7 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
     The PID suffix keeps concurrent writers (daemon + a renderer-spawned
     refresher) from racing on the same tmp name.
     """
-    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
-    tmp.write_text(json.dumps(payload, indent=2))
-    tmp.replace(path)
+    atomic_write(path, json.dumps(payload, indent=2))
 
 
 def write_pr_cache(
