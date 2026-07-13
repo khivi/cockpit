@@ -270,6 +270,58 @@ def test_workspace_cwds_parses_ok_when_cmux_ok():
         assert workspace_cwds() == {"workspace:1": Path("/tmp/wt")}
 
 
+def test_workspace_cwds_skips_own_dashboard_workspace(monkeypatch):
+    # The daemon's own workspace (id == $CMUX_WORKSPACE_ID) is dropped so an
+    # in-place repo sharing its cwd doesn't resolve focus to self (a no-op).
+    payload = (
+        '{"workspaces":['
+        '{"ref":"workspace:2","id":"SELF-UUID","current_directory":"/tmp/dash"},'
+        '{"ref":"workspace:404","id":"OTHER-UUID","current_directory":"/tmp/wt"}'
+        "]}"
+    )
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", "SELF-UUID")
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.cmux", return_value=payload),
+    ):
+        assert workspace_cwds() == {"workspace:404": Path("/tmp/wt")}
+
+
+def test_workspace_cwds_keeps_all_when_env_unset(monkeypatch):
+    # No CMUX_WORKSPACE_ID (daemon outside cmux): skip nobody.
+    payload = (
+        '{"workspaces":['
+        '{"ref":"workspace:2","id":"SELF-UUID","current_directory":"/tmp/dash"},'
+        '{"ref":"workspace:404","id":"OTHER-UUID","current_directory":"/tmp/wt"}'
+        "]}"
+    )
+    monkeypatch.delenv("CMUX_WORKSPACE_ID", raising=False)
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.cmux", return_value=payload),
+    ):
+        assert workspace_cwds() == {
+            "workspace:2": Path("/tmp/dash"),
+            "workspace:404": Path("/tmp/wt"),
+        }
+
+
+def test_workspace_cwds_include_self_keeps_own_workspace(monkeypatch):
+    # `cockpit close` runs from inside the worktree it tears down, so it must
+    # still resolve its own workspace ref (include_self=True).
+    payload = (
+        '{"workspaces":['
+        '{"ref":"workspace:2","id":"SELF-UUID","current_directory":"/tmp/dash"}'
+        "]}"
+    )
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", "SELF-UUID")
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.cmux", return_value=payload),
+    ):
+        assert workspace_cwds(include_self=True) == {"workspace:2": Path("/tmp/dash")}
+
+
 def test_workspace_cwds_parses_limux_json():
     payload = '{"workspace_id":"123","workspaces":[{"ref":"workspace:abc-def","cwd":"/tmp/wt"}]}'
     # limux path bypasses the cmux() wrapper because --json is a global flag

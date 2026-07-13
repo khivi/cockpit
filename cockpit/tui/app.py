@@ -812,8 +812,7 @@ class CockpitApp(App[None]):
         # spawn reuses the daemon's exact spawn+pill helpers, so an `f`-spawned
         # workspace is indistinguishable from a daemon-spawned one; the next tick
         # adopts it by cwd (path-keyed, not pill-keyed) so it is never
-        # double-spawned, and `_dedupe_workspaces` reaps any same-path dupe from
-        # a rare race with the slow tick. Spawning is not a cache write, so the
+        # double-spawned. Spawning is not a cache write, so the
         # daemon-is-sole-writer invariant still holds.
         backend = resolve_tool()
         if backend == "none":
