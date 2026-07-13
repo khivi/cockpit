@@ -777,8 +777,9 @@ class CockpitApp(App[None]):
             rp = Path(os.path.expanduser(repo["path"]))
             if not rp.is_dir():
                 continue
+            repo_name = repo.get("name") or rp.name
             try:
-                for wt in worktrees(rp, repo.get("branch_prefix", "")):
+                for wt in worktrees(rp, repo.get("branch_prefix", ""), repo_name):
                     if wt.path.resolve() == target:
                         return repo, wt
             except (RuntimeError, OSError):

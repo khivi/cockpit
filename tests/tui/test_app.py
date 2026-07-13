@@ -115,7 +115,9 @@ async def test_table_primes_before_slow_completes(monkeypatch, tmp_path):
             "check_update": False,
         },
     )
-    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees", lambda p, prefix="", repo_name="": [wt]
+    )
 
     release = threading.Event()
 
@@ -151,7 +153,9 @@ async def test_slow_tick_gets_per_repo_publish_callback(monkeypatch, tmp_path):
             "check_update": False,
         },
     )
-    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees", lambda p, prefix="", repo_name="": [wt]
+    )
 
     captured: dict = {}
     published = threading.Event()
@@ -398,7 +402,9 @@ def _seed_one_worktree(monkeypatch, tmp_path, *, branch="khivi/feat-a"):
             "check_update": False,
         },
     )
-    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees", lambda p, prefix="", repo_name="": [wt]
+    )
     monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path})
     monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {"ws1": "feat-a"})
     monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
@@ -596,7 +602,9 @@ async def test_focus_no_worktree_repo_switches_by_repo_name(monkeypatch, tmp_pat
             "check_update": False,
         },
     )
-    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees", lambda p, prefix="", repo_name="": [wt]
+    )
     monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
     monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
     # The repo-named workspace lives at a DIFFERENT cwd, so a cwd match misses;
@@ -1003,7 +1011,9 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
             "check_update": False,
         },
     )
-    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees", lambda p, prefix="", repo_name="": [wt]
+    )
     monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path})
     monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {"ws1": "feat-a"})
     monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
@@ -1048,7 +1058,9 @@ async def test_new_box_no_worktree_repo_spawns_named_checkout(monkeypatch, tmp_p
             "check_update": False,
         },
     )
-    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="": [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees", lambda p, prefix="", repo_name="": [wt]
+    )
     monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
     monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {})
     monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)

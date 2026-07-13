@@ -80,7 +80,18 @@ class Worktree:
         prefix used to disambiguate same-label branches across repos; cockpit
         resolves workspaces by cwd→path (never by name), so the collision is
         cosmetic — the one exception being orphan-auto-spawn's name-clash skip.
+
+        The **primary checkout** (a repo's main worktree — notably a
+        `use_worktree: false` repo's single in-place session) is named after the
+        **repo**, not its branch label: the label would be `master`, but the `f`
+        focus path looks the session up by repo name (`_workspace_ref_by_name`),
+        so spawning under `master` and searching under the repo name would never
+        match — a double-spawn. Falls back to `label` when `repo_name` is unset.
+        `reconcile_workspace_names` exempts primary/main worktrees, so this never
+        gets force-renamed back to `master`.
         """
+        if self.is_primary and self.repo_name:
+            return self.repo_name
         return self.label
 
     @property
