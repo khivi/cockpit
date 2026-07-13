@@ -149,6 +149,22 @@ def test_workspace_name_is_bare_label(tmp_path):
     assert detached.workspace_name == ""
 
 
+def test_workspace_name_primary_uses_repo_name(tmp_path):
+    """A primary checkout (notably a `use_worktree: false` repo's in-place
+    session) is named after the repo, not its `master` label — the `f` focus
+    path looks it up by repo name, so spawning under `master` would double-spawn.
+    Falls back to the label when `repo_name` is unset."""
+    wt = Worktree(
+        path=tmp_path / "needl-ai",
+        branch="master",
+        is_primary=True,
+        repo_name="needl-ai",
+    )
+    assert wt.workspace_name == "needl-ai"
+    no_name = Worktree(path=tmp_path / "x", branch="master", is_primary=True)
+    assert no_name.workspace_name == "master"
+
+
 def test_worktrees_basic_threads_repo_name(cockpit_repo):
     """`worktrees_basic` stamps the passed repo name onto each Worktree for the
     `git-repo` cell."""
