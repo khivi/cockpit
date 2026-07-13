@@ -92,9 +92,13 @@ def _workspace_ref(wt: Worktree) -> str | None:
     """The backend workspace ref whose cwd is this worktree, or None.
 
     Best-effort: a backend hiccup (`CmuxUnavailable`) falls back to None so the
-    caller uses the branch/short as the marker ref."""
+    caller uses the branch/short as the marker ref.
+
+    `include_self=True`: `cockpit close` is typically run from *inside* the
+    worktree it tears down, so the workspace to close IS the caller's own — the
+    default self-exclusion would drop it and lose the ref."""
     try:
-        cwds = workspace_cwds()
+        cwds = workspace_cwds(include_self=True)
     except CmuxUnavailable:
         return None
     target = wt.path.resolve()

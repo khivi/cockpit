@@ -11,6 +11,7 @@ Callers needing the policy predicates import `resolve_tool` / `is_cmux` /
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sys
@@ -520,11 +521,18 @@ def workspace_names() -> dict[str, str]:
     return names
 
 
-def workspace_cwds() -> dict[str, Path]:
+def workspace_cwds(*, include_self: bool = False) -> dict[str, Path]:
     """{ref: current_directory} via `cmux rpc workspace.list` (cmux) or `limux --json list-workspaces` (limux).
 
     Raises `CmuxUnavailable` on nonzero rc or unparsable output, so a backend
     hiccup is not misread as an empty workspace set.
+
+    Excludes the caller's OWN workspace (id == $CMUX_WORKSPACE_ID) by default:
+    the daemon/TUI resolves *other* workspaces to switch/match against, and its
+    own dashboard is never a valid focus/PR target — resolving an in-place repo
+    that shares the dashboard's cwd to self makes `select-workspace` a no-op.
+    Pass `include_self=True` when operating ON the current workspace (e.g.
+    `cockpit close` run from inside the worktree it's tearing down).
 
     limux uses `--json` as a global flag (before the command), so the limux
     path bypasses the `cmux()` wrapper — `cmux("--json", ...)` would still
@@ -556,8 +564,14 @@ def workspace_cwds() -> dict[str, Path]:
         data = json.loads(out)
     except json.JSONDecodeError as e:
         raise CmuxUnavailable(f"{label} returned non-JSON: {e}") from e
+    # `CMUX_WORKSPACE_ID` is the caller's own workspace UUID `id` (not its
+    # `ref`); absent outside cmux/limux, so the guard degrades to skipping
+    # nobody. See the docstring for why self is excluded by default.
+    self_id = None if include_self else os.environ.get("CMUX_WORKSPACE_ID")
     cwds: dict[str, Path] = {}
     for ws in data.get("workspaces", []):
+        if self_id and ws.get("id") == self_id:
+            continue
         ref = ws.get("ref")
         cwd = ws.get(cwd_key)
         if ref and cwd:
