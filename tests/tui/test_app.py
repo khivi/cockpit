@@ -1130,6 +1130,46 @@ async def test_new_box_defaults_to_cursor_header_repo(monkeypatch, tmp_path):
         assert app.screen.query_one(Select).value == str(repo_b)
 
 
+async def test_double_click_header_opens_new_modal(monkeypatch, tmp_path):
+    # Double-clicking a repo group-header row opens the new-workspace modal for
+    # that repo (a header has no workspace to focus, so its action is `n`).
+    from textual.widgets import Select
+
+    from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
+    from cockpit.tui.widgets.worktree_table import WorktreeTable
+
+    repo_a = tmp_path / "a"
+    repo_b = tmp_path / "b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    wt_a = Worktree(path=repo_a / "wt-a", branch="khivi/feat-a")
+    wt_b = Worktree(path=repo_b / "wt-b", branch="khivi/feat-b")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [
+                {"name": "a", "path": str(repo_a)},
+                {"name": "b", "path": str(repo_b)},
+            ],
+            "check_update": False,
+        },
+    )
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("a", None, False, [wt_a]), ("b", None, False, [wt_b])])
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        table.move_cursor(row=2)  # header-b
+        assert table.current_path() is None  # header carries no workspace
+        table.on_click(type("Ev", (), {"chain": 2})())  # simulate double-click
+        await pilot.pause()
+        assert isinstance(app.screen, NewWorkspaceScreen)
+        assert app.screen.query_one(Select).value == str(repo_b)
+
+
 async def test_update_key_exits_with_restart_code():
     # An available update + `u` exits with the sentinel so cli.py runs the
     # updater and re-execs.

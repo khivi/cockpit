@@ -767,6 +767,12 @@ class CockpitApp(App[None]):
         # cmux focus.
         self._focus_worktree(event.path)
 
+    def on_worktree_table_new_request(self, event: WorktreeTable.NewRequest) -> None:
+        # Double-click on a repo header row → same as `n`. action_new_workspace
+        # defaults the modal's repo picker to the cursor row's repo, which the
+        # click already moved onto the header.
+        self.action_new_workspace()
+
     def _resolve_worktree(self, path_str: str) -> tuple[dict, Worktree] | None:
         """Map a row's worktree-path key back to its (repo config, Worktree).
 
