@@ -1,8 +1,18 @@
 # Cockpit
 
+[![CI](https://github.com/khivi/cockpit/actions/workflows/ci.yml/badge.svg)](https://github.com/khivi/cockpit/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Cockpit is a terminal UI for juggling several PRs at once from Claude Code. Each task gets its own git worktree, a `cmux`/`limux` terminal running `claude`, and a GitHub PR — and cockpit shows them all in one live table (CI, reviews, comments, dirty state) that you drive by keystroke: focus, close, or nudge any row.
 
 ![cockpit watch — every worktree, workspace, and PR in one table](docs/cockpit-tui.png)
+
+## Why I built this
+
+Claude Code made it cheap to run several coding agents at once. The clean way to do that is one git worktree per task, each with its own [`cmux`](https://github.com/manaflow-ai/cmux) terminal running `claude`, each ending in its own PR. That scales the *work* — but not the *tracking*. After a few parallel tasks you have N terminals, N PRs on GitHub, and N tickets in Linear/Jira/Trello, with nothing tying a worktree to its PR to its ticket. Which agent is idle and waiting on you? Which PR just went red on CI? Which one has a review comment nobody's answered? You find out by tabbing through terminals and refreshing browser tabs.
+
+Cockpit is the missing glue between cmux, git worktrees, GitHub PRs, and your ticket tracker. It re-derives the whole fleet every cycle — `git worktree list` + `cmux tree` + your open PRs + linked tickets — and renders one live table you drive by keystroke. No stored inventory to drift out of sync: each row is computed from the real state of git, cmux, and GitHub. From that one table you focus a session, open its PR or ticket, nudge an idle agent, or close a finished worktree — without leaving the terminal.
+
+It also closes the loop the other way: cockpit can spawn a worktree + cmux session + PR-tracking row straight from a PR number, a Slack thread, a ticket, or a bare branch (`/cockpit:new`), and tear the whole thing down when the PR merges. Worktrees, PRs, and tickets stop being three separate things you manage by hand and become rows in one board.
 
 ## Requirements
 
@@ -132,4 +142,4 @@ Then `/plugin uninstall cockpit` in Claude Code.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Contributing? Read [`AGENTS.md`](./AGENTS.md) first.
+MIT — see [LICENSE](LICENSE). Contributing? Read [`CONTRIBUTING.md`](./CONTRIBUTING.md) first.
