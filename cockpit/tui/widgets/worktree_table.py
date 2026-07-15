@@ -401,6 +401,11 @@ class WorktreeTable(DataTable):
             self.path = path
             super().__init__()
 
+    class NewRequest(Message):
+        """User double-clicked a repo group-header row → open the new-workspace
+        modal for that repo (a header has no workspace to focus, so its primary
+        action is `n`)."""
+
     def __init__(self, *, show_tickets: bool = False, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._show_tickets = show_tickets
@@ -465,6 +470,9 @@ class WorktreeTable(DataTable):
             path = self.current_path()
             if path:
                 self.post_message(self.FocusRequest(path))
+            elif self._current_row_key() is not None:
+                # Double-clicked a repo header row (no path) → open new-workspace.
+                self.post_message(self.NewRequest())
 
     def update_inventory(
         self, inventory: Inventory, workspace_paths: set[Path] | None = None
