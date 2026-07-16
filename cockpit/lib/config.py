@@ -58,6 +58,31 @@ STARSHIP_THEME_PLACEHOLDER = "__COCKPIT_THEME__"
 # pills visible on macOS.
 STARSHIP_LINE_SEP_PLACEHOLDER = "__COCKPIT_LINE_SEP__"
 VALID_THEMES = ("dark", "light")
+# Every statusline field name — one per `[custom.*]` module in starship.toml and
+# one per non-`warm` subcommand in `starship.py::main`. `statusline_hide` lists a
+# subset to suppress; preflight validates entries against this set.
+# `test_statusline_fields_match_toml_modules` asserts this stays in sync with the
+# shipped starship.toml.
+STATUSLINE_FIELDS = frozenset(
+    {
+        "model",
+        "context",
+        "rate-limit",
+        "repo",
+        "branch-identity",
+        "worktree-status",
+        "permission-mode",
+        "cost",
+        "session-time",
+        "ticket",
+        "pr-state",
+        "pr-num",
+        "pr-comments",
+        "pr-checks",
+        "pr-title",
+        "pr-muted",
+    }
+)
 # Default Textual theme for the `cockpit watch` TUI when `tui_theme` is unset.
 # Mirrors Textual's own default (constants.DEFAULT_THEME = $TEXTUAL_THEME or
 # "textual-dark"), so an absent key changes nothing.
@@ -476,6 +501,22 @@ def review_external(repo_entry: dict) -> bool:
     shape as the `dependabot` per-repo bool.
     """
     return bool(repo_entry.get("review_external"))
+
+
+def statusline_hidden(cfg: dict | None = None) -> set[str]:
+    """Statusline field names the user has hidden (global, default none).
+
+    Each entry is a `cockpit starship <name>` field (see `STATUSLINE_FIELDS`);
+    the dispatcher skips a listed field so its footer segment renders empty.
+    Lets a user drop pills they don't care about (e.g. `cost`, `session-time`,
+    `rate-limit`). Non-string / unknown entries are ignored here — preflight
+    hard-fails on them so a typo surfaces at daemon start rather than silently.
+    """
+    cfg = cfg if cfg is not None else load_config()
+    raw = cfg.get("statusline_hide")
+    if not isinstance(raw, list):
+        return set()
+    return {x.strip() for x in raw if isinstance(x, str) and x.strip()}
 
 
 def use_slack() -> bool:

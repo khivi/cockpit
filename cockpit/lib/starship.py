@@ -186,7 +186,7 @@ def _git_state(cwd: str) -> tuple[str, GitStatusCounts, int, int]:
 
     Empty `branch` cell means "not a repo" (daemon wrote empty after cwd
     left a repo); counts and sync zero out so callers
-    (`print_branch_identity`, `print_worktree_status`, `print_linear`) can
+    (`print_branch_identity`, `print_worktree_status`, `print_ticket`) can
     short-circuit on `not branch`.
     """
     branch = read_text(cwd_cache("git-branch", cwd))
@@ -452,7 +452,7 @@ def _base_ahead_segment(branch: str) -> str:
     return azure(f"{ICON_AHEAD_BASE}{count}")
 
 
-def print_linear() -> str:
+def print_ticket() -> str:
     return extract_ticket(_branch())
 
 

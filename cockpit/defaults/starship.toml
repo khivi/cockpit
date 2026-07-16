@@ -19,7 +19,7 @@
 # current branch — the trailing newline still prints, but cship trims
 # blank trailing lines, so the footer stays single-line in that case.
 #
-# The line-break token between session_time and linear (see
+# The line-break token between session_time and ticket (see
 # STARSHIP_LINE_SEP_PLACEHOLDER in config.py) is the line-2 break.
 # `install_starship_default_config()` substitutes it: a real newline
 # off-macOS, but EMPTY on macOS — Claude Code renders only the first line of a
@@ -29,7 +29,7 @@
 # `${custom.<name>}` (braces required) is starship's syntax for referencing
 # a specific [custom.*] block. Bare `$custom` would expand to every custom
 # module concatenated in arbitrary order; the dotted form is what lets us
-# pin the line break between session_time and linear.
+# pin the line break between session_time and ticket.
 format = """\
 ${custom.model}\
 ${custom.context}\
@@ -40,7 +40,7 @@ ${custom.worktree_status}\
 ${custom.permission_mode}\
 ${custom.cost}\
 ${custom.session_time}__COCKPIT_LINE_SEP__\
-${custom.linear}\
+${custom.ticket}\
 ${custom.pr_state}\
 ${custom.pr_num}\
 ${custom.pr_comments}\
@@ -55,7 +55,7 @@ add_newline = false
 # time by `install_starship_default_config()` in cockpit/lib/config.py. Only the
 # two neutral-grey roles are themed — the near-black greys were the only values
 # with a real contrast problem (see fix d42a1d2). The saturated styles
-# (permission-mode fg:172, linear fg:91) are legible on both backgrounds and stay
+# (permission-mode fg:172, ticket fg:91) are legible on both backgrounds and stay
 # literal, mirroring the same decision in cockpit/lib/colors.py.
 #
 # Palette values are BARE NUMERIC ("243"), not `color_NNN`: starship 1.25.1
@@ -160,13 +160,13 @@ format      = "(   [⏱ $output]($style))"
 style       = "fg:text_muted"
 description = "Claude Code session duration"
 
-# Linear ticket extracted from current branch (e.g. "PRO-123"). Hidden if branch has none.
-[custom.linear]
-command     = "__COCKPIT_STARSHIP__ linear"
+# Ticket ID extracted from current branch (e.g. "PRO-123"). Hidden if branch has none.
+[custom.ticket]
+command     = "__COCKPIT_STARSHIP__ ticket"
 when        = "true"
 format      = "(   [◫ $output]($style))"
 style       = "bold fg:91"
-description = "Linear ticket ID from git branch"
+description = "Ticket ID from git branch"
 
 # PR state for current branch: OPEN | DRAFT | MERGED | CLOSED | APPROVED | CHANGES_REQUESTED.
 # Cached 60s. Hidden if no PR. Per-state ANSI is emitted by the Python output.

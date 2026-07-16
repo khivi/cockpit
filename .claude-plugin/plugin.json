@@ -1,7 +1,7 @@
 {
   "name": "cockpit",
   "description": "Workspace backends (cmux/limux) backed by git worktrees, aligned to GitHub PRs with live status surfaced in cmux pills and a Claude session footer.",
-  "version": "0.27.169",
+  "version": "0.27.170",
   "author": { "name": "Khivi" },
   "homepage": "https://github.com/khivi/cockpit",
   "keywords": ["cmux", "claude-code", "git-worktree", "github", "pull-request", "workspace"],
