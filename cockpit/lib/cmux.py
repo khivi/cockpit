@@ -244,8 +244,9 @@ def apply_devdone_pill(ref: str, ticket: str | None) -> None:
     """Set the Linear "dev done" pill on `ref` to `ticket`, or clear it when
     `ticket` is falsy. See `DEVDONE_KEY` for the design rationale. Green because
     "development complete" is a positive milestone, not an action item. The 🏁
-    icon + green already convey "dev-done", so the label is just the ticket
-    title/id — no literal "dev-done" word, leaving more room for the title.
+    icon + green already convey "dev-done", so the label is just the caller's
+    `ticket` string (the id, or a Trello card title) — no literal "dev-done"
+    word, leaving more room for the label.
     """
     if ticket:
         _set_status(ref, DEVDONE_KEY, f"{DEVDONE_ICON} {ticket}", GREEN)

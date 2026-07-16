@@ -117,11 +117,13 @@ def _linear_status_icon(state: str) -> tuple[str, str]:
     return _LINEAR_STATUS_FALLBACK
 
 
-# (repo display name, cache key/nwo, sidebar_color, tickets-enabled, worktrees).
-# Display name → header + `_row_repo`; cache key → `find_pr_payload` (the daemon
-# writes PR cache under the git nwo, which differs from the config label when
-# that label is set). See `app._cache_repo_name`.
-Inventory = list[tuple[str, str, str | None, bool, list[Worktree]]]
+# (repo display name, cache key/nwo, sidebar_color, tickets provider, worktrees).
+# The provider is `repo_tickets(...)` verbatim ("none" when disabled) — Trello
+# renders card titles, every other provider its id. Display name → header +
+# `_row_repo`; cache key → `find_pr_payload` (the daemon writes PR cache under the
+# git nwo, which differs from the config label when that label is set). See
+# `app._cache_repo_name`.
+Inventory = list[tuple[str, str, str | None, str, list[Worktree]]]
 
 # Row-key prefix marking a repo *group header* row (repo name, no workspace).
 # Real worktree keys are absolute filesystem paths, so this NUL-led sentinel
@@ -268,17 +270,21 @@ def _comments_cell(unaddressed_raw: str, total_raw: str) -> Text:
     return Text(label, style="red")
 
 
-def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
-    """Delivered Linear ticket id(s) and workflow state(s) from the cached per-PR
-    block, as two cells. The Ticket cell is the comma-joined id(s); the Status
-    cell is one workflow-state *icon* per ticket (space-joined), each tinted by
-    its own `_linear_status_icon` style. Both blank when there are no delivered
-    tickets."""
+def _linear_cells(wt: Worktree, repo_name: str, provider: str) -> tuple[Text, Text]:
+    """Delivered ticket id(s) and workflow state(s) from the cached per-PR block,
+    as two cells. The Ticket cell is the comma-joined id(s) — except Trello, whose
+    ids are opaque short links, so it joins the cached card title(s) (id fallback).
+    The Status cell is one workflow-state *icon* per ticket (space-joined), each
+    tinted by its own `_linear_status_icon` style. Both blank when there are no
+    delivered tickets."""
     payload = find_pr_payload(wt.branch, repo_name) or {}
     tickets = (payload.get("ticket") or {}).get("tickets") or []
     if not tickets:
         return Text(""), Text("")
-    ids = ", ".join(str(t.get("id", "?")) for t in tickets)
+    if provider == "trello":
+        ids = ", ".join(str(t.get("title") or t.get("id", "?")) for t in tickets)
+    else:
+        ids = ", ".join(str(t.get("id", "?")) for t in tickets)
     icons = []
     for t in tickets:
         state = t.get("state")
@@ -298,7 +304,7 @@ def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
 def row_capabilities(
     wt: Worktree,
     repo_name: str,
-    tickets_enabled: bool,
+    tickets_provider: str,
     *,
     has_workspace: bool = False,
 ) -> frozenset[str]:
@@ -324,7 +330,7 @@ def row_capabilities(
         caps.add("pr")
     if read_text(branch_cache("pr-muted", wt.branch)):
         caps.add("muted")
-    if tickets_enabled and (
+    if tickets_provider != "none" and (
         (find_pr_payload(wt.branch, repo_name) or {}).get("ticket") or {}
     ).get("tickets"):
         caps.add("ticket")
@@ -339,14 +345,15 @@ def worktree_cells(
     wt: Worktree,
     repo_name: str,
     repo_color: str | None,
-    tickets_enabled: bool,
+    tickets_provider: str,
     *,
     show_tickets: bool,
 ) -> list[Text]:
     """Build one row's cells (Rich Text, so colours survive), in `column_labels`
     order: the Ticket cell follows Author and the Status cell follows the
     PR-state cell, both present only when `show_tickets` (the columns exist) and
-    blank for a row whose repo isn't Linear-enabled."""
+    blank for a row whose repo has no ticket provider (`tickets_provider ==
+    "none"`)."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
@@ -357,7 +364,9 @@ def worktree_cells(
     author = cell("pr-author")
     state_icon, style = _STATE.get(state, (state, "white"))
     ticket, ticket_status = (
-        _linear_cells(wt, repo_name) if tickets_enabled else (Text(""), Text(""))
+        _linear_cells(wt, repo_name, tickets_provider)
+        if tickets_provider != "none"
+        else (Text(""), Text(""))
     )
 
     cells = [
@@ -493,7 +502,7 @@ class WorktreeTable(DataTable):
         self._row_caps = {}
         self._row_repo = {}
         ncols = len(column_labels(show_tickets=self._show_tickets))
-        for repo_name, cache_key, repo_color, tickets_enabled, wts in inventory:
+        for repo_name, cache_key, repo_color, tickets_provider, wts in inventory:
             hkey = f"{HEADER_KEY_PREFIX}{repo_name}"
             self.add_row(*_header_cells(repo_name, repo_color, ncols), key=hkey)
             self._row_caps[hkey] = frozenset({HEADER_CAP})
@@ -504,7 +513,7 @@ class WorktreeTable(DataTable):
                         wt,
                         cache_key,
                         repo_color,
-                        tickets_enabled,
+                        tickets_provider,
                         show_tickets=self._show_tickets,
                     ),
                     key=str(wt.path),
@@ -512,7 +521,7 @@ class WorktreeTable(DataTable):
                 self._row_caps[str(wt.path)] = row_capabilities(
                     wt,
                     cache_key,
-                    tickets_enabled,
+                    tickets_provider,
                     has_workspace=wt.path.resolve() in ws,
                 )
                 self._row_repo[str(wt.path)] = repo_name
