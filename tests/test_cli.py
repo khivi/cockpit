@@ -145,6 +145,31 @@ def test_update_routes_with_flags(monkeypatch, argv, expected):
     assert seen == expected
 
 
+def test_update_sync_routes_to_run_sync_when_installed(monkeypatch):
+    called = {"n": 0}
+    monkeypatch.setattr("cockpit.cli._running_as_installed_cockpit", lambda: True)
+
+    def fake() -> int:
+        called["n"] += 1
+        return 0
+
+    monkeypatch.setattr("cockpit.lib.updater.run_sync", fake)
+    assert cli.main(["update", "--sync"]) == 0
+    assert called["n"] == 1
+
+
+def test_update_sync_declines_when_not_installed(monkeypatch):
+    # A dev `uv run` / pytest session (argv[0] isn't the installed console
+    # script) must never auto-swap the binary — decline without calling run_sync.
+    monkeypatch.setattr("cockpit.cli._running_as_installed_cockpit", lambda: False)
+
+    def _boom() -> int:
+        raise AssertionError("run_sync must not run when not installed")
+
+    monkeypatch.setattr("cockpit.lib.updater.run_sync", _boom)
+    assert cli.main(["update", "--sync"]) == 0
+
+
 # --- `u` self-update: run `cockpit update` in a subprocess, then re-exec ----
 
 

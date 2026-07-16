@@ -248,3 +248,57 @@ def test_refresh_skipped_without_claude(tmp_path, monkeypatch):
     assert fake.ran(
         "uv", "tool", "install", "--force", "--no-cache", str(root / "0.27.91")
     )
+
+
+# --- run_sync (local SessionStart sync) ------------------------------------
+
+
+def test_sync_installs_when_cache_is_newer(tmp_path, monkeypatch):
+    # Cache ahead of the running binary: reinstall locally + re-pin, NO network.
+    root = _make_cache(tmp_path, monkeypatch, ["0.27.91"])
+    fake = FakeRun()
+    monkeypatch.setattr(updater.subprocess, "run", fake)
+    monkeypatch.setattr(updater.shutil, "which", _which_all)
+    monkeypatch.setattr(updater.version, "running_version", lambda: "0.27.90")
+
+    assert updater.run_sync() == 0
+    assert fake.ran(
+        "uv", "tool", "install", "--force", "--no-cache", str(root / "0.27.91")
+    )
+    assert fake.ran("/usr/bin/cockpit", "setup")
+    # Local only — never touches the `claude` plugin refresh.
+    assert not fake.ran("plugin", "update", f"{_PLUGIN}@{_MARKET}")
+
+
+def test_sync_noop_when_current(tmp_path, monkeypatch):
+    # Installed binary already at the newest cache dir: silent no-op, no install.
+    _make_cache(tmp_path, monkeypatch, ["0.27.90", "0.27.91"])
+    fake = FakeRun()
+    monkeypatch.setattr(updater.subprocess, "run", fake)
+    monkeypatch.setattr(updater.shutil, "which", _which_all)
+    monkeypatch.setattr(updater.version, "running_version", lambda: "0.27.91")
+
+    assert updater.run_sync() == 0
+    assert not fake.ran("uv", "tool", "install")
+
+
+def test_sync_noop_without_uv(tmp_path, monkeypatch):
+    _make_cache(tmp_path, monkeypatch, ["0.27.91"])
+    fake = FakeRun()
+    monkeypatch.setattr(updater.subprocess, "run", fake)
+    monkeypatch.setattr(updater.shutil, "which", lambda name: None)
+    monkeypatch.setattr(updater.version, "running_version", lambda: "0.27.90")
+
+    assert updater.run_sync() == 0
+    assert fake.calls == []
+
+
+def test_sync_noop_when_cache_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    fake = FakeRun()
+    monkeypatch.setattr(updater.subprocess, "run", fake)
+    monkeypatch.setattr(updater.shutil, "which", _which_all)
+    monkeypatch.setattr(updater.version, "running_version", lambda: "0.27.90")
+
+    assert updater.run_sync() == 0
+    assert fake.calls == []
