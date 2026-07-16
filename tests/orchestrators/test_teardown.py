@@ -234,6 +234,9 @@ def test_teardown_primary_checkout_closes_workspace_only(tmp_path):
         patch.object(teardown_mod, "_count_unpushed", return_value=4),
         patch.object(teardown_mod, "find_pr_payload", return_value=None),
         patch.object(teardown_mod, "fetch_pr_state_for_branch", return_value=None),
+        # On its default branch → workspace-only close. Pin the default so the
+        # relaxation doesn't hinge on the ambient git env resolving origin/HEAD.
+        patch.object(teardown_mod, "origin_head_branch", return_value="master"),
         patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree") as rm_mock,
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
