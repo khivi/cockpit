@@ -3104,12 +3104,32 @@ def test_track_dev_done_no_tickets_clears(tmp_path):
     pill.assert_called_once_with("workspace:1", None)
 
 
-def test_track_dev_done_single_ticket_shows_id(tmp_path):
+def test_track_dev_done_single_ticket_shows_id_when_no_title(tmp_path):
+    # Old on-disk cache carried no `title` — fall back to the id.
     ctx = _devdone_ctx(tmp_path, cfg={"linear_dev_done_state": "Dev Done"})
     block = {"tickets": [{"id": "PE-1234", "state": "Dev Done"}]}
     with patch.object(cycle, "apply_devdone_pill") as pill:
         cycle._track_dev_done(ctx, "workspace:1", block)
     pill.assert_called_once_with("workspace:1", "PE-1234")
+
+
+def test_track_dev_done_single_ticket_prefers_title(tmp_path):
+    ctx = _devdone_ctx(tmp_path, cfg={"linear_dev_done_state": "Dev Done"})
+    block = {"tickets": [{"id": "VfqsfqUd", "state": "Dev Done", "title": "Fix it"}]}
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "workspace:1", block)
+    pill.assert_called_once_with("workspace:1", "Fix it")
+
+
+def test_track_dev_done_single_ticket_truncates_long_title(tmp_path):
+    ctx = _devdone_ctx(tmp_path, cfg={"linear_dev_done_state": "Dev Done"})
+    long = "Fix the OAuth login redirect loop"
+    block = {"tickets": [{"id": "VfqsfqUd", "state": "Dev Done", "title": long}]}
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "workspace:1", block)
+    (_, label), _ = pill.call_args
+    assert label == "Fix the OAuth …"  # 14 chars + "…", never wider than the cap
+    assert len(label) == cycle._DEVDONE_TITLE_MAX
 
 
 def test_track_dev_done_all_done_multiple_shows_count(tmp_path):

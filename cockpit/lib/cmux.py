@@ -243,10 +243,12 @@ def apply_stale_pill(ref: str, behind_base: int) -> None:
 def apply_devdone_pill(ref: str, ticket: str | None) -> None:
     """Set the Linear "dev done" pill on `ref` to `ticket`, or clear it when
     `ticket` is falsy. See `DEVDONE_KEY` for the design rationale. Green because
-    "development complete" is a positive milestone, not an action item.
+    "development complete" is a positive milestone, not an action item. The 🏁
+    icon + green already convey "dev-done", so the label is just the ticket
+    title/id — no literal "dev-done" word, leaving more room for the title.
     """
     if ticket:
-        _set_status(ref, DEVDONE_KEY, f"{DEVDONE_ICON} dev-done {ticket}", GREEN)
+        _set_status(ref, DEVDONE_KEY, f"{DEVDONE_ICON} {ticket}", GREEN)
     else:
         _clear_status(ref, DEVDONE_KEY)
 

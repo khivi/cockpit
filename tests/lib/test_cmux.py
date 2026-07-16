@@ -638,7 +638,7 @@ def test_apply_devdone_pill_sets_label_when_ticket():
 
     set_call = next(c for c in calls if c[0] == "set-status")
     assert set_call[1] == DEVDONE_KEY
-    assert set_call[2] == "🏁 dev-done PE-1234"
+    assert set_call[2] == "🏁 PE-1234"
     assert "--color" in set_call and GREEN in set_call
 
 
