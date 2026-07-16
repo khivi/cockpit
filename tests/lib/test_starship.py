@@ -152,18 +152,18 @@ def test_print_rate_limit_tier(cache_dir, pct, color: Colorizer):
 # ── field printer: linear ──────────────────────────────────────────────────
 
 
-def test_print_linear_extracts_ticket(_clean_git_env, cache_dir, tmp_path, monkeypatch):
+def test_print_ticket_extracts_ticket(_clean_git_env, cache_dir, tmp_path, monkeypatch):
     repo = _make_repo(tmp_path, branch="khivi/PRO-123-fix")
     monkeypatch.chdir(repo)
     _seed_git_state(repo)
-    assert starship.print_linear() == "PRO-123"
+    assert starship.print_ticket() == "PRO-123"
 
 
-def test_print_linear_no_ticket(_clean_git_env, cache_dir, tmp_path, monkeypatch):
+def test_print_ticket_no_ticket(_clean_git_env, cache_dir, tmp_path, monkeypatch):
     repo = _make_repo(tmp_path, branch="khivi/cleanup")
     monkeypatch.chdir(repo)
     _seed_git_state(repo)
-    assert starship.print_linear() == ""
+    assert starship.print_ticket() == ""
 
 
 # ── PR cache reads ─────────────────────────────────────────────────────────

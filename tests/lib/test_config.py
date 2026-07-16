@@ -44,6 +44,22 @@ def test_cship_toml_uses_lines_wrapper_schema():
     assert "$starship_prompt" in body
 
 
+def test_statusline_fields_match_toml_modules():
+    """Every `STATUSLINE_FIELDS` entry (the hide/validate whitelist) maps to a
+    shipped `[custom.*]` module and vice-versa. A new pill added to starship.toml
+    without a matching field can't be hidden or validated — this catches the drift.
+    """
+    import re
+
+    body = (DEFAULTS / "starship.toml").read_text()
+    # toml module names use `_`; field names use `-`, and `ratelimit` → `rate-limit`.
+    modules = {
+        m.replace("_", "-").replace("ratelimit", "rate-limit")
+        for m in re.findall(r"\[custom\.([a-z_]+)\]", body)
+    }
+    assert modules == set(config_mod.STATUSLINE_FIELDS)
+
+
 def test_starship_toml_declares_expected_pills():
     """All bundled pill modules must stay declared — silent drops of a
     `[custom.*]` section is how Bug B-class regressions sneak in."""
@@ -56,7 +72,7 @@ def test_starship_toml_declares_expected_pills():
         "[custom.permission_mode]",
         "[custom.branch_identity]",
         "[custom.worktree_status]",
-        "[custom.linear]",
+        "[custom.ticket]",
         "[custom.pr_state]",
         "[custom.pr_num]",
         "[custom.pr_comments]",
@@ -73,11 +89,11 @@ def test_starship_toml_declares_expected_pills():
     assert (
         "🤖" in body[model_block_start:next_block]
     ), "[custom.model].format must include the 🤖 icon"
-    linear_block_start = body.index("[custom.linear]")
-    linear_next = body.index("\n[custom.", linear_block_start + 1)
+    ticket_block_start = body.index("[custom.ticket]")
+    ticket_next = body.index("\n[custom.", ticket_block_start + 1)
     assert (
-        "◫" in body[linear_block_start:linear_next]
-    ), "[custom.linear].format must include the ◫ icon"
+        "◫" in body[ticket_block_start:ticket_next]
+    ), "[custom.ticket].format must include the ◫ icon"
 
 
 def test_starship_toml_drops_time_pill():
@@ -89,7 +105,7 @@ def test_starship_toml_drops_time_pill():
 
 
 def test_starship_toml_pr_identity_on_line_two():
-    """PR/Linear identity (linear + pr_state + pr_num + pr_checks +
+    """PR/ticket identity (ticket + pr_state + pr_num + pr_checks +
     pr_title) lives on line two of the format string so the metric
     strip stays uniform across sessions."""
     # The line-2 break is the `__COCKPIT_LINE_SEP__` token in the default,
@@ -105,7 +121,7 @@ def test_starship_toml_pr_identity_on_line_two():
     assert len(lines) >= 2, f"format should have at least 2 lines, got {lines!r}"
     line_two = lines[1]
     for token in (
-        "${custom.linear}",
+        "${custom.ticket}",
         "${custom.pr_state}",
         "${custom.pr_num}",
         "${custom.pr_comments}",
@@ -584,14 +600,14 @@ def test_starship_default_renders_custom_modules_via_starship_prompt(
     cship_default = cockpit_config.CSHIP_DEFAULT_TOML.read_text()
     starship_default = cockpit_config.STARSHIP_DEFAULT_TOML.read_text()
     assert "$starship_prompt" in cship_default
-    assert "[custom.linear]" in starship_default
+    assert "[custom.ticket]" in starship_default
     assert "[custom.pr_state]" in starship_default
     # The eight custom modules whose chain commit 8ab5889 broke.
     for mod in (
         "custom.context",
         "custom.session_time",
         "custom.ratelimit",
-        "custom.linear",
+        "custom.ticket",
         "custom.pr_state",
         "custom.pr_num",
         "custom.pr_checks",
@@ -883,6 +899,37 @@ def test_base_remote_falls_back_to_global(tmp_path, monkeypatch):
 def test_base_remote_blank_falls_through_to_default(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     assert cockpit_config.base_remote(repo_entry={"base_remote": "  "}) == "origin"
+
+
+# ── statusline_hide ─────────────────────────────────────────────────────────
+
+
+def test_statusline_hidden_defaults_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.statusline_hidden() == set()
+
+
+def test_statusline_hidden_reads_list(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {"repos": [], "statusline_hide": ["cost", "session-time"]},
+    )
+    assert cockpit_config.statusline_hidden() == {"cost", "session-time"}
+
+
+def test_statusline_hidden_ignores_blanks_and_non_strings(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "statusline_hide": ["cost", "  ", 7]}
+    )
+    assert cockpit_config.statusline_hidden() == {"cost"}
+
+
+def test_statusline_hidden_non_list_is_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "statusline_hide": "cost"}
+    )
+    assert cockpit_config.statusline_hidden() == set()
 
 
 # ── tickets object: dev_done labels + close_on_merge ────────────────────────

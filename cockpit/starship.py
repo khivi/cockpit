@@ -14,7 +14,7 @@ Subcommands:
   repo                 — owning repo name (hidden when unset)
   branch-identity      — current branch + ahead-of-origin + ahead-of-base
   worktree-status      — staged/unstaged/untracked + behind-origin + base-staleness
-  linear               — Linear ticket ID from branch name
+  ticket               — ticket ID from branch name
   pr-state             — PR state (OPEN / DRAFT / APPROVED / ...)
   pr-num               — "#<n>" for the current branch's PR
   pr-comments          — 💬 N unaddressed review threads
@@ -32,11 +32,11 @@ from __future__ import annotations
 import sys
 
 from cockpit.lib.cache import warm_all
+from cockpit.lib.config import statusline_hidden
 from cockpit.lib.starship import (
     print_branch_identity,
     print_context,
     print_cost,
-    print_linear,
     print_model,
     print_permission_mode,
     print_pr_checks,
@@ -48,6 +48,7 @@ from cockpit.lib.starship import (
     print_rate_limit,
     print_repo,
     print_session_time,
+    print_ticket,
     print_worktree_status,
 )
 
@@ -63,6 +64,10 @@ def main(argv: list[str]) -> int:
         return 0
     cmd = argv[1]
     try:
+        # A field the user hid via `statusline_hide` renders empty (warm is not
+        # a field, so it's never gated).
+        if cmd != "warm" and cmd in statusline_hidden():
+            return 0
         if cmd == "context":
             return _emit(print_context())
         if cmd == "session-time":
@@ -81,8 +86,8 @@ def main(argv: list[str]) -> int:
             return _emit(print_branch_identity())
         if cmd == "worktree-status":
             return _emit(print_worktree_status())
-        if cmd == "linear":
-            return _emit(print_linear())
+        if cmd == "ticket":
+            return _emit(print_ticket())
         if cmd == "pr-state":
             return _emit(print_pr_state())
         if cmd == "pr-num":

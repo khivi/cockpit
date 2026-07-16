@@ -337,6 +337,28 @@ def test_preflight_ignores_absent_check_update(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_preflight_exits_on_non_list_statusline_hide(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "statusline_hide": "cost"})
+    assert exc.value.code == 2
+    assert "statusline_hide must be a list" in capsys.readouterr().err
+
+
+def test_preflight_exits_on_unknown_statusline_field(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "statusline_hide": ["cost", "bogus"]})
+    assert exc.value.code == 2
+    assert "'bogus' is not a statusline field" in capsys.readouterr().err
+
+
+def test_preflight_passes_on_valid_statusline_hide(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "statusline_hide": ["cost", "session-time"]})
+    assert capsys.readouterr().err == ""
+
+
 def test_preflight_exits_on_non_bool_use_slack(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:

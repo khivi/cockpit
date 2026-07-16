@@ -82,6 +82,27 @@ def _validate_global_bool(cfg: dict, key: str) -> None:
         _die(f"{key} must be true or false, got {cfg[key]!r}.")
 
 
+def _validate_statusline_hide(cfg: dict) -> None:
+    """Hard-fail on a `statusline_hide` that isn't a list of known field names.
+
+    A typo'd field would silently hide nothing, so it's rejected at start with
+    the valid set listed — same treatment as `sidebar_color`.
+    """
+    from .config import STATUSLINE_FIELDS
+
+    raw = cfg.get("statusline_hide")
+    if raw is None:
+        return
+    if not isinstance(raw, list):
+        _die(f"statusline_hide must be a list of field names, got {raw!r}.")
+    for field in raw:
+        if not isinstance(field, str) or field not in STATUSLINE_FIELDS:
+            _die(
+                f"statusline_hide: {field!r} is not a statusline field. "
+                f"Choose from: {', '.join(sorted(STATUSLINE_FIELDS))}."
+            )
+
+
 def _validate_field(
     cfg: dict,
     key: str,
@@ -358,6 +379,7 @@ def validate_config(cfg: dict) -> None:
     _validate_base_remote(cfg)
     _validate_global_bool(cfg, "check_update")
     _validate_global_bool(cfg, "use_slack")
+    _validate_statusline_hide(cfg)
     _validate_tickets(cfg)
     _validate_orphan_nudge_grace(cfg)
     _validate_linear_dev_done(cfg)

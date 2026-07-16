@@ -79,6 +79,7 @@ Secrets are **env-only**, never config: `LINEAR_API_KEY`, `JIRA_API_TOKEN`,
 | `tool` | string | `auto` | Workspace backend: `auto` \| `cmux` \| `limux` \| `none`. |
 | `theme` | string | `dark` | `dark` \| `light` — tunes cmux pills + the cship/starship footer palette. |
 | `tui_theme` | string | `textual-dark` | Textual theme for the `cockpit watch` TUI chrome only. Persisted from the TUI theme picker. |
+| `statusline_hide` | list | `[]` | Statusline fields to hide from the footer. Any of: `model`, `context`, `rate-limit`, `repo`, `branch-identity`, `worktree-status`, `permission-mode`, `cost`, `session-time`, `ticket`, `pr-state`, `pr-num`, `pr-comments`, `pr-checks`, `pr-title`, `pr-muted`. |
 
 Global `tickets`, `review_command`, and the legacy flat `linear_*` keys may also appear
 at top level as defaults inherited by repos that omit them.
