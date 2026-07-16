@@ -23,7 +23,9 @@ from cockpit.lib.git import (
     branch_commits_ahead,
     branch_exists,
     branch_label,
+    checkout_branch,
     create_worktree,
+    current_branch,
     delete_local_branch,
     has_remote_branch,
     is_ancestor,
@@ -859,6 +861,51 @@ def test_delete_local_branch_failure_on_missing(cockpit_repo) -> None:
     repo = cockpit_repo.repo
 
     ok, err = delete_local_branch(repo, "no-such-branch")
+
+    assert ok is False
+    assert err != ""
+
+
+# ── checkout_branch: move HEAD (used before deleting a primary's feature ref) ──
+
+
+def test_checkout_branch_moves_head(cockpit_repo) -> None:
+    repo = cockpit_repo.repo
+    env = _committer_env()
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-b", "feature"], check=True, env=env
+    )
+    assert current_branch(repo) == "feature"
+
+    ok, _ = checkout_branch(repo, "main")
+
+    assert ok is True
+    assert current_branch(repo) == "main"
+
+
+def test_checkout_branch_then_delete_own_branch(cockpit_repo) -> None:
+    """The teardown sequence for a primary checkout: git refuses `branch -D` of
+    the checked-out branch, so move to the default branch first, then delete."""
+    repo = cockpit_repo.repo
+    env = _committer_env()
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-b", "feature"], check=True, env=env
+    )
+    # Deleting while it's HEAD fails...
+    fail_ok, _ = delete_local_branch(repo, "feature")
+    assert fail_ok is False
+
+    # ...but succeeds after moving HEAD to main.
+    assert checkout_branch(repo, "main")[0] is True
+    ok, _ = delete_local_branch(repo, "feature")
+    assert ok is True
+    assert "feature" not in _local_branches(repo)
+
+
+def test_checkout_branch_failure_on_missing(cockpit_repo) -> None:
+    repo = cockpit_repo.repo
+
+    ok, err = checkout_branch(repo, "no-such-branch")
 
     assert ok is False
     assert err != ""

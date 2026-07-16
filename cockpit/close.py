@@ -35,7 +35,12 @@ from cockpit.lib.cmux import CmuxUnavailable, workspace_cwds, workspace_names
 from cockpit.lib.config import load_config
 from cockpit.lib.daemon_signal import enqueue, kick_running
 from cockpit.lib.gh import repo_nwo
-from cockpit.lib.git import Worktree, current_branch, worktrees
+from cockpit.lib.git import (
+    Worktree,
+    current_branch,
+    origin_head_branch,
+    worktrees,
+)
 from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.orchestrators.teardown import resolve_pr_state, worktree_state_blockers
 
@@ -168,15 +173,21 @@ def main(argv: list[str] | None = None) -> int:
     state, pr_number = resolve_pr_state(wt.path, branch, repo_name)
     pr_is_merged = state == "MERGED"
 
-    # A primary checkout (a `use_worktree: false` `master`) relaxes the unpushed guard — its
-    # close is workspace-only (teardown skips `git worktree remove`), so unpushed
-    # commits stay put; only the dirty guard stands.
+    # A primary checkout (`use_worktree: false`) relaxes the unpushed guard only
+    # while it stays on its default branch — a workspace-only close where nothing
+    # is removed. Parked on a feature branch it's a branch teardown (checkout
+    # default + `git branch -D`), so the unpushed guard must stand; pass
+    # `is_primary=False` there. `default is None` (off-GitHub) can't delete, so it
+    # stays workspace-only.
+    default_branch = origin_head_branch(repo_dir)
+    on_default = default_branch is None or branch == default_branch
+    ws_only_close = wt.is_primary and on_default
     hard = worktree_state_blockers(
         wt.path,
         branch=branch,
         is_mine=is_mine,
         pr_merged=pr_is_merged,
-        is_primary=wt.is_primary,
+        is_primary=ws_only_close,
     )
     if hard:
         print(
@@ -203,7 +214,9 @@ def main(argv: list[str] | None = None) -> int:
         repo_path=repo_dir,
         repo_name=repo_name,
         forced=args.force,
-        delete_branch=pr_is_merged,
+        # Delete on merge, or when tearing down a primary checkout's feature
+        # branch (workspace-only closes on the default branch keep the branch).
+        delete_branch=pr_is_merged or (wt.is_primary and not on_default),
     )
 
     if args.dry_run:

@@ -60,6 +60,7 @@ from textual.widgets.data_table import CellDoesNotExist
 from cockpit.lib.cache import branch_cache, cwd_cache, find_pr_payload, read_text
 from cockpit.lib.cmux import DEVDONE_ICON
 from cockpit.lib.colors import CMUX_COLOR_ANSI
+from cockpit.lib.constants import MAIN_BRANCHES
 from cockpit.lib.git import Worktree
 from cockpit.lib.starship import (
     _PR_STATE_ICON,
@@ -332,9 +333,16 @@ def row_capabilities(
         "Unmute";
       * ``"workspace"`` — the row has a live workspace, so `N` (nudge) applies
         (`f` shows regardless — it focuses an existing session or spawns one);
-      * ``"primary"``   — the row is the repo's primary checkout (a
-        `use_worktree: false` `master`); it can't be torn down as a worktree, so
-        `c`/`C` reduce to a workspace-only close.
+      * ``"primary"``   — the row is a `use_worktree: false` primary checkout
+        sitting on a **main branch** (`master`/`main`); it can't be torn down as
+        a worktree and the branch survives, so `c`/`C` reduce to a workspace-only
+        close (which the footer hides when there's no workspace). A primary
+        checkout parked on a *feature* branch does NOT get this cap: `c`/`C`
+        there tear the branch down (checkout default + `git branch -D`), so they
+        stay advertised even with no workspace — same as a feature row. The
+        `MAIN_BRANCHES` test is a cheap, call-free heuristic for "on the default
+        branch"; a miss only mis-hides a footer hint, never affecting teardown's
+        own authoritative (`origin_head_branch`) guards.
     """
     caps: set[str] = set()
     if read_text(branch_cache("pr-num", wt.branch)):
@@ -347,7 +355,7 @@ def row_capabilities(
         caps.add("ticket")
     if has_workspace:
         caps.add("workspace")
-    if wt.is_primary:
+    if wt.is_primary and wt.branch in MAIN_BRANCHES:
         caps.add("primary")
     return frozenset(caps)
 

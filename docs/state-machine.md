@@ -156,13 +156,23 @@ Key gates (all from `cycle.py`):
   the local branch ref. The unpushed / open-PR gate lives in `probe_blockers` (the
   TUI `c` close path), where `C` force overrides the open-PR soft block but never
   uncommitted/unpushed work.
-- **Primary-checkout close is workspace-only** — a manual `c`/`C` on a primary
-  checkout (a `use_worktree: false` `master`, `worktree_path == repo_path` / `wt.is_primary`)
-  closes only the workspace: `teardown` skips `git worktree remove` (git refuses it
-  on a primary checkout, and the user works there in place), and the unpushed guard
-  relaxes (`worktree_state_blockers(is_primary=True)` — the checkout stays, so
-  unpushed commits are safe), leaving only the dirty guard. This is a *manual* path
-  only; the autoclose tree above never reaches a `use_worktree: false` repo.
+- **Primary-checkout close branches on the checkout's branch** — a manual `c`/`C`
+  on a primary checkout (a `use_worktree: false` repo, `worktree_path == repo_path` /
+  `wt.is_primary`) **always** skips `git worktree remove` (git refuses it on a
+  primary checkout, and the user works there in place), then splits:
+  - **On its default branch** → *workspace-only close*: the unpushed guard relaxes
+    (`worktree_state_blockers(is_primary=True)` — the checkout and its branch stay,
+    so unpushed commits are safe), leaving only the dirty guard.
+  - **On a non-default (feature) branch** → *branch teardown*: after the workspace
+    close, HEAD moves back to the default branch (`checkout_branch`) and the feature
+    ref is deleted (`delete_local_branch`). The unpushed guard is **not** relaxed
+    here (the branch is going away), so callers pass `is_primary = wt.is_primary and
+    on_default` to the blockers (`on_default` via `origin_head_branch`; unknown
+    default keeps it workspace-only) and set `delete_branch = pr_is_merged or
+    (wt.is_primary and not on_default)`. The checkout+delete is soft-fail.
+
+  This is a *manual* path only; the autoclose tree above never reaches a
+  `use_worktree: false` repo.
 - **Manual close is squash/rebase-merge aware** — the merged/open state both the
   hard unpushed gate and the soft open-PR gate read comes from
   `teardown.resolve_pr_state`: the cached PR payload first, then ONE live

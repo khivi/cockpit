@@ -234,6 +234,9 @@ def test_teardown_primary_checkout_closes_workspace_only(tmp_path):
         patch.object(teardown_mod, "_count_unpushed", return_value=4),
         patch.object(teardown_mod, "find_pr_payload", return_value=None),
         patch.object(teardown_mod, "fetch_pr_state_for_branch", return_value=None),
+        # On its default branch → workspace-only close. Pin the default so the
+        # relaxation doesn't hinge on the ambient git env resolving origin/HEAD.
+        patch.object(teardown_mod, "origin_head_branch", return_value="master"),
         patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
         patch.object(teardown_mod, "remove_worktree") as rm_mock,
         patch.object(teardown_mod, "delete_pr_caches_for_branch"),
@@ -670,3 +673,114 @@ def test_teardown_branch_delete_failure_is_nonfatal(tmp_path, capsys):
     assert blockers == []
     cache_mock.assert_called_once_with("repo", "khivi/x")
     assert "git branch -D khivi/x failed: boom" in capsys.readouterr().err
+
+
+# ── primary checkout parked on a non-default branch → tear the branch down ────
+
+
+def _primary_req(tmp_path, *, branch, forced=False, delete_branch=False):
+    """A `use_worktree: false` primary checkout (worktree_path == repo_path)."""
+    return TeardownRequest(
+        ref="ws:1",
+        worktree_path=tmp_path,
+        branch=branch,
+        repo_path=tmp_path,  # == worktree_path → primary checkout
+        repo_name="repo",
+        forced=forced,
+        delete_branch=delete_branch,
+    )
+
+
+def test_teardown_primary_on_feature_branch_enforces_unpushed(tmp_path):
+    """A primary checkout on a *non-default* branch is a branch teardown, so the
+    unpushed relaxation does NOT apply — unpushed commits still refuse."""
+    req = _primary_req(tmp_path, branch="khivi/x")
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=2),
+        patch.object(teardown_mod, "find_pr_payload", return_value=None),
+        patch.object(teardown_mod, "fetch_pr_state_for_branch", return_value=None),
+        patch.object(teardown_mod, "origin_head_branch", return_value="main"),
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+    ):
+        ok, blockers = teardown(req)
+    assert not ok
+    assert any("unpushed" in b for b in blockers)
+    close_mock.assert_not_called()  # refused before any mutation
+
+
+def test_teardown_primary_on_default_branch_relaxes_unpushed(tmp_path):
+    """On its default branch it stays workspace-only — unpushed is relaxed and
+    neither the checkout nor the branch delete runs."""
+    req = _primary_req(tmp_path, branch="main")
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=0),
+        patch.object(teardown_mod, "_count_unpushed", return_value=5),
+        patch.object(teardown_mod, "find_pr_payload", return_value=None),
+        patch.object(teardown_mod, "fetch_pr_state_for_branch", return_value=None),
+        patch.object(teardown_mod, "origin_head_branch", return_value="main"),
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as rm_mock,
+        patch.object(teardown_mod, "checkout_branch") as co_mock,
+        patch.object(teardown_mod, "delete_local_branch") as del_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+        patch.object(teardown_mod, "log_ff_advances"),
+    ):
+        ok, blockers = teardown(req)
+    assert ok and blockers == []
+    close_mock.assert_called_once()
+    rm_mock.assert_not_called()
+    co_mock.assert_not_called()
+    del_mock.assert_not_called()
+
+
+def test_teardown_primary_feature_checks_out_default_then_deletes(tmp_path):
+    """The core new behavior: close the workspace, move HEAD to the default
+    branch, delete the feature ref — but never `git worktree remove`."""
+    req = _primary_req(tmp_path, branch="khivi/x", forced=True, delete_branch=True)
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as rm_mock,
+        patch.object(teardown_mod, "origin_head_branch", return_value="main"),
+        patch.object(
+            teardown_mod, "checkout_branch", return_value=(True, "")
+        ) as co_mock,
+        patch.object(
+            teardown_mod, "delete_local_branch", return_value=(True, "")
+        ) as del_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch") as cache_mock,
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+        patch.object(teardown_mod, "log_ff_advances"),
+    ):
+        ok, _ = teardown(req)
+    assert ok
+    close_mock.assert_called_once()
+    rm_mock.assert_not_called()  # primary checkout: worktree never removed
+    co_mock.assert_called_once_with(tmp_path, "main")
+    del_mock.assert_called_once_with(tmp_path, "khivi/x")
+    cache_mock.assert_called_once_with("repo", "khivi/x")
+
+
+def test_teardown_primary_feature_checkout_failure_skips_delete(tmp_path, capsys):
+    """If moving HEAD to the default branch fails, the feature branch is left in
+    place (a failed `branch -D` of the checked-out branch would only warn) —
+    delete is not attempted, and the teardown is still non-fatal."""
+    req = _primary_req(tmp_path, branch="khivi/x", forced=True, delete_branch=True)
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort"),
+        patch.object(teardown_mod, "remove_worktree"),
+        patch.object(teardown_mod, "origin_head_branch", return_value="main"),
+        patch.object(teardown_mod, "checkout_branch", return_value=(False, "conflict")),
+        patch.object(teardown_mod, "delete_local_branch") as del_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(teardown_mod, "worktrees", return_value=[]),
+        patch.object(teardown_mod, "ff_default_branch_worktrees", return_value=[]),
+        patch.object(teardown_mod, "log_ff_advances"),
+    ):
+        ok, _ = teardown(req)
+    assert ok  # non-fatal
+    del_mock.assert_not_called()
+    assert "git checkout main failed" in capsys.readouterr().err

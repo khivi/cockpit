@@ -413,6 +413,18 @@ def test_row_capabilities_workspace_and_primary(cache_dir, monkeypatch):
     )
 
 
+def test_row_capabilities_primary_on_feature_branch_not_primary(cache_dir, monkeypatch):
+    # A `use_worktree: false` primary checkout parked on a *feature* branch is a
+    # branch teardown, not a workspace-only close, so it does NOT get the
+    # "primary" cap — that keeps `c`/`C` advertised even with no workspace.
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: None,
+    )
+    feature_primary = _wt(branch="khivi/feat-x", is_primary=True)
+    assert row_capabilities(feature_primary, "r", "none") == frozenset()
+
+
 def test_muted_pr_prefixes_workspace_glyph(cache_dir):
     wt = _wt(branch="khivi/silence", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")

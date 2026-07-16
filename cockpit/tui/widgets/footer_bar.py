@@ -213,10 +213,13 @@ class FooterBar(Horizontal):
         allowed = self.BACKEND_ACTIONS.get(action)
         if allowed is not None and self._backend not in allowed:
             return True
-        # A primary checkout (a `use_worktree: false` `master`) can't be removed as a worktree,
-        # so `c`/`C` reduce to a workspace-only close — pointless with no
-        # workspace. Hide them there (feature rows keep `c`, which also removes
-        # the worktree, workspace or not).
+        # A `use_worktree: false` primary checkout on its default branch (the
+        # "primary" cap) can't be removed as a worktree and keeps its branch, so
+        # `c`/`C` reduce to a workspace-only close — pointless with no workspace.
+        # Hide them there. Feature rows keep `c` (it removes the worktree), and a
+        # primary checkout parked on a *feature* branch lacks the "primary" cap
+        # (see `row_capabilities`) so it keeps `c` too — that close tears the
+        # branch down.
         if (
             action in ("close_row", "force_close_row")
             and self._row_caps is not None
