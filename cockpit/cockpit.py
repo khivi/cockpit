@@ -37,6 +37,7 @@ from cockpit.lib.cache import (
 from cockpit.lib.cmux import (
     CmuxUnavailable,
     reconcile_workspace_names,
+    set_workspace_color,
     workspace_state,
 )
 from cockpit.lib.config import (
@@ -87,16 +88,49 @@ def _once_with(
     )
 
 
+def _tint_repo_workspaces(
+    repo_entry: dict,
+    repo_path: Path,
+    wts: list,
+    cwds: dict,
+    pill_state: dict,
+) -> None:
+    """Fast-tick counterpart to `cycle._apply_repo_colors`: tint this repo's
+    workspaces to its `sidebar_color`, deduped in `pill_state` under
+    `color:<ref>` (the same key + persistent dict the slow tick uses, so the two
+    never re-apply each other's work). A freshly spawned workspace lands on
+    cmux's auto colour until it's tinted; running here — not just on the slow
+    tick — closes that window to ~30s, mirroring the name reconcile.
+
+    No-op without a `sidebar_color` or a cmux backend (`set_workspace_color`
+    no-ops on limux/none). Ownership is cwd→path, matching `_repo_owned_refs`.
+    """
+    color = repo_entry.get("sidebar_color")
+    if not color:
+        return
+    roots = {repo_path.resolve()} | {wt.path.resolve() for wt in wts}
+    for ref, cwd in cwds.items():
+        resolved = cwd.resolve()
+        if not any(parent in roots for parent in (resolved, *resolved.parents)):
+            continue
+        if pill_state.get(f"color:{ref}") == color:
+            continue
+        set_workspace_color(ref, color)
+        pill_state[f"color:{ref}"] = color
+
+
 def _fast_tick(state: dict) -> None:
     """Cheap, local-only refresh: write git-state cells for every worktree
-    of every registered repo, reconcile workspace names to their worktree dir,
-    then re-publish PR flat cells from the persistent JSON snapshots.
-    Network-free (cmux/git are local); safe to run at a tight cadence.
+    of every registered repo, reconcile each workspace's name and sidebar
+    colour to its worktree, then re-publish PR flat cells from the persistent
+    JSON snapshots. Network-free (cmux/git are local); safe at a tight cadence.
 
-    The slow tick already does all three after fetching `gh` data; the fast
+    The slow tick already does all this after fetching `gh` data; the fast
     tick fills the 300s gap between slow ticks so:
       • `git checkout` reflects in the footer within ~30s instead of ~300s
       • a workspace whose name drifted recovers within ~30s
+      • a freshly spawned workspace picks up its repo's sidebar colour within
+        ~30s instead of waiting for the next slow tick
       • PR flat cells repopulate within ~30s after an OS tmpdir wipe
         (cells live under `$TMPDIR/cockpit-cache/`; JSON survives under
         `$COCKPIT_HOME/cache/`)
@@ -105,6 +139,7 @@ def _fast_tick(state: dict) -> None:
     (both write the same cache cells).
     """
     cfg = load_config()
+    pill_state = state.setdefault("pill_state", {})
     # Names/cwds are a local (non-network) cmux query; fetch once and reuse
     # across repos. A backend hiccup degrades to no rename, never a crash.
     try:
@@ -127,6 +162,7 @@ def _fast_tick(state: dict) -> None:
             write_git_state_cache(wt.path, wt.repo_name)
         if cwds:
             reconcile_workspace_names(names, cwds, wts)
+            _tint_repo_workspaces(repo_entry, repo_path, wts, cwds, pill_state)
     republish_pr_caches_from_disk()
 
 

@@ -327,9 +327,11 @@ Why two ticks:
   re-render); it writes no cell.
 - **Fast tick** is network-free: it re-derives git-state cells for every
   worktree, reconciles each workspace's name to its branch-derived label
-  (`reconcile_workspace_names`), and republishes PR flat cells from the
-  persistent JSON, so a `git checkout`, a drifted workspace name, or an OS
-  tmpdir wipe recovers within ~30s instead of ~300s.
+  (`reconcile_workspace_names`) and its sidebar colour to the repo's
+  `sidebar_color` (`_tint_repo_workspaces`), and republishes PR flat cells from
+  the persistent JSON, so a `git checkout`, a drifted workspace name, a
+  freshly spawned workspace's colour, or an OS tmpdir wipe recovers within ~30s
+  instead of ~300s.
 
 Both hold `_tick_lock` (`tui/app.py`) so they never collide on the same cells.
 
