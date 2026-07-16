@@ -27,6 +27,7 @@ from cockpit.lib.colors import dim
 from cockpit.lib.gh import fetch_pr_state_for_branch
 from cockpit.lib.git import (
     _count_unpushed,
+    checkout_branch,
     commits_only_local,
     count_dirty,
     delete_local_branch,
@@ -78,10 +79,14 @@ def worktree_state_blockers(
     (cache first, then one live `gh` lookup — see `probe_blockers`), mirroring
     how autoclose uses `is_ancestor(wt, headRefOid)` instead of the commit count.
 
-    `is_primary=True` (a `use_worktree: false` `master` — the repo's primary checkout)
-    likewise skips the unpushed check: its close never removes the worktree
-    (`teardown` refuses `git worktree remove` on a primary checkout anyway), so
-    the checkout and any unpushed commits stay put. Only the dirty guard stands.
+    `is_primary=True` means a **workspace-only close** — a primary checkout
+    (`use_worktree: false`) staying on its default branch: nothing is removed
+    (`teardown` refuses `git worktree remove` on a primary checkout, and the
+    branch survives), so the checkout and any unpushed commits stay put and only
+    the dirty guard stands. Callers pass `is_primary` as
+    `wt.is_primary and on_default` — a primary checkout parked on a *non-default*
+    branch is torn down (that branch is deleted), so its unpushed commits are NOT
+    safe and the guard must still stand; those callers pass `is_primary=False`.
     """
     blockers: list[str] = []
     if worktree_path is None or not worktree_path.is_dir():
@@ -188,25 +193,36 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
     to drop the request or surface it for user attention.
 
     Exception: a **primary checkout** (`worktree_path == repo_path`, a
-    `use_worktree: false` `master`) does a *workspace-only* close — the session is closed but
-    `git worktree remove` is skipped (git refuses it on a primary checkout, and
-    the user works there in place). The dirty guard still applies; unpushed does
-    not (nothing is removed).
+    `use_worktree: false` repo) never has its worktree removed (git refuses
+    `git worktree remove` on a primary checkout, and the user works there in
+    place). Two sub-cases:
+
+      * On its **default branch** — a *workspace-only* close: close the session,
+        leave the checkout. Only the dirty guard applies (unpushed is relaxed —
+        nothing is removed, the branch survives).
+      * On a **non-default (feature) branch** — the branch is torn down: after
+        the workspace close, HEAD is moved back to the default branch
+        (`checkout_branch`) and the feature ref is deleted (`git branch -D`).
+        The unpushed guard is NOT relaxed here (the branch is going away, so its
+        commits are not safe) — callers pass `is_primary=False` to the blockers.
     """
     label = req.name or req.ref
-    # A primary checkout (a `use_worktree: false` `master`: worktree path == repo root) can't be
-    # removed as a worktree, so its close is workspace-only — close the session,
-    # leave the checkout. `probe_blockers`/`worktree_state_blockers` relax the
-    # unpushed guard for it (dirty still refuses), and the removal below is
-    # skipped.
+    # A primary checkout (worktree path == repo root) can't be removed as a
+    # worktree, so `remove_worktree` below is skipped for it.
     is_primary = (
         req.worktree_path is not None
         and req.repo_path is not None
         and req.worktree_path.resolve() == req.repo_path.resolve()
     )
+    # Resolve the default branch once (reused by the blocker relaxation and the
+    # branch-delete guard). A primary checkout counts as a workspace-only close —
+    # unpushed relaxed — only while it stays on that default branch; parked on a
+    # feature branch it's a branch teardown, so the unpushed guard must stand.
+    default = origin_head_branch(req.repo_path) if req.repo_path is not None else None
+    workspace_only = is_primary and (default is None or req.branch == default)
     if not req.forced:
         blockers = probe_blockers(
-            req.worktree_path, req.branch, req.repo_name, is_primary=is_primary
+            req.worktree_path, req.branch, req.repo_name, is_primary=workspace_only
         )
         if blockers:
             return False, blockers
@@ -234,9 +250,30 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
             )
             return False, [f"git worktree remove failed: {err}"]
 
-    if req.delete_branch and req.branch is not None and req.repo_path is not None:
-        default = origin_head_branch(req.repo_path)
-        if default is not None and req.branch != default:
+    if (
+        req.delete_branch
+        and req.branch is not None
+        and req.repo_path is not None
+        and default is not None
+        and req.branch != default
+    ):
+        # A primary checkout still has the feature branch as HEAD (its worktree
+        # wasn't removed), and git refuses `branch -D` of the checked-out branch
+        # — move HEAD to the default branch first. Soft-fail: a failed checkout
+        # leaves the branch in place for a retry rather than aborting the
+        # (already-run) workspace close.
+        checked_out = True
+        if is_primary:
+            ok_c, err_c = checkout_branch(req.repo_path, default)
+            checked_out = ok_c
+            if not ok_c:
+                print(
+                    f"  warn: git checkout {default} failed, "
+                    f"leaving {req.branch}: {err_c}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        if checked_out:
             ok_b, err_b = delete_local_branch(req.repo_path, req.branch)
             if not ok_b:
                 # Non-fatal: a dangling local ref is cosmetic, and the worktree

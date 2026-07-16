@@ -693,6 +693,19 @@ def delete_local_branch(repo: Path, branch: str) -> tuple[bool, str]:
     return res.returncode == 0, res.stderr.strip()
 
 
+def checkout_branch(repo: Path, branch: str) -> tuple[bool, str]:
+    """`git checkout <branch>` in `repo`. Returns (ok, stderr) — non-raising,
+    mirroring `delete_local_branch`/`remove_worktree`'s contract.
+
+    Teardown of a primary checkout parked on a feature branch uses this to move
+    HEAD back onto the default branch before deleting the feature ref: git
+    refuses `branch -D` of the currently checked-out branch, so the checkout must
+    happen first.
+    """
+    res = _git(repo, "checkout", branch)
+    return res.returncode == 0, res.stderr.strip()
+
+
 def prune_worktrees(repo: Path) -> None:
     """Run `git worktree prune` — drop admin entries for deleted directories.
 

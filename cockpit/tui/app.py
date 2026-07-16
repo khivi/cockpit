@@ -71,7 +71,7 @@ from cockpit.lib.config import (
 from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.daemon_signal import enqueue
 from cockpit.lib.gh import PR, repo_nwo
-from cockpit.lib.git import Worktree, worktrees
+from cockpit.lib.git import Worktree, origin_head_branch, worktrees
 from cockpit.lib.nudges import load_pref, save_pref
 from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.lib.tickets import provider_for
@@ -985,15 +985,22 @@ class CockpitApp(App[None]):
         pr_is_merged = state == "MERGED"
 
         # Hard blockers (dirty/unpushed) refuse even under force. A primary
-        # checkout (a `use_worktree: false` `master`) relaxes the unpushed guard — its close is
-        # workspace-only, so the checkout and any unpushed commits stay put; only
-        # the dirty guard stands. `teardown` skips `git worktree remove` for it.
+        # checkout (`use_worktree: false`) relaxes the unpushed guard only while
+        # it stays on its default branch (a workspace-only close — nothing
+        # removed). Parked on a feature branch it's a branch teardown (checkout
+        # default + `git branch -D`), so unpushed must stand; pass
+        # `is_primary=False` there. `default is None` (off-GitHub) can't delete,
+        # so it stays workspace-only. `teardown` skips `git worktree remove`
+        # either way.
+        default_branch = origin_head_branch(repo_dir)
+        on_default = default_branch is None or wt.branch == default_branch
+        ws_only_close = wt.is_primary and on_default
         hard = worktree_state_blockers(
             wt.path,
             branch=wt.branch,
             is_mine=is_mine,
             pr_merged=pr_is_merged,
-            is_primary=wt.is_primary,
+            is_primary=ws_only_close,
         )
         if hard:
             self._notify(
@@ -1021,7 +1028,9 @@ class CockpitApp(App[None]):
             repo_path=repo_dir,
             repo_name=repo_name,
             forced=force,
-            delete_branch=pr_is_merged,
+            # Delete on merge, or when tearing down a primary checkout's feature
+            # branch (workspace-only closes on the default branch keep it).
+            delete_branch=pr_is_merged or (wt.is_primary and not on_default),
         )
         enqueue(req)
         self._notify(f"queued {'force-' if force else ''}close: {wt.label or wt.short}")
