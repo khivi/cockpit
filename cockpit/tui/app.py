@@ -70,7 +70,7 @@ from cockpit.lib.config import (
 )
 from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.daemon_signal import enqueue
-from cockpit.lib.gh import PR
+from cockpit.lib.gh import PR, repo_nwo
 from cockpit.lib.git import Worktree, worktrees
 from cockpit.lib.nudges import load_pref, save_pref
 from cockpit.lib.teardown_types import TeardownRequest
@@ -105,9 +105,13 @@ _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
 # sentinel between this module and cli.py.
 RESTART_EXIT_CODE = 42
 
-# (repo display name, sidebar_color, linear-enabled, worktrees)
-# (repo display name, sidebar_color, tickets-enabled, worktrees)
-Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
+# (repo display name, cache key/nwo, sidebar_color, tickets-enabled, worktrees).
+# The display name is the arbitrary config label (header + `_row_repo`); the
+# cache key is the git nwo name the daemon writes PR cache files under — the two
+# differ when the config `name` is set (e.g. label "Envesya" vs repo "beta"), so
+# the render path must key the cache by the nwo, not the label. See
+# `_cache_repo_name`.
+Inventory = list[tuple[str, str, str | None, bool, list[Worktree]]]
 
 
 def _pr_from_payload(p: dict) -> PR:
@@ -228,6 +232,10 @@ class CockpitApp(App[None]):
         self._log_path = COCKPIT_HOME / "watch.log"
         self._saved_stdout: object | None = None
         self._saved_stderr: object | None = None
+        # repo path → git nwo name (the PR-cache key). `repo_nwo` shells out to
+        # `gh`; memoized here since a repo's nwo is stable and the TUI reads the
+        # cache on every render. See `_cache_repo_name`.
+        self._repo_nwo_cache: dict[str, str] = {}
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -487,6 +495,29 @@ class CockpitApp(App[None]):
         with contextlib.suppress(Exception):
             self.query_one(FooterBar).set_show_update(bool(text))
 
+    def _cache_repo_name(self, repo: dict) -> str:
+        """The repo's git nwo name — the key the daemon writes PR cache files
+        under (`{name}__pr-N.json`, `cache._repo_slug`), NOT the config `name`
+        label. The label is arbitrary/mutable (`docs/config.md`) and differs
+        from the nwo whenever it's set (e.g. label "Envesya" vs repo "beta"), so
+        keying the cache by the label misses every file and blanks the
+        Ticket/Status cells + row actions. Memoized per path (`repo_nwo` shells
+        out to `gh`, the TUI reads the cache on every render). Falls back to the
+        path basename on a `gh` failure — off-GitHub repos have no PR cache, so
+        the fallback never resolves anything wrong — and does NOT cache that
+        fallback, so a transient failure doesn't pin the wrong key."""
+        path = Path(os.path.expanduser(repo["path"]))
+        key = str(path)
+        cached = self._repo_nwo_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            name = repo_nwo(path)[1]
+        except RuntimeError:
+            return path.name
+        self._repo_nwo_cache[key] = name
+        return name
+
     def _gather_inventory(self) -> Inventory:
         """Enumerate worktrees per configured repo. Runs on a worker thread —
         `worktrees()` shells out to git (dirty/unpushed counts)."""
@@ -503,6 +534,7 @@ class CockpitApp(App[None]):
             out.append(
                 (
                     repo.get("name") or path.name,
+                    self._cache_repo_name(repo),
                     repo.get("sidebar_color"),
                     repo_tickets(cfg, repo) != "none",
                     wts,
@@ -850,7 +882,11 @@ class CockpitApp(App[None]):
             else:
                 self._notify(f"workspace already open: {wt.label or wt.short}")
             return
-        payload = find_pr_payload(wt.branch, repo_name) if wt.branch else None
+        payload = (
+            find_pr_payload(wt.branch, self._cache_repo_name(repo))
+            if wt.branch
+            else None
+        )
         if payload:
             pr = _pr_from_payload(payload)
             new_ref = spawn_pr_workspace(pr, wt, pref=load_pref(pr.number))
@@ -875,8 +911,7 @@ class CockpitApp(App[None]):
         if resolved is None:
             return None
         repo, wt = resolved
-        repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
-        return find_pr_payload(wt.branch, repo_name)
+        return find_pr_payload(wt.branch, self._cache_repo_name(repo))
 
     @work(thread=True, group="open", exit_on_error=False)
     def _open_pr_url(self, path_str: str) -> None:
@@ -904,8 +939,7 @@ class CockpitApp(App[None]):
         if provider is None:
             self._notify("tickets not enabled for this repo", severity="warning")
             return
-        repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
-        payload = find_pr_payload(wt.branch, repo_name)
+        payload = find_pr_payload(wt.branch, self._cache_repo_name(repo))
         tickets = ((payload or {}).get("ticket") or {}).get("tickets") or []
         if not payload or not tickets:
             self._notify("no ticket for this row", severity="warning")
@@ -934,7 +968,11 @@ class CockpitApp(App[None]):
             self._notify(f"close: no worktree at {path_str}", severity="error")
             return
         repo, wt = resolved
-        repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
+        # nwo name, not the config label — `resolve_pr_state`/teardown key the PR
+        # cache by it (`find_pr_payload`, `delete_pr_caches_for_branch`), and the
+        # daemon wrote those files under the nwo. A label mismatch here would
+        # misresolve PR state and leave the cache files undeleted on teardown.
+        repo_name = self._cache_repo_name(repo)
         repo_dir = Path(os.path.expanduser(repo["path"]))
         prefix = repo.get("branch_prefix", "")
         is_mine = wt.branch.startswith(prefix) if (prefix and wt.branch) else True

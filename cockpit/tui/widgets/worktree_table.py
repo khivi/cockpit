@@ -117,8 +117,11 @@ def _linear_status_icon(state: str) -> tuple[str, str]:
     return _LINEAR_STATUS_FALLBACK
 
 
-# (repo display name, sidebar_color, tickets-enabled, worktrees)
-Inventory = list[tuple[str, str | None, bool, list[Worktree]]]
+# (repo display name, cache key/nwo, sidebar_color, tickets-enabled, worktrees).
+# Display name → header + `_row_repo`; cache key → `find_pr_payload` (the daemon
+# writes PR cache under the git nwo, which differs from the config label when
+# that label is set). See `app._cache_repo_name`.
+Inventory = list[tuple[str, str, str | None, bool, list[Worktree]]]
 
 # Row-key prefix marking a repo *group header* row (repo name, no workspace).
 # Real worktree keys are absolute filesystem paths, so this NUL-led sentinel
@@ -490,7 +493,7 @@ class WorktreeTable(DataTable):
         self._row_caps = {}
         self._row_repo = {}
         ncols = len(column_labels(show_tickets=self._show_tickets))
-        for repo_name, repo_color, tickets_enabled, wts in inventory:
+        for repo_name, cache_key, repo_color, tickets_enabled, wts in inventory:
             hkey = f"{HEADER_KEY_PREFIX}{repo_name}"
             self.add_row(*_header_cells(repo_name, repo_color, ncols), key=hkey)
             self._row_caps[hkey] = frozenset({HEADER_CAP})
@@ -499,7 +502,7 @@ class WorktreeTable(DataTable):
                 self.add_row(
                     *worktree_cells(
                         wt,
-                        repo_name,
+                        cache_key,
                         repo_color,
                         tickets_enabled,
                         show_tickets=self._show_tickets,
@@ -508,7 +511,7 @@ class WorktreeTable(DataTable):
                 )
                 self._row_caps[str(wt.path)] = row_capabilities(
                     wt,
-                    repo_name,
+                    cache_key,
                     tickets_enabled,
                     has_workspace=wt.path.resolve() in ws,
                 )

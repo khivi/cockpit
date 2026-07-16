@@ -444,9 +444,43 @@ async def test_cursor_skips_past_consecutive_header_rows(cache_dir):
         table = app.query_one(WorktreeTable)
         table.update_inventory(
             [
-                ("A", None, False, []),  # empty repo -> header row only
-                ("B", None, False, [wt]),  # header row followed by one worktree
+                ("A", "A", None, False, []),  # empty repo -> header row only
+                ("B", "B", None, False, [wt]),  # header row + one worktree
             ]
         )
         await pilot.pause()
         assert table.current_path() == str(wt.path)
+
+
+@pytest.mark.asyncio
+async def test_update_inventory_keys_cache_by_nwo_not_label(cache_dir, monkeypatch):
+    # Regression: the Ticket cell (and row caps) key the PR cache by the git nwo
+    # — the daemon's cache key — NOT the config display label. When they differ
+    # (label "Envesya" vs repo "beta") keying by the label missed every cache
+    # file and blanked the column. The inventory's 2nd field is the nwo; feed a
+    # `find_pr_payload` that only answers to "beta" and assert the ticket renders.
+    seen: list[str | None] = []
+
+    def fake_find(branch, repo=None):
+        seen.append(repo)
+        return (
+            {"ticket": {"tickets": [{"id": "PE-7", "state": "Done"}]}}
+            if repo == "beta"
+            else {}
+        )
+
+    monkeypatch.setattr("cockpit.tui.widgets.worktree_table.find_pr_payload", fake_find)
+    wt = _wt(path="/tmp/envesya-wt", branch="khivi/feat-y")
+
+    class _TicketHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield WorktreeTable(show_tickets=True, id="table")
+
+    app = _TicketHost()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("Envesya", "beta", None, True, [wt])])
+        await pilot.pause()
+        row = table.get_row_at(1)  # 0 = group header, 1 = the worktree row
+        assert row[3].plain == "PE-7"  # Ticket cell, keyed by the nwo
+    assert "beta" in seen and "Envesya" not in seen

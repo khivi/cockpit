@@ -315,6 +315,14 @@ The cell-key detail (per-branch / per-cwd / per-sid suffixes) lives in the
 source; this view shows ownership. Everything the renderer reads passes through
 a cell — it never touches a source directly.
 
+The **per-PR JSON** is the one read keyed by *repo* rather than branch/cwd: the
+daemon writes `{nwo}__pr-N.json` (`cache._repo_slug`, `nwo = repo_nwo(path)[1]`),
+so every reader — daemon *and* TUI/`cockpit close` — must resolve `find_pr_payload`
+by that same git nwo, **not** the config `name` label (arbitrary/mutable; the two
+differ e.g. label `Envesya` vs repo `beta`). The TUI memoizes the nwo per repo
+(`app._cache_repo_name`) since `repo_nwo` shells out to `gh`. Keying by the label
+misses every file → blank Ticket/Status cells and no-op row actions.
+
 Why two ticks:
 
 - **Slow tick** owns every decision (spawn, nudge, devdone, teardown,
