@@ -1,5 +1,13 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "cockpit update --sync || true" }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",

@@ -14,6 +14,8 @@ Subcommands:
   close  [args]         queue a worktree + workspace teardown for the daemon
   nudge  [args]         manage nudge mutes
   update [--check]      self-update the daemon (or just report availability)
+  update --sync         local-only: reinstall the daemon from the plugin cache
+                        iff the installed binary lags it (SessionStart hook)
 """
 
 from __future__ import annotations
@@ -114,8 +116,15 @@ def main(argv: list[str] | None = None) -> int:
         return spawn_main(rest)
 
     if sub == "update":
-        from cockpit.lib.updater import run_update
+        from cockpit.lib.updater import run_sync, run_update
 
+        if "--sync" in rest:
+            # Local cache→binary sync for the SessionStart hook. Gated like the
+            # `u` self-update: a dev's `uv run` (or pytest) session, whose
+            # argv[0] isn't the installed console script, is never auto-swapped.
+            if not _running_as_installed_cockpit():
+                return 0
+            return run_sync()
         return run_update(
             skip_install="--skip-install" in rest,
             check_only="--check" in rest,

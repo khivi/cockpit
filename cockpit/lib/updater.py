@@ -210,6 +210,31 @@ def _run_setup() -> None:
         print("cockpit setup failed; footer config left as-is.", file=sys.stderr)
 
 
+def run_sync() -> int:
+    """Local daemon sync for the SessionStart hook: reinstall from the newest
+    plugin-cache dir *only* when the installed binary is behind it.
+
+    Distinct from `run_update`: no `_refresh_plugin()` (so no network — the
+    `claude`/`gh` round-trips), and silent when there's nothing to do, because
+    this fires on every session start. The `/plugin update` (or Claude Code's
+    plugin auto-update) already advanced the cache; this just brings the uv-tool
+    binary up to it. The reinstall is on-disk, so a running `cockpit watch` is
+    undisturbed until its next launch."""
+    if not shutil.which("uv"):
+        return 0
+    src = newest_cache_dir()
+    if src is None:
+        return 0
+    running = version.running_version()
+    if running and not version.is_newer(src.name, running):
+        return 0  # current — the common path, stay silent
+    print(f"cockpit: syncing daemon {running or '?'} → {src.name}")
+    rc = _do_install()  # reuses the downgrade guard + tty-detached install
+    if rc == 0:
+        _run_setup()  # re-pin the statusline only when a real install happened
+    return rc
+
+
 def _check() -> int:
     running = version.running_version()
     latest = version.latest_version()
