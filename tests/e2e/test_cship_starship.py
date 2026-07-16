@@ -50,10 +50,16 @@ def footer_env(tmp_path):
     cache_dir = tmpdir / "cockpit-cache"
     cache_dir.mkdir()
 
-    # Substitute __COCKPIT_STARSHIP__ → the module-dispatch render command,
-    # mirroring install_starship_default_config().
+    # Substitute __COCKPIT_STARSHIP__ → the module-dispatch render command and
+    # the line-2 break token → a real newline (the non-macOS two-line layout),
+    # mirroring install_starship_default_config(). Pin the newline explicitly so
+    # this render is host-OS-independent — the macOS single-line collapse is
+    # covered by tests/lib/test_config.py::test_line_sep_collapses_to_single_line_on_macos.
     starship_toml = (
-        (DEFAULTS / "starship.toml").read_text().replace(PLACEHOLDER, STARSHIP_CMD)
+        (DEFAULTS / "starship.toml")
+        .read_text()
+        .replace(PLACEHOLDER, STARSHIP_CMD)
+        .replace("__COCKPIT_LINE_SEP__", "\n")
     )
     (config_dir / "starship.toml").write_text(starship_toml)
     shutil.copy(DEFAULTS / "cship.toml", config_dir / "cship.toml")

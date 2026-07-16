@@ -19,6 +19,13 @@
 # current branch — the trailing newline still prints, but cship trims
 # blank trailing lines, so the footer stays single-line in that case.
 #
+# The line-break token between session_time and linear (see
+# STARSHIP_LINE_SEP_PLACEHOLDER in config.py) is the line-2 break.
+# `install_starship_default_config()` substitutes it: a real newline
+# off-macOS, but EMPTY on macOS — Claude Code renders only the first line of a
+# multi-line statusLine there (anthropics/claude-code#35176), so on macOS the
+# whole footer is one line and the PR pills stay visible.
+#
 # `${custom.<name>}` (braces required) is starship's syntax for referencing
 # a specific [custom.*] block. Bare `$custom` would expand to every custom
 # module concatenated in arbitrary order; the dotted form is what lets us
@@ -32,7 +39,7 @@ ${custom.branch_identity}\
 ${custom.worktree_status}\
 ${custom.permission_mode}\
 ${custom.cost}\
-${custom.session_time}
+${custom.session_time}__COCKPIT_LINE_SEP__\
 ${custom.linear}\
 ${custom.pr_state}\
 ${custom.pr_num}\
