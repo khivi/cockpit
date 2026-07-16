@@ -29,6 +29,7 @@ from cockpit.lib.cache import (
     load_pr_payloads_by_branch,
     muted_payload,
     prune_superseded_pr_caches,
+    ticket_pill_id,
     write_base_ahead,
     write_base_distance,
     write_branch_pr_cache,
@@ -1544,6 +1545,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             total=pr.total_from_others,
             author=other_author,
             nudge=pr.nudge_issue,
+            ticket_id=ticket_pill_id(ticket),
         )
     # After the live snapshots are on disk, drop any superseded snapshot
     # sharing a branch (reused branch: old merged PR alongside the live one)

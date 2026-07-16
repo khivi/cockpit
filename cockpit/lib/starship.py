@@ -453,7 +453,13 @@ def _base_ahead_segment(branch: str) -> str:
 
 
 def print_ticket() -> str:
-    return extract_ticket(_branch())
+    # Prefer the daemon-written `pr-ticket` cell — the delivered ticket id from
+    # the PR footer, resolved per provider (Linear/Jira/GitHub/Trello). Fall
+    # back to the Linear branch-slug regex when the cell is empty (no PR yet, or
+    # an unaligned footer) so a `pe-4608-` branch still shows its id pre-PR.
+    # A Trello codename branch carries no id, so it stays blank until aligned.
+    branch = _branch()
+    return read_text(branch_cache("pr-ticket", branch)) or extract_ticket(branch)
 
 
 def print_pr_state(branch: str | None = None) -> str:

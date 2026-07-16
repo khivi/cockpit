@@ -198,6 +198,46 @@ def test_write_branch_pr_cache_default_nudge_empty(cache_dir):
     assert (cache_dir / "pr-nudge-khivi-feature").read_text() == ""
 
 
+def test_write_branch_pr_cache_writes_ticket(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/fnox",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=28,
+        title="Trello card",
+        ticket_id="VfqsfqUd",
+    )
+    assert (cache_dir / "pr-ticket-khivi-fnox").read_text() == "VfqsfqUd"
+
+
+def test_write_branch_pr_cache_default_ticket_empty(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/feature",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=29,
+        title="No ticket",
+    )
+    assert (cache_dir / "pr-ticket-khivi-feature").read_text() == ""
+
+
+@pytest.mark.parametrize(
+    "block,expected",
+    [
+        (None, ""),
+        ({}, ""),
+        ({"tickets": []}, ""),
+        ({"tickets": [{"id": "PE-4608", "state": "Dev Done"}]}, "PE-4608"),
+        ({"tickets": [{"id": "VfqsfqUd"}, {"id": "AbCdEf12"}]}, "VfqsfqUd"),
+        ({"tickets": [{"state": "Done"}]}, ""),
+    ],
+)
+def test_ticket_pill_id(block, expected):
+    assert cache_mod.ticket_pill_id(block) == expected
+
+
 def test_write_branch_pr_cache_no_branch_noop(cache_dir):
     cache_mod.write_branch_pr_cache(
         "",
@@ -222,6 +262,21 @@ def test_refresh_pr_data_writes_no_pr_sentinel(cache_dir):
     assert (cache_dir / "pr-comments-khivi-foo").read_text() == ""
     assert (cache_dir / "pr-comments-total-khivi-foo").read_text() == ""
     assert (cache_dir / "pr-nudge-khivi-foo").read_text() == ""
+    assert (cache_dir / "pr-ticket-khivi-foo").read_text() == ""
+
+
+def test_refresh_pr_data_populates_ticket_from_json_snapshot(cache_dir):
+    payload = {
+        "state": "OPEN",
+        "isDraft": False,
+        "review": "",
+        "number": 91,
+        "title": "Trello work",
+        "ticket": {"tickets": [{"id": "VfqsfqUd", "state": "Doing"}]},
+    }
+    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
+        cache_mod.refresh_pr_data("khivi/fnox")
+    assert (cache_dir / "pr-ticket-khivi-fnox").read_text() == "VfqsfqUd"
 
 
 def test_refresh_pr_data_populates_nudge_from_json_snapshot(cache_dir):
