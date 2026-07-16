@@ -25,6 +25,7 @@ stderr (visible in the watch TUI log); the next cycle retries.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import sys
 from collections.abc import Callable
@@ -201,22 +202,32 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
         fast_secs=fast_secs,
         self_ws=self_ws,
     )
-    app.run()
+    # Run on a loop we own, NOT Textual's default `asyncio.run()`. A slow-tick
+    # worker runs `gh`/`git` in a non-daemon executor thread (Textual dispatches
+    # `@work(thread=True)` via `loop.run_in_executor(None, …)`, the default
+    # ThreadPoolExecutor). `asyncio.run()` joins that executor at shutdown with a
+    # 300s timeout (`shutdown_default_executor`), so if `q` lands while a tick is
+    # blocked in a subprocess, `app.run()` itself hangs ~300s *before returning*
+    # — the "q, then it hangs until ^C" bug. `App.run(loop=…)` makes Textual use
+    # `loop.run_until_complete()`, which does NOT join the executor, so `app.run()`
+    # returns the instant the app exits, leaving the blocked worker abandoned.
+    # There's a single loop across the code: `tui/app.py`'s signal handlers bind
+    # to this same loop via `get_running_loop()`.
+    loop = asyncio.new_event_loop()
+    app.run(loop=loop)
     # `u` exits with RESTART_EXIT_CODE so cli.py runs the updater and re-execs;
     # a clean quit / SIGTERM leaves return_code at 0.
     rc = app.return_code or 0
     if rc == RESTART_EXIT_CODE:
         # Let cli.py run the updater and os.execvp — that replaces the process
-        # image (killing any threads), so it never hits the interpreter-exit
-        # join below.
+        # image (killing the abandoned worker thread), so it never hits the
+        # interpreter-exit join below.
         return rc
-    # A slow tick worker runs `gh`/`git` in a non-daemon executor thread. If `q`
-    # lands mid-tick, Textual restores the terminal and app.run() returns while
-    # that thread is still blocked in the subprocess — then a normal return hangs
-    # at interpreter exit, where concurrent.futures' atexit handler joins it
-    # (the "q, then it hangs until ^C" bug). Nothing lives in memory (cache writes
-    # already hit disk atomically; the pidfile was released on_unmount), so exit
-    # hard and skip that join.
+    # The blocked worker thread is still alive here (see above). A normal return
+    # would then hang at interpreter exit, where concurrent.futures' atexit
+    # handler joins that thread. Nothing lives in memory (cache writes already
+    # hit disk atomically; the pidfile was released on_unmount), so exit hard and
+    # skip that join.
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(rc)
