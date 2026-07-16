@@ -261,13 +261,13 @@ def _run_watch_with_return_code(monkeypatch, return_code):
     exits: list[int] = []
     monkeypatch.setattr(cockpit.os, "_exit", lambda code: exits.append(code))
     rc = cockpit._watch({}, 300, 30)
-    return rc, exits
+    return rc, exits, fake_app
 
 
 def test_watch_hard_exits_on_normal_quit(monkeypatch):
     """A clean `q` quit os._exit()s instead of returning — a normal return would
     hang at interpreter exit joining a slow-tick thread still blocked in `gh`."""
-    _rc, exits = _run_watch_with_return_code(monkeypatch, 0)
+    _rc, exits, _app = _run_watch_with_return_code(monkeypatch, 0)
     assert exits == [0]
 
 
@@ -276,6 +276,20 @@ def test_watch_returns_for_restart(monkeypatch):
     hard-exiting, so the updater/re-exec path still runs."""
     from cockpit.tui.app import RESTART_EXIT_CODE
 
-    rc, exits = _run_watch_with_return_code(monkeypatch, RESTART_EXIT_CODE)
+    rc, exits, _app = _run_watch_with_return_code(monkeypatch, RESTART_EXIT_CODE)
     assert rc == RESTART_EXIT_CODE
     assert exits == []
+
+
+def test_watch_runs_app_on_own_loop(monkeypatch):
+    """`_watch` must drive the app on a loop it owns, not Textual's default
+    `asyncio.run()`. The default joins the thread-worker executor with a 300s
+    timeout at shutdown, so `q` mid-tick hangs *inside* `app.run()` (before the
+    os._exit below can fire). Passing `loop=` makes Textual use
+    `run_until_complete`, which skips that join and returns immediately."""
+    import asyncio
+
+    _rc, _exits, app = _run_watch_with_return_code(monkeypatch, 0)
+    app.run.assert_called_once()
+    loop = app.run.call_args.kwargs.get("loop")
+    assert isinstance(loop, asyncio.AbstractEventLoop)
