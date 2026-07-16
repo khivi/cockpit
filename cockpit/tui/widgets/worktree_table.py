@@ -12,18 +12,27 @@ tinted with the repo's `sidebar_color`), so same-named worktrees (every repo's
 `repo/label` prefix needed. The worktree rows below each header keep the same
 `sidebar_color` tint on their label (matching the cmux sidebar). Header rows
 carry no workspace, so `current_path()` returns None on them and every row
-action no-ops there. The Author column (right after
-PR) shows the PR author's login prefixed with `@`, populated by the daemon only
-for other-authored PRs (coworker / review PRs) and blank for my own. The Dirty
-column (headed with the
+action no-ops there. The Author column (just before Title, since it's rarely
+populated) shows the PR author's login prefixed with `@`, populated by the daemon
+only for other-authored PRs (coworker / review PRs) and blank for my own. The
+Dirty column (headed with the
 `✎` modifications glyph rather than the word "Dirty") reads the same
 daemon-written `git-status` cell the footer does (`●S ✎M ✚U`). The Ticket and
 Status columns are added only when some configured repo is Linear-enabled
 (`show_tickets`); Ticket shows the delivered Linear ticket id(s) and Status shows
 one workflow-state *icon* per ticket (headed with the `📍` glyph rather than the
 word "Status", mapped from the state name via `_linear_status_icon`), both from
-the cached per-PR block, with Ticket placed right after Author and Status right
-after the PR-state column (`🔀`) so the two status columns are adjacent.
+the cached per-PR block.
+
+Columns are grouped by domain so the eye doesn't hop between GitHub and ticket
+data: the GitHub cluster (PR # / review-state / CI / comments) sits together next
+to `Workspace`, then the ticket cluster (Ticket id / status), then the local
+dirty column, then the rarely-populated `Author`, and finally the long `Title` at
+the end. Every
+icon-headed column carries a hover tooltip (`watch_hover_coordinate`) — hovering
+the header shows what the column means; hovering a value cell shows the decoded
+value (PR review-state name, ticket workflow state, CI verdict) — so the glyphs
+stay legible without a legend.
 
 A muted PR (nudges silenced via `m` / `/cockpit:nudge`) prefixes its workspace
 name with the 🔇 glyph, read from the daemon-written `pr-muted` cell — the same
@@ -43,8 +52,10 @@ from pathlib import Path
 from rich.text import Text
 from textual import events
 from textual.binding import Binding
+from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.widgets import DataTable
+from textual.widgets.data_table import CellDoesNotExist
 
 from cockpit.lib.cache import branch_cache, cwd_cache, find_pr_payload, read_text
 from cockpit.lib.cmux import DEVDONE_ICON
@@ -66,8 +77,8 @@ _APPROVAL_ICON = "🔀"
 
 # Header glyph for the Linear workflow-state column (was the word "Status"). The
 # pin reads as "pipeline position" and collides with none of the value icons
-# below. Sits right after `_APPROVAL_ICON` so the two status columns are
-# adjacent.
+# below. Sits right after the `Ticket` id column (the ticket cluster), not next
+# to the PR-state column, so ticket data stays grouped away from GitHub data.
 _STATUS_ICON = "📍"
 
 # Linear workflow-state *name* (case-insensitive substring) → (icon, style).
@@ -77,10 +88,12 @@ _STATUS_ICON = "📍"
 # vocabulary — the same name-substring approach `_linear_cells` already uses for
 # the status colour. An unrecognised state falls back to a neutral ◎.
 #
-# These deliberately share NO glyph with the adjacent PR-state column
-# (`_STATE` / `_PR_STATE_ICON`): a "workflow position" family (squares + tools)
-# rather than PR's "review verdict" family (circles + checks). Without this the
-# two columns — now side by side — were indistinguishable (both used 🔵/👀/✅/⛔).
+# These deliberately share NO glyph with the PR-state column (`_STATE` /
+# `_PR_STATE_ICON`): a "workflow position" family (squares + tools) rather than
+# PR's "review verdict" family (circles + checks). Even though the two columns
+# now live in separate clusters, keeping the vocabularies disjoint means a stray
+# glance never confuses a ticket state for a PR state (both would else use
+# 🔵/👀/✅/⛔).
 _LINEAR_STATUS_ICONS: tuple[tuple[str, str, str], ...] = (
     ("cancel", "🚫", "red"),
     ("duplicate", "🚫", "red"),
@@ -157,19 +170,17 @@ _DIRTY_ICON = ICON_UNSTAGED
 
 
 def column_labels(*, show_tickets: bool) -> tuple[str, ...]:
-    """Column headers in display order. The `Author` column sits right after
-    `PR` (always present — blank for self-authored PRs, the coworker login for
-    a review PR). The `Ticket` column follows it; the ticket `Status` column
-    sits right after the PR-state column so the two status columns are adjacent.
-    Both ticket columns appear only when some configured repo has a ticket
-    provider — Linear or GitHub (`show_tickets`)."""
-    cols = ["Workspace", "PR", "Author"]
+    """Column headers in display order, grouped by domain. The GitHub cluster —
+    `PR` #, the `🔀` review-state, `CI`, and `💬` comments — sits together next to
+    `Workspace`. The ticket cluster — `Ticket` id then its `📍` workflow-state —
+    follows, present only when some configured repo has a ticket provider (Linear
+    or GitHub, `show_tickets`). Then the local `✎` dirty column, then `Author`
+    (blank for self-authored, the coworker login on a review PR — rarely
+    populated, so parked near the end), and finally the long `Title`."""
+    cols = ["Workspace", "PR", _APPROVAL_ICON, "CI", "💬"]
     if show_tickets:
-        cols.append("Ticket")
-    cols.append(_APPROVAL_ICON)
-    if show_tickets:
-        cols.append(_STATUS_ICON)
-    cols += ["CI", "💬", _DIRTY_ICON, "Title"]
+        cols += ["Ticket", _STATUS_ICON]
+    cols += [_DIRTY_ICON, "Author", "Title"]
     return tuple(cols)
 
 
@@ -350,10 +361,10 @@ def worktree_cells(
     show_tickets: bool,
 ) -> list[Text]:
     """Build one row's cells (Rich Text, so colours survive), in `column_labels`
-    order: the Ticket cell follows Author and the Status cell follows the
-    PR-state cell, both present only when `show_tickets` (the columns exist) and
-    blank for a row whose repo has no ticket provider (`tickets_provider ==
-    "none"`)."""
+    order: the GitHub cluster (PR / state / CI / comments), then the ticket
+    cluster (Ticket / Status) when `show_tickets` (blank for a row whose repo has
+    no ticket provider, `tickets_provider == "none"`), then Dirty, Author, and
+    Title."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
@@ -377,23 +388,153 @@ def worktree_cells(
             nudge=bool(cell("pr-nudge")),
         ),
         Text(f"#{num}") if num else Text(""),
-        # Author is populated by the daemon only for other-authored (coworker /
-        # review) PRs — blank for my own, so the column reads "whose PR is this
-        # that isn't mine".
-        Text(f"@{author}", style="cyan") if author else Text(""),
-    ]
-    if show_tickets:
-        cells.append(ticket)
-    cells.append(Text(state_icon, style=style) if state else Text(""))
-    if show_tickets:
-        cells.append(ticket_status)
-    cells += [
+        Text(state_icon, style=style) if state else Text(""),
         Text(ci, style=_CI_STYLE.get(ci, "white")) if ci else Text(""),
         comments,
-        _dirty_cell(wt),
     ]
-    cells.append(Text((title[:48] + "…") if len(title) > 49 else title, style="grey62"))
+    if show_tickets:
+        cells += [ticket, ticket_status]
+    cells += [
+        _dirty_cell(wt),
+        # Author is populated by the daemon only for other-authored (coworker /
+        # review) PRs — blank for my own, so the column reads "whose PR is this
+        # that isn't mine". Rarely populated → parked just before Title.
+        Text(f"@{author}", style="cyan") if author else Text(""),
+        Text((title[:48] + "…") if len(title) > 49 else title, style="grey62"),
+    ]
     return cells
+
+
+# ── Hover tooltips ──────────────────────────────────────────────────────────
+# The icon-headed columns are cryptic at a glance, so every column carries a
+# hover hint (`WorktreeTable.watch_hover_coordinate`). Hovering the *header*
+# shows what the column means (`_HEADER_TOOLTIPS`, keyed by the column label);
+# hovering a *value cell* shows the decoded value (`row_tooltips`, e.g. the PR
+# review-state name or the ticket's workflow state), falling back to the column
+# meaning for the self-evident text columns.
+
+_HEADER_TOOLTIPS: dict[str, str] = {
+    "Workspace": "Workspace / branch name",
+    "PR": "Pull-request number",
+    "Author": "PR author (blank when it's mine)",
+    _APPROVAL_ICON: "PR review state",
+    "CI": "CI checks",
+    "💬": "Unaddressed review comments (unaddressed / total)",
+    "Ticket": "Delivered ticket id(s)",
+    _STATUS_ICON: "Ticket workflow state",
+    _DIRTY_ICON: "Uncommitted changes (staged / modified / untracked)",
+    "Title": "PR title",
+}
+
+# Raw `pr-state` enum → the phrase shown when hovering a PR-state (🔀) cell.
+_STATE_LABEL: dict[str, str] = {
+    "APPROVED": "Approved",
+    "OPEN": "Open",
+    "DRAFT": "Draft",
+    "REVIEW_REQUIRED": "Review required",
+    "CHANGES_REQUESTED": "Changes requested",
+    "MERGED": "Merged",
+    "CLOSED": "Closed",
+}
+
+# CI glyph → phrase shown when hovering a CI cell.
+_CI_LABEL: dict[str, str] = {
+    "✓": "CI passing",
+    "✗": "CI failing",
+    "•": "CI running",
+    "?": "CI status unknown",
+}
+
+
+def _comments_tooltip(unaddressed_raw: str, total_raw: str) -> str | None:
+    """Hover text for the 💬 cell — mirrors `_comments_cell`'s parse but spells
+    the ratio out in words. None when nothing is unaddressed (no cell shown)."""
+    try:
+        unaddressed = int(unaddressed_raw or 0)
+        total = int(total_raw or 0)
+    except ValueError:
+        return None
+    if unaddressed <= 0:
+        return None
+    if total > unaddressed:
+        return f"{unaddressed} of {total} review threads unaddressed"
+    return f"{unaddressed} unaddressed review thread(s)"
+
+
+def _dirty_tooltip(wt: Worktree) -> str | None:
+    """Hover text for the ✎ cell — the same `git-status` counts spelled out
+    (`1 staged, 2 modified, 3 untracked`). None when clean or unpopulated."""
+    parts = read_text(cwd_cache("git-status", wt.path)).split()
+    if len(parts) != 3:
+        return None
+    try:
+        staged, unstaged, untracked = (int(p) for p in parts)
+    except ValueError:
+        return None
+    segs = []
+    if staged:
+        segs.append(f"{staged} staged")
+    if unstaged:
+        segs.append(f"{unstaged} modified")
+    if untracked:
+        segs.append(f"{untracked} untracked")
+    return ", ".join(segs) or None
+
+
+def _ticket_status_tooltip(wt: Worktree, repo_name: str) -> str | None:
+    """Hover text for the 📍 cell — each delivered ticket's `id: state` (the
+    workflow-state name the icon abstracts away). None with no delivered
+    tickets."""
+    payload = find_pr_payload(wt.branch, repo_name) or {}
+    tickets = (payload.get("ticket") or {}).get("tickets") or []
+    if not tickets:
+        return None
+    parts = []
+    for t in tickets:
+        tid = t.get("id", "?")
+        state = t.get("state")
+        parts.append(f"{tid}: {state}" if state else f"{tid}: state unavailable")
+    return "; ".join(parts)
+
+
+def row_tooltips(
+    wt: Worktree,
+    repo_name: str,
+    tickets_provider: str,
+    *,
+    show_tickets: bool,
+) -> list[str | None]:
+    """Per-cell hover hints for one worktree row, aligned to `column_labels`
+    order. Only the cryptic value columns decode (workspace glyph, PR state, CI,
+    comments, ticket state, dirty); the self-evident text columns are None and
+    fall back to the column meaning on hover."""
+
+    def cell(stem: str) -> str:
+        return read_text(branch_cache(stem, wt.branch))
+
+    if cell("pr-muted"):
+        workspace: str | None = "Nudges muted"
+    elif cell("pr-nudge"):
+        workspace = "Nudge pending (CI / threads / conflicts)"
+    else:
+        workspace = None
+
+    tips: list[str | None] = [
+        workspace,
+        None,  # PR #
+        _STATE_LABEL.get(cell("pr-state")),
+        _CI_LABEL.get(cell("pr-checks")),
+        _comments_tooltip(cell("pr-comments"), cell("pr-comments-total")),
+    ]
+    if show_tickets:
+        tips += [
+            None,  # Ticket id (self-evident)
+            _ticket_status_tooltip(wt, repo_name)
+            if tickets_provider != "none"
+            else None,
+        ]
+    tips += [_dirty_tooltip(wt), None, None]  # Dirty, Author, Title
+    return tips
 
 
 class WorktreeTable(DataTable):
@@ -429,6 +570,11 @@ class WorktreeTable(DataTable):
         # so `current_repo_name()` resolves the cursor row's repo even on a
         # group-header row (where `current_path()` is None).
         self._row_repo: dict[str, str] = {}
+        # worktree path → per-column hover tooltip (aligned to `column_labels`),
+        # so `watch_hover_coordinate` decodes a value cell without re-reading the
+        # cache on every mouse move. Header rows carry none (fall back to the
+        # column meaning).
+        self._cell_tooltips: dict[str, list[str | None]] = {}
 
     def on_mount(self) -> None:
         self.cursor_type = "row"
@@ -469,6 +615,34 @@ class WorktreeTable(DataTable):
             return None
         return self._row_caps.get(key, frozenset())
 
+    def watch_hover_coordinate(self, old: Coordinate, value: Coordinate) -> None:
+        # Keep DataTable's own hover-highlight refresh, then point the widget
+        # tooltip at whatever the mouse is over. `_on_mouse_move` sets
+        # `hover_coordinate` to `(row, column)` for a body cell and `(-1, column)`
+        # for the column header, so one watcher covers both.
+        super().watch_hover_coordinate(old, value)
+        self.tooltip = self._tooltip_for(value)
+
+    def _tooltip_for(self, coord: Coordinate) -> str | None:
+        """Hover hint for a coordinate: the column meaning on the header row
+        (`coord.row < 0`), else the decoded value cell (falling back to the
+        column meaning for the self-evident text columns)."""
+        labels = column_labels(show_tickets=self._show_tickets)
+        col = coord.column
+        if not 0 <= col < len(labels):
+            return None
+        header = _HEADER_TOOLTIPS.get(labels[col])
+        if coord.row < 0:
+            return header
+        try:
+            row_key, _ = self.coordinate_to_cell_key(coord)
+        except CellDoesNotExist:
+            return header
+        tips = self._cell_tooltips.get(row_key.value or "")
+        if tips and col < len(tips) and tips[col]:
+            return tips[col]
+        return header
+
     def action_request_focus(self) -> None:
         path = self.current_path()
         if path:
@@ -501,6 +675,7 @@ class WorktreeTable(DataTable):
         self.clear()
         self._row_caps = {}
         self._row_repo = {}
+        self._cell_tooltips = {}
         ncols = len(column_labels(show_tickets=self._show_tickets))
         for repo_name, cache_key, repo_color, tickets_provider, wts in inventory:
             hkey = f"{HEADER_KEY_PREFIX}{repo_name}"
@@ -525,6 +700,12 @@ class WorktreeTable(DataTable):
                     has_workspace=wt.path.resolve() in ws,
                 )
                 self._row_repo[str(wt.path)] = repo_name
+                self._cell_tooltips[str(wt.path)] = row_tooltips(
+                    wt,
+                    cache_key,
+                    tickets_provider,
+                    show_tickets=self._show_tickets,
+                )
         if self.row_count:
             target = min(saved, self.row_count - 1)
             self.move_cursor(row=target)
