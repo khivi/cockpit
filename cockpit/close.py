@@ -34,6 +34,7 @@ from pathlib import Path
 from cockpit.lib.cmux import CmuxUnavailable, workspace_cwds, workspace_names
 from cockpit.lib.config import load_config
 from cockpit.lib.daemon_signal import enqueue, kick_running
+from cockpit.lib.gh import repo_nwo
 from cockpit.lib.git import Worktree, current_branch, worktrees
 from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.orchestrators.teardown import resolve_pr_state, worktree_state_blockers
@@ -148,7 +149,15 @@ def main(argv: list[str] | None = None) -> int:
     repo, wt = resolved
 
     repo_dir = Path(os.path.expanduser(repo["path"]))
-    repo_name = repo.get("name") or repo_dir.name
+    # The git nwo name, not the config label — `resolve_pr_state`/teardown key
+    # the PR cache by it (the daemon wrote `{nwo}__pr-N.json`); the label misses
+    # every file, misresolving PR state and orphaning the cache on teardown.
+    # Falls back to the basename when `gh` can't resolve (off-GitHub repo, which
+    # has no PR cache anyway).
+    try:
+        repo_name = repo_nwo(repo_dir)[1]
+    except RuntimeError:
+        repo_name = repo_dir.name
     prefix = repo.get("branch_prefix", "")
     branch = wt.branch or current_branch(wt.path)
     is_mine = branch.startswith(prefix) if (prefix and branch) else True

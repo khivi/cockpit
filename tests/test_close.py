@@ -37,6 +37,10 @@ def repo_cfg(tmp_path, monkeypatch):
     monkeypatch.setattr(close_mod, "load_config", cfg.load_config)
     monkeypatch.setattr(close_mod, "_workspace_ref", lambda wt: "workspace:ws1")
     monkeypatch.setattr(close_mod, "_workspace_name", lambda ref: "foo")
+    # The PR cache is keyed by the git nwo name, not the config label — pin it to
+    # a value deliberately != the "myrepo" label so a regression back to the
+    # label is caught. `repo_nwo` shells out to `gh` (unavailable in tests).
+    monkeypatch.setattr(close_mod, "repo_nwo", lambda p: ("acme", "beta"))
     return repo
 
 
@@ -61,8 +65,24 @@ def test_resolves_cwd_worktree_and_enqueues(repo_cfg, captured, monkeypatch):
     assert len(captured) == 1
     req = captured[0]
     assert req.branch == "khivi/foo"
-    assert req.repo_name == "myrepo"
+    # repo_name is the git nwo, NOT the config "myrepo" label — teardown keys the
+    # PR cache by it (find_pr_payload / delete_pr_caches_for_branch).
+    assert req.repo_name == "beta"
     assert req.forced is False
+
+
+def test_repo_name_falls_back_to_basename_when_gh_fails(
+    repo_cfg, captured, monkeypatch
+):
+    # `repo_nwo` failure (off-GitHub repo / gh unavailable) → the path basename,
+    # not a crash.
+    def boom(p):
+        raise RuntimeError("gh repo view failed")
+
+    monkeypatch.setattr(close_mod, "repo_nwo", boom)
+    _no_blockers(monkeypatch)
+    assert close_mod.main(["khivi/foo"]) == 0
+    assert captured[0].repo_name == repo_cfg.name
 
 
 def test_resolves_by_branch_query(repo_cfg, captured, monkeypatch):
