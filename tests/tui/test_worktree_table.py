@@ -52,8 +52,8 @@ def _wt(path="/tmp/feat", branch="khivi/feat-x", **kw):
     return Worktree(path=Path(path), branch=branch, **kw)
 
 
-def _plain(wt, repo="repo", color=None, linear=False, show_tickets=False):
-    cells = worktree_cells(wt, repo, color, linear, show_tickets=show_tickets)
+def _plain(wt, repo="repo", color=None, provider="none", show_tickets=False):
+    cells = worktree_cells(wt, repo, color, provider, show_tickets=show_tickets)
     return [c.plain for c in cells]
 
 
@@ -81,8 +81,8 @@ def test_workspace_label_strips_prefix(cache_dir):
 
 def test_workspace_tinted_by_repo_color(cache_dir):
     wt = _wt(branch="khivi/c", branch_prefix="khivi/")
-    colored = worktree_cells(wt, "r", "Blue", False, show_tickets=False)[0]
-    plain = worktree_cells(wt, "r", None, False, show_tickets=False)[0]
+    colored = worktree_cells(wt, "r", "Blue", "none", show_tickets=False)[0]
+    plain = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
     assert colored.plain == "c" == plain.plain
     assert colored.spans  # Text.from_ansi(colorizer(...)) → colour spans
     assert not plain.spans
@@ -90,7 +90,7 @@ def test_workspace_tinted_by_repo_color(cache_dir):
 
 
 def test_unknown_color_falls_back_to_plain(cache_dir):
-    cell = worktree_cells(_wt(), "r", "NotAColor", False, show_tickets=False)[0]
+    cell = worktree_cells(_wt(), "r", "NotAColor", "none", show_tickets=False)[0]
     assert not cell.spans
 
 
@@ -123,7 +123,7 @@ def test_approval_state_icons(cache_dir, raw):
 def test_changes_requested_colored_red(cache_dir):
     wt = _wt(branch="khivi/cr")
     cache_mod.branch_cache("pr-state", wt.branch).write_text("CHANGES_REQUESTED")
-    cell = worktree_cells(wt, "r", None, False, show_tickets=False)[3]
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[3]
     assert cell.plain == _PR_STATE_ICON["CHANGES_REQUESTED"]
     assert "red" in str(cell.style)
 
@@ -133,7 +133,7 @@ def test_author_column_shows_coworker_login(cache_dir):
     # renders it `@login`.
     wt = _wt(branch="coworker/feat")
     cache_mod.branch_cache("pr-author", wt.branch).write_text("octocat")
-    cell = worktree_cells(wt, "r", None, False, show_tickets=False)[2]
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[2]
     assert cell.plain == "@octocat"
     assert "cyan" in str(cell.style)
 
@@ -199,11 +199,55 @@ def test_ticket_and_status_columns_when_enabled(cache_dir, monkeypatch):
             "ticket": {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}
         },
     )
-    cells = worktree_cells(wt, "r", None, True, show_tickets=True)
+    cells = worktree_cells(wt, "r", None, "linear", show_tickets=True)
     ticket, status = cells[3], cells[5]  # Ticket after Author, Status after PR state
     assert ticket.plain == "PE-1"
     assert status.plain == DEVDONE_ICON  # "Dev Done" → 🏁 icon, not text
     assert any("green" in str(s.style) for s in status.spans)  # dev-done → green
+
+
+def test_ticket_cell_trello_shows_title(cache_dir, monkeypatch):
+    # Trello ids are opaque short links (e.g. VfqsfqUd) — the Ticket cell shows
+    # the cached card title instead. Other providers keep their meaningful id.
+    wt = _wt(branch="khivi/tr")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: {
+            "ticket": {
+                "tickets": [{"id": "VfqsfqUd", "state": "Done", "title": "Fix login"}]
+            }
+        },
+    )
+    ticket = worktree_cells(wt, "r", None, "trello", show_tickets=True)[3]
+    assert ticket.plain == "Fix login"
+
+
+def test_ticket_cell_trello_falls_back_to_id_without_title(cache_dir, monkeypatch):
+    wt = _wt(branch="khivi/tr2")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: {
+            "ticket": {"tickets": [{"id": "VfqsfqUd", "state": "Done"}]}
+        },
+    )
+    ticket = worktree_cells(wt, "r", None, "trello", show_tickets=True)[3]
+    assert ticket.plain == "VfqsfqUd"
+
+
+def test_ticket_cell_non_trello_keeps_id_despite_title(cache_dir, monkeypatch):
+    # A Linear ticket carries a title in the cache too, but its id is meaningful,
+    # so the Ticket cell must still render the id — not the title.
+    wt = _wt(branch="khivi/lin2")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: {
+            "ticket": {
+                "tickets": [{"id": "PE-1", "state": "Done", "title": "Fix login"}]
+            }
+        },
+    )
+    ticket = worktree_cells(wt, "r", None, "linear", show_tickets=True)[3]
+    assert ticket.plain == "PE-1"
 
 
 @pytest.mark.parametrize(
@@ -242,7 +286,7 @@ def test_status_cell_one_icon_per_ticket(cache_dir, monkeypatch):
             }
         },
     )
-    cells = worktree_cells(wt, "r", None, True, show_tickets=True)
+    cells = worktree_cells(wt, "r", None, "linear", show_tickets=True)
     ticket, status = cells[3], cells[5]  # Ticket after Author, Status after PR state
     assert ticket.plain == "PE-1, PE-2"  # ids still comma-joined
     assert status.plain == "🔍 🟢"  # one icon per ticket, space-joined
@@ -257,7 +301,7 @@ def test_status_cell_unresolved_state_flags_red(cache_dir, monkeypatch):
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
         lambda branch, repo: {"ticket": {"tickets": [{"id": "PE-1", "state": None}]}},
     )
-    status = worktree_cells(wt, "r", None, True, show_tickets=True)[5]
+    status = worktree_cells(wt, "r", None, "linear", show_tickets=True)[5]
     assert status.plain == "!"
     assert any("red" in str(s.style) for s in status.spans)
 
@@ -269,13 +313,13 @@ def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
         lambda branch, repo: {"ticket": {"tickets": [{"id": "PE-9", "state": "x"}]}},
     )
     # columns exist (some other repo is Linear) but this row's repo isn't
-    cells = worktree_cells(wt, "r", None, False, show_tickets=True)
+    cells = worktree_cells(wt, "r", None, "none", show_tickets=True)
     assert cells[3].plain == "" and cells[5].plain == ""  # Ticket, Status
 
 
 def test_no_linear_columns_when_not_configured(cache_dir):
     # show_tickets False → no Ticket/Status cells
-    assert len(_plain(_wt(), linear=True, show_tickets=False)) == 8
+    assert len(_plain(_wt(), provider="linear", show_tickets=False)) == 8
 
 
 def test_row_capabilities_pr_muted_ticket(cache_dir, monkeypatch):
@@ -289,9 +333,9 @@ def test_row_capabilities_pr_muted_ticket(cache_dir, monkeypatch):
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
         lambda branch, repo: {"ticket": {"tickets": [{"id": "#42", "state": "open"}]}},
     )
-    assert row_capabilities(wt, "r", True) == frozenset({"pr", "muted", "ticket"})
+    assert row_capabilities(wt, "r", "linear") == frozenset({"pr", "muted", "ticket"})
     # tickets disabled for this repo → no ticket token even with a cached block
-    assert row_capabilities(wt, "r", False) == frozenset({"pr", "muted"})
+    assert row_capabilities(wt, "r", "none") == frozenset({"pr", "muted"})
 
 
 def test_row_capabilities_empty_without_pr(cache_dir, monkeypatch):
@@ -300,7 +344,7 @@ def test_row_capabilities_empty_without_pr(cache_dir, monkeypatch):
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
         lambda branch, repo: None,
     )
-    assert row_capabilities(wt, "r", True) == frozenset()
+    assert row_capabilities(wt, "r", "linear") == frozenset()
 
 
 def test_row_capabilities_workspace_and_primary(cache_dir, monkeypatch):
@@ -311,13 +355,13 @@ def test_row_capabilities_workspace_and_primary(cache_dir, monkeypatch):
         lambda branch, repo: None,
     )
     wt = _wt(branch="khivi/live")
-    assert row_capabilities(wt, "r", False) == frozenset()
-    assert row_capabilities(wt, "r", False, has_workspace=True) == frozenset(
+    assert row_capabilities(wt, "r", "none") == frozenset()
+    assert row_capabilities(wt, "r", "none", has_workspace=True) == frozenset(
         {"workspace"}
     )
     primary = _wt(branch="master", is_primary=True)
-    assert row_capabilities(primary, "r", False) == frozenset({"primary"})
-    assert row_capabilities(primary, "r", False, has_workspace=True) == frozenset(
+    assert row_capabilities(primary, "r", "none") == frozenset({"primary"})
+    assert row_capabilities(primary, "r", "none", has_workspace=True) == frozenset(
         {"primary", "workspace"}
     )
 
@@ -325,13 +369,13 @@ def test_row_capabilities_workspace_and_primary(cache_dir, monkeypatch):
 def test_muted_pr_prefixes_workspace_glyph(cache_dir):
     wt = _wt(branch="khivi/silence", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
-    cell = worktree_cells(wt, "r", None, False, show_tickets=False)[0]
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
     assert cell.plain == f"{ICON_PR_MUTED} silence"
 
 
 def test_unmuted_pr_has_no_glyph(cache_dir):
     wt = _wt(branch="khivi/loud", branch_prefix="khivi/")
-    cell = worktree_cells(wt, "r", None, False, show_tickets=False)[0]
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
     assert cell.plain == "loud"
 
 
@@ -340,7 +384,7 @@ def test_nudge_pr_prefixes_bell_glyph(cache_dir):
     prefixes the workspace name with 🔔."""
     wt = _wt(branch="khivi/ringing", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
-    cell = worktree_cells(wt, "r", None, False, show_tickets=False)[0]
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
     assert cell.plain == f"{ICON_PR_NUDGE} ringing"
 
 
@@ -350,7 +394,7 @@ def test_mute_wins_over_nudge_glyph(cache_dir):
     wt = _wt(branch="khivi/quiet", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("comments")
-    cell = worktree_cells(wt, "r", None, False, show_tickets=False)[0]
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
     assert cell.plain == f"{ICON_PR_MUTED} quiet"
 
 
@@ -358,14 +402,14 @@ def test_empty_nudge_cell_has_no_glyph(cache_dir):
     """A blank `pr-nudge` cell (no actionable issue) shows no bell."""
     wt = _wt(branch="khivi/calm", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("")
-    cell = worktree_cells(wt, "r", None, False, show_tickets=False)[0]
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
     assert cell.plain == "calm"
 
 
 def test_dirty_column_renders_counts(cache_dir):
     wt = _wt(path="/tmp/dirtywt", branch="khivi/dirty")
     cache_mod.cwd_cache("git-status", wt.path).write_text("1 2 3")
-    dirty = worktree_cells(wt, "r", None, False, show_tickets=False)[6]
+    dirty = worktree_cells(wt, "r", None, "none", show_tickets=False)[6]
     # ●1 ✎2 ✚3 with the footer's glyphs
     assert dirty.plain == "●1 ✎2 ✚3"
     assert "green" in str(dirty.spans[0].style)  # staged
@@ -375,21 +419,21 @@ def test_dirty_column_renders_counts(cache_dir):
 def test_dirty_column_omits_zero_segments(cache_dir):
     wt = _wt(path="/tmp/partialdirty", branch="khivi/partial")
     cache_mod.cwd_cache("git-status", wt.path).write_text("0 0 4")
-    dirty = worktree_cells(wt, "r", None, False, show_tickets=False)[6]
+    dirty = worktree_cells(wt, "r", None, "none", show_tickets=False)[6]
     assert dirty.plain == "✚4"  # only untracked shown
 
 
 def test_dirty_column_blank_when_clean(cache_dir):
     wt = _wt(path="/tmp/cleanwt", branch="khivi/clean")
     cache_mod.cwd_cache("git-status", wt.path).write_text("0 0 0")
-    dirty = worktree_cells(wt, "r", None, False, show_tickets=False)[6]
+    dirty = worktree_cells(wt, "r", None, "none", show_tickets=False)[6]
     assert dirty.plain == ""
 
 
 def test_dirty_column_blank_when_cell_missing(cache_dir):
     # Cold start: daemon hasn't written the git-status cell yet.
     wt = _wt(path="/tmp/coldwt", branch="khivi/cold")
-    dirty = worktree_cells(wt, "r", None, False, show_tickets=False)[6]
+    dirty = worktree_cells(wt, "r", None, "none", show_tickets=False)[6]
     assert dirty.plain == ""
 
 
@@ -397,12 +441,12 @@ def test_label_stays_bare_across_repos(cache_dir):
     # Same-named worktrees in different repos render bare — the group-header row
     # disambiguates them, not a `repo/` prefix.
     wt = _wt(branch="master")
-    assert worktree_cells(wt, "Cockpit", None, False, show_tickets=False)[0].plain == (
+    assert worktree_cells(wt, "Cockpit", None, "none", show_tickets=False)[0].plain == (
         "master"
     )
-    assert worktree_cells(wt, "dotfiles", None, False, show_tickets=False)[0].plain == (
-        "master"
-    )
+    assert worktree_cells(wt, "dotfiles", None, "none", show_tickets=False)[
+        0
+    ].plain == ("master")
 
 
 def test_header_cells_repo_name_and_blank_tail():
@@ -444,8 +488,8 @@ async def test_cursor_skips_past_consecutive_header_rows(cache_dir):
         table = app.query_one(WorktreeTable)
         table.update_inventory(
             [
-                ("A", "A", None, False, []),  # empty repo -> header row only
-                ("B", "B", None, False, [wt]),  # header row + one worktree
+                ("A", "A", None, "none", []),  # empty repo -> header row only
+                ("B", "B", None, "none", [wt]),  # header row + one worktree
             ]
         )
         await pilot.pause()
@@ -479,7 +523,7 @@ async def test_update_inventory_keys_cache_by_nwo_not_label(cache_dir, monkeypat
     app = _TicketHost()
     async with app.run_test() as pilot:
         table = app.query_one(WorktreeTable)
-        table.update_inventory([("Envesya", "beta", None, True, [wt])])
+        table.update_inventory([("Envesya", "beta", None, "linear", [wt])])
         await pilot.pause()
         row = table.get_row_at(1)  # 0 = group header, 1 = the worktree row
         assert row[3].plain == "PE-7"  # Ticket cell, keyed by the nwo

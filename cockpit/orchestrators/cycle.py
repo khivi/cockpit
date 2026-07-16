@@ -369,10 +369,12 @@ def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
 
     The pill is raised — green — only when the PR delivers at least one ticket
     AND *every* delivered ticket is in the `linear_dev_done_state` workflow state
-    (default "Dev Done"); the whole PR's scope is dev-complete. Shows the human
-    ticket title (id fallback, truncated to `_DEVDONE_TITLE_MAX`) when a single
-    ticket, the `done/total` count when several. Cleared otherwise, so a ticket
-    slipping back out of dev-done drops the pill. No-op in dry runs.
+    (default "Dev Done"); the whole PR's scope is dev-complete. For a single
+    ticket, shows the id (`PE-123`, `#45` — meaningful) — except Trello, whose id
+    is an opaque short link, so it shows the human title (id fallback, truncated
+    to `_DEVDONE_TITLE_MAX`). Several tickets show the `done/total` count. Cleared
+    otherwise, so a ticket slipping back out of dev-done drops the pill. No-op in
+    dry runs.
     """
     if ctx.dry:
         return
@@ -389,12 +391,18 @@ def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
         apply_devdone_pill(ref, None)
         return
     if len(tickets) == 1:
-        text = tickets[0].get("title") or tickets[0]["id"]
-        label = (
-            text
-            if len(text) <= _DEVDONE_TITLE_MAX
-            else text[: _DEVDONE_TITLE_MAX - 1] + "…"
-        )
+        # Trello ids are opaque short links — show the card title (id fallback,
+        # truncated so a long name can't widen the sidebar pill). Every other
+        # provider's id is meaningful, so show it as-is.
+        if provider.name == "trello":
+            text = tickets[0].get("title") or tickets[0]["id"]
+            label = (
+                text
+                if len(text) <= _DEVDONE_TITLE_MAX
+                else text[: _DEVDONE_TITLE_MAX - 1] + "…"
+            )
+        else:
+            label = tickets[0]["id"]
     else:
         label = f"{len(done)}/{len(tickets)}"
     apply_devdone_pill(ref, label)

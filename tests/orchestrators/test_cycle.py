@@ -3113,18 +3113,42 @@ def test_track_dev_done_single_ticket_shows_id_when_no_title(tmp_path):
     pill.assert_called_once_with("workspace:1", "PE-1234")
 
 
-def test_track_dev_done_single_ticket_prefers_title(tmp_path):
+def test_track_dev_done_single_ticket_linear_shows_id_despite_title(tmp_path):
+    # A Linear id (PE-1234) is meaningful — show it even when a title is cached.
     ctx = _devdone_ctx(tmp_path, cfg={"linear_dev_done_state": "Dev Done"})
-    block = {"tickets": [{"id": "VfqsfqUd", "state": "Dev Done", "title": "Fix it"}]}
+    block = {"tickets": [{"id": "PE-1234", "state": "Dev Done", "title": "Fix it"}]}
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "workspace:1", block)
+    pill.assert_called_once_with("workspace:1", "PE-1234")
+
+
+def _trello_devdone_ctx(tmp_path):
+    ctx = _devdone_ctx(tmp_path, linear_keys=None)
+    ctx.repo_entry = {"tickets": {"provider": "trello", "dev_done_list": "Done"}}
+    return ctx
+
+
+def test_track_dev_done_single_ticket_trello_prefers_title(tmp_path):
+    # A Trello id is an opaque short link — show the card title instead.
+    ctx = _trello_devdone_ctx(tmp_path)
+    block = {"tickets": [{"id": "VfqsfqUd", "state": "Done", "title": "Fix it"}]}
     with patch.object(cycle, "apply_devdone_pill") as pill:
         cycle._track_dev_done(ctx, "workspace:1", block)
     pill.assert_called_once_with("workspace:1", "Fix it")
 
 
-def test_track_dev_done_single_ticket_truncates_long_title(tmp_path):
-    ctx = _devdone_ctx(tmp_path, cfg={"linear_dev_done_state": "Dev Done"})
+def test_track_dev_done_single_ticket_trello_falls_back_to_id(tmp_path):
+    ctx = _trello_devdone_ctx(tmp_path)
+    block = {"tickets": [{"id": "VfqsfqUd", "state": "Done"}]}
+    with patch.object(cycle, "apply_devdone_pill") as pill:
+        cycle._track_dev_done(ctx, "workspace:1", block)
+    pill.assert_called_once_with("workspace:1", "VfqsfqUd")
+
+
+def test_track_dev_done_single_ticket_trello_truncates_long_title(tmp_path):
+    ctx = _trello_devdone_ctx(tmp_path)
     long = "Fix the OAuth login redirect loop"
-    block = {"tickets": [{"id": "VfqsfqUd", "state": "Dev Done", "title": long}]}
+    block = {"tickets": [{"id": "VfqsfqUd", "state": "Done", "title": long}]}
     with patch.object(cycle, "apply_devdone_pill") as pill:
         cycle._track_dev_done(ctx, "workspace:1", block)
     (_, label), _ = pill.call_args

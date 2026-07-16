@@ -111,7 +111,7 @@ RESTART_EXIT_CODE = 42
 # differ when the config `name` is set (e.g. label "Envesya" vs repo "beta"), so
 # the render path must key the cache by the nwo, not the label. See
 # `_cache_repo_name`.
-Inventory = list[tuple[str, str, str | None, bool, list[Worktree]]]
+Inventory = list[tuple[str, str, str | None, str, list[Worktree]]]
 
 
 def _pr_from_payload(p: dict) -> PR:
@@ -536,7 +536,7 @@ class CockpitApp(App[None]):
                     repo.get("name") or path.name,
                     self._cache_repo_name(repo),
                     repo.get("sidebar_color"),
-                    repo_tickets(cfg, repo) != "none",
+                    repo_tickets(cfg, repo),
                     wts,
                 )
             )
