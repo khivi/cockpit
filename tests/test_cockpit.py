@@ -169,3 +169,40 @@ def test_watch_requires_tty(capsys):
     rc = cockpit._watch({}, 300, 30)
     assert rc == 2
     assert "requires a terminal" in capsys.readouterr().err
+
+
+def _run_watch_with_return_code(monkeypatch, return_code):
+    """Drive _watch past app.run() with a stub app carrying `return_code`,
+    faking a TTY and stubbing the pidfile so no real Textual/daemon starts."""
+    from unittest.mock import MagicMock
+
+    import cockpit.cockpit as cockpit
+    import cockpit.lib.daemon as daemon
+    import cockpit.tui.app as tui_app
+
+    monkeypatch.setattr(cockpit.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(daemon, "claim_pidfile", lambda: None)
+    fake_app = MagicMock()
+    fake_app.return_code = return_code
+    monkeypatch.setattr(tui_app, "CockpitApp", lambda **_kw: fake_app)
+    exits: list[int] = []
+    monkeypatch.setattr(cockpit.os, "_exit", lambda code: exits.append(code))
+    rc = cockpit._watch({}, 300, 30)
+    return rc, exits
+
+
+def test_watch_hard_exits_on_normal_quit(monkeypatch):
+    """A clean `q` quit os._exit()s instead of returning — a normal return would
+    hang at interpreter exit joining a slow-tick thread still blocked in `gh`."""
+    _rc, exits = _run_watch_with_return_code(monkeypatch, 0)
+    assert exits == [0]
+
+
+def test_watch_returns_for_restart(monkeypatch):
+    """The `u` self-update code returns to cli.py (which os.execvp's) instead of
+    hard-exiting, so the updater/re-exec path still runs."""
+    from cockpit.tui.app import RESTART_EXIT_CODE
+
+    rc, exits = _run_watch_with_return_code(monkeypatch, RESTART_EXIT_CODE)
+    assert rc == RESTART_EXIT_CODE
+    assert exits == []

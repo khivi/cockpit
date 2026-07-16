@@ -147,7 +147,7 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
         return 2
 
     from cockpit.lib.daemon import claim_pidfile
-    from cockpit.tui.app import CockpitApp
+    from cockpit.tui.app import RESTART_EXIT_CODE, CockpitApp
 
     claim_pidfile()  # exits 1 if a live daemon already holds it
     self_ws = os.environ.get("CMUX_WORKSPACE_ID")
@@ -168,7 +168,22 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
     app.run()
     # `u` exits with RESTART_EXIT_CODE so cli.py runs the updater and re-execs;
     # a clean quit / SIGTERM leaves return_code at 0.
-    return app.return_code or 0
+    rc = app.return_code or 0
+    if rc == RESTART_EXIT_CODE:
+        # Let cli.py run the updater and os.execvp — that replaces the process
+        # image (killing any threads), so it never hits the interpreter-exit
+        # join below.
+        return rc
+    # A slow tick worker runs `gh`/`git` in a non-daemon executor thread. If `q`
+    # lands mid-tick, Textual restores the terminal and app.run() returns while
+    # that thread is still blocked in the subprocess — then a normal return hangs
+    # at interpreter exit, where concurrent.futures' atexit handler joins it
+    # (the "q, then it hangs until ^C" bug). Nothing lives in memory (cache writes
+    # already hit disk atomically; the pidfile was released on_unmount), so exit
+    # hard and skip that join.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc)
 
 
 def _statusline_command() -> str:
