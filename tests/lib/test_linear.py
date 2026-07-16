@@ -20,6 +20,7 @@ from cockpit.lib.linear import (
     fetch_team_states,
     fetch_ticket_meta,
     fetch_ticket_states,
+    fetch_ticket_titles,
     fetch_viewer_id,
     linear_mcp_available,
     parse_linear_footer_links,
@@ -250,6 +251,26 @@ def _batch_resp(nodes: list[dict]) -> _FakeResp:
 def test_fetch_ticket_states_empty_input_no_network():
     with patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen:
         assert fetch_ticket_states([], api_key="k") == {}
+    urlopen.assert_not_called()
+
+
+def test_fetch_ticket_titles_batched_and_none_on_missing():
+    def fake_urlopen(req, timeout=None):
+        return _batch_resp(
+            [{"identifier": "PE-1", "title": "Fix the login flow"}]
+        )  # PE-2 absent → stays None
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_ticket_titles(["PE-1", "PE-2"], api_key="k")
+    assert out == {"PE-1": "Fix the login flow", "PE-2": None}
+
+
+def test_fetch_ticket_titles_no_key_all_none_no_network():
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_ticket_titles(["PE-1"]) == {"PE-1": None}
     urlopen.assert_not_called()
 
 

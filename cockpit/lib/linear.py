@@ -92,6 +92,15 @@ _TICKET_STATES_BATCH_QUERY = (
     "nodes{identifier state{name}}}}"
 )
 
+# Same team-batched shape, but pulling each ticket's human `title` — the
+# cache-enrichment field a statusline consumer (cship) reads to show the ticket
+# name next to its id, so it never needs its own Linear round-trip.
+_TICKET_TITLES_BATCH_QUERY = (
+    "query($team:String!,$numbers:[Float!]!){"
+    "issues(filter:{team:{key:{eq:$team}},number:{in:$numbers}}){"
+    "nodes{identifier title}}}"
+)
+
 # Same team-key + number filter, but pulling the extra fields the
 # merge-transition path needs: the opaque issue `id` (UUID — what `issueUpdate`
 # wants), the state `type` (so a *canceled* ticket is never resurrected — note
@@ -273,6 +282,52 @@ def fetch_ticket_states(
             orig = id_by_upper.get((node.get("identifier") or "").upper())
             if orig is not None:
                 out[orig] = (node.get("state") or {}).get("name") or None
+    return out
+
+
+def fetch_ticket_titles(
+    ticket_ids: list[str], *, api_key: str | None = None
+) -> dict[str, str | None]:
+    """Return a `{ticket_id: title_or_None}` map covering every id in
+    `ticket_ids`.
+
+    Same team-batched round-trip and error isolation as `fetch_ticket_states`
+    (one query per team, every input id present, None on any failure) — this one
+    pulls the ticket's human title for the PR-cache enrichment rather than its
+    workflow state. Never raises.
+    """
+    out: dict[str, str | None] = {tid: None for tid in ticket_ids}
+    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    if not key:
+        return out
+
+    by_team: dict[str, set[float]] = {}
+    id_by_upper: dict[str, str] = {}
+    for tid in ticket_ids:
+        if not LINEAR_RE_CI.fullmatch(tid or ""):
+            continue
+        team, _, num = tid.partition("-")
+        try:
+            number = float(int(num))
+        except ValueError:
+            continue
+        by_team.setdefault(team.upper(), set()).add(number)
+        id_by_upper[tid.upper()] = tid
+
+    for team, numbers in by_team.items():
+        data = _post_graphql(
+            _TICKET_TITLES_BATCH_QUERY,
+            {"team": team, "numbers": sorted(numbers)},
+            api_key=key,
+            timeout=_TICKET_STATE_TIMEOUT_SECONDS,
+        )
+        nodes = ((data or {}).get("issues") or {}).get("nodes")
+        if not nodes:
+            continue
+        for node in nodes:
+            orig = id_by_upper.get((node.get("identifier") or "").upper())
+            if orig is not None:
+                out[orig] = node.get("title") or None
     return out
 
 

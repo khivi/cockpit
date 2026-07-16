@@ -1420,7 +1420,7 @@ async def test_open_ticket_linear_opens_footer_url(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "_resolve_worktree", lambda p: (repo, wt))
     monkeypatch.setattr(
         "cockpit.tui.app.find_pr_payload",
-        lambda b, name=None: {"number": 7, "linear": {"tickets": [{"id": "PE-9"}]}},
+        lambda b, name=None: {"number": 7, "ticket": {"tickets": [{"id": "PE-9"}]}},
     )
     monkeypatch.setattr(
         "cockpit.lib.tickets.pr_body",
@@ -1450,7 +1450,7 @@ async def test_open_ticket_github_opens_issue_url(monkeypatch, tmp_path):
         lambda b, name=None: {
             "number": 7,
             "url": "https://github.com/ai-needl/repo/pull/7",
-            "linear": {"tickets": [{"id": "#42"}]},
+            "ticket": {"tickets": [{"id": "#42"}]},
         },
     )
     monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))

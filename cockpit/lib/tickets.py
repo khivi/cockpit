@@ -34,11 +34,26 @@ from .gh import pr_body
 from .github_issues import CONFIG_FIELDS as _GITHUB_CONFIG_FIELDS
 from .github_issues import fetch_issues, issue_url, parse_github_issue_refs
 from .jira import CONFIG_FIELDS as _JIRA_CONFIG_FIELDS
-from .jira import fetch_issue_statuses, parse_jira_footer_links, parse_jira_footers
+from .jira import (
+    fetch_issue_statuses,
+    fetch_issue_summaries,
+    parse_jira_footer_links,
+    parse_jira_footers,
+)
 from .linear import CONFIG_FIELDS as _LINEAR_CONFIG_FIELDS
-from .linear import fetch_ticket_states, parse_linear_footer_links, parse_linear_footers
+from .linear import (
+    fetch_ticket_states,
+    fetch_ticket_titles,
+    parse_linear_footer_links,
+    parse_linear_footers,
+)
 from .trello import CONFIG_FIELDS as _TRELLO_CONFIG_FIELDS
-from .trello import fetch_card_lists, parse_trello_footer_links, parse_trello_footers
+from .trello import (
+    fetch_card_lists,
+    fetch_card_names,
+    parse_trello_footer_links,
+    parse_trello_footers,
+)
 
 # ── config-field schema (drives preflight validation) ───────────────────────
 #
@@ -110,6 +125,11 @@ class TicketProvider:
     # repo_entry)` exactly when the ticket/issue is dev-done, so
     # `_track_dev_done` is provider-neutral.
     fetch_states: Callable[..., dict[str, str | None]]
+    # (ids, repo_nwo, repo_dir, cfg, repo_entry) → {id: human-title or None}.
+    # Same signature as `fetch_states`; the enrichment cockpit writes into the PR
+    # cache so a statusline consumer (cship) shows the ticket name beside its id
+    # without its own API round-trip. None per id on any failure/unset creds.
+    fetch_titles: Callable[..., dict[str, str | None]]
     # (ref, *, repo_nwo, repo_dir, pr_number) → the ticket's web URL, or None.
     # GitHub builds it deterministically from ref + repo_nwo; Linear has no
     # constructable URL (workspace slug unknown), so it reads the PR body's
@@ -143,6 +163,20 @@ def _github_fetch_states(
         else:
             out[ref] = (issue or {}).get("state")
     return out
+
+
+def _github_fetch_titles(
+    ids: list[str],
+    *,
+    repo_nwo: str,
+    repo_dir: str,
+    cfg: dict,
+    repo_entry: dict | None = None,
+) -> dict[str, str | None]:
+    """`{ref: issue-title or None}`. `fetch_issues` already returns the title, so
+    this just projects it. Unreadable issues map to None."""
+    issues = fetch_issues(ids, repo_nwo=repo_nwo, repo_dir=repo_dir)
+    return {ref: (issue or {}).get("title") for ref, issue in issues.items()}
 
 
 def _github_ticket_url(
@@ -191,6 +225,20 @@ def _linear_fetch_states(
     return fetch_ticket_states(ids)
 
 
+def _linear_fetch_titles(
+    ids: list[str],
+    *,
+    repo_nwo: str,
+    repo_dir: str,
+    cfg: dict,
+    repo_entry: dict | None = None,
+) -> dict[str, str | None]:
+    """`{id: title}` via the batched Linear query (one per team). Unused kwargs
+    kept for the uniform `fetch_titles` signature (Linear keys off
+    `LINEAR_API_KEY`)."""
+    return fetch_ticket_titles(ids)
+
+
 def _jira_fetch_states(
     ids: list[str],
     *,
@@ -209,6 +257,23 @@ def _jira_fetch_states(
     if not site or not email:
         return {i: None for i in ids}
     return fetch_issue_statuses(ids, site_url=site, email=email)
+
+
+def _jira_fetch_titles(
+    ids: list[str],
+    *,
+    repo_nwo: str,
+    repo_dir: str,
+    cfg: dict,
+    repo_entry: dict | None = None,
+) -> dict[str, str | None]:
+    """`{key: summary}` via the Jira REST API (one GET per key). All keys map to
+    None when the site or email is unconfigured (feature off)."""
+    site = jira_site_url(cfg, repo_entry)
+    email = jira_email(cfg, repo_entry)
+    if not site or not email:
+        return {i: None for i in ids}
+    return fetch_issue_summaries(ids, site_url=site, email=email)
 
 
 def _jira_ticket_url(
@@ -245,6 +310,19 @@ def _trello_fetch_states(
     return fetch_card_lists(ids)
 
 
+def _trello_fetch_titles(
+    ids: list[str],
+    *,
+    repo_nwo: str,
+    repo_dir: str,
+    cfg: dict,
+    repo_entry: dict | None = None,
+) -> dict[str, str | None]:
+    """`{short_link: card_name}` via the Trello REST API (one GET per card). All
+    ids map to None when creds are unset (feature off)."""
+    return fetch_card_names(ids)
+
+
 def _trello_ticket_url(
     ref: str,
     *,
@@ -268,6 +346,7 @@ LINEAR = TicketProvider(
     dev_done_value=linear_dev_done_state,
     parse_footers=lambda body, _nwo: parse_linear_footers(body),
     fetch_states=_linear_fetch_states,
+    fetch_titles=_linear_fetch_titles,
     ticket_url=_linear_ticket_url,
 )
 
@@ -276,6 +355,7 @@ JIRA = TicketProvider(
     dev_done_value=jira_dev_done_status,
     parse_footers=lambda body, _nwo: parse_jira_footers(body),
     fetch_states=_jira_fetch_states,
+    fetch_titles=_jira_fetch_titles,
     ticket_url=_jira_ticket_url,
 )
 
@@ -284,6 +364,7 @@ GITHUB = TicketProvider(
     dev_done_value=github_dev_done_label,
     parse_footers=parse_github_issue_refs,
     fetch_states=_github_fetch_states,
+    fetch_titles=_github_fetch_titles,
     ticket_url=_github_ticket_url,
 )
 
@@ -292,6 +373,7 @@ TRELLO = TicketProvider(
     dev_done_value=trello_dev_done_list,
     parse_footers=lambda body, _nwo: parse_trello_footers(body),
     fetch_states=_trello_fetch_states,
+    fetch_titles=_trello_fetch_titles,
     ticket_url=_trello_ticket_url,
 )
 

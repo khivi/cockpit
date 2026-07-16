@@ -196,7 +196,7 @@ def test_ticket_and_status_columns_when_enabled(cache_dir, monkeypatch):
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
         lambda branch, repo: {
-            "linear": {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}
+            "ticket": {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}
         },
     )
     cells = worktree_cells(wt, "r", None, True, show_tickets=True)
@@ -234,7 +234,7 @@ def test_status_cell_one_icon_per_ticket(cache_dir, monkeypatch):
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
         lambda branch, repo: {
-            "linear": {
+            "ticket": {
                 "tickets": [
                     {"id": "PE-1", "state": "In Review"},
                     {"id": "PE-2", "state": "Done"},
@@ -255,7 +255,7 @@ def test_status_cell_unresolved_state_flags_red(cache_dir, monkeypatch):
     wt = _wt(branch="khivi/down")
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
-        lambda branch, repo: {"linear": {"tickets": [{"id": "PE-1", "state": None}]}},
+        lambda branch, repo: {"ticket": {"tickets": [{"id": "PE-1", "state": None}]}},
     )
     status = worktree_cells(wt, "r", None, True, show_tickets=True)[5]
     assert status.plain == "!"
@@ -266,7 +266,7 @@ def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
     wt = _wt(branch="khivi/nl")
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
-        lambda branch, repo: {"linear": {"tickets": [{"id": "PE-9", "state": "x"}]}},
+        lambda branch, repo: {"ticket": {"tickets": [{"id": "PE-9", "state": "x"}]}},
     )
     # columns exist (some other repo is Linear) but this row's repo isn't
     cells = worktree_cells(wt, "r", None, False, show_tickets=True)
@@ -287,7 +287,7 @@ def test_row_capabilities_pr_muted_ticket(cache_dir, monkeypatch):
     cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
-        lambda branch, repo: {"linear": {"tickets": [{"id": "#42", "state": "open"}]}},
+        lambda branch, repo: {"ticket": {"tickets": [{"id": "#42", "state": "open"}]}},
     )
     assert row_capabilities(wt, "r", True) == frozenset({"pr", "muted", "ticket"})
     # tickets disabled for this repo → no ticket token even with a cached block

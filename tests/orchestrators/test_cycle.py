@@ -1544,7 +1544,7 @@ def _transition_patches(
     each test to patch so it can assert on the call. `payload` defaults to a
     one-ticket linear block."""
     if payload is None:
-        payload = {"linear": {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}}
+        payload = {"ticket": {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}}
     if meta is None:
         meta = {
             "id": "issue-uuid",
@@ -1790,8 +1790,8 @@ def test_transition_viewer_and_team_states_fetched_once(tmp_path, monkeypatch):
     )
     ctx.merged_branches["khivi/feat2"] = "cafe"
     payloads = {
-        "khivi/feat": {"linear": {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}},
-        "khivi/feat2": {"linear": {"tickets": [{"id": "PE-2", "state": "Dev Done"}]}},
+        "khivi/feat": {"ticket": {"tickets": [{"id": "PE-1", "state": "Dev Done"}]}},
+        "khivi/feat2": {"ticket": {"tickets": [{"id": "PE-2", "state": "Dev Done"}]}},
     }
     metas = {
         "PE-1": {
@@ -1865,7 +1865,7 @@ def _jira_transition_ctx(tmp_path, *, cfg=None, branch="khivi/feat"):
 
 def _jira_patches(*, myself="acc-me", meta=None, payload=None):
     if payload is None:
-        payload = {"linear": {"tickets": [{"id": "PROJ-1", "state": "Dev Done"}]}}
+        payload = {"ticket": {"tickets": [{"id": "PROJ-1", "state": "Dev Done"}]}}
     if meta is None:
         meta = {"status": "Dev Done", "assignee_id": "acc-me"}
     return [
@@ -2001,7 +2001,7 @@ def _trello_transition_ctx(tmp_path, *, cfg=None, branch="khivi/feat"):
 
 def _trello_patches(*, myself="mem-me", meta=None, payload=None):
     if payload is None:
-        payload = {"linear": {"tickets": [{"id": "aB3dZ9", "state": "Doing"}]}}
+        payload = {"ticket": {"tickets": [{"id": "aB3dZ9", "state": "Doing"}]}}
     if meta is None:
         meta = {"list": "Doing", "board": "b1", "members": ["mem-me"]}
     return [
@@ -2935,15 +2935,22 @@ def test_prefetch_linear_blocks_fetches_when_no_prior(tmp_path):
             "cockpit.lib.tickets.fetch_ticket_states",
             return_value={"PE-1234": "Dev Done"},
         ) as fetch,
+        patch(
+            "cockpit.lib.tickets.fetch_ticket_titles",
+            return_value={"PE-1234": "Fix the login flow"},
+        ) as fetch_titles,
         patch.object(cycle.time, "time", return_value=1000.0),
     ):
         block = _prefetch_one(ctx, _devdone_pr(FOOTER))
 
     assert block == {
-        "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
+        "tickets": [
+            {"id": "PE-1234", "state": "Dev Done", "title": "Fix the login flow"}
+        ],
         "fetched_at": 1000.0,
     }
     fetch.assert_called_once_with(["PE-1234"])
+    fetch_titles.assert_called_once_with(["PE-1234"])
 
 
 def test_prefetch_linear_blocks_carries_forward_when_unchanged_and_fresh(tmp_path):
@@ -2953,7 +2960,7 @@ def test_prefetch_linear_blocks_carries_forward_when_unchanged_and_fresh(tmp_pat
         "fetched_at": 900.0,
     }
     pr = _devdone_pr(FOOTER)
-    ctx.pr_payloads = {pr.branch: {"linear": prior}}
+    ctx.pr_payloads = {pr.branch: {"ticket": prior}}
     with (
         patch("cockpit.lib.tickets.fetch_ticket_states") as fetch,
         patch.object(cycle.time, "time", return_value=1000.0),  # 100s < 900s TTL
@@ -2969,7 +2976,7 @@ def test_prefetch_linear_blocks_refetches_when_footer_changed(tmp_path):
     pr = _devdone_pr(FOOTER)
     ctx.pr_payloads = {
         pr.branch: {
-            "linear": {
+            "ticket": {
                 "tickets": [{"id": "PE-9", "state": "Dev Done"}],
                 "fetched_at": 990.0,
             }
@@ -2980,12 +2987,18 @@ def test_prefetch_linear_blocks_refetches_when_footer_changed(tmp_path):
             "cockpit.lib.tickets.fetch_ticket_states",
             return_value={"PE-1234": "In Progress"},
         ) as fetch,
+        patch(
+            "cockpit.lib.tickets.fetch_ticket_titles",
+            return_value={"PE-1234": "Fix the login flow"},
+        ),
         patch.object(cycle.time, "time", return_value=1000.0),  # fresh, but ids differ
     ):
         block = _prefetch_one(ctx, pr)
 
     assert block is not None
-    assert block["tickets"] == [{"id": "PE-1234", "state": "In Progress"}]
+    assert block["tickets"] == [
+        {"id": "PE-1234", "state": "In Progress", "title": "Fix the login flow"}
+    ]
     fetch.assert_called_once_with(["PE-1234"])
 
 
@@ -2994,7 +3007,7 @@ def test_prefetch_linear_blocks_refetches_when_stale(tmp_path):
     pr = _devdone_pr(FOOTER)
     ctx.pr_payloads = {
         pr.branch: {
-            "linear": {
+            "ticket": {
                 "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
                 "fetched_at": 0.0,
             }
@@ -3023,19 +3036,24 @@ def test_prefetch_linear_blocks_batches_across_prs_one_call(tmp_path):
     )
     ctx.prs = [pr_a, pr_b]
     states = {"PE-1": "Dev Done", "PE-2": "In Progress", "ENG-3": "Dev Done"}
+    titles = {"PE-1": "A", "PE-2": "B", "ENG-3": "C"}
     with (
         patch("cockpit.lib.tickets.fetch_ticket_states", return_value=states) as fetch,
+        patch(
+            "cockpit.lib.tickets.fetch_ticket_titles", return_value=titles
+        ) as fetch_titles,
         patch.object(cycle.time, "time", return_value=1000.0),
     ):
         cycle._prefetch_linear_blocks(ctx)
 
     fetch.assert_called_once_with(["ENG-3", "PE-1", "PE-2"])  # union, sorted
+    fetch_titles.assert_called_once_with(["ENG-3", "PE-1", "PE-2"])  # titles too
     assert ctx.linear_blocks["khivi/pe-a"]["tickets"] == [
-        {"id": "PE-1", "state": "Dev Done"}
+        {"id": "PE-1", "state": "Dev Done", "title": "A"}
     ]
     assert ctx.linear_blocks["khivi/pe-b"]["tickets"] == [
-        {"id": "PE-2", "state": "In Progress"},
-        {"id": "ENG-3", "state": "Dev Done"},
+        {"id": "PE-2", "state": "In Progress", "title": "B"},
+        {"id": "ENG-3", "state": "Dev Done", "title": "C"},
     ]
 
 
@@ -3882,14 +3900,16 @@ def test_github_prefetch_maps_label_to_devdone(tmp_path):
     ctx = _github_devdone_ctx(tmp_path)
     pr = _devdone_pr("Closes #5", branch="khivi/issue-5")
     # default dev-done label is "ready for review"
-    issues = {"#5": {"labels": ["ready for review"], "state": "open"}}
+    issues = {
+        "#5": {"labels": ["ready for review"], "state": "open", "title": "Fix login"}
+    }
     with (
         patch("cockpit.lib.tickets.fetch_issues", return_value=issues),
         patch.object(cycle.time, "time", return_value=1000.0),
     ):
         block = _prefetch_one(ctx, pr)
     assert block == {
-        "tickets": [{"id": "#5", "state": "ready for review"}],
+        "tickets": [{"id": "#5", "state": "ready for review", "title": "Fix login"}],
         "fetched_at": 1000.0,
     }
 
@@ -3897,13 +3917,13 @@ def test_github_prefetch_maps_label_to_devdone(tmp_path):
 def test_github_prefetch_unlabeled_issue_keeps_state(tmp_path):
     ctx = _github_devdone_ctx(tmp_path)
     pr = _devdone_pr("Closes #5", branch="khivi/issue-5")
-    issues = {"#5": {"labels": ["bug"], "state": "open"}}
+    issues = {"#5": {"labels": ["bug"], "state": "open", "title": "Fix login"}}
     with (
         patch("cockpit.lib.tickets.fetch_issues", return_value=issues),
         patch.object(cycle.time, "time", return_value=1000.0),
     ):
         block = _prefetch_one(ctx, pr)
-    assert block["tickets"] == [{"id": "#5", "state": "open"}]
+    assert block["tickets"] == [{"id": "#5", "state": "open", "title": "Fix login"}]
 
 
 def test_github_track_dev_done_lights_pill(tmp_path):
@@ -3939,7 +3959,7 @@ def _github_merge_patches(*, viewer="khivi", issue=None):
         patch.object(
             cycle,
             "find_pr_payload",
-            return_value={"linear": {"tickets": [{"id": "#5", "state": "open"}]}},
+            return_value={"ticket": {"tickets": [{"id": "#5", "state": "open"}]}},
         ),
         patch.object(cycle, "github_viewer_login", return_value=viewer),
         patch.object(cycle, "fetch_issue", return_value=issue),

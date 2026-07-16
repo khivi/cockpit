@@ -199,6 +199,27 @@ def fetch_card_lists(
     return out
 
 
+def fetch_card_names(
+    short_links: list[str], *, key: str | None = None, token: str | None = None
+) -> dict[str, str | None]:
+    """`{short_link: card_name_or_None}` for every card — the human title for the
+    PR-cache enrichment. Same per-card `GET /cards/{id}?fields=name` shape and
+    error isolation as `fetch_card_lists`. None on unset creds. Never raises.
+    """
+    out: dict[str, str | None] = {sl: None for sl in short_links}
+    creds = _creds(key, token)
+    if not creds:
+        return out
+    k, tok = creds
+    for sl in out:
+        data = _request(
+            "GET", f"/cards/{sl}", key=k, token=tok, params={"fields": "name"}
+        )
+        if isinstance(data, dict):
+            out[sl] = data.get("name") or None
+    return out
+
+
 def fetch_myself(*, key: str | None = None, token: str | None = None) -> str | None:
     """The authenticated member's Trello id, or None — the "only move my own
     cards" gate (the Trello analog of `jira.fetch_myself`). None on unset creds
