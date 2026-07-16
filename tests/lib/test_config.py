@@ -92,7 +92,12 @@ def test_starship_toml_pr_identity_on_line_two():
     """PR/Linear identity (linear + pr_state + pr_num + pr_checks +
     pr_title) lives on line two of the format string so the metric
     strip stays uniform across sessions."""
-    body = _strip_comments((DEFAULTS / "starship.toml").read_text())
+    # The line-2 break is the `__COCKPIT_LINE_SEP__` token in the default,
+    # substituted to a real newline off-macOS at install time. Expand it here
+    # to assert the intended (non-macOS) two-line structure.
+    body = _strip_comments((DEFAULTS / "starship.toml").read_text()).replace(
+        "__COCKPIT_LINE_SEP__", "\n"
+    )
     fmt_start = body.index('format = """')
     fmt_end = body.index('"""', fmt_start + 12)
     fmt = body[fmt_start:fmt_end]
@@ -260,6 +265,29 @@ def test_theme_substituted_at_install(tmp_path, monkeypatch):
         installed = (tmp_path / "xdg" / "starship.toml").read_text()
         assert f'palette = "{expected}"' in installed, f"theme={theme!r}"
         assert "__COCKPIT_THEME__" not in installed
+
+
+def test_line_sep_collapses_to_single_line_on_macos(tmp_path, monkeypatch):
+    """macOS drops line 2 of a multi-line statusLine (claude-code#35176), so
+    `install_starship_default_config()` substitutes the line-break token with
+    empty on darwin (one-line footer) and a real newline elsewhere. The
+    placeholder must never survive into the installed file either way."""
+    import tomllib
+
+    for platform, expect_two_lines in (("darwin", False), ("linux", True)):
+        cfg = {"repos": [], "use_cship": True}
+        (tmp_path / platform).mkdir()
+        cockpit_config = _setup_cockpit_config(tmp_path / platform, monkeypatch, cfg)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / platform / "xdg"))
+        monkeypatch.setattr(config_mod.sys, "platform", platform)
+        cockpit_config.install_starship_default_config()
+        installed = (tmp_path / platform / "xdg" / "starship.toml").read_text()
+        assert "__COCKPIT_LINE_SEP__" not in installed, platform
+        fmt = tomllib.loads(installed)["format"]
+        has_break = "\n" in fmt
+        assert has_break is expect_two_lines, f"{platform}: fmt={fmt!r}"
+        # The PR pills must still be present regardless of layout.
+        assert "${custom.pr_num}" in fmt, platform
 
 
 def test_resolve_theme_validates():

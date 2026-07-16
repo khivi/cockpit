@@ -50,6 +50,13 @@ STARSHIP_DEFAULT_TOML = (
 STARSHIP_CMD = f"{sys.executable} -m cockpit.cli starship"
 STARSHIP_PLACEHOLDER = "__COCKPIT_STARSHIP__"
 STARSHIP_THEME_PLACEHOLDER = "__COCKPIT_THEME__"
+# The line break between the format's two lines (session pills / PR pills).
+# Substituted at install time: a real newline off-macOS (the two-line layout),
+# but empty on macOS — Claude Code renders only the FIRST line of a multi-line
+# statusLine there (anthropics/claude-code#35176, closed not-planned), so a
+# second line would be silently dropped. Collapsing to one line keeps the PR
+# pills visible on macOS.
+STARSHIP_LINE_SEP_PLACEHOLDER = "__COCKPIT_LINE_SEP__"
 VALID_THEMES = ("dark", "light")
 # Default Textual theme for the `cockpit watch` TUI when `tui_theme` is unset.
 # Mirrors Textual's own default (constants.DEFAULT_THEME = $TEXTUAL_THEME or
@@ -816,10 +823,12 @@ def install_starship_default_config() -> None:
         return
     if not STARSHIP_DEFAULT_TOML.exists():
         return
+    line_sep = "" if sys.platform == "darwin" else "\n"
     payload = (
         STARSHIP_DEFAULT_TOML.read_text()
         .replace(STARSHIP_PLACEHOLDER, STARSHIP_CMD)
         .replace(STARSHIP_THEME_PLACEHOLDER, resolve_theme())
+        .replace(STARSHIP_LINE_SEP_PLACEHOLDER, line_sep)
     ).encode()
     _seed_default_toml(
         STARSHIP_DEFAULT_TOML, _starship_user_config_path(), "starship", payload
