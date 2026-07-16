@@ -19,6 +19,7 @@ from cockpit.lib.trello import (
     card_short_link,
     fetch_card_lists,
     fetch_card_meta,
+    fetch_card_names,
     fetch_myself,
     move_card,
     parse_trello_footer_links,
@@ -132,6 +133,29 @@ def test_fetch_card_lists_happy_path_and_query_auth():
     # key + token ride as query params (Trello's scheme), not a header.
     assert "key=key_xxx" in captured["url"] and "token=tok_xxx" in captured["url"]
     assert captured["url"].startswith("https://api.trello.com/1/cards/aB3dZ9?")
+
+
+def test_fetch_card_names_happy_path_and_fields_param():
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        return _FakeResp({"name": "Fix the login flow"})
+
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_card_names(["aB3dZ9"], key=KEY, token=TOKEN)
+    assert out == {"aB3dZ9": "Fix the login flow"}
+    assert "fields=name" in captured["url"]
+
+
+def test_fetch_card_names_no_creds_skips_network():
+    with (
+        patch("cockpit.lib.trello.urllib.request.urlopen") as urlopen,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        out = fetch_card_names(["aB3dZ9"])
+    assert out == {"aB3dZ9": None}
+    urlopen.assert_not_called()
 
 
 def test_fetch_card_lists_no_creds_skips_network():

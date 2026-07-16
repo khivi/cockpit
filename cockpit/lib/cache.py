@@ -72,7 +72,7 @@ def write_pr_cache(
     pr: PR,
     wt: Worktree | None = None,
     pref: NudgePref | None = None,
-    linear: dict | None = None,
+    ticket: dict | None = None,
     *,
     reused_branch: bool = False,
     other_author: str = "",
@@ -87,11 +87,13 @@ def write_pr_cache(
     `refresh_pr_data` (the `warm` prewarm) can republish the same snapshot
     into the `pr-muted` flat cell without re-reading `nudges`.
 
-    `linear` is the resolved Linear-delivery block — `{"tickets": [{"id",
-    "state"}], "fetched_at": ts}` — for the tickets this PR delivers (from its
-    `Linear:` footer). Network-fetched like the PR itself, so it is cached here
-    rather than recomputed every render. The daemon (cycle.py) decides when to
-    refetch vs. carry forward; this writer just persists what it's handed.
+    `ticket` is the resolved delivery block — `{"tickets": [{"id", "state",
+    "title"}], "fetched_at": ts}` — for the tickets this PR delivers (from its
+    provider footer: Linear/Jira/Trello/GitHub). Provider-neutral: stored under
+    the `ticket` key (`title` is the enrichment a statusline consumer like cship
+    reads). Network-fetched like the PR itself, so it is cached here rather than
+    recomputed every render. The daemon (cycle.py) decides when to refetch vs.
+    carry forward; this writer just persists what it's handed.
 
     `reused_branch` records the daemon's reused-branch decision (a merged/closed
     PR whose head the worktree's HEAD has advanced past — see
@@ -137,8 +139,8 @@ def write_pr_cache(
         # issue logic (the daemon-is-sole-decider invariant).
         "nudge": pr.nudge_issue,
     }
-    if linear is not None:
-        payload["linear"] = linear
+    if ticket is not None:
+        payload["ticket"] = ticket
     _atomic_write_json(path, payload)
     return payload
 

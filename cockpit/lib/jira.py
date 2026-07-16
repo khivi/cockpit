@@ -184,6 +184,28 @@ def fetch_issue_statuses(
     return out
 
 
+def fetch_issue_summaries(
+    keys: list[str], *, site_url: str, email: str, token: str | None = None
+) -> dict[str, str | None]:
+    """`{key: summary_or_None}` for every key — the human title for the PR-cache
+    enrichment. Same per-key `GET /issue/{key}?fields=summary` shape and error
+    isolation as `fetch_issue_statuses`. None on unset creds/site. Never raises.
+    """
+    out: dict[str, str | None] = {k: None for k in keys}
+    creds = _creds(email, token)
+    if not creds or not site_url:
+        return out
+    em, tok = creds
+    base = _base(site_url)
+    for key in out:
+        data = _request(
+            "GET", f"{base}/rest/api/3/issue/{key}?fields=summary", email=em, token=tok
+        )
+        summary = ((data or {}).get("fields") or {}).get("summary")
+        out[key] = summary or None
+    return out
+
+
 def fetch_myself(*, site_url: str, email: str, token: str | None = None) -> str | None:
     """The authenticated user's Jira `accountId`, or None — the "only transition
     my own issues" gate (the Jira analog of `linear.fetch_viewer_id`). None on

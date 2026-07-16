@@ -906,7 +906,7 @@ class CockpitApp(App[None]):
             return
         repo_name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
         payload = find_pr_payload(wt.branch, repo_name)
-        tickets = ((payload or {}).get("linear") or {}).get("tickets") or []
+        tickets = ((payload or {}).get("ticket") or {}).get("tickets") or []
         if not payload or not tickets:
             self._notify("no ticket for this row", severity="warning")
             return

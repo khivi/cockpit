@@ -277,7 +277,7 @@ def _decide_linear_refetch(ctx: RepoCycle, pr: PR, now: float) -> tuple[str, obj
     if _provider(ctx) is None:
         return "skip", None
     ids = _ticket_footer_ids(ctx, pr)
-    prior_block = (ctx.pr_payloads.get(pr.branch) or {}).get("linear")
+    prior_block = (ctx.pr_payloads.get(pr.branch) or {}).get("ticket")
     if prior_block:
         prior_ids = [t.get("id") for t in prior_block.get("tickets", [])]
         fresh = now - float(
@@ -318,8 +318,12 @@ def _prefetch_linear_blocks(ctx: RepoCycle) -> None:
     if not builds:
         return
     states = _fetch_ticket_states(ctx, sorted(due)) if due else {}
+    titles = _fetch_ticket_titles(ctx, sorted(due)) if due else {}
     for branch, ids in builds:
-        tickets = [{"id": tid, "state": states.get(tid)} for tid in ids]
+        tickets = [
+            {"id": tid, "state": states.get(tid), "title": titles.get(tid)}
+            for tid in ids
+        ]
         ctx.linear_blocks[branch] = {"tickets": tickets, "fetched_at": now}
 
 
@@ -330,6 +334,21 @@ def _fetch_ticket_states(ctx: RepoCycle, ids: list[str]) -> dict[str, str | None
     if provider is None:
         return {}
     return provider.fetch_states(
+        ids,
+        repo_nwo=f"{ctx.owner}/{ctx.name}",
+        repo_dir=str(ctx.repo_path),
+        cfg=ctx.cfg,
+        repo_entry=ctx.repo_entry,
+    )
+
+
+def _fetch_ticket_titles(ctx: RepoCycle, ids: list[str]) -> dict[str, str | None]:
+    """Resolve `{id: human-title}` via the repo's provider strategy — the PR-cache
+    enrichment cship reads. Returns empty when the repo has no provider."""
+    provider = _provider(ctx)
+    if provider is None:
+        return {}
+    return provider.fetch_titles(
         ids,
         repo_nwo=f"{ctx.owner}/{ctx.name}",
         repo_dir=str(ctx.repo_path),
@@ -644,7 +663,7 @@ def _transition_merged_linear(ctx: RepoCycle) -> None:
         if not _is_post_merge_stale(wt, ctx.merged_branches):
             continue
         payload = find_pr_payload(wt.branch, ctx.name)
-        tickets = ((payload or {}).get("linear") or {}).get("tickets") or []
+        tickets = ((payload or {}).get("ticket") or {}).get("tickets") or []
         for entry in tickets:
             tid = entry.get("id")
             if not tid:
@@ -730,7 +749,7 @@ def _transition_merged_github(ctx: RepoCycle) -> None:
         if not _is_post_merge_stale(wt, ctx.merged_branches):
             continue
         payload = find_pr_payload(wt.branch, ctx.name)
-        tickets = ((payload or {}).get("linear") or {}).get("tickets") or []
+        tickets = ((payload or {}).get("ticket") or {}).get("tickets") or []
         for entry in tickets:
             ref = entry.get("id")
             if not ref:
@@ -821,7 +840,7 @@ def _transition_merged_jira(ctx: RepoCycle) -> None:
         if not _is_post_merge_stale(wt, ctx.merged_branches):
             continue
         payload = find_pr_payload(wt.branch, ctx.name)
-        tickets = ((payload or {}).get("linear") or {}).get("tickets") or []
+        tickets = ((payload or {}).get("ticket") or {}).get("tickets") or []
         for entry in tickets:
             key = entry.get("id")
             if not key:
@@ -914,7 +933,7 @@ def _transition_merged_trello(ctx: RepoCycle) -> None:
         if not _is_post_merge_stale(wt, ctx.merged_branches):
             continue
         payload = find_pr_payload(wt.branch, ctx.name)
-        tickets = ((payload or {}).get("linear") or {}).get("tickets") or []
+        tickets = ((payload or {}).get("ticket") or {}).get("tickets") or []
         for entry in tickets:
             ref = entry.get("id")
             if not ref:
@@ -1465,8 +1484,8 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
     for pr in ctx.prs:
         pref = ctx.prefs.get(pr.number)
         wt_opt = wt_by_branch.get(pr.branch)
-        # None for non-Linear repos → field untouched by write_pr_cache.
-        linear = ctx.linear_blocks.get(pr.branch)
+        # None for no-provider repos → field untouched by write_pr_cache.
+        ticket = ctx.linear_blocks.get(pr.branch)
         reused = _is_reused_branch_merge(wt_opt, pr)
         # The author's login only when this is someone else's PR (a coworker /
         # review PR) — empty for my own. Resolved here, the one place self_user
@@ -1478,7 +1497,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             pr,
             wt_opt,
             pref,
-            linear=linear,
+            ticket=ticket,
             reused_branch=reused,
             other_author=other_author,
         )

@@ -272,7 +272,7 @@ def _linear_cells(wt: Worktree, repo_name: str) -> tuple[Text, Text]:
     its own `_linear_status_icon` style. Both blank when there are no delivered
     tickets."""
     payload = find_pr_payload(wt.branch, repo_name) or {}
-    tickets = (payload.get("linear") or {}).get("tickets") or []
+    tickets = (payload.get("ticket") or {}).get("tickets") or []
     if not tickets:
         return Text(""), Text("")
     ids = ", ".join(str(t.get("id", "?")) for t in tickets)
@@ -322,7 +322,7 @@ def row_capabilities(
     if read_text(branch_cache("pr-muted", wt.branch)):
         caps.add("muted")
     if tickets_enabled and (
-        (find_pr_payload(wt.branch, repo_name) or {}).get("linear") or {}
+        (find_pr_payload(wt.branch, repo_name) or {}).get("ticket") or {}
     ).get("tickets"):
         caps.add("ticket")
     if has_workspace:

@@ -1,7 +1,11 @@
 # TODO
 
-## Linear title in cship pill
+_Nothing queued._
 
-Cockpit no longer renders the statusline itself — `use_cship: true` delegates to the `cship` binary. Any "Linear title in the statusline" work belongs in cship's repo, not here.
+## Done
 
-The data path cockpit could still own: enrich `~/.config/cockpit/cache/{repo}__pr-{N}.json` with `linear_id` / `linear_title` so cship (or any other consumer) reads them without its own Linear API call. Deferred until cship grows a hook for that.
+- **Ticket title in PR cache** — the delivery block (`payload["ticket"]`, renamed
+  from `linear`) now carries a provider-neutral `title` per ticket
+  (`provider.fetch_titles`, Linear/Jira/Trello/GitHub), so cship (or any
+  consumer) reads the ticket name from `~/.config/cockpit/cache/{repo}__pr-{N}.json`
+  without its own API call. Rendering the title in the statusline is cship's job.

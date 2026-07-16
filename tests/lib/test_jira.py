@@ -19,6 +19,7 @@ from unittest.mock import patch
 from cockpit.lib.jira import (
     fetch_issue_meta,
     fetch_issue_statuses,
+    fetch_issue_summaries,
     fetch_myself,
     parse_jira_footer_links,
     parse_jira_footers,
@@ -106,6 +107,26 @@ def test_fetch_issue_statuses_happy_path_and_basic_auth():
     assert out == {"PROJ-1": "Dev Done"}
     assert captured["auth"] == _expected_basic()  # base64(email:token), no Bearer
     assert captured["url"] == f"{SITE}/rest/api/3/issue/PROJ-1?fields=status"
+
+
+def test_fetch_issue_summaries_happy_path():
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        return _FakeResp({"fields": {"summary": "Fix the login flow"}})
+
+    with patch("cockpit.lib.jira.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_issue_summaries(["PROJ-1"], site_url=SITE, email=EMAIL, token=TOKEN)
+    assert out == {"PROJ-1": "Fix the login flow"}
+    assert captured["url"] == f"{SITE}/rest/api/3/issue/PROJ-1?fields=summary"
+
+
+def test_fetch_issue_summaries_no_creds_all_none_no_network():
+    with patch("cockpit.lib.jira.urllib.request.urlopen") as urlopen:
+        out = fetch_issue_summaries(["PROJ-1"], site_url="", email="", token=None)
+    assert out == {"PROJ-1": None}
+    urlopen.assert_not_called()
 
 
 def test_fetch_issue_statuses_trailing_slash_site_no_double_slash():
