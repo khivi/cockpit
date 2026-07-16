@@ -2,11 +2,11 @@
 
 `worktree_cells` is a pure function — no Textual. Seeds the same flat cache
 cells the daemon writes, then asserts the per-column Rich Text. Columns are
-grouped by domain: Workspace | PR | 🔀 | CI | comments | (Ticket) | (Status) |
-✎ | Author | Title — the GitHub cluster (PR/🔀/CI/comments) sits next to
-Workspace, then the ticket cluster (Ticket/Status, present only when some repo
-has a ticket provider), then Dirty, then the rarely-populated Author (blank for
-self-authored PRs, the coworker login for a review PR), then Title. Tests index
+grouped by domain: Workspace | PR | ✎ | 🔀 | CI | comments | (Ticket) |
+(Status) | Author | Title — Dirty (✎) sits right after PR, then the rest of the
+GitHub cluster (🔀/CI/comments), then the ticket cluster (Ticket/Status, present
+only when some repo has a ticket provider), then the rarely-populated Author
+(blank for self-authored PRs, the coworker login for a review PR), then Title. Tests index
 columns by label via `_col(...)` so a reorder doesn't touch every assertion. The
 repo is conveyed by a group-header row plus a tint on the workspace name (not a
 column). The Dirty column (icon header)
@@ -76,10 +76,10 @@ def test_cell_count_matches_columns(cache_dir):
     assert cols == (
         "Workspace",
         "PR",
+        _DIRTY_ICON,
         _APPROVAL_ICON,
         "CI",
         "💬",
-        _DIRTY_ICON,
         "Author",
         "Title",
     )
@@ -90,12 +90,12 @@ def test_cell_count_matches_columns(cache_dir):
     assert lin == (
         "Workspace",
         "PR",
+        _DIRTY_ICON,
         _APPROVAL_ICON,
         "CI",
         "💬",
         "Ticket",
         _STATUS_ICON,
-        _DIRTY_ICON,
         "Author",
         "Title",
     )
