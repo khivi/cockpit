@@ -68,13 +68,13 @@ Each cycle re-reads `git worktree list` and `cmux tree`. Only PR payloads are ca
 `lib/starship.py` field printers are strictly read-only (no gh/git/subprocess/`atomic_write`).
 
 - **Slow tick** (`slow_poll_interval_seconds`, 300s) — `cycle.py::cycle_all`: full reconcile (gh fetch, base-distance, per-PR JSON, PR flat cells, git-state cells, pills).
-- **Fast tick** (`fast_poll_interval_seconds`, 30s) — `cockpit.py::_fast_tick`: network-free republish of git-state (`write_git_state_cache`) + PR flat cells from disk (`republish_pr_caches_from_disk`), so `git checkout` / tmpdir wipes recover in ~30s.
+- **Fast tick** (`fast_poll_interval_seconds`, 30s) — `cockpit.py::_fast_tick`: network-free republish of git-state (`write_git_state_cache`) + PR flat cells from disk (`republish_pr_caches_from_disk`) + workspace name (`reconcile_workspace_names`) and sidebar-colour (`_tint_repo_workspaces`) reconcile, so `git checkout` / tmpdir wipes / a freshly spawned workspace's name+colour recover in ~30s.
 
 New cell → writer in `cache.py`, call site in the slow tick (decide + snapshot) and/or fast tick (republish). **Never** let a renderer read source state directly — that same-render disagreement is the bug class this avoids.
 
 ### `sidebar_color` — cosmetic, cmux-only, per-repo
 
-Applied slow-tick via `_apply_repo_colors` → `cmux … set-color`, deduped in `pill_state` under `color:<ref>` (cmux touched only on change/restart). Validated at preflight (`_validate_sidebar_colors`, `sys.exit(2)` on unknown). Valid set = `colors.CMUX_COLOR_ANSI` (= `cmux.WORKSPACE_COLORS`).
+Applied slow-tick via `_apply_repo_colors` **and** fast-tick via `_tint_repo_workspaces` → `cmux … set-color`, deduped in `pill_state` under `color:<ref>` (the same key + persistent dict, so cmux is touched only on change/restart; the fast pass just closes a freshly spawned workspace's ~300s→~30s colour gap, mirroring the name reconcile). Validated at preflight (`_validate_sidebar_colors`, `sys.exit(2)` on unknown). Valid set = `colors.CMUX_COLOR_ANSI` (= `cmux.WORKSPACE_COLORS`).
 
 ### Workspace names track repo + branch (`wt.workspace_name`), re-asserted on both ticks
 

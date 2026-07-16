@@ -161,6 +161,79 @@ def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
     assert republished == [True]  # tick completed
 
 
+def test_fast_tick_tints_spawned_workspace(tmp_path, monkeypatch):
+    """A repo with a `sidebar_color` gets its owned workspaces tinted on the
+    fast tick and the tint recorded in the shared `pill_state`, so a freshly
+    spawned workspace picks up the colour within ~30s (not the next slow tick)."""
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
+
+    importlib.reload(cockpit)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = Worktree(path=repo / "feat", branch="khivi/feat")
+    (repo / "feat").mkdir()
+    cwds = {"workspace:1": repo / "feat"}
+
+    tinted: list = []
+    monkeypatch.setattr(
+        cockpit,
+        "load_config",
+        lambda: {"repos": [{"path": str(repo), "sidebar_color": "Teal"}]},
+    )
+    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, cwds))
+    monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda *a: None)
+    monkeypatch.setattr(
+        cockpit, "set_workspace_color", lambda ref, color: tinted.append((ref, color))
+    )
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+
+    state: dict = {"pill_state": {}}
+    cockpit._fast_tick(state)
+
+    assert tinted == [("workspace:1", "Teal")]
+    assert state["pill_state"]["color:workspace:1"] == "Teal"
+
+    # Second tick with the colour already recorded is a no-op (shared dedup).
+    tinted.clear()
+    cockpit._fast_tick(state)
+    assert tinted == []
+
+
+def test_fast_tick_skips_color_without_sidebar_color(tmp_path, monkeypatch):
+    """A repo with no `sidebar_color` is never tinted on the fast tick."""
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
+
+    importlib.reload(cockpit)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = Worktree(path=repo / "feat", branch="khivi/feat")
+
+    tinted: list = []
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
+    )
+    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(
+        cockpit, "workspace_state", lambda: ({}, {"workspace:1": repo / "feat"})
+    )
+    monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda *a: None)
+    monkeypatch.setattr(
+        cockpit, "set_workspace_color", lambda ref, color: tinted.append((ref, color))
+    )
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+
+    cockpit._fast_tick({})
+
+    assert tinted == []
+
+
 def test_watch_requires_tty(capsys):
     """`cockpit watch` is TUI-only: with no TTY (as under pytest capture) it
     prints a clean message and exits 2 instead of launching Textual."""
