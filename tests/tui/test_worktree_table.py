@@ -570,6 +570,24 @@ def test_row_tooltips_aligned_and_decode(cache_dir, monkeypatch):
     assert tip("Title") is None
 
 
+def test_row_tooltips_trello_status_uses_title_not_short_link(cache_dir, monkeypatch):
+    # The 📍 hover must match the Ticket cell: Trello's opaque short link is
+    # garbage to a human, so show the card title (id fallback), not the id.
+    wt = _wt(path="/tmp/trtip", branch="khivi/trtip")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: {
+            "ticket": {
+                "tickets": [
+                    {"id": "EVskYnXV", "state": "Code Complete", "title": "Dockerize"}
+                ]
+            }
+        },
+    )
+    tips = row_tooltips(wt, "r", "trello", show_tickets=True)
+    assert tips[_col(_STATUS_ICON, show_tickets=True)] == "Dockerize: Code Complete"
+
+
 def test_row_tooltips_blank_when_no_data(cache_dir, monkeypatch):
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload", lambda branch, repo: None
