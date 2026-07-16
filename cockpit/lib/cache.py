@@ -334,6 +334,18 @@ def _resolve_state(state: str, is_draft: bool, review: str) -> str:
     return state
 
 
+def ticket_pill_id(block: dict | None) -> str:
+    """The first delivered ticket id from a `ticket` block
+    (`{"tickets": [{"id", ...}], ...}`), or "" — the provider-neutral value the
+    statusline `pr-ticket` cell / pill renders: Linear `PE-1234`, Jira
+    `PROJ-123`, GitHub `#123`, Trello the card short link. Footer-derived by the
+    daemon (`cycle._prefetch_linear_blocks`), so a codename branch that carries
+    no id (Trello/Slack sources) still resolves once the PR footer is aligned.
+    """
+    tickets = (block or {}).get("tickets") or []
+    return str(tickets[0].get("id") or "") if tickets else ""
+
+
 def _write_pr_flat_cells(
     branch: str,
     *,
@@ -345,8 +357,9 @@ def _write_pr_flat_cells(
     total: int = 0,
     author: str = "",
     nudge: str = "",
+    ticket_id: str = "",
 ) -> None:
-    """Write the eight branch-keyed PR flat cells that every PR writer shares.
+    """Write the nine branch-keyed PR flat cells that every PR writer shares.
 
     `state` is already resolved (see `_resolve_state`). The `pr-checks` cell is
     deliberately NOT written here — its three writers disagree on purpose
@@ -367,6 +380,11 @@ def _write_pr_flat_cells(
     that the TUI renders as 🔔. Always written so the bell clears the moment CI
     goes green / threads resolve / the PR merges, with no separate clearing path
     (derived, never stored as standalone state).
+
+    `ticket_id` is the delivered ticket id (`ticket_pill_id` of the PR's `ticket`
+    block) that the statusline `pr-ticket` pill renders — provider-neutral, so a
+    Trello codename branch resolves off the footer, not a branch regex. Always
+    written so a re-aligned or removed footer clears the stale id.
     """
     atomic_write(branch_cache("pr-state", branch), state)
     atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
@@ -376,6 +394,7 @@ def _write_pr_flat_cells(
     atomic_write(branch_cache("pr-comments-total", branch), str(total) if total else "")
     atomic_write(branch_cache("pr-author", branch), str(author or ""))
     atomic_write(branch_cache("pr-nudge", branch), str(nudge or ""))
+    atomic_write(branch_cache("pr-ticket", branch), str(ticket_id or ""))
 
 
 def refresh_pr_data(branch: str) -> None:
@@ -406,6 +425,7 @@ def refresh_pr_data(branch: str) -> None:
             total=0,
             author="",
             nudge="",
+            ticket_id="",
         )
         return
     _write_pr_flat_cells(
@@ -422,6 +442,7 @@ def refresh_pr_data(branch: str) -> None:
         total=int(data.get("total") or 0),
         author=str(data.get("author") or ""),
         nudge=str(data.get("nudge") or ""),
+        ticket_id=ticket_pill_id(data.get("ticket")),
     )
 
 
@@ -533,6 +554,7 @@ def write_branch_pr_cache(
     total: int = 0,
     author: str = "",
     nudge: str = "",
+    ticket_id: str = "",
 ) -> None:
     """Daemon-tick entrypoint: write pre-resolved PR fields straight to the
     flat cache, no `gh` round-trip needed. Caller (cockpit.py::cycle_repo)
@@ -566,6 +588,7 @@ def write_branch_pr_cache(
         total=total,
         author=author,
         nudge=nudge,
+        ticket_id=ticket_id,
     )
     if ci_glyph:
         atomic_write(branch_cache("pr-checks", branch), ci_glyph)
@@ -580,6 +603,7 @@ _BRANCH_PR_CELLS = (
     "pr-comments-total",
     "pr-author",
     "pr-nudge",
+    "pr-ticket",
     "pr-checks",
 )
 
@@ -607,7 +631,7 @@ def republish_pr_caches_from_disk() -> None:
     pattern. Walks `$COCKPIT_HOME/cache/*__pr-*.json` and, for each
     payload's `branch`, re-writes `pr-state`, `pr-num`, `pr-title`,
     `pr-muted`, `pr-comments`, `pr-comments-total`, `pr-author`, `pr-nudge`,
-    `pr-checks`.
+    `pr-ticket`, `pr-checks`.
     Pure JSON → flat-cell republish,
     no `gh` calls — safe to run on the fast tick.
 
@@ -651,6 +675,7 @@ def republish_pr_caches_from_disk() -> None:
             total=int(payload.get("total") or 0),
             author=str(payload.get("author") or ""),
             nudge=str(payload.get("nudge") or ""),
+            ticket_id=ticket_pill_id(payload.get("ticket")),
         )
         atomic_write(
             branch_cache("pr-checks", branch), _ci_glyph(str(payload.get("ci") or ""))

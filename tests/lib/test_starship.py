@@ -166,6 +166,35 @@ def test_print_ticket_no_ticket(_clean_git_env, cache_dir, tmp_path, monkeypatch
     assert starship.print_ticket() == ""
 
 
+def test_print_ticket_reads_pr_ticket_cell(
+    _clean_git_env, cache_dir, tmp_path, monkeypatch
+):
+    """A codename branch (no Linear id) resolves the ticket from the
+    daemon-written `pr-ticket` cell — the Trello short link the PR footer
+    delivers."""
+    import cockpit.lib.cache as cache_mod
+
+    repo = _make_repo(tmp_path, branch="khivi/fnox")
+    monkeypatch.chdir(repo)
+    _seed_git_state(repo)
+    cache_mod.branch_cache("pr-ticket", "khivi/fnox").write_text("VfqsfqUd")
+    assert starship.print_ticket() == "VfqsfqUd"
+
+
+def test_print_ticket_cell_wins_over_branch_regex(
+    _clean_git_env, cache_dir, tmp_path, monkeypatch
+):
+    """When both are present the footer-derived cell wins over the branch slug —
+    the footer is the delivery signal, the branch is only a fallback."""
+    import cockpit.lib.cache as cache_mod
+
+    repo = _make_repo(tmp_path, branch="khivi/PRO-123-fix")
+    monkeypatch.chdir(repo)
+    _seed_git_state(repo)
+    cache_mod.branch_cache("pr-ticket", "khivi/PRO-123-fix").write_text("PRO-999")
+    assert starship.print_ticket() == "PRO-999"
+
+
 # ── PR cache reads ─────────────────────────────────────────────────────────
 
 
