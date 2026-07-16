@@ -32,6 +32,32 @@ def claim_pidfile() -> None:
     PID_FILE.write_text(str(os.getpid()))
 
 
+def reassert_pidfile() -> None:
+    """Re-write the pidfile if it's missing or stale, so a live daemon that
+    lost its pidfile mid-run becomes reachable again.
+
+    `claim_pidfile` runs exactly once, at startup. If the pidfile is later
+    deleted — the self-update restart window (`release_pidfile` on unmount, then
+    a multi-second `cockpit update` subprocess before the re-exec re-claims), a
+    racing stale-cleanup, or an external `rm` — nothing rewrites it, so
+    `cockpit close`/spawn kicks report "no daemon" for the rest of this
+    process's life. Called each fast tick to self-heal within ~30s, mirroring
+    the workspace-name / colour / `idle=` re-asserts. Idempotent; only writes on
+    drift, and never clobbers a pidfile a *different* live daemon holds."""
+    me = os.getpid()
+    try:
+        raw = PID_FILE.read_text().strip()
+    except OSError:
+        PID_FILE.write_text(str(me))  # missing → reclaim
+        return
+    if raw == str(me):
+        return  # already ours — no-op
+    try:
+        os.kill(int(raw), 0)
+    except (ValueError, ProcessLookupError, OSError):
+        PID_FILE.write_text(str(me))  # dead/corrupt → reclaim
+
+
 def release_pidfile() -> None:
     """Remove the pidfile if present (idempotent)."""
     PID_FILE.unlink(missing_ok=True)

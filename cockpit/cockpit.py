@@ -48,6 +48,7 @@ from cockpit.lib.config import (
     install_starship_default_config,
     load_config,
 )
+from cockpit.lib.daemon import reassert_pidfile
 from cockpit.lib.gh import gh_self_user, require_gh
 from cockpit.lib.git import require_git, worktrees
 from cockpit.lib.preflight import preflight
@@ -139,6 +140,7 @@ def _fast_tick(state: dict) -> None:
     Lock-free: the TUI serializes this against the slow tick under its own lock
     (both write the same cache cells).
     """
+    reassert_pidfile()  # self-heal a pidfile lost mid-run (~30s recovery)
     cfg = load_config()
     pill_state = state.setdefault("pill_state", {})
     # Names/cwds are a local (non-network) cmux query; fetch once and reuse
