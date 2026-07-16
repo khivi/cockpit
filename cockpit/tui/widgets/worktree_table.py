@@ -25,10 +25,10 @@ word "Status", mapped from the state name via `_linear_status_icon`), both from
 the cached per-PR block.
 
 Columns are grouped by domain so the eye doesn't hop between GitHub and ticket
-data: the GitHub cluster (PR # / review-state / CI / comments) sits together next
-to `Workspace`, then the ticket cluster (Ticket id / status), then the local
-dirty column, then the rarely-populated `Author`, and finally the long `Title` at
-the end. Every
+data: the local dirty column sits right after `PR` #, then the rest of the GitHub
+cluster (review-state / CI / comments), then the ticket cluster (Ticket id /
+status), then the rarely-populated `Author`, and finally the long `Title` at the
+end. Every
 icon-headed column carries a hover tooltip (`watch_hover_coordinate`) — hovering
 the header shows what the column means; hovering a value cell shows the decoded
 value (PR review-state name, ticket workflow state, CI verdict) — so the glyphs
@@ -170,17 +170,17 @@ _DIRTY_ICON = ICON_UNSTAGED
 
 
 def column_labels(*, show_tickets: bool) -> tuple[str, ...]:
-    """Column headers in display order, grouped by domain. The GitHub cluster —
-    `PR` #, the `🔀` review-state, `CI`, and `💬` comments — sits together next to
-    `Workspace`. The ticket cluster — `Ticket` id then its `📍` workflow-state —
-    follows, present only when some configured repo has a ticket provider (Linear
-    or GitHub, `show_tickets`). Then the local `✎` dirty column, then `Author`
-    (blank for self-authored, the coworker login on a review PR — rarely
-    populated, so parked near the end), and finally the long `Title`."""
-    cols = ["Workspace", "PR", _APPROVAL_ICON, "CI", "💬"]
+    """Column headers in display order, grouped by domain. The local `✎` dirty
+    column sits right after `PR` #, then the rest of the GitHub cluster — the `🔀`
+    review-state, `CI`, and `💬` comments. The ticket cluster — `Ticket` id then
+    its `📍` workflow-state — follows, present only when some configured repo has a
+    ticket provider (Linear or GitHub, `show_tickets`). Then `Author` (blank for
+    self-authored, the coworker login on a review PR — rarely populated, so parked
+    near the end), and finally the long `Title`."""
+    cols = ["Workspace", "PR", _DIRTY_ICON, _APPROVAL_ICON, "CI", "💬"]
     if show_tickets:
         cols += ["Ticket", _STATUS_ICON]
-    cols += [_DIRTY_ICON, "Author", "Title"]
+    cols += ["Author", "Title"]
     return tuple(cols)
 
 
@@ -361,10 +361,10 @@ def worktree_cells(
     show_tickets: bool,
 ) -> list[Text]:
     """Build one row's cells (Rich Text, so colours survive), in `column_labels`
-    order: the GitHub cluster (PR / state / CI / comments), then the ticket
-    cluster (Ticket / Status) when `show_tickets` (blank for a row whose repo has
-    no ticket provider, `tickets_provider == "none"`), then Dirty, Author, and
-    Title."""
+    order: PR, Dirty, then the rest of the GitHub cluster (state / CI / comments),
+    then the ticket cluster (Ticket / Status) when `show_tickets` (blank for a row
+    whose repo has no ticket provider, `tickets_provider == "none"`), then Author
+    and Title."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
@@ -388,6 +388,7 @@ def worktree_cells(
             nudge=bool(cell("pr-nudge")),
         ),
         Text(f"#{num}") if num else Text(""),
+        _dirty_cell(wt),
         Text(state_icon, style=style) if state else Text(""),
         Text(ci, style=_CI_STYLE.get(ci, "white")) if ci else Text(""),
         comments,
@@ -395,7 +396,6 @@ def worktree_cells(
     if show_tickets:
         cells += [ticket, ticket_status]
     cells += [
-        _dirty_cell(wt),
         # Author is populated by the daemon only for other-authored (coworker /
         # review) PRs — blank for my own, so the column reads "whose PR is this
         # that isn't mine". Rarely populated → parked just before Title.
@@ -522,6 +522,7 @@ def row_tooltips(
     tips: list[str | None] = [
         workspace,
         None,  # PR #
+        _dirty_tooltip(wt),
         _STATE_LABEL.get(cell("pr-state")),
         _CI_LABEL.get(cell("pr-checks")),
         _comments_tooltip(cell("pr-comments"), cell("pr-comments-total")),
@@ -533,7 +534,7 @@ def row_tooltips(
             if tickets_provider != "none"
             else None,
         ]
-    tips += [_dirty_tooltip(wt), None, None]  # Dirty, Author, Title
+    tips += [None, None]  # Author, Title
     return tips
 
 
