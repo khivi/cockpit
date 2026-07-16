@@ -422,7 +422,7 @@ def test_row_capabilities_primary_on_feature_branch_not_primary(cache_dir, monke
         lambda branch, repo: None,
     )
     feature_primary = _wt(branch="khivi/feat-x", is_primary=True)
-    assert row_capabilities(feature_primary, "r", False) == frozenset()
+    assert row_capabilities(feature_primary, "r", "none") == frozenset()
 
 
 def test_muted_pr_prefixes_workspace_glyph(cache_dir):
