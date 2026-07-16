@@ -170,6 +170,11 @@ from cockpit.orchestrators.teardown import TeardownRequest, teardown
 # query; the oldest merges beyond that simply reap on a later tick.
 _DEEP_MERGED_CUTOFF_DAYS = 36500
 
+# Max visible width of the single-ticket `devdone=` pill title, so a long ticket
+# title (e.g. a Trello card name) can't widen the sidebar pill. The trailing "…"
+# counts toward this, so the rendered string is never longer than this many chars.
+_DEVDONE_TITLE_MAX = 15
+
 _NUDGE_DESC = {
     "comments": lambda pr: (
         f"{pr.unaddressed} unresolved review thread(s) — reply or push fixes"
@@ -364,9 +369,10 @@ def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
 
     The pill is raised — green — only when the PR delivers at least one ticket
     AND *every* delivered ticket is in the `linear_dev_done_state` workflow state
-    (default "Dev Done"); the whole PR's scope is dev-complete. Shows the id when
-    a single ticket, the `done/total` count when several. Cleared otherwise, so a
-    ticket slipping back out of dev-done drops the pill. No-op in dry runs.
+    (default "Dev Done"); the whole PR's scope is dev-complete. Shows the human
+    ticket title (id fallback, truncated to `_DEVDONE_TITLE_MAX`) when a single
+    ticket, the `done/total` count when several. Cleared otherwise, so a ticket
+    slipping back out of dev-done drops the pill. No-op in dry runs.
     """
     if ctx.dry:
         return
@@ -382,7 +388,15 @@ def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
     if len(done) != len(tickets):
         apply_devdone_pill(ref, None)
         return
-    label = tickets[0]["id"] if len(tickets) == 1 else f"{len(done)}/{len(tickets)}"
+    if len(tickets) == 1:
+        text = tickets[0].get("title") or tickets[0]["id"]
+        label = (
+            text
+            if len(text) <= _DEVDONE_TITLE_MAX
+            else text[: _DEVDONE_TITLE_MAX - 1] + "…"
+        )
+    else:
+        label = f"{len(done)}/{len(tickets)}"
     apply_devdone_pill(ref, label)
 
 
