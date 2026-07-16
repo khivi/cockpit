@@ -488,8 +488,8 @@ async def test_cursor_skips_past_consecutive_header_rows(cache_dir):
         table = app.query_one(WorktreeTable)
         table.update_inventory(
             [
-                ("A", "A", None, False, []),  # empty repo -> header row only
-                ("B", "B", None, False, [wt]),  # header row + one worktree
+                ("A", "A", None, "none", []),  # empty repo -> header row only
+                ("B", "B", None, "none", [wt]),  # header row + one worktree
             ]
         )
         await pilot.pause()
@@ -523,7 +523,7 @@ async def test_update_inventory_keys_cache_by_nwo_not_label(cache_dir, monkeypat
     app = _TicketHost()
     async with app.run_test() as pilot:
         table = app.query_one(WorktreeTable)
-        table.update_inventory([("Envesya", "beta", None, True, [wt])])
+        table.update_inventory([("Envesya", "beta", None, "linear", [wt])])
         await pilot.pause()
         row = table.get_row_at(1)  # 0 = group header, 1 = the worktree row
         assert row[3].plain == "PE-7"  # Ticket cell, keyed by the nwo

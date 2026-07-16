@@ -464,7 +464,7 @@ async def test_focus_key_focuses_workspace(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("f")
         await pilot.pause(0.6)
@@ -482,7 +482,7 @@ async def test_focus_via_enter_key(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         app.query_one(WorktreeTable).focus()
         await pilot.pause()
@@ -501,7 +501,7 @@ async def test_focus_via_double_click(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         # Row 1 (y=2 incl. the column header) is the worktree; row 1 is the repo
         # group header.
@@ -520,7 +520,7 @@ async def test_single_click_does_not_focus(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.click(WorktreeTable, offset=(2, 1))
         await pilot.pause(0.4)
@@ -539,7 +539,7 @@ async def test_focus_existing_does_not_select_on_limux(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("f")
         await pilot.pause(0.6)
@@ -580,7 +580,7 @@ def _patch_focus(monkeypatch, *, backend, has_ws):
 async def _press_focus(app, wt):
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("f")
         await pilot.pause(0.6)
@@ -678,7 +678,7 @@ async def test_close_key_enqueues_when_clean(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("c")
         await pilot.pause(0.6)
@@ -698,7 +698,7 @@ async def test_close_key_refuses_on_blockers(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("c")
         await pilot.pause(0.6)
@@ -716,7 +716,7 @@ async def test_force_close_key_overrides_open_pr(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("C")
         await pilot.pause(0.6)
@@ -736,7 +736,7 @@ async def test_force_close_key_still_refuses_hard_blockers(monkeypatch, tmp_path
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("C")
         await pilot.pause(0.6)
@@ -766,7 +766,7 @@ async def test_close_key_merge_aware_clears_hard_unpushed(monkeypatch, tmp_path)
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("c")
         await pilot.pause(0.6)
@@ -785,7 +785,7 @@ async def test_focus_shows_notification(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("f")
         await pilot.pause(0.6)
@@ -816,7 +816,7 @@ async def test_mute_key_mutes_unmuted_pr(monkeypatch, tmp_path):
     app, calls = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         before = calls["slow"]
         await pilot.press("m")
@@ -861,7 +861,7 @@ async def test_mute_key_unmutes_muted_pr(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("m")
         await pilot.pause(0.6)
@@ -881,7 +881,7 @@ async def test_mute_key_noop_when_no_pr(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("m")
         await pilot.pause(0.6)
@@ -903,7 +903,7 @@ async def test_nudge_key_sends_when_idle(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("N")
         await pilot.pause(0.6)
@@ -924,7 +924,7 @@ async def test_nudge_key_skips_when_not_idle(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("N")
         await pilot.pause(0.6)
@@ -941,7 +941,7 @@ async def test_nudge_key_noop_on_limux(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("N")
         await pilot.pause(0.6)
@@ -993,7 +993,7 @@ async def test_new_box_submit_launches_spawn(monkeypatch, tmp_path):
     app, calls = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         before = calls["slow"]
         await pilot.press("n")
@@ -1069,7 +1069,7 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("a", "a", None, False, [wt])])
+        app._render_table([("a", "a", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("n")
         await pilot.pause()
@@ -1116,7 +1116,7 @@ async def test_new_box_no_worktree_repo_spawns_named_checkout(monkeypatch, tmp_p
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("scratch", "scratch", None, False, [wt])])
+        app._render_table([("scratch", "scratch", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("n")
         await pilot.pause()
@@ -1161,7 +1161,7 @@ async def test_new_box_defaults_to_cursor_header_repo(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         await pilot.pause()
         app._render_table(
-            [("a", "a", None, False, [wt_a]), ("b", "b", None, False, [wt_b])]
+            [("a", "a", None, "none", [wt_a]), ("b", "b", None, "none", [wt_b])]
         )
         await pilot.pause()
         # Rows: header-a(0), wt-a(1), header-b(2). Park the cursor on header-b.
@@ -1205,7 +1205,7 @@ async def test_double_click_header_opens_new_modal(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         await pilot.pause()
         app._render_table(
-            [("a", "a", None, False, [wt_a]), ("b", "b", None, False, [wt_b])]
+            [("a", "a", None, "none", [wt_a]), ("b", "b", None, "none", [wt_b])]
         )
         await pilot.pause()
         table = app.query_one(WorktreeTable)
@@ -1342,7 +1342,7 @@ async def test_open_pr_opens_cached_url(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("p")
         await pilot.pause(0.6)
@@ -1362,7 +1362,7 @@ async def test_open_pr_no_pr_warns(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, False, [wt])])
+        app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("p")
         await pilot.pause(0.6)
@@ -1478,7 +1478,7 @@ async def test_open_ticket_linear_opens_footer_url(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, True, [wt])])
+        app._render_table([("repo", "repo", None, "linear", [wt])])
         await pilot.pause()
         await pilot.press("t")
         await pilot.pause(0.6)
@@ -1505,7 +1505,7 @@ async def test_open_ticket_github_opens_issue_url(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, True, [wt])])
+        app._render_table([("repo", "repo", None, "linear", [wt])])
         await pilot.pause()
         await pilot.press("t")
         await pilot.pause(0.6)
@@ -1526,7 +1526,7 @@ async def test_open_ticket_no_ticket_warns(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._render_table([("repo", "repo", None, True, [wt])])
+        app._render_table([("repo", "repo", None, "linear", [wt])])
         await pilot.pause()
         await pilot.press("t")
         await pilot.pause(0.6)
