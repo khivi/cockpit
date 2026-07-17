@@ -334,16 +334,45 @@ def _resolve_state(state: str, is_draft: bool, review: str) -> str:
     return state
 
 
+_STATUSLINE_TICKET_MAX = 40
+
+
+def ticket_display(
+    t: dict, provider: str, *, missing: str = "", max_len: int | None = None
+) -> str:
+    """The human-facing handle for one delivered ticket. Trello ids are opaque
+    short links, so prefer the cached card title (id fallback, truncated with a
+    trailing "…" when `max_len` is set — a long card name can't widen a pill);
+    every other provider's id (PE-1234, #123, PROJ-45) is itself the meaningful
+    handle, returned as-is. Shared by the statusline `pr-ticket` cell
+    (`ticket_pill_id`), the TUI Ticket cell / 📍 hover (`worktree_table`), and
+    the `devdone=` pill (`cycle`)."""
+    if provider == "trello":
+        text = str(t.get("title") or t.get("id") or missing)
+        if max_len is not None and len(text) > max_len:
+            text = text[: max_len - 1] + "…"
+        return text
+    return str(t.get("id") or missing)
+
+
 def ticket_pill_id(block: dict | None) -> str:
-    """The first delivered ticket id from a `ticket` block
-    (`{"tickets": [{"id", ...}], ...}`), or "" — the provider-neutral value the
-    statusline `pr-ticket` cell / pill renders: Linear `PE-1234`, Jira
-    `PROJ-123`, GitHub `#123`, Trello the card short link. Footer-derived by the
-    daemon (`cycle._prefetch_linear_blocks`), so a codename branch that carries
+    """The first delivered ticket's display handle from a `ticket` block
+    (`{"provider", "tickets": [{"id", "title", ...}], ...}`), or "" — the value
+    the statusline `pr-ticket` cell / pill renders: Linear `PE-1234`, Jira
+    `PROJ-123`, GitHub `#123`, Trello the card *title* (short-link fallback,
+    truncated to `_STATUSLINE_TICKET_MAX`). Reads the provider off the block
+    (self-describing, written by `cycle._prefetch_linear_blocks`); an old
+    provider-less on-disk block falls back to the raw id for one cycle until
+    rewritten. Footer-derived by the daemon, so a codename branch that carries
     no id (Trello/Slack sources) still resolves once the PR footer is aligned.
     """
-    tickets = (block or {}).get("tickets") or []
-    return str(tickets[0].get("id") or "") if tickets else ""
+    block = block or {}
+    tickets = block.get("tickets") or []
+    if not tickets:
+        return ""
+    return ticket_display(
+        tickets[0], str(block.get("provider") or ""), max_len=_STATUSLINE_TICKET_MAX
+    )
 
 
 def _write_pr_flat_cells(
@@ -381,10 +410,11 @@ def _write_pr_flat_cells(
     goes green / threads resolve / the PR merges, with no separate clearing path
     (derived, never stored as standalone state).
 
-    `ticket_id` is the delivered ticket id (`ticket_pill_id` of the PR's `ticket`
-    block) that the statusline `pr-ticket` pill renders — provider-neutral, so a
-    Trello codename branch resolves off the footer, not a branch regex. Always
-    written so a re-aligned or removed footer clears the stale id.
+    `ticket_id` is the delivered ticket display handle (`ticket_pill_id` of the
+    PR's `ticket` block — the id for most providers, the card title for Trello)
+    that the statusline `pr-ticket` pill renders, resolved off the footer so a
+    Trello codename branch works without a branch regex. Always written so a
+    re-aligned or removed footer clears the stale value.
     """
     atomic_write(branch_cache("pr-state", branch), state)
     atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
