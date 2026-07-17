@@ -57,7 +57,13 @@ from textual.message import Message
 from textual.widgets import DataTable
 from textual.widgets.data_table import CellDoesNotExist
 
-from cockpit.lib.cache import branch_cache, cwd_cache, find_pr_payload, read_text
+from cockpit.lib.cache import (
+    branch_cache,
+    cwd_cache,
+    find_pr_payload,
+    read_text,
+    ticket_display,
+)
 from cockpit.lib.cmux import DEVDONE_ICON
 from cockpit.lib.colors import CMUX_COLOR_ANSI
 from cockpit.lib.constants import MAIN_BRANCHES
@@ -282,15 +288,6 @@ def _comments_cell(unaddressed_raw: str, total_raw: str) -> Text:
     return Text(label, style="red")
 
 
-def _ticket_display_id(t: dict, provider: str) -> str:
-    """The human-facing ticket handle. Trello ids are opaque short links, so it
-    prefers the cached card title (id fallback); every other provider's id
-    (PE-1234, #123, PROJ-45) is itself the meaningful handle."""
-    if provider == "trello":
-        return str(t.get("title") or t.get("id", "?"))
-    return str(t.get("id", "?"))
-
-
 def _linear_cells(wt: Worktree, repo_name: str, provider: str) -> tuple[Text, Text]:
     """Delivered ticket id(s) and workflow state(s) from the cached per-PR block,
     as two cells. The Ticket cell is the comma-joined id(s) — except Trello, whose
@@ -302,7 +299,7 @@ def _linear_cells(wt: Worktree, repo_name: str, provider: str) -> tuple[Text, Te
     tickets = (payload.get("ticket") or {}).get("tickets") or []
     if not tickets:
         return Text(""), Text("")
-    ids = ", ".join(_ticket_display_id(t, provider) for t in tickets)
+    ids = ", ".join(ticket_display(t, provider, missing="?") for t in tickets)
     icons = []
     for t in tickets:
         state = t.get("state")
@@ -498,7 +495,7 @@ def _dirty_tooltip(wt: Worktree) -> str | None:
 def _ticket_status_tooltip(wt: Worktree, repo_name: str, provider: str) -> str | None:
     """Hover text for the 📍 cell — each delivered ticket's `id: state` (the
     workflow-state name the icon abstracts away). Uses the same display handle as
-    the Ticket cell (`_ticket_display_id`), so Trello shows the card title rather
+    the Ticket cell (`ticket_display`), so Trello shows the card title rather
     than its opaque short link. None with no delivered tickets."""
     payload = find_pr_payload(wt.branch, repo_name) or {}
     tickets = (payload.get("ticket") or {}).get("tickets") or []
@@ -506,7 +503,7 @@ def _ticket_status_tooltip(wt: Worktree, repo_name: str, provider: str) -> str |
         return None
     parts = []
     for t in tickets:
-        tid = _ticket_display_id(t, provider)
+        tid = ticket_display(t, provider, missing="?")
         state = t.get("state")
         parts.append(f"{tid}: {state}" if state else f"{tid}: state unavailable")
     return "; ".join(parts)

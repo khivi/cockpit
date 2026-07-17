@@ -2948,6 +2948,7 @@ def test_prefetch_linear_blocks_fetches_when_no_prior(tmp_path):
             {"id": "PE-1234", "state": "Dev Done", "title": "Fix the login flow"}
         ],
         "fetched_at": 1000.0,
+        "provider": "linear",
     }
     fetch.assert_called_once_with(["PE-1234"])
     fetch_titles.assert_called_once_with(["PE-1234"])
@@ -3068,7 +3069,7 @@ def test_prefetch_linear_blocks_no_footers_no_fetch(tmp_path):
     ):
         block = _prefetch_one(ctx, pr)
 
-    assert block == {"tickets": [], "fetched_at": 1000.0}
+    assert block == {"tickets": [], "fetched_at": 1000.0, "provider": "linear"}
     fetch.assert_not_called()
 
 
@@ -3955,6 +3956,7 @@ def test_github_prefetch_maps_label_to_devdone(tmp_path):
     assert block == {
         "tickets": [{"id": "#5", "state": "ready for review", "title": "Fix login"}],
         "fetched_at": 1000.0,
+        "provider": "github",
     }
 
 

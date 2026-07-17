@@ -29,6 +29,7 @@ from cockpit.lib.cache import (
     load_pr_payloads_by_branch,
     muted_payload,
     prune_superseded_pr_caches,
+    ticket_display,
     ticket_pill_id,
     write_base_ahead,
     write_base_distance,
@@ -325,12 +326,21 @@ def _prefetch_linear_blocks(ctx: RepoCycle) -> None:
         return
     states = _fetch_ticket_states(ctx, sorted(due)) if due else {}
     titles = _fetch_ticket_titles(ctx, sorted(due)) if due else {}
+    provider = _provider(ctx)
+    prov_name = provider.name if provider else ""
     for branch, ids in builds:
         tickets = [
             {"id": tid, "state": states.get(tid), "title": titles.get(tid)}
             for tid in ids
         ]
-        ctx.linear_blocks[branch] = {"tickets": tickets, "fetched_at": now}
+        # Embed the provider so a downstream reader (`ticket_pill_id`,
+        # `ticket_display`) can pick Trello's title-over-short-link handle
+        # without re-reading config — the block is self-describing.
+        ctx.linear_blocks[branch] = {
+            "tickets": tickets,
+            "fetched_at": now,
+            "provider": prov_name,
+        }
 
 
 def _fetch_ticket_states(ctx: RepoCycle, ids: list[str]) -> dict[str, str | None]:
@@ -395,15 +405,7 @@ def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
         # Trello ids are opaque short links — show the card title (id fallback,
         # truncated so a long name can't widen the sidebar pill). Every other
         # provider's id is meaningful, so show it as-is.
-        if provider.name == "trello":
-            text = tickets[0].get("title") or tickets[0]["id"]
-            label = (
-                text
-                if len(text) <= _DEVDONE_TITLE_MAX
-                else text[: _DEVDONE_TITLE_MAX - 1] + "…"
-            )
-        else:
-            label = tickets[0]["id"]
+        label = ticket_display(tickets[0], provider.name, max_len=_DEVDONE_TITLE_MAX)
     else:
         label = f"{len(done)}/{len(tickets)}"
     apply_devdone_pill(ref, label)
