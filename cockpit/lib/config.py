@@ -336,6 +336,13 @@ JIRA_DEV_DONE_DEFAULT = "Dev Done"
 # Claude Code install so it resolves in every spawned review workspace (unlike a
 # personal global skill, which only resolves for its owner). Override per-repo
 # (or globally) with `review_command` — e.g. a personal `/pr-review`.
+#
+# Why this defaults to a command while `skills.plan`/`skills.actions` default to
+# "" (built-in prose): the rule is the same for all three — "default to the
+# built-in slash command if one exists, else ship bundled prose." Only `/review`
+# has a universal Claude Code built-in to point at; there is no `/plan` or
+# `/actions` built-in, so those fall back to `plan_only.txt`/`actions.txt` rather
+# than dangle a command that resolves to nothing on an unconfigured install.
 REVIEW_COMMAND_DEFAULT = "/review"
 
 
