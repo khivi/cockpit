@@ -118,7 +118,7 @@ def test_preflight_warns_when_cockpit_not_on_path(tmp_path, monkeypatch, capsys)
     err = capsys.readouterr().err
     assert "cockpit" in err
     assert "PATH" in err
-    assert "uv tool install" in err
+    assert "brew install" in err
 
 
 def test_preflight_exits_on_invalid_sidebar_color(tmp_path, monkeypatch, capsys):
@@ -312,28 +312,6 @@ def test_preflight_passes_on_valid_base_remote(tmp_path, monkeypatch, capsys):
             "repos": [{"name": "r", "base_remote": "origin"}],
         }
     )
-    assert capsys.readouterr().err == ""
-
-
-def test_preflight_exits_on_non_bool_check_update(tmp_path, monkeypatch, capsys):
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "check_update": "yes"})
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "check_update" in err
-    assert "'yes'" in err
-
-
-def test_preflight_passes_on_bool_check_update(tmp_path, monkeypatch, capsys):
-    _all_required(tmp_path, monkeypatch)
-    preflight({"tool": "cmux", "check_update": False})
-    assert capsys.readouterr().err == ""
-
-
-def test_preflight_ignores_absent_check_update(tmp_path, monkeypatch, capsys):
-    _all_required(tmp_path, monkeypatch)
-    preflight({"tool": "cmux"})
     assert capsys.readouterr().err == ""
 
 

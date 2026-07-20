@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import IO, cast
 
 import cockpit.lib.daemon_signal as daemon_signal
-from cockpit.lib import version
 from cockpit.lib.cache import (
     clear_branch_pr_cache,
     find_pr_payload,
@@ -1853,7 +1852,7 @@ def _bg_spawn_pr(
     `cockpit.py` shadows the `cockpit` package and the child dies on
     `ModuleNotFoundError: 'cockpit' is not a package` before doing anything.
 
-    The child reuses the exact path `/cockpit:new` walks (create_worktree +
+    The child reuses the exact path `cockpit new` walks (create_worktree +
     spawn_pr_workspace), then the new worktree surfaces as cells on a later
     cycle — inventory is derived, not stored (see AGENTS.md). `--repo` is passed
     when the config entry has a name; otherwise the child's cwd-based discovery
@@ -1918,7 +1917,7 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
 
     1. PR-matched worktrees that lack a cmux workspace → spawn one.
     2. My open PRs with no local worktree → create worktree + workspace in the
-       background (replaces the old "create one with /cockpit:new" warning).
+       background (replaces the old "create one with cockpit new" warning).
     3. `review_prs`: every other-authored open PR without a worktree → create a
        review worktree (`spawn.py --review`) in the background. Uncapped, but
        gated to repo collaborators by default (see `review_external` below).
@@ -2302,42 +2301,6 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
             daemon_signal.enqueue(req)
 
 
-# Re-query the install repo for a newer version at most hourly — the running
-# version can't change mid-daemon-run, so checking every slow tick (300s) just
-# spends a `gh api` call. The per-version log guard below caps noise further.
-_UPDATE_CHECK_TTL_SECONDS = 3600
-
-
-def _check_plugin_update(cfg: dict, pill_state: dict) -> None:
-    """Log once when a newer cockpit is published on the install repo's default
-    branch. Gated on `check_update` (default true), throttled to one `gh` query
-    per `_UPDATE_CHECK_TTL_SECONDS` and one log line per newer version — both
-    keyed in `pill_state` like the spawn in-flight guard. Daemon-wide (not
-    per-repo), so it runs before the repo loop. Any fetch failure logs nothing
-    (see lib.version).
-    """
-    if not cfg.get("check_update", True):
-        return
-    now = time.monotonic()
-    last = pill_state.get("update-check:ts")
-    if isinstance(last, float) and (now - last) < _UPDATE_CHECK_TTL_SECONDS:
-        return
-    pill_state["update-check:ts"] = now
-    running = version.running_version()
-    latest = version.latest_version()
-    if not latest or not version.is_newer(latest, running):
-        return
-    if pill_state.get("update-check:warned") == latest:
-        return
-    pill_state["update-check:warned"] = latest
-    ts = datetime.now().isoformat(timespec="seconds")
-    print(
-        f"[{ts}] {yellow('cockpit:')} update available\n"
-        f"  {running} -> {latest} (run /plugin update cockpit)",
-        flush=True,
-    )
-
-
 def cycle_all(
     cfg: dict,
     self_user: str,
@@ -2362,13 +2325,13 @@ def cycle_all(
     row's repo without round-tripping `gh` for every other repo. A scoped run
     still drains the close queue (a `c`/`C` teardown lands there) but skips the
     repo-spanning sweeps (`close_gone_cwd_workspaces`, `_reap_workspace_orphans`)
-    and the plugin-update check — those are global housekeeping the next full
-    periodic tick handles, not work the keypress is waiting on."""
+    — those are global housekeeping the next full periodic tick handles, not
+    work the keypress is waiting on."""
     ensure_state_dirs()
     repos = cfg.get("repos", [])
     if not repos:
         print(
-            f"  {yellow('no managed repos')} — register one via /cockpit:new in a git repo",
+            f"  {yellow('no managed repos')} — register one via `cockpit new` in a git repo",
             flush=True,
         )
         return
@@ -2379,8 +2342,6 @@ def cycle_all(
         ]
         if not repos:
             return  # unknown repo path — nothing scoped to reconcile
-    else:
-        _check_plugin_update(cfg, pill_state)
     # Worktree teardown drains on every backend — the TUI `c`/`C` close path
     # (which enqueues here) was dead on limux/none until now.
     _drain_close_requests(dry=dry)

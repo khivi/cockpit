@@ -1,0 +1,49 @@
+name: release
+
+# On a pushed `v<version>` tag: verify it matches pyproject.toml, then bump the
+# Homebrew tap (khivi/homebrew-cockpit) formula's `url` + `sha256` to this tag
+# so `brew upgrade cockpit` picks it up. The action downloads the tag tarball,
+# computes its sha256, and opens a PR against the tap repo.
+#
+# The Python `resource` blocks (Textual + its deps) change only on a dependency
+# bump, NOT every release — this CI leaves them untouched. Regenerate them by
+# hand when deps move: `brew update-python-resources Formula/cockpit.rb`.
+#
+# Requires an Actions secret `COCKPIT_GITHUB_API_TOKEN`: a PAT with Contents +
+# Pull-requests write on khivi/homebrew-cockpit (the default GITHUB_TOKEN can't
+# write to a different repo).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  bump-tap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify tag matches pyproject version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          tag="${TAG#v}"
+          proj="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          echo "tag=$tag pyproject=$proj"
+          if [ "$tag" != "$proj" ]; then
+            echo "::error::tag v$tag does not match pyproject.toml version $proj — bump pyproject before tagging"
+            exit 1
+          fi
+
+      - name: Bump Homebrew tap formula
+        uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name: cockpit
+          homebrew-tap: khivi/homebrew-cockpit
+          download-url: https://github.com/khivi/cockpit/archive/refs/tags/${{ github.ref_name }}.tar.gz
+        env:
+          COMMITTER_TOKEN: ${{ secrets.COCKPIT_GITHUB_API_TOKEN }}

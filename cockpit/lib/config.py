@@ -44,9 +44,9 @@ STARSHIP_DEFAULT_TOML = (
 # Render command substituted for __COCKPIT_STARSHIP__ in the seeded
 # starship.toml. Uses the running interpreter + module dispatch so it resolves
 # regardless of whether `cockpit` is on PATH in starship's render environment.
-# Invoked the normal way (the installed `cockpit` console script), `sys.executable`
-# is the stable uv-tool interpreter; `cockpit update` re-runs `cockpit setup` after
-# the install so a stale pin (e.g. to a since-removed worktree venv) is re-pinned.
+# Invoked the normal way (the brew-installed `cockpit` console script),
+# `sys.executable` is the stable installed interpreter; re-run `cockpit setup`
+# to re-pin if it ever points at a stale (e.g. removed worktree venv) interpreter.
 STARSHIP_CMD = f"{sys.executable} -m cockpit.cli starship"
 STARSHIP_PLACEHOLDER = "__COCKPIT_STARSHIP__"
 STARSHIP_THEME_PLACEHOLDER = "__COCKPIT_THEME__"
@@ -294,13 +294,11 @@ GITHUB_DEV_DONE_DEFAULT = "ready for review"
 JIRA_DEV_DONE_DEFAULT = "Dev Done"
 
 # Slash command seeded as the first turn of an auto-spawned `review_prs`
-# worktree. Defaults to cockpit's own `/cockpit:review` plugin command — it
-# ships with the plugin, so every cockpit user has it in every spawned review
-# workspace (unlike a personal global skill, which only resolves for its owner),
-# and it reviews against the *target repo's* documented conventions. Override
-# per-repo (or globally) with `review_command` (e.g. the built-in `/review`, or
-# a personal `/pr-review`).
-REVIEW_COMMAND_DEFAULT = "/cockpit:review"
+# worktree. Defaults to Claude Code's built-in `/review`, which ships with every
+# Claude Code install so it resolves in every spawned review workspace (unlike a
+# personal global skill, which only resolves for its owner). Override per-repo
+# (or globally) with `review_command` — e.g. a personal `/pr-review`.
+REVIEW_COMMAND_DEFAULT = "/review"
 
 
 def _tickets_block(src: dict | None) -> dict:
@@ -444,14 +442,12 @@ def review_command(cfg: dict | None = None, repo_entry: dict | None = None) -> s
     """The slash command seeded as the first turn of an auto-spawned review
     worktree (per-repo `review_prs`).
 
-    Default ``"/cockpit:review"`` — cockpit's own plugin command, available in
-    every spawned review workspace because the plugin is installed alongside the
-    daemon (a personal global skill would only resolve for its owner). It reviews
-    against the *target repo's* documented conventions, so it stays portable
-    across watched repos. Override per-repo (or globally) with a `review_command`
-    string — e.g. the built-in ``"/review"`` or a personal ``"/pr-review"``.
-    Resolved repo-block → global-block → default; a non-string/blank value falls
-    through to the next level.
+    Default ``"/review"`` — Claude Code's built-in review command, available in
+    every spawned review workspace (a personal global skill would only resolve
+    for its owner). Override per-repo (or globally) with a `review_command`
+    string — e.g. a personal ``"/pr-review"``. Resolved repo-block →
+    global-block → default; a non-string/blank value falls through to the next
+    level.
     """
     if repo_entry is not None:
         rv = repo_entry.get("review_command")
@@ -522,7 +518,7 @@ def statusline_hidden(cfg: dict | None = None) -> set[str]:
 def use_slack() -> bool:
     """Whether Slack-thread spawn sources are enabled (default: False).
 
-    When False (default), a Slack permalink passed to `/cockpit:new` still
+    When False (default), a Slack permalink passed to `cockpit new` still
     classifies as `slack` mode in `spawn.detect_source` (so the worktree lands
     on a codename branch instead of a garbage branch named after the URL), but
     spawn skips the Slack-MCP-fetch prompt — the workspace starts on the
@@ -715,6 +711,99 @@ def _write_statusline(settings_path: Path, statusline_command: str) -> None:
     data["statusLine"] = {"type": "command", "command": statusline_command}
     settings_path.write_text(json.dumps(data, indent=2) + "\n")
     print(f"wrote claude statusLine -> {statusline_command}")
+
+
+# Claude Code hooks cockpit owns. Commands resolve off PATH (the installed
+# `cockpit` console script) — there is no plugin root to interpolate. This is
+# what the plugin's hooks.json used to provide, minus the retired SessionStart
+# self-update hook. `cockpit statusline` stashes the statusLine stdin caches on
+# Stop; `cockpit idle-pill <phase>` drives the cmux idle pill the nudge gate
+# reads.
+_COCKPIT_HOOKS: dict[str, list[dict]] = {
+    "Stop": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": "cockpit statusline || true"},
+                {"type": "command", "command": "cockpit idle-pill stop || true"},
+            ],
+        }
+    ],
+    "UserPromptSubmit": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill prompt || true"}
+            ],
+        }
+    ],
+    "PreToolUse": [
+        {
+            "matcher": "ScheduleWakeup|CronCreate|CronUpdate",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill loop-set || true"}
+            ],
+        },
+        {
+            "matcher": "CronDelete",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill loop-clear || true"}
+            ],
+        },
+    ],
+    "SessionEnd": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill loop-clear || true"}
+            ],
+        }
+    ],
+}
+
+
+def _is_cockpit_hook_group(group: dict) -> bool:
+    """True if a settings.json hook group is one cockpit owns — any of its
+    commands invoke `cockpit statusline` / `cockpit idle-pill`."""
+    for h in group.get("hooks", []):
+        cmd = str(h.get("command", ""))
+        if "cockpit statusline" in cmd or "cockpit idle-pill" in cmd:
+            return True
+    return False
+
+
+def install_claude_hooks(settings_path: Path | None = None) -> None:
+    """Merge cockpit's Claude Code hooks into ~/.claude/settings.json.
+
+    Idempotent: cockpit-owned hook groups are dropped and rewritten each run, so
+    a re-`setup` never duplicates them; unrelated user hooks are preserved.
+    Backs up an existing settings.json before rewriting, and no-ops (no backup)
+    when the merged result is byte-identical to what's already there. Called
+    from `cockpit setup`; replaces what the plugin's hooks.json used to install.
+    """
+    settings_path = settings_path or (Path.home() / ".claude" / "settings.json")
+    original = settings_path.read_text() if settings_path.exists() else None
+    try:
+        data: dict = json.loads(original) if original else {}
+    except json.JSONDecodeError:
+        data = {}
+    hooks: dict = data.get("hooks") or {}
+    for event, groups in _COCKPIT_HOOKS.items():
+        kept = [g for g in hooks.get(event, []) if not _is_cockpit_hook_group(g)]
+        # Deep-copy the owned groups so the module-level template stays pristine.
+        hooks[event] = kept + json.loads(json.dumps(groups))
+    data["hooks"] = hooks
+    new_text = json.dumps(data, indent=2) + "\n"
+    if original == new_text:
+        print("claude hooks unchanged")
+        return
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    if original is not None:
+        settings_path.with_name(
+            f"{settings_path.name}.bak.{datetime.now():%Y%m%d%H%M%S}"
+        ).write_text(original)
+    settings_path.write_text(new_text)
+    print(f"wrote claude hooks -> {settings_path}")
 
 
 def _write_if_changed(dest: Path, payload: bytes, label: str, src: Path) -> bool:

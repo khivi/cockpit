@@ -37,10 +37,8 @@ def reassert_pidfile() -> None:
     lost its pidfile mid-run becomes reachable again.
 
     `claim_pidfile` runs exactly once, at startup. If the pidfile is later
-    deleted — the self-update restart window (`release_pidfile` on unmount, then
-    a multi-second `cockpit update` subprocess before the re-exec re-claims), a
-    racing stale-cleanup, or an external `rm` — nothing rewrites it, so
-    `cockpit close`/spawn kicks report "no daemon" for the rest of this
+    deleted — a racing stale-cleanup or an external `rm` — nothing rewrites it,
+    so `cockpit close`/spawn kicks report "no daemon" for the rest of this
     process's life. Called each fast tick to self-heal within ~30s, mirroring
     the workspace-name / colour / `idle=` re-asserts. Idempotent; only writes on
     drift, and never clobbers a pidfile a *different* live daemon holds."""

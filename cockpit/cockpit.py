@@ -16,7 +16,7 @@ Modes:
 
 Sibling entry points (each script does one job):
   cockpit/statusline.py   statusLine shim — pipes Claude Code's stdin to cship
-  cockpit/spawn.py    `/cockpit:new` — create worktree + workspace
+  cockpit/spawn.py    `cockpit new` — create worktree + workspace
 
 Failure policy: each cycle MUST exit 0 even on GitHub API errors. Errors go to
 stderr (visible in the watch TUI log); the next cycle retries.
@@ -43,6 +43,7 @@ from cockpit.lib.cmux import (
 )
 from cockpit.lib.config import (
     ensure_state_dirs,
+    install_claude_hooks,
     install_cship_default_config,
     install_cship_statusline_if_configured,
     install_starship_default_config,
@@ -186,7 +187,7 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
         return 2
 
     from cockpit.lib.daemon import claim_pidfile
-    from cockpit.tui.app import RESTART_EXIT_CODE, CockpitApp
+    from cockpit.tui.app import CockpitApp
 
     claim_pidfile()  # exits 1 if a live daemon already holds it
     self_ws = os.environ.get("CMUX_WORKSPACE_ID")
@@ -217,14 +218,7 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
     # to this same loop via `get_running_loop()`.
     loop = asyncio.new_event_loop()
     app.run(loop=loop)
-    # `u` exits with RESTART_EXIT_CODE so cli.py runs the updater and re-execs;
-    # a clean quit / SIGTERM leaves return_code at 0.
     rc = app.return_code or 0
-    if rc == RESTART_EXIT_CODE:
-        # Let cli.py run the updater and os.execvp — that replaces the process
-        # image (killing the abandoned worker thread), so it never hits the
-        # interpreter-exit join below.
-        return rc
     # The blocked worker thread is still alive here (see above). A normal return
     # would then hang at interpreter exit, where concurrent.futures' atexit
     # handler joins that thread. Nothing lives in memory (cache writes already
@@ -251,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument(
         "--setup",
         action="store_true",
-        help="Re-run statusLine setup only (cship.toml + starship.toml + statusLine), then exit.",
+        help="Re-run setup only (cship.toml + starship.toml + statusLine + Claude hooks), then exit.",
     )
     args = p.parse_args(argv)
 
@@ -265,6 +259,7 @@ def main(argv: list[str] | None = None) -> int:
         install_cship_default_config()
         install_starship_default_config()
         install_cship_statusline_if_configured(_statusline_command())
+        install_claude_hooks()
         return 0
 
     if args.watch:

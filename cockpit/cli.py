@@ -7,51 +7,29 @@ heavy reconcile/spawn modules.
 
 Subcommands:
   watch                 long-running daemon (Textual TUI)
-  setup                 (re)install the cship/starship statusLine config
+  setup                 (re)install the statusLine config + Claude Code hooks
   statusline            Claude Code statusLine shim (reads stdin → renders)
   starship <field>      starship field printer / `warm`
+  idle-pill <phase>     Claude Code hook shim → cmux idle pill (stop/prompt/…)
   new    [args]         create a worktree + workspace
   close  [args]         queue a worktree + workspace teardown for the daemon
   nudge  [args]         manage nudge mutes
-  update [--check]      self-update the daemon (or just report availability)
-  update --sync         local-only: reinstall the daemon from the plugin cache
-                        iff the installed binary lags it (SessionStart hook)
 """
 
 from __future__ import annotations
 
-import contextlib
-import os
-import shutil
 import sys
-from pathlib import Path
 
 _SUBCOMMANDS = (
     "watch",
     "setup",
     "statusline",
     "starship",
+    "idle-pill",
     "new",
     "close",
     "nudge",
-    "update",
 )
-
-
-def _running_as_installed_cockpit() -> bool:
-    """True iff this process was launched as the PATH-installed `cockpit`
-    console script (not a dev's `uv run cockpit watch` from a worktree venv).
-
-    Guards the `u`-triggered self-update + re-exec: auto-swapping a dev's
-    worktree session for the released wheel would be wrong, so when the launched
-    binary differs from `shutil.which("cockpit")` we decline."""
-    which = shutil.which("cockpit")
-    if not which:
-        return False
-    try:
-        return Path(which).resolve() == Path(sys.argv[0]).resolve()
-    except OSError:
-        return False
 
 
 def _usage() -> str:
@@ -66,6 +44,11 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] in ("-h", "--help"):
         print(_usage())
         return 0
+    if argv and argv[0] in ("-V", "--version"):
+        from cockpit.lib.version import running_version
+
+        print(f"cockpit {running_version()}")
+        return 0
     # Bare `cockpit` defaults to `watch` — the daemon TUI is the primary entry
     # point; every other subcommand is a hook/render shim or one-off.
     if not argv:
@@ -77,17 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     if sub in ("watch", "setup"):
         from cockpit.cockpit import main as daemon_main
 
-        rc = daemon_main([f"--{sub}", *rest])
-        # `u` in the TUI exits watch with RESTART_EXIT_CODE. Run the update in a
-        # fresh subprocess (not in-process, where the just-torn-down Textual
-        # would share fds/signals with the terminal-touching update), then
-        # re-exec a fresh `cockpit watch` on the new version.
-        if sub == "watch":
-            from cockpit.tui.app import RESTART_EXIT_CODE
-
-            if rc == RESTART_EXIT_CODE:
-                return _self_update_and_reexec(rest)
-        return rc
+        return daemon_main([f"--{sub}", *rest])
 
     # statusline + starship are the hot render path — route straight to the
     # leaf module, skipping the daemon preflight that setup/starship never run.
@@ -99,6 +72,23 @@ def main(argv: list[str] | None = None) -> int:
         from cockpit.starship import main as starship_main
 
         return starship_main(["cockpit-starship", *rest])
+
+    # idle-pill is a Claude Code hook shim — exec the packaged shell script with
+    # the phase arg (stop/prompt/loop-set/loop-clear). Kept off the render path
+    # and never fatal: a Claude hook must not break a session.
+    if sub == "idle-pill":
+        import os
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent / "hooks" / "cmux-idle-pill.sh"
+        if not script.exists():
+            print(f"cockpit: idle-pill script missing at {script}", file=sys.stderr)
+            return 0
+        # Run via `bash` rather than execv'ing the script directly: a wheel does
+        # not reliably preserve the file's exec bit, so relying on it would break
+        # the hook on a fresh brew install.
+        os.execvp("bash", ["bash", str(script), *rest])
+        return 0  # type: ignore[unreachable]  # execvp replaces the process
 
     if sub == "close":
         from cockpit.close import main as close_main
@@ -115,106 +105,8 @@ def main(argv: list[str] | None = None) -> int:
 
         return spawn_main(rest)
 
-    if sub == "update":
-        from cockpit.lib.updater import run_sync, run_update
-
-        if "--sync" in rest:
-            # Local cache→binary sync for the SessionStart hook. Gated like the
-            # `u` self-update: a dev's `uv run` (or pytest) session, whose
-            # argv[0] isn't the installed console script, is never auto-swapped.
-            if not _running_as_installed_cockpit():
-                return 0
-            return run_sync()
-        return run_update(
-            skip_install="--skip-install" in rest,
-            check_only="--check" in rest,
-        )
-
     print(f"cockpit: unknown subcommand {sub!r}\n{_usage()}", file=sys.stderr)
     return 2
-
-
-def _self_update_and_reexec(watch_args: list[str]) -> int:
-    """The TUI exited via `u`. Run the update as a fresh `cockpit update`
-    subprocess — a cooked, pre-TUI process, the exact state manual `cockpit
-    update` runs in — so the heavy, terminal-touching update work never runs in
-    this process that just tore Textual down, then re-exec onto the new version.
-
-    Declines (returning 0) when not running as the installed `cockpit` — a dev's
-    `uv run` session must not be auto-swapped for the released wheel."""
-    if not _running_as_installed_cockpit():
-        print(
-            "update available — run `cockpit update`, or press `u` from an "
-            "installed `cockpit watch` to self-update.",
-            file=sys.stderr,
-        )
-        return 0
-    import subprocess
-    import time
-
-    from cockpit.lib.updater import UPDATE_SKIPPED_NOOP_EXIT
-
-    rc = subprocess.run(["cockpit", "update"]).returncode
-    if rc == UPDATE_SKIPPED_NOOP_EXIT:
-        # The local plugin cache had nothing newer than the running version —
-        # not the same claim as "up to date" (the header's indicator compares
-        # against GitHub directly, which can be ahead of the local cache after
-        # a network hiccup or propagation lag). Relaunch anyway (the user quit
-        # the TUI; leaving them at a shell is worse) but explain, and hold the
-        # message on screen for a moment — this is a cooked, pre-exec terminal.
-        print(
-            "cockpit: plugin cache not yet refreshed; nothing new to install. "
-            "The header may still show an update — retry `u` shortly.",
-            file=sys.stderr,
-        )
-        time.sleep(2)
-    elif rc != 0:
-        print(
-            "cockpit: update failed; not relaunching. Re-run `cockpit watch`.",
-            file=sys.stderr,
-        )
-        return 1
-    # The update's subprocesses can leave the controlling terminal's foreground
-    # process group dangling; re-assert ours before re-exec so the new Textual
-    # isn't stopped on SIGTTIN/SIGTTOU (blank frozen screen).
-    _restore_terminal_foreground()
-    # Replace this process with the just-installed cockpit; execvp never returns
-    # on success (the trailing return is reached only if stubbed in tests).
-    try:
-        os.execvp("cockpit", ["cockpit", "watch", *watch_args])
-    except OSError as exc:
-        print(
-            f"cockpit: relaunch failed ({exc}); update installed — "
-            "re-run `cockpit watch`.",
-            file=sys.stderr,
-        )
-        return 1
-    return 0  # type: ignore[unreachable]
-
-
-def _restore_terminal_foreground() -> None:
-    """Re-assert this process group as the controlling terminal's foreground
-    before re-exec'ing the TUI. A no-op unless something (an update subprocess)
-    left the foreground pgrp elsewhere; without it the re-exec'd Textual reads
-    stdin from the background and is stopped on SIGTTIN. No-op without a TTY."""
-    import signal
-
-    try:
-        if not sys.stdin.isatty():
-            return
-    except (OSError, ValueError):
-        return
-    prev = signal.getsignal(signal.SIGTTOU)
-    try:
-        # tcsetpgrp from a background pgrp raises SIGTTOU at us; ignore it for
-        # the reclaim so we don't stop ourselves doing it.
-        signal.signal(signal.SIGTTOU, signal.SIG_IGN)
-        os.tcsetpgrp(sys.stdin.fileno(), os.getpgrp())
-    except (OSError, ValueError):
-        pass
-    finally:
-        with contextlib.suppress(OSError, ValueError, TypeError):
-            signal.signal(signal.SIGTTOU, prev)
 
 
 if __name__ == "__main__":

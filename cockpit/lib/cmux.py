@@ -693,7 +693,7 @@ def apply_pills(
     slot. To force a deterministic order — and push cmux's own `claude_code`
     pill (e.g. "Needs input") to the bottom — clear all our keys first, then
     re-set in reverse display order. The `idle=` pill is owned by
-    `hooks/cmux-idle-pill.sh` (Stop / UserPromptSubmit) — not touched here.
+    `cockpit/hooks/cmux-idle-pill.sh` (Stop / UserPromptSubmit) — not touched here.
     """
     desired = tuple(status_pills(pr, wt, self_user, pref))
     _clear_pr_pill_keys(ref)

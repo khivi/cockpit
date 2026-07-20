@@ -271,16 +271,6 @@ def test_watch_hard_exits_on_normal_quit(monkeypatch):
     assert exits == [0]
 
 
-def test_watch_returns_for_restart(monkeypatch):
-    """The `u` self-update code returns to cli.py (which os.execvp's) instead of
-    hard-exiting, so the updater/re-exec path still runs."""
-    from cockpit.tui.app import RESTART_EXIT_CODE
-
-    rc, exits, _app = _run_watch_with_return_code(monkeypatch, RESTART_EXIT_CODE)
-    assert rc == RESTART_EXIT_CODE
-    assert exits == []
-
-
 def test_watch_runs_app_on_own_loop(monkeypatch):
     """`_watch` must drive the app on a loop it owns, not Textual's default
     `asyncio.run()`. The default joins the thread-worker executor with a 300s

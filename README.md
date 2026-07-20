@@ -10,40 +10,41 @@ Cockpit is a terminal UI for juggling several PRs at once from Claude Code. Each
 
 Claude Code made it cheap to run several coding agents at once. The clean way to do that is one git worktree per task, each with its own [`cmux`](https://github.com/manaflow-ai/cmux) terminal running `claude`, each ending in its own PR. That scales the *work* — but not the *tracking*. After a few parallel tasks you have N terminals, N PRs on GitHub, and N tickets in Linear/Jira/Trello, with nothing tying a worktree to its PR to its ticket. Which agent is idle and waiting on you? Which PR just went red on CI? Which one has a review comment nobody's answered? You find out by tabbing through terminals and refreshing browser tabs.
 
-Cockpit is the missing glue between cmux, git worktrees, GitHub PRs, and your ticket tracker. It re-derives the whole fleet every cycle — `git worktree list` + `cmux tree` + your open PRs + linked tickets — and renders one live table you drive by keystroke. No stored inventory to drift out of sync: each row is computed from the real state of git, cmux, and GitHub. From that one table you focus a session, open its PR or ticket, nudge an idle agent, or close a finished worktree — without leaving the terminal.
+Cockpit is the missing glue between cmux, git worktrees, GitHub PRs, and your ticket tracker. It renders one live table — always computed fresh from the real state of git, cmux, and GitHub, so it never drifts out of sync and there's nothing to refresh by hand. From that table you focus a session, open its PR or ticket, nudge an idle agent, or close a finished worktree — without leaving the terminal.
 
-It also closes the loop the other way: cockpit can spawn a worktree + cmux session + PR-tracking row straight from a PR number, a Slack thread, a ticket, or a bare branch (`/cockpit:new`), and tear the whole thing down when the PR merges. Worktrees, PRs, and tickets stop being three separate things you manage by hand and become rows in one board.
+It also closes the loop the other way: cockpit can spawn a worktree + cmux session + PR-tracking row straight from a PR number, a Slack thread, a ticket, or a bare branch (`cockpit new`, or `n` in the TUI), and tear the whole thing down when the PR merges. Worktrees, PRs, and tickets stop being three separate things you manage by hand and become rows in one board.
 
 ## Requirements
 
-- `uv`, `git ≥ 2.30`, Python ≥ 3.12
+- `git ≥ 2.30`
 - [`gh`](https://cli.github.com/), authenticated
 - Claude Code
-- A workspace backend on `PATH` — a "workspace backend" is the terminal app that gives each worktree its own tab/session cockpit can spawn, focus, and close. Without one, cockpit runs in cache-only mode: the footer/statusline still work, but the side panel and slash-command spawning are disabled.
+- A workspace backend on `PATH` — a "workspace backend" is the terminal app that gives each worktree its own tab/session cockpit can spawn, focus, and close. Without one, cockpit runs in cache-only mode: the footer/statusline still work, but the side panel and workspace spawning are disabled.
   - [`cmux`](https://github.com/manaflow-ai/cmux) ([cmux.dev](https://cmux.dev)) — an open-source, Ghostty-based macOS terminal with vertical-tab workspaces built for AI coding agents. `brew install --cask cmux`.
   - [`limux`](https://github.com/am-will/limux) — a GPU-accelerated Linux port of cmux (GTK4 over libghostty, tracks cmux parity). AppImage/`.deb` from [releases](https://github.com/am-will/limux/releases), or AUR `limux-bin`. Cockpit's Linux backend: it can spawn/close workspaces but lacks cmux's focus/pill/sidebar-color verbs, which degrade gracefully.
-- Optional: [`cship`](https://github.com/khivi/cship) + [`starship`](https://starship.rs/) for the statusline (set `use_cship: true`; wired automatically by the installer / `cockpit update`)
+- Optional: [`cship`](https://github.com/khivi/cship) + [`starship`](https://starship.rs/) for the statusline (set `use_cship: true`; wired by `cockpit setup`)
 
 ## Install
 
-1. Add the plugin inside Claude Code:
+```bash
+brew tap khivi/cockpit    # maps to github.com/khivi/homebrew-cockpit
+brew install cockpit
+cockpit setup             # wires the statusLine + Claude Code hooks into ~/.claude/settings.json
+```
 
-   ```text
-   /plugin marketplace add https://github.com/khivi/cockpit
-   /plugin install cockpit@khivi-cockpit
-   ```
-
-2. Run the bundled installer once — it installs the `cockpit` command (bootstrapping `uv` if missing) and wires the statusline:
-
-   ```bash
-   bash ~/.claude/plugins/cache/khivi-cockpit/cockpit/*/bin/update.sh
-   ```
-
-To update later, run `cockpit update` or press `u` in the TUI when it shows "⬆ update available". Both run the same in-wheel updater — no shell needed once installed. (`cockpit update --check` reports availability without installing.)
+`cockpit setup` is idempotent and preserves any hooks you've already configured. To update later, `brew upgrade cockpit`. Coming from the old Claude Code plugin install? See [`MIGRATION.md`](MIGRATION.md).
 
 ## Use
 
-The daemon *is* the TUI — run it yourself (no auto-start):
+**1. Start your first task.** Run `cockpit new` from a shell in any git repo — it auto-registers that repo and spawns a worktree + workspace (or press `n` inside the TUI later):
+
+```text
+cockpit new <branch | PR | url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--context] [-- <text...>]
+```
+
+`url` is auto-detected: a GitHub PR URL, a **GitHub Actions run URL**, or a Slack thread permalink. These (like `--pr`) are *spawn sources* you pass at creation time — not configuration, so they have no entry in `config.json`.
+
+**2. Open the dashboard.** The daemon *is* the TUI, so run it yourself (no auto-start):
 
 ```bash
 cockpit watch          # requires a TTY; run under tmux/cmux/screen to persist
@@ -62,20 +63,11 @@ Drive the table by keystroke — most keys act on the highlighted row, and the f
 | `n` | New workspace (branch / PR / URL / Linear id / Slack thread) | always (global — not row-scoped) |
 | `s` | Sync (full reconcile now) | always |
 | `o` | Show tick output / logs | always |
-| `u` | Self-update | when "⬆ update available" |
 | `q` | Quit | always |
-
-Start a task — run `/cockpit:new` inside Claude Code, from a session in any git repo (or press `n` in the TUI):
-
-```text
-/cockpit:new <branch | PR | url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--context] [-- <text...>]
-```
-
-`url` is auto-detected: a GitHub PR URL, a **GitHub Actions run URL**, or a Slack thread permalink. These (like `--pr`) are *CLI spawn sources* you pass at workspace-creation time — they are not configuration, so they have no entry in `config.json` / `config.example.json`. The only GitHub *config* surface is the `tickets` provider (`{provider: "github", …}`); see below.
 
 ## Configuration
 
-`~/.config/cockpit/config.json` holds managed repos + tunables; `/cockpit:new` auto-registers the current repo:
+`~/.config/cockpit/config.json` holds managed repos + tunables; `cockpit new` auto-registers the current repo:
 
 ```json
 {
@@ -102,7 +94,7 @@ That minimal block is enough to start; every other knob has a sane default. The 
 | `slow_poll_interval_seconds` | 300 | full GitHub reconcile |
 | `fast_poll_interval_seconds` | 30 | network-free git-state republish |
 
-**Every knob, with defaults, lives in [`cockpit/config.example.json`](cockpit/config.example.json)** — a plain-JSON example config (not annotated; this README table is the field documentation), validated in CI so it can't drift from what the daemon accepts. It is *not* copied as your config on first run: a fresh install seeds an empty `{"repos": []}` instead, and repos are registered by running `/cockpit:new` (or `cockpit new`) in a repo, or by adding a `repos` entry to `~/.config/cockpit/config.json` by hand.
+**Every knob, with defaults, lives in [`cockpit/config.example.json`](cockpit/config.example.json)** (this README table documents the common ones). A fresh install starts empty (`{"repos": []}`) — you register repos by running `cockpit new` in them, or by adding a `repos` entry to `~/.config/cockpit/config.json` by hand.
 
 ### Ticket providers
 
@@ -136,9 +128,10 @@ Stop the TUI (`q`), then:
 
 ```bash
 rm -rf ~/.config/cockpit          # state only; your worktrees remain
+brew uninstall cockpit
 ```
 
-Then `/plugin uninstall cockpit` in Claude Code.
+Also remove the `statusLine` / `hooks` entries `cockpit setup` added to `~/.claude/settings.json`, if desired.
 
 ## License
 

@@ -601,7 +601,7 @@ def test_review_prompt_leads_with_default_review_command():
             "url": "https://github.com/o/n/pull/7",
         },
     )
-    assert p.startswith("/cockpit:review")  # the plugin-command default
+    assert p.startswith("/review")  # the built-in default
     assert "#7" in p and "coworker" in p and "fix the thing" in p
     assert "Ask before posting" in p
 
@@ -610,7 +610,7 @@ def test_review_prompt_without_pr_info_mentions_branch():
     import cockpit.spawn as spawn
 
     p = spawn._review_prompt("coworker/x", None)
-    assert p.startswith("/cockpit:review")
+    assert p.startswith("/review")
     assert "coworker/x" in p
 
 
@@ -657,7 +657,7 @@ def test_review_branch_mode_seeds_default_review_command(
     )
     assert code == 0
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
-    assert "/cockpit:review" in cmd  # --review-command omitted → plugin-command default
+    assert "/review" in cmd  # --review-command omitted → built-in default
     assert "PLAN ONLY" not in cmd
 
 

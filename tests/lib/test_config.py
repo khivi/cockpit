@@ -847,7 +847,7 @@ def test_find_repo_by_nwo_skips_missing_path(tmp_path, monkeypatch):
 
 def test_review_command_defaults_to_plugin_command(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.review_command() == "/cockpit:review"
+    assert cockpit_config.review_command() == "/review"
 
 
 def test_review_command_repo_override_wins(tmp_path, monkeypatch):
@@ -870,8 +870,7 @@ def test_review_command_falls_back_to_global(tmp_path, monkeypatch):
 def test_review_command_blank_falls_through_to_default(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     assert (
-        cockpit_config.review_command(repo_entry={"review_command": "  "})
-        == "/cockpit:review"
+        cockpit_config.review_command(repo_entry={"review_command": "  "}) == "/review"
     )
 
 
@@ -1353,3 +1352,77 @@ def test_find_repos_by_linear_key_rejects_non_linear_identifier(tmp_path, monkey
     assert cockpit_config.find_repos_by_linear_key("not-a-key") == []
     assert cockpit_config.find_repos_by_linear_key("PE-") == []
     assert cockpit_config.find_repos_by_linear_key("HTTP-200") == []
+
+
+# ---- install_claude_hooks (cockpit setup → ~/.claude/settings.json) ---------
+
+
+def _events(data: dict) -> dict:
+    return data["hooks"]
+
+
+def _cmds(data: dict, event: str) -> list[str]:
+    out = []
+    for group in data["hooks"].get(event, []):
+        for h in group.get("hooks", []):
+            out.append(h["command"])
+    return out
+
+
+def test_install_claude_hooks_writes_expected_events(tmp_path):
+    settings = tmp_path / "settings.json"
+    config_mod.install_claude_hooks(settings)
+    data = json.loads(settings.read_text())
+    assert set(_events(data)) == {
+        "Stop",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "SessionEnd",
+    }
+    # No self-update SessionStart hook — it was retired with the update subsystem.
+    assert "SessionStart" not in _events(data)
+    assert "cockpit statusline || true" in _cmds(data, "Stop")
+    assert "cockpit idle-pill stop || true" in _cmds(data, "Stop")
+    assert "cockpit idle-pill prompt || true" in _cmds(data, "UserPromptSubmit")
+    assert {
+        "cockpit idle-pill loop-set || true",
+        "cockpit idle-pill loop-clear || true",
+    } <= set(_cmds(data, "PreToolUse"))
+
+
+def test_install_claude_hooks_is_idempotent(tmp_path):
+    settings = tmp_path / "settings.json"
+    config_mod.install_claude_hooks(settings)
+    first = settings.read_text()
+    config_mod.install_claude_hooks(settings)
+    second = settings.read_text()
+    assert first == second
+    data = json.loads(second)
+    # Re-run must not duplicate cockpit's Stop group.
+    assert (
+        len([g for g in data["hooks"]["Stop"] if config_mod._is_cockpit_hook_group(g)])
+        == 1
+    )
+    # A second run makes no change → no new backup file.
+    assert not list(tmp_path.glob("settings.json.bak.*"))
+
+
+def test_install_claude_hooks_preserves_user_hooks(tmp_path):
+    settings = tmp_path / "settings.json"
+    user_group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "my-own-linter"}],
+    }
+    settings.write_text(
+        json.dumps(
+            {"hooks": {"Stop": [user_group]}, "statusLine": {"command": "keep-me"}}
+        )
+    )
+    config_mod.install_claude_hooks(settings)
+    data = json.loads(settings.read_text())
+    # User's Stop hook survives alongside cockpit's.
+    assert "my-own-linter" in _cmds(data, "Stop")
+    assert "cockpit idle-pill stop || true" in _cmds(data, "Stop")
+    # Unrelated top-level keys untouched, and the prior file was backed up.
+    assert data["statusLine"] == {"command": "keep-me"}
+    assert list(tmp_path.glob("settings.json.bak.*"))

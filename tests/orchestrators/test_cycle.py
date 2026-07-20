@@ -2419,7 +2419,7 @@ def test_bg_spawn_pr_launches_records_and_guards(tmp_path, monkeypatch):
     argv = popen.call_args.args[0]
     assert "--auto" not in argv
     assert argv[1:4] == ["-m", "cockpit.cli", "new"]  # module dispatch, not spawn.py
-    # review=True rides the per-repo review_command (default /cockpit:review).
+    # review=True rides the per-repo review_command (default /review).
     assert argv[4:] == [
         "--pr",
         "9",
@@ -2427,7 +2427,7 @@ def test_bg_spawn_pr_launches_records_and_guards(tmp_path, monkeypatch):
         "n",
         "--review",
         "--review-command",
-        "/cockpit:review",
+        "/review",
     ]
     assert ctx.pill_state["spawn:o/n:coworker/x"] == 100.0
 
@@ -3561,81 +3561,6 @@ def test_reap_dry_run_does_not_delete(tmp_path):
     dele.assert_not_called()
 
 
-# --- _check_plugin_update --------------------------------------------------
-
-
-def test_check_plugin_update_logs_when_newer(capsys):
-    pill_state: dict = {}
-    with (
-        patch.object(cycle.version, "running_version", return_value="0.27.74"),
-        patch.object(cycle.version, "latest_version", return_value="0.27.80"),
-    ):
-        cycle._check_plugin_update({"check_update": True}, pill_state)
-    out = capsys.readouterr().out
-    assert "update available" in out
-    assert "0.27.74 -> 0.27.80" in out
-    assert pill_state["update-check:warned"] == "0.27.80"
-
-
-def test_check_plugin_update_default_on_when_key_absent(capsys):
-    with (
-        patch.object(cycle.version, "running_version", return_value="0.27.74"),
-        patch.object(cycle.version, "latest_version", return_value="0.27.80"),
-    ):
-        cycle._check_plugin_update({}, {})
-    assert "update available" in capsys.readouterr().out
-
-
-def test_check_plugin_update_skips_when_disabled(capsys):
-    with patch.object(cycle.version, "latest_version") as latest:
-        cycle._check_plugin_update({"check_update": False}, {})
-    latest.assert_not_called()
-    assert capsys.readouterr().out == ""
-
-
-def test_check_plugin_update_silent_when_up_to_date(capsys):
-    with (
-        patch.object(cycle.version, "running_version", return_value="0.27.80"),
-        patch.object(cycle.version, "latest_version", return_value="0.27.80"),
-    ):
-        cycle._check_plugin_update({"check_update": True}, {})
-    assert capsys.readouterr().out == ""
-
-
-def test_check_plugin_update_silent_on_fetch_failure(capsys):
-    with (
-        patch.object(cycle.version, "running_version", return_value="0.27.74"),
-        patch.object(cycle.version, "latest_version", return_value=None),
-    ):
-        cycle._check_plugin_update({"check_update": True}, {})
-    assert capsys.readouterr().out == ""
-
-
-def test_check_plugin_update_ttl_throttles_second_call(capsys):
-    pill_state: dict = {}
-    with (
-        patch.object(cycle.version, "running_version", return_value="0.27.74"),
-        patch.object(cycle.version, "latest_version", return_value="0.27.80") as latest,
-    ):
-        cycle._check_plugin_update({"check_update": True}, pill_state)
-        capsys.readouterr()  # drain the first notice
-        cycle._check_plugin_update({"check_update": True}, pill_state)
-    # Second call is inside the TTL window — no re-query, no re-log.
-    assert latest.call_count == 1
-    assert capsys.readouterr().out == ""
-
-
-def test_check_plugin_update_warns_once_per_version(capsys):
-    # A re-query (after the TTL) for the same newer version must not re-log.
-    pill_state = {"update-check:warned": "0.27.80"}
-    with (
-        patch.object(cycle.version, "running_version", return_value="0.27.74"),
-        patch.object(cycle.version, "latest_version", return_value="0.27.80"),
-    ):
-        cycle._check_plugin_update({"check_update": True}, pill_state)
-    assert capsys.readouterr().out == ""
-
-
 # --- cycle_all on_repo_done -------------------------------------------------
 
 
@@ -3645,7 +3570,6 @@ def _patch_cycle_all_collaborators():
     `gh`/`git`/`cmux`."""
     return (
         patch.object(cycle, "ensure_state_dirs", lambda: None),
-        patch.object(cycle, "_check_plugin_update", lambda *_a, **_k: None),
         patch.object(cycle, "_drain_close_requests", lambda *, dry: None),
         patch.object(cycle, "close_gone_cwd_workspaces", lambda *, dry: None),
         patch.object(cycle, "_reap_workspace_orphans", lambda *_a, **_k: None),
@@ -3661,7 +3585,6 @@ def test_cycle_all_calls_on_repo_done_once_per_repo():
         patches[1],
         patches[2],
         patches[3],
-        patches[4],
         patch.object(
             cycle, "cycle_repo", lambda repo_entry, *_a, **_k: seen.append("repo")
         ),
@@ -3693,7 +3616,6 @@ def test_cycle_all_on_repo_done_fires_even_when_a_repo_errors():
         patches[1],
         patches[2],
         patches[3],
-        patches[4],
         patch.object(cycle, "cycle_repo", _boom),
     ):
         cycle.cycle_all(
@@ -3722,7 +3644,6 @@ def test_cycle_all_callback_error_does_not_abort_remaining_repos(capsys):
         patches[1],
         patches[2],
         patches[3],
-        patches[4],
         patch.object(
             cycle,
             "cycle_repo",
@@ -3759,11 +3680,6 @@ def test_cycle_all_only_repo_reconciles_just_that_repo():
         # in CI). Without this the drain is environment-dependent.
         patch.object(cycle, "_cache_only", lambda cfg: False),
         patch.object(
-            cycle,
-            "_check_plugin_update",
-            lambda *_a, **_k: swept.append("plugin-update"),
-        ),
-        patch.object(
             cycle, "_drain_close_requests", lambda *, dry: drained.append("drain")
         ),
         patch.object(
@@ -3793,8 +3709,8 @@ def test_cycle_all_only_repo_reconciles_just_that_repo():
     # The close queue is still drained — a `c`/`C` teardown lands there and the
     # keypress is waiting on it.
     assert drained == ["drain"]
-    # The repo-spanning sweeps + plugin-update check are skipped for a scoped
-    # run — the next full periodic tick handles that global housekeeping.
+    # The repo-spanning sweeps are skipped for a scoped run — the next full
+    # periodic tick handles that global housekeeping.
     assert swept == []
 
 
@@ -3803,7 +3719,6 @@ def test_cycle_all_only_repo_unknown_path_reconciles_nothing():
     seen: list[str] = []
     with (
         patch.object(cycle, "ensure_state_dirs", lambda: None),
-        patch.object(cycle, "_check_plugin_update", lambda *_a, **_k: None),
         patch.object(cycle, "_drain_close_requests", lambda *, dry: None),
         patch.object(cycle, "close_gone_cwd_workspaces", lambda *, dry: None),
         patch.object(cycle, "_reap_workspace_orphans", lambda *_a, **_k: None),
@@ -3884,7 +3799,6 @@ def _run_cycle_all(*, is_cmux: bool, has_backend: bool) -> tuple:
     (drain, close_gone, reap) collaborator mocks."""
     with (
         patch.object(cycle, "ensure_state_dirs"),
-        patch.object(cycle, "_check_plugin_update"),
         patch.object(cycle, "cycle_repo"),
         patch.object(cycle, "_drain_close_requests") as drain,
         patch.object(cycle, "close_gone_cwd_workspaces") as close_gone,

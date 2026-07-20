@@ -8,18 +8,14 @@ on:
 permissions:
   contents: read
 
-# Two hooks are local-dev-only and must be skipped in CI:
-# - no-commit-to-branch guards against committing straight to main/master. On a
-#   push-to-main CI run the runner checks out main directly, so the hook fails
-#   on every run (pull_request runs sit on a detached HEAD and pass).
-# - version-bump-pre-push auto-bumps plugin.json and creates a commit. In CI
-#   there is no git author identity and no reason to bump, so its `git commit`
-#   dies with exit 128, failing the pre-push step on every PR.
-# Both run in the pre-commit steps below — the default-stage pre-commit/action
-# and the explicit pre-push invocation — so skip them workflow-wide. SKIP is
-# honoured by both `pre-commit/action` and bare `pre-commit run`.
+# no-commit-to-branch is local-dev-only and must be skipped in CI: it guards
+# against committing straight to main/master, but on a push-to-main CI run the
+# runner checks out main directly, so the hook fails on every run (pull_request
+# runs sit on a detached HEAD and pass). It runs in both pre-commit steps below,
+# so skip it workflow-wide. SKIP is honoured by `pre-commit/action` and bare
+# `pre-commit run`.
 env:
-  SKIP: "no-commit-to-branch,version-bump-pre-push"
+  SKIP: "no-commit-to-branch"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

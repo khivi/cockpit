@@ -28,13 +28,12 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch, tmp_path):
-    # No live config reads; no network update check; watch.log under a tmp dir
-    # (not the developer's real ~/.config/cockpit).
+    # No live config reads; watch.log under a tmp dir (not the developer's real
+    # ~/.config/cockpit).
     monkeypatch.setattr(
         "cockpit.tui.app.load_config",
-        lambda: {"repos": [], "check_update": False},
+        lambda: {"repos": []},
     )
-    monkeypatch.setattr("cockpit.lib.version.latest_version", lambda: None)
     monkeypatch.setattr("cockpit.tui.app.COCKPIT_HOME", tmp_path)
     # Pin the workspace backend so footer/key tests are deterministic regardless
     # of whether cmux/limux is on PATH (CI has neither → would resolve "none").
@@ -155,7 +154,6 @@ async def test_table_primes_before_slow_completes(monkeypatch, tmp_path):
         "cockpit.tui.app.load_config",
         lambda: {
             "repos": [{"name": "repo", "path": str(tmp_path)}],
-            "check_update": False,
         },
     )
     monkeypatch.setattr(
@@ -193,7 +191,6 @@ async def test_slow_tick_gets_per_repo_publish_callback(monkeypatch, tmp_path):
         "cockpit.tui.app.load_config",
         lambda: {
             "repos": [{"name": "repo", "path": str(tmp_path)}],
-            "check_update": False,
         },
     )
     monkeypatch.setattr(
@@ -339,33 +336,6 @@ async def test_waiting_on_lock_shows_waiting_not_running():
         assert app._slow_phase == "idle"
 
 
-async def test_update_check_re_runs_on_each_slow_tick(monkeypatch):
-    # The update check rides the slow tick (no separate hourly timer), so a
-    # release that lands after startup surfaces on the next slow tick — not up
-    # to an hour later. Clear the indicator after the startup check, kick a
-    # fresh slow tick, and assert it gets re-set.
-    monkeypatch.setattr(
-        "cockpit.tui.app.load_config",
-        lambda: {"repos": [], "check_update": True},
-    )
-    monkeypatch.setattr("cockpit.lib.version.running_version", lambda: "0.1")
-    monkeypatch.setattr("cockpit.lib.version.latest_version", lambda: "0.2")
-
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause(0.8)  # startup slow tick + its update check land
-        header = app.query_one(HeaderBar)
-        assert header.update_text == "0.1 → 0.2"
-
-        header.update_text = ""  # forget it; only a re-check can restore it
-        await pilot.press("s")  # kick a fresh slow tick
-        for _ in range(20):
-            if header.update_text:
-                break
-            await pilot.pause(0.1)
-        assert header.update_text == "0.1 → 0.2"  # slow tick re-checked
-
-
 async def test_tick_output_written_to_bounded_log_file():
     # No log pane widget exists; tick output lands in the bounded watch.log.
     app, _ = _make_app()
@@ -442,7 +412,6 @@ def _seed_one_worktree(monkeypatch, tmp_path, *, branch="khivi/feat-a"):
         "cockpit.tui.app.load_config",
         lambda: {
             "repos": [{"name": "repo", "path": str(tmp_path)}],
-            "check_update": False,
         },
     )
     monkeypatch.setattr(
@@ -642,7 +611,6 @@ async def test_focus_no_worktree_repo_switches_by_repo_name(monkeypatch, tmp_pat
         "cockpit.tui.app.load_config",
         lambda: {
             "repos": [{"name": "myrepo", "path": str(tmp_path), "use_worktree": False}],
-            "check_update": False,
         },
     )
     monkeypatch.setattr(
@@ -1051,7 +1019,6 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
                 {"name": "a", "path": str(repo_a)},
                 {"name": "b", "path": str(repo_b)},
             ],
-            "check_update": False,
         },
     )
     monkeypatch.setattr(
@@ -1098,7 +1065,6 @@ async def test_new_box_no_worktree_repo_spawns_named_checkout(monkeypatch, tmp_p
         "cockpit.tui.app.load_config",
         lambda: {
             "repos": [{"name": "scratch", "path": str(repo), "use_worktree": False}],
-            "check_update": False,
         },
     )
     monkeypatch.setattr(
@@ -1152,7 +1118,6 @@ async def test_new_box_defaults_to_cursor_header_repo(monkeypatch, tmp_path):
                 {"name": "a", "path": str(repo_a)},
                 {"name": "b", "path": str(repo_b)},
             ],
-            "check_update": False,
         },
     )
     monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
@@ -1196,7 +1161,6 @@ async def test_double_click_header_opens_new_modal(monkeypatch, tmp_path):
                 {"name": "a", "path": str(repo_a)},
                 {"name": "b", "path": str(repo_b)},
             ],
-            "check_update": False,
         },
     )
     monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
@@ -1215,34 +1179,6 @@ async def test_double_click_header_opens_new_modal(monkeypatch, tmp_path):
         await pilot.pause()
         assert isinstance(app.screen, NewWorkspaceScreen)
         assert app.screen.query_one(Select).value == str(repo_b)
-
-
-async def test_update_key_exits_with_restart_code():
-    # An available update + `u` exits with the sentinel so cli.py runs the
-    # updater and re-execs.
-    from cockpit.tui.app import RESTART_EXIT_CODE
-
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.query_one(HeaderBar).update_text = "0.1 → 0.2"
-        await pilot.pause()
-        await pilot.press("u")
-        await pilot.pause()
-    assert app.return_code == RESTART_EXIT_CODE
-
-
-async def test_update_key_noop_when_no_update(monkeypatch):
-    # No advertised update → `u` is a no-op toast, the daemon keeps running.
-    app, _ = _make_app()
-    toasts: list[str] = []
-    monkeypatch.setattr(app, "notify", lambda m, **k: toasts.append(m))
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        await pilot.press("u")
-        await pilot.pause(0.3)
-        assert app.return_code is None  # still running; no restart requested
-    assert any("no update" in t.lower() for t in toasts)
 
 
 async def test_arrow_keys_move_row_cursor():
@@ -1266,7 +1202,7 @@ async def test_arrow_keys_move_row_cursor():
 
 
 async def test_show_full_config_pushes_screen(monkeypatch, tmp_path):
-    cfg = {"repos": [{"name": "a", "path": str(tmp_path)}], "check_update": False}
+    cfg = {"repos": [{"name": "a", "path": str(tmp_path)}], "use_slack": False}
     monkeypatch.setattr("cockpit.tui.app.load_config", lambda: cfg)
     app, _ = _make_app()
     async with app.run_test() as pilot:
@@ -1274,13 +1210,13 @@ async def test_show_full_config_pushes_screen(monkeypatch, tmp_path):
         app.action_show_full_config()
         await pilot.pause()
         assert isinstance(app.screen, ConfigScreen)
-        assert "check_update" in app.screen._body
+        assert "use_slack" in app.screen._body
 
 
 async def test_full_config_surfaces_both_themes(monkeypatch):
     # The overlay header shows the current `theme` (dark|light, pills/footer)
     # and the live `tui_theme` (this TUI) — answering "show the current theme".
-    cfg = {"repos": [], "check_update": False, "theme": "light", "tui_theme": "nord"}
+    cfg = {"repos": [], "theme": "light", "tui_theme": "nord"}
     monkeypatch.setattr("cockpit.tui.app.load_config", lambda: cfg)
     app, _ = _make_app()
     async with app.run_test() as pilot:
@@ -1295,7 +1231,7 @@ async def test_full_config_surfaces_both_themes(monkeypatch):
 async def test_applies_saved_tui_theme_on_mount(monkeypatch):
     monkeypatch.setattr(
         "cockpit.tui.app.load_config",
-        lambda: {"repos": [], "check_update": False, "tui_theme": "nord"},
+        lambda: {"repos": [], "tui_theme": "nord"},
     )
     app, _ = _make_app()
     async with app.run_test() as pilot:
@@ -1308,7 +1244,7 @@ async def test_unknown_tui_theme_falls_back_without_crashing(monkeypatch):
     # stays on a valid theme.
     monkeypatch.setattr(
         "cockpit.tui.app.load_config",
-        lambda: {"repos": [], "check_update": False, "tui_theme": "no-such-theme"},
+        lambda: {"repos": [], "tui_theme": "no-such-theme"},
     )
     app, _ = _make_app()
     async with app.run_test() as pilot:
@@ -1534,19 +1470,6 @@ async def test_open_ticket_no_ticket_warns(monkeypatch, tmp_path):
     assert any("no ticket" in t for t in toasts)
 
 
-async def test_footer_hides_update_until_available():
-    from cockpit.tui.widgets.footer_bar import FooterBar
-
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        footer = app.query_one(FooterBar)
-        assert "Update" not in footer.global_text  # hidden with no update
-        app._set_update("0.1 → 0.2")
-        await pilot.pause()
-        assert "Update" in footer.global_text  # revealed once available
-
-
 async def test_footer_groups_row_keys_left_global_right():
     from cockpit.tui.widgets.footer_bar import FooterBar
 
@@ -1722,42 +1645,3 @@ async def test_footer_hides_close_on_workspaceless_primary_checkout():
     assert not fb._skip("close_row") and not fb._skip("force_close_row")
     fb._row_caps = frozenset()  # feature row, no workspace
     assert not fb._skip("close_row") and not fb._skip("force_close_row")
-
-
-async def test_mount_does_not_block_loop_on_update_check(monkeypatch):
-    # The startup update check (`_check_update` → `version.latest_version` →
-    # `gh api`) must not stall the first paint: it's dispatched off the loop via
-    # `@work(thread=True)`. Guard that a *slow* update check leaves the app
-    # interactive within the fast-tick horizon anyway. A bounded event stands in
-    # for a slow `gh` so a regression (making the check synchronous in on_mount)
-    # can't hang the suite. NOTE: this pins the non-blocking-mount invariant only
-    # — it does NOT reproduce the `u` self-update freeze, which is a real-TTY /
-    # execvp fd-inheritance issue outside the headless PipeDriver's reach.
-    monkeypatch.setattr(
-        "cockpit.tui.app.load_config",
-        lambda: {"repos": [], "check_update": True},
-    )
-    monkeypatch.setattr("cockpit.tui.app.version.running_version", lambda: "0.1")
-    release = threading.Event()
-    entered = threading.Event()
-
-    def blocking_latest():
-        entered.set()
-        release.wait(5)  # bounded: a bug can't hang the suite, only slow it
-        return "9.9.9"
-
-    monkeypatch.setattr("cockpit.lib.version.latest_version", blocking_latest)
-
-    app, _ = _make_app()
-    try:
-        start = time.monotonic()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            ready = time.monotonic() - start
-            # Interactive well before the 5s block clears → the check ran on a
-            # worker, not the loop. A synchronous on_mount call would push this
-            # past 5s (the freeze the re-exec'd TUI shows, in miniature).
-            assert ready < 2.0, f"mount blocked {ready:.1f}s on the update check"
-            assert entered.is_set()  # the check did start (off-thread)
-    finally:
-        release.set()

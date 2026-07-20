@@ -25,7 +25,7 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `default_base` | string | `"main"` | Base branch PRs target; drives base-distance + the `origin/{base}` startup warning. |
 | `sidebar_color` | string | unset | cmux sidebar tint + TUI row tint (one of `colors.CMUX_COLOR_ANSI`). Validated at preflight. |
 | `review_prs` | bool | `false` | Auto-spawn a review worktree for each coworker's open PR (collaborators only; see `review_external`). |
-| `review_command` | string | `/cockpit:review` | Slash command seeded as the first turn of an auto-spawned review worktree. No-op unless `review_prs`. |
+| `review_command` | string | `/review` | Slash command seeded as the first turn of an auto-spawned review worktree. No-op unless `review_prs`. |
 | `review_external` | bool | `false` | Also auto-spawn review worktrees for non-collaborator (fork) PRs. Off by default — untrusted content reaching a Bash-capable agent is a prompt-injection risk. |
 | `dependabot` | bool | `false` | Include Dependabot PRs in `review_prs` auto-spawn. Excluded by default. |
 | `use_worktree` | bool | `true` | When `false`, the user works directly in the main checkout and cockpit never spawns PR/review/orphan worktrees for the repo (and `n` on its row creates a single named workspace on the checkout, no worktree). Absent = `true` = normal worktree-managed repo. Set to `false` by bare `cockpit new`. |
@@ -75,7 +75,6 @@ Secrets are **env-only**, never config: `LINEAR_API_KEY`, `JIRA_API_TOKEN`,
 | `prompt_prefix` | string | `""` | First line prepended to every spawned Claude prompt (e.g. a session-start skill). |
 | `use_cship` | bool | `false` | Install/point the statusLine at cship; seed `cship.toml`/`starship.toml` (via `cockpit setup` only). |
 | `use_slack` | bool | `false` | Enable the Slack-MCP fetch+rename prompt for Slack-thread spawn sources. |
-| `check_update` | bool | `true` | Whether the TUI checks for a newer cockpit release. |
 | `tool` | string | `auto` | Workspace backend: `auto` \| `cmux` \| `limux` \| `none`. |
 | `theme` | string | `dark` | `dark` \| `light` — tunes cmux pills + the cship/starship footer palette. |
 | `tui_theme` | string | `textual-dark` | Textual theme for the `cockpit watch` TUI chrome only. Persisted from the TUI theme picker. |

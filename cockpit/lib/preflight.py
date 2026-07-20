@@ -74,9 +74,9 @@ def _validate_repo_bool(cfg: dict, key: str) -> None:
 def _validate_global_bool(cfg: dict, key: str) -> None:
     """Hard-fail on a top-level `key` that's present but isn't a bool.
 
-    `check_update` (gates the new-version log line) and `use_slack` (gates the
-    Slack-MCP-fetch spawn prompt) both default true/false and gate daemon
-    behavior, so a non-bool would be silently truthy — rejected like `review_prs`.
+    `use_slack` (gates the Slack-MCP-fetch spawn prompt) defaults false and
+    gates daemon behavior, so a non-bool would be silently truthy — rejected
+    like `review_prs`.
     """
     if key in cfg and not isinstance(cfg[key], bool):
         _die(f"{key} must be true or false, got {cfg[key]!r}.")
@@ -309,16 +309,16 @@ def _warn_cockpit_not_on_path() -> None:
 
     The daemon itself runs fine via `python -m cockpit.cli`, and the seeded
     statusline/starship commands use the interpreter + module dispatch — but the
-    `/cockpit:*` slash-commands and the Stop-hook statusline invoke the bare
-    `cockpit` console script, which needs it on PATH. Warn once at start so a
-    missing install surfaces here, not as an opaque command-not-found later.
+    Claude Code hooks (`cockpit setup` writes) and `cockpit new`/`cockpit close`
+    invoke the bare `cockpit` console script, which needs it on PATH. Warn once
+    at start so a missing install surfaces here, not as an opaque
+    command-not-found later.
     """
     if shutil.which("cockpit") is None:
         print(
             f"{yellow('cockpit:')} the `cockpit` command is not on PATH. The "
-            "daemon runs, but the /cockpit:* slash-commands and the statusline "
-            "hook invoke it directly. Install with `uv tool install cockpit` "
-            "(or run via `uvx cockpit`).",
+            "daemon runs, but the Claude Code hooks invoke it directly. "
+            "Install with `brew install khivi/cockpit/cockpit`.",
             file=sys.stderr,
             flush=True,
         )
@@ -377,7 +377,6 @@ def validate_config(cfg: dict) -> None:
     _validate_repo_bool(cfg, "review_external")
     _validate_review_command(cfg)
     _validate_base_remote(cfg)
-    _validate_global_bool(cfg, "check_update")
     _validate_global_bool(cfg, "use_slack")
     _validate_statusline_hide(cfg)
     _validate_tickets(cfg)
@@ -419,7 +418,7 @@ def preflight(cfg: dict) -> None:
             print(
                 f"{yellow('cockpit:')} no workspace tool on PATH (cmux/limux) — "
                 "running cache-only mode. Footer/statusline works; "
-                "side panel and slash commands disabled. "
+                "side panel and workspace spawning disabled. "
                 "Set 'tool': 'none' in config to suppress this warning.",
                 file=sys.stderr,
                 flush=True,

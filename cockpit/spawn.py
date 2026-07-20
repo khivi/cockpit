@@ -185,7 +185,7 @@ def _unknown_repo_msg(name: str) -> str:
         )
     return (
         f"--repo {name!r}: no configured repo with that name, and no repos "
-        f"are configured. Run /cockpit:new from inside a "
+        f"are configured. Run `cockpit new` from inside a "
         f"git repo to auto-register."
     )
 
@@ -226,7 +226,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--context-text",
         help="caller-supplied summary of the current session, injected into the "
         "seeded first-turn prompt under a 'Caller session context' heading. The "
-        "/cockpit:new skill fills this from `--context` by summarizing the live "
+        "the new-workspace flow fills this from `--context` by summarizing the live "
         "session before invoking spawn.py.",
     )
     raw = sys.argv[1:] if argv is None else argv
@@ -561,9 +561,8 @@ def _review_prompt(
     review against the PR checked out on this branch; the PR context block
     follows for the human reading the transcript. Mirrors the `--skill` path,
     which also delivers a bare slash command as the first turn. ``command``
-    defaults to cockpit's `/cockpit:review` plugin command; the daemon passes
-    the per-repo `review_command` (e.g. `/review` or `/pr-review`) via
-    `--review-command`.
+    defaults to Claude Code's built-in `/review`; the daemon passes the per-repo
+    `review_command` (e.g. `/pr-review`) via `--review-command`.
 
     The closing line keeps the worktree dry-run: report findings, then stop
     before posting comments or submitting an approve / request-changes verdict —
@@ -946,7 +945,7 @@ def main(argv: list[str] | None = None) -> int:
         ):
             # Plan-only fires only when there's something to study first: a PR,
             # a Linear ticket, inherited `--context`, or an explicit `-- <text>`
-            # task. A blank worktree (`/cockpit:new <name> --repo <repo>` with
+            # task. A blank worktree (`cockpit new <name> --repo <repo>` with
             # none of those) is ready to work on, so it gets no seeded guidance —
             # any configured `prompt_prefix` (e.g. a session-setup skill) still
             # rides via `claude_command()`, and the user states the task live.
@@ -967,7 +966,7 @@ def main(argv: list[str] | None = None) -> int:
     # Match by name first, then fall back to worktree path. The path check
     # catches the case where the daemon already spawned a workspace for this
     # worktree under a different slug (e.g. cockpit auto-spawned before the
-    # user ran /cockpit:new), preventing a duplicate workspace.
+    # user ran cockpit new), preventing a duplicate workspace.
     existing_ref = next((ref for ref, n in ws_refs.items() if n == ws_name), None)
     if existing_ref is None and wt is not None:
         try:

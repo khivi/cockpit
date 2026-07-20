@@ -77,11 +77,7 @@ from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
 from cockpit.orchestrators.teardown import resolve_pr_state, worktree_state_blockers
-from cockpit.tui.widgets.config_screen import (
-    ConfigCommands,
-    ConfigScreen,
-    ReleaseNotesScreen,
-)
+from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
@@ -95,15 +91,6 @@ _LOG_TAIL_LINES = 200
 # `cockpit` package and intra-package imports die (`'cockpit' is not a package`).
 # Detached output lands in `spawn.log`.
 _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
-
-# Process exit code the TUI returns when the user presses `u` to update.
-# `cli.py`'s watch branch watches for this specific code: after the TUI tears
-# down it runs the Python updater (`cockpit.lib.updater`, which can't take
-# effect in-process — it reinstalls the very package the daemon is running from)
-# and `os.execvp`s a fresh `cockpit watch`. Any value outside the daemon's own
-# exit codes (0 clean, 1 pidfile collision, 2 non-TTY) works; 42 is the agreed
-# sentinel between this module and cli.py.
-RESTART_EXIT_CODE = 42
 
 # (repo display name, cache key/nwo, sidebar_color, tickets-enabled, worktrees).
 # The display name is the arbitrary config label (header + `_row_repo`); the
@@ -191,13 +178,11 @@ class CockpitApp(App[None]):
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
         ("o", "show_output", "Output"),
-        ("r", "show_release_notes", "What's new"),
         ("c", "close_row", "Close"),
         ("C", "force_close_row", "Force close"),
         ("m", "mute_row", "Mute"),
         ("N", "nudge_row", "Nudge"),
         ("n", "new_workspace", "New"),
-        ("u", "update", "Update"),
         ("q", "quit", "Quit"),
         ("escape", "dismiss_overlay", "Back"),
     ]
@@ -254,11 +239,10 @@ class CockpitApp(App[None]):
             id="table",
             cursor_foreground_priority="renderable",
         )
-        # Grouped footer: row keys (left) vs global keys (right). The `u` update
-        # key stays hidden until `_set_update` reveals it; the `t` ticket key
-        # shows only when some repo has a ticket provider; backend-divergent keys
-        # follow `resolve_tool()` (see FooterBar.BACKEND_ACTIONS). Row keys are
-        # further gated per-row by the highlighted row's capabilities
+        # Grouped footer: row keys (left) vs global keys (right). The `t` ticket
+        # key shows only when some repo has a ticket provider; backend-divergent
+        # keys follow `resolve_tool()` (see FooterBar.BACKEND_ACTIONS). Row keys
+        # are further gated per-row by the highlighted row's capabilities
         # (`_refresh_footer_caps`): `p`/`m` need a PR, `t` needs a ticket.
         yield FooterBar(
             self.BINDINGS,
@@ -285,9 +269,6 @@ class CockpitApp(App[None]):
         self.set_interval(1.0, self._update_countdown)
         self.set_interval(0.2, self._drain_log)
         self.set_interval(self._slow_secs, self._kick_slow)
-        # The update check rides the slow tick (see _run_slow); no separate
-        # timer — that's why a fresh release surfaces in ~one slow interval,
-        # not up to an hour.
 
         print(f"slow-tick: every {self._slow_secs}s")
         if self._fast_secs > 0:
@@ -300,7 +281,6 @@ class CockpitApp(App[None]):
 
         # Slow first; the fast loop starts only once the slow tick has populated
         # the PR caches (so the first fast republish isn't a no-op).
-        self._check_update()
         self._kick_slow()
 
     def _apply_saved_theme(self) -> None:
@@ -409,13 +389,6 @@ class CockpitApp(App[None]):
                 self.call_from_thread(self._start_fast)
             except Exception as e:
                 print(f"slow-tick error: start_fast failed: {e}")
-            try:
-                # Re-check for a newer release on every slow tick (network-light
-                # gh api). `exclusive` coalesces a manual `s`/SIGUSR1 kick that
-                # lands on top of an in-flight check.
-                self.call_from_thread(self._check_update)
-            except Exception as e:
-                print(f"slow-tick error: check_update failed: {e}")
 
     @work(thread=True, group="prime", exit_on_error=False)
     def _prime_table(self) -> None:
@@ -440,15 +413,6 @@ class CockpitApp(App[None]):
         finally:
             self._fast_phase = "idle"
             self._publish_inventory()
-
-    @work(thread=True, group="update", exclusive=True, exit_on_error=False)
-    def _check_update(self) -> None:
-        if not load_config().get("check_update", True):
-            return
-        running = version.running_version()
-        latest = version.latest_version()
-        if latest and version.is_newer(latest, running):
-            self.call_from_thread(self._set_update, f"{running} → {latest}")
 
     # ---- ui updates ------------------------------------------------------
 
@@ -489,11 +453,6 @@ class CockpitApp(App[None]):
         self._log_tail.extend(new)
         with contextlib.suppress(OSError):
             self._log_path.write_text("\n".join(self._log_tail) + "\n")
-
-    def _set_update(self, text: str) -> None:
-        self.query_one(HeaderBar).update_text = text
-        with contextlib.suppress(Exception):
-            self.query_one(FooterBar).set_show_update(bool(text))
 
     def _cache_repo_name(self, repo: dict) -> str:
         """The repo's git nwo name — the key the daemon writes PR cache files
@@ -643,17 +602,6 @@ class CockpitApp(App[None]):
         body = "\n".join(self._log_tail) or "(no tick output yet)"
         self.push_screen(ConfigScreen("slow / fast output", body))
 
-    def action_show_release_notes(self) -> None:
-        # `r`: the ChangeLog overlay. Lazy-paginated — it pulls one page of
-        # merged-PR subjects per scroll-to-bottom (gh api, off the UI thread in
-        # the screen's own worker), so the first paint is quick and history is
-        # only fetched as far as you scroll.
-        from cockpit.lib import release_notes
-
-        self.push_screen(
-            ReleaseNotesScreen(release_notes.recent_title(), release_notes.recent_page)
-        )
-
     def action_dismiss_overlay(self) -> None:
         # Escape: close the help panel if open, else pop a modal back toward the
         # table (no-op on the base screen; modals with their own escape binding
@@ -700,7 +648,7 @@ class CockpitApp(App[None]):
         self._row_act(self._send_nudge)
 
     def action_new_workspace(self) -> None:
-        # Spawn a worktree + workspace from the typed source (the `/cockpit:new`
+        # Spawn a worktree + workspace from the typed source (the `cockpit new`
         # path). The modal offers a repo picker (when more than one is
         # configured) so a bare branch name can be routed to any repo; it
         # defaults to the cursor row's repo, which sets spawn.py's cwd. A
@@ -775,16 +723,6 @@ class CockpitApp(App[None]):
         else:
             spawn_source = name
         self._launch_spawn(spawn_source, cwd)
-
-    def action_update(self) -> None:
-        # Only meaningful when the header advertises a newer version. Exit with
-        # the restart sentinel; cli.py runs the updater + re-execs `cockpit
-        # watch` (the in-process reinstall can't take effect — see
-        # RESTART_EXIT_CODE).
-        if not self.query_one(HeaderBar).update_text:
-            self.notify("no update available", severity="information", timeout=4.0)
-            return
-        self.exit(return_code=RESTART_EXIT_CODE, message="updating cockpit…")
 
     def on_data_table_row_highlighted(self, event: object) -> None:
         # Arrow-key navigation moves the row cursor → re-gate the footer's row
@@ -1039,7 +977,7 @@ class CockpitApp(App[None]):
     @work(thread=True, group="mute", exit_on_error=False)
     def _toggle_mute(self, path_str: str) -> None:
         # Toggle the row PR's nudge-mute (full mute, no expiry — same as
-        # `/cockpit:nudge mute`). Writes a NudgePref, NOT a cache cell, so the
+        # `cockpit nudge mute`). Writes a NudgePref, NOT a cache cell, so the
         # daemon stays sole writer; the kicked slow tick republishes the
         # `pr-muted` cell + pills, so the 🔇 glyph catches up within the cycle.
         resolved = self._resolve_worktree(path_str)

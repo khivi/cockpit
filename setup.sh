@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-shot dev setup: wire pre-commit hooks for both commit + push stages.
-# pre-push runs version-bump and pytest via pre-commit (see .pre-commit-config.yaml).
+# pre-push runs pytest + mypy via pre-commit (see .pre-commit-config.yaml).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 

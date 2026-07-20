@@ -3,10 +3,10 @@
 All notable changes to this project are documented here, in the style of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-The version number auto-bumps a patch on every merge to `main` (see
-`.githooks/version-bump.py`), so a per-version list would mostly be noise.
-This file instead records notable, human-readable changes grouped by kind,
-not every version bump.
+The version in `pyproject.toml` is bumped and tagged `v<version>` at release
+time (the brew formula pins that tag), so a per-version list would mostly be
+noise. This file instead records notable, human-readable changes grouped by
+kind, not every version bump.
 
 ## Recent history
 
@@ -29,6 +29,12 @@ not every version bump.
 
 ### Changed
 
+- Distribution moved from a Claude Code plugin + uv-tool to a Homebrew formula
+  (`brew tap khivi/cockpit && brew install cockpit`); `cockpit setup` now writes
+  the statusLine **and** the Claude Code hooks into `~/.claude/settings.json`.
+  The in-TUI self-update (`u`), the `/cockpit:*` slash commands, and the
+  plugin/marketplace are gone — `brew upgrade` handles updates. Existing
+  plugin users: see [`MIGRATION.md`](MIGRATION.md).
 - `w` (open workspace) folded into `f` (focus), which now spawns a workspace
   first if the row has none; `in_place` config renamed to `use_worktree`
   (inverted polarity); `n` (new workspace) routes per repo type (#245)
