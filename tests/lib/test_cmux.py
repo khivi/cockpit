@@ -108,7 +108,6 @@ def test_apply_pills_clears_legacy_managed_key():
     for k in ACTIONABLE_KEYS:
         assert k in cleared_keys
     assert COCKPIT_KEY in cleared_keys
-    assert "cockpit_managed" in cleared_keys
 
 
 # ── status_pills (cmux mapper) ──────────────────────────────────────────────

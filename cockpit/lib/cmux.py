@@ -703,8 +703,7 @@ def apply_pills(
     return frozenset(desired)
 
 
-# "cockpit_managed" is a one-release back-compat strip — remove next release.
-_PR_PILL_CLEAR_KEYS = [*ACTIONABLE_KEYS, COCKPIT_KEY, OWNER_KEY, "cockpit_managed"]
+_PR_PILL_CLEAR_KEYS = [*ACTIONABLE_KEYS, COCKPIT_KEY, OWNER_KEY]
 
 
 def _clear_pr_pill_keys(ref: str) -> None:

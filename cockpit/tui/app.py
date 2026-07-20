@@ -81,7 +81,7 @@ from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
-from cockpit.tui.widgets.worktree_table import WorktreeTable
+from cockpit.tui.widgets.worktree_table import Inventory, WorktreeTable
 
 _LOG_TAIL_LINES = 200
 
@@ -91,14 +91,6 @@ _LOG_TAIL_LINES = 200
 # `cockpit` package and intra-package imports die (`'cockpit' is not a package`).
 # Detached output lands in `spawn.log`.
 _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
-
-# (repo display name, cache key/nwo, sidebar_color, tickets-enabled, worktrees).
-# The display name is the arbitrary config label (header + `_row_repo`); the
-# cache key is the git nwo name the daemon writes PR cache files under — the two
-# differ when the config `name` is set (e.g. label "Envesya" vs repo "beta"), so
-# the render path must key the cache by the nwo, not the label. See
-# `_cache_repo_name`.
-Inventory = list[tuple[str, str, str | None, str, list[Worktree]]]
 
 
 def _pr_from_payload(p: dict) -> PR:
