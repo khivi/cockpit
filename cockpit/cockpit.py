@@ -49,6 +49,7 @@ from cockpit.lib.config import (
     install_cship_statusline_if_configured,
     install_starship_default_config,
     load_config,
+    repin_interpreter_if_stale,
 )
 from cockpit.lib.daemon import reassert_pidfile
 from cockpit.lib.gh import gh_self_user, require_gh
@@ -263,9 +264,17 @@ def main(argv: list[str] | None = None) -> int:
         install_cship_statusline_if_configured(_statusline_command())
         install_claude_hooks()
         install_claude_commands()
+        if not load_config().get("use_cship"):
+            print(
+                "tip: for the Claude Code footer statusline, install cship — "
+                "`curl -fsSL https://cship.dev/install.sh | bash` (macOS + Linux) — "
+                'then set "use_cship": true in your config and re-run `cockpit setup`.'
+            )
         return 0
 
     if args.watch:
+        # Heal a stale `{python}` pin left by a `brew upgrade` before rendering.
+        repin_interpreter_if_stale()
         cfg = load_config()
         slow_secs = int(cfg.get("slow_poll_interval_seconds", DEFAULT_SLOW_POLL_SECS))
         fast_secs = int(cfg.get("fast_poll_interval_seconds", DEFAULT_FAST_POLL_SECS))

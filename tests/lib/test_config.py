@@ -11,6 +11,7 @@ update — long after the test would have flagged it if we had one.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 DEFAULTS = Path(__file__).resolve().parent.parent.parent / "cockpit" / "defaults"
@@ -1540,3 +1541,64 @@ def test_clear_cockpit_statusline_keeps_user_statusline(tmp_path):
     assert json.loads(settings.read_text())["statusLine"] == {
         "command": "my-own-status"
     }
+
+
+# ---- repin_interpreter_if_stale (brew-upgrade self-heal on watch startup) ----
+
+
+def test_repin_starship_swaps_only_the_interpreter(tmp_path):
+    toml = tmp_path / "starship.toml"
+    # Stale interpreter path + a user colour edit that must survive.
+    toml.write_text(
+        "[custom.model]\n"
+        'command = "/old/Cellar/cockpit/1.0/libexec/bin/python -m cockpit.cli starship model"\n'
+        'style = "fg:99"  # my edit\n'
+    )
+    assert config_mod._repin_starship_config(toml) is True
+    body = toml.read_text()
+    assert f"{sys.executable} -m cockpit.cli starship model" in body
+    assert "/old/Cellar/cockpit/1.0" not in body
+    # The quote and the user's unrelated edit are untouched.
+    assert 'command = "' in body
+    assert 'style = "fg:99"  # my edit' in body
+
+
+def test_repin_starship_noop_when_current(tmp_path):
+    toml = tmp_path / "starship.toml"
+    toml.write_text(f'command = "{sys.executable} -m cockpit.cli starship model"\n')
+    assert config_mod._repin_starship_config(toml) is False
+
+
+def test_repin_starship_skips_symlink(tmp_path):
+    real = tmp_path / "real.toml"
+    real.write_text('command = "/old/py -m cockpit.cli starship model"\n')
+    link = tmp_path / "starship.toml"
+    link.symlink_to(real)
+    assert config_mod._repin_starship_config(link) is False
+    assert "/old/py" in real.read_text()  # symlink target left alone
+
+
+def test_repin_statusline_swaps_cockpit_shim(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "statusLine": {
+                    "type": "command",
+                    "command": "/old/py -m cockpit.cli statusline",
+                }
+            }
+        )
+    )
+    assert config_mod._repin_statusline(settings) is True
+    cmd = json.loads(settings.read_text())["statusLine"]["command"]
+    assert cmd == f"{sys.executable} -m cockpit.cli statusline"
+
+
+def test_repin_statusline_ignores_user_statusline(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps({"statusLine": {"command": "/old/py my-own-status"}})
+    )
+    assert config_mod._repin_statusline(settings) is False
+    assert "/old/py my-own-status" in settings.read_text()

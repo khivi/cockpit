@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cockpit"
-version = "0.27.172"
+name = "cmux-cockpit"
+version = "1.0.0"
 requires-python = ">=3.12"
 description = "cmux workspaces backed by git worktrees, aligned to GitHub PRs."
 dependencies = [

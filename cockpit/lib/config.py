@@ -942,6 +942,79 @@ def clear_cockpit_statusline(settings_path: Path | None = None) -> bool:
     return True
 
 
+# Matches the interpreter token immediately preceding ` -m cockpit.cli` in a
+# baked invocation. `[^\s"']+` stops at the surrounding quote in starship.toml
+# (`command = "<interp> -m cockpit.cli starship model"`) so only the path is
+# captured, never the quote.
+_COCKPIT_PIN_RE = re.compile(r"(?P<interp>[^\s\"']+)(?= -m cockpit\.cli)")
+
+
+def _repin_text(text: str) -> str:
+    """Rewrite every `<interp> -m cockpit.cli` interpreter to the running one."""
+    return _COCKPIT_PIN_RE.sub(lambda _m: sys.executable, text)
+
+
+def _repin_starship_config(path: Path) -> bool:
+    """Surgically re-pin the interpreter in ~/.config/starship.toml. Returns True
+    iff it rewrote the file. Skips a symlink (user-managed) and no-ops when no
+    stale pin is present, so unrelated user edits to the toml are untouched."""
+    if not path.exists() or path.is_symlink():
+        return False
+    original = path.read_text()
+    if "-m cockpit.cli" not in original:
+        return False
+    new = _repin_text(original)
+    if new == original:
+        return False
+    path.write_text(new)
+    print(f"re-pinned starship interpreter -> {path}")
+    return True
+
+
+def _repin_statusline(settings_path: Path) -> bool:
+    """Re-pin the interpreter in Claude Code's statusLine, but only when it points
+    at cockpit's shim (`-m cockpit.cli statusline`). Returns True iff it rewrote."""
+    if not settings_path.exists():
+        return False
+    try:
+        data: dict = json.loads(settings_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    cmd = str((data.get("statusLine") or {}).get("command", ""))
+    if "-m cockpit.cli statusline" not in cmd:
+        return False
+    new_cmd = _repin_text(cmd)
+    if new_cmd == cmd:
+        return False
+    data["statusLine"]["command"] = new_cmd
+    settings_path.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"re-pinned statusLine interpreter -> {settings_path}")
+    return True
+
+
+def repin_interpreter_if_stale() -> None:
+    """Heal a stale `{python}` pin after a `brew upgrade`, called on `cockpit
+    watch` startup.
+
+    `cockpit setup` bakes `sys.executable` — a *versioned* brew Cellar libexec
+    python — into `~/.config/starship.toml` and (under `use_cship`) Claude
+    Code's statusLine. `brew upgrade` bumps the Cellar version and deletes the
+    old path, so those on-disk pins dangle until the next `setup`. The daemon
+    runs this once at startup so the footer heals itself in a single restart
+    instead of a manual re-run. Startup-only on purpose: a running daemon's
+    `sys.executable` is still the *old* removed path until it restarts, so a
+    per-tick re-pin could never see the new interpreter. Surgical — only the
+    interpreter prefix of a `... -m cockpit.cli ...` invocation is rewritten, so
+    user colour/format edits in starship.toml survive (unlike `install_starship_
+    default_config`, which re-seeds the whole file). No-op unless `use_cship`
+    and a pin actually differs from the running interpreter.
+    """
+    if not load_config().get("use_cship"):
+        return
+    _repin_starship_config(_starship_user_config_path())
+    _repin_statusline(Path.home() / ".claude" / "settings.json")
+
+
 def teardown_claude_integration() -> None:
     """Reverse the Claude-Code-facing writes `cockpit setup` made.
 
