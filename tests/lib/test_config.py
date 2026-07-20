@@ -1358,7 +1358,8 @@ def test_find_repos_by_linear_key_rejects_non_linear_identifier(tmp_path, monkey
 
 
 def _events(data: dict) -> dict:
-    return data["hooks"]
+    hooks: dict = data["hooks"]
+    return hooks
 
 
 def _cmds(data: dict, event: str) -> list[str]:
