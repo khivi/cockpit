@@ -1427,3 +1427,116 @@ def test_install_claude_hooks_preserves_user_hooks(tmp_path):
     # Unrelated top-level keys untouched, and the prior file was backed up.
     assert data["statusLine"] == {"command": "keep-me"}
     assert list(tmp_path.glob("settings.json.bak.*"))
+
+
+def test_install_claude_commands_writes_expected_files(tmp_path):
+    commands_dir = tmp_path / "commands"
+    config_mod.install_claude_commands(commands_dir)
+    names = {p.name for p in commands_dir.iterdir()}
+    assert names == {"cockpit-new.md", "cockpit-close.md"}
+    assert "cockpit new $ARGUMENTS" in (commands_dir / "cockpit-new.md").read_text()
+    assert "cockpit close $ARGUMENTS" in (commands_dir / "cockpit-close.md").read_text()
+
+
+def test_install_claude_commands_is_idempotent(tmp_path):
+    commands_dir = tmp_path / "commands"
+    config_mod.install_claude_commands(commands_dir)
+    first = (commands_dir / "cockpit-new.md").read_text()
+    config_mod.install_claude_commands(commands_dir)
+    second = (commands_dir / "cockpit-new.md").read_text()
+    assert first == second
+    # A second run makes no change → no backup files.
+    assert not list(commands_dir.glob("*.bak.*"))
+
+
+def test_install_claude_commands_preserves_unrelated_user_command(tmp_path):
+    commands_dir = tmp_path / "commands"
+    commands_dir.mkdir()
+    user_cmd = commands_dir / "my-own-command.md"
+    user_cmd.write_text("do the thing")
+    config_mod.install_claude_commands(commands_dir)
+    assert user_cmd.read_text() == "do the thing"
+    assert (commands_dir / "cockpit-new.md").exists()
+    assert (commands_dir / "cockpit-close.md").exists()
+
+
+# ---- teardown (cockpit teardown → reverse the setup writes) ------------------
+
+
+def test_uninstall_claude_commands_removes_cockpit_keeps_user(tmp_path):
+    commands_dir = tmp_path / "commands"
+    config_mod.install_claude_commands(commands_dir)
+    user_cmd = commands_dir / "my-own-command.md"
+    user_cmd.write_text("do the thing")
+
+    assert config_mod.uninstall_claude_commands(commands_dir) is True
+    remaining = {p.name for p in commands_dir.iterdir()}
+    assert remaining == {"my-own-command.md"}
+
+
+def test_uninstall_claude_commands_noop_when_absent(tmp_path):
+    commands_dir = tmp_path / "commands"
+    assert config_mod.uninstall_claude_commands(commands_dir) is False
+
+
+def test_uninstall_claude_hooks_removes_cockpit_keeps_user(tmp_path):
+    settings = tmp_path / "settings.json"
+    config_mod.install_claude_hooks(settings)
+    # Add a user-owned Stop hook alongside cockpit's, plus a user-only event.
+    data = json.loads(settings.read_text())
+    data["hooks"]["Stop"].append(
+        {"matcher": "", "hooks": [{"type": "command", "command": "my-own-linter"}]}
+    )
+    data["hooks"]["Notification"] = [
+        {"matcher": "", "hooks": [{"type": "command", "command": "user-notify"}]}
+    ]
+    settings.write_text(json.dumps(data))
+
+    assert config_mod.uninstall_claude_hooks(settings) is True
+    data = json.loads(settings.read_text())
+    # cockpit's commands gone, user's kept; a cockpit-only event is pruned entirely.
+    assert _cmds(data, "Stop") == ["my-own-linter"]
+    assert "UserPromptSubmit" not in data["hooks"]
+    assert _cmds(data, "Notification") == ["user-notify"]
+
+
+def test_uninstall_claude_hooks_drops_empty_hooks_block(tmp_path):
+    settings = tmp_path / "settings.json"
+    config_mod.install_claude_hooks(settings)
+    assert config_mod.uninstall_claude_hooks(settings) is True
+    data = json.loads(settings.read_text())
+    # Nothing but cockpit hooks existed → the whole block is gone, not left empty.
+    assert "hooks" not in data
+
+
+def test_uninstall_claude_hooks_noop_when_absent(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"statusLine": {"command": "keep-me"}}))
+    assert config_mod.uninstall_claude_hooks(settings) is False
+    assert not list(tmp_path.glob("settings.json.bak.*"))
+
+
+def test_clear_cockpit_statusline_removes_only_cockpit(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "statusLine": {
+                    "type": "command",
+                    "command": "/x/py -m cockpit.cli statusline",
+                }
+            }
+        )
+    )
+    assert config_mod.clear_cockpit_statusline(settings) is True
+    assert "statusLine" not in json.loads(settings.read_text())
+    assert list(tmp_path.glob("settings.json.bak.*"))
+
+
+def test_clear_cockpit_statusline_keeps_user_statusline(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"statusLine": {"command": "my-own-status"}}))
+    assert config_mod.clear_cockpit_statusline(settings) is False
+    assert json.loads(settings.read_text())["statusLine"] == {
+        "command": "my-own-status"
+    }

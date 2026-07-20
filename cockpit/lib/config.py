@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -806,6 +807,162 @@ def install_claude_hooks(settings_path: Path | None = None) -> None:
     print(f"wrote claude hooks -> {settings_path}")
 
 
+# Package holding the bundled `/cockpit-new` + `/cockpit-close` command
+# templates (`cockpit/claude_commands/*.md`). Flat filenames, not a `cockpit/`
+# subdirectory: Claude Code's `.claude/commands/` convention names a command
+# from its filename only (`deploy.md` -> `/deploy`) — there is no documented
+# subdirectory-namespace scheme for user commands (that colon-namespacing is
+# a plugin-only feature, keyed off the plugin name, which cockpit no longer
+# is). So the files ship as `cockpit-new.md` / `cockpit-close.md`, invoked as
+# `/cockpit-new` / `/cockpit-close`.
+_CLAUDE_COMMANDS_PACKAGE = "cockpit.claude_commands"
+
+
+def _bundled_claude_commands() -> list[Any]:
+    return sorted(
+        (
+            p
+            for p in files(_CLAUDE_COMMANDS_PACKAGE).iterdir()
+            if p.name.endswith(".md")
+        ),
+        key=lambda p: p.name,
+    )
+
+
+def install_claude_commands(commands_dir: Path | None = None) -> None:
+    """Install cockpit's bundled slash commands into `~/.claude/commands/`.
+
+    Mirrors `install_claude_hooks`'s contract: idempotent (a byte-identical
+    file is left alone, reported "unchanged"), backs up an existing file
+    before overwriting it with different content, and never touches unrelated
+    user command files. Templates are read via `importlib.resources` so this
+    works from the installed wheel, not just a source checkout (same
+    mechanism as `cockpit.lib.templates`). Called from `cockpit setup`.
+    """
+    commands_dir = commands_dir or (Path.home() / ".claude" / "commands")
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    for resource in _bundled_claude_commands():
+        target = commands_dir / resource.name
+        new_text = resource.read_text(encoding="utf-8")
+        original = target.read_text() if target.exists() else None
+        if original == new_text:
+            print(f"claude command unchanged -> {target}")
+            continue
+        if original is not None:
+            _backup_settings(target, original)
+        target.write_text(new_text)
+        print(f"wrote claude command -> {target}")
+
+
+def uninstall_claude_commands(commands_dir: Path | None = None) -> bool:
+    """Inverse of `install_claude_commands`: remove cockpit's bundled command
+    files from `~/.claude/commands/`. Leaves unrelated user commands alone.
+    Returns True iff it removed at least one file."""
+    commands_dir = commands_dir or (Path.home() / ".claude" / "commands")
+    removed = False
+    for resource in _bundled_claude_commands():
+        target = commands_dir / resource.name
+        if target.exists():
+            target.unlink()
+            removed = True
+    if removed:
+        print(f"removed cockpit slash commands -> {commands_dir}")
+    return removed
+
+
+def _backup_settings(settings_path: Path, original: str) -> None:
+    settings_path.with_name(
+        f"{settings_path.name}.bak.{datetime.now():%Y%m%d%H%M%S}"
+    ).write_text(original)
+
+
+def uninstall_claude_hooks(settings_path: Path | None = None) -> bool:
+    """Inverse of `install_claude_hooks`: drop cockpit-owned hook groups.
+
+    Removes every hook group `_is_cockpit_hook_group` matches, prunes any event
+    list (and the whole `hooks` block) left empty, and preserves unrelated user
+    hooks. Backs up before rewriting. Returns True iff it changed the file.
+    `brew uninstall` leaves these hooks pointing at a now-missing `cockpit`
+    binary, so `cockpit teardown` calls this before uninstalling.
+    """
+    settings_path = settings_path or (Path.home() / ".claude" / "settings.json")
+    if not settings_path.exists():
+        return False
+    original = settings_path.read_text()
+    try:
+        data: dict = json.loads(original)
+    except json.JSONDecodeError:
+        return False
+    hooks: dict = data.get("hooks") or {}
+    removed = False
+    for event in list(hooks):
+        kept = [g for g in hooks[event] if not _is_cockpit_hook_group(g)]
+        if len(kept) != len(hooks[event]):
+            removed = True
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+    if not removed:
+        return False
+    if hooks:
+        data["hooks"] = hooks
+    else:
+        data.pop("hooks", None)
+    new_text = json.dumps(data, indent=2) + "\n"
+    _backup_settings(settings_path, original)
+    settings_path.write_text(new_text)
+    print(f"removed cockpit claude hooks -> {settings_path}")
+    return True
+
+
+def clear_cockpit_statusline(settings_path: Path | None = None) -> bool:
+    """Inverse of `install_cship_statusline_if_configured`: drop the statusLine.
+
+    Removes Claude Code's `statusLine` only when it points at cockpit's shim
+    (`cockpit.cli statusline` / `cockpit statusline`) — a user's own statusLine
+    is left untouched. Backs up before rewriting. Returns True iff it changed
+    the file.
+    """
+    settings_path = settings_path or (Path.home() / ".claude" / "settings.json")
+    if not settings_path.exists():
+        return False
+    original = settings_path.read_text()
+    try:
+        data: dict = json.loads(original)
+    except json.JSONDecodeError:
+        return False
+    cmd = str((data.get("statusLine") or {}).get("command", ""))
+    if "cockpit.cli statusline" not in cmd and "cockpit statusline" not in cmd:
+        return False
+    data.pop("statusLine", None)
+    _backup_settings(settings_path, original)
+    settings_path.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"cleared cockpit claude statusLine -> {settings_path}")
+    return True
+
+
+def teardown_claude_integration() -> None:
+    """Reverse the Claude-Code-facing writes `cockpit setup` made.
+
+    `brew uninstall cockpit` removes only the Cellar binary; the `~/.claude`
+    entries setup wrote live outside the brew prefix and would otherwise dangle
+    (hooks/statusLine invoking a missing `cockpit`). This drops those, plus the
+    bundled slash commands. It deliberately does **not** touch the
+    `~/.config/{cship,starship}.toml` seeds (user-editable, inert without the
+    binary) or `~/.config/cockpit` state — those are reported for manual removal.
+    """
+    changed = uninstall_claude_hooks()
+    changed = clear_cockpit_statusline() or changed
+    changed = uninstall_claude_commands() or changed
+    if not changed:
+        print("no cockpit claude integration found — nothing to remove")
+    print(
+        "left in place (remove by hand if wanted): "
+        "~/.config/cship.toml, ~/.config/starship.toml, ~/.config/cockpit"
+    )
+
+
 def _write_if_changed(dest: Path, payload: bytes, label: str, src: Path) -> bool:
     """Write `payload` to `dest` only if contents differ; print verbose status either way.
 
@@ -852,7 +1009,8 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
     if shutil.which("cship") is None:
         raise CshipNotInstalledError(
             "use_cship=true but `cship` is not on PATH. "
-            "Install cship (https://github.com/khivi/cship) or set "
+            "Install it with `curl -fsSL https://cship.dev/install.sh | bash` "
+            "(macOS + Linux), or set "
             f"use_cship=false in {CONFIG_PATH}."
         )
     settings_path = Path.home() / ".claude" / "settings.json"

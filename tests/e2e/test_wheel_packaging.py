@@ -37,3 +37,8 @@ def test_wheel_bundles_cockpit_package(tmp_path):
     # The Claude Code idle-pill hook shell script must ride along in the wheel —
     # `cockpit idle-pill <phase>` execs it, and a brew install has no plugin dir.
     assert "cockpit/hooks/cmux-idle-pill.sh" in names
+    # Same for the bundled `/cockpit-new` + `/cockpit-close` user-command
+    # templates — `cockpit setup` reads them via importlib.resources at
+    # install time, so they must ship in the wheel too.
+    assert "cockpit/claude_commands/cockpit-new.md" in names
+    assert "cockpit/claude_commands/cockpit-close.md" in names

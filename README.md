@@ -22,7 +22,7 @@ It also closes the loop the other way: cockpit can spawn a worktree + cmux sessi
 - A workspace backend on `PATH` — a "workspace backend" is the terminal app that gives each worktree its own tab/session cockpit can spawn, focus, and close. Without one, cockpit runs in cache-only mode: the footer/statusline still work, but the side panel and workspace spawning are disabled.
   - [`cmux`](https://github.com/manaflow-ai/cmux) ([cmux.dev](https://cmux.dev)) — an open-source, Ghostty-based macOS terminal with vertical-tab workspaces built for AI coding agents. `brew install --cask cmux`.
   - [`limux`](https://github.com/am-will/limux) — a GPU-accelerated Linux port of cmux (GTK4 over libghostty, tracks cmux parity). AppImage/`.deb` from [releases](https://github.com/am-will/limux/releases), or AUR `limux-bin`. Cockpit's Linux backend: it can spawn/close workspaces but lacks cmux's focus/pill/sidebar-color verbs, which degrade gracefully.
-- Optional: [`cship`](https://github.com/khivi/cship) + [`starship`](https://starship.rs/) for the statusline (set `use_cship: true`; wired by `cockpit setup`)
+- Optional: [`cship`](https://github.com/stephenleo/cship) + [`starship`](https://starship.rs/) for the statusline — install cship with `curl -fsSL https://cship.dev/install.sh | bash` (macOS + Linux, arm64/x86_64), then set `use_cship: true` (wired by `cockpit setup`)
 
 ## Install
 
@@ -32,7 +32,7 @@ brew install cockpit
 cockpit setup             # wires the statusLine + Claude Code hooks into ~/.claude/settings.json
 ```
 
-`cockpit setup` is idempotent and preserves any hooks you've already configured. To update later, `brew upgrade cockpit`. Coming from the old Claude Code plugin install? See [`MIGRATION.md`](MIGRATION.md).
+`cockpit setup` is idempotent and preserves any hooks you've already configured. It also installs the optional `/cockpit-new` and `/cockpit-close` in-session commands into `~/.claude/commands/` — thin wrappers around `cockpit new`/`cockpit close`, so you don't have to leave the Claude Code session to spawn or tear down a worktree. To update later, `brew upgrade cockpit`. Coming from the old Claude Code plugin install? See [`MIGRATION.md`](MIGRATION.md).
 
 ## Use
 
@@ -127,11 +127,13 @@ TICKET-123   APPROVED   #9999   ✓   Add login flow
 Stop the TUI (`q`), then:
 
 ```bash
+cockpit teardown                  # removes the settings.json statusLine/hooks entries
+                                   # and ~/.claude/commands/{cockpit-new,cockpit-close}.md
 rm -rf ~/.config/cockpit          # state only; your worktrees remain
 brew uninstall cockpit
 ```
 
-Also remove the `statusLine` / `hooks` entries `cockpit setup` added to `~/.claude/settings.json`, if desired.
+`cockpit teardown` is the inverse of `cockpit setup` — run it *before* `brew uninstall`, or the `statusLine`/hooks left in `~/.claude/settings.json` (and the two command files under `~/.claude/commands/`) point at a now-missing `cockpit` binary.
 
 ## License
 

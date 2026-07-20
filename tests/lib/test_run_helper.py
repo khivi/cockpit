@@ -44,7 +44,7 @@ def test_run_exits_on_missing_cship_with_install_hint(capsys, monkeypatch):
     assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "'cship' not found on PATH" in err
-    assert "https://github.com/khivi/cship" in err
+    assert "https://cship.dev" in err
 
 
 def test_run_exits_on_missing_starship_with_install_hint(capsys, monkeypatch):

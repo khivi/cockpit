@@ -12,7 +12,7 @@ Per cycle, for every repo registered in $COCKPIT_HOME/config.json:
 
 Modes:
   --watch         long-running daemon (Textual TUI); SIGUSR1 kicks a cycle
-  --setup         re-run statusLine setup, then exit
+  --setup         re-run statusLine + Claude Code hooks/commands setup, then exit
 
 Sibling entry points (each script does one job):
   cockpit/statusline.py   statusLine shim — pipes Claude Code's stdin to cship
@@ -43,6 +43,7 @@ from cockpit.lib.cmux import (
 )
 from cockpit.lib.config import (
     ensure_state_dirs,
+    install_claude_commands,
     install_claude_hooks,
     install_cship_default_config,
     install_cship_statusline_if_configured,
@@ -245,7 +246,8 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument(
         "--setup",
         action="store_true",
-        help="Re-run setup only (cship.toml + starship.toml + statusLine + Claude hooks), then exit.",
+        help="Re-run setup only (cship.toml + starship.toml + statusLine + "
+        "Claude hooks + Claude commands), then exit.",
     )
     args = p.parse_args(argv)
 
@@ -260,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         install_starship_default_config()
         install_cship_statusline_if_configured(_statusline_command())
         install_claude_hooks()
+        install_claude_commands()
         return 0
 
     if args.watch:

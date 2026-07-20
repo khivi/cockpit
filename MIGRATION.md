@@ -3,9 +3,17 @@
 Cockpit used to ship as a **Claude Code plugin** (installed from a marketplace)
 paired with a **uv-tool** daemon, and updated itself in-place (the `u` key /
 `cockpit update`). It now ships as a **Homebrew formula** and is updated with
-`brew upgrade`. Its only Claude Code footprint is two `~/.claude/settings.json`
-entries — the statusLine command and the idle/stop hooks — written by
-`cockpit setup`.
+`brew upgrade`. Its Claude Code footprint is now three writes made by
+`cockpit setup`: two `~/.claude/settings.json` entries (the statusLine command
+and the idle/stop hooks) and two files under `~/.claude/commands/`.
+
+The plugin's `/cockpit:new` / `/cockpit:close` / `/cockpit:review` slash
+commands are gone (there is no plugin to namespace them). `/cockpit:review` is
+replaced by the built-in `/review`. `/cockpit:new` and `/cockpit:close` are
+back as **user commands** — `cockpit setup` installs them as `/cockpit-new`
+and `/cockpit-close` (hyphenated, not colon-namespaced: `.claude/commands/`
+names a command from its filename only, and colon-namespacing is a
+plugin-only feature).
 
 If you installed cockpit the old way, do this once. **Order matters: remove the
 old plugin *before* installing the new one**, or the old plugin-managed hooks
@@ -18,8 +26,9 @@ Quit the TUI (`q` in `cockpit watch`).
 ## 2. Remove the old plugin
 
 The plugin owned the Claude Code hooks (the `SessionStart` self-update hook, the
-`Stop`/`UserPromptSubmit` idle-pill + statusline hooks). Uninstalling it removes
-them automatically.
+`Stop`/`UserPromptSubmit` idle-pill + statusline hooks) and the
+`/cockpit:new` / `/cockpit:close` / `/cockpit:review` slash commands.
+Uninstalling it removes all of that automatically.
 
 In a Claude Code session (or the `claude` CLI):
 
@@ -50,13 +59,15 @@ for `bin/update.sh`; it lived inside the uv-tool install.)
 ```bash
 brew tap khivi/cockpit    # maps to github.com/khivi/homebrew-cockpit
 brew install cockpit
-cockpit setup             # writes statusLine + hooks into ~/.claude/settings.json
+cockpit setup             # writes statusLine + hooks into ~/.claude/settings.json,
+                          # and /cockpit-new + /cockpit-close into ~/.claude/commands/
 ```
 
-`cockpit setup` is idempotent, backs up `settings.json` before writing, and
-preserves any non-cockpit hooks you already have. It rewrites the statusLine
-entry the old install left in `settings.json` (backing it up first), so there's
-nothing to clean by hand there.
+`cockpit setup` is idempotent, backs up `settings.json` (and any overwritten
+command file) before writing, and preserves any non-cockpit hooks or commands
+you already have. It rewrites the statusLine entry the old install left in
+`settings.json` (backing it up first), so there's nothing to clean by hand
+there.
 
 ## 5. Restart + verify
 

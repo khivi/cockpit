@@ -7,7 +7,8 @@ heavy reconcile/spawn modules.
 
 Subcommands:
   watch                 long-running daemon (Textual TUI)
-  setup                 (re)install the statusLine config + Claude Code hooks
+  setup                 (re)install the statusLine config + Claude Code hooks/commands
+  teardown              reverse setup's ~/.claude writes (run before brew uninstall)
   statusline            Claude Code statusLine shim (reads stdin → renders)
   starship <field>      starship field printer / `warm`
   idle-pill <phase>     Claude Code hook shim → cmux idle pill (stop/prompt/…)
@@ -23,6 +24,7 @@ import sys
 _SUBCOMMANDS = (
     "watch",
     "setup",
+    "teardown",
     "statusline",
     "starship",
     "idle-pill",
@@ -64,6 +66,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # statusline + starship are the hot render path — route straight to the
     # leaf module, skipping the daemon preflight that setup/starship never run.
+    if sub == "teardown":
+        from cockpit.lib.config import teardown_claude_integration
+
+        teardown_claude_integration()
+        return 0
+
     if sub == "statusline":
         from cockpit.statusline import main as statusline_main
 

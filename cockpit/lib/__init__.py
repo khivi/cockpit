@@ -26,7 +26,7 @@ import sys
 _INSTALL_HINTS = {
     "gh": "https://cli.github.com",
     "git": "https://git-scm.com",
-    "cship": "https://github.com/khivi/cship",
+    "cship": "https://cship.dev",
     "starship": "https://starship.rs",
 }
 
