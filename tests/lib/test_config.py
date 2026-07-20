@@ -843,7 +843,7 @@ def test_find_repo_by_nwo_skips_missing_path(tmp_path, monkeypatch):
     assert cockpit_config.find_repo_by_nwo("owner/repo") is None
 
 
-# ── review_command (review_prs first-turn slash command) ────────────────────
+# ── review_command (review_prs first-turn slash command, via skills.review) ─
 
 
 def test_review_command_defaults_to_plugin_command(tmp_path, monkeypatch):
@@ -853,17 +853,17 @@ def test_review_command_defaults_to_plugin_command(tmp_path, monkeypatch):
 
 def test_review_command_repo_override_wins(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "review_command": "/review"}
+        tmp_path, monkeypatch, {"repos": [], "skills": {"review": "/review"}}
     )
     assert (
-        cockpit_config.review_command(repo_entry={"review_command": "/pr-review"})
+        cockpit_config.review_command(repo_entry={"skills": {"review": "/pr-review"}})
         == "/pr-review"
     )
 
 
 def test_review_command_falls_back_to_global(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "review_command": "/pr-review"}
+        tmp_path, monkeypatch, {"repos": [], "skills": {"review": "/pr-review"}}
     )
     assert cockpit_config.review_command(repo_entry={}) == "/pr-review"
 
@@ -871,8 +871,26 @@ def test_review_command_falls_back_to_global(tmp_path, monkeypatch):
 def test_review_command_blank_falls_through_to_default(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     assert (
-        cockpit_config.review_command(repo_entry={"review_command": "  "}) == "/review"
+        cockpit_config.review_command(repo_entry={"skills": {"review": "  "}})
+        == "/review"
     )
+
+
+# ── prompt_prefix (skills.session — first turn of every spawn) ──────────────
+
+
+def test_prompt_prefix_reads_skills_session(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {"repos": [], "skills": {"session": "/session-coordination"}},
+    )
+    assert cockpit_config.prompt_prefix() == "/session-coordination"
+
+
+def test_prompt_prefix_defaults_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.prompt_prefix() == ""
 
 
 def test_base_remote_defaults_to_origin(tmp_path, monkeypatch):

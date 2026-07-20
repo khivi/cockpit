@@ -1239,7 +1239,7 @@ def test_blank_spawn_still_applies_prompt_prefix(spawn_main, cockpit_repo, monke
     claude_command()."""
     import cockpit.spawn as spawn
 
-    _set_config_key(cockpit_repo, "prompt_prefix", "/session-coordination")
+    _set_config_key(cockpit_repo, "skills", {"session": "/session-coordination"})
     monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     spawn_main(["fresh-feat", "--repo", "testrepo"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
@@ -1254,7 +1254,7 @@ def test_prefix_and_body_split_into_two_sends(spawn_main, cockpit_repo, monkeypa
     so the skill and the task don't collapse onto one slash-command line."""
     import cockpit.spawn as spawn
 
-    _set_config_key(cockpit_repo, "prompt_prefix", "/session-coordination")
+    _set_config_key(cockpit_repo, "skills", {"session": "/session-coordination"})
     monkeypatch.setattr(
         spawn,
         "pr_for_branch",

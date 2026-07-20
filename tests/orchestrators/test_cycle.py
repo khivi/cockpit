@@ -2435,7 +2435,7 @@ def test_bg_spawn_pr_launches_records_and_guards(tmp_path, monkeypatch):
 def test_bg_spawn_pr_passes_custom_review_command(tmp_path, monkeypatch):
     monkeypatch.setattr(cycle, "_SPAWN_LOG", tmp_path / "spawn.log")
     ctx = _spawn_ctx(tmp_path)
-    ctx.repo_entry = {"review_command": "/pr-review"}
+    ctx.repo_entry = {"skills": {"review": "/pr-review"}}
     with (
         patch.object(cycle.subprocess, "Popen") as popen,
         patch.object(cycle.time, "monotonic", return_value=1.0),

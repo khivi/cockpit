@@ -249,40 +249,108 @@ def test_preflight_passes_on_bool_use_worktree(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
-def test_preflight_exits_on_non_slash_review_command_repo(
+def test_preflight_exits_on_non_slash_skills_review_repo(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {
+                "tool": "cmux",
+                "repos": [{"name": "r", "skills": {"review": "pr-review"}}],
+            }
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "skills.review" in err
+    assert "'pr-review'" in err
+
+
+def test_preflight_exits_on_non_string_skills_review_global(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [], "skills": {"review": True}})
+    assert exc.value.code == 2
+    assert "skills.review" in capsys.readouterr().err
+
+
+def test_preflight_passes_on_valid_skills_review(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "skills": {"review": "/review"},
+            "repos": [{"name": "r", "skills": {"review": "/pr-review"}}],
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_exits_on_unknown_skills_field(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [], "skills": {"bogus": "/foo"}})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "unknown skills field" in err
+    assert "'bogus'" in err
+
+
+def test_preflight_exits_on_leftover_flat_review_command_global(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [], "review_command": "/review"})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "review_command" in err
+    assert "skills.review" in err
+
+
+def test_preflight_exits_on_leftover_flat_review_command_repo(
     tmp_path, monkeypatch, capsys
 ):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
         preflight(
-            {"tool": "cmux", "repos": [{"name": "r", "review_command": "pr-review"}]}
+            {"tool": "cmux", "repos": [{"name": "r", "review_command": "/review"}]}
         )
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "review_command" in err
-    assert "'pr-review'" in err
+    assert "skills.review" in err
 
 
-def test_preflight_exits_on_non_string_review_command_global(
+def test_preflight_exits_on_leftover_flat_prompt_prefix_global(
     tmp_path, monkeypatch, capsys
 ):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "repos": [], "review_command": True})
+        preflight(
+            {"tool": "cmux", "repos": [], "prompt_prefix": "/session-coordination"}
+        )
     assert exc.value.code == 2
-    assert "review_command" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "prompt_prefix" in err
+    assert "skills.session" in err
 
 
-def test_preflight_passes_on_valid_review_command(tmp_path, monkeypatch, capsys):
+def test_preflight_exits_on_leftover_flat_prompt_prefix_repo(
+    tmp_path, monkeypatch, capsys
+):
     _all_required(tmp_path, monkeypatch)
-    preflight(
-        {
-            "tool": "cmux",
-            "review_command": "/review",
-            "repos": [{"name": "r", "review_command": "/pr-review"}],
-        }
-    )
-    assert capsys.readouterr().err == ""
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {
+                "tool": "cmux",
+                "repos": [{"name": "r", "prompt_prefix": "/session-coordination"}],
+            }
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "prompt_prefix" in err
+    assert "skills.session" in err
 
 
 def test_preflight_exits_on_blank_base_remote_repo(tmp_path, monkeypatch, capsys):

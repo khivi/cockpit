@@ -290,13 +290,30 @@ def find_repo_by_nwo(nwo: str) -> dict | None:
     return None
 
 
-def prompt_prefix() -> str:
-    """Optional first line prepended to every claude prompt spawned by cockpit.
+def _skills_block(src: dict | None) -> dict:
+    """The `skills` object off a config source (global or a repo entry), or `{}`."""
+    if src is None:
+        return {}
+    block = src.get("skills")
+    return block if isinstance(block, dict) else {}
 
-    Configured via `prompt_prefix` in config.json (default: ""). Useful for
-    invoking a personal session-start skill on every new workspace's first turn.
+
+def _skills_field(cfg: dict | None, repo_entry: dict | None, field: str) -> str | None:
+    """One `skills` field, resolved repo-block → global-block → None. A
+    non-string/blank value falls through to the next level."""
+    for src in (repo_entry, cfg if cfg is not None else load_config()):
+        v = _skills_block(src).get(field)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def prompt_prefix() -> str:
+    """Slash command seeded as its own first turn in every workspace cockpit
+    spawns (e.g. `/session-coordination`), or "" when unset. Configured via
+    `skills.session` (global — it applies to every spawn).
     """
-    return str(load_config().get("prompt_prefix", "")).strip()
+    return _skills_field(load_config(), None, "session") or ""
 
 
 VALID_TICKETS = ("none", "linear", "github", "jira", "trello")
@@ -465,20 +482,12 @@ def review_command(cfg: dict | None = None, repo_entry: dict | None = None) -> s
 
     Default ``"/review"`` — Claude Code's built-in review command, available in
     every spawned review workspace (a personal global skill would only resolve
-    for its owner). Override per-repo (or globally) with a `review_command`
-    string — e.g. a personal ``"/pr-review"``. Resolved repo-block →
-    global-block → default; a non-string/blank value falls through to the next
-    level.
+    for its owner). Override with `skills.review` per-repo or globally — e.g. a
+    personal ``"/pr-review"``. Resolved `skills.review` repo → global → default;
+    a non-string/blank value falls through to the next level.
     """
-    if repo_entry is not None:
-        rv = repo_entry.get("review_command")
-        if isinstance(rv, str) and rv.strip():
-            return rv.strip()
     cfg = cfg if cfg is not None else load_config()
-    gv = cfg.get("review_command")
-    if isinstance(gv, str) and gv.strip():
-        return gv.strip()
-    return REVIEW_COMMAND_DEFAULT
+    return _skills_field(cfg, repo_entry, "review") or REVIEW_COMMAND_DEFAULT
 
 
 def base_remote(cfg: dict | None = None, repo_entry: dict | None = None) -> str:

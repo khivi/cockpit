@@ -131,24 +131,52 @@ def _validate_field(
         check(repo[key], where)
 
 
-def _validate_review_command(cfg: dict) -> None:
-    """Hard-fail on a `review_command` (global or per-repo) that isn't a slash
-    command string.
+_SKILL_FIELDS = ("session", "review")
+# Flat keys the `skills` object replaced — a leftover hard-fails with its new
+# home, same treatment as `use_linear` → `tickets`.
+_LEGACY_SKILL_KEYS = {
+    "prompt_prefix": "skills.session",
+    "review_command": "skills.review",
+}
 
-    `review_command` overrides the `/review` first-turn seeded into a
-    `review_prs` worktree (e.g. `/pr-review`). It is delivered verbatim as the
-    workspace's opening prompt, so a non-string or a value missing the leading
-    `/` would silently seed a non-command — rejected at start like `review_prs`.
+
+def _validate_skills(cfg: dict) -> None:
+    """Validate the `skills` config (top-level + per-repo).
+
+    `skills` is `{session: "/cmd", review: "/cmd"}` — each value a slash command
+    seeded verbatim as a workspace's first turn (`session` on every spawn,
+    `review` on a `review_prs` spawn). A non-`/` value would seed a non-command,
+    so it's rejected at start. The legacy flat `prompt_prefix` / `review_command`
+    keys are gone; a leftover hard-fails with the new location.
     """
 
-    def _check(val: object, where: str) -> None:
-        if not isinstance(val, str) or not val.startswith("/"):
-            _die(
-                f"{where}: review_command must be a slash command string "
-                f"(e.g. '/review'), got {val!r}."
-            )
+    def _check_source(src: dict, where: str) -> None:
+        for old, new in _LEGACY_SKILL_KEYS.items():
+            if old in src:
+                _die(
+                    f"{where}: `{old}` is now `{new}` — move it into a `skills` object."
+                )
+        block = src.get("skills")
+        if block is None:
+            return
+        if not isinstance(block, dict):
+            _die(f"{where}: skills must be an object, got {block!r}.")
+        for field, val in block.items():
+            if field not in _SKILL_FIELDS:
+                _die(
+                    f"{where}: unknown skills field {field!r} "
+                    f"(allowed: {', '.join(_SKILL_FIELDS)})."
+                )
+            if not isinstance(val, str) or not val.startswith("/"):
+                _die(
+                    f"{where}: skills.{field} must be a slash command string "
+                    f"(e.g. '/review'), got {val!r}."
+                )
 
-    _validate_field(cfg, "review_command", _check)
+    _check_source(cfg, "config")
+    for repo in cfg.get("repos", []):
+        name = repo.get("name") or repo.get("path", "?")
+        _check_source(repo, f"repo {name!r}")
 
 
 def _validate_base_remote(cfg: dict) -> None:
@@ -375,7 +403,7 @@ def validate_config(cfg: dict) -> None:
     _validate_repo_bool(cfg, "use_worktree")
     _validate_repo_bool(cfg, "dependabot")
     _validate_repo_bool(cfg, "review_external")
-    _validate_review_command(cfg)
+    _validate_skills(cfg)
     _validate_base_remote(cfg)
     _validate_global_bool(cfg, "use_slack")
     _validate_statusline_hide(cfg)
