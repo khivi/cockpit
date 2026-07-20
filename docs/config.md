@@ -8,6 +8,13 @@ by `cockpit new` / `registry.register_cwd`.
 The config is read **once per process** (`config.py::load_config`) — edits are picked up
 on the next daemon start, not mid-run.
 
+**How settings are set.** Every field below is set by editing `config.json` directly —
+`cockpit setup` is not a config wizard. The **one** setting it prompts for is `use_cship`
+(the footer statusline), and only because it also installs the required cship/starship
+binaries; everything else is a plain JSON edit with a sane default. A mistyped value is
+caught at daemon start by `preflight` (hard-fail with the valid set listed), so you don't
+need a wizard to avoid silent misconfiguration.
+
 This file is the human reference; the authoritative default/resolution for each field is
 its reader function in `cockpit/lib/config.py`. Keep all three in sync when a field
 changes: `config.py` (reader), `config.example.json` (sample), this file.
