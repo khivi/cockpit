@@ -31,6 +31,9 @@ def test_wheel_bundles_cockpit_package(tmp_path):
     )
     wheels = list(tmp_path.glob("*.whl"))
     assert len(wheels) == 1, f"expected one wheel, got {wheels}"
+    # PyPI distribution is `cmux-cockpit` (normalized to `cmux_cockpit` in the
+    # wheel filename); the import package + console script stay `cockpit`.
+    assert wheels[0].name.startswith("cmux_cockpit-"), wheels[0].name
     names = set(zipfile.ZipFile(wheels[0]).namelist())
     assert "cockpit/cli.py" in names
     assert any(n.endswith(".dist-info/METADATA") for n in names)

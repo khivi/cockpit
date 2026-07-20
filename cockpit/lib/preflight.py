@@ -393,11 +393,16 @@ def preflight(cfg: dict) -> None:
     _warn_cockpit_not_on_path()
 
     if cfg.get("use_cship"):
+        _cship_install = {
+            "cship": "curl -fsSL https://cship.dev/install.sh | bash  (macOS + Linux)",
+            "starship": "https://starship.rs",
+        }
         for binary in CSHIP_BINARIES:
             if shutil.which(binary) is None:
                 _die(
                     f"use_cship=true but `{binary}` is not on PATH. "
-                    f"Install {binary} or set use_cship=false in your config."
+                    f"Install it — {_cship_install.get(binary, binary)} — "
+                    "or set use_cship=false in your config."
                 )
 
     validate_config(cfg)

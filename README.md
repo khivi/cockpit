@@ -32,6 +32,13 @@ brew install cockpit
 cockpit setup             # wires the statusLine + Claude Code hooks into ~/.claude/settings.json
 ```
 
+Not on Homebrew? Any platform with Python 3.12+ works via [pipx](https://pipx.pypa.io/) or [uv](https://docs.astral.sh/uv/) — the PyPI distribution is `cmux-cockpit` (the bare name `cockpit` is taken), and it still gives you the `cockpit` command:
+
+```bash
+pipx install cmux-cockpit   # or: uv tool install cmux-cockpit
+cockpit setup
+```
+
 `cockpit setup` is idempotent and preserves any hooks you've already configured. It also installs the optional `/cockpit-new` and `/cockpit-close` in-session commands into `~/.claude/commands/` — thin wrappers around `cockpit new`/`cockpit close`, so you don't have to leave the Claude Code session to spawn or tear down a worktree. To update later, `brew upgrade cockpit`. Coming from the old Claude Code plugin install? See [`MIGRATION.md`](MIGRATION.md).
 
 ## Use

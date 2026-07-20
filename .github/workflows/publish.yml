@@ -1,0 +1,43 @@
+name: publish
+
+# On a pushed `v<version>` tag: build sdist + wheel and publish to PyPI as the
+# `cmux-cockpit` distribution (the import package + `cockpit` console script
+# are unchanged — only the PyPI name differs, since bare "cockpit" collides
+# with Red Hat's Cockpit web console). Runs alongside release.yml (which bumps
+# the Homebrew tap) on the same tag; the two are independent.
+#
+# Uses PyPI Trusted Publishing (OIDC) — no API token stored in this repo.
+# One-time setup on pypi.org (project owner only):
+#   1. https://pypi.org/manage/account/publishing/ → "Add a new pending publisher"
+#   2. PyPI project name: cmux-cockpit
+#   3. Owner: khivi   Repository: cockpit   Workflow: publish.yml   Environment: pypi
+# PyPI creates the project on first successful publish from that pending
+# publisher — no manual `pypi.org/project/cmux-cockpit` creation needed first.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
