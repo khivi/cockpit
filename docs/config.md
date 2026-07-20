@@ -77,6 +77,8 @@ Slash commands seeded as a spawned workspace's first turn. Fields resolve
 |---|---|---|
 | `session` | unset (no-op) | Slash command run as its own first turn in **every** spawn (e.g. `/session-coordination`). Global only — a per-repo `skills.session` is accepted but every spawn resolves the same global value in practice, since there's no per-repo caller. |
 | `review` | `/review` | Slash command seeded as the first turn of an auto-spawned `review_prs` worktree. No-op unless `review_prs`. Override per-repo (e.g. `/pr-review`) or globally. |
+| `plan` | unset (built-in plan-only prose) | Slash command seeded as the first turn of a plan-only spawn (a PR/branch worth studying before implementing), followed by the source/PR context and the shared no-code/wait-for-approval gate. Unset keeps cockpit's built-in `plan_only.txt` prose. Override per-repo (e.g. `/plan-pr`) or globally. |
+| `actions` | unset (built-in Actions prose) | Slash command seeded as the first turn of a GitHub-Actions-run-URL spawn, followed by the run/PR context (run URL, job id, linked PR) and the same no-code gate. Unset keeps cockpit's built-in `--log-failed` investigation prose. Override per-repo (e.g. `/actions-pr`) or globally. |
 
 ## Top-level fields
 

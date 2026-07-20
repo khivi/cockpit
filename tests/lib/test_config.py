@@ -876,6 +876,70 @@ def test_review_command_blank_falls_through_to_default(tmp_path, monkeypatch):
     )
 
 
+# ── plan_command (plan-only first-turn slash command, via skills.plan) ──────
+
+
+def test_plan_command_defaults_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.plan_command() == ""
+
+
+def test_plan_command_repo_override_wins(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "skills": {"plan": "/plan-global"}}
+    )
+    assert (
+        cockpit_config.plan_command(repo_entry={"skills": {"plan": "/plan-pr"}})
+        == "/plan-pr"
+    )
+
+
+def test_plan_command_falls_back_to_global(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "skills": {"plan": "/plan-pr"}}
+    )
+    assert cockpit_config.plan_command(repo_entry={}) == "/plan-pr"
+
+
+def test_plan_command_blank_falls_through_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.plan_command(repo_entry={"skills": {"plan": "  "}}) == ""
+
+
+# ── actions_command (Actions-run-URL first-turn slash command, via skills.actions) ─
+
+
+def test_actions_command_defaults_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.actions_command() == ""
+
+
+def test_actions_command_repo_override_wins(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "skills": {"actions": "/actions-global"}}
+    )
+    assert (
+        cockpit_config.actions_command(
+            repo_entry={"skills": {"actions": "/actions-pr"}}
+        )
+        == "/actions-pr"
+    )
+
+
+def test_actions_command_falls_back_to_global(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "skills": {"actions": "/actions-pr"}}
+    )
+    assert cockpit_config.actions_command(repo_entry={}) == "/actions-pr"
+
+
+def test_actions_command_blank_falls_through_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert (
+        cockpit_config.actions_command(repo_entry={"skills": {"actions": "  "}}) == ""
+    )
+
+
 # ── prompt_prefix (skills.session — first turn of every spawn) ──────────────
 
 

@@ -622,6 +622,58 @@ def test_review_prompt_uses_custom_command():
     assert "/review\n" not in p  # the built-in default isn't seeded
 
 
+# ── skills.plan (plan-only first-turn slash command) ────────────────────────
+
+
+def test_plan_only_prompt_uses_builtin_prose_by_default():
+    import cockpit.spawn as spawn
+
+    p = spawn._plan_only_prompt("khivi/feature", None)
+    assert p.startswith("You are starting a fresh task")
+    assert "PLAN ONLY" in p
+
+
+def test_plan_only_prompt_uses_custom_command():
+    import cockpit.spawn as spawn
+
+    p = spawn._plan_only_prompt(
+        "khivi/feature",
+        {
+            "number": 7,
+            "title": "fix the thing",
+            "author": {"login": "coworker"},
+            "url": "https://github.com/o/n/pull/7",
+        },
+        command="/plan-pr",
+    )
+    assert p.startswith("/plan-pr")
+    assert "#7" in p and "fix the thing" in p
+    assert "PLAN ONLY" in p  # the shared no-code gate always rides along
+
+
+def test_plan_only_branch_mode_seeds_configured_skills_plan_command(
+    spawn_main, cockpit_repo
+):
+    """`skills.plan` set (global or per-repo) → the plan-only spawn leads with
+    the configured slash command; the safety gate is never externalized."""
+    _set_config_key(cockpit_repo, "skills", {"plan": "/plan-pr"})
+    code, _out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "/plan-pr" in cmd
+    assert "PLAN ONLY" in cmd
+
+
+def test_plan_only_branch_mode_falls_back_to_builtin_when_skills_plan_unset(
+    spawn_main,
+):
+    code, _out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "You are starting a fresh task" in cmd
+    assert "PLAN ONLY" in cmd
+
+
 def test_review_branch_mode_seeds_custom_review_command(
     spawn_main, push_branch, monkeypatch
 ):
@@ -847,6 +899,65 @@ def test_actions_url_with_pr_includes_related_pr_in_prompt(spawn_main, monkeypat
     assert "Related PR" in cmd
     assert "#42" in cmd
     assert "fix the bug" in cmd
+
+
+def test_actions_prompt_uses_custom_command():
+    import cockpit.spawn as spawn
+
+    p = spawn._actions_prompt(
+        "khivi/ci-fix",
+        _actions_run_info(),
+        None,
+        {
+            "number": 42,
+            "title": "fix the bug",
+            "author": {"login": "khivi"},
+            "url": "https://github.com/owner/repo/pull/42",
+        },
+        command="/actions-pr",
+    )
+    assert p.startswith("/actions-pr")
+    assert "runs/12345" in p  # run URL
+    assert "Linked PR" in p and "#42" in p
+    assert "PLAN ONLY" in p  # the shared no-code gate always rides along
+
+
+def test_actions_branch_mode_seeds_configured_skills_actions_command(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """`skills.actions` set → the Actions-run spawn leads with the configured
+    slash command instead of the built-in `--log-failed` investigation prose."""
+    import cockpit.spawn as spawn
+
+    _set_config_key(cockpit_repo, "skills", {"actions": "/actions-pr"})
+    monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+
+    code, _out, _err = spawn_main(
+        ["https://github.com/owner/repo/actions/runs/12345", "--repo", "testrepo"]
+    )
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "/actions-pr" in cmd
+    assert "gh run view" not in cmd  # built-in log-fetch step is not seeded
+    assert "PLAN ONLY" in cmd
+
+
+def test_actions_branch_mode_falls_back_to_builtin_when_skills_actions_unset(
+    spawn_main, monkeypatch
+):
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+
+    code, _out, _err = spawn_main(
+        ["https://github.com/owner/repo/actions/runs/12345", "--repo", "testrepo"]
+    )
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "gh run view 12345 --log-failed" in cmd
+    assert "PLAN ONLY" in cmd
 
 
 def test_actions_url_missing_head_branch_errors(spawn_main, monkeypatch):

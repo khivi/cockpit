@@ -19,6 +19,7 @@ _TEMPLATES = {
     "trello": {"branch", "url", "plan_tail"},
     "plan_only": {"branch", "source_block"},
     "review": {"command", "context"},
+    "command_seed": {"command", "context", "plan_tail"},
     "actions": {
         "branch",
         "source",

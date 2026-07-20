@@ -286,6 +286,20 @@ def test_preflight_passes_on_valid_skills_review(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_preflight_passes_on_valid_skills_plan_and_actions(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "skills": {"plan": "/plan-pr", "actions": "/actions-pr"},
+            "repos": [{"name": "r", "skills": {"plan": "/plan-pr"}}],
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
 def test_preflight_exits_on_unknown_skills_field(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:

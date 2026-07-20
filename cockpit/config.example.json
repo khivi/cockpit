@@ -74,7 +74,9 @@
   "linear_identity_ttl_seconds": 3600,
   "skills": {
     "session": "/session-coordination",
-    "review": "/review"
+    "review": "/review",
+    "plan": "/plan-pr",
+    "actions": "/actions-pr"
   },
   "use_cship": false,
   "use_slack": false,

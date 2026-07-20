@@ -69,6 +69,7 @@ Everything else has a sane default. Full field reference: [`docs/config.md`](doc
 
 - **Tickets** — link each PR to Linear / Jira / GitHub Issues / Trello via a body footer, and transition the ticket on merge (per-repo `tickets`).
 - **Auto-review** — `review_prs: true` spawns a review agent per coworker PR (collaborators only; `review_external` opts in fork PRs — untrusted content reaching a Bash-capable agent, so enable deliberately).
+- **Skills** — `skills.{session,review,plan,actions}` seed a slash command as the first turn of each spawn (session runs in *every* spawn; review/plan/actions per scenario). Unset fields fall back to cockpit's built-in prose. Point them at your own commands, e.g. `"skills": {"review": "/pr-review"}`.
 
 Only the statusline is prompted for at `cockpit setup` (it installs binaries); every other setting is a plain `config.json` edit, validated at startup.
 

@@ -131,7 +131,7 @@ def _validate_field(
         check(repo[key], where)
 
 
-_SKILL_FIELDS = ("session", "review")
+_SKILL_FIELDS = ("session", "review", "plan", "actions")
 # Flat keys the `skills` object replaced — a leftover hard-fails with its new
 # home, same treatment as `use_linear` → `tickets`.
 _LEGACY_SKILL_KEYS = {
@@ -143,11 +143,12 @@ _LEGACY_SKILL_KEYS = {
 def _validate_skills(cfg: dict) -> None:
     """Validate the `skills` config (top-level + per-repo).
 
-    `skills` is `{session: "/cmd", review: "/cmd"}` — each value a slash command
+    `skills` is `{session, review, plan, actions}` — each value a slash command
     seeded verbatim as a workspace's first turn (`session` on every spawn,
-    `review` on a `review_prs` spawn). A non-`/` value would seed a non-command,
-    so it's rejected at start. The legacy flat `prompt_prefix` / `review_command`
-    keys are gone; a leftover hard-fails with the new location.
+    `review` on a `review_prs` spawn, `plan` on a plan-only PR/branch spawn,
+    `actions` on a GitHub-Actions-run-URL spawn). A non-`/` value would seed a
+    non-command, so it's rejected at start. The legacy flat `prompt_prefix` /
+    `review_command` keys are gone; a leftover hard-fails with the new location.
     """
 
     def _check_source(src: dict, where: str) -> None:

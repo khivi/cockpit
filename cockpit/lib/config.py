@@ -490,6 +490,33 @@ def review_command(cfg: dict | None = None, repo_entry: dict | None = None) -> s
     return _skills_field(cfg, repo_entry, "review") or REVIEW_COMMAND_DEFAULT
 
 
+def plan_command(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The slash command seeded as the first turn of a plan-only spawn (a PR or
+    branch worth studying before implementing).
+
+    Default ``""`` — unset means cockpit seeds its own built-in plan-only prose
+    (`cockpit/prompts/plan_only.txt`). Override with `skills.plan` per-repo or
+    globally — e.g. a personal ``"/plan-pr"``. Resolved `skills.plan` repo →
+    global → default, same shape as `review_command`.
+    """
+    cfg = cfg if cfg is not None else load_config()
+    return _skills_field(cfg, repo_entry, "plan") or ""
+
+
+def actions_command(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The slash command seeded as the first turn of a GitHub-Actions-run-URL
+    spawn.
+
+    Default ``""`` — unset means cockpit seeds its own built-in Actions
+    investigation prose (`cockpit/prompts/actions.txt`). Override with
+    `skills.actions` per-repo or globally — e.g. a personal ``"/actions-pr"``.
+    Resolved `skills.actions` repo → global → default, same shape as
+    `review_command`.
+    """
+    cfg = cfg if cfg is not None else load_config()
+    return _skills_field(cfg, repo_entry, "actions") or ""
+
+
 def base_remote(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """The git remote the footer ahead/staleness count measures against.
 
