@@ -385,14 +385,16 @@ def validate_config(cfg: dict) -> None:
     _validate_linear_done_on_merge(cfg)
 
 
-def preflight(cfg: dict) -> None:
+def preflight(cfg: dict, *, for_setup: bool = False) -> None:
     for binary in REQUIRED_BINARIES:
         if shutil.which(binary) is None:
             _die(f"`{binary}` not found on PATH (required)")
 
     _warn_cockpit_not_on_path()
 
-    if cfg.get("use_cship"):
+    # `cockpit setup` may be about to install cship/starship (interactive opt-in
+    # or --install-deps), so it must not hard-fail on their absence here.
+    if not for_setup and cfg.get("use_cship"):
         _cship_install = {
             "cship": "curl -fsSL https://cship.dev/install.sh | bash  (macOS + Linux)",
             "starship": "https://starship.rs",

@@ -763,3 +763,22 @@ def test_config_example_would_catch_a_dead_key():
     cfg["use_linear"] = False
     with pytest.raises(SystemExit):
         validate_config(cfg)
+
+
+def test_preflight_for_setup_skips_cship_hardfail(monkeypatch):
+    """`cockpit setup` may be about to install cship/starship, so preflight with
+    `for_setup=True` must not hard-fail on their absence — but the default
+    (watch/other) path still does."""
+    import pytest
+
+    import cockpit.lib.preflight as pf
+
+    def _which(binary):
+        return f"/x/{binary}" if binary in ("gh", "git") else None
+
+    monkeypatch.setattr(pf.shutil, "which", _which)
+    cfg = {"use_cship": True, "repos": []}
+    pf.preflight(cfg, for_setup=True)  # must not raise
+    with pytest.raises(SystemExit) as exc:
+        pf.preflight(cfg)  # default: hard-fails on missing cship
+    assert exc.value.code == 2

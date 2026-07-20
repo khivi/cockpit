@@ -144,6 +144,26 @@ def save_tui_theme(name: str) -> None:
     reset_config_cache()
 
 
+def save_config_value(key: str, value: Any) -> None:
+    """Atomically set a single top-level `config.json` key, preserving all other
+    keys, and drop the per-process cache. Used by interactive `cockpit setup` to
+    persist a feature toggle the user opts into (e.g. `use_cship`). No-op when
+    the value is unchanged. Same read-modify-write contract as `save_tui_theme`.
+    """
+    try:
+        data = _read_config()
+    except (OSError, ValueError):
+        data = {}
+    if data.get(key) == value:
+        return
+    data[key] = value
+    ensure_state_dirs()
+    tmp = CONFIG_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    os.replace(tmp, CONFIG_PATH)
+    reset_config_cache()
+
+
 _CONFIG_CACHE: dict | None = None
 
 
@@ -771,6 +791,22 @@ def _is_cockpit_hook_group(group: dict) -> bool:
         if "cockpit statusline" in cmd or "cockpit idle-pill" in cmd:
             return True
     return False
+
+
+def claude_integration_present(settings_path: Path | None = None) -> bool:
+    """True iff cockpit's hooks are already wired into ~/.claude/settings.json —
+    i.e. the user has run `cockpit setup`. `cockpit watch` uses this to *re-assert*
+    an existing integration (repair drift) without force-installing it onto
+    someone who never opted in."""
+    settings_path = settings_path or (Path.home() / ".claude" / "settings.json")
+    if not settings_path.exists():
+        return False
+    try:
+        data = json.loads(settings_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    hooks = data.get("hooks") or {}
+    return any(_is_cockpit_hook_group(g) for groups in hooks.values() for g in groups)
 
 
 def install_claude_hooks(settings_path: Path | None = None) -> None:

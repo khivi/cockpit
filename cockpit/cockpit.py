@@ -27,6 +27,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import shutil
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -42,6 +44,7 @@ from cockpit.lib.cmux import (
     workspace_state,
 )
 from cockpit.lib.config import (
+    claude_integration_present,
     ensure_state_dirs,
     install_claude_commands,
     install_claude_hooks,
@@ -50,6 +53,8 @@ from cockpit.lib.config import (
     install_starship_default_config,
     load_config,
     repin_interpreter_if_stale,
+    save_config_value,
+    teardown_claude_integration,
 )
 from cockpit.lib.daemon import reassert_pidfile
 from cockpit.lib.gh import gh_self_user, require_gh
@@ -235,6 +240,69 @@ def _statusline_command() -> str:
     return f"{sys.executable} -m cockpit.cli statusline"
 
 
+_CSHIP_INSTALL = "curl -fsSL https://cship.dev/install.sh | bash"
+
+
+def _prompt_yes(question: str, *, default: bool) -> bool:
+    """Ask a y/n question on a TTY. Returns `default` immediately when stdin or
+    stdout isn't a terminal, so scripted / CI `cockpit setup` stays silent."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return default
+    suffix = "[Y/n]" if default else "[y/N]"
+    try:
+        reply = input(f"{question} {suffix} ").strip().lower()
+    except EOFError:
+        return default
+    return default if not reply else reply.startswith("y")
+
+
+def _maybe_enable_statusline(*, install_deps: bool) -> None:
+    """Interactive opt-in for the cship/starship footer statusline. No-op when
+    it's already enabled or on a non-TTY (there, config drives it as before).
+
+    On opt-in, ensures cship+starship are present — with `--install-deps` it runs
+    the cship.dev installer; otherwise it prints the command and leaves the
+    feature off until the user installs them and re-runs setup — then persists
+    `use_cship: true` so the wiring that follows picks it up.
+    """
+    if load_config().get("use_cship"):
+        return
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return
+    if not _prompt_yes(
+        "Enable the Claude Code footer statusline "
+        "(model / context / cost / PR pills)? Needs cship + starship.",
+        default=False,
+    ):
+        return
+    if [b for b in ("cship", "starship") if shutil.which(b) is None]:
+        if install_deps:
+            print(f"installing statusline deps: {_CSHIP_INSTALL} -s -- --yes")
+            subprocess.run(f"{_CSHIP_INSTALL} -s -- --yes", shell=True, check=False)
+        if shutil.which("cship") is None:
+            print(
+                f"cship not on PATH — install it (`{_CSHIP_INSTALL}`) and re-run "
+                "`cockpit setup`. (statusline not enabled yet)"
+            )
+            return
+    save_config_value("use_cship", True)
+    print('statusline enabled ("use_cship": true).')
+
+
+def _report_backend() -> None:
+    """Print the resolved workspace backend so the user sees what's active."""
+    from cockpit.lib.tool import resolve_tool
+
+    tool = resolve_tool()
+    if tool == "none":
+        print(
+            "workspace backend: none — cache-only mode (TUI + statusline work, "
+            "workspace spawning disabled). Install cmux: `brew install --cask cmux`."
+        )
+    else:
+        print(f"workspace backend: {tool}")
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     g = p.add_mutually_exclusive_group(required=True)
@@ -248,7 +316,20 @@ def main(argv: list[str] | None = None) -> int:
         "--setup",
         action="store_true",
         help="Re-run setup only (cship.toml + starship.toml + statusLine + "
-        "Claude hooks + Claude commands), then exit.",
+        "Claude hooks + Claude commands), then exit. Interactive on a TTY.",
+    )
+    p.add_argument(
+        "--install-deps",
+        action="store_true",
+        help="With --setup: run the cship.dev installer for the statusline "
+        "dependencies instead of just printing the command.",
+    )
+    p.add_argument(
+        "--reset",
+        action="store_true",
+        help="With --setup: undo prior cockpit ~/.claude writes and reset the "
+        "statusline opt-in, then set up fresh (re-prompts). Leaves your "
+        "~/.config/cockpit config and cship/starship seeds in place.",
     )
     args = p.parse_args(argv)
 
@@ -256,25 +337,43 @@ def main(argv: list[str] | None = None) -> int:
     require_gh()
 
     ensure_state_dirs()
-    preflight(load_config())
+    preflight(load_config(), for_setup=args.setup)
 
     if args.setup:
+        if args.reset:
+            teardown_claude_integration()
+            save_config_value("use_cship", False)
+            print("reset: cleared prior setup — configuring fresh.")
+        _maybe_enable_statusline(install_deps=args.install_deps)
         install_cship_default_config()
         install_starship_default_config()
         install_cship_statusline_if_configured(_statusline_command())
         install_claude_hooks()
         install_claude_commands()
+        _report_backend()
         if not load_config().get("use_cship"):
             print(
-                "tip: for the Claude Code footer statusline, install cship — "
-                "`curl -fsSL https://cship.dev/install.sh | bash` (macOS + Linux) — "
-                'then set "use_cship": true in your config and re-run `cockpit setup`.'
+                "tip: enable the footer statusline any time by re-running "
+                "`cockpit setup` (or `cockpit setup --install-deps`)."
             )
         return 0
 
     if args.watch:
         # Heal a stale `{python}` pin left by a `brew upgrade` before rendering.
         repin_interpreter_if_stale()
+        # Re-assert an *existing* Claude integration (repair drift, e.g. a hook
+        # left dangling by a `brew upgrade`), but never force-install onto a user
+        # who hasn't run `cockpit setup` — respect the opt-out, just hint. Writes
+        # are idempotent (only on content change).
+        if claude_integration_present():
+            install_claude_hooks()
+            install_claude_commands()
+        else:
+            print(
+                "tip: run `cockpit setup` to wire cockpit into Claude Code "
+                "(idle nudge, statusline, /cockpit-new /cockpit-close).",
+                file=sys.stderr,
+            )
         cfg = load_config()
         slow_secs = int(cfg.get("slow_poll_interval_seconds", DEFAULT_SLOW_POLL_SECS))
         fast_secs = int(cfg.get("fast_poll_interval_seconds", DEFAULT_FAST_POLL_SECS))
