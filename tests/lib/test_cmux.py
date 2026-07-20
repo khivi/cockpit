@@ -957,6 +957,47 @@ def test_nudge_suppressed_when_parked_even_on_native_idle():
     assert result is False
 
 
+def test_nudge_skips_muted_pr_without_touching_cmux():
+    """A file-backed mute (`should_nudge` False) suppresses the nudge before any
+    cmux round-trip — the mute survives daemon restarts, so it must gate ahead of
+    list-status, not just before send."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return _idle_status_lines()
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.nudges.should_nudge", return_value=False),
+    ):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="t", pr_number=42)
+
+    assert result is False
+    assert calls == []  # short-circuits before list-status
+
+
+def test_nudge_dry_run_reports_without_sending_or_self_healing(capsys):
+    """`dry=True` on an idle-eligible workspace observes only: it prints the plan,
+    sends nothing, and must NOT self-heal the dropped pill (the `and not dry`
+    guard — a dry run mutates nothing)."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-status":
+            return _native_line("Idle")  # eligible + would self-heal when not dry
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "fix CI", tag="t", dry=True)
+
+    assert result is False
+    assert [a for a in calls if a[0] == "send"] == []
+    assert [a for a in calls if a[0] == "set-status"] == []  # no self-heal in dry
+    assert "[dry]" in capsys.readouterr().out
+
+
 def test_native_claude_state_parsing():
     from cockpit.lib.cmux import _native_claude_state
 
