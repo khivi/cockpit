@@ -388,6 +388,24 @@ def test_maybe_enable_statusline_missing_no_flag_prints_skips(monkeypatch, capsy
     assert "cship.dev" in capsys.readouterr().out
 
 
+def test_maybe_enable_statusline_starship_missing_skips(monkeypatch, capsys):
+    cockpit = _reload_cockpit()
+    monkeypatch.setattr(cockpit, "load_config", lambda: {})
+    _force_tty(cockpit, monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda _p: "y")
+    # cship resolves, starship doesn't — the post-install re-check must catch this too.
+    monkeypatch.setattr(
+        cockpit.shutil, "which", lambda b: "/usr/bin/cship" if b == "cship" else None
+    )
+    saved: dict = {}
+    monkeypatch.setattr(
+        cockpit, "save_config_value", lambda k, v: saved.__setitem__(k, v)
+    )
+    cockpit._maybe_enable_statusline(install_deps=False)
+    assert saved == {}  # not enabled while starship is still missing
+    assert "starship" in capsys.readouterr().out
+
+
 def test_maybe_enable_statusline_install_deps_runs_installer(monkeypatch):
     cockpit = _reload_cockpit()
     monkeypatch.setattr(cockpit, "load_config", lambda: {})

@@ -275,13 +275,16 @@ def _maybe_enable_statusline(*, install_deps: bool) -> None:
         default=False,
     ):
         return
-    if [b for b in ("cship", "starship") if shutil.which(b) is None]:
+    missing = [b for b in ("cship", "starship") if shutil.which(b) is None]
+    if missing:
         if install_deps:
             print(f"installing statusline deps: {_CSHIP_INSTALL} -s -- --yes")
             subprocess.run(f"{_CSHIP_INSTALL} -s -- --yes", shell=True, check=False)
-        if shutil.which("cship") is None:
+            missing = [b for b in ("cship", "starship") if shutil.which(b) is None]
+        if missing:
             print(
-                f"cship not on PATH — install it (`{_CSHIP_INSTALL}`) and re-run "
+                f"{', '.join(missing)} not on PATH — install "
+                f"(cship: `{_CSHIP_INSTALL}`; starship: https://starship.rs) and re-run "
                 "`cockpit setup`. (statusline not enabled yet)"
             )
             return
