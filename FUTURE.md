@@ -100,7 +100,7 @@ cargo tauri build   # → cockpit.app + .dmg
 ## Repo strategy (two phases — prototype first, migrate only if it proves out)
 
 **Phase 1 — prototype in `cockpit-app`. Do NOT touch the old repo yet.**
-Start fresh in a separate repo so the rewrite is de-risked before retiring anything. Old `cockpit` stays live and untouched as a fallback/reference.
+The new repo is decided: **`cockpit-app`** (private). Start fresh there so the rewrite is de-risked before retiring anything; old `cockpit` stays live and untouched as a fallback/reference. This build plan (`FUTURE.md`) is the seed doc — carry it into `cockpit-app` as its handoff spec on the first commit.
 
 ```bash
 # new repo; first commit = the Tauri scaffold (step 1), not an empty README
