@@ -335,7 +335,7 @@ JIRA_DEV_DONE_DEFAULT = "Dev Done"
 # worktree. Defaults to Claude Code's built-in `/review`, which ships with every
 # Claude Code install so it resolves in every spawned review workspace (unlike a
 # personal global skill, which only resolves for its owner). Override per-repo
-# (or globally) with `review_command` — e.g. a personal `/pr-review`.
+# (or globally) with `skills.review` — e.g. a personal `/pr-review`.
 #
 # Why this defaults to a command while `skills.plan`/`skills.actions` default to
 # "" (built-in prose): the rule is the same for all three — "default to the
