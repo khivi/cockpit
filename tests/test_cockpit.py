@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import json as _json
+import sys
 
 from tests.asserts import expected_starship as _expected_starship
 from tests.fixtures import (
@@ -324,9 +325,9 @@ def _reload_cockpit():
     return cockpit
 
 
-def _force_tty(cockpit, monkeypatch):
-    monkeypatch.setattr(cockpit.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(cockpit.sys.stdout, "isatty", lambda: True)
+def _force_tty(monkeypatch):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
 
 
 def test_prompt_yes_non_tty_returns_default(monkeypatch):
@@ -357,7 +358,7 @@ def test_maybe_enable_statusline_noop_non_tty(monkeypatch):
 def test_maybe_enable_statusline_accept_deps_present_enables(monkeypatch):
     cockpit = _reload_cockpit()
     monkeypatch.setattr(cockpit, "load_config", lambda: {})
-    _force_tty(cockpit, monkeypatch)
+    _force_tty(monkeypatch)
     monkeypatch.setattr("builtins.input", lambda _p: "y")
     monkeypatch.setattr(cockpit.shutil, "which", lambda b: "/usr/bin/" + b)
 
@@ -376,7 +377,7 @@ def test_maybe_enable_statusline_accept_deps_present_enables(monkeypatch):
 def test_maybe_enable_statusline_missing_no_flag_prints_skips(monkeypatch, capsys):
     cockpit = _reload_cockpit()
     monkeypatch.setattr(cockpit, "load_config", lambda: {})
-    _force_tty(cockpit, monkeypatch)
+    _force_tty(monkeypatch)
     monkeypatch.setattr("builtins.input", lambda _p: "y")
     monkeypatch.setattr(cockpit.shutil, "which", lambda _b: None)
     saved: dict = {}
@@ -391,7 +392,7 @@ def test_maybe_enable_statusline_missing_no_flag_prints_skips(monkeypatch, capsy
 def test_maybe_enable_statusline_starship_missing_skips(monkeypatch, capsys):
     cockpit = _reload_cockpit()
     monkeypatch.setattr(cockpit, "load_config", lambda: {})
-    _force_tty(cockpit, monkeypatch)
+    _force_tty(monkeypatch)
     monkeypatch.setattr("builtins.input", lambda _p: "y")
     # cship resolves, starship doesn't — the post-install re-check must catch this too.
     monkeypatch.setattr(
@@ -409,7 +410,7 @@ def test_maybe_enable_statusline_starship_missing_skips(monkeypatch, capsys):
 def test_maybe_enable_statusline_install_deps_runs_installer(monkeypatch):
     cockpit = _reload_cockpit()
     monkeypatch.setattr(cockpit, "load_config", lambda: {})
-    _force_tty(cockpit, monkeypatch)
+    _force_tty(monkeypatch)
     monkeypatch.setattr("builtins.input", lambda _p: "y")
     state = {"installed": False}
     monkeypatch.setattr(
@@ -430,7 +431,7 @@ def test_maybe_enable_statusline_install_deps_runs_installer(monkeypatch):
 def test_maybe_enable_statusline_decline(monkeypatch):
     cockpit = _reload_cockpit()
     monkeypatch.setattr(cockpit, "load_config", lambda: {})
-    _force_tty(cockpit, monkeypatch)
+    _force_tty(monkeypatch)
     monkeypatch.setattr("builtins.input", lambda _p: "n")
     saved: dict = {}
     monkeypatch.setattr(

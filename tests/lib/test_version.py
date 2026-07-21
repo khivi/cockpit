@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import re
+
 from cockpit.lib import version
 
 
 def test_running_version_reads_package_metadata():
     v = version.running_version()
     assert v
-    assert all(part.isdigit() for part in v.split("."))
+    # X.Y.Z numeric prefix; tolerate a PEP 440 pre-release suffix (e.g. 1.2.3rc1).
+    assert re.match(r"^\d+\.\d+\.\d+", v)
 
 
 def _no_metadata(monkeypatch):
@@ -23,7 +26,7 @@ def test_running_version_falls_back_to_pyproject_without_metadata(monkeypatch):
     _no_metadata(monkeypatch)
     v = version.running_version()
     assert v
-    assert all(part.isdigit() for part in v.split("."))
+    assert re.match(r"^\d+\.\d+\.\d+", v)
 
 
 def test_running_version_empty_when_no_source(monkeypatch, tmp_path):

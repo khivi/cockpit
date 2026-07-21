@@ -95,9 +95,7 @@ def test_idle_pill_execs_bundled_script(monkeypatch):
 
 
 def test_idle_pill_missing_script_is_not_fatal(monkeypatch, capsys):
-    import cockpit.cli as cli_mod
-
-    monkeypatch.setattr(cli_mod, "__file__", "/nonexistent/cli.py")
+    monkeypatch.setattr(cli, "__file__", "/nonexistent/cli.py")
     # No os.execvp patch: the missing-script guard must return before exec.
     assert cli.main(["idle-pill", "stop"]) == 0
     assert "idle-pill script missing" in capsys.readouterr().err
