@@ -270,8 +270,11 @@ def _decide_linear_refetch(ctx: RepoCycle, pr: PR, now: float) -> tuple[str, obj
 
       * `("skip", None)`   — repo has no ticket provider; leave the block None so
         `write_pr_cache` leaves the field untouched.
-      * `("carry", block)` — the prior snapshot's footer id-set is unchanged and
-        still within the TTL backstop; carry it forward verbatim.
+      * `("carry", block)` — the prior snapshot's footer id-set is unchanged,
+        still within the TTL backstop, and it carries the self-describing
+        `provider` key; carry it forward verbatim. A pre-rename block with no
+        `provider` key falls through to `build` so it's rewritten this cycle
+        (else its Trello title-over-short-link handle stays wrong until TTL).
       * `("build", ids)`   — (re)build the block from freshly-fetched states for
         `ids` (the footer set, possibly empty), triggered by a footer change or a
         prior snapshot aged past the TTL.
@@ -289,7 +292,7 @@ def _decide_linear_refetch(ctx: RepoCycle, pr: PR, now: float) -> tuple[str, obj
         fresh = now - float(
             prior_block.get("fetched_at", 0)
         ) < _linear_state_ttl_seconds(ctx.cfg)
-        if prior_ids == ids and fresh:
+        if prior_ids == ids and fresh and "provider" in prior_block:
             return "carry", prior_block
     return "build", ids
 

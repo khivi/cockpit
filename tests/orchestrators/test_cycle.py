@@ -2959,6 +2959,7 @@ def test_prefetch_linear_blocks_carries_forward_when_unchanged_and_fresh(tmp_pat
     prior = {
         "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
         "fetched_at": 900.0,
+        "provider": "linear",
     }
     pr = _devdone_pr(FOOTER)
     ctx.pr_payloads = {pr.branch: {"ticket": prior}}
@@ -2970,6 +2971,33 @@ def test_prefetch_linear_blocks_carries_forward_when_unchanged_and_fresh(tmp_pat
 
     assert block is prior
     fetch.assert_not_called()
+
+
+def test_prefetch_linear_blocks_rebuilds_provider_less_prior(tmp_path):
+    # A pre-rename on-disk block (no `provider` key) must NOT be carried forward
+    # even when fresh + unchanged — it's rebuilt this cycle so the self-describing
+    # provider lands immediately, instead of blipping a wrong Trello handle until
+    # the TTL forces a rebuild.
+    ctx = _devdone_ctx(tmp_path, cfg={"slow_poll_interval_seconds": 300})
+    prior = {
+        "tickets": [{"id": "PE-1234", "state": "Dev Done"}],
+        "fetched_at": 900.0,
+    }  # no "provider" key
+    pr = _devdone_pr(FOOTER)
+    ctx.pr_payloads = {pr.branch: {"ticket": prior}}
+    with (
+        patch(
+            "cockpit.lib.tickets.fetch_ticket_states",
+            return_value={"PE-1234": "Dev Done"},
+        ) as fetch,
+        patch("cockpit.lib.tickets.fetch_ticket_titles", return_value={}),
+        patch.object(cycle.time, "time", return_value=1000.0),  # 100s < 900s TTL
+    ):
+        block = _prefetch_one(ctx, pr)
+
+    assert block is not prior
+    assert block["provider"] == "linear"
+    fetch.assert_called_once_with(["PE-1234"])
 
 
 def test_prefetch_linear_blocks_refetches_when_footer_changed(tmp_path):
