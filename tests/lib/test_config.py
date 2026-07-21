@@ -11,6 +11,7 @@ update — long after the test would have flagged it if we had one.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 DEFAULTS = Path(__file__).resolve().parent.parent.parent / "cockpit" / "defaults"
@@ -842,27 +843,27 @@ def test_find_repo_by_nwo_skips_missing_path(tmp_path, monkeypatch):
     assert cockpit_config.find_repo_by_nwo("owner/repo") is None
 
 
-# ── review_command (review_prs first-turn slash command) ────────────────────
+# ── review_command (review_prs first-turn slash command, via skills.review) ─
 
 
 def test_review_command_defaults_to_plugin_command(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.review_command() == "/cockpit:review"
+    assert cockpit_config.review_command() == "/review"
 
 
 def test_review_command_repo_override_wins(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "review_command": "/review"}
+        tmp_path, monkeypatch, {"repos": [], "skills": {"review": "/review"}}
     )
     assert (
-        cockpit_config.review_command(repo_entry={"review_command": "/pr-review"})
+        cockpit_config.review_command(repo_entry={"skills": {"review": "/pr-review"}})
         == "/pr-review"
     )
 
 
 def test_review_command_falls_back_to_global(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "review_command": "/pr-review"}
+        tmp_path, monkeypatch, {"repos": [], "skills": {"review": "/pr-review"}}
     )
     assert cockpit_config.review_command(repo_entry={}) == "/pr-review"
 
@@ -870,9 +871,90 @@ def test_review_command_falls_back_to_global(tmp_path, monkeypatch):
 def test_review_command_blank_falls_through_to_default(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     assert (
-        cockpit_config.review_command(repo_entry={"review_command": "  "})
-        == "/cockpit:review"
+        cockpit_config.review_command(repo_entry={"skills": {"review": "  "}})
+        == "/review"
     )
+
+
+# ── plan_command (plan-only first-turn slash command, via skills.plan) ──────
+
+
+def test_plan_command_defaults_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.plan_command() == ""
+
+
+def test_plan_command_repo_override_wins(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "skills": {"plan": "/plan-global"}}
+    )
+    assert (
+        cockpit_config.plan_command(repo_entry={"skills": {"plan": "/plan-pr"}})
+        == "/plan-pr"
+    )
+
+
+def test_plan_command_falls_back_to_global(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "skills": {"plan": "/plan-pr"}}
+    )
+    assert cockpit_config.plan_command(repo_entry={}) == "/plan-pr"
+
+
+def test_plan_command_blank_falls_through_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.plan_command(repo_entry={"skills": {"plan": "  "}}) == ""
+
+
+# ── actions_command (Actions-run-URL first-turn slash command, via skills.actions) ─
+
+
+def test_actions_command_defaults_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.actions_command() == ""
+
+
+def test_actions_command_repo_override_wins(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "skills": {"actions": "/actions-global"}}
+    )
+    assert (
+        cockpit_config.actions_command(
+            repo_entry={"skills": {"actions": "/actions-pr"}}
+        )
+        == "/actions-pr"
+    )
+
+
+def test_actions_command_falls_back_to_global(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path, monkeypatch, {"repos": [], "skills": {"actions": "/actions-pr"}}
+    )
+    assert cockpit_config.actions_command(repo_entry={}) == "/actions-pr"
+
+
+def test_actions_command_blank_falls_through_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert (
+        cockpit_config.actions_command(repo_entry={"skills": {"actions": "  "}}) == ""
+    )
+
+
+# ── prompt_prefix (skills.session — first turn of every spawn) ──────────────
+
+
+def test_prompt_prefix_reads_skills_session(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {"repos": [], "skills": {"session": "/session-coordination"}},
+    )
+    assert cockpit_config.prompt_prefix() == "/session-coordination"
+
+
+def test_prompt_prefix_defaults_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.prompt_prefix() == ""
 
 
 def test_base_remote_defaults_to_origin(tmp_path, monkeypatch):
@@ -1353,3 +1435,293 @@ def test_find_repos_by_linear_key_rejects_non_linear_identifier(tmp_path, monkey
     assert cockpit_config.find_repos_by_linear_key("not-a-key") == []
     assert cockpit_config.find_repos_by_linear_key("PE-") == []
     assert cockpit_config.find_repos_by_linear_key("HTTP-200") == []
+
+
+# ---- install_claude_hooks (cockpit setup → ~/.claude/settings.json) ---------
+
+
+def _events(data: dict) -> dict:
+    hooks: dict = data["hooks"]
+    return hooks
+
+
+def _cmds(data: dict, event: str) -> list[str]:
+    out = []
+    for group in data["hooks"].get(event, []):
+        for h in group.get("hooks", []):
+            out.append(h["command"])
+    return out
+
+
+def test_install_claude_hooks_writes_expected_events(tmp_path):
+    settings = tmp_path / "settings.json"
+    config_mod.install_claude_hooks(settings)
+    data = json.loads(settings.read_text())
+    assert set(_events(data)) == {
+        "Stop",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "SessionEnd",
+    }
+    # No self-update SessionStart hook — it was retired with the update subsystem.
+    assert "SessionStart" not in _events(data)
+    assert "cockpit statusline || true" in _cmds(data, "Stop")
+    assert "cockpit idle-pill stop || true" in _cmds(data, "Stop")
+    assert "cockpit idle-pill prompt || true" in _cmds(data, "UserPromptSubmit")
+    assert {
+        "cockpit idle-pill loop-set || true",
+        "cockpit idle-pill loop-clear || true",
+    } <= set(_cmds(data, "PreToolUse"))
+
+
+def test_install_claude_hooks_is_idempotent(tmp_path):
+    settings = tmp_path / "settings.json"
+    config_mod.install_claude_hooks(settings)
+    first = settings.read_text()
+    config_mod.install_claude_hooks(settings)
+    second = settings.read_text()
+    assert first == second
+    data = json.loads(second)
+    # Re-run must not duplicate cockpit's Stop group.
+    assert (
+        len([g for g in data["hooks"]["Stop"] if config_mod._is_cockpit_hook_group(g)])
+        == 1
+    )
+    # A second run makes no change → no new backup file.
+    assert not list(tmp_path.glob("settings.json.bak.*"))
+
+
+def test_install_claude_hooks_preserves_user_hooks(tmp_path):
+    settings = tmp_path / "settings.json"
+    user_group = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "my-own-linter"}],
+    }
+    settings.write_text(
+        json.dumps(
+            {"hooks": {"Stop": [user_group]}, "statusLine": {"command": "keep-me"}}
+        )
+    )
+    config_mod.install_claude_hooks(settings)
+    data = json.loads(settings.read_text())
+    # User's Stop hook survives alongside cockpit's.
+    assert "my-own-linter" in _cmds(data, "Stop")
+    assert "cockpit idle-pill stop || true" in _cmds(data, "Stop")
+    # Unrelated top-level keys untouched, and the prior file was backed up.
+    assert data["statusLine"] == {"command": "keep-me"}
+    assert list(tmp_path.glob("settings.json.bak.*"))
+
+
+def test_is_cockpit_hook_group_requires_command_boundary():
+    # A real cockpit hook matches; an unrelated command that merely mentions
+    # the phrase as a substring (e.g. an echo) must NOT be swept up as ours.
+    assert config_mod._is_cockpit_hook_group(
+        {"hooks": [{"command": "cockpit idle-pill stop || true"}]}
+    )
+    assert config_mod._is_cockpit_hook_group(
+        {"hooks": [{"command": "  cockpit statusline || true"}]}
+    )
+    assert not config_mod._is_cockpit_hook_group(
+        {"hooks": [{"command": "echo cockpit statusline is neat"}]}
+    )
+    assert not config_mod._is_cockpit_hook_group(
+        {"hooks": [{"command": "cockpit-statusline-wrapper"}]}
+    )
+
+
+def test_save_config_value_backs_up_corrupt_config(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{ this is not json")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", cfg)
+    monkeypatch.setattr(config_mod, "COCKPIT_HOME", tmp_path)
+    monkeypatch.setattr(config_mod, "CACHE_DIR", tmp_path / "cache")
+    config_mod.reset_config_cache()
+    config_mod.save_config_value("use_cship", True)
+    # Corrupt original preserved under .corrupt; fresh config has the new key.
+    assert (tmp_path / "config.json.corrupt").read_text() == "{ this is not json"
+    assert json.loads(cfg.read_text()) == {"use_cship": True}
+
+
+def test_install_claude_commands_writes_expected_files(tmp_path):
+    commands_dir = tmp_path / "commands"
+    config_mod.install_claude_commands(commands_dir)
+    names = {p.name for p in commands_dir.iterdir()}
+    assert names == {"cockpit-new.md", "cockpit-close.md"}
+    assert "cockpit new $ARGUMENTS" in (commands_dir / "cockpit-new.md").read_text()
+    assert "cockpit close $ARGUMENTS" in (commands_dir / "cockpit-close.md").read_text()
+
+
+def test_install_claude_commands_is_idempotent(tmp_path):
+    commands_dir = tmp_path / "commands"
+    config_mod.install_claude_commands(commands_dir)
+    first = (commands_dir / "cockpit-new.md").read_text()
+    config_mod.install_claude_commands(commands_dir)
+    second = (commands_dir / "cockpit-new.md").read_text()
+    assert first == second
+    # A second run makes no change → no backup files.
+    assert not list(commands_dir.glob("*.bak.*"))
+
+
+def test_install_claude_commands_preserves_unrelated_user_command(tmp_path):
+    commands_dir = tmp_path / "commands"
+    commands_dir.mkdir()
+    user_cmd = commands_dir / "my-own-command.md"
+    user_cmd.write_text("do the thing")
+    config_mod.install_claude_commands(commands_dir)
+    assert user_cmd.read_text() == "do the thing"
+    assert (commands_dir / "cockpit-new.md").exists()
+    assert (commands_dir / "cockpit-close.md").exists()
+
+
+# ---- teardown (cockpit teardown → reverse the setup writes) ------------------
+
+
+def test_uninstall_claude_commands_removes_cockpit_keeps_user(tmp_path):
+    commands_dir = tmp_path / "commands"
+    config_mod.install_claude_commands(commands_dir)
+    user_cmd = commands_dir / "my-own-command.md"
+    user_cmd.write_text("do the thing")
+
+    assert config_mod.uninstall_claude_commands(commands_dir) is True
+    remaining = {p.name for p in commands_dir.iterdir()}
+    assert remaining == {"my-own-command.md"}
+
+
+def test_uninstall_claude_commands_noop_when_absent(tmp_path):
+    commands_dir = tmp_path / "commands"
+    assert config_mod.uninstall_claude_commands(commands_dir) is False
+
+
+def test_uninstall_claude_hooks_removes_cockpit_keeps_user(tmp_path):
+    settings = tmp_path / "settings.json"
+    config_mod.install_claude_hooks(settings)
+    # Add a user-owned Stop hook alongside cockpit's, plus a user-only event.
+    data = json.loads(settings.read_text())
+    data["hooks"]["Stop"].append(
+        {"matcher": "", "hooks": [{"type": "command", "command": "my-own-linter"}]}
+    )
+    data["hooks"]["Notification"] = [
+        {"matcher": "", "hooks": [{"type": "command", "command": "user-notify"}]}
+    ]
+    settings.write_text(json.dumps(data))
+
+    assert config_mod.uninstall_claude_hooks(settings) is True
+    data = json.loads(settings.read_text())
+    # cockpit's commands gone, user's kept; a cockpit-only event is pruned entirely.
+    assert _cmds(data, "Stop") == ["my-own-linter"]
+    assert "UserPromptSubmit" not in data["hooks"]
+    assert _cmds(data, "Notification") == ["user-notify"]
+
+
+def test_uninstall_claude_hooks_drops_empty_hooks_block(tmp_path):
+    settings = tmp_path / "settings.json"
+    config_mod.install_claude_hooks(settings)
+    assert config_mod.uninstall_claude_hooks(settings) is True
+    data = json.loads(settings.read_text())
+    # Nothing but cockpit hooks existed → the whole block is gone, not left empty.
+    assert "hooks" not in data
+
+
+def test_uninstall_claude_hooks_noop_when_absent(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"statusLine": {"command": "keep-me"}}))
+    assert config_mod.uninstall_claude_hooks(settings) is False
+    assert not list(tmp_path.glob("settings.json.bak.*"))
+
+
+def test_clear_cockpit_statusline_removes_only_cockpit(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "statusLine": {
+                    "type": "command",
+                    "command": "/x/py -m cockpit.cli statusline",
+                }
+            }
+        )
+    )
+    assert config_mod.clear_cockpit_statusline(settings) is True
+    assert "statusLine" not in json.loads(settings.read_text())
+    assert list(tmp_path.glob("settings.json.bak.*"))
+
+
+def test_clear_cockpit_statusline_keeps_user_statusline(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"statusLine": {"command": "my-own-status"}}))
+    assert config_mod.clear_cockpit_statusline(settings) is False
+    assert json.loads(settings.read_text())["statusLine"] == {
+        "command": "my-own-status"
+    }
+
+
+# ---- repin_interpreter_if_stale (brew-upgrade self-heal on watch startup) ----
+
+
+def test_repin_starship_swaps_only_the_interpreter(tmp_path):
+    toml = tmp_path / "starship.toml"
+    # Stale interpreter path + a user colour edit that must survive.
+    toml.write_text(
+        "[custom.model]\n"
+        'command = "/old/Cellar/cockpit/1.0/libexec/bin/python -m cockpit.cli starship model"\n'
+        'style = "fg:99"  # my edit\n'
+    )
+    assert config_mod._repin_starship_config(toml) is True
+    body = toml.read_text()
+    assert f"{sys.executable} -m cockpit.cli starship model" in body
+    assert "/old/Cellar/cockpit/1.0" not in body
+    # The quote and the user's unrelated edit are untouched.
+    assert 'command = "' in body
+    assert 'style = "fg:99"  # my edit' in body
+
+
+def test_repin_text_handles_quoted_interpreter_with_spaces():
+    # An interpreter path containing spaces must be wrapped in its own quotes
+    # to survive shell-style parsing; the pin regex has to swallow the whole
+    # quoted token, not just up to the first space.
+    stale = "'/Users/my user/old py' -m cockpit.cli starship model"
+    assert (
+        config_mod._repin_text(stale)
+        == f"{sys.executable} -m cockpit.cli starship model"
+    )
+
+
+def test_repin_starship_noop_when_current(tmp_path):
+    toml = tmp_path / "starship.toml"
+    toml.write_text(f'command = "{sys.executable} -m cockpit.cli starship model"\n')
+    assert config_mod._repin_starship_config(toml) is False
+
+
+def test_repin_starship_skips_symlink(tmp_path):
+    real = tmp_path / "real.toml"
+    real.write_text('command = "/old/py -m cockpit.cli starship model"\n')
+    link = tmp_path / "starship.toml"
+    link.symlink_to(real)
+    assert config_mod._repin_starship_config(link) is False
+    assert "/old/py" in real.read_text()  # symlink target left alone
+
+
+def test_repin_statusline_swaps_cockpit_shim(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "statusLine": {
+                    "type": "command",
+                    "command": "/old/py -m cockpit.cli statusline",
+                }
+            }
+        )
+    )
+    assert config_mod._repin_statusline(settings) is True
+    cmd = json.loads(settings.read_text())["statusLine"]["command"]
+    assert cmd == f"{sys.executable} -m cockpit.cli statusline"
+
+
+def test_repin_statusline_ignores_user_statusline(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps({"statusLine": {"command": "/old/py my-own-status"}})
+    )
+    assert config_mod._repin_statusline(settings) is False
+    assert "/old/py my-own-status" in settings.read_text()

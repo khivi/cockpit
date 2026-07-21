@@ -34,7 +34,7 @@ the header shows what the column means; hovering a value cell shows the decoded
 value (PR review-state name, ticket workflow state, CI verdict) — so the glyphs
 stay legible without a legend.
 
-A muted PR (nudges silenced via `m` / `/cockpit:nudge`) prefixes its workspace
+A muted PR (nudges silenced via `m` / `cockpit nudge`) prefixes its workspace
 name with the 🔇 glyph, read from the daemon-written `pr-muted` cell — the same
 snapshot starship reads, so the table never diverges from the sidebar. An
 unmuted PR with an actionable nudge condition (failing CI / unresolved threads /

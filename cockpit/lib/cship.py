@@ -43,8 +43,8 @@ def invoke_cship(blob: bytes, sid: str | None) -> int:
     """
     if shutil.which(CSHIP_BIN) is None:
         sys.stderr.write(
-            "cockpit setup: `cship` binary not on PATH — install cship "
-            "(https://github.com/khivi/cship) or set use_cship=false\n"
+            "cockpit setup: `cship` binary not on PATH — install it with "
+            "`curl -fsSL https://cship.dev/install.sh | bash` or set use_cship=false\n"
         )
         return 127
     if shutil.which(STARSHIP_BIN) is None:

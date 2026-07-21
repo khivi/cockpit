@@ -2,7 +2,7 @@
 
 Inferring the PR from the current branch (via `gh pr view`) lets the Claude
 session that's being nudged mute its own PR without knowing the number, which
-is the whole point of the slash-skill surface (`/cockpit:nudge`).
+is the whole point of this surface (`cockpit nudge`).
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from .nudges import (
 def _infer_pr_number() -> int | None:
     """Return the PR number for the current branch via `gh pr view`, else None.
 
-    The daemon stores nudge prefs by PR number, so this is what the skill uses
-    when the user invokes `/cockpit:nudge` without an explicit number.
+    The daemon stores nudge prefs by PR number, so this is what `cockpit nudge`
+    uses when invoked without an explicit number.
     """
     res = subprocess.run(
         ["gh", "pr", "view", "--json", "number", "-q", ".number"],

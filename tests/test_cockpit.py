@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import json as _json
+import sys
 
 from tests.asserts import expected_starship as _expected_starship
 from tests.fixtures import (
@@ -52,7 +53,9 @@ def test_cli_footer_flag_runs_only_footer_setup(tmp_path, monkeypatch):
 
 
 def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
-    """`--watch` is pure reconcile — never seeds either toml or writes statusLine."""
+    """`--watch` never seeds either toml or writes the statusLine, and it does
+    NOT force-install the Claude integration onto a user who never ran setup —
+    with no cockpit hooks present it only hints, leaving settings.json alone."""
     _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
     _make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cship", "starship")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
@@ -66,7 +69,34 @@ def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
     assert cockpit.main(["--watch"]) == 0
     assert not (tmp_path / "xdg" / "cship.toml").exists()
     assert not (tmp_path / "xdg" / "starship.toml").exists()
-    assert not (tmp_path / ".claude" / "settings.json").exists()
+    assert not (
+        tmp_path / ".claude" / "settings.json"
+    ).exists()  # not set up → not touched
+
+
+def test_cli_watch_reasserts_existing_claude_integration(tmp_path, monkeypatch):
+    """When cockpit hooks ARE already present (user ran setup), watch re-asserts
+    them (repairs drift) instead of hinting."""
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+    monkeypatch.setattr(cockpit, "_build_state", lambda: {})
+    monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: 0)
+    reasserted = []
+    monkeypatch.setattr(cockpit, "claude_integration_present", lambda: True)
+    monkeypatch.setattr(
+        cockpit, "install_claude_hooks", lambda: reasserted.append("hooks")
+    )
+    monkeypatch.setattr(
+        cockpit, "install_claude_commands", lambda: reasserted.append("cmds")
+    )
+
+    assert cockpit.main(["--watch"]) == 0
+    assert reasserted == ["hooks", "cmds"]
 
 
 def test_cli_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, capsys):
@@ -271,16 +301,6 @@ def test_watch_hard_exits_on_normal_quit(monkeypatch):
     assert exits == [0]
 
 
-def test_watch_returns_for_restart(monkeypatch):
-    """The `u` self-update code returns to cli.py (which os.execvp's) instead of
-    hard-exiting, so the updater/re-exec path still runs."""
-    from cockpit.tui.app import RESTART_EXIT_CODE
-
-    rc, exits, _app = _run_watch_with_return_code(monkeypatch, RESTART_EXIT_CODE)
-    assert rc == RESTART_EXIT_CODE
-    assert exits == []
-
-
 def test_watch_runs_app_on_own_loop(monkeypatch):
     """`_watch` must drive the app on a loop it owns, not Textual's default
     `asyncio.run()`. The default joins the thread-worker executor with a 300s
@@ -293,3 +313,143 @@ def test_watch_runs_app_on_own_loop(monkeypatch):
     app.run.assert_called_once()
     loop = app.run.call_args.kwargs.get("loop")
     assert isinstance(loop, asyncio.AbstractEventLoop)
+
+
+# ---- interactive setup: statusline opt-in / --install-deps / --reset --------
+
+
+def _reload_cockpit():
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+    return cockpit
+
+
+def _force_tty(monkeypatch):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+
+def test_prompt_yes_non_tty_returns_default(monkeypatch):
+    cockpit = _reload_cockpit()
+    # pytest's captured stdin isn't a TTY, so the default is returned unprompted.
+    assert cockpit._prompt_yes("q?", default=True) is True
+    assert cockpit._prompt_yes("q?", default=False) is False
+
+
+def test_maybe_enable_statusline_noop_when_already_enabled(monkeypatch):
+    cockpit = _reload_cockpit()
+    monkeypatch.setattr(cockpit, "load_config", lambda: {"use_cship": True})
+    saved = []
+    monkeypatch.setattr(cockpit, "save_config_value", lambda *a: saved.append(a))
+    cockpit._maybe_enable_statusline(install_deps=False)
+    assert saved == []
+
+
+def test_maybe_enable_statusline_noop_non_tty(monkeypatch):
+    cockpit = _reload_cockpit()
+    monkeypatch.setattr(cockpit, "load_config", lambda: {})
+    saved = []
+    monkeypatch.setattr(cockpit, "save_config_value", lambda *a: saved.append(a))
+    cockpit._maybe_enable_statusline(install_deps=False)  # non-TTY under pytest
+    assert saved == []
+
+
+def test_maybe_enable_statusline_accept_deps_present_enables(monkeypatch):
+    cockpit = _reload_cockpit()
+    monkeypatch.setattr(cockpit, "load_config", lambda: {})
+    _force_tty(monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda _p: "y")
+    monkeypatch.setattr(cockpit.shutil, "which", lambda b: "/usr/bin/" + b)
+
+    def _no_install(*_a, **_k):
+        raise AssertionError("must not install when deps already present")
+
+    monkeypatch.setattr(cockpit.subprocess, "run", _no_install)
+    saved: dict = {}
+    monkeypatch.setattr(
+        cockpit, "save_config_value", lambda k, v: saved.__setitem__(k, v)
+    )
+    cockpit._maybe_enable_statusline(install_deps=False)
+    assert saved == {"use_cship": True}
+
+
+def test_maybe_enable_statusline_missing_no_flag_prints_skips(monkeypatch, capsys):
+    cockpit = _reload_cockpit()
+    monkeypatch.setattr(cockpit, "load_config", lambda: {})
+    _force_tty(monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda _p: "y")
+    monkeypatch.setattr(cockpit.shutil, "which", lambda _b: None)
+    saved: dict = {}
+    monkeypatch.setattr(
+        cockpit, "save_config_value", lambda k, v: saved.__setitem__(k, v)
+    )
+    cockpit._maybe_enable_statusline(install_deps=False)
+    assert saved == {}  # not enabled until cship present
+    assert "cship.dev" in capsys.readouterr().out
+
+
+def test_maybe_enable_statusline_starship_missing_skips(monkeypatch, capsys):
+    cockpit = _reload_cockpit()
+    monkeypatch.setattr(cockpit, "load_config", lambda: {})
+    _force_tty(monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda _p: "y")
+    # cship resolves, starship doesn't — the post-install re-check must catch this too.
+    monkeypatch.setattr(
+        cockpit.shutil, "which", lambda b: "/usr/bin/cship" if b == "cship" else None
+    )
+    saved: dict = {}
+    monkeypatch.setattr(
+        cockpit, "save_config_value", lambda k, v: saved.__setitem__(k, v)
+    )
+    cockpit._maybe_enable_statusline(install_deps=False)
+    assert saved == {}  # not enabled while starship is still missing
+    assert "starship" in capsys.readouterr().out
+
+
+def test_maybe_enable_statusline_install_deps_runs_installer(monkeypatch):
+    cockpit = _reload_cockpit()
+    monkeypatch.setattr(cockpit, "load_config", lambda: {})
+    _force_tty(monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda _p: "y")
+    state = {"installed": False}
+    monkeypatch.setattr(
+        cockpit.shutil, "which", lambda b: ("/x/" + b) if state["installed"] else None
+    )
+    monkeypatch.setattr(
+        cockpit.subprocess, "run", lambda *a, **k: state.__setitem__("installed", True)
+    )
+    saved: dict = {}
+    monkeypatch.setattr(
+        cockpit, "save_config_value", lambda k, v: saved.__setitem__(k, v)
+    )
+    cockpit._maybe_enable_statusline(install_deps=True)
+    assert state["installed"] is True
+    assert saved == {"use_cship": True}
+
+
+def test_maybe_enable_statusline_decline(monkeypatch):
+    cockpit = _reload_cockpit()
+    monkeypatch.setattr(cockpit, "load_config", lambda: {})
+    _force_tty(monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda _p: "n")
+    saved: dict = {}
+    monkeypatch.setattr(
+        cockpit, "save_config_value", lambda k, v: saved.__setitem__(k, v)
+    )
+    cockpit._maybe_enable_statusline(install_deps=False)
+    assert saved == {}
+
+
+def test_setup_reset_tears_down_and_resets_use_cship(tmp_path, monkeypatch):
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "use_cship": True})
+    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cship", "starship")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cockpit = _reload_cockpit()
+    calls = []
+    monkeypatch.setattr(
+        cockpit, "teardown_claude_integration", lambda: calls.append("teardown")
+    )
+    assert cockpit.main(["--setup", "--reset"]) == 0
+    assert calls == ["teardown"]
+    assert cockpit.load_config().get("use_cship") is False

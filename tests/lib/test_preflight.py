@@ -118,7 +118,7 @@ def test_preflight_warns_when_cockpit_not_on_path(tmp_path, monkeypatch, capsys)
     err = capsys.readouterr().err
     assert "cockpit" in err
     assert "PATH" in err
-    assert "uv tool install" in err
+    assert "brew install" in err
 
 
 def test_preflight_exits_on_invalid_sidebar_color(tmp_path, monkeypatch, capsys):
@@ -249,40 +249,122 @@ def test_preflight_passes_on_bool_use_worktree(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
-def test_preflight_exits_on_non_slash_review_command_repo(
+def test_preflight_exits_on_non_slash_skills_review_repo(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {
+                "tool": "cmux",
+                "repos": [{"name": "r", "skills": {"review": "pr-review"}}],
+            }
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "skills.review" in err
+    assert "'pr-review'" in err
+
+
+def test_preflight_exits_on_non_string_skills_review_global(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [], "skills": {"review": True}})
+    assert exc.value.code == 2
+    assert "skills.review" in capsys.readouterr().err
+
+
+def test_preflight_passes_on_valid_skills_review(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "skills": {"review": "/review"},
+            "repos": [{"name": "r", "skills": {"review": "/pr-review"}}],
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_passes_on_valid_skills_plan_and_actions(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "skills": {"plan": "/plan-pr", "actions": "/actions-pr"},
+            "repos": [{"name": "r", "skills": {"plan": "/plan-pr"}}],
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_exits_on_unknown_skills_field(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [], "skills": {"bogus": "/foo"}})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "unknown skills field" in err
+    assert "'bogus'" in err
+
+
+def test_preflight_exits_on_leftover_flat_review_command_global(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [], "review_command": "/review"})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "review_command" in err
+    assert "skills.review" in err
+
+
+def test_preflight_exits_on_leftover_flat_review_command_repo(
     tmp_path, monkeypatch, capsys
 ):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
         preflight(
-            {"tool": "cmux", "repos": [{"name": "r", "review_command": "pr-review"}]}
+            {"tool": "cmux", "repos": [{"name": "r", "review_command": "/review"}]}
         )
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "review_command" in err
-    assert "'pr-review'" in err
+    assert "skills.review" in err
 
 
-def test_preflight_exits_on_non_string_review_command_global(
+def test_preflight_exits_on_leftover_flat_prompt_prefix_global(
     tmp_path, monkeypatch, capsys
 ):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "repos": [], "review_command": True})
+        preflight(
+            {"tool": "cmux", "repos": [], "prompt_prefix": "/session-coordination"}
+        )
     assert exc.value.code == 2
-    assert "review_command" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "prompt_prefix" in err
+    assert "skills.session" in err
 
 
-def test_preflight_passes_on_valid_review_command(tmp_path, monkeypatch, capsys):
+def test_preflight_exits_on_leftover_flat_prompt_prefix_repo(
+    tmp_path, monkeypatch, capsys
+):
     _all_required(tmp_path, monkeypatch)
-    preflight(
-        {
-            "tool": "cmux",
-            "review_command": "/review",
-            "repos": [{"name": "r", "review_command": "/pr-review"}],
-        }
-    )
-    assert capsys.readouterr().err == ""
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {
+                "tool": "cmux",
+                "repos": [{"name": "r", "prompt_prefix": "/session-coordination"}],
+            }
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "prompt_prefix" in err
+    assert "skills.session" in err
 
 
 def test_preflight_exits_on_blank_base_remote_repo(tmp_path, monkeypatch, capsys):
@@ -312,28 +394,6 @@ def test_preflight_passes_on_valid_base_remote(tmp_path, monkeypatch, capsys):
             "repos": [{"name": "r", "base_remote": "origin"}],
         }
     )
-    assert capsys.readouterr().err == ""
-
-
-def test_preflight_exits_on_non_bool_check_update(tmp_path, monkeypatch, capsys):
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "check_update": "yes"})
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "check_update" in err
-    assert "'yes'" in err
-
-
-def test_preflight_passes_on_bool_check_update(tmp_path, monkeypatch, capsys):
-    _all_required(tmp_path, monkeypatch)
-    preflight({"tool": "cmux", "check_update": False})
-    assert capsys.readouterr().err == ""
-
-
-def test_preflight_ignores_absent_check_update(tmp_path, monkeypatch, capsys):
-    _all_required(tmp_path, monkeypatch)
-    preflight({"tool": "cmux"})
     assert capsys.readouterr().err == ""
 
 
@@ -785,3 +845,22 @@ def test_config_example_would_catch_a_dead_key():
     cfg["use_linear"] = False
     with pytest.raises(SystemExit):
         validate_config(cfg)
+
+
+def test_preflight_for_setup_skips_cship_hardfail(monkeypatch):
+    """`cockpit setup` may be about to install cship/starship, so preflight with
+    `for_setup=True` must not hard-fail on their absence — but the default
+    (watch/other) path still does."""
+    import pytest
+
+    import cockpit.lib.preflight as pf
+
+    def _which(binary):
+        return f"/x/{binary}" if binary in ("gh", "git") else None
+
+    monkeypatch.setattr(pf.shutil, "which", _which)
+    cfg = {"use_cship": True, "repos": []}
+    pf.preflight(cfg, for_setup=True)  # must not raise
+    with pytest.raises(SystemExit) as exc:
+        pf.preflight(cfg)  # default: hard-fails on missing cship
+    assert exc.value.code == 2

@@ -7,7 +7,9 @@
       "default_base": "main",
       "sidebar_color": "Blue",
       "review_prs": false,
-      "review_command": "/cockpit:review",
+      "skills": {
+        "review": "/pr-review"
+      },
       "review_external": false,
       "dependabot": false,
       "tickets": {
@@ -70,10 +72,14 @@
   "orphan_nudge_grace_hours": 4,
   "linear_state_ttl_seconds": 900,
   "linear_identity_ttl_seconds": 3600,
-  "prompt_prefix": "",
+  "skills": {
+    "session": "/session-coordination",
+    "review": "/review",
+    "plan": "/plan-pr",
+    "actions": "/actions-pr"
+  },
   "use_cship": false,
   "use_slack": false,
-  "check_update": true,
   "tool": "auto",
   "theme": "dark",
   "tui_theme": "textual-dark",

@@ -20,7 +20,6 @@ labels: bug
 
 ## Environment
 
-- cockpit version: <!-- `cockpit update --check`, or the `version` field in
-  `.claude-plugin/plugin.json` -->
+- cockpit version: <!-- `cockpit --version` -->
 - OS:
 - Workspace backend: <!-- cmux / limux / none -->

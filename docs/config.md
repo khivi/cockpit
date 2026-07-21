@@ -8,6 +8,13 @@ by `cockpit new` / `registry.register_cwd`.
 The config is read **once per process** (`config.py::load_config`) — edits are picked up
 on the next daemon start, not mid-run.
 
+**How settings are set.** Every field below is set by editing `config.json` directly —
+`cockpit setup` is not a config wizard. The **one** setting it prompts for is `use_cship`
+(the footer statusline), and only because it also installs the required cship/starship
+binaries; everything else is a plain JSON edit with a sane default. A mistyped value is
+caught at daemon start by `preflight` (hard-fail with the valid set listed), so you don't
+need a wizard to avoid silent misconfiguration.
+
 This file is the human reference; the authoritative default/resolution for each field is
 its reader function in `cockpit/lib/config.py`. Keep all three in sync when a field
 changes: `config.py` (reader), `config.example.json` (sample), this file.
@@ -25,7 +32,7 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `default_base` | string | `"main"` | Base branch PRs target; drives base-distance + the `origin/{base}` startup warning. |
 | `sidebar_color` | string | unset | cmux sidebar tint + TUI row tint (one of `colors.CMUX_COLOR_ANSI`). Validated at preflight. |
 | `review_prs` | bool | `false` | Auto-spawn a review worktree for each coworker's open PR (collaborators only; see `review_external`). |
-| `review_command` | string | `/cockpit:review` | Slash command seeded as the first turn of an auto-spawned review worktree. No-op unless `review_prs`. |
+| `skills` | object | `{}` | Slash-command overrides (below). No-op for `review` unless `review_prs`. |
 | `review_external` | bool | `false` | Also auto-spawn review worktrees for non-collaborator (fork) PRs. Off by default — untrusted content reaching a Bash-capable agent is a prompt-injection risk. |
 | `dependabot` | bool | `false` | Include Dependabot PRs in `review_prs` auto-spawn. Excluded by default. |
 | `use_worktree` | bool | `true` | When `false`, the user works directly in the main checkout and cockpit never spawns PR/review/orphan worktrees for the repo (and `n` on its row creates a single named workspace on the checkout, no worktree). Absent = `true` = normal worktree-managed repo. Set to `false` by bare `cockpit new`. |
@@ -61,6 +68,18 @@ export `CONFIG_FIELDS`); preflight rejects a field belonging to another provider
 Secrets are **env-only**, never config: `LINEAR_API_KEY`, `JIRA_API_TOKEN`,
 `TRELLO_API_KEY`, `TRELLO_API_TOKEN`.
 
+## `skills` block
+
+Slash commands seeded as a spawned workspace's first turn. Fields resolve
+**per-field** repo-block → global-block → default (`config.py::_skills_field`).
+
+| Field | Default | Meaning |
+|---|---|---|
+| `session` | unset (no-op) | Slash command run as its own first turn in **every** spawn (e.g. `/session-coordination`). Global only — a per-repo `skills.session` is accepted but every spawn resolves the same global value in practice, since there's no per-repo caller. |
+| `review` | `/review` | Slash command seeded as the first turn of an auto-spawned `review_prs` worktree. No-op unless `review_prs`. Override per-repo (e.g. `/pr-review`) or globally. |
+| `plan` | unset (built-in plan-only prose) | Slash command seeded as the first turn of a plan-only spawn (a PR/branch worth studying before implementing), followed by the source/PR context and the shared no-code/wait-for-approval gate. Unset keeps cockpit's built-in `plan_only.txt` prose. Override per-repo (e.g. `/plan-pr`) or globally. |
+| `actions` | unset (built-in Actions prose) | Slash command seeded as the first turn of a GitHub-Actions-run-URL spawn, followed by the run/PR context (run URL, job id, linked PR) and the same no-code gate. Unset keeps cockpit's built-in `--log-failed` investigation prose. Override per-repo (e.g. `/actions-pr`) or globally. |
+
 ## Top-level fields
 
 | Field | Type | Default | Meaning |
@@ -72,14 +91,13 @@ Secrets are **env-only**, never config: `LINEAR_API_KEY`, `JIRA_API_TOKEN`,
 | `orphan_nudge_grace_hours` | number | `4` | Default orphan-nudge grace (per-repo key overrides). |
 | `linear_state_ttl_seconds` | number | `3 × slow` (900) | Backstop staleness for the cached Linear delivery block. |
 | `linear_identity_ttl_seconds` | number | `12 × slow` (3600) | Cache lifetime for Linear viewer id + team state maps. |
-| `prompt_prefix` | string | `""` | First line prepended to every spawned Claude prompt (e.g. a session-start skill). |
+| `skills` | object | `{}` | Slash-command overrides (above). |
 | `use_cship` | bool | `false` | Install/point the statusLine at cship; seed `cship.toml`/`starship.toml` (via `cockpit setup` only). |
 | `use_slack` | bool | `false` | Enable the Slack-MCP fetch+rename prompt for Slack-thread spawn sources. |
-| `check_update` | bool | `true` | Whether the TUI checks for a newer cockpit release. |
 | `tool` | string | `auto` | Workspace backend: `auto` \| `cmux` \| `limux` \| `none`. |
 | `theme` | string | `dark` | `dark` \| `light` — tunes cmux pills + the cship/starship footer palette. |
 | `tui_theme` | string | `textual-dark` | Textual theme for the `cockpit watch` TUI chrome only. Persisted from the TUI theme picker. |
 | `statusline_hide` | list | `[]` | Statusline fields to hide from the footer. Any of: `model`, `context`, `rate-limit`, `repo`, `branch-identity`, `worktree-status`, `permission-mode`, `cost`, `session-time`, `ticket`, `pr-state`, `pr-num`, `pr-comments`, `pr-checks`, `pr-title`, `pr-muted`. |
 
-Global `tickets`, `review_command`, and the legacy flat `linear_*` keys may also appear
+Global `tickets`, `skills`, and the legacy flat `linear_*` keys may also appear
 at top level as defaults inherited by repos that omit them.

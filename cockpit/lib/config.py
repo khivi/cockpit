@@ -20,6 +20,7 @@ Owns:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -27,10 +28,20 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 from .git import main_worktree_path
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text via a temp file + os.replace so a crash can't leave a
+    truncated config. Same pattern save_config_value already uses."""
+    tmp = path.parent / (path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
 
 COCKPIT_HOME = Path(os.environ.get("COCKPIT_HOME", Path.home() / ".config" / "cockpit"))
 CONFIG_PATH = COCKPIT_HOME / "config.json"
@@ -44,9 +55,9 @@ STARSHIP_DEFAULT_TOML = (
 # Render command substituted for __COCKPIT_STARSHIP__ in the seeded
 # starship.toml. Uses the running interpreter + module dispatch so it resolves
 # regardless of whether `cockpit` is on PATH in starship's render environment.
-# Invoked the normal way (the installed `cockpit` console script), `sys.executable`
-# is the stable uv-tool interpreter; `cockpit update` re-runs `cockpit setup` after
-# the install so a stale pin (e.g. to a since-removed worktree venv) is re-pinned.
+# Invoked the normal way (the brew-installed `cockpit` console script),
+# `sys.executable` is the stable installed interpreter; re-run `cockpit setup`
+# to re-pin if it ever points at a stale (e.g. removed worktree venv) interpreter.
 STARSHIP_CMD = f"{sys.executable} -m cockpit.cli starship"
 STARSHIP_PLACEHOLDER = "__COCKPIT_STARSHIP__"
 STARSHIP_THEME_PLACEHOLDER = "__COCKPIT_THEME__"
@@ -140,6 +151,32 @@ def save_tui_theme(name: str) -> None:
     tmp = CONFIG_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n")
     os.replace(tmp, CONFIG_PATH)
+    reset_config_cache()
+
+
+def save_config_value(key: str, value: Any) -> None:
+    """Atomically set a single top-level `config.json` key, preserving all other
+    keys, and drop the per-process cache. Used by interactive `cockpit setup` to
+    persist a feature toggle the user opts into (e.g. `use_cship`). No-op when
+    the value is unchanged. Same read-modify-write contract as `save_tui_theme`.
+    """
+    try:
+        data = _read_config()
+    except OSError:
+        data = {}
+    except json.JSONDecodeError as exc:
+        print(
+            f"cockpit: config unreadable ({exc}); backing up and resetting",
+            file=sys.stderr,
+        )
+        with contextlib.suppress(OSError):
+            CONFIG_PATH.rename(CONFIG_PATH.with_name(CONFIG_PATH.name + ".corrupt"))
+        data = {}
+    if data.get(key) == value:
+        return
+    data[key] = value
+    ensure_state_dirs()
+    _atomic_write_text(CONFIG_PATH, json.dumps(data, indent=2) + "\n")
     reset_config_cache()
 
 
@@ -269,13 +306,30 @@ def find_repo_by_nwo(nwo: str) -> dict | None:
     return None
 
 
-def prompt_prefix() -> str:
-    """Optional first line prepended to every claude prompt spawned by cockpit.
+def _skills_block(src: dict | None) -> dict:
+    """The `skills` object off a config source (global or a repo entry), or `{}`."""
+    if src is None:
+        return {}
+    block = src.get("skills")
+    return block if isinstance(block, dict) else {}
 
-    Configured via `prompt_prefix` in config.json (default: ""). Useful for
-    invoking a personal session-start skill on every new workspace's first turn.
+
+def _skills_field(cfg: dict | None, repo_entry: dict | None, field: str) -> str | None:
+    """One `skills` field, resolved repo-block → global-block → None. A
+    non-string/blank value falls through to the next level."""
+    for src in (repo_entry, cfg if cfg is not None else load_config()):
+        v = _skills_block(src).get(field)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def prompt_prefix() -> str:
+    """Slash command seeded as its own first turn in every workspace cockpit
+    spawns (e.g. `/session-coordination`), or "" when unset. Configured via
+    `skills.session` (global — it applies to every spawn).
     """
-    return str(load_config().get("prompt_prefix", "")).strip()
+    return _skills_field(load_config(), None, "session") or ""
 
 
 VALID_TICKETS = ("none", "linear", "github", "jira", "trello")
@@ -294,13 +348,18 @@ GITHUB_DEV_DONE_DEFAULT = "ready for review"
 JIRA_DEV_DONE_DEFAULT = "Dev Done"
 
 # Slash command seeded as the first turn of an auto-spawned `review_prs`
-# worktree. Defaults to cockpit's own `/cockpit:review` plugin command — it
-# ships with the plugin, so every cockpit user has it in every spawned review
-# workspace (unlike a personal global skill, which only resolves for its owner),
-# and it reviews against the *target repo's* documented conventions. Override
-# per-repo (or globally) with `review_command` (e.g. the built-in `/review`, or
-# a personal `/pr-review`).
-REVIEW_COMMAND_DEFAULT = "/cockpit:review"
+# worktree. Defaults to Claude Code's built-in `/review`, which ships with every
+# Claude Code install so it resolves in every spawned review workspace (unlike a
+# personal global skill, which only resolves for its owner). Override per-repo
+# (or globally) with `skills.review` — e.g. a personal `/pr-review`.
+#
+# Why this defaults to a command while `skills.plan`/`skills.actions` default to
+# "" (built-in prose): the rule is the same for all three — "default to the
+# built-in slash command if one exists, else ship bundled prose." Only `/review`
+# has a universal Claude Code built-in to point at; there is no `/plan` or
+# `/actions` built-in, so those fall back to `plan_only.txt`/`actions.txt` rather
+# than dangle a command that resolves to nothing on an unconfigured install.
+REVIEW_COMMAND_DEFAULT = "/review"
 
 
 def _tickets_block(src: dict | None) -> dict:
@@ -444,24 +503,41 @@ def review_command(cfg: dict | None = None, repo_entry: dict | None = None) -> s
     """The slash command seeded as the first turn of an auto-spawned review
     worktree (per-repo `review_prs`).
 
-    Default ``"/cockpit:review"`` — cockpit's own plugin command, available in
-    every spawned review workspace because the plugin is installed alongside the
-    daemon (a personal global skill would only resolve for its owner). It reviews
-    against the *target repo's* documented conventions, so it stays portable
-    across watched repos. Override per-repo (or globally) with a `review_command`
-    string — e.g. the built-in ``"/review"`` or a personal ``"/pr-review"``.
-    Resolved repo-block → global-block → default; a non-string/blank value falls
-    through to the next level.
+    Default ``"/review"`` — Claude Code's built-in review command, available in
+    every spawned review workspace (a personal global skill would only resolve
+    for its owner). Override with `skills.review` per-repo or globally — e.g. a
+    personal ``"/pr-review"``. Resolved `skills.review` repo → global → default;
+    a non-string/blank value falls through to the next level.
     """
-    if repo_entry is not None:
-        rv = repo_entry.get("review_command")
-        if isinstance(rv, str) and rv.strip():
-            return rv.strip()
     cfg = cfg if cfg is not None else load_config()
-    gv = cfg.get("review_command")
-    if isinstance(gv, str) and gv.strip():
-        return gv.strip()
-    return REVIEW_COMMAND_DEFAULT
+    return _skills_field(cfg, repo_entry, "review") or REVIEW_COMMAND_DEFAULT
+
+
+def plan_command(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The slash command seeded as the first turn of a plan-only spawn (a PR or
+    branch worth studying before implementing).
+
+    Default ``""`` — unset means cockpit seeds its own built-in plan-only prose
+    (`cockpit/prompts/plan_only.txt`). Override with `skills.plan` per-repo or
+    globally — e.g. a personal ``"/plan-pr"``. Resolved `skills.plan` repo →
+    global → default, same shape as `review_command`.
+    """
+    cfg = cfg if cfg is not None else load_config()
+    return _skills_field(cfg, repo_entry, "plan") or ""
+
+
+def actions_command(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The slash command seeded as the first turn of a GitHub-Actions-run-URL
+    spawn.
+
+    Default ``""`` — unset means cockpit seeds its own built-in Actions
+    investigation prose (`cockpit/prompts/actions.txt`). Override with
+    `skills.actions` per-repo or globally — e.g. a personal ``"/actions-pr"``.
+    Resolved `skills.actions` repo → global → default, same shape as
+    `review_command`.
+    """
+    cfg = cfg if cfg is not None else load_config()
+    return _skills_field(cfg, repo_entry, "actions") or ""
 
 
 def base_remote(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
@@ -522,7 +598,7 @@ def statusline_hidden(cfg: dict | None = None) -> set[str]:
 def use_slack() -> bool:
     """Whether Slack-thread spawn sources are enabled (default: False).
 
-    When False (default), a Slack permalink passed to `/cockpit:new` still
+    When False (default), a Slack permalink passed to `cockpit new` still
     classifies as `slack` mode in `spawn.detect_source` (so the worktree lands
     on a codename branch instead of a garbage branch named after the URL), but
     spawn skips the Slack-MCP-fetch prompt — the workspace starts on the
@@ -717,6 +793,362 @@ def _write_statusline(settings_path: Path, statusline_command: str) -> None:
     print(f"wrote claude statusLine -> {statusline_command}")
 
 
+# Claude Code hooks cockpit owns. Commands resolve off PATH (the installed
+# `cockpit` console script) — there is no plugin root to interpolate. This is
+# what the plugin's hooks.json used to provide, minus the retired SessionStart
+# self-update hook. `cockpit statusline` stashes the statusLine stdin caches on
+# Stop; `cockpit idle-pill <phase>` drives the cmux idle pill the nudge gate
+# reads.
+_COCKPIT_HOOKS: dict[str, list[dict]] = {
+    "Stop": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": "cockpit statusline || true"},
+                {"type": "command", "command": "cockpit idle-pill stop || true"},
+            ],
+        }
+    ],
+    "UserPromptSubmit": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill prompt || true"}
+            ],
+        }
+    ],
+    "PreToolUse": [
+        {
+            "matcher": "ScheduleWakeup|CronCreate|CronUpdate",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill loop-set || true"}
+            ],
+        },
+        {
+            "matcher": "CronDelete",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill loop-clear || true"}
+            ],
+        },
+    ],
+    "SessionEnd": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill loop-clear || true"}
+            ],
+        }
+    ],
+}
+
+
+# Every command `_COCKPIT_HOOKS` writes starts with one of these two tokens
+# (e.g. "cockpit statusline || true", "cockpit idle-pill stop || true") — never
+# a bare substring match, so an unrelated hook that merely mentions "cockpit
+# statusline" (e.g. in an echo) doesn't get swept up as cockpit-owned.
+_COCKPIT_HOOK_CMD_RE = re.compile(r"^cockpit (statusline|idle-pill)(\s|$)")
+
+
+def _is_cockpit_hook_group(group: dict) -> bool:
+    """True if a settings.json hook group is one cockpit owns — any of its
+    commands invoke `cockpit statusline` / `cockpit idle-pill` as the command
+    itself."""
+    for h in group.get("hooks", []):
+        cmd = str(h.get("command", "")).strip()
+        if _COCKPIT_HOOK_CMD_RE.match(cmd):
+            return True
+    return False
+
+
+def claude_integration_present(settings_path: Path | None = None) -> bool:
+    """True iff cockpit's hooks are already wired into ~/.claude/settings.json —
+    i.e. the user has run `cockpit setup`. `cockpit watch` uses this to *re-assert*
+    an existing integration (repair drift) without force-installing it onto
+    someone who never opted in."""
+    settings_path = settings_path or (Path.home() / ".claude" / "settings.json")
+    if not settings_path.exists():
+        return False
+    try:
+        data = json.loads(settings_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    hooks = data.get("hooks") or {}
+    return any(_is_cockpit_hook_group(g) for groups in hooks.values() for g in groups)
+
+
+def install_claude_hooks(settings_path: Path | None = None) -> None:
+    """Merge cockpit's Claude Code hooks into ~/.claude/settings.json.
+
+    Idempotent: cockpit-owned hook groups are dropped and rewritten each run, so
+    a re-`setup` never duplicates them; unrelated user hooks are preserved.
+    Backs up an existing settings.json before rewriting, and no-ops (no backup)
+    when the merged result is byte-identical to what's already there. Called
+    from `cockpit setup`; replaces what the plugin's hooks.json used to install.
+    """
+    settings_path = settings_path or (Path.home() / ".claude" / "settings.json")
+    original = settings_path.read_text() if settings_path.exists() else None
+    try:
+        data: dict = json.loads(original) if original else {}
+    except json.JSONDecodeError:
+        data = {}
+    hooks: dict = data.get("hooks") or {}
+    for event, groups in _COCKPIT_HOOKS.items():
+        kept = [g for g in hooks.get(event, []) if not _is_cockpit_hook_group(g)]
+        # Deep-copy the owned groups so the module-level template stays pristine.
+        hooks[event] = kept + json.loads(json.dumps(groups))
+    data["hooks"] = hooks
+    new_text = json.dumps(data, indent=2) + "\n"
+    if original == new_text:
+        print("claude hooks unchanged")
+        return
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    if original is not None:
+        settings_path.with_name(
+            f"{settings_path.name}.bak.{datetime.now():%Y%m%d%H%M%S}"
+        ).write_text(original)
+    _atomic_write_text(settings_path, new_text)
+    print(f"wrote claude hooks -> {settings_path}")
+
+
+# Package holding the bundled `/cockpit-new` + `/cockpit-close` command
+# templates (`cockpit/claude_commands/*.md`). Flat filenames, not a `cockpit/`
+# subdirectory: Claude Code's `.claude/commands/` convention names a command
+# from its filename only (`deploy.md` -> `/deploy`) — there is no documented
+# subdirectory-namespace scheme for user commands (that colon-namespacing is
+# a plugin-only feature, keyed off the plugin name, which cockpit no longer
+# is). So the files ship as `cockpit-new.md` / `cockpit-close.md`, invoked as
+# `/cockpit-new` / `/cockpit-close`.
+_CLAUDE_COMMANDS_PACKAGE = "cockpit.claude_commands"
+
+
+def _bundled_claude_commands() -> list[Any]:
+    return sorted(
+        (
+            p
+            for p in files(_CLAUDE_COMMANDS_PACKAGE).iterdir()
+            if p.name.endswith(".md")
+        ),
+        key=lambda p: p.name,
+    )
+
+
+def install_claude_commands(commands_dir: Path | None = None) -> None:
+    """Install cockpit's bundled slash commands into `~/.claude/commands/`.
+
+    Mirrors `install_claude_hooks`'s contract: idempotent (a byte-identical
+    file is left alone, reported "unchanged"), backs up an existing file
+    before overwriting it with different content, and never touches unrelated
+    user command files. Templates are read via `importlib.resources` so this
+    works from the installed wheel, not just a source checkout (same
+    mechanism as `cockpit.lib.templates`). Called from `cockpit setup`.
+    """
+    commands_dir = commands_dir or (Path.home() / ".claude" / "commands")
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    for resource in _bundled_claude_commands():
+        target = commands_dir / resource.name
+        new_text = resource.read_text(encoding="utf-8")
+        original = target.read_text() if target.exists() else None
+        if original == new_text:
+            print(f"claude command unchanged -> {target}")
+            continue
+        if original is not None:
+            _backup_settings(target, original)
+        target.write_text(new_text)
+        print(f"wrote claude command -> {target}")
+
+
+def uninstall_claude_commands(commands_dir: Path | None = None) -> bool:
+    """Inverse of `install_claude_commands`: remove cockpit's bundled command
+    files from `~/.claude/commands/`. Leaves unrelated user commands alone.
+    Returns True iff it removed at least one file."""
+    commands_dir = commands_dir or (Path.home() / ".claude" / "commands")
+    removed = False
+    for resource in _bundled_claude_commands():
+        target = commands_dir / resource.name
+        if target.exists():
+            target.unlink()
+            removed = True
+    if removed:
+        print(f"removed cockpit slash commands -> {commands_dir}")
+    return removed
+
+
+def _backup_settings(settings_path: Path, original: str) -> None:
+    settings_path.with_name(
+        f"{settings_path.name}.bak.{datetime.now():%Y%m%d%H%M%S}"
+    ).write_text(original)
+
+
+def uninstall_claude_hooks(settings_path: Path | None = None) -> bool:
+    """Inverse of `install_claude_hooks`: drop cockpit-owned hook groups.
+
+    Removes every hook group `_is_cockpit_hook_group` matches, prunes any event
+    list (and the whole `hooks` block) left empty, and preserves unrelated user
+    hooks. Backs up before rewriting. Returns True iff it changed the file.
+    `brew uninstall` leaves these hooks pointing at a now-missing `cockpit`
+    binary, so `cockpit teardown` calls this before uninstalling.
+    """
+    settings_path = settings_path or (Path.home() / ".claude" / "settings.json")
+    if not settings_path.exists():
+        return False
+    original = settings_path.read_text()
+    try:
+        data: dict = json.loads(original)
+    except json.JSONDecodeError:
+        return False
+    hooks: dict = data.get("hooks") or {}
+    removed = False
+    for event in list(hooks):
+        kept = [g for g in hooks[event] if not _is_cockpit_hook_group(g)]
+        if len(kept) != len(hooks[event]):
+            removed = True
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+    if not removed:
+        return False
+    if hooks:
+        data["hooks"] = hooks
+    else:
+        data.pop("hooks", None)
+    new_text = json.dumps(data, indent=2) + "\n"
+    _backup_settings(settings_path, original)
+    _atomic_write_text(settings_path, new_text)
+    print(f"removed cockpit claude hooks -> {settings_path}")
+    return True
+
+
+def clear_cockpit_statusline(settings_path: Path | None = None) -> bool:
+    """Inverse of `install_cship_statusline_if_configured`: drop the statusLine.
+
+    Removes Claude Code's `statusLine` only when it points at cockpit's shim
+    (`cockpit.cli statusline` / `cockpit statusline`) — a user's own statusLine
+    is left untouched. Backs up before rewriting. Returns True iff it changed
+    the file.
+    """
+    settings_path = settings_path or (Path.home() / ".claude" / "settings.json")
+    if not settings_path.exists():
+        return False
+    original = settings_path.read_text()
+    try:
+        data: dict = json.loads(original)
+    except json.JSONDecodeError:
+        return False
+    cmd = str((data.get("statusLine") or {}).get("command", ""))
+    if "cockpit.cli statusline" not in cmd and "cockpit statusline" not in cmd:
+        return False
+    data.pop("statusLine", None)
+    _backup_settings(settings_path, original)
+    settings_path.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"cleared cockpit claude statusLine -> {settings_path}")
+    return True
+
+
+# Matches the interpreter token immediately preceding ` -m cockpit.cli` in a
+# baked invocation. `[^\s"']+` stops at the surrounding quote in starship.toml
+# (`command = "<interp> -m cockpit.cli starship model"`) so only the path is
+# captured, never the quote. The two quoted alternatives come first so an
+# interpreter path containing spaces (itself wrapped in its own quotes, distinct
+# from starship.toml's outer `command = "..."` quoting) still matches whole.
+_COCKPIT_PIN_RE = re.compile(
+    r"(?P<interp>\"[^\"]+\"|'[^']+'|[^\s\"']+)(?= -m cockpit\.cli)"
+)
+
+
+def _repin_text(text: str) -> str:
+    """Rewrite every `<interp> -m cockpit.cli` interpreter to the running one."""
+    return _COCKPIT_PIN_RE.sub(lambda _m: sys.executable, text)
+
+
+def _repin_starship_config(path: Path) -> bool:
+    """Surgically re-pin the interpreter in ~/.config/starship.toml. Returns True
+    iff it rewrote the file. Skips a symlink (user-managed) and no-ops when no
+    stale pin is present, so unrelated user edits to the toml are untouched."""
+    if not path.exists() or path.is_symlink():
+        return False
+    original = path.read_text()
+    if "-m cockpit.cli" not in original:
+        return False
+    new = _repin_text(original)
+    if new == original:
+        return False
+    _atomic_write_text(path, new)
+    print(f"re-pinned starship interpreter -> {path}")
+    return True
+
+
+def _repin_statusline(settings_path: Path) -> bool:
+    """Re-pin the interpreter in Claude Code's statusLine, but only when it points
+    at cockpit's shim (`-m cockpit.cli statusline`). Returns True iff it rewrote."""
+    if not settings_path.exists():
+        return False
+    try:
+        data: dict = json.loads(settings_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    cmd = str((data.get("statusLine") or {}).get("command", ""))
+    if "-m cockpit.cli statusline" not in cmd:
+        return False
+    new_cmd = _repin_text(cmd)
+    if new_cmd == cmd:
+        return False
+    data["statusLine"]["command"] = new_cmd
+    _atomic_write_text(settings_path, json.dumps(data, indent=2) + "\n")
+    print(f"re-pinned statusLine interpreter -> {settings_path}")
+    return True
+
+
+def repin_interpreter_if_stale() -> None:
+    """Heal a stale `{python}` pin after a `brew upgrade`, called on `cockpit
+    watch` startup.
+
+    `cockpit setup` bakes `sys.executable` — a *versioned* brew Cellar libexec
+    python — into `~/.config/starship.toml` and (under `use_cship`) Claude
+    Code's statusLine. `brew upgrade` bumps the Cellar version and deletes the
+    old path, so those on-disk pins dangle until the next `setup`. The daemon
+    runs this once at startup so the footer heals itself in a single restart
+    instead of a manual re-run. Startup-only on purpose: a running daemon's
+    `sys.executable` is still the *old* removed path until it restarts, so a
+    per-tick re-pin could never see the new interpreter. Surgical — only the
+    interpreter prefix of a `... -m cockpit.cli ...` invocation is rewritten, so
+    user colour/format edits in starship.toml survive (unlike `install_starship_
+    default_config`, which re-seeds the whole file). No-op unless `use_cship`
+    and a pin actually differs from the running interpreter.
+    """
+    if not load_config().get("use_cship"):
+        return
+    try:
+        _repin_starship_config(_starship_user_config_path())
+    except Exception as exc:
+        print(f"cockpit: starship repin failed: {exc}", file=sys.stderr)
+    try:
+        _repin_statusline(Path.home() / ".claude" / "settings.json")
+    except Exception as exc:
+        print(f"cockpit: statusline repin failed: {exc}", file=sys.stderr)
+
+
+def teardown_claude_integration() -> None:
+    """Reverse the Claude-Code-facing writes `cockpit setup` made.
+
+    `brew uninstall cockpit` removes only the Cellar binary; the `~/.claude`
+    entries setup wrote live outside the brew prefix and would otherwise dangle
+    (hooks/statusLine invoking a missing `cockpit`). This drops those, plus the
+    bundled slash commands. It deliberately does **not** touch the
+    `~/.config/{cship,starship}.toml` seeds (user-editable, inert without the
+    binary) or `~/.config/cockpit` state — those are reported for manual removal.
+    """
+    changed = uninstall_claude_hooks()
+    changed = clear_cockpit_statusline() or changed
+    changed = uninstall_claude_commands() or changed
+    if not changed:
+        print("no cockpit claude integration found — nothing to remove")
+    print(
+        "left in place (remove by hand if wanted): "
+        "~/.config/cship.toml, ~/.config/starship.toml, ~/.config/cockpit"
+    )
+
+
 def _write_if_changed(dest: Path, payload: bytes, label: str, src: Path) -> bool:
     """Write `payload` to `dest` only if contents differ; print verbose status either way.
 
@@ -763,7 +1195,8 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
     if shutil.which("cship") is None:
         raise CshipNotInstalledError(
             "use_cship=true but `cship` is not on PATH. "
-            "Install cship (https://github.com/khivi/cship) or set "
+            "Install it with `curl -fsSL https://cship.dev/install.sh | bash` "
+            "(macOS + Linux), or set "
             f"use_cship=false in {CONFIG_PATH}."
         )
     settings_path = Path.home() / ".claude" / "settings.json"

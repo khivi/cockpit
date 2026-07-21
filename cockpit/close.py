@@ -17,7 +17,7 @@ Gating mirrors the TUI exactly:
     merge is recognized via `resolve_pr_state` (cache first, one live `gh`
     fallback), so a merged PR isn't false-flagged as unpushed.
 
-Like the old `/cockpit:close` skill, this **requires a running daemon**: the
+Like the TUI's `c`/`C` close keys, this **requires a running daemon**: the
 request is enqueued durably and the daemon is SIGUSR1-kicked. If no daemon is
 up, the marker stays queued (drained on the next `cockpit watch` start, within
 `STALE_SECONDS`) and the command reports that — it never runs teardown inline,

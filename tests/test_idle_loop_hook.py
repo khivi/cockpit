@@ -1,4 +1,4 @@
-"""Behavioural tests for hooks/cmux-idle-pill.sh.
+"""Behavioural tests for cockpit/hooks/cmux-idle-pill.sh.
 
 The script shells out to `cmux` via `( command cmux ... & )`. We intercept by
 shadowing `cmux` on PATH with a tiny shim that records its argv to a log file,
@@ -19,7 +19,9 @@ import pytest
 
 from tests.fixtures import make_shim_on_path
 
-HOOK = Path(__file__).resolve().parent.parent / "hooks" / "cmux-idle-pill.sh"
+HOOK = (
+    Path(__file__).resolve().parent.parent / "cockpit" / "hooks" / "cmux-idle-pill.sh"
+)
 
 
 def _plant_cmux_shim(tmp_path: Path, monkeypatch, workspaces: list[str]) -> Path:

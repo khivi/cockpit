@@ -74,9 +74,9 @@ def _validate_repo_bool(cfg: dict, key: str) -> None:
 def _validate_global_bool(cfg: dict, key: str) -> None:
     """Hard-fail on a top-level `key` that's present but isn't a bool.
 
-    `check_update` (gates the new-version log line) and `use_slack` (gates the
-    Slack-MCP-fetch spawn prompt) both default true/false and gate daemon
-    behavior, so a non-bool would be silently truthy — rejected like `review_prs`.
+    `use_slack` (gates the Slack-MCP-fetch spawn prompt) defaults false and
+    gates daemon behavior, so a non-bool would be silently truthy — rejected
+    like `review_prs`.
     """
     if key in cfg and not isinstance(cfg[key], bool):
         _die(f"{key} must be true or false, got {cfg[key]!r}.")
@@ -131,24 +131,53 @@ def _validate_field(
         check(repo[key], where)
 
 
-def _validate_review_command(cfg: dict) -> None:
-    """Hard-fail on a `review_command` (global or per-repo) that isn't a slash
-    command string.
+_SKILL_FIELDS = ("session", "review", "plan", "actions")
+# Flat keys the `skills` object replaced — a leftover hard-fails with its new
+# home, same treatment as `use_linear` → `tickets`.
+_LEGACY_SKILL_KEYS = {
+    "prompt_prefix": "skills.session",
+    "review_command": "skills.review",
+}
 
-    `review_command` overrides the `/review` first-turn seeded into a
-    `review_prs` worktree (e.g. `/pr-review`). It is delivered verbatim as the
-    workspace's opening prompt, so a non-string or a value missing the leading
-    `/` would silently seed a non-command — rejected at start like `review_prs`.
+
+def _validate_skills(cfg: dict) -> None:
+    """Validate the `skills` config (top-level + per-repo).
+
+    `skills` is `{session, review, plan, actions}` — each value a slash command
+    seeded verbatim as a workspace's first turn (`session` on every spawn,
+    `review` on a `review_prs` spawn, `plan` on a plan-only PR/branch spawn,
+    `actions` on a GitHub-Actions-run-URL spawn). A non-`/` value would seed a
+    non-command, so it's rejected at start. The legacy flat `prompt_prefix` /
+    `review_command` keys are gone; a leftover hard-fails with the new location.
     """
 
-    def _check(val: object, where: str) -> None:
-        if not isinstance(val, str) or not val.startswith("/"):
-            _die(
-                f"{where}: review_command must be a slash command string "
-                f"(e.g. '/review'), got {val!r}."
-            )
+    def _check_source(src: dict, where: str) -> None:
+        for old, new in _LEGACY_SKILL_KEYS.items():
+            if old in src:
+                _die(
+                    f"{where}: `{old}` is now `{new}` — move it into a `skills` object."
+                )
+        block = src.get("skills")
+        if block is None:
+            return
+        if not isinstance(block, dict):
+            _die(f"{where}: skills must be an object, got {block!r}.")
+        for field, val in block.items():
+            if field not in _SKILL_FIELDS:
+                _die(
+                    f"{where}: unknown skills field {field!r} "
+                    f"(allowed: {', '.join(_SKILL_FIELDS)})."
+                )
+            if not isinstance(val, str) or not val.startswith("/"):
+                _die(
+                    f"{where}: skills.{field} must be a slash command string "
+                    f"(e.g. '/review'), got {val!r}."
+                )
 
-    _validate_field(cfg, "review_command", _check)
+    _check_source(cfg, "config")
+    for repo in cfg.get("repos", []):
+        name = repo.get("name") or repo.get("path", "?")
+        _check_source(repo, f"repo {name!r}")
 
 
 def _validate_base_remote(cfg: dict) -> None:
@@ -309,16 +338,16 @@ def _warn_cockpit_not_on_path() -> None:
 
     The daemon itself runs fine via `python -m cockpit.cli`, and the seeded
     statusline/starship commands use the interpreter + module dispatch — but the
-    `/cockpit:*` slash-commands and the Stop-hook statusline invoke the bare
-    `cockpit` console script, which needs it on PATH. Warn once at start so a
-    missing install surfaces here, not as an opaque command-not-found later.
+    Claude Code hooks (`cockpit setup` writes) and `cockpit new`/`cockpit close`
+    invoke the bare `cockpit` console script, which needs it on PATH. Warn once
+    at start so a missing install surfaces here, not as an opaque
+    command-not-found later.
     """
     if shutil.which("cockpit") is None:
         print(
             f"{yellow('cockpit:')} the `cockpit` command is not on PATH. The "
-            "daemon runs, but the /cockpit:* slash-commands and the statusline "
-            "hook invoke it directly. Install with `uv tool install cockpit` "
-            "(or run via `uvx cockpit`).",
+            "daemon runs, but the Claude Code hooks invoke it directly. "
+            "Install with `brew install khivi/cockpit/cockpit`.",
             file=sys.stderr,
             flush=True,
         )
@@ -375,9 +404,8 @@ def validate_config(cfg: dict) -> None:
     _validate_repo_bool(cfg, "use_worktree")
     _validate_repo_bool(cfg, "dependabot")
     _validate_repo_bool(cfg, "review_external")
-    _validate_review_command(cfg)
+    _validate_skills(cfg)
     _validate_base_remote(cfg)
-    _validate_global_bool(cfg, "check_update")
     _validate_global_bool(cfg, "use_slack")
     _validate_statusline_hide(cfg)
     _validate_tickets(cfg)
@@ -386,19 +414,26 @@ def validate_config(cfg: dict) -> None:
     _validate_linear_done_on_merge(cfg)
 
 
-def preflight(cfg: dict) -> None:
+def preflight(cfg: dict, *, for_setup: bool = False) -> None:
     for binary in REQUIRED_BINARIES:
         if shutil.which(binary) is None:
             _die(f"`{binary}` not found on PATH (required)")
 
     _warn_cockpit_not_on_path()
 
-    if cfg.get("use_cship"):
+    # `cockpit setup` may be about to install cship/starship (interactive opt-in
+    # or --install-deps), so it must not hard-fail on their absence here.
+    if not for_setup and cfg.get("use_cship"):
+        _cship_install = {
+            "cship": "curl -fsSL https://cship.dev/install.sh | bash  (macOS + Linux)",
+            "starship": "https://starship.rs",
+        }
         for binary in CSHIP_BINARIES:
             if shutil.which(binary) is None:
                 _die(
                     f"use_cship=true but `{binary}` is not on PATH. "
-                    f"Install {binary} or set use_cship=false in your config."
+                    f"Install it — {_cship_install.get(binary, binary)} — "
+                    "or set use_cship=false in your config."
                 )
 
     validate_config(cfg)
@@ -419,7 +454,7 @@ def preflight(cfg: dict) -> None:
             print(
                 f"{yellow('cockpit:')} no workspace tool on PATH (cmux/limux) — "
                 "running cache-only mode. Footer/statusline works; "
-                "side panel and slash commands disabled. "
+                "side panel and workspace spawning disabled. "
                 "Set 'tool': 'none' in config to suppress this warning.",
                 file=sys.stderr,
                 flush=True,

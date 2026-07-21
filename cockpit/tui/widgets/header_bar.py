@@ -1,4 +1,4 @@
-"""Top bar: slow + fast tick countdowns (left) and update indicator (right).
+"""Top bar: slow + fast tick countdowns.
 
 Pure display: the app sets the reactive attributes each second; this widget
 just formats them. A remaining value of -1 means "tick running now", -2 means
@@ -8,7 +8,6 @@ just formats them. A remaining value of -1 means "tick running now", -2 means
 from __future__ import annotations
 
 from rich.console import RenderableType
-from rich.table import Table
 from textual.reactive import reactive
 from textual.widgets import Static
 
@@ -38,7 +37,6 @@ class HeaderBar(Static):
     version_text: reactive[str] = reactive("")
     slow_remaining: reactive[int] = reactive(0)
     fast_remaining: reactive[int] = reactive(-2)
-    update_text: reactive[str] = reactive("")
 
     def render(self) -> RenderableType:
         left = ""
@@ -47,13 +45,4 @@ class HeaderBar(Static):
         left += f"slow ⏱ {_fmt(self.slow_remaining)}"
         if self.fast_remaining != -2:
             left += f"   fast ⏱ {_fmt(self.fast_remaining)}"
-        right = (
-            f"[yellow]⬆ update available {self.update_text} (press u)[/]"
-            if self.update_text
-            else ""
-        )
-        grid = Table.grid(expand=True)
-        grid.add_column(justify="left", ratio=1)
-        grid.add_column(justify="right")
-        grid.add_row(left, right)
-        return grid
+        return left

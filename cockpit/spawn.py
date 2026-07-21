@@ -116,12 +116,14 @@ from cockpit.lib.cmux import (
 from cockpit.lib.codename import codename
 from cockpit.lib.config import (
     REVIEW_COMMAND_DEFAULT,
+    actions_command,
     discover_repo,
     find_repo_by_name,
     find_repo_by_nwo,
     find_repos_by_linear_key,
     github_start_label,
     load_config,
+    plan_command,
 )
 from cockpit.lib.config import (
     tickets as cfg_tickets,
@@ -185,7 +187,7 @@ def _unknown_repo_msg(name: str) -> str:
         )
     return (
         f"--repo {name!r}: no configured repo with that name, and no repos "
-        f"are configured. Run /cockpit:new from inside a "
+        f"are configured. Run `cockpit new` from inside a "
         f"git repo to auto-register."
     )
 
@@ -226,7 +228,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--context-text",
         help="caller-supplied summary of the current session, injected into the "
         "seeded first-turn prompt under a 'Caller session context' heading. The "
-        "/cockpit:new skill fills this from `--context` by summarizing the live "
+        "the new-workspace flow fills this from `--context` by summarizing the live "
         "session before invoking spawn.py.",
     )
     raw = sys.argv[1:] if argv is None else argv
@@ -534,11 +536,16 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
     )
 
 
-def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
+def _plan_only_prompt(
+    branch: str, pr_info: dict | None = None, command: str = ""
+) -> str:
     """Plan-only first-turn prompt. PR context block is included when `pr_info` is set.
 
-    Prose lives in ``cockpit/prompts/plan_only.txt``; the optional PR block is
-    interpolated into its ``{source_block}`` slot.
+    When `command` (`skills.plan`) is set, it leads as the first turn, followed
+    by the same PR/source context and the shared `plan_tail` no-code/wait-for-
+    approval gate — mirrors `_review_prompt`'s command-vs-context shape. That
+    gate is cockpit's safety contract and is never externalized, even when the
+    verb is. When unset, falls back to the built-in ``plan_only.txt`` prose.
     """
     source_block = ""
     if pr_info:
@@ -548,6 +555,9 @@ def _plan_only_prompt(branch: str, pr_info: dict | None = None) -> str:
             f"\n**Task**: {title}"
             f"\n\n**Context**: {pr_info.get('url', '')}"
         )
+    if command:
+        context = f"branch: {branch}" + source_block
+        return _scenario_prompt("command_seed", command=command, context=context)
     return render("plan_only", branch=branch, source_block=source_block)
 
 
@@ -561,9 +571,8 @@ def _review_prompt(
     review against the PR checked out on this branch; the PR context block
     follows for the human reading the transcript. Mirrors the `--skill` path,
     which also delivers a bare slash command as the first turn. ``command``
-    defaults to cockpit's `/cockpit:review` plugin command; the daemon passes
-    the per-repo `review_command` (e.g. `/review` or `/pr-review`) via
-    `--review-command`.
+    defaults to Claude Code's built-in `/review`; the daemon passes the per-repo
+    `review_command` (e.g. `/pr-review`) via `--review-command`.
 
     The closing line keeps the worktree dry-run: report findings, then stop
     before posting comments or submitting an approve / request-changes verdict —
@@ -617,14 +626,21 @@ def _actions_short_name(run_info: dict, job_id: str | None) -> str:
 
 
 def _actions_prompt(
-    branch: str, run_info: dict, job_id: str | None, pr_info: dict | None = None
+    branch: str,
+    run_info: dict,
+    job_id: str | None,
+    pr_info: dict | None = None,
+    command: str = "",
 ) -> str:
     """First-turn prompt for a GitHub Actions run URL.
 
-    Directs Claude to fetch only the failed-step logs via `gh run view
-    --log-failed` (`--job <id>` when a specific job was linked), identify
-    the root cause, and propose a plan. Logs are not embedded in the
-    prompt — they can be huge.
+    When `command` (`skills.actions`) is set, it leads as the first turn,
+    followed by the run/PR context (run URL, job id, linked PR) and the shared
+    `plan_tail` gate — the command owns the investigation steps itself. When
+    unset, falls back to the built-in prompt directing Claude to fetch only the
+    failed-step logs via `gh run view --log-failed` (`--job <id>` when a
+    specific job was linked), identify the root cause, and propose a plan.
+    Logs are not embedded in the prompt — they can be huge.
     """
     run_id = str(run_info.get("databaseId") or "")
     workflow = run_info.get("workflowName") or "workflow"
@@ -652,6 +668,20 @@ def _actions_prompt(
             f"\n**Related PR**: #{pr_info['number']} by @{author} — "
             f"{pr_info.get('title', '')} ({pr_info.get('url', '')})"
         )
+
+    if command:
+        context_lines = [f"Run: {source}", f"Run URL: {run_url}"]
+        if job_id:
+            context_lines.append(f"Job ID: {job_id}")
+        if pr_info:
+            author = _pr_author(pr_info)
+            context_lines.append(
+                f"Linked PR: #{pr_info['number']} by @{author} — "
+                f"{pr_info.get('title', '')} ({pr_info.get('url', '')})"
+            )
+        context = "\n".join(context_lines)
+        return _scenario_prompt("command_seed", command=command, context=context)
+
     return _scenario_prompt(
         "actions",
         branch=branch,
@@ -902,11 +932,15 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as e:
             return _die(str(e))
 
+        # Re-resolved (already succeeded once inside resolve_worktree above) —
+        # cheap, and gives the plan/actions prompt builders below the repo
+        # entry needed to resolve `skills.plan` / `skills.actions`.
+        repo_cfg = select_repo(args.repo)
         if not short:
             # Name the workspace by the same branch-derived label the daemon
             # re-asserts each tick, so the spawn name agrees with reconcile and
             # the path/name dedup below (no one-tick flip after creation).
-            prefix = select_repo(args.repo).get("branch_prefix", "")
+            prefix = repo_cfg.get("branch_prefix", "")
             short = branch_label(branch, prefix)
         branch_display = branch
 
@@ -932,7 +966,13 @@ def main(argv: list[str] | None = None) -> int:
                 )
 
         if actions_run_info is not None:
-            prompt = _actions_prompt(branch, actions_run_info, actions_job_id, pr_info)
+            prompt = _actions_prompt(
+                branch,
+                actions_run_info,
+                actions_job_id,
+                pr_info,
+                command=actions_command(repo_entry=repo_cfg),
+            )
         elif args.review:
             prompt = _review_prompt(branch, pr_info, command=args.review_command)
         elif prompt is None and (
@@ -946,11 +986,13 @@ def main(argv: list[str] | None = None) -> int:
         ):
             # Plan-only fires only when there's something to study first: a PR,
             # a Linear ticket, inherited `--context`, or an explicit `-- <text>`
-            # task. A blank worktree (`/cockpit:new <name> --repo <repo>` with
+            # task. A blank worktree (`cockpit new <name> --repo <repo>` with
             # none of those) is ready to work on, so it gets no seeded guidance —
             # any configured `prompt_prefix` (e.g. a session-setup skill) still
             # rides via `claude_command()`, and the user states the task live.
-            prompt = _plan_only_prompt(branch, pr_info)
+            prompt = _plan_only_prompt(
+                branch, pr_info, command=plan_command(repo_entry=repo_cfg)
+            )
 
     if args.claude_addendum:
         prompt = (
@@ -967,7 +1009,7 @@ def main(argv: list[str] | None = None) -> int:
     # Match by name first, then fall back to worktree path. The path check
     # catches the case where the daemon already spawned a workspace for this
     # worktree under a different slug (e.g. cockpit auto-spawned before the
-    # user ran /cockpit:new), preventing a duplicate workspace.
+    # user ran cockpit new), preventing a duplicate workspace.
     existing_ref = next((ref for ref, n in ws_refs.items() if n == ws_name), None)
     if existing_ref is None and wt is not None:
         try:

@@ -7,9 +7,6 @@ differently, so a glance tells you which keys need a selected row. It's derived
 from the app's `BINDINGS`, so a new binding only needs classifying in
 `ROW_ACTIONS` (default: global), never re-listing here. Keys stay clickable via
 Textual markup action links.
-
-The `u`/update key is conditional: it only renders once an update is available
-(`set_show_update(True)`), matching the header's update indicator.
 """
 
 from __future__ import annotations
@@ -45,7 +42,7 @@ class FooterBar(Horizontal):
     """
 
     # Actions that operate on the selected row's workspace → left group. Anything
-    # not listed (sync, update, quit) is global → right.
+    # not listed (sync, quit) is global → right.
     ROW_ACTIONS = frozenset(
         {
             "focus_row",
@@ -81,8 +78,6 @@ class FooterBar(Horizontal):
         "new_workspace",
         "sync",
         "show_output",
-        "show_release_notes",
-        "update",
         "quit",
     )
 
@@ -95,13 +90,11 @@ class FooterBar(Horizontal):
         "open_pr": "PR",
         "open_ticket": "Ticket",
         "show_output": "Output",
-        "show_release_notes": "ChangeLog",
         "close_row": "Close",
         "force_close_row": "Force",
         "mute_row": "Mute",
         "nudge_row": "Nudge",
         "new_workspace": "New",
-        "update": "Update",
         "quit": "Quit",
     }
 
@@ -135,7 +128,6 @@ class FooterBar(Horizontal):
             for b in bindings
             if isinstance(b, tuple) and len(b) >= 3
         ]
-        self._show_update = False
         self._show_tickets = show_tickets
         self._backend = backend
         # The highlighted row's capability tokens (e.g. {"pr", "ticket",
@@ -175,13 +167,6 @@ class FooterBar(Horizontal):
     def on_mount(self) -> None:
         self._rebuild()
 
-    def set_show_update(self, show: bool) -> None:
-        """Reveal/hide the `u` update key (called when an update is detected)."""
-        if show != self._show_update:
-            self._show_update = show
-            if self.is_mounted:
-                self._rebuild()
-
     def set_row_state(self, caps: frozenset[str] | None) -> None:
         """Set the highlighted row's capability tokens and re-render. `None` (no
         row selected) shows the full row-key legend; a set gates the row keys per
@@ -192,10 +177,10 @@ class FooterBar(Horizontal):
                 self._rebuild()
 
     def _skip(self, action: str) -> bool:
-        # Conditional keys: update only once available; the ticket key only when
-        # some repo has a ticket provider; backend-conditional keys only on their
-        # backend; per-row keys only when the highlighted row supports them;
-        # hidden actions (escape/back) never shown.
+        # Conditional keys: the ticket key only when some repo has a ticket
+        # provider; backend-conditional keys only on their backend; per-row keys
+        # only when the highlighted row supports them; hidden actions
+        # (escape/back) never shown.
         if action in self.HIDDEN_ACTIONS:
             return True
         # A repo group-header row carries no workspace, so hide every
@@ -205,8 +190,6 @@ class FooterBar(Horizontal):
             and self._row_caps is not None
             and HEADER_CAP in self._row_caps
         ):
-            return True
-        if action == "update" and not self._show_update:
             return True
         if action == "open_ticket" and not self._show_tickets:
             return True

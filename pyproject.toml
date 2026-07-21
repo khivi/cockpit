@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cockpit"
-dynamic = ["version"]
+name = "cmux-cockpit"
+version = "1.0.0"
 requires-python = ">=3.12"
 description = "cmux workspaces backed by git worktrees, aligned to GitHub PRs."
 dependencies = [
@@ -14,24 +14,10 @@ dependencies = [
 [project.scripts]
 cockpit = "cockpit.cli:main"
 
-# Version is single-sourced from the plugin manifest; the pre-push hook bumps
-# that file, and the wheel version follows it automatically.
-[tool.hatch.version]
-path = ".claude-plugin/plugin.json"
-pattern = '"version":\s*"(?P<version>[^"]+)"'
-
+# Version is static here and cut as a `v<version>` git tag at release; the brew
+# formula pins that tag. `cockpit --version` reads it via importlib.metadata.
 [tool.hatch.build.targets.wheel]
 packages = ["cockpit"]
-
-# The runtime update check (cockpit/lib/version.py) reads the plugin manifests
-# at `parents[2]/.claude-plugin/` — which, for the installed wheel, is
-# `site-packages/.claude-plugin/`. Without this the daemon (run from the
-# uv-tool install, not the plugin cache) can't resolve its own version or the
-# install repo, so `latest_version()` is None and the "update available"
-# header is silently never shown.
-[tool.hatch.build.targets.wheel.force-include]
-".claude-plugin/plugin.json" = ".claude-plugin/plugin.json"
-".claude-plugin/marketplace.json" = ".claude-plugin/marketplace.json"
 
 [dependency-groups]
 dev = [

@@ -3,7 +3,7 @@
 The app's `n` action pushes this screen; on submit it dismisses with a
 `(source, repo_path)` tuple, which the app feeds to `spawn.py` — a bare name
 (new branch), a PR (`#N` / URL), a Linear id, or a Slack thread URL,
-auto-detected by spawn.py (the same path `/cockpit:new` walks) — with
+auto-detected by spawn.py (the same path `cockpit new` walks) — with
 `repo_path` becoming the spawn `cwd`, so
 the source resolves against the chosen repo. Empty input / escape dismisses with
 `None` (no spawn).
