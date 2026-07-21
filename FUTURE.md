@@ -1,218 +1,169 @@
-# FUTURE — cockpit UI on Tauri/Electron (parking notes)
+# cockpit — build plan (Tauri rewrite)
 
-Scratch pad for a future direction: replacing cmux + cockpit's Textual TUI with
-a single desktop app, keeping cockpit's reconcile engine as a headless sidecar.
-Nothing here is decided. "We'll think later."
+Handoff spec for a Claude Code session. Everything here was decided; don't relitigate the rejected options.
 
-## The decision so far
+## Thesis
 
-- **Tauri (or Electron) replaces cmux too** — one unified desktop app is BOTH the
-  terminal host (panes/splits/sessions, replacing cmux) AND the worktree/PR
-  dashboard (replacing cockpit's Textual TUI).
-- **cockpit daemon runs as a sidecar** — the reconcile brain stays, goes headless,
-  and the desktop app supervises it as a sidecar process.
-- Terminal-fidelity is the whole point (Claude Code's TUI must render perfectly),
-  so the rendering layer is the main risk to de-risk.
+A single self-contained **Tauri v2** desktop app that spawns Claude Code agents on ptys, renders live ones in tiled xterm panes and all of them as state in an instrument-panel sidebar. **Everything ephemeral:** quit the app → all agent ptys die → clean slate next launch. No tmux, no separate daemon, no launchd.
 
-## Layering (the mental model)
+Differentiators (the reason this exists, all shell-agnostic): **hook-driven status** (not pane-scraping), **PR as a first-class object** (1:1:1 = one worktree : one PR : one agent), and **intent→keystroke indirection** (surfaces send intent, backend owns the keys).
 
-cockpit today is two things fused in one process:
-
-- **Brain** (~90% of code): reconcile cycle, `gh`/`git`/`cmux`/ticket-provider
-  leaves, spawn/teardown orchestrators, cache writers, nudge logic, the
-  `cockpit new/close/nudge` CLI subcommands. **Keep all of it.**
-- **Face** (`cockpit/tui/`): Textual table, footer, modals, row-action keys.
-  **Throw away**, replace with native desktop UI.
-
-The face is already a thin renderer: the table is read-only, reads only
-daemon-written flat cells, and every mutating key routes through a CLI
-subcommand + daemon kick. So the swap is a UI replacement, not a rewrite.
+## Architecture
 
 ```text
-┌─ Desktop app (Tauri/Electron — replaces cmux) ─────────┐
-│  sidebar   │  ┌─ pane ────────────────────────────┐    │
-│  ● repo-a  │  │  xterm.js  →  Claude Code session  │    │
-│  ● pr-224  │  └───────────────────────────────────┘    │
-│  dashboard (native UI, replaces Textual TUI)            │
-│    reads cockpit cache JSON + `git worktree list`       │
-│    buttons shell out to `cockpit new/close/nudge`       │
-└────────────────────────────────────────────────────────┘
-        ▲ reads cells / drives host        │ spawns
-        │                                   ▼
-   cockpit daemon (Python, headless) — SIDECAR
-   reconcile cycle, cache writers, spawn/teardown
+Tauri app (single process — owns everything)
+  Rust backend
+    ├── portable-pty → spawns `claude` per agent (CommandBuilder, cwd = worktree)
+    ├── in-memory session registry
+    ├── per-agent output ring buffer (VecDeque<u8>, ~10k lines) — always draining
+    ├── git worktree + gh PR calls
+    ├── localhost hook receiver (Stop / UserPromptSubmit / Notification) → status
+    └── KEYMAP: intent → bytes → pty master.write()
+  React frontend
+    ├── sidebar: session state, status lights, PR/CI badges, contextual actions
+    └── allotment tiling → xterm.js (WebGL addon) tiles ← Channel<PtyEvent>
+
+  quit app → every pty dies → clean slate
 ```
 
-## Why this is a UI swap, not a rewrite
+Lifecycle: **agents = app-lifetime.** Closing a *tile* hides it but keeps the pty + ring buffer alive (reopen replays from buffer). Closing the *app* kills everything. This is the explicit choice — no persistence across app restarts, no background work when closed.
 
-- Daemon already writes everything to `~/.config/cockpit/cache/*.json` as the
-  single source of truth; inventory is derived each cycle from `git worktree
-  list` (never stored). The desktop app reads the **same** cells the Textual
-  table reads today. → **IPC is nearly free. YAGNI on a socket/HTTP API.**
-- One addition worth it: a `cockpit inventory --json` subcommand so the app gets
-  the joined view (worktrees × cells) in one call instead of re-joining in JS/Rust.
-- Every mutation is already a CLI subcommand (`cockpit close` enqueues a
-  `TeardownRequest`; `n`→`cockpit new`; `N`→nudge). The app just invokes them.
+## Key decisions (with the why, so future-me remembers)
 
-## The one hard part: un-fuse the daemon from the TUI
+- **Tauri, not Go+libghostty.** Multiple live interactive pty panes with splits = embedding a terminal emulator. Rent it (xterm.js) rather than write one. Go+libghostty would mean writing an emulator *and* a tiling WM; libghostty-vt is parser-only and the full render surface isn't shipped cross-platform.
+- **No tmux.** tmux's only irreplaceable property is *persistence across app restarts* (agent keeps running while app is closed). Decided that's not wanted → tmux drops out entirely. Bonus: portable-pty is cross-platform, so **Windows is back on the table** (tmux was the only thing forcing mac+Linux).
+- **No separate daemon / no launchd.** Daemon was only needed to outlive the app. Decided it shouldn't. So its logic (registry, worktree, PR, hooks) folds into the Rust backend. Removes: socket protocol, launchd/systemd, fork-as-child, single-instance guard, reconciliation-on-boot.
+- **`Channel<PtyEvent>` for pty output, never `emit`.** Events serialize through the global bus and drop under high throughput.
+- **Ring buffer is the one thing tmux gave for free that must be rebuilt.** ~30 lines. Bounded `VecDeque<u8>` per session, drains even with no tile open. Powers sidebar previews + tile-reopen replay.
+- **KEYMAP indirection.** Sidebar sends semantic intent (`approve`); backend resolves to bytes (`"1\r"`) and writes to the pty master directly — clears blocked *background* agents without attaching. When Claude Code reorders its permission menu, fix one KEYMAP entry, not every surface. Same discipline as hook-driven status, applied to input.
+- **Native app install, no brew.** `cargo tauri build` → `.app`, drag to Applications. Add Tauri auto-updater (GitHub Releases + minisign) so "just an app" stays current without a package manager. No signing/notarization needed at n=1 (Gatekeeper right-click-open once).
 
-Reconcile **bodies** are already Textual-free and lock-free
-(`cockpit.py::_once_with`, `cockpit.py::_fast_tick`, `cycle.py::cycle_all`).
-The **scheduling** lives in the Textual `App` (`cockpit/tui/app.py`) and must move
-to a headless runner:
+## Rejected (do not reconsider)
 
-- pidfile claim — `cockpit.py:199` (`daemon.claim_pidfile`)
-- tick scheduling — the two `@work(thread=True)` workers `_run_slow`
-  (`app.py:359`) / `_run_fast` (`app.py:398`) + `_tick_lock` (`app.py:199`) +
-  `_start_fast` (`app.py:300`)
-- signal handlers — `app.py:325-327` (`loop.add_signal_handler`; SIGUSR1 slow
-  kick, SIGTERM/SIGHUP exit)
+- **Go + libghostty** — writing a terminal emulator + tiling WM; libghostty-vt is parser-only.
+- **Bubble Tea** — a Bubble Tea program owns the alt-screen; can't host interactive pty panes inside a panel.
+- **Swift + GhosttyKit** — macOS-only = rebuilding cmux, the thing being replaced.
+- **Extending Tabby / Hyper / Wave (Electron terminals)** — terminal-first architecture fights the sidebar-first inversion; Electron ~300MB idle RAM; Tabby is Angular (throws away the React/Tauri reuse) with a quiet plugin ecosystem; Hyper is stalled.
 
-Invariant to deliberately **reverse**: "no headless mode — non-TTY `watch` exits
-2" (`cockpit.py:188`). Extract a `cockpit daemon` headless runner (plain
-asyncio/thread loop calling the same bodies); the desktop app spawns it as a
-sidecar. Bodies don't move.
+## Build order (test-first — each step self-verifying)
 
-## cmux CLI contract the daemon depends on (handoff checklist)
+**Step 0 — FakeAgent + test scaffolding.** A scripted stand-in for `claude` (emits known bytes, reads stdin) so the pty path is deterministic. Build this first; it unblocks every later test. Canned scripts: emits-then-waits, emits-a-permission-prompt, exits-nonzero.
 
-The desktop app must honor this — it's cockpit's coupling to the host, above the
-pixel layer. From `cockpit/lib/cmux.py`. `lib/tool.py` already abstracts the
-backend (cmux/limux); add a third value. limux's branches are a working example
-of "a second backend honoring the contract" — use as the compat spec.
+1. **Scaffold** — `create-tauri-app` (React/TS/Tailwind/shadcn — reuse launchd-ui muscle). Add `tauri-plugin-pty` or raw `portable-pty`. Read `crynta/terax-ai` TERAX.md first.
+2. **Backend pty spawn** — spawn one `claude` on a pty, reader thread → `Channel<PtyEvent>`, keystrokes via `invoke` → `master.write()`. **Prove one live xterm tile end to end.** ← first real milestone.
+3. **Ring buffer** — bounded `VecDeque<u8>` per session, drains with no tile open.
+4. **Multi-session + allotment** — registry of N agents, allotment tiling, open/close a tile without killing the pty (hide + keep buffer; reopen replays).
+5. **Sidebar state** — hook receiver updates status; sidebar renders lights/badges (see mockups).
+6. **KEYMAP action layer** — Approve / Reject / Interrupt → intent → bytes to that agent's pty. Wire the v2 mockup's buttons to real writes.
 
-### Tier 1 — subtle semantic contracts (break silently)
+## Tests (by layer, most coverage in Rust)
 
-1. **`claude_code=` is a 3-state signal; `Needs input` is poison.** `list-status`
-   emits `claude_code=Running|Idle|Needs input`. Nudge gate trusts `Running`
-   (block) and `Idle` (safe) but MUST NOT trust `Needs input` (ambiguous:
-   aged-idle AND pending y/n permission). Most fragile assumption.
-2. **Status-line format `KEY=VALUE icon=… color=…`** — parsed by prefix, then
-   split on the `icon=` and `color=` separators (each preceded by a space).
-   Values may contain spaces.
-3. **Persistent keyed pills with prepend ordering** — `set-status KEY VAL
-   --color` / `clear-status KEY`, addressable by key, survive across the session.
-4. **`idle=` pill writable by an external hook** — `cockpit/hooks/cmux-idle-pill.sh`
-   sets it on Claude's Stop event. Third-party `set-status` must work from outside.
+```rust
+// Layer 1 — Rust unit (cargo test): most value here
+keymap_resolves_intent_to_bytes()   // approve → b"1\r", interrupt → [0x03]
+ring_buffer_bounds_and_replays()    // never unbounded; snapshot ends with most recent
+hook_event_maps_to_status()         // Notification → NeedsInput, Stop → Idle
 
-### Tier 2 — CLI verbs + flags (break loudly)
+// Layer 2 — pty integration (tokio test) against FakeAgent, NOT real claude
+pty_roundtrip_streams_and_writes()  // spawn → collect marker → write "1\r" → assert echo
+```
 
-| Verb | Contract |
-|---|---|
-| `rpc workspace.list "{}"` | JSON `{workspaces:[{id, ref, current_directory}]}` |
-| `list-workspaces` | text `[*] workspace:<ref>  <name>  [flags…]`; name may have spaces, trailing `[flags]` stripped |
-| `list-status --workspace <ref>` | the `KEY=…` dump |
-| `set-status KEY VAL --workspace <ref> --color <c>` / `clear-status KEY --workspace <ref>` | keyed pills |
-| `new-workspace --name --cwd --command --focus false` | does NOT echo the new ref — cockpit polls `list-workspaces` for the diff |
-| `select-workspace --workspace <ref>` | focus (NOT `focus` — that verb exits nonzero) |
-| `close-workspace --workspace <ref>` | teardown |
-| `rename-workspace --workspace <ref> <name>` | name reconcile |
-| `workspace-action --action set-color --color <name> --workspace <ref>` | sidebar tint; **named** color, not hex |
-| `send --workspace <ref> <text>` + `send-key --workspace <ref> enter` | two-step submission (type, then Enter) |
+```ts
+// Layer 3 — frontend (Vitest + mockIPC): no Tauri binary
+actionsFor("needs_input") == ["approve","reject","interrupt"]
+actionsFor("idle") == []            // no dead buttons
+```
 
-### Tier 3 — env
+- **Layer 4 — E2E (WDIO Tauri service):** keep thin, ~3 smoke tests. WebKitGTK (Playwright doesn't work); macOS needs the embedded-server route. Lowest ROI — don't build until app is stable.
+- **Terminal correctness gap:** WebDriver can't see inside the xterm WebGL canvas. Assert on **bytes** (layer 2), not pixels. If you must assert screen *state*, run bytes through a headless VT parser (`vte` crate) and check the grid.
 
-- **`CMUX_WORKSPACE_ID`** = caller's own workspace `id` (the JSON `id`, not
-  `ref`). Used to exclude self from focus/match targets. App must set it per pane.
+Test-to-step map: step 2 → layer-2 roundtrip; step 3 → ring buffer; step 5 → hook→status; step 6 → KEYMAP resolve + action-set.
 
-### Simplification this direction unlocks
+## Watch items / gotchas
 
-Once the app owns BOTH the sidebar and the dashboard and both read cockpit's
-cache cells, the daemon's **decorative-pill push** dies — DELETE `apply_pills`,
-`status_pills`, `_CMUX_RENDERERS`, `_clear_pr_pill_keys`, `apply_wip_pill`,
-`apply_stale_pill`, `apply_devdone_pill`, `set_workspace_color`,
-`_tint_repo_workspaces`, and the color/pill reconcile in the fast tick. The app
-renders `ci`/`comments`/`wip`/`owner`/`devdone`/`muted` rows straight from the
-JSON cells. Only the **functional** trio stays as host state the nudge gate
-reads: `claude_code=`, `idle=`, `parked=`.
+- Resize must round-trip: xterm `FitAddon.fit()` → `master.resize(rows, cols)`, or Claude's TUI renders at the wrong width.
+- `@xterm/addon-webgl` for the agent panes (fast-scrolling output).
+- Cost scales with *visible* panes, not total agents — attach/render on open, keep buffer draining in background.
+- Ring buffer is the load-bearing new code; everything else tmux did was deleted, not replaced.
 
-## Bucket framing (why the host swap doesn't cost cockpit anything)
+## Install / distribution
 
-Sort every cmux feature into three buckets:
+```bash
+cargo tauri build   # → cockpit.app + .dmg
+# drag .app to /Applications
+```
 
-1. **From tmux** — session persistence, splits, copy mode, scrollback,
-   send-keys. Free on any path (Tauri/Electron/native).
-2. **From xterm.js** — GPU/fast render, TUI fidelity, ligatures, true color,
-   hyperlinks, search. Free on any web path.
-3. **From cmux being native macOS + libghostty** — native chrome, notification
-   center, libghostty glyph nuance, Kitty graphics. The only bucket that argues
-   against a web path.
+- Auto-updater in `tauri.conf.json`: endpoint → GitHub Releases `latest.json`, minisign pubkey.
+- `tauri-action` GitHub workflow on tag push → builds bundle + `latest.json` (mac/Linux/Windows in one job). Add from first commit even if unused.
+- **Skip** (solo): brew cask, homebrew tap, Apple notarization, Windows/Linux matrix — add only if a second person wants it.
 
-cockpit relies on **none** of bucket 3 — only on the cmux **CLI/workspace
-contract** above (bucket "app-level," orthogonal to the rendering backend). So
-swapping the host's rendering leaves cockpit untouched as long as the contract
-holds.
+## Repo strategy (two phases — prototype first, migrate only if it proves out)
 
-## Build vs reuse — layer 1 (terminal host)
+**Phase 1 — prototype in `cockpit-app`. Do NOT touch the old repo yet.**
+Start fresh in a separate repo so the rewrite is de-risked before retiring anything. Old `cockpit` stays live and untouched as a fallback/reference.
 
-Do NOT write a VTE parser or pty layer. Reusable pieces:
+```bash
+# new repo; first commit = the Tauri scaffold (step 1), not an empty README
+gh repo create khivi/cockpit-app --private --source . --remote origin
+```
 
-- **maiTerm** (`Flexmark-Intl/maiterm`) — closest match: Tauri + Svelte 5 +
-  xterm.js, workspace organization, split panes, editor tabs. Architecture to
-  copy regardless: `alacritty_terminal` (Rust) does VTE parsing + scrollback +
-  buffering; xterm.js is a thin DOM renderer painting only the visible screen.
-  Candidate **fork base**.
-- **marc2332/tauri-terminal** — minimal reference (xterm.js + `portable-pty`).
-- **Terax** (`emee-dev/terax-ai-tauri-terminal`) — Tauri 2 + portable-pty + React
-  19 + xterm.js, 7MB.
-- Search surfaced (no repo name captured) an "xterm.js + Tauri macOS terminal
-  multiplexer for switching between AI agent sessions like Claude Code and Codex
-  in one window" — almost exactly the target. **TODO: find the repo.**
+- `.gitignore`: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`. Private to start.
 
-Reusable blocks ranked: xterm.js (renderer) → `alacritty_terminal` OR
-`portable-pty` (Rust VTE/pty) → maiTerm as fork base. tmux stays optional as the
-session-persistence backend.
+**Phase 2 — only after the prototype works: adopt the `cockpit` name + retire old.**
+Deferred on purpose — don't pay the migration cost until the architecture is proven. Order matters (archive locks writes):
 
-**Layer 2 (dashboard + orchestration) has nothing off-the-shelf** — adjacent AI
-tools (Parallel Code, RunPane, Crystal, Conductor) are session launchers, not
-PR-state trackers with cockpit's ticket-provider/dev-done/autoclose logic. That
-IS cockpit. Keep it.
+```bash
+# 1. tombstone commit on old repo (before archiving)
+git commit -am "Retired: superseded by the Tauri rewrite (see cockpit-app)" && git push
+# 2. rename old → frees the name
+gh repo rename cockpit-legacy --repo khivi/cockpit
+# 3. archive old (read-only; keeps history/issues/stars)
+gh api -X PATCH repos/khivi/cockpit-legacy -f archived=true
+# 4. rename the proven prototype to take the name
+gh repo rename cockpit --repo khivi/cockpit-app
+```
 
-## Tauri vs Electron
+- Do NOT delete the old repo (destructive, buys nothing).
+- Carry the name **cockpit** eventually — the idea (1:1:1, instrument-panel sidebar) continues; the code restarts.
 
-Axes that actually differ for a terminal app:
+## References
 
-- **Rendering fidelity (biggest):** Electron bundles Chromium; Tauri uses OS
-  webview (WKWebView/Safari on macOS). xterm.js is Chromium-tuned; VS Code /
-  Hyper / Tabby are Electron for this reason. WKWebView is where xterm.js
-  perf/correctness bugs live. Strongest arg for Electron — terminal-specific.
-- **BUT the maiTerm architecture blunts it:** VTE/scrollback in Rust, xterm.js as
-  thin renderer → webview does less, engine gap shrinks. Tauri risk is real only
-  if xterm.js does the full terminal.
-- **PTY maturity:** edge Electron (`node-pty`, VS Code's) vs Tauri
-  `portable-pty` (solid, less proven at scale).
-- **Ecosystem prior art:** edge Electron (VS Code stack to borrow; existing
-  AI-agent-worktree tools are Electron).
-- **Footprint/memory:** Tauri decisively (~5–10MB vs ~150MB).
-- **Language:** Tauri core Rust (forking maiTerm = Rust work); Electron Node/JS.
-  cockpit brain is Python sidecar either way, unaffected.
-- Everything in buckets 1 & 2 is identical on both — Electron is also the "web
-  path," just heavier and more proven.
+- **crynta/terax-ai** (Terax) — Tauri2 + portable-pty + xterm.js WebGL, `Channel<PtyEvent>`, PtyState `RwLock<HashMap>`, ~7–10MB. Closest reference impl — read TERAX.md first. **Best reference for the terminal mechanics specifically.**
+- **Jan** — local-AI desktop app (runs OSS models locally / connects to OpenAI/Anthropic/Google) on Tauri. Best reference for streaming + Rust-backend patterns. Terax + Jan are the two best code references overall.
+- **marc2332/tauri-terminal** — minimal xterm ↔ portable-pty pattern.
+- **Tnze/tauri-plugin-pty** + `tauri-pty` (frontend) — drop-in if not hand-rolling the Rust side.
+- Also on Tauri v2 in-domain (context, not code refs): Spacedrive (file manager), Nous Research desktop agent (agent orchestration + sandboxing), Yaak (API client), GeoLibre.
+- Mockups (visual/interaction target): `cockpit-tauri-mockup.html` (shell layout), `cockpit-tauri-mockup-v2.html` (interactive sidebar actions + KEYMAP toast).
 
-**Deciding question:** trust WKWebView + newer Rust terminal crates vs value
-footprint. Risk-minimizing default for a terminal = **Electron** (Chromium +
-node-pty is the proven stack), UNLESS committed to the Rust-backend/thin-renderer
-architecture, where Tauri's footprint win returns and the rendering risk is
-mostly designed away.
+**Maturity note:** Tauri v2 is production-proven (stable since late 2024, 2.9.x line, real apps at hundreds-of-thousands of installs). The only real knock is a shorter track record than Electron — irrelevant at this scale. Multi-webview sidebars/split-views are an officially supported pattern; an r/tauri multi-window IDE shipped at ~5MB in a week, which is directly this scope.
 
-**Don't decide from reasoning — spike it:** put Claude Code's actual TUI in
-xterm.js inside WKWebView (Tauri) for an hour, watch for repaint lag, cursor
-artifacts, resize glitches. Clean → Tauri. Stutters → Electron. Settles it faster
-than more analysis.
+## Reuse & licensing
 
-## Open decisions
+- **Tauri framework** — dual MIT / Apache-2.0. Building on it (crates, plugins) has no obligations beyond standard permissive terms.
+- **Terax (crynta/terax-ai) — REFERENCE ONLY, do not copy its code.** Decision: read TERAX.md and its pty module to learn the portable-pty ↔ `Channel<PtyEvent>` ↔ xterm wiring, then write cockpit's pty layer fresh from the portable-pty / `tauri-plugin-pty` docs. Reading open code to learn a pattern is not a license event → zero attribution burden, repo stays clean, no derivative worry (cockpit diverges 90% anyway — Terax is an IDE, cockpit isn't). Writing the glue fresh costs ~a day over copying; worth it for the clean repo.
+- *(For the record: Terax is Apache-2.0, NOT copyleft, so copying WOULD be legally fine with a THIRD_PARTY attribution line. Choosing not to, for a clean repo. Unlike Claude Squad = AGPL, which was avoided outright.)*
+- **What to write fresh (all of it):** pty spawn/stream layer (referencing Terax's approach), plus everything above it — sidebar, orchestration, PR/1:1:1 model, KEYMAP action layer.
 
-- [ ] Tauri vs Electron — run the WKWebView + Claude Code TUI spike first.
-- [ ] Fork maiTerm vs greenfield layer 1 — eval maiTerm's pane/workspace model
-      for forkability.
-- [ ] Find the unnamed macOS AI-agent Tauri multiplexer from search.
-- [ ] Session backend: tmux vs `alacritty_terminal`'s own scrollback/persistence.
-- [ ] Sidecar lifecycle confirmed (vs standalone service) — sidecar chosen.
+## Timeline calibration (from Terax's git history)
 
-## Sources
+- Terax's **first commit was "rust pty & xterm in react prototype"** — i.e. this plan's step 2. Prototype → public release (macOS+Linux) was **~11 days**, but at ~302 commits/month = near-full-time, AI-assisted pace.
+- Terax's later months (~230 commits) went into an IDE surface cockpit is NOT building (editor, file explorer, git panel, AI chat, 75+ providers). Comparable slice = Terax v0.0.2 → v0.5.8 ≈ first ~150–200 commits.
+- **Calibration:** the "one agent, one live tile" milestone is a day-one thing (same portable-pty + xterm + Channel pattern). A usable cockpit shell is a ~2-week-of-focused-work artifact, not multi-month — the scoped-out IDE features are what made Terax a 3-month project. Calendar time scales with available hours, not commit count.
 
-- [maiTerm](https://github.com/Flexmark-Intl/maiterm)
-- [marc2332/tauri-terminal](https://github.com/marc2332/tauri-terminal)
-- [Terax](https://github.com/emee-dev/terax-ai-tauri-terminal)
-- [xterm.js](https://github.com/xtermjs/xterm.js/)
-- [Claude Code native worktrees](https://code.claude.com/docs/en/worktrees)
-- [johannesjo/parallel-code](https://github.com/johannesjo/parallel-code)
+## Open questions for the session
+
+- Target Windows in v1, or mac+Linux first? (portable-pty makes Windows viable; decide before scaffolding CI.)
+- Nudge input: inline text field on the row vs command-palette prompt.
+- Background-agent Interrupt: confirm step, or fire blind?
+
+## Roadmap (post-v1 — do NOT let this inflate v1 scope)
+
+The v1 is the shell (pty + sidebar + PR core). These make cockpit more than "another Claude Squad" but only have somewhere to live once the shell exists. Fence them off until then.
+
+The theme: cockpit's model grows from *PR-first* to the full **ticket → agent → hooks → PR → CI → merge** loop — i.e. more first-class objects in the daemon, same architecture. The 1:1:1 invariant extends toward ticket:worktree:agent:PR.
+
+- **Native Linear (etc.) read — cockpit's job.** Daemon reads Linear via API to populate the Ticket column + spawn-an-agent-from-a-ticket, writes status back. Same shape as the existing `gh` PR calls. Belongs in the daemon/backend.
+- **Pre-commit hooks as a status signal — cockpit's job.** Hook results (lint/test/format) become another per-agent gate surfaced in the sidebar before the PR forms. Extends the hook-driven-status model.
+- **Browser-to-see-code — the AGENT's job, NOT cockpit's.** Claude Code can already drive a browser (Chrome MCP / Playwright) to view rendered output or a PR web UI. Do NOT build browser integration into cockpit — host agents that use it and track the *outcome*. Pulling an agent capability up into the orchestrator bloats cockpit and couples it to one agent's toolset.
+
+Design rule this surfaces: **orchestration-layer concerns (ticket read, hook results, PR/CI state) go in the daemon; agent capabilities (browsing, editing, tool use) stay in the agent.** cockpit tracks outcomes, doesn't absorb tools.
