@@ -20,6 +20,7 @@ Owns:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -32,6 +33,15 @@ from pathlib import Path
 from typing import Any
 
 from .git import main_worktree_path
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text via a temp file + os.replace so a crash can't leave a
+    truncated config. Same pattern save_config_value already uses."""
+    tmp = path.parent / (path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
 
 COCKPIT_HOME = Path(os.environ.get("COCKPIT_HOME", Path.home() / ".config" / "cockpit"))
 CONFIG_PATH = COCKPIT_HOME / "config.json"
@@ -152,15 +162,21 @@ def save_config_value(key: str, value: Any) -> None:
     """
     try:
         data = _read_config()
-    except (OSError, ValueError):
+    except OSError:
+        data = {}
+    except json.JSONDecodeError as exc:
+        print(
+            f"cockpit: config unreadable ({exc}); backing up and resetting",
+            file=sys.stderr,
+        )
+        with contextlib.suppress(OSError):
+            CONFIG_PATH.rename(CONFIG_PATH.with_name(CONFIG_PATH.name + ".corrupt"))
         data = {}
     if data.get(key) == value:
         return
     data[key] = value
     ensure_state_dirs()
-    tmp = CONFIG_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
-    os.replace(tmp, CONFIG_PATH)
+    _atomic_write_text(CONFIG_PATH, json.dumps(data, indent=2) + "\n")
     reset_config_cache()
 
 
@@ -826,12 +842,20 @@ _COCKPIT_HOOKS: dict[str, list[dict]] = {
 }
 
 
+# Every command `_COCKPIT_HOOKS` writes starts with one of these two tokens
+# (e.g. "cockpit statusline || true", "cockpit idle-pill stop || true") — never
+# a bare substring match, so an unrelated hook that merely mentions "cockpit
+# statusline" (e.g. in an echo) doesn't get swept up as cockpit-owned.
+_COCKPIT_HOOK_CMD_RE = re.compile(r"^cockpit (statusline|idle-pill)(\s|$)")
+
+
 def _is_cockpit_hook_group(group: dict) -> bool:
     """True if a settings.json hook group is one cockpit owns — any of its
-    commands invoke `cockpit statusline` / `cockpit idle-pill`."""
+    commands invoke `cockpit statusline` / `cockpit idle-pill` as the command
+    itself."""
     for h in group.get("hooks", []):
-        cmd = str(h.get("command", ""))
-        if "cockpit statusline" in cmd or "cockpit idle-pill" in cmd:
+        cmd = str(h.get("command", "")).strip()
+        if _COCKPIT_HOOK_CMD_RE.match(cmd):
             return True
     return False
 
@@ -882,7 +906,7 @@ def install_claude_hooks(settings_path: Path | None = None) -> None:
         settings_path.with_name(
             f"{settings_path.name}.bak.{datetime.now():%Y%m%d%H%M%S}"
         ).write_text(original)
-    settings_path.write_text(new_text)
+    _atomic_write_text(settings_path, new_text)
     print(f"wrote claude hooks -> {settings_path}")
 
 
@@ -990,7 +1014,7 @@ def uninstall_claude_hooks(settings_path: Path | None = None) -> bool:
         data.pop("hooks", None)
     new_text = json.dumps(data, indent=2) + "\n"
     _backup_settings(settings_path, original)
-    settings_path.write_text(new_text)
+    _atomic_write_text(settings_path, new_text)
     print(f"removed cockpit claude hooks -> {settings_path}")
     return True
 
@@ -1024,8 +1048,12 @@ def clear_cockpit_statusline(settings_path: Path | None = None) -> bool:
 # Matches the interpreter token immediately preceding ` -m cockpit.cli` in a
 # baked invocation. `[^\s"']+` stops at the surrounding quote in starship.toml
 # (`command = "<interp> -m cockpit.cli starship model"`) so only the path is
-# captured, never the quote.
-_COCKPIT_PIN_RE = re.compile(r"(?P<interp>[^\s\"']+)(?= -m cockpit\.cli)")
+# captured, never the quote. The two quoted alternatives come first so an
+# interpreter path containing spaces (itself wrapped in its own quotes, distinct
+# from starship.toml's outer `command = "..."` quoting) still matches whole.
+_COCKPIT_PIN_RE = re.compile(
+    r"(?P<interp>\"[^\"]+\"|'[^']+'|[^\s\"']+)(?= -m cockpit\.cli)"
+)
 
 
 def _repin_text(text: str) -> str:
@@ -1045,7 +1073,7 @@ def _repin_starship_config(path: Path) -> bool:
     new = _repin_text(original)
     if new == original:
         return False
-    path.write_text(new)
+    _atomic_write_text(path, new)
     print(f"re-pinned starship interpreter -> {path}")
     return True
 
@@ -1066,7 +1094,7 @@ def _repin_statusline(settings_path: Path) -> bool:
     if new_cmd == cmd:
         return False
     data["statusLine"]["command"] = new_cmd
-    settings_path.write_text(json.dumps(data, indent=2) + "\n")
+    _atomic_write_text(settings_path, json.dumps(data, indent=2) + "\n")
     print(f"re-pinned statusLine interpreter -> {settings_path}")
     return True
 
@@ -1090,8 +1118,14 @@ def repin_interpreter_if_stale() -> None:
     """
     if not load_config().get("use_cship"):
         return
-    _repin_starship_config(_starship_user_config_path())
-    _repin_statusline(Path.home() / ".claude" / "settings.json")
+    try:
+        _repin_starship_config(_starship_user_config_path())
+    except Exception as exc:
+        print(f"cockpit: starship repin failed: {exc}", file=sys.stderr)
+    try:
+        _repin_statusline(Path.home() / ".claude" / "settings.json")
+    except Exception as exc:
+        print(f"cockpit: statusline repin failed: {exc}", file=sys.stderr)
 
 
 def teardown_claude_integration() -> None:

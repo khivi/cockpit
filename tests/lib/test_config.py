@@ -1512,6 +1512,36 @@ def test_install_claude_hooks_preserves_user_hooks(tmp_path):
     assert list(tmp_path.glob("settings.json.bak.*"))
 
 
+def test_is_cockpit_hook_group_requires_command_boundary():
+    # A real cockpit hook matches; an unrelated command that merely mentions
+    # the phrase as a substring (e.g. an echo) must NOT be swept up as ours.
+    assert config_mod._is_cockpit_hook_group(
+        {"hooks": [{"command": "cockpit idle-pill stop || true"}]}
+    )
+    assert config_mod._is_cockpit_hook_group(
+        {"hooks": [{"command": "  cockpit statusline || true"}]}
+    )
+    assert not config_mod._is_cockpit_hook_group(
+        {"hooks": [{"command": "echo cockpit statusline is neat"}]}
+    )
+    assert not config_mod._is_cockpit_hook_group(
+        {"hooks": [{"command": "cockpit-statusline-wrapper"}]}
+    )
+
+
+def test_save_config_value_backs_up_corrupt_config(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{ this is not json")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", cfg)
+    monkeypatch.setattr(config_mod, "COCKPIT_HOME", tmp_path)
+    monkeypatch.setattr(config_mod, "CACHE_DIR", tmp_path / "cache")
+    config_mod.reset_config_cache()
+    config_mod.save_config_value("use_cship", True)
+    # Corrupt original preserved under .corrupt; fresh config has the new key.
+    assert (tmp_path / "config.json.corrupt").read_text() == "{ this is not json"
+    assert json.loads(cfg.read_text()) == {"use_cship": True}
+
+
 def test_install_claude_commands_writes_expected_files(tmp_path):
     commands_dir = tmp_path / "commands"
     config_mod.install_claude_commands(commands_dir)
@@ -1643,6 +1673,17 @@ def test_repin_starship_swaps_only_the_interpreter(tmp_path):
     # The quote and the user's unrelated edit are untouched.
     assert 'command = "' in body
     assert 'style = "fg:99"  # my edit' in body
+
+
+def test_repin_text_handles_quoted_interpreter_with_spaces():
+    # An interpreter path containing spaces must be wrapped in its own quotes
+    # to survive shell-style parsing; the pin regex has to swallow the whole
+    # quoted token, not just up to the first space.
+    stale = "'/Users/my user/old py' -m cockpit.cli starship model"
+    assert (
+        config_mod._repin_text(stale)
+        == f"{sys.executable} -m cockpit.cli starship model"
+    )
 
 
 def test_repin_starship_noop_when_current(tmp_path):
