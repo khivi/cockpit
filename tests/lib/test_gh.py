@@ -19,14 +19,18 @@ import pytest
 from cockpit.lib.gh import (
     _PR_LIGHT_FIELDS,
     OpenPRHead,
+    _collect_nodes,
     _graphql,
     _identify_stale,
     _relevant_pr_query,
     fetch_merged_branches,
     fetch_pr_state_for_branch,
     list_open_pr_heads,
+    pr_worktree_branch,
     require_gh,
+    resolve_pr_branch,
 )
+from cockpit.lib.git import branch_label
 
 
 def _referenced_vars(query: str) -> set[str]:
@@ -494,3 +498,117 @@ def test_fetch_pr_state_for_branch_gh_failure_returns_none():
 def test_fetch_pr_state_for_branch_unparseable_returns_none():
     with patch("cockpit.lib.gh.subprocess.run", return_value=_completed("not json")):
         assert fetch_pr_state_for_branch("khivi/x", Path("/tmp/wt")) is None
+
+
+# ---------------------------------------------------------------------------
+# Trunk-headed PRs (head == main/master, e.g. "merge main into <feature>").
+# The head ref can't be the worktree branch — it clobbers the local trunk and
+# collapses onto the primary checkout. `pr_worktree_branch` synthesizes a
+# `pr-<N>-<base-slug>` branch instead; the daemon rejoins it to GitHub by the
+# embedded number rather than by headRefName.
+# ---------------------------------------------------------------------------
+
+
+def test_pr_worktree_branch_feature_head_unchanged():
+    # The 99% case: a dedicated feature head is used verbatim.
+    assert pr_worktree_branch(12, "khivi/fix-login", "main") == "khivi/fix-login"
+
+
+def test_pr_worktree_branch_trunk_head_synthesized():
+    assert (
+        pr_worktree_branch(280, "main", "feature/new_onboarding")
+        == "pr-280-new-onboarding"
+    )
+    assert pr_worktree_branch(9, "master", "develop") == "pr-9-develop"
+
+
+def test_pr_worktree_branch_trunk_head_no_base():
+    # Off-GitHub / missing base still yields a trunk-safe, number-bearing branch.
+    assert pr_worktree_branch(5, "main", "") == "pr-5"
+
+
+def test_synth_branch_label_reads_as_base_feature():
+    # branch_label strips the `pr-<N>-` token so the workspace name is the
+    # feature the PR merges INTO, not the trunk it came from.
+    b = pr_worktree_branch(280, "main", "feature/new_onboarding")
+    assert branch_label(b) == "new-onboarding"
+
+
+def test_relevant_pr_query_routes_synth_by_number():
+    q, variables = _relevant_pr_query(
+        "o",
+        "n",
+        "me",
+        ["pr-280-new-onboarding", "khivi/feat-x"],
+        "number updatedAt",
+    )
+    # synth branch → single-node pullRequest(number:), NOT a headRefName alias,
+    # and NOT declared as a String variable (the number is interpolated).
+    assert "pullRequest(number: 280)" in q
+    assert "b0" not in variables
+    # normal branch keeps the connection alias + its String variable.
+    assert "headRefName: $b1" in q
+    assert variables["b1"] == "khivi/feat-x"
+
+
+def test_collect_nodes_mixes_single_and_connection():
+    data = {
+        "data": {
+            "mine": {"nodes": []},
+            "repo": {
+                "b0": {"number": 280, "updatedAt": "t"},  # pullRequest(number:)
+                "b1": {"nodes": [{"number": 12, "updatedAt": "u"}]},  # connection
+                "b2": None,  # pullRequest(number:) miss — skipped, no crash
+            },
+        }
+    }
+    assert [n["number"] for n in _collect_nodes(data, 3)] == [280, 12]
+
+
+def test_list_open_pr_heads_synthesizes_trunk_head():
+    page = {
+        "data": {
+            "search": {
+                "pageInfo": {"endCursor": None, "hasNextPage": False},
+                "nodes": [
+                    {
+                        "number": 280,
+                        "headRefName": "main",
+                        "baseRefName": "feature/new_onboarding",
+                        "author": {"login": "coworker"},
+                        "authorAssociation": "COLLABORATOR",
+                    },
+                    {
+                        "number": 12,
+                        "headRefName": "khivi/feat-x",
+                        "baseRefName": "main",
+                        "author": {"login": "khivi"},
+                        "authorAssociation": "OWNER",
+                    },
+                ],
+            }
+        }
+    }
+    with patch("cockpit.lib.gh._graphql", return_value=page):
+        heads = list_open_pr_heads("o", "n")
+    by_num = {h.number: h for h in heads}
+    assert by_num[280].branch == "pr-280-new-onboarding"
+    assert by_num[12].branch == "khivi/feat-x"  # feature head untouched
+
+
+def test_resolve_pr_branch_synthesizes_trunk_head():
+    def fake_run(args, **kwargs):
+        if "nameWithOwner" in args:
+            return _completed("o/n")
+        return _completed(
+            json.dumps(
+                {
+                    "number": 280,
+                    "headRefName": "main",
+                    "baseRefName": "feature/new_onboarding",
+                }
+            )
+        )
+
+    with patch("cockpit.lib.gh.subprocess.run", side_effect=fake_run):
+        assert resolve_pr_branch("280") == "pr-280-new-onboarding"

@@ -399,3 +399,23 @@ def test_null_check_suites_yields_unknown():
     pr = _pr_from_node(node)
     assert pr is not None
     assert pr.ci == "unknown"
+
+
+def test_trunk_headed_pr_gets_synthesized_branch():
+    """A PR whose head IS the trunk (merge main → feature) must not surface with
+    branch `main` — that collapses onto the primary checkout. `_pr_from_node`
+    synthesizes `pr-<N>-<base-slug>` so it joins to its own worktree/row."""
+    node = _node()
+    node["number"] = 280
+    node["headRefName"] = "main"
+    node["baseRefName"] = "feature/new_onboarding"
+    pr = _pr_from_node(node)
+    assert pr is not None
+    assert pr.branch == "pr-280-new-onboarding"
+    assert pr.base == "feature/new_onboarding"  # real base still recorded
+
+
+def test_feature_headed_pr_branch_unchanged():
+    pr = _pr_from_node(_node())  # headRefName "khivi/b"
+    assert pr is not None
+    assert pr.branch == "khivi/b"
