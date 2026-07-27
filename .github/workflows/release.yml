@@ -40,7 +40,7 @@ jobs:
           fi
 
       - name: Bump Homebrew tap formula
-        uses: mislav/bump-homebrew-formula-action@v3
+        uses: mislav/bump-homebrew-formula-action@v4
         with:
           formula-name: cockpit
           homebrew-tap: khivi/homebrew-cockpit
