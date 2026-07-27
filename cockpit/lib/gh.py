@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -10,6 +11,35 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import run
+from .constants import MAIN_BRANCHES
+from .git import slugify
+
+# A synthesized trunk-headed-PR branch (`pr-<N>-<slug>`, see `pr_worktree_branch`).
+# The `\d+` capture is the PR number the daemon rejoins to GitHub by (the head
+# ref is `main`, so headRefName can't be the join key). A user's own branches
+# carry the `branch_prefix` (e.g. `khivi/pr-…`) and so never match this.
+_SYNTH_PR_BRANCH_RE = re.compile(r"^pr-(\d+)-")
+
+
+def pr_worktree_branch(number: int | str, head_ref: str, base_ref: str) -> str:
+    """Local worktree/branch identity for a PR.
+
+    Normally a PR's head is a dedicated feature branch, used verbatim as the
+    worktree branch AND as GitHub's join key (`headRefName`). A PR whose head
+    IS the trunk (`main`/`master` — a "merge main into <feature>" PR) can't:
+    checking out `main` clobbers the local trunk and collapses onto the primary
+    checkout, so the worktree gets no distinct branch, row, or label.
+
+    For a trunk-headed PR, synthesize `pr-<N>-<base-slug>` — a distinct,
+    trunk-safe branch that (a) carries the PR number so the daemon rejoins it to
+    GitHub by number (`_relevant_pr_query`), and (b) whose `branch_label` strips
+    the leading `pr-<N>-` token, so the workspace reads as the base feature it
+    merges into (`feature/new_onboarding` → `new-onboarding`).
+    """
+    if head_ref not in MAIN_BRANCHES:
+        return head_ref
+    slug = slugify(base_ref.rsplit("/", 1)[-1]) if base_ref else ""
+    return f"pr-{number}-{slug}" if slug else f"pr-{number}"
 
 
 def require_gh() -> None:
@@ -139,8 +169,8 @@ _OPEN_PR_HEADS_QUERY = (
     "query ($search: String!, $cursor: String) {\n"
     "  search(query: $search, type: ISSUE, first: 100, after: $cursor) {\n"
     "    pageInfo { endCursor hasNextPage }\n"
-    "    nodes { ... on PullRequest { number headRefName author { login } "
-    "authorAssociation } }\n"
+    "    nodes { ... on PullRequest { number headRefName baseRefName "
+    "author { login } authorAssociation } }\n"
     "  }\n"
     "}"
 )
@@ -208,9 +238,10 @@ def list_open_pr_heads(owner: str, name: str) -> list[OpenPRHead]:
                     continue
                 author = (node.get("author") or {}).get("login") or ""
                 association = node.get("authorAssociation") or ""
-                out.append(
-                    OpenPRHead(node["number"], node["headRefName"], author, association)
+                branch = pr_worktree_branch(
+                    node["number"], node["headRefName"], node.get("baseRefName") or ""
                 )
+                out.append(OpenPRHead(node["number"], branch, author, association))
             info = page["pageInfo"]
             if not info["hasNextPage"]:
                 break
@@ -350,11 +381,16 @@ def resolve_pr_branch(pr_num: str, repo_dir: Path | None = None) -> str:
     if not nwo:
         raise RuntimeError(f"could not resolve repo for PR #{pr_num}")
     out = _gh(
-        ["-R", nwo, "pr", "view", pr_num, "--json", "headRefName", "-q", ".headRefName"]
+        ["-R", nwo, "pr", "view", pr_num, "--json", "headRefName,baseRefName,number"]
     )
     if not out:
         raise RuntimeError(f"could not resolve PR #{pr_num} to a branch via gh")
-    return out
+    data = json.loads(out)
+    # Trunk-headed PRs get a synthesized `pr-<N>-<slug>` branch — see
+    # `pr_worktree_branch`. The head ref is used verbatim for the common case.
+    return pr_worktree_branch(
+        data["number"], data["headRefName"], data.get("baseRefName") or ""
+    )
 
 
 def pr_body(repo_dir: Path, number: int) -> str:
@@ -608,7 +644,9 @@ def _pr_from_node(n: dict) -> PR | None:
     return PR(
         number=n["number"],
         title=n["title"],
-        branch=n["headRefName"],
+        branch=pr_worktree_branch(
+            n["number"], n["headRefName"], n.get("baseRefName") or ""
+        ),
         url=n["url"],
         author=author,
         is_draft=n["isDraft"],
@@ -647,6 +685,18 @@ def _relevant_pr_query(
     aliases: list[str] = []
     for i, branch in enumerate(branches):
         key = f"b{i}"
+        synth = _SYNTH_PR_BRANCH_RE.match(branch)
+        if synth:
+            # Synthesized trunk-headed PR branch (`pr-<N>-<slug>`): its head ref
+            # is `main`/`master`, so a `headRefName:` alias would collide with
+            # the trunk or with other main-headed PRs. Rejoin by the embedded
+            # number instead — a single-node `pullRequest(number:)`, normalized
+            # in `_collect_nodes`. The number is our own `\d+` capture (safe to
+            # interpolate; no user string reaches the query text).
+            aliases.append(
+                f"{key}: pullRequest(number: {int(synth.group(1))}) {{ {fields} }}"
+            )
+            continue
         var_decls.append(f"${key}: String!")
         variables[key] = branch
         aliases.append(
@@ -693,7 +743,13 @@ def _collect_nodes(data: dict, n_branches: int) -> list[dict]:
     nodes: list[dict] = list(data["data"]["mine"]["nodes"])
     repo = data["data"].get("repo") or {}
     for i in range(n_branches):
-        nodes.extend(repo.get(f"b{i}", {}).get("nodes", []))
+        val = repo.get(f"b{i}")
+        if not val:
+            continue
+        if "nodes" in val:  # `pullRequests(headRefName:)` connection
+            nodes.extend(val["nodes"])
+        elif val.get("number") is not None:  # single `pullRequest(number:)` node
+            nodes.append(val)
     return nodes
 
 
