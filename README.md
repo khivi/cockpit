@@ -55,7 +55,7 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 | `m` | Mute / unmute the row's nudge |
 | `N` | Nudge the row now (honours the idle gate) |
 | `n` | New workspace (branch / PR / URL / ticket / Slack thread) |
-| `h` / `H` | Park the row's repo — stops polling and closes its idle cmux workspaces · reveal parked repos |
+| `h` | Park the row's repo — stops polling and closes its idle cmux workspaces. On the `▸ N hidden` row it expands the parked repos (click works too); on one of those it un-parks |
 | `s` / `o` / `q` | Sync · show logs · quit |
 
 ## Configuration
