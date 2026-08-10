@@ -457,6 +457,31 @@ def test_nudge_issue_non_open_is_empty(state):
     assert _issue_pr(ci="failed:lint", state=state).nudge_issue == ""
 
 
+@pytest.mark.parametrize("overrides", [dict(ci="failed:lint"), dict(unaddressed=2)])
+def test_nudge_issue_coworker_pr_is_never_actionable(overrides):
+    """A coworker's PR is reviewed, not authored — nudging it would tell the
+    review session to fix someone else's CI or rewrite their branch."""
+    pr = _issue_pr(author="alice", mine=False, **overrides)
+    assert pr.display_issue in {"ci", "comments"}  # the issue is still surfaced
+    assert pr.nudge_issue == ""
+
+
+def test_pr_from_node_sets_mine_from_self_user():
+    from cockpit.lib.gh import _pr_from_node
+
+    node = _full_pr_node(author={"login": "alice"})
+
+    def _mine(*args: str) -> bool:
+        pr = _pr_from_node(node, *args)
+        assert pr is not None
+        return pr.mine
+
+    assert _mine("khivi") is False
+    assert _mine("alice") is True
+    # No self_user given → can't prove it's a coworker's, so author-mode default.
+    assert _mine() is True
+
+
 def test_nudge_issue_matches_display_issue_when_actionable():
     """When actionable, nudge_issue is exactly display_issue (so the 🔔 and the
     nudge message can't diverge)."""

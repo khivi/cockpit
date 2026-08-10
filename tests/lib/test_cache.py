@@ -774,6 +774,15 @@ def test_write_pr_cache_bakes_nudge_issue_into_json(tmp_path, monkeypatch):
     )
     assert merged["nudge"] == ""
 
+    # A coworker's PR is never actionable for me, so the 🔔 cell stays empty and
+    # can't disagree with the (suppressed) nudge.
+    coworker = cache_mod.write_pr_cache(
+        "testrepo",
+        _pr(number=3, branch="alice/feat", ci="failed:lint", mine=False),
+        other_author="alice",
+    )
+    assert coworker["nudge"] == ""
+
 
 def test_write_pr_cache_without_worktree(tmp_path, monkeypatch):
     import importlib

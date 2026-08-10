@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .config import prompt_prefix
+from .config import prompt_prefix, review_command
 from .templates import render
 
 if TYPE_CHECKING:
@@ -69,9 +69,29 @@ _ISSUE_ACTIONS: dict[str | None, tuple[str, bool]] = {
 
 
 def build_pr_prompt(pr: PR) -> str:
-    """Per-PR Claude prompt in author-mode. A local worktree on a PR's branch
-    implies the user intends to author/collaborate.
+    """Per-PR Claude prompt.
+
+    Author-mode for **my own** PR — a local worktree on my PR's branch implies I
+    intend to author/collaborate, so the issue-specific action gets the
+    `pr_authority` block (commit/push, force-push after rebase, no asking).
+
+    A **coworker's** PR gets the same review-mode seed the `review_prs`
+    auto-spawn uses (`spawn._review_prompt`'s `review.txt`, led by
+    `skills.review`): its branch is not mine to rewrite, so no authority block
+    and no "fix the CI" action. Resolved global-level (`review_command()` with no
+    repo entry) — this helper is reached from `spawn_pr_workspace`, which carries
+    a PR and a worktree, not the repo config block.
     """
+    if not pr.mine:
+        return render(
+            "review",
+            command=review_command(),
+            context=(
+                f"Reviewing PR #{pr.number} by @{pr.author} — {pr.title}"
+                f"\nbranch: {pr.branch}"
+                f"\n{pr.url}"
+            ),
+        )
     template, with_authority = _ISSUE_ACTIONS.get(
         pr.display_issue, _ISSUE_ACTIONS[None]
     )

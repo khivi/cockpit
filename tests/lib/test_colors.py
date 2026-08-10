@@ -26,7 +26,14 @@ def _reset_colors_module():
     collection order."""
     yield
     prev = os.environ.get("COCKPIT_HOME")
+    # $NO_COLOR is popped for the same reason $COCKPIT_HOME is planted: colors.py
+    # reads BOTH at import, so a reload that inherits either one bakes it into
+    # the shared module. The NO_COLOR test's own monkeypatch would normally have
+    # unset it by now, but that relies on fixture teardown order — one autouse
+    # fixture requesting monkeypatch anywhere above this module reverses it, and
+    # the reload then leaks colorless colorizers into every later test module.
     os.environ["COCKPIT_HOME"] = "/nonexistent-cockpit-home-reset"
+    no_color = os.environ.pop("NO_COLOR", None)
     try:
         importlib.reload(colors_mod)
     finally:
@@ -34,6 +41,8 @@ def _reset_colors_module():
             os.environ.pop("COCKPIT_HOME", None)
         else:
             os.environ["COCKPIT_HOME"] = prev
+        if no_color is not None:
+            os.environ["NO_COLOR"] = no_color
 
 
 def _reload_with(tmp_path, monkeypatch, cfg: dict | None):

@@ -18,6 +18,7 @@ import pytest
 import cockpit.orchestrators.cycle as cycle
 from cockpit.lib.gh import PR
 from cockpit.lib.git import Worktree
+from cockpit.lib.hidden import toggle_hidden
 from cockpit.orchestrators import teardown as teardown_mod
 
 
@@ -2880,6 +2881,33 @@ def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
     rn.assert_called_once_with("workspace:7", "feat", "stale-name", dry=False)
 
 
+@pytest.mark.parametrize("mine,nudged", [(True, True), (False, False)])
+def test_refresh_tracked_pills_nudges_only_my_prs(tmp_path, mine, nudged):
+    """A coworker's PR (a `review_prs` worktree, or a manual review checkout)
+    tracks and pills like any other, but is never nudged — "fix the failing CI"
+    / "rebase and force-push" is the author's job, not the reviewer's."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="feat", dirty_count=0)
+    pr = _pr("feat", state="OPEN", ci="failed:lint")
+    pr.author = "khivi" if mine else "alice"
+    pr.mine = mine
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.tracked = {"workspace:7": (pr, wt)}
+    ctx.names = {"workspace:7": "feat"}
+
+    with (
+        patch.object(cycle, "apply_pills"),
+        patch.object(cycle, "status_pills", return_value=()),
+        patch.object(cycle, "rename_workspace_if_needed", return_value=False),
+        patch.object(cycle, "_track_dev_done"),
+        patch.object(cycle, "maybe_nudge", return_value=True) as nudge_mock,
+    ):
+        cycle._refresh_tracked_pills(ctx, {"workspace:7"})
+
+    assert nudge_mock.called is nudged
+
+
 # ── devdone pill: Linear-delivery resolution + decision ──────────────────────
 
 
@@ -3765,6 +3793,52 @@ def test_cycle_all_only_repo_unknown_path_reconciles_nothing():
             only_repo="/nonexistent",
         )
     assert seen == []  # no repo matched the scoped path → nothing reconciled
+
+
+# --- cycle_all parked ("hidden") repos --------------------------------------
+
+
+def _run_cycle_all_seeing(cfg, **kw) -> list[str]:
+    """Run cycle_all with every collaborator stubbed, returning the repo names
+    that actually reached `cycle_repo`."""
+    seen: list[str] = []
+    with (
+        patch.object(cycle, "ensure_state_dirs", lambda: None),
+        patch.object(cycle, "_cache_only", lambda cfg: False),
+        patch.object(cycle, "_drain_close_requests", lambda *, dry: None),
+        patch.object(cycle, "close_gone_cwd_workspaces", lambda *, dry: None),
+        patch.object(cycle, "_reap_workspace_orphans", lambda *_a, **_k: None),
+        patch.object(
+            cycle,
+            "cycle_repo",
+            lambda repo_entry, *_a, **_k: seen.append(repo_entry["name"]),
+        ),
+    ):
+        cycle.cycle_all(cfg, "khivi", dry=False, pr_cache={}, pill_state={}, **kw)
+    return seen
+
+
+def test_cycle_all_skips_parked_repos(tmp_path):
+    # A repo parked in the TUI (`h`) goes dormant: no `gh` fetch, no cells, no
+    # auto-spawn, no nudges — it never reaches cycle_repo at all.
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    cfg = {"repos": [{"name": "a", "path": str(a)}, {"name": "b", "path": str(b)}]}
+    assert _run_cycle_all_seeing(cfg) == ["a", "b"]
+    toggle_hidden(a)
+    assert _run_cycle_all_seeing(cfg) == ["b"]
+
+
+def test_cycle_all_only_repo_overrides_parked(tmp_path):
+    # An explicit only_repo is a deliberate gesture at that one repo (e.g.
+    # `cockpit close` run from inside a parked repo's worktree), so it reconciles
+    # even while parked — otherwise the keypress that's waiting on it hangs.
+    a = tmp_path / "a"
+    a.mkdir()
+    cfg = {"repos": [{"name": "a", "path": str(a)}]}
+    toggle_hidden(a)
+    assert _run_cycle_all_seeing(cfg, only_repo=str(a)) == ["a"]
 
 
 # ────────────────────────────────────────────────────────────────────────────

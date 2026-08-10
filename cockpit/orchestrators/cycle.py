@@ -122,6 +122,7 @@ from cockpit.lib.github_issues import (
 from cockpit.lib.github_issues import (
     viewer_login as github_viewer_login,
 )
+from cockpit.lib.hidden import load_hidden
 from cockpit.lib.issue_color import issue_color
 from cockpit.lib.jira import (
     JIRA_API_TOKEN_ENV,
@@ -176,6 +177,9 @@ _DEEP_MERGED_CUTOFF_DAYS = 36500
 # counts toward this, so the rendered string is never longer than this many chars.
 _DEVDONE_TITLE_MAX = 15
 
+# Nudge text per actionable issue. Author-mode by construction ("rebase and
+# force-push") — `PR.nudge_issue` gates these to my own PRs, so a coworker's
+# review worktree is never told to rewrite their branch.
 _NUDGE_DESC = {
     "comments": lambda pr: (
         f"{pr.unaddressed} unresolved review thread(s) — reply or push fixes"
@@ -1725,6 +1729,11 @@ def _refresh_tracked_pills(
             # merged-with-red-CI state for inspection, but no nudge fires; it is
             # also the single source the `pr-nudge` flat cell (TUI 🔔) reads, so
             # the bell never disagrees with whether a nudge would fire.
+            #
+            # `nudge_issue` encodes the mine-only gate too, so this loop's
+            # `others_items` (coworker PRs — a `review_prs` auto-spawn or a
+            # manual review checkout) never nudge: their CI, conflicts, and
+            # review threads are the author's to fix, not mine.
             actionable = bool(pr.nudge_issue)
             if actionable:
                 maybe_nudge(
@@ -2345,6 +2354,18 @@ def cycle_all(
         ]
         if not repos:
             return  # unknown repo path — nothing scoped to reconcile
+    else:
+        # A repo the user parked in the TUI (`h`) is dormant, not just hidden: no
+        # `gh` fetch, no cells, no auto-spawn, no nudges, no ticket writes. Only
+        # the periodic/full cycle honours this — an explicit `only_repo` is a
+        # deliberate gesture at that one repo (`cockpit close` from inside a
+        # parked worktree), and the close-queue drain below runs either way.
+        hidden = load_hidden()
+        repos = [
+            e
+            for e in repos
+            if str(Path(os.path.expanduser(e["path"])).resolve()) not in hidden
+        ]
     # Worktree teardown drains on every backend — the TUI `c`/`C` close path
     # (which enqueues here) was dead on limux/none until now.
     _drain_close_requests(dry=dry)

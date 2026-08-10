@@ -151,6 +151,11 @@ Inventory = list[tuple[str, str, str | None, str, list[Worktree]]]
 # every row action no-ops there.
 HEADER_KEY_PREFIX = "\x00hdr:"
 
+# Row key for the single summary line standing in for every hidden (parked)
+# repo. Nested under `HEADER_KEY_PREFIX` so `current_path()` returns None on it
+# and the cursor-skip loop treats it like any other header for free.
+HIDDEN_ROW_KEY = f"{HEADER_KEY_PREFIX}\x00hidden"
+
 # Capability sentinel handed to the footer when the highlighted row is a group
 # header: it hides every row-targeted key (nothing to act on) while keeping the
 # global keys (`n`/New, `s`/Sync, …). See `FooterBar._skip`.
@@ -198,11 +203,22 @@ def _display_label(wt: Worktree) -> str:
     return wt.label or wt.short
 
 
-def _header_cells(repo_name: str, repo_color: str | None, ncols: int) -> list[Text]:
+def _header_cells(
+    repo_name: str, repo_color: str | None, ncols: int, *, hidden: bool = False
+) -> list[Text]:
     """A repo group-header row: `▸ <repo>` in the Workspace column (bold, tinted
     with the repo's cmux colour when set), the rest blank. `ncols` is the live
-    column count so the blank tail matches whatever `show_tickets` produced."""
+    column count so the blank tail matches whatever `show_tickets` produced.
+
+    `hidden` renders a *parked* repo revealed by `H`: the repo's colour is
+    dropped for a dim `(hidden)` suffix, so a revealed repo reads as temporarily
+    on screen rather than back in rotation."""
     label = f"▸ {repo_name}"
+    if hidden:
+        return [
+            Text.assemble((label, "dim"), (" (hidden)", "dim italic")),
+            *(Text("") for _ in range(ncols - 1)),
+        ]
     colorizer = CMUX_COLOR_ANSI.get(repo_color or "")
     if colorizer is not None:
         head = Text.from_ansi(colorizer(label))
@@ -210,6 +226,17 @@ def _header_cells(repo_name: str, repo_color: str | None, ncols: int) -> list[Te
     else:
         head = Text(label, style="bold")
     return [head, *(Text("") for _ in range(ncols - 1))]
+
+
+def _hidden_cells(names: list[str], ncols: int) -> list[Text]:
+    """The one summary line standing in for every parked repo: a short count in
+    the Workspace column (so it can't stretch that column) and the repo names in
+    the wide trailing Title column. Both dim — it's a reminder, not a row."""
+    return [
+        Text(f"▸ {len(names)} hidden", style="dim"),
+        *(Text("") for _ in range(ncols - 2)),
+        Text(" · ".join(names) + "   (H to show)", style="dim"),
+    ]
 
 
 def _workspace_cell(
@@ -674,7 +701,10 @@ class WorktreeTable(DataTable):
                 self.post_message(self.NewRequest())
 
     def update_inventory(
-        self, inventory: Inventory, workspace_paths: set[Path] | None = None
+        self,
+        inventory: Inventory,
+        workspace_paths: set[Path] | None = None,
+        hidden_repos: set[str] | None = None,
     ) -> None:
         """Rebuild rows from the worktree inventory, keeping the cursor on the
         same row index so a refresh doesn't yank the selection away. Each repo
@@ -682,8 +712,14 @@ class WorktreeTable(DataTable):
 
         `workspace_paths` is the set of resolved cwds that currently have a live
         workspace (from the app's per-refresh `workspace_cwds()` read); a row
-        whose path is in it gets the `"workspace"` cap."""
+        whose path is in it gets the `"workspace"` cap.
+
+        `hidden_repos` is the display names of every repo the user parked with
+        `h`. A parked repo *in* the inventory means `H` revealed it — its header
+        renders dim `(hidden)`; the rest collapse into one trailing summary
+        row."""
         ws = workspace_paths or set()
+        parked = hidden_repos or set()
         saved = self.cursor_row
         self.clear()
         self._row_caps = {}
@@ -692,7 +728,12 @@ class WorktreeTable(DataTable):
         ncols = len(column_labels(show_tickets=self._show_tickets))
         for repo_name, cache_key, repo_color, tickets_provider, wts in inventory:
             hkey = f"{HEADER_KEY_PREFIX}{repo_name}"
-            self.add_row(*_header_cells(repo_name, repo_color, ncols), key=hkey)
+            self.add_row(
+                *_header_cells(
+                    repo_name, repo_color, ncols, hidden=repo_name in parked
+                ),
+                key=hkey,
+            )
             self._row_caps[hkey] = frozenset({HEADER_CAP})
             self._row_repo[hkey] = repo_name
             for wt in wts:
@@ -719,6 +760,11 @@ class WorktreeTable(DataTable):
                     tickets_provider,
                     show_tickets=self._show_tickets,
                 )
+        shown = {repo_name for repo_name, *_ in inventory}
+        collapsed = sorted(parked - shown)
+        if collapsed:
+            self.add_row(*_hidden_cells(collapsed, ncols), key=HIDDEN_ROW_KEY)
+            self._row_caps[HIDDEN_ROW_KEY] = frozenset({HEADER_CAP})
         if self.row_count:
             target = min(saved, self.row_count - 1)
             self.move_cursor(row=target)
