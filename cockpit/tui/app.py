@@ -84,7 +84,7 @@ from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
-from cockpit.tui.widgets.worktree_table import Inventory, WorktreeTable
+from cockpit.tui.widgets.worktree_table import HIDDEN_CAP, Inventory, WorktreeTable
 
 _LOG_TAIL_LINES = 200
 
@@ -182,7 +182,6 @@ class CockpitApp(App[None]):
         ("N", "nudge_row", "Nudge"),
         ("n", "new_workspace", "New"),
         ("h", "hide_repo", "Hide repo"),
-        ("H", "toggle_hidden", "Show hidden"),
         ("q", "quit", "Quit"),
         ("escape", "dismiss_overlay", "Back"),
     ]
@@ -221,8 +220,8 @@ class CockpitApp(App[None]):
         # `gh`; memoized here since a repo's nwo is stable and the TUI reads the
         # cache on every render. See `_cache_repo_name`.
         self._repo_nwo_cache: dict[str, str] = {}
-        # `H` — reveal the repos parked with `h` for this session only. The parked
-        # *set* persists (`lib/hidden.py`); this peek deliberately doesn't, so a
+        # Is the `▸ N hidden` disclosure row expanded? Session-only: the parked
+        # *set* persists (`lib/hidden.py`), this peek deliberately doesn't, so a
         # restart comes back tidy.
         self._show_hidden = False
 
@@ -500,7 +499,10 @@ class CockpitApp(App[None]):
             path = Path(os.path.expanduser(repo["path"]))
             if not path.is_dir():
                 continue
-            if str(path.resolve()) in hidden and not self._show_hidden:
+            # A parked repo is dormant — never enumerated, even while the hidden
+            # section is expanded (it renders there as a bare name row, from
+            # `_hidden_names`, so revealing costs no `git worktree list`).
+            if str(path.resolve()) in hidden:
                 continue
             try:
                 wts = worktrees(path, repo.get("branch_prefix", ""))
@@ -542,7 +544,7 @@ class CockpitApp(App[None]):
     @staticmethod
     def _hidden_names() -> set[str]:
         """Display names of the repos parked with `h` — what the table needs to
-        dim a revealed header or build the collapsed summary row."""
+        build the disclosure row and its revealed repo rows."""
         hidden = load_hidden()
         return {
             repo.get("name") or Path(os.path.expanduser(repo["path"])).name
@@ -557,13 +559,11 @@ class CockpitApp(App[None]):
         hidden_names: set[str] | None = None,
     ) -> None:
         self.query_one(WorktreeTable).update_inventory(
-            inventory, workspace_paths, hidden_names
+            inventory, workspace_paths, hidden_names, expanded=self._show_hidden
         )
         # A refresh can change the highlighted row's state (PR/ticket/mute) or
         # the row set, so re-gate the footer's row keys to the current row.
         self._refresh_footer_caps()
-        with contextlib.suppress(Exception):
-            self.query_one(FooterBar).set_hidden_count(len(hidden_names or ()))
 
     def _refresh_footer_caps(self) -> None:
         """Push the highlighted row's capabilities to the footer so its row-key
@@ -684,28 +684,41 @@ class CockpitApp(App[None]):
         self._row_act(self._send_nudge)
 
     def action_hide_repo(self) -> None:
-        """`h` — park (or un-park) the cursor row's whole repo. Repo-scoped, not
-        row-scoped, so it works from a group header, a worktree row, *or* the
-        collapsed summary row — anywhere the cursor can land. A parked repo goes
-        dormant: `cycle_all` skips it entirely, so it costs no `gh` round-trip
-        and gets no auto-spawn or nudge until un-parked. The repo stays
-        registered in `config.json` — this is parking, not unregistering.
+        """`h` — the one hide/unhide key, read off the cursor row:
+
+        - on the `▸ N hidden` disclosure row → expand/collapse the parked repos
+          (`_toggle_hidden_section`), so unhiding is reachable without a second
+          keybinding to remember;
+        - on a revealed parked repo's row → un-park it;
+        - anywhere else → park the cursor row's whole repo.
+
+        Park is repo-scoped, not row-scoped, so it works from a group header or
+        any of its worktree rows. A parked repo goes dormant: `cycle_all` skips
+        it entirely, so it costs no `gh` round-trip and gets no auto-spawn or
+        nudge until un-parked. The repo stays registered in `config.json` — this
+        is parking, not unregistering.
 
         Parking also clears the repo out of the *cmux sidebar* (`_park_workspaces`)
         — hiding the TUI row while its workspaces still sit in the sidebar would
         only move the clutter. Un-parking does not respawn them: a
         worktree-managed repo gets its workspaces back from the next slow tick's
         `_spawn_missing_workspaces`, a `use_worktree: false` one from `n`/`f`."""
-        repo = self._repo_config_by_name(
-            self.query_one(WorktreeTable).current_repo_name()
-        )
+        table = self.query_one(WorktreeTable)
+        if HIDDEN_CAP in (table.current_capabilities() or frozenset()):
+            self._toggle_hidden_section()
+            return
+        repo = self._repo_config_by_name(table.current_repo_name())
         if repo is None:
             self.notify("no repo under the cursor", severity="warning")
             return
         path = Path(os.path.expanduser(repo["path"]))
         name = repo.get("name") or path.name
         parked = toggle_hidden(path)
-        self.notify(f"{name} {'hidden — H to reveal' if parked else 'un-hidden'}")
+        self.notify(
+            f"{name} hidden — h on the ▸ hidden row to reveal"
+            if parked
+            else f"{name} un-hidden"
+        )
         if parked:
             # Shells out to git + cmux, so it runs on a worker; it republishes
             # the table itself when done.
@@ -756,10 +769,18 @@ class CockpitApp(App[None]):
             print(f"park {repo_path.name}: closed {closed}, kept {busy} busy")
         self._publish_inventory()
 
-    def action_toggle_hidden(self) -> None:
-        """`H` — reveal / re-collapse the parked repos for this session."""
+    def _toggle_hidden_section(self) -> None:
+        """Expand / collapse the parked repos for this session. No key of its
+        own — reached by `h` or a click on the disclosure row. Re-renders locally
+        (`_prime_table`): revealing must never cost a `gh` round-trip."""
         self._show_hidden = not self._show_hidden
         self._prime_table()
+
+    def on_worktree_table_hidden_toggle(
+        self, event: WorktreeTable.HiddenToggle
+    ) -> None:
+        """Click on the `▸ N hidden` disclosure row → same as `h` there."""
+        self._toggle_hidden_section()
 
     def action_new_workspace(self) -> None:
         # Spawn a worktree + workspace from the typed source (the `cockpit new`

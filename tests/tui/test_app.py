@@ -1050,9 +1050,10 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
     assert launched["cwd"] == str(repo_b)  # chosen repo, not the cursor row's
 
 
-async def test_h_parks_repo_and_capital_h_reveals(monkeypatch, tmp_path):
+async def test_h_parks_repo(monkeypatch, tmp_path):
     # `h` parks the cursor row's whole repo (persisted via lib/hidden) — it drops
-    # out of the inventory entirely; `H` reveals the parked set for the session.
+    # out of the inventory entirely, even once revealed (a parked repo is dormant:
+    # revealing it must not cost a `git worktree list`).
     from cockpit.lib.hidden import is_hidden
 
     alpha, beta = tmp_path / "alpha", tmp_path / "beta"
@@ -1093,7 +1094,7 @@ async def test_h_parks_repo_and_capital_h_reveals(monkeypatch, tmp_path):
     assert [n for n, *_ in app._gather_inventory(set())] == ["beta"]
     assert app._hidden_names() == {"alpha"}
     app._show_hidden = True
-    assert [n for n, *_ in app._gather_inventory(set())] == ["alpha", "beta"]
+    assert [n for n, *_ in app._gather_inventory(set())] == ["beta"]
 
 
 async def test_parking_closes_the_repos_workspaces(monkeypatch, tmp_path):
@@ -1199,7 +1200,7 @@ async def test_h_on_group_header_parks_that_repo(monkeypatch, tmp_path):
     assert is_hidden(repo)
 
 
-async def test_parked_repos_collapse_into_one_summary_row():
+async def test_parked_repos_collapse_into_one_disclosure_row():
     from cockpit.tui.widgets.footer_bar import FooterBar
     from cockpit.tui.widgets.worktree_table import HIDDEN_ROW_KEY
 
@@ -1218,11 +1219,12 @@ async def test_parked_repos_collapse_into_one_summary_row():
         # It's a header-ish row: no path, so every row action no-ops there.
         table.move_cursor(row=2)
         assert table.current_path() is None
-        # `H` is advertised only because something is parked.
-        assert "Hidden" in app.query_one(FooterBar).global_text
+        await pilot.pause()
+        # `h` reads as Reveal there, not Hide — one key, labelled by the row.
+        assert "Reveal" in app.query_one(FooterBar).global_text
 
 
-async def test_no_summary_row_when_nothing_parked():
+async def test_no_disclosure_row_when_nothing_parked():
     from cockpit.tui.widgets.footer_bar import FooterBar
     from cockpit.tui.widgets.worktree_table import HIDDEN_ROW_KEY
 
@@ -1235,24 +1237,60 @@ async def test_no_summary_row_when_nothing_parked():
         table = app.query_one(WorktreeTable)
         assert table.row_count == 2
         assert HIDDEN_ROW_KEY not in table._row_caps
-        assert "Hidden" not in app.query_one(FooterBar).global_text
+        assert "Hide" in app.query_one(FooterBar).global_text
 
 
-async def test_revealed_parked_repo_renders_inline_not_as_summary():
-    # Under `H` a parked repo is back in the inventory — it gets its normal
-    # header (flagged "(hidden)"), and the summary row disappears.
+async def test_expanded_disclosure_row_lists_parked_repos(monkeypatch, tmp_path):
+    # `h` on the disclosure row expands it in place: the parked repos render as
+    # dim name rows under it (no worktrees — they're dormant), and `h` on one of
+    # those un-parks it. The whole loop is one key.
+    from cockpit.lib.hidden import is_hidden, toggle_hidden
+    from cockpit.tui.widgets.footer_bar import FooterBar
     from cockpit.tui.widgets.worktree_table import HIDDEN_ROW_KEY
 
+    alpha, beta = tmp_path / "alpha", tmp_path / "beta"
+    alpha.mkdir()
+    beta.mkdir()
+    awt = Worktree(path=alpha / "wt", branch="khivi/feat")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [
+                {"name": "alpha", "path": str(alpha)},
+                {"name": "beta", "path": str(beta)},
+            ]
+        },
+    )
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="", **k: [awt])
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    toggle_hidden(beta)
     app, _ = _make_app()
+    # `h` re-renders through the real `_publish_inventory` (`_prime_table`), which
+    # `_make_app` stubs out — restore the class method so expansion actually paints.
+    del app._publish_inventory
     async with app.run_test() as pilot:
         await pilot.pause()
-        wt = Worktree(path=Path("/tmp/b"), branch="khivi/feat")
-        app._render_table([("beta", "beta", None, "none", [wt])], None, {"beta"})
+        app._render_table([("alpha", "alpha", None, "none", [awt])], None, {"beta"})
         await pilot.pause()
         table = app.query_one(WorktreeTable)
-        assert table.row_count == 2  # header + row, no summary line
-        assert HIDDEN_ROW_KEY not in table._row_caps
-        assert "(hidden)" in str(table.get_row_at(0)[0])
+        assert table.row_count == 3  # alpha header + row + collapsed disclosure
+        table.move_cursor(row=2)
+        await pilot.press("h")  # expand
+        await pilot.pause(0.5)
+        assert app._show_hidden
+        # A parked repo stays out of the inventory even revealed — its row comes
+        # from the name set, so revealing costs no `git worktree list`.
+        assert [n for n, *_ in app._gather_inventory(set())] == ["alpha"]
+        assert table.row_count == 4
+        assert table._current_row_key() == HIDDEN_ROW_KEY  # cursor stays put
+        assert "(hidden)" in str(table.get_row_at(3)[0])
+        # Down onto the revealed repo: `h` there reads Unhide, and un-parks it.
+        table.move_cursor(row=3)
+        await pilot.pause()
+        assert "Unhide" in app.query_one(FooterBar).global_text
+        await pilot.press("h")
+        await pilot.pause(0.5)
+    assert not is_hidden(beta)
 
 
 async def test_gather_inventory_hides_workspaceless_no_worktree_row(
@@ -1421,6 +1459,22 @@ async def test_double_click_header_opens_new_modal(monkeypatch, tmp_path):
         await pilot.pause()
         assert isinstance(app.screen, NewWorkspaceScreen)
         assert app.screen.query_one(Select).value == str(repo_b)
+
+
+async def test_single_click_on_hidden_row_expands():
+    # A disclosure triangle that needs a double-click doesn't read as one, so the
+    # hidden row is the one row a *single* click acts on.
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wt = Worktree(path=Path("/tmp/a"), branch="khivi/feat")
+        app._render_table([("alpha", "alpha", None, "none", [wt])], None, {"beta"})
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        table.move_cursor(row=2)  # the `▸ 1 hidden` row
+        table.on_click(type("Ev", (), {"chain": 1})())  # single click
+        await pilot.pause()
+        assert app._show_hidden
 
 
 async def test_arrow_keys_move_row_cursor():

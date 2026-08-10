@@ -151,15 +151,25 @@ Inventory = list[tuple[str, str, str | None, str, list[Worktree]]]
 # every row action no-ops there.
 HEADER_KEY_PREFIX = "\x00hdr:"
 
-# Row key for the single summary line standing in for every hidden (parked)
-# repo. Nested under `HEADER_KEY_PREFIX` so `current_path()` returns None on it
-# and the cursor-skip loop treats it like any other header for free.
+# Row key for the disclosure line standing in for the hidden (parked) repos —
+# `▸ N hidden` collapsed, `▾ N hidden` expanded, with one dim repo row per parked
+# repo underneath while expanded. Nested under `HEADER_KEY_PREFIX` so
+# `current_path()` returns None on it and the cursor-skip loop treats it like any
+# other header for free.
 HIDDEN_ROW_KEY = f"{HEADER_KEY_PREFIX}\x00hidden"
 
 # Capability sentinel handed to the footer when the highlighted row is a group
 # header: it hides every row-targeted key (nothing to act on) while keeping the
 # global keys (`n`/New, `s`/Sync, …). See `FooterBar._skip`.
 HEADER_CAP = "header"
+
+# Caps carrying the hidden-section state to the footer, so one key (`h`) can
+# read as three verbs without the footer tracking any state of its own:
+# `hiddenrow` (+ `expanded`) on the disclosure row → Reveal / Collapse;
+# `parked` on a revealed repo's row → Unhide.
+HIDDEN_CAP = "hiddenrow"
+EXPANDED_CAP = "expanded"
+PARKED_CAP = "parked"
 
 # Raw `pr-state` enum → (icon shown in the PR-state column, style). The icons
 # reuse the sidebar's `_PR_STATE_ICON` vocabulary (single source of truth) so the
@@ -210,9 +220,9 @@ def _header_cells(
     with the repo's cmux colour when set), the rest blank. `ncols` is the live
     column count so the blank tail matches whatever `show_tickets` produced.
 
-    `hidden` renders a *parked* repo revealed by `H`: the repo's colour is
-    dropped for a dim `(hidden)` suffix, so a revealed repo reads as temporarily
-    on screen rather than back in rotation."""
+    `hidden` renders a *parked* repo revealed by expanding the hidden row: the
+    repo's colour is dropped for a dim `(hidden)` suffix, so a revealed repo
+    reads as temporarily on screen rather than back in rotation."""
     label = f"▸ {repo_name}"
     if hidden:
         return [
@@ -228,14 +238,19 @@ def _header_cells(
     return [head, *(Text("") for _ in range(ncols - 1))]
 
 
-def _hidden_cells(names: list[str], ncols: int) -> list[Text]:
-    """The one summary line standing in for every parked repo: a short count in
-    the Workspace column (so it can't stretch that column) and the repo names in
-    the wide trailing Title column. Both dim — it's a reminder, not a row."""
+def _hidden_cells(names: list[str], ncols: int, *, expanded: bool) -> list[Text]:
+    """The disclosure line for the parked repos: a count behind a `▸`/`▾` triangle
+    in the Workspace column (so it can't stretch that column) and, while
+    collapsed, the repo names in the wide trailing Title column. Both dim — it's
+    a reminder, not a row. Expanded, the names render as their own rows below, so
+    the tail just says how to put them back."""
     return [
-        Text(f"▸ {len(names)} hidden", style="dim"),
+        Text(f"{'▾' if expanded else '▸'} {len(names)} hidden", style="dim"),
         *(Text("") for _ in range(ncols - 2)),
-        Text(" · ".join(names) + "   (H to show)", style="dim"),
+        Text(
+            "h to collapse" if expanded else " · ".join(names) + "   (h to show)",
+            style="dim",
+        ),
     ]
 
 
@@ -599,6 +614,12 @@ class WorktreeTable(DataTable):
         modal for that repo (a header has no workspace to focus, so its primary
         action is `n`)."""
 
+    class HiddenToggle(Message):
+        """User clicked the `▸ N hidden` disclosure row → expand/collapse the
+        parked repos. A *single* click, unlike the double-click every other row
+        needs: expanding is free and reversible, and a disclosure triangle that
+        needs a double-click doesn't read as one."""
+
     def __init__(self, *, show_tickets: bool = False, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._show_tickets = show_tickets
@@ -692,6 +713,9 @@ class WorktreeTable(DataTable):
         # Double-click focuses; single click only moves the cursor. DataTable's
         # own `_on_click` (private) still runs to move the cursor first, so by
         # the second click the row cursor already points at the clicked row.
+        if self._current_row_key() == HIDDEN_ROW_KEY:
+            self.post_message(self.HiddenToggle())
+            return
         if getattr(event, "chain", 1) >= 2:
             path = self.current_path()
             if path:
@@ -705,6 +729,7 @@ class WorktreeTable(DataTable):
         inventory: Inventory,
         workspace_paths: set[Path] | None = None,
         hidden_repos: set[str] | None = None,
+        expanded: bool = False,
     ) -> None:
         """Rebuild rows from the worktree inventory, keeping the cursor on the
         same row index so a refresh doesn't yank the selection away. Each repo
@@ -715,9 +740,10 @@ class WorktreeTable(DataTable):
         whose path is in it gets the `"workspace"` cap.
 
         `hidden_repos` is the display names of every repo the user parked with
-        `h`. A parked repo *in* the inventory means `H` revealed it — its header
-        renders dim `(hidden)`; the rest collapse into one trailing summary
-        row."""
+        `h`. A parked repo is dormant, so it carries no worktrees in the
+        inventory: they render as name-only rows under the trailing `▸ N hidden`
+        disclosure row, and only while `expanded`. Pressing `h` on one of those
+        rows un-parks it — the whole hide/unhide loop lives on one key."""
         ws = workspace_paths or set()
         parked = hidden_repos or set()
         saved = self.cursor_row
@@ -762,9 +788,24 @@ class WorktreeTable(DataTable):
                 )
         shown = {repo_name for repo_name, *_ in inventory}
         collapsed = sorted(parked - shown)
+        # First row of the hidden section (or the row count when there is none) —
+        # the cursor-skip loop below stops here, so expanding the disclosure row
+        # doesn't slide the cursor down through every revealed repo.
+        hidden_start = self.row_count
         if collapsed:
-            self.add_row(*_hidden_cells(collapsed, ncols), key=HIDDEN_ROW_KEY)
-            self._row_caps[HIDDEN_ROW_KEY] = frozenset({HEADER_CAP})
+            self.add_row(
+                *_hidden_cells(collapsed, ncols, expanded=expanded), key=HIDDEN_ROW_KEY
+            )
+            caps = {HEADER_CAP, HIDDEN_CAP} | ({EXPANDED_CAP} if expanded else set())
+            self._row_caps[HIDDEN_ROW_KEY] = frozenset(caps)
+            if expanded:
+                for repo_name in collapsed:
+                    hkey = f"{HEADER_KEY_PREFIX}{repo_name}"
+                    self.add_row(
+                        *_header_cells(repo_name, None, ncols, hidden=True), key=hkey
+                    )
+                    self._row_caps[hkey] = frozenset({HEADER_CAP, PARKED_CAP})
+                    self._row_repo[hkey] = repo_name
         if self.row_count:
             target = min(saved, self.row_count - 1)
             self.move_cursor(row=target)
@@ -776,9 +817,7 @@ class WorktreeTable(DataTable):
             # the cursor is off every header or the rows run out.
             key = self._current_row_key()
             while (
-                key
-                and key.startswith(HEADER_KEY_PREFIX)
-                and target + 1 < self.row_count
+                key and key.startswith(HEADER_KEY_PREFIX) and target + 1 < hidden_start
             ):
                 target += 1
                 self.move_cursor(row=target)

@@ -17,7 +17,12 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
 
-from cockpit.tui.widgets.worktree_table import HEADER_CAP
+from cockpit.tui.widgets.worktree_table import (
+    EXPANDED_CAP,
+    HEADER_CAP,
+    HIDDEN_CAP,
+    PARKED_CAP,
+)
 
 
 class FooterBar(Horizontal):
@@ -76,11 +81,10 @@ class FooterBar(Horizontal):
     # order. Actions not listed here render after these, in BINDINGS order.
     GLOBAL_ORDER = (
         "new_workspace",
-        # `h`/`H` act on the cursor row's *repo*, not its workspace, so they stay
-        # global — a group header (where every ROW_ACTION is suppressed) is
-        # exactly where you reach for them.
+        # `h` acts on the cursor row's *repo* (or the hidden disclosure row), not
+        # its workspace, so it stays global — a group header (where every
+        # ROW_ACTION is suppressed) is exactly where you reach for it.
         "hide_repo",
-        "toggle_hidden",
         "sync",
         "show_output",
         "quit",
@@ -101,7 +105,6 @@ class FooterBar(Horizontal):
         "nudge_row": "Nudge",
         "new_workspace": "New",
         "hide_repo": "Hide",
-        "toggle_hidden": "Hidden",
         "quit": "Quit",
     }
 
@@ -141,9 +144,6 @@ class FooterBar(Horizontal):
         # "muted"}), or None when no row is selected — drives per-row gating of
         # the row keys and the Mute/Unmute label.
         self._row_caps: frozenset[str] | None = None
-        # How many repos are parked (`h`). `H` only means something when there's
-        # something to reveal, so its hint stays off at zero.
-        self._hidden_count = 0
         # Last-rendered group strings, exposed for tests / introspection.
         self.row_text = ""
         self.global_text = ""
@@ -151,8 +151,16 @@ class FooterBar(Horizontal):
     def _label(self, action: str, desc: str) -> str:
         # Mute flips to Unmute when the highlighted row's PR is already muted, so
         # the key hint reflects what pressing `m` will actually do.
-        if action == "mute_row" and self._row_caps and "muted" in self._row_caps:
+        caps = self._row_caps or frozenset()
+        if action == "mute_row" and "muted" in caps:
             return "Unmute"
+        # `h` is one key with three meanings, read off the cursor row — the hint
+        # says which one is live (see `app.action_hide_repo`).
+        if action == "hide_repo":
+            if HIDDEN_CAP in caps:
+                return "Collapse" if EXPANDED_CAP in caps else "Reveal"
+            if PARKED_CAP in caps:
+                return "Unhide"
         return self.LABELS.get(action) or (desc.split()[0] if desc else action)
 
     def _seg(self, key: str, action: str, desc: str) -> str:
@@ -186,13 +194,6 @@ class FooterBar(Horizontal):
             if self.is_mounted:
                 self._rebuild()
 
-    def set_hidden_count(self, count: int) -> None:
-        """How many repos are currently parked — gates the `H` hint."""
-        if count != self._hidden_count:
-            self._hidden_count = count
-            if self.is_mounted:
-                self._rebuild()
-
     def _skip(self, action: str) -> bool:
         # Conditional keys: the ticket key only when some repo has a ticket
         # provider; backend-conditional keys only on their backend; per-row keys
@@ -209,9 +210,6 @@ class FooterBar(Horizontal):
         ):
             return True
         if action == "open_ticket" and not self._show_tickets:
-            return True
-        # `H` reveals parked repos — meaningless (and confusing) with none parked.
-        if action == "toggle_hidden" and not self._hidden_count:
             return True
         allowed = self.BACKEND_ACTIONS.get(action)
         if allowed is not None and self._backend not in allowed:
