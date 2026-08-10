@@ -1463,7 +1463,10 @@ async def test_double_click_header_opens_new_modal(monkeypatch, tmp_path):
 
 async def test_single_click_on_hidden_row_expands():
     # A disclosure triangle that needs a double-click doesn't read as one, so the
-    # hidden row is the one row a *single* click acts on.
+    # hidden row is the one row a *single* click acts on — from wherever the
+    # cursor happens to be. Drive a REAL click through the Pilot with the cursor
+    # parked on another row: `on_click` is dispatched before DataTable moves the
+    # row cursor, so a cursor-only read would need a second click to see it.
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1471,8 +1474,26 @@ async def test_single_click_on_hidden_row_expands():
         app._render_table([("alpha", "alpha", None, "none", [wt])], None, {"beta"})
         await pilot.pause()
         table = app.query_one(WorktreeTable)
+        table.move_cursor(row=0)  # cursor elsewhere — do NOT pre-select the row
+        # y: header at 0, group header at 1, worktree at 2, `▸ 1 hidden` at 3.
+        await pilot.click(WorktreeTable, offset=(2, 3))
+        await pilot.pause()
+        assert app._show_hidden
+
+
+async def test_enter_on_hidden_row_expands():
+    # Enter is Focus on every other row; on the disclosure row (no path to
+    # focus) it opens the section instead.
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wt = Worktree(path=Path("/tmp/a"), branch="khivi/feat")
+        app._render_table([("alpha", "alpha", None, "none", [wt])], None, {"beta"})
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        table.focus()
         table.move_cursor(row=2)  # the `▸ 1 hidden` row
-        table.on_click(type("Ev", (), {"chain": 1})())  # single click
+        await pilot.press("enter")
         await pilot.pause()
         assert app._show_hidden
 

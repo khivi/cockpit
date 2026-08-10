@@ -615,10 +615,11 @@ class WorktreeTable(DataTable):
         action is `n`)."""
 
     class HiddenToggle(Message):
-        """User clicked the `▸ N hidden` disclosure row → expand/collapse the
-        parked repos. A *single* click, unlike the double-click every other row
-        needs: expanding is free and reversible, and a disclosure triangle that
-        needs a double-click doesn't read as one."""
+        """User opened the `▸ N hidden` disclosure row → expand/collapse the
+        parked repos. Raised by a *single* click (unlike the double-click every
+        other row needs: expanding is free and reversible, and a disclosure
+        triangle that needs a double-click doesn't read as one) and by Enter,
+        which every other row spends on Focus."""
 
     def __init__(self, *, show_tickets: bool = False, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -705,14 +706,32 @@ class WorktreeTable(DataTable):
         return header
 
     def action_request_focus(self) -> None:
+        # Enter on the disclosure row expands/collapses it, same as `h` and a
+        # single click. `current_path()` is None there (a header sentinel), so
+        # without this the one row whose entire purpose is "open me" would be
+        # the one row Enter ignored.
+        if self._current_row_key() == HIDDEN_ROW_KEY:
+            self.post_message(self.HiddenToggle())
+            return
         path = self.current_path()
         if path:
             self.post_message(self.FocusRequest(path))
 
     def on_click(self, event: events.Click) -> None:
-        # Double-click focuses; single click only moves the cursor. DataTable's
-        # own `_on_click` (private) still runs to move the cursor first, so by
-        # the second click the row cursor already points at the clicked row.
+        # Resolve the clicked row from the event, NOT the cursor: Textual's MRO
+        # walk takes each class's `_on_click` *or* `on_click`, and WorktreeTable
+        # defines only the latter — so this runs BEFORE `DataTable._on_click`
+        # moves the row cursor. Reading the cursor here tests the *previously*
+        # selected row, which is why a single click on the disclosure row did
+        # nothing until a second click (by then the first had moved the cursor).
+        # Move it ourselves; DataTable repeats the same assignment a moment
+        # later, idempotently.
+        style = getattr(event, "style", None)
+        row = style.meta.get("row") if style is not None else None
+        if isinstance(row, int) and row >= 0:
+            self.cursor_coordinate = Coordinate(row, self.cursor_coordinate.column)
+        # Double-click focuses; a single click only moves the cursor — except on
+        # the hidden row, the one row a single click acts on.
         if self._current_row_key() == HIDDEN_ROW_KEY:
             self.post_message(self.HiddenToggle())
             return
