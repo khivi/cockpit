@@ -9,7 +9,15 @@ from __future__ import annotations
 
 import json
 
-from cockpit.lib.hidden import HIDDEN_PATH, is_hidden, load_hidden, toggle_hidden
+import cockpit.lib.hidden as hidden_mod
+from cockpit.lib.hidden import is_hidden, load_hidden, toggle_hidden
+
+# NB: reach the path as `hidden_mod.HIDDEN_PATH`, never a module-level
+# `from ... import HIDDEN_PATH` — that binds the real `~/.config/cockpit` path
+# by value, so the conftest redirect can't reach it and the test writes to the
+# developer's own file (which is exactly what it did until CI, where the parent
+# dir doesn't exist, turned the silent write into a FileNotFoundError). The
+# function imports are fine: they read the module global at call time.
 
 
 def test_absent_file_hides_nothing():
@@ -51,8 +59,12 @@ def test_two_repos_are_independent(tmp_path):
 
 
 def test_garbage_file_fails_open(tmp_path):
+    # Only test that writes the pref file directly — assert the conftest redirect
+    # is live before doing so, or a regression writes to the real ~/.config.
+    assert hidden_mod.HIDDEN_PATH.parent == tmp_path
     # A corrupt pref must never make repos silently vanish from the table.
-    HIDDEN_PATH.write_text("{not json")
+    hidden_mod.HIDDEN_PATH.write_text("{not json")
     assert load_hidden() == set()
-    HIDDEN_PATH.write_text(json.dumps({"repos": []}))  # right JSON, wrong shape
+    # Right JSON, wrong shape.
+    hidden_mod.HIDDEN_PATH.write_text(json.dumps({"repos": []}))
     assert load_hidden() == set()
