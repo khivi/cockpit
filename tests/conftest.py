@@ -33,6 +33,26 @@ def _reset_config_cache():
     cockpit_config.reset_config_cache()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_hidden_repos(tmp_path):
+    """`hidden.HIDDEN_PATH` is resolved off the real `COCKPIT_HOME` at import, so
+    without this every test would read the developer's own parked-repo list (and
+    a `toggle_hidden` in a test would write to it).
+
+    Deliberately does NOT request `monkeypatch`: a suite-wide autouse fixture
+    that does forces monkeypatch's setup ahead of every module-level autouse
+    fixture, which flips their relative *teardown* order — that's what silently
+    broke `tests/lib/test_colors.py::_reset_colors_module` (it reloaded
+    lib.colors before monkeypatch had unset $NO_COLOR, leaving every later
+    module with colorless colorizers)."""
+    import cockpit.lib.hidden as hidden_mod
+
+    prev = hidden_mod.HIDDEN_PATH
+    hidden_mod.HIDDEN_PATH = tmp_path / "hidden-repos.json"
+    yield
+    hidden_mod.HIDDEN_PATH = prev
+
+
 def _git(cwd: Path, *args: str) -> str:
     env = {
         **os.environ,

@@ -1050,6 +1050,166 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
     assert launched["cwd"] == str(repo_b)  # chosen repo, not the cursor row's
 
 
+async def test_h_parks_repo_and_capital_h_reveals(monkeypatch, tmp_path):
+    # `h` parks the cursor row's whole repo (persisted via lib/hidden) — it drops
+    # out of the inventory entirely; `H` reveals the parked set for the session.
+    from cockpit.lib.hidden import is_hidden
+
+    alpha, beta = tmp_path / "alpha", tmp_path / "beta"
+    alpha.mkdir()
+    beta.mkdir()
+    awt = Worktree(path=alpha / "wt", branch="khivi/feat")
+    bwt = Worktree(path=beta / "wt", branch="khivi/other")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [
+                {"name": "alpha", "path": str(alpha)},
+                {"name": "beta", "path": str(beta)},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees",
+        lambda p, prefix="", repo_name="": [awt if Path(p) == alpha else bwt],
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table(
+            [
+                ("alpha", "alpha", None, "none", [awt]),
+                ("beta", "beta", None, "none", [bwt]),
+            ]
+        )
+        await pilot.pause()
+        # Cursor auto-skips the header onto alpha's worktree row; `h` is
+        # repo-scoped, so it parks alpha (not just that row).
+        await pilot.press("h")
+        await pilot.pause()
+    assert is_hidden(alpha) and not is_hidden(beta)
+    assert [n for n, *_ in app._gather_inventory(set())] == ["beta"]
+    assert app._hidden_names() == {"alpha"}
+    app._show_hidden = True
+    assert [n for n, *_ in app._gather_inventory(set())] == ["alpha", "beta"]
+
+
+async def test_h_on_group_header_parks_that_repo(monkeypatch, tmp_path):
+    # Row keys are all suppressed on a group header — `h` is global precisely so
+    # it still works there (and it resolves the header's own repo).
+    from cockpit.lib.hidden import is_hidden
+
+    repo = tmp_path / "solo"
+    repo.mkdir()
+    wt = Worktree(path=repo / "wt", branch="khivi/feat")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [{"name": "solo", "path": str(repo)}]},
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("solo", "solo", None, "none", [wt])])
+        await pilot.pause()
+        app.query_one(WorktreeTable).move_cursor(row=0)  # the group header
+        await pilot.press("h")
+        await pilot.pause()
+    assert is_hidden(repo)
+
+
+async def test_parked_repos_collapse_into_one_summary_row():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.worktree_table import HIDDEN_ROW_KEY
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wt = Worktree(path=Path("/tmp/a"), branch="khivi/feat")
+        app._render_table(
+            [("alpha", "alpha", None, "none", [wt])], None, {"beta", "gamma"}
+        )
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        # header + worktree + ONE line for both parked repos (not one each).
+        assert table.row_count == 3
+        assert HIDDEN_ROW_KEY in table._row_caps
+        # It's a header-ish row: no path, so every row action no-ops there.
+        table.move_cursor(row=2)
+        assert table.current_path() is None
+        # `H` is advertised only because something is parked.
+        assert "Hidden" in app.query_one(FooterBar).global_text
+
+
+async def test_no_summary_row_when_nothing_parked():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.worktree_table import HIDDEN_ROW_KEY
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wt = Worktree(path=Path("/tmp/a"), branch="khivi/feat")
+        app._render_table([("alpha", "alpha", None, "none", [wt])])
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        assert table.row_count == 2
+        assert HIDDEN_ROW_KEY not in table._row_caps
+        assert "Hidden" not in app.query_one(FooterBar).global_text
+
+
+async def test_revealed_parked_repo_renders_inline_not_as_summary():
+    # Under `H` a parked repo is back in the inventory — it gets its normal
+    # header (flagged "(hidden)"), and the summary row disappears.
+    from cockpit.tui.widgets.worktree_table import HIDDEN_ROW_KEY
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        wt = Worktree(path=Path("/tmp/b"), branch="khivi/feat")
+        app._render_table([("beta", "beta", None, "none", [wt])], None, {"beta"})
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        assert table.row_count == 2  # header + row, no summary line
+        assert HIDDEN_ROW_KEY not in table._row_caps
+        assert "(hidden)" in str(table.get_row_at(0)[0])
+
+
+async def test_gather_inventory_hides_workspaceless_no_worktree_row(
+    monkeypatch, tmp_path
+):
+    # A `use_worktree: false` repo with no live workspace shows only its group
+    # header — the branch row is unactionable, and `n` starts one on demand. With
+    # a workspace open the row comes back. A normal (worktree-managed) repo is
+    # never filtered.
+    scratch, managed = tmp_path / "scratch", tmp_path / "managed"
+    scratch.mkdir()
+    managed.mkdir()
+    swt = Worktree(path=scratch, branch="master")
+    mwt = Worktree(path=managed, branch="feature")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [
+                {"name": "scratch", "path": str(scratch), "use_worktree": False},
+                {"name": "managed", "path": str(managed)},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees",
+        lambda p, prefix="", repo_name="": [swt if Path(p) == scratch else mwt],
+    )
+    app, _ = _make_app()
+    assert [(name, wts) for name, _, _, _, wts in app._gather_inventory(set())] == [
+        ("scratch", []),
+        ("managed", [mwt]),
+    ]
+    live = {scratch.resolve()}
+    assert [(name, wts) for name, _, _, _, wts in app._gather_inventory(live)] == [
+        ("scratch", [swt]),
+        ("managed", [mwt]),
+    ]
+
+
 async def test_new_box_no_worktree_repo_spawns_named_checkout(monkeypatch, tmp_path):
     # `n` on a `use_worktree: false` repo → one named workspace on the checkout:
     # `cockpit new --cwd <path> --name <name>`, no worktree. The name prefills to

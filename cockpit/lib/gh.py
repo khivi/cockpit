@@ -454,6 +454,11 @@ class PR:
     # base is measured against its own base, not the repo's `origin/HEAD`. Empty
     # when unfetched (light query) — callers fall back to the repo default base.
     base: str = ""
+    # True when `author` is the `gh` auth login. Set at construction (the query
+    # layer knows `self_user`); defaults True so a hand-built PR keeps the
+    # author-mode behaviour. Read by `nudge_issue` — a coworker's PR is never
+    # nudged, because its CI, conflicts, and review threads are not mine to fix.
+    mine: bool = True
 
     @property
     def primary_issue(self) -> str:
@@ -484,12 +489,22 @@ class PR:
         Single source for both the slow-tick nudge decision
         (`cycle._refresh_tracked_pills`) and the `pr-nudge` flat cell that drives
         the TUI's 🔔 — so the bell can never disagree with whether a nudge would
-        actually fire. A nudge fires only for an OPEN PR whose `display_issue` is
-        in `ACTIONABLE_ISSUES`: a merged/closed PR is never actionable (its CI,
-        comments, and conflicts can no longer be resolved, so nudging loops
-        forever — the same reasoning as the OPEN gate that consumes this).
+        actually fire. A nudge fires only for **my own** OPEN PR whose
+        `display_issue` is in `ACTIONABLE_ISSUES`:
+
+        - a merged/closed PR is never actionable (its CI, comments, and conflicts
+          can no longer be resolved, so nudging loops forever — the same
+          reasoning as the OPEN gate that consumes this);
+        - a **coworker's** PR is never actionable *for me*. Its worktree exists
+          to review, not to author (`review_prs` auto-spawn, or a manual
+          checkout), so "fix the failing CI" / "rebase and force-push" would tell
+          a review session to rewrite someone else's branch.
         """
-        if self.state == "OPEN" and self.display_issue in ACTIONABLE_ISSUES:
+        if (
+            self.mine
+            and self.state == "OPEN"
+            and self.display_issue in ACTIONABLE_ISSUES
+        ):
             return self.display_issue
         return ""
 
@@ -584,7 +599,7 @@ def _unaddressed(pr_node: dict, pr_author: str) -> tuple[int, int]:
     return unresolved, total
 
 
-def _pr_from_node(n: dict) -> PR | None:
+def _pr_from_node(n: dict, self_user: str = "") -> PR | None:
     author = (n.get("author") or {}).get("login")
     if not author:
         return None
@@ -660,6 +675,9 @@ def _pr_from_node(n: dict) -> PR | None:
         body=n.get("body") or "",
         head_oid=n.get("headRefOid"),
         base=n.get("baseRefName") or "",
+        # An unknown `self_user` (caller didn't pass one) means we can't prove the
+        # PR is a coworker's, so it keeps the author-mode default.
+        mine=not self_user or author == self_user,
     )
 
 
@@ -782,6 +800,7 @@ def _identify_stale(
 def _hydrate_stale(
     owner: str,
     name: str,
+    self_user: str,
     stale: list[int],
     light_by_number: dict[int, str],
     cache: dict[int, tuple[PR, str]],
@@ -800,7 +819,7 @@ def _hydrate_stale(
     repo = heavy_data["data"]["repository"]
     for i, num in enumerate(stale):
         node = repo.get(f"pr{i}")
-        pr = _pr_from_node(node) if node else None
+        pr = _pr_from_node(node, self_user) if node else None
         if pr:
             cache[num] = (pr, light_by_number.get(num, ""))
 
@@ -833,7 +852,7 @@ def list_relevant_prs(
         cache = {}
     stale = _identify_stale(light_by_number, cache)
     if stale:
-        _hydrate_stale(owner, name, stale, light_by_number, cache)
+        _hydrate_stale(owner, name, self_user, stale, light_by_number, cache)
     for num in list(cache):
         if num not in light_by_number:
             del cache[num]

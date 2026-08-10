@@ -55,6 +55,7 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 | `m` | Mute / unmute the row's nudge |
 | `N` | Nudge the row now (honours the idle gate) |
 | `n` | New workspace (branch / PR / URL / ticket / Slack thread) |
+| `h` / `H` | Park the row's repo (goes dormant — no polling) · reveal parked repos |
 | `s` / `o` / `q` | Sync · show logs · quit |
 
 ## Configuration

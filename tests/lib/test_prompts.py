@@ -134,6 +134,25 @@ def test_pr_prompt_authority_gating(display_issue, has_authority):
     assert ("Authority: commit and push" in p) is has_authority
 
 
+@pytest.mark.parametrize("display_issue", ["ci", "conflicts", "comments"])
+def test_pr_prompt_coworker_gets_review_mode_not_authority(display_issue, monkeypatch):
+    """A coworker's PR worktree exists to review, not to author: no authority
+    block, no "fix the CI"/"force-push" action — the same review seed the
+    `review_prs` auto-spawn uses."""
+    monkeypatch.setattr(prompts, "review_command", lambda: "/review")
+    p = build_pr_prompt(_pr(display_issue, mine=False))
+    assert "Authority: commit and push" not in p
+    assert "force-push" not in p
+    assert p.startswith("/review")
+    assert "Reviewing PR #42 by @alice — Fix the thing" in p
+    assert "Ask before posting any review comments" in p
+
+
+def test_pr_prompt_coworker_uses_configured_review_command(monkeypatch):
+    monkeypatch.setattr(prompts, "review_command", lambda: "/pr-review")
+    assert build_pr_prompt(_pr("ci", mine=False)).startswith("/pr-review")
+
+
 def test_pr_prompt_braced_title_is_not_reparsed():
     """A `{...}` in the PR title is data, never a format placeholder."""
     p = build_pr_prompt(_pr("clean", title="handle {weird} input"))

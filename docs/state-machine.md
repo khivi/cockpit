@@ -84,7 +84,13 @@ Leads on "does a worktree exist?" so the two PR×author dimensions don't fan out
 A `use_worktree: false` repo (registered by bare `cockpit new`) never reaches
 this tree — `_spawn_missing_workspaces` early-returns, so no PR/review/orphan
 worktree is auto-spawned; its row still renders from `git worktree list` + the
-cell writers.
+cell writers (and only while a workspace is open on it).
+
+A repo **parked** with the TUI's `h` key drops out one level higher still:
+`cycle_all` filters it before the per-repo loop, so nothing below runs for it —
+no `gh` fetch, no cells, no spawn, no nudge, no ticket write. The one exception
+is a scoped `only_repo` run (a `cockpit close` from inside a parked worktree),
+which reconciles it regardless.
 
 ```mermaid
 flowchart TD
@@ -95,8 +101,9 @@ flowchart TD
   WT -->|yes| REUSE{"merged/closed PR but<br/>HEAD past head_oid?<br/>(branch reused)"}
   REUSE -->|yes| SUP["suppress: clear pills +<br/>blank PR cells (show no PR)"]
   REUSE -->|no| TRACK["Track: refresh pills + caches"]
-  TRACK --> ACT{"actionable issue?<br/>ci / comments / conflicts<br/>AND state == OPEN"}
+  TRACK --> ACT{"actionable issue?<br/>ci / comments / conflicts<br/>AND state == OPEN<br/>AND mine"}
   ACT -->|yes| NUDGE["nudge_if_idle → diagram 3"]
+  ACT -->|"no (coworker's PR)"| RONLY["review worktree:<br/>pills only, never nudged"]
 
   WT -->|no| WHO{"author?"}
   WHO -->|mine| SP["bg spawn --pr N<br/>(plan-only first turn)"]
@@ -139,6 +146,13 @@ Key gates (all from `cycle.py`):
   resolved, so `actionable` is gated on `state == "OPEN"`; otherwise the nudge
   would loop forever (the issue never clears). The footer pill still shows the
   state; only the nudge is suppressed.
+- **A coworker's PR is never nudged** (`PR.mine`): a tracked coworker worktree
+  exists to *review* (`review_prs` auto-spawn, or a manual checkout), so the
+  author-mode nudge text — "fix the failing CI", "rebase and force-push" —
+  would aim a review session at rewriting someone else's branch. Same shape as
+  the OPEN gate: pills and cells still render the issue, only the nudge (and
+  its 🔔) is suppressed. Its seeded first turn is review-mode too
+  (`build_pr_prompt` → `review.txt`, no `pr_authority` block).
 - **Reused-branch suppression** (`_is_reused_branch_merge`): a merged/closed PR
   whose `headRefOid` is no longer an ancestor of the worktree's HEAD means the
   branch was reused for new local work. The card shows no PR until a new one is

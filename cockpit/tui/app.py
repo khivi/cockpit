@@ -72,6 +72,7 @@ from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.daemon_signal import enqueue
 from cockpit.lib.gh import PR, repo_nwo
 from cockpit.lib.git import Worktree, origin_head_branch, worktrees
+from cockpit.lib.hidden import load_hidden, toggle_hidden
 from cockpit.lib.nudges import load_pref, save_pref
 from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.lib.tickets import provider_for
@@ -98,9 +99,11 @@ def _pr_from_payload(p: dict) -> PR:
     inverse) so the `w` action can reuse `spawn_pr_workspace` — the daemon's own
     spawn helper — for an identical prompt and pills rather than re-deriving
     them. Lossy by design: `author` is empty for self-authored PRs (the cache
-    only records a *coworker's* login), and fields absent from the snapshot
-    (`body`, `merged_at`) fall back to defaults. The daemon re-applies live
-    pills on its next tick, so any drift self-heals within a cycle."""
+    only records a *coworker's* login) — which is exactly what `mine` reads, so
+    an `f`-spawned coworker workspace gets the same review-mode seed prompt the
+    daemon would have used — and fields absent from the snapshot (`body`,
+    `merged_at`) fall back to defaults. The daemon re-applies live pills on its
+    next tick, so any drift self-heals within a cycle."""
     return PR(
         number=int(p.get("number") or 0),
         title=str(p.get("title") or ""),
@@ -116,6 +119,7 @@ def _pr_from_payload(p: dict) -> PR:
         state=str(p.get("state") or "OPEN"),
         updated_at=str(p.get("updatedAt") or ""),
         head_oid=p.get("headRefOid"),
+        mine=not p.get("author"),
     )
 
 
@@ -175,6 +179,8 @@ class CockpitApp(App[None]):
         ("m", "mute_row", "Mute"),
         ("N", "nudge_row", "Nudge"),
         ("n", "new_workspace", "New"),
+        ("h", "hide_repo", "Hide repo"),
+        ("H", "toggle_hidden", "Show hidden"),
         ("q", "quit", "Quit"),
         ("escape", "dismiss_overlay", "Back"),
     ]
@@ -213,6 +219,10 @@ class CockpitApp(App[None]):
         # `gh`; memoized here since a repo's nwo is stable and the TUI reads the
         # cache on every render. See `_cache_repo_name`.
         self._repo_nwo_cache: dict[str, str] = {}
+        # `H` — reveal the repos parked with `h` for this session only. The parked
+        # *set* persists (`lib/hidden.py`); this peek deliberately doesn't, so a
+        # restart comes back tidy.
+        self._show_hidden = False
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -469,19 +479,33 @@ class CockpitApp(App[None]):
         self._repo_nwo_cache[key] = name
         return name
 
-    def _gather_inventory(self) -> Inventory:
+    def _gather_inventory(self, workspace_paths: set[Path] | None = None) -> Inventory:
         """Enumerate worktrees per configured repo. Runs on a worker thread —
-        `worktrees()` shells out to git (dirty/unpushed counts)."""
+        `worktrees()` shells out to git (dirty/unpushed counts).
+
+        A `use_worktree: false` repo works in-place on its checkout, so its one
+        row is only meaningful while a workspace is open on it — without one the
+        row is a branch name you can't act on (`f`/`c` have nothing to reach).
+        Those rows are dropped, leaving just the repo's group header, from which
+        `n` starts a workspace on demand. `workspace_paths` is the app's live
+        `workspace_cwds()` read; omitted (or empty on a backend hiccup) it hides
+        those rows, which is the same "start one when you need it" state."""
+        ws = workspace_paths or set()
+        hidden = load_hidden()
         out: Inventory = []
         cfg = load_config()
         for repo in cfg.get("repos", []):
             path = Path(os.path.expanduser(repo["path"]))
             if not path.is_dir():
                 continue
+            if str(path.resolve()) in hidden and not self._show_hidden:
+                continue
             try:
                 wts = worktrees(path, repo.get("branch_prefix", ""))
             except (RuntimeError, OSError):
                 continue
+            if not repo.get("use_worktree", True):
+                wts = [wt for wt in wts if wt.path.resolve() in ws]
             out.append(
                 (
                     repo.get("name") or path.name,
@@ -509,17 +533,35 @@ class CockpitApp(App[None]):
         thread (the slow tick's per-repo `on_repo_done` hook): `_gather_inventory`
         is a pure git + cache-cell read, and `call_from_thread` marshals the
         render onto the UI thread — the same two steps the tick's `finally` runs."""
-        inv = self._gather_inventory()
         ws_paths = self._live_workspace_paths()
-        self.call_from_thread(self._render_table, inv, ws_paths)
+        inv = self._gather_inventory(ws_paths)
+        self.call_from_thread(self._render_table, inv, ws_paths, self._hidden_names())
+
+    @staticmethod
+    def _hidden_names() -> set[str]:
+        """Display names of the repos parked with `h` — what the table needs to
+        dim a revealed header or build the collapsed summary row."""
+        hidden = load_hidden()
+        return {
+            repo.get("name") or Path(os.path.expanduser(repo["path"])).name
+            for repo in load_config().get("repos", []) or []
+            if str(Path(os.path.expanduser(repo["path"])).resolve()) in hidden
+        }
 
     def _render_table(
-        self, inventory: Inventory, workspace_paths: set[Path] | None = None
+        self,
+        inventory: Inventory,
+        workspace_paths: set[Path] | None = None,
+        hidden_names: set[str] | None = None,
     ) -> None:
-        self.query_one(WorktreeTable).update_inventory(inventory, workspace_paths)
+        self.query_one(WorktreeTable).update_inventory(
+            inventory, workspace_paths, hidden_names
+        )
         # A refresh can change the highlighted row's state (PR/ticket/mute) or
         # the row set, so re-gate the footer's row keys to the current row.
         self._refresh_footer_caps()
+        with contextlib.suppress(Exception):
+            self.query_one(FooterBar).set_hidden_count(len(hidden_names or ()))
 
     def _refresh_footer_caps(self) -> None:
         """Push the highlighted row's capabilities to the footer so its row-key
@@ -638,6 +680,33 @@ class CockpitApp(App[None]):
 
     def action_nudge_row(self) -> None:
         self._row_act(self._send_nudge)
+
+    def action_hide_repo(self) -> None:
+        """`h` — park (or un-park) the cursor row's whole repo. Repo-scoped, not
+        row-scoped, so it works from a group header, a worktree row, *or* the
+        collapsed summary row — anywhere the cursor can land. A parked repo goes
+        dormant: `cycle_all` skips it entirely, so it costs no `gh` round-trip
+        and gets no auto-spawn or nudge until un-parked. The repo stays
+        registered in `config.json` — this is parking, not unregistering."""
+        repo = self._repo_config_by_name(
+            self.query_one(WorktreeTable).current_repo_name()
+        )
+        if repo is None:
+            self.notify("no repo under the cursor", severity="warning")
+            return
+        path = Path(os.path.expanduser(repo["path"]))
+        name = repo.get("name") or path.name
+        parked = toggle_hidden(path)
+        self.notify(f"{name} {'hidden — H to reveal' if parked else 'un-hidden'}")
+        # Local re-render only (git + cache cells, no network): parking must not
+        # cost a `gh` round-trip, and un-parking picks up fresh data on the next
+        # slow tick anyway.
+        self._prime_table()
+
+    def action_toggle_hidden(self) -> None:
+        """`H` — reveal / re-collapse the parked repos for this session."""
+        self._show_hidden = not self._show_hidden
+        self._prime_table()
 
     def action_new_workspace(self) -> None:
         # Spawn a worktree + workspace from the typed source (the `cockpit new`
