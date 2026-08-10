@@ -1073,6 +1073,8 @@ async def test_h_parks_repo_and_capital_h_reveals(monkeypatch, tmp_path):
         "cockpit.tui.app.worktrees",
         lambda p, prefix="", repo_name="": [awt if Path(p) == alpha else bwt],
     )
+    # Parking closes the repo's workspaces — keep that off real cmux here.
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1094,6 +1096,81 @@ async def test_h_parks_repo_and_capital_h_reveals(monkeypatch, tmp_path):
     assert [n for n, *_ in app._gather_inventory(set())] == ["alpha", "beta"]
 
 
+async def test_parking_closes_the_repos_workspaces(monkeypatch, tmp_path):
+    # Hiding the TUI row while the repo's workspaces stay in the cmux sidebar
+    # would just move the clutter, so parking closes them — but never the
+    # daemon's own workspace, never a busy one, and never another repo's.
+    repo, other = tmp_path / "repo", tmp_path / "other"
+    repo.mkdir()
+    other.mkdir()
+    wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat")
+    wt.path.mkdir()
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [{"name": "repo", "path": str(repo)}]},
+    )
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="", **k: [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds",
+        lambda: {
+            "workspace:1": repo,  # the checkout itself
+            "workspace:2": wt.path,  # a sibling worktree — matched by cwd
+            "workspace:3": repo,  # busy → spared
+            "workspace:4": other,  # another repo → untouched
+            "workspace:9": repo,  # the daemon's own → never closed
+        },
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_is_idle", lambda ref: ref != "workspace:3"
+    )
+    closed: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.cmux_close_workspace_best_effort",
+        lambda ref: closed.append(ref) or True,
+    )
+    app, _ = _make_app()
+    app._self_ws = "workspace:9"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("h")
+        await pilot.pause(0.5)
+    assert sorted(closed) == ["workspace:1", "workspace:2"]
+
+
+async def test_unparking_closes_nothing(monkeypatch, tmp_path):
+    # `h` on an already-parked repo un-parks it — a pure display change; it must
+    # not touch the sidebar (and certainly not close what it never opened).
+    from cockpit.lib.hidden import toggle_hidden
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = Worktree(path=repo, branch="master")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [{"name": "repo", "path": str(repo)}]},
+    )
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="", **k: [wt])
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {"workspace:1": repo})
+    monkeypatch.setattr("cockpit.tui.app.workspace_is_idle", lambda ref: True)
+    closed: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.cmux_close_workspace_best_effort",
+        lambda ref: closed.append(ref) or True,
+    )
+    toggle_hidden(repo)  # already parked
+    app, _ = _make_app()
+    app._show_hidden = True
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])], None, {"repo"})
+        await pilot.pause()
+        await pilot.press("h")
+        await pilot.pause(0.5)
+    assert closed == []
+
+
 async def test_h_on_group_header_parks_that_repo(monkeypatch, tmp_path):
     # Row keys are all suppressed on a group header — `h` is global precisely so
     # it still works there (and it resolves the header's own repo).
@@ -1106,6 +1183,7 @@ async def test_h_on_group_header_parks_that_repo(monkeypatch, tmp_path):
         "cockpit.tui.app.load_config",
         lambda: {"repos": [{"name": "solo", "path": str(repo)}]},
     )
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()

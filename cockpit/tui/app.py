@@ -50,11 +50,13 @@ from cockpit.lib.cmux import (
     LOOP_KEY,
     CmuxUnavailable,
     cmux,
+    cmux_close_workspace_best_effort,
     nudge_if_idle,
     select_workspace,
     spawn_orphan_workspace,
     spawn_pr_workspace,
     workspace_cwds,
+    workspace_is_idle,
     workspace_names,
 )
 from cockpit.lib.config import (
@@ -687,7 +689,13 @@ class CockpitApp(App[None]):
         collapsed summary row — anywhere the cursor can land. A parked repo goes
         dormant: `cycle_all` skips it entirely, so it costs no `gh` round-trip
         and gets no auto-spawn or nudge until un-parked. The repo stays
-        registered in `config.json` — this is parking, not unregistering."""
+        registered in `config.json` — this is parking, not unregistering.
+
+        Parking also clears the repo out of the *cmux sidebar* (`_park_workspaces`)
+        — hiding the TUI row while its workspaces still sit in the sidebar would
+        only move the clutter. Un-parking does not respawn them: a
+        worktree-managed repo gets its workspaces back from the next slow tick's
+        `_spawn_missing_workspaces`, a `use_worktree: false` one from `n`/`f`."""
         repo = self._repo_config_by_name(
             self.query_one(WorktreeTable).current_repo_name()
         )
@@ -698,10 +706,55 @@ class CockpitApp(App[None]):
         name = repo.get("name") or path.name
         parked = toggle_hidden(path)
         self.notify(f"{name} {'hidden — H to reveal' if parked else 'un-hidden'}")
+        if parked:
+            # Shells out to git + cmux, so it runs on a worker; it republishes
+            # the table itself when done.
+            self._park_workspaces(path, repo.get("branch_prefix", ""))
+            return
         # Local re-render only (git + cache cells, no network): parking must not
         # cost a `gh` round-trip, and un-parking picks up fresh data on the next
         # slow tick anyway.
         self._prime_table()
+
+    @work(thread=True, group="park", exit_on_error=False)
+    def _park_workspaces(self, repo_path: Path, branch_prefix: str) -> None:
+        """Close the parked repo's cmux workspaces so it leaves the sidebar too.
+
+        Workspace-only, like the `c` key on a primary checkout: no worktree is
+        removed, no branch deleted, nothing uncommitted is touched — parking is
+        not teardown, and the only thing lost is the terminal session.
+
+        Matched by cwd against the repo's own worktrees (`git worktree list`),
+        not by name — a worktree usually lives in a *sibling* directory, so a
+        path-prefix test would miss it. Two workspaces are always spared: the one
+        the daemon itself runs in (closing it would kill this TUI) and any that
+        isn't idle, since a running agent mid-turn shouldn't be cut off. A busy
+        one is reported, never silently skipped."""
+        try:
+            wts = worktrees(repo_path, branch_prefix)
+            paths = {repo_path.resolve(), *(wt.path.resolve() for wt in wts)}
+            cwds = workspace_cwds()
+        except (CmuxUnavailable, RuntimeError, OSError) as e:
+            print(f"park: could not enumerate workspaces for {repo_path}: {e}")
+            return
+        closed, busy = 0, 0
+        for ref, cwd in cwds.items():
+            if cwd.resolve() not in paths or ref == self._self_ws:
+                continue
+            if not workspace_is_idle(ref):
+                busy += 1
+                continue
+            if cmux_close_workspace_best_effort(ref):
+                closed += 1
+        if busy:
+            self.call_from_thread(
+                self.notify,
+                f"{busy} workspace(s) still running — left open",
+                severity="warning",
+            )
+        if closed or busy:
+            print(f"park {repo_path.name}: closed {closed}, kept {busy} busy")
+        self._publish_inventory()
 
     def action_toggle_hidden(self) -> None:
         """`H` — reveal / re-collapse the parked repos for this session."""
