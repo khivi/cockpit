@@ -1124,10 +1124,12 @@ async def test_parking_closes_the_repos_workspaces(monkeypatch, tmp_path):
         "cockpit.tui.app.workspace_is_idle", lambda ref: ref != "workspace:3"
     )
     closed: list[str] = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.cmux_close_workspace_best_effort",
-        lambda ref: closed.append(ref) or True,
-    )
+
+    def _close(ref: str) -> bool:
+        closed.append(ref)
+        return True
+
+    monkeypatch.setattr("cockpit.tui.app.cmux_close_workspace_best_effort", _close)
     app, _ = _make_app()
     app._self_ws = "workspace:9"
     async with app.run_test() as pilot:
@@ -1155,10 +1157,12 @@ async def test_unparking_closes_nothing(monkeypatch, tmp_path):
     monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {"workspace:1": repo})
     monkeypatch.setattr("cockpit.tui.app.workspace_is_idle", lambda ref: True)
     closed: list[str] = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.cmux_close_workspace_best_effort",
-        lambda ref: closed.append(ref) or True,
-    )
+
+    def _close(ref: str) -> bool:
+        closed.append(ref)
+        return True
+
+    monkeypatch.setattr("cockpit.tui.app.cmux_close_workspace_best_effort", _close)
     toggle_hidden(repo)  # already parked
     app, _ = _make_app()
     app._show_hidden = True

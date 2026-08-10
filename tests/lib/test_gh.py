@@ -470,10 +470,16 @@ def test_pr_from_node_sets_mine_from_self_user():
     from cockpit.lib.gh import _pr_from_node
 
     node = _full_pr_node(author={"login": "alice"})
-    assert _pr_from_node(node, "khivi").mine is False
-    assert _pr_from_node(node, "alice").mine is True
+
+    def _mine(*args: str) -> bool:
+        pr = _pr_from_node(node, *args)
+        assert pr is not None
+        return pr.mine
+
+    assert _mine("khivi") is False
+    assert _mine("alice") is True
     # No self_user given → can't prove it's a coworker's, so author-mode default.
-    assert _pr_from_node(node).mine is True
+    assert _mine() is True
 
 
 def test_nudge_issue_matches_display_issue_when_actionable():
