@@ -304,6 +304,16 @@ def move_workspace_group_to_end(group_ref: str) -> None:
     cmux("workspace-group", "move", group_ref, "--to-index", "9999", check=False)
 
 
+def move_workspace_to_end(ref: str) -> None:
+    """Park a single workspace at the bottom of the sidebar.
+
+    The ungrouped counterpart of `move_workspace_group_to_end`, for a lone
+    review that has no group to park (cmux drops a one-member group).
+    `--index` clamps the same way, so 9999 is "last".
+    """
+    cmux("reorder-workspace", "--workspace", ref, "--index", "9999", check=False)
+
+
 def ungroup_workspaces(group_ref: str) -> None:
     """Dissolve the group, keeping every member workspace open."""
     cmux("workspace-group", "ungroup", group_ref, check=False)

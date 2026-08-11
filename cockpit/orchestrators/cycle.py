@@ -58,6 +58,7 @@ from cockpit.lib.cmux import (
     find_cockpit_workspaces,
     list_workspace_groups,
     move_workspace_group_to_end,
+    move_workspace_to_end,
     nudge_if_idle,
     remove_from_workspace_group,
     rename_workspace_group,
@@ -2179,7 +2180,9 @@ def _reconcile_sidebar_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
     Stacks win the overlap: a coworker PR that is part of a stack folds with its
     chain, not into `reviews` — a workspace can live in exactly one group. The
     reviews fold is re-parked at the bottom of the sidebar every cycle; it's the
-    passive pile, so it stays out of the way of my own work.
+    passive pile, so it stays out of the way of my own work. A *lone* review
+    can't be a group at all (cmux drops a one-member group), so its bare
+    workspace row is re-parked at the bottom instead.
 
     Only groups overlapping *this* repo's workspaces are touched — a group the
     user made by hand around unrelated workspaces is never claimed or dissolved.
@@ -2256,6 +2259,11 @@ def _reconcile_sidebar_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
             if group.anchor and group.anchor not in owned:
                 cmux_close_workspace_best_effort(group.anchor)
             print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
+    if len(reviews) == 1:
+        # A lone review has no group to park (cmux drops a one-member group),
+        # so park the row itself — it's still the passive pile. After the
+        # ungroup sweep, in case it was just dissolved out of a shrunken fold.
+        move_workspace_to_end(reviews[0])
 
 
 def _match_stack_group(
