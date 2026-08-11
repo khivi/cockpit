@@ -28,6 +28,7 @@ from cockpit.lib.cmux import (
     create_workspace_group,
     deliver_followup,
     list_workspace_groups,
+    move_workspace_group_to_end,
     nudge_if_idle,
     reconcile_workspace_names,
     remove_from_workspace_group,
@@ -1153,6 +1154,20 @@ def test_create_workspace_group_refuses_a_single_member():
     cmux_mock.assert_not_called()
 
 
+def test_move_workspace_group_to_end_clamps_past_the_sidebar():
+    with patch("cockpit.lib.cmux.cmux") as cmux_mock:
+        move_workspace_group_to_end("workspace_group:1")
+
+    cmux_mock.assert_called_once_with(
+        "workspace-group",
+        "move",
+        "workspace_group:1",
+        "--to-index",
+        "9999",
+        check=False,
+    )
+
+
 def test_group_verbs_noop_on_limux():
     # workspace-group is cmux-only; limux users silently skip stack folding.
     with (
@@ -1163,6 +1178,7 @@ def test_group_verbs_noop_on_limux():
         add_to_workspace_group("workspace_group:1", "workspace:2")
         remove_from_workspace_group("workspace:2")
         rename_workspace_group("workspace_group:1", "auth (2)")
+        move_workspace_group_to_end("workspace_group:1")
         ungroup_workspaces("workspace_group:1")
 
     run_mock.assert_not_called()
