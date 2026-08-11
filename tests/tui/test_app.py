@@ -1815,9 +1815,11 @@ async def test_footer_merges_close_and_force_into_one_segment():
         assert "Force" not in rt  # folded in, no separate label
 
 
-async def test_footer_global_group_orders_new_sync_output_first():
-    # The global group renders New, Sync, Output in that order regardless of
-    # BINDINGS order (FooterBar.GLOBAL_ORDER), with Quit trailing.
+async def test_footer_global_group_orders_hide_new_sync_output_first():
+    # The global group renders Hide, New, Sync, Output in that order regardless
+    # of BINDINGS order (FooterBar.GLOBAL_ORDER), with Quit trailing. `h` leads
+    # so it sits against the row-key group — it's the repo-targeted key, the most
+    # row-adjacent of the globals.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
     app, _ = _make_app()
@@ -1825,7 +1827,11 @@ async def test_footer_global_group_orders_new_sync_output_first():
         await pilot.pause()
         gt = app.query_one(FooterBar).global_text
         assert (
-            gt.index("New") < gt.index("Sync") < gt.index("Output") < gt.index("Quit")
+            gt.index("Hide")
+            < gt.index("New")
+            < gt.index("Sync")
+            < gt.index("Output")
+            < gt.index("Quit")
         )
 
 

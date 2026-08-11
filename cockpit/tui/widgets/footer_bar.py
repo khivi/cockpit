@@ -80,11 +80,13 @@ class FooterBar(Horizontal):
     # Explicit render order for the global (right) group — independent of BINDINGS
     # order. Actions not listed here render after these, in BINDINGS order.
     GLOBAL_ORDER = (
-        "new_workspace",
         # `h` acts on the cursor row's *repo* (or the hidden disclosure row), not
         # its workspace, so it stays global — a group header (where every
-        # ROW_ACTION is suppressed) is exactly where you reach for it.
+        # ROW_ACTION is suppressed) is exactly where you reach for it. It renders
+        # first so it sits against the row-key group: it's the most row-adjacent
+        # of the global keys.
         "hide_repo",
+        "new_workspace",
         "sync",
         "show_output",
         "quit",
