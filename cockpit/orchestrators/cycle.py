@@ -40,6 +40,8 @@ from cockpit.lib.cmux import (
     ORANGE,
     ORPHAN_ICON,
     ORPHAN_KEY,
+    REVIEW_GROUP_ICON,
+    STACK_GROUP_ICON,
     CmuxUnavailable,
     WorkspaceGroup,
     add_to_workspace_group,
@@ -55,6 +57,7 @@ from cockpit.lib.cmux import (
     deliver_followup,
     find_cockpit_workspaces,
     list_workspace_groups,
+    move_workspace_group_to_end,
     nudge_if_idle,
     remove_from_workspace_group,
     rename_workspace_group,
@@ -2154,14 +2157,28 @@ def _stack_group_name(root: Worktree, size: int) -> str:
     return f"{root.label} ({size})"
 
 
-def _reconcile_stack_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
-    """Fold each stacked-PR chain into one collapsible cmux sidebar group.
+def _review_group_name(size: int) -> str:
+    """Sidebar header for the coworker-review fold. Counted like a stack, since
+    the anchor's row *is* the header and a bare label would read as a workspace.
+    """
+    return f"reviews ({size})"
 
-    A stack is derived, not stored (`lib.stacks.find_stacks` off `PR.base`), so
-    this reconciles against cmux's live groups every slow tick rather than
-    keeping a `pill_state` mirror: `workspace-group list` is the authority, and
-    a group whose members left the stack (root merged, worktree torn down) is
+
+def _reconcile_sidebar_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
+    """Fold this repo's workspaces into cmux sidebar groups: one per stacked-PR
+    chain, plus one trailing `reviews` fold for coworker PRs.
+
+    Both are derived, not stored (stacks from `lib.stacks.find_stacks` off
+    `PR.base`, reviews from `PR.mine`), so this reconciles against cmux's live
+    groups every slow tick rather than keeping a `pill_state` mirror:
+    `workspace-group list` is the authority, and a group whose members left the
+    stack (root merged, worktree torn down) or stopped being a review is
     dissolved back into loose rows.
+
+    Stacks win the overlap: a coworker PR that is part of a stack folds with its
+    chain, not into `reviews` — a workspace can live in exactly one group. The
+    reviews fold is re-parked at the bottom of the sidebar every cycle; it's the
+    passive pile, so it stays out of the way of my own work.
 
     Only groups overlapping *this* repo's workspaces are touched — a group the
     user made by hand around unrelated workspaces is never claimed or dissolved.
@@ -2179,22 +2196,40 @@ def _reconcile_stack_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
         if ref in owned and pr.branch
     }
 
-    desired: list[tuple[str, list[str]]] = []
+    # (name, refs, is_review) — stacks first, so an overlapping group is claimed
+    # by its chain before the reviews fold gets a look at it.
+    desired: list[tuple[str, list[str], bool]] = []
+    stacked: set[str] = set()
     for chain in find_stacks(ctx.prs):
         members = [tracked[pr.branch] for pr in chain if pr.branch in tracked]
         if len(members) < 2:
             continue  # a stack with fewer than two local workspaces isn't a fold
         refs = [ref for ref, _ in members]
-        desired.append((_stack_group_name(members[0][1], len(refs)), refs))
+        stacked.update(refs)
+        desired.append((_stack_group_name(members[0][1], len(refs)), refs, False))
+
+    reviews = [
+        ref
+        for ref, (pr, _wt) in sorted(
+            ctx.tracked.items(), key=lambda kv: kv[1][0].number
+        )
+        if ref in owned and not pr.mine and ref not in stacked
+    ]
+    if len(reviews) > 1:  # cmux drops a group the moment it has one member left
+        desired.append((_review_group_name(len(reviews)), reviews, True))
 
     groups = [g for g in list_workspace_groups() if owned & set(g.members)]
     matched: set[str] = set()
-    for name, refs in desired:
+    for name, refs, is_review in desired:
+        icon = REVIEW_GROUP_ICON if is_review else STACK_GROUP_ICON
         group = _match_stack_group(groups, refs, matched)
         if group is None:
-            if create_workspace_group(name, refs) is not None:
+            created = create_workspace_group(name, refs, icon=icon)
+            if created is not None:
+                if is_review:
+                    move_workspace_group_to_end(created.ref)
                 print(
-                    f"  {verb('stacked')} {cyan(name)} {dim(' → '.join(refs))}",
+                    f"  {verb('grouped')} {cyan(name)} {dim(' → '.join(refs))}",
                     flush=True,
                 )
             continue
@@ -2209,10 +2244,12 @@ def _reconcile_stack_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
             # the group is the user's business, not a stale stack member.
             if ref in owned and ref not in refs:
                 remove_from_workspace_group(ref)
+        if is_review:
+            move_workspace_group_to_end(group.ref)
     for group in groups:
         if group.ref not in matched:
             ungroup_workspaces(group.ref)
-            print(f"  {verb('unstacked')} {cyan(group.name)}", flush=True)
+            print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
 
 
 def _match_stack_group(
@@ -2290,7 +2327,7 @@ def cycle_repo(
             _print_tracked_summary(ctx, mine_items, others_items)
         _handle_orphans_and_close_stale(ctx, keep_refs)
         _apply_repo_colors(ctx, repo_entry, keep_refs)
-        _reconcile_stack_groups(ctx, keep_refs)
+        _reconcile_sidebar_groups(ctx, keep_refs)
     if workspaces_ready:
         _spawn_missing_workspaces(ctx, repo_entry)
     _transition_merged_tickets(ctx)

@@ -184,6 +184,10 @@ def set_workspace_color(ref: str, color: str) -> None:
 # needs saying.
 STACK_GROUP_ICON = "square.stack"
 
+# SF Symbol on the coworker-review fold's header — someone else's PR I'm reading,
+# not mine to ship.
+REVIEW_GROUP_ICON = "eyeglasses"
+
 
 @dataclass(frozen=True)
 class WorkspaceGroup:
@@ -303,6 +307,16 @@ def remove_from_workspace_group(ref: str) -> None:
 
 def rename_workspace_group(group_ref: str, name: str) -> None:
     cmux("workspace-group", "rename", group_ref, "--name", name, check=False)
+
+
+def move_workspace_group_to_end(group_ref: str) -> None:
+    """Park the group at the bottom of the sidebar.
+
+    `--to-index` clamps, so a number past the end is "last" without having to
+    read the sidebar's current length (`workspace-group list` doesn't report an
+    index). Best-effort like every other group verb.
+    """
+    cmux("workspace-group", "move", group_ref, "--to-index", "9999", check=False)
 
 
 def ungroup_workspaces(group_ref: str) -> None:

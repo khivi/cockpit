@@ -16,6 +16,7 @@ from unittest.mock import patch
 import pytest
 
 import cockpit.orchestrators.cycle as cycle
+from cockpit.lib.cmux import REVIEW_GROUP_ICON, STACK_GROUP_ICON
 from cockpit.lib.gh import PR
 from cockpit.lib.git import Worktree
 from cockpit.lib.hidden import toggle_hidden
@@ -4095,8 +4096,11 @@ def test_github_transition_noop_when_dry(tmp_path):
 # ── stacked-PR sidebar groups ────────────────────────────────────────────────
 
 
-def _stack_pr(number: int, branch: str, base: str, *, state: str = "OPEN") -> PR:
+def _stack_pr(
+    number: int, branch: str, base: str, *, state: str = "OPEN", mine: bool = True
+) -> PR:
     return PR(
+        mine=mine,
         number=number,
         title=f"pr {number}",
         branch=branch,
@@ -4113,13 +4117,17 @@ def _stack_pr(number: int, branch: str, base: str, *, state: str = "OPEN") -> PR
     )
 
 
-def _stack_ctx(tmp_path, chain, *, dry=False, extra_prs=()):
-    """RepoCycle with one tracked workspace per (ref, branch, base) in `chain`."""
+def _stack_ctx(tmp_path, chain, *, dry=False, extra_prs=(), coworkers=()):
+    """RepoCycle with one tracked workspace per (ref, branch, base) in `chain`.
+
+    Refs listed in `coworkers` get a `mine=False` PR — someone else's, i.e. a
+    review workspace.
+    """
     repo = tmp_path / "repo"
     wts, prs, tracked, cwds = [], [], {}, {}
     for i, (ref, branch, base) in enumerate(chain, start=1):
         wt = Worktree(path=repo / f"wt-{i}", branch=branch)
-        pr = _stack_pr(i, branch, base)
+        pr = _stack_pr(i, branch, base, mine=ref not in coworkers)
         wts.append(wt)
         prs.append(pr)
         tracked[ref] = (pr, wt)
@@ -4136,7 +4144,7 @@ def _group(ref, name, anchor, members):
     return WorkspaceGroup(ref=ref, name=name, anchor=anchor, members=tuple(members))
 
 
-def test_reconcile_stack_groups_creates_a_group_root_first(tmp_path):
+def test_reconcile_sidebar_groups_creates_a_group_root_first(tmp_path):
     ctx = _stack_ctx(
         tmp_path,
         [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
@@ -4145,13 +4153,15 @@ def test_reconcile_stack_groups_creates_a_group_root_first(tmp_path):
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(cycle, "create_workspace_group") as create,
     ):
-        cycle._reconcile_stack_groups(ctx, {"workspace:1", "workspace:2"})
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
     root_label = ctx.tracked["workspace:1"][1].label
-    create.assert_called_once_with(f"{root_label} (2)", ["workspace:1", "workspace:2"])
+    create.assert_called_once_with(
+        f"{root_label} (2)", ["workspace:1", "workspace:2"], icon=STACK_GROUP_ICON
+    )
 
 
-def test_reconcile_stack_groups_ignores_unstacked_prs(tmp_path):
+def test_reconcile_sidebar_groups_ignores_unstacked_prs(tmp_path):
     ctx = _stack_ctx(
         tmp_path,
         [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "main")],
@@ -4160,12 +4170,12 @@ def test_reconcile_stack_groups_ignores_unstacked_prs(tmp_path):
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(cycle, "create_workspace_group") as create,
     ):
-        cycle._reconcile_stack_groups(ctx, {"workspace:1", "workspace:2"})
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
     create.assert_not_called()
 
 
-def test_reconcile_stack_groups_skips_stack_without_two_workspaces(tmp_path):
+def test_reconcile_sidebar_groups_skips_stack_without_two_workspaces(tmp_path):
     # #2 is stacked on #1 but has no local worktree — nothing to fold together.
     ctx = _stack_ctx(tmp_path, [("workspace:1", "khivi/a", "main")])
     ctx.prs.append(_stack_pr(2, "khivi/b", "khivi/a"))
@@ -4173,12 +4183,12 @@ def test_reconcile_stack_groups_skips_stack_without_two_workspaces(tmp_path):
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(cycle, "create_workspace_group") as create,
     ):
-        cycle._reconcile_stack_groups(ctx, {"workspace:1"})
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1"})
 
     create.assert_not_called()
 
 
-def test_reconcile_stack_groups_adds_new_member_to_existing_group(tmp_path):
+def test_reconcile_sidebar_groups_adds_new_member_to_existing_group(tmp_path):
     ctx = _stack_ctx(
         tmp_path,
         [
@@ -4195,7 +4205,7 @@ def test_reconcile_stack_groups_adds_new_member_to_existing_group(tmp_path):
         patch.object(cycle, "rename_workspace_group") as rename,
         patch.object(cycle, "ungroup_workspaces") as ungroup,
     ):
-        cycle._reconcile_stack_groups(
+        cycle._reconcile_sidebar_groups(
             ctx, {"workspace:1", "workspace:2", "workspace:3"}
         )
 
@@ -4205,7 +4215,7 @@ def test_reconcile_stack_groups_adds_new_member_to_existing_group(tmp_path):
     rename.assert_called_once()  # "old" → "<label> (3)"
 
 
-def test_reconcile_stack_groups_removes_departed_member(tmp_path):
+def test_reconcile_sidebar_groups_removes_departed_member(tmp_path):
     # #3 was re-based off the stack onto the trunk — it leaves the fold, while
     # the group itself survives for the two PRs still stacked.
     ctx = _stack_ctx(
@@ -4226,14 +4236,14 @@ def test_reconcile_stack_groups_removes_departed_member(tmp_path):
         patch.object(cycle, "list_workspace_groups", return_value=[existing]),
         patch.object(cycle, "remove_from_workspace_group") as remove,
     ):
-        cycle._reconcile_stack_groups(
+        cycle._reconcile_sidebar_groups(
             ctx, {"workspace:1", "workspace:2", "workspace:3"}
         )
 
     remove.assert_called_once_with("workspace:3")
 
 
-def test_reconcile_stack_groups_dissolves_a_group_whose_stack_is_gone(tmp_path):
+def test_reconcile_sidebar_groups_dissolves_a_group_whose_stack_is_gone(tmp_path):
     # The root merged, so the survivors are no longer stacked on anything.
     ctx = _stack_ctx(
         tmp_path,
@@ -4244,12 +4254,12 @@ def test_reconcile_stack_groups_dissolves_a_group_whose_stack_is_gone(tmp_path):
         patch.object(cycle, "list_workspace_groups", return_value=[existing]),
         patch.object(cycle, "ungroup_workspaces") as ungroup,
     ):
-        cycle._reconcile_stack_groups(ctx, {"workspace:1", "workspace:2"})
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
     ungroup.assert_called_once_with("wg:1")
 
 
-def test_reconcile_stack_groups_leaves_foreign_groups_alone(tmp_path):
+def test_reconcile_sidebar_groups_leaves_foreign_groups_alone(tmp_path):
     # A group the user built by hand around unrelated workspaces is not ours to
     # rename, re-member, or dissolve.
     ctx = _stack_ctx(
@@ -4262,19 +4272,108 @@ def test_reconcile_stack_groups_leaves_foreign_groups_alone(tmp_path):
         patch.object(cycle, "ungroup_workspaces") as ungroup,
         patch.object(cycle, "remove_from_workspace_group") as remove,
     ):
-        cycle._reconcile_stack_groups(ctx, {"workspace:1", "workspace:2"})
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
     ungroup.assert_not_called()
     remove.assert_not_called()
 
 
-def test_reconcile_stack_groups_dry_noops(tmp_path):
+def test_reconcile_sidebar_groups_dry_noops(tmp_path):
     ctx = _stack_ctx(
         tmp_path,
         [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
         dry=True,
     )
     with patch.object(cycle, "list_workspace_groups") as lst:
-        cycle._reconcile_stack_groups(ctx, {"workspace:1", "workspace:2"})
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
     lst.assert_not_called()
+
+
+# ── coworker-review fold ─────────────────────────────────────────────────────
+
+
+def test_reconcile_sidebar_groups_folds_coworker_prs_into_reviews(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [
+            ("workspace:1", "khivi/a", "main"),
+            ("workspace:2", "them/b", "main"),
+            ("workspace:3", "them/c", "main"),
+        ],
+        coworkers=("workspace:2", "workspace:3"),
+    )
+    refs = {"workspace:1", "workspace:2", "workspace:3"}
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(
+            cycle,
+            "create_workspace_group",
+            return_value=_group("wg:1", "reviews (2)", "workspace:2", []),
+        ) as create,
+        patch.object(cycle, "move_workspace_group_to_end") as move,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, refs)
+
+    create.assert_called_once_with(
+        "reviews (2)", ["workspace:2", "workspace:3"], icon=REVIEW_GROUP_ICON
+    )
+    move.assert_called_once_with("wg:1")
+
+
+def test_reconcile_sidebar_groups_skips_a_lone_review(tmp_path):
+    # cmux drops a one-member group, so a single review stays a loose row.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "them/b", "main")],
+        coworkers=("workspace:2",),
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group") as create,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+
+    create.assert_not_called()
+
+
+def test_reconcile_sidebar_groups_leaves_a_stacked_coworker_pr_in_its_stack(tmp_path):
+    # A coworker's stack folds as a stack — a workspace lives in one group only,
+    # and the chain says more than "someone else's".
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "them/b", "them/a")],
+        coworkers=("workspace:1", "workspace:2"),
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group", return_value=None) as create,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+
+    root_label = ctx.tracked["workspace:1"][1].label
+    create.assert_called_once_with(
+        f"{root_label} (2)", ["workspace:1", "workspace:2"], icon=STACK_GROUP_ICON
+    )
+
+
+def test_reconcile_sidebar_groups_reparks_an_existing_reviews_fold(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "them/b", "main")],
+        coworkers=("workspace:1", "workspace:2"),
+    )
+    existing = _group(
+        "wg:1", "reviews (2)", "workspace:1", ["workspace:1", "workspace:2"]
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "create_workspace_group") as create,
+        patch.object(cycle, "move_workspace_group_to_end") as move,
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+
+    create.assert_not_called()
+    ungroup.assert_not_called()
+    move.assert_called_once_with("wg:1")
