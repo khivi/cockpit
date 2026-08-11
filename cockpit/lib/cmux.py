@@ -17,6 +17,7 @@ import shutil
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import run, tool
@@ -95,10 +96,13 @@ ACTIONABLE_KEYS = (
 OWNER_KEY = "owner"
 OWNER_ICON = "👥"
 
-# Verbs that need cmux specifically — limux fork lacks the persistent-pill
-# and workspace-action (set-color) APIs. Gated here so they no-op on limux
-# instead of erroring; repo sidebar colors are an additive cmux-only nicety.
-_PILL_VERBS = frozenset({"set-status", "clear-status", "workspace-action"})
+# Verbs that need cmux specifically — the limux fork lacks the persistent-pill,
+# workspace-action (set-color), and workspace-group APIs. Gated here so they
+# no-op on limux instead of erroring; sidebar tint and stack grouping are both
+# additive cmux-only niceties.
+_CMUX_ONLY_VERBS = frozenset(
+    {"set-status", "clear-status", "workspace-action", "workspace-group"}
+)
 
 
 class CmuxUnavailable(RuntimeError):
@@ -160,7 +164,7 @@ def _apply_count_pill(
 def set_workspace_color(ref: str, color: str) -> None:
     """Tint workspace `ref`'s sidebar entry to `color` (a `WORKSPACE_COLORS`
     name). Best-effort and cmux-only — no-ops on limux (workspace-action is
-    gated in `_PILL_VERBS`) and never raises, so a missed tint can't stall a
+    gated in `_CMUX_ONLY_VERBS`) and never raises, so a missed tint can't stall a
     reconcile. Callers validate `color` against `WORKSPACE_COLORS` first.
     """
     cmux(
@@ -175,6 +179,137 @@ def set_workspace_color(ref: str, color: str) -> None:
     )
 
 
+# SF Symbol on a stacked-PR group's sidebar header. Not a pill — cmux renders
+# it on the group row itself, which is the one place "these belong together"
+# needs saying.
+STACK_GROUP_ICON = "square.stack"
+
+
+@dataclass(frozen=True)
+class WorkspaceGroup:
+    """A cmux sidebar group: a collapsible fold over member workspaces.
+
+    `ref` is a `workspace_group:N` handle (window-scoped, like `workspace:N`).
+    `anchor` is the member whose sidebar row *is* the group header — closing it
+    dissolves the group, so cockpit always anchors a stack on its root PR.
+    """
+
+    ref: str
+    name: str
+    anchor: str
+    members: tuple[str, ...]
+
+
+def _group_from_json(blob: dict) -> WorkspaceGroup | None:
+    ref = blob.get("ref")
+    if not ref:
+        return None
+    return WorkspaceGroup(
+        ref=ref,
+        name=blob.get("name") or "",
+        anchor=blob.get("anchor_workspace_ref") or "",
+        members=tuple(blob.get("member_workspace_refs") or ()),
+    )
+
+
+def list_workspace_groups() -> list[WorkspaceGroup]:
+    """Every sidebar group in the window. Empty on any failure (cmux absent,
+    limux, malformed JSON) — grouping is additive, so a failed read just means
+    "reconcile nothing this cycle", never an exception into the tick.
+    """
+    out = cmux("workspace-group", "list", "--json", check=False)
+    try:
+        blobs = json.loads(out or "{}").get("groups") or []
+    except (json.JSONDecodeError, AttributeError):
+        return []
+    return [g for g in (_group_from_json(b) for b in blobs) if g is not None]
+
+
+def create_workspace_group(
+    name: str, refs: list[str], *, icon: str = STACK_GROUP_ICON
+) -> WorkspaceGroup | None:
+    """Fold `refs` into one sidebar group named `name`, anchored on `refs[0]`.
+
+    `cmux workspace-group create` always spawns a *fresh* workspace to own the
+    group (the anchor's row is the group header), so this does the three-step
+    dance the CLI has no single verb for: create with the members captured,
+    re-anchor onto `refs[0]` (the stack root), then close the spawned anchor.
+    The close is gated on the re-anchor having actually taken effect — closing
+    the anchor dissolves the whole group, so an unverified close would silently
+    undo the grouping it was meant to finish.
+
+    Returns the group as it stands after the dance, or None if anything failed.
+    """
+    if len(refs) < 2:
+        return None  # cmux drops a group the moment it has one member left
+    # cmux prepends each `--from` entry, so pass them leaf-first to land the
+    # stack root at the top of the fold.
+    created = cmux(
+        "workspace-group",
+        "create",
+        "--name",
+        name,
+        "--from",
+        ",".join(reversed(refs)),
+        "--json",
+        check=False,
+    )
+    try:
+        group = _group_from_json(json.loads(created or "{}").get("group") or {})
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    if group is None:
+        return None
+    spawned_anchor = group.anchor
+    if spawned_anchor == refs[0]:  # cmux stopped spawning one — nothing to undo
+        _set_group_icon(group.ref, icon)
+        return group
+    cmux(
+        "workspace-group",
+        "set-anchor",
+        "--group",
+        group.ref,
+        "--workspace",
+        refs[0],
+        check=False,
+    )
+    current = next((g for g in list_workspace_groups() if g.ref == group.ref), None)
+    if current is None or current.anchor != refs[0]:
+        return None  # re-anchor failed; leave the spawned anchor rather than
+        # close it and take the group down with it
+    cmux_close_workspace_best_effort(spawned_anchor)
+    _set_group_icon(group.ref, icon)
+    return WorkspaceGroup(
+        ref=current.ref,
+        name=current.name,
+        anchor=current.anchor,
+        members=tuple(r for r in current.members if r != spawned_anchor),
+    )
+
+
+def _set_group_icon(group_ref: str, icon: str) -> None:
+    cmux("workspace-group", "set-icon", group_ref, "--symbol", icon, check=False)
+
+
+def add_to_workspace_group(group_ref: str, ref: str) -> None:
+    cmux(
+        "workspace-group", "add", "--group", group_ref, "--workspace", ref, check=False
+    )
+
+
+def remove_from_workspace_group(ref: str) -> None:
+    cmux("workspace-group", "remove", "--workspace", ref, check=False)
+
+
+def rename_workspace_group(group_ref: str, name: str) -> None:
+    cmux("workspace-group", "rename", group_ref, "--name", name, check=False)
+
+
+def ungroup_workspaces(group_ref: str) -> None:
+    """Dissolve the group, keeping every member workspace open."""
+    cmux("workspace-group", "ungroup", group_ref, check=False)
+
+
 def _resolve_binary(verb: str) -> str | None:
     """Pick a workspace-CLI binary for `verb`. Pills require cmux; everything
     else accepts cmux or its limux fork. Honours cfg['tool'].
@@ -182,8 +317,8 @@ def _resolve_binary(verb: str) -> str | None:
     backend = tool.resolve_tool()
     if backend == "none":
         return None
-    if verb in _PILL_VERBS and backend != "cmux":
-        return None  # limux can't do pills
+    if verb in _CMUX_ONLY_VERBS and backend != "cmux":
+        return None  # limux has no pills / workspace-action / workspace-group
     return backend if shutil.which(backend) else None
 
 
@@ -215,8 +350,8 @@ def cmux(*args: str, check: bool = True) -> str:
         if check:
             backend = tool.resolve_tool()
             hint = (
-                " (pills require cmux; current tool is limux)"
-                if verb in _PILL_VERBS and backend == "limux"
+                " (requires cmux; current tool is limux)"
+                if verb in _CMUX_ONLY_VERBS and backend == "limux"
                 else f" (current tool: {backend})"
             )
             raise FileNotFoundError(f"cockpit: '{verb}' unavailable{hint}")

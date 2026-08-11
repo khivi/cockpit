@@ -245,6 +245,9 @@ Key gates (all from `cycle.py`):
     spawn/close (best-effort, `check=False`) but not pills — limux has both verbs.
   - **cmux-only** (`not ctx.headless` ⇔ `is_cmux`): pills
     (`_refresh_tracked_pills`, orphan/wip/stale), colors (`_apply_repo_colors`),
+    stacked-PR sidebar folds (`_reconcile_stack_groups` — derived from `PR.base`
+    via `stacks.find_stacks`, reconciled against cmux's live `workspace-group
+    list`, never stored),
     `_dedupe_workspaces` (scoped to workspaces whose cwd resolves under this
     repo's worktrees — a foreign repo's same-named workspace is never grouped or
     closed; sorts by the PID in cmux `workspace:<pid>` refs — limux refs are

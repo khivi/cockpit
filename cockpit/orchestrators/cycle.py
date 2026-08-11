@@ -41,6 +41,8 @@ from cockpit.lib.cmux import (
     ORPHAN_ICON,
     ORPHAN_KEY,
     CmuxUnavailable,
+    WorkspaceGroup,
+    add_to_workspace_group,
     apply_devdone_pill,
     apply_pills,
     apply_stale_pill,
@@ -49,15 +51,20 @@ from cockpit.lib.cmux import (
     close_gone_cwd_workspaces,
     cmux,
     cmux_close_workspace_best_effort,
+    create_workspace_group,
     deliver_followup,
     find_cockpit_workspaces,
+    list_workspace_groups,
     nudge_if_idle,
+    remove_from_workspace_group,
+    rename_workspace_group,
     rename_workspace_if_needed,
     set_workspace_color,
     spawn_orphan_workspace,
     spawn_pr_workspace,
     spawn_workspace,
     status_pills,
+    ungroup_workspaces,
     workspace_is_idle,
     workspace_names,
     workspace_state,
@@ -148,6 +155,7 @@ from cockpit.lib.nudges import NudgePref
 from cockpit.lib.nudges import load_pref as _load_nudge_pref
 from cockpit.lib.pills import ci_glyph
 from cockpit.lib.prompts import claude_command, shell_quote, split_prompt_prefix
+from cockpit.lib.stacks import find_stacks
 from cockpit.lib.tickets import TicketProvider, provider_for
 from cockpit.lib.tool import has_workspace_backend, is_cmux
 from cockpit.lib.trello import (
@@ -2136,6 +2144,97 @@ def _apply_repo_colors(ctx: RepoCycle, repo_entry: dict, keep_refs: set[str]) ->
         ctx.pill_state[f"color:{ref}"] = color
 
 
+def _stack_group_name(root: Worktree, size: int) -> str:
+    """Sidebar header for a stack: the root PR's workspace label + its depth.
+
+    The label alone would read exactly like the root's own workspace row (the
+    anchor's row *is* the group header), so the count is what marks the row as
+    a fold rather than a workspace.
+    """
+    return f"{root.label} ({size})"
+
+
+def _reconcile_stack_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
+    """Fold each stacked-PR chain into one collapsible cmux sidebar group.
+
+    A stack is derived, not stored (`lib.stacks.find_stacks` off `PR.base`), so
+    this reconciles against cmux's live groups every slow tick rather than
+    keeping a `pill_state` mirror: `workspace-group list` is the authority, and
+    a group whose members left the stack (root merged, worktree torn down) is
+    dissolved back into loose rows.
+
+    Only groups overlapping *this* repo's workspaces are touched — a group the
+    user made by hand around unrelated workspaces is never claimed or dissolved.
+    cmux-only and best-effort throughout (every verb is `check=False`); a
+    missing backend just means no groups.
+    """
+    if ctx.dry:
+        return
+    owned = set(_repo_owned_refs(ctx, keep_refs))
+    if not owned:
+        return
+    tracked = {
+        pr.branch: (ref, wt)
+        for ref, (pr, wt) in ctx.tracked.items()
+        if ref in owned and pr.branch
+    }
+
+    desired: list[tuple[str, list[str]]] = []
+    for chain in find_stacks(ctx.prs):
+        members = [tracked[pr.branch] for pr in chain if pr.branch in tracked]
+        if len(members) < 2:
+            continue  # a stack with fewer than two local workspaces isn't a fold
+        refs = [ref for ref, _ in members]
+        desired.append((_stack_group_name(members[0][1], len(refs)), refs))
+
+    groups = [g for g in list_workspace_groups() if owned & set(g.members)]
+    matched: set[str] = set()
+    for name, refs in desired:
+        group = _match_stack_group(groups, refs, matched)
+        if group is None:
+            if create_workspace_group(name, refs) is not None:
+                print(
+                    f"  {verb('stacked')} {cyan(name)} {dim(' → '.join(refs))}",
+                    flush=True,
+                )
+            continue
+        matched.add(group.ref)
+        if group.name != name:
+            rename_workspace_group(group.ref, name)
+        for ref in refs:
+            if ref not in group.members:
+                add_to_workspace_group(group.ref, ref)
+        for ref in group.members:
+            # Only drop refs this repo owns — a hand-added foreign workspace in
+            # the group is the user's business, not a stale stack member.
+            if ref in owned and ref not in refs:
+                remove_from_workspace_group(ref)
+    for group in groups:
+        if group.ref not in matched:
+            ungroup_workspaces(group.ref)
+            print(f"  {verb('unstacked')} {cyan(group.name)}", flush=True)
+
+
+def _match_stack_group(
+    groups: list[WorkspaceGroup], refs: list[str], matched: set[str]
+) -> WorkspaceGroup | None:
+    """The existing group that already holds this stack, if any.
+
+    Matched by membership rather than name: names are cosmetic (and collide
+    across repos), while a workspace ref identifies exactly one row. The root's
+    group wins; otherwise any group sharing a member, so a stack that grew or
+    lost its root is updated in place instead of duplicated.
+    """
+    for candidate in (
+        (g for g in groups if refs[0] in g.members),
+        (g for g in groups if set(refs) & set(g.members)),
+    ):
+        group = next((g for g in candidate if g.ref not in matched), None)
+        if group is not None:
+            return group
+    return None
+
+
 def _reconcile_worktree_lifecycle(ctx: RepoCycle, *, dry: bool) -> None:
     """Backend-agnostic worktree teardown: reap merged-clean worktrees + stale
     local branch refs. Runs on every backend — git + a best-effort workspace
@@ -2191,6 +2290,7 @@ def cycle_repo(
             _print_tracked_summary(ctx, mine_items, others_items)
         _handle_orphans_and_close_stale(ctx, keep_refs)
         _apply_repo_colors(ctx, repo_entry, keep_refs)
+        _reconcile_stack_groups(ctx, keep_refs)
     if workspaces_ready:
         _spawn_missing_workspaces(ctx, repo_entry)
     _transition_merged_tickets(ctx)
