@@ -3,7 +3,12 @@ name: release
 # On a pushed `v<version>` tag: verify it matches pyproject.toml, then bump the
 # Homebrew tap (khivi/homebrew-cockpit) formula's `url` + `sha256` to this tag
 # so `brew upgrade cockpit` picks it up. The action downloads the tag tarball,
-# computes its sha256, and opens a PR against the tap repo.
+# computes its sha256, and commits the bump directly onto the tap's default
+# branch (it has push access via the PAT below — no PR to merge by hand).
+#
+# The tag must be pushed on the *merged* main commit carrying the version bump:
+# the verify step below re-reads pyproject.toml at the tag and fails on a
+# mismatch. See AGENTS.md "Release versioning".
 #
 # The Python `resource` blocks (Textual + its deps) change only on a dependency
 # bump, NOT every release — this CI leaves them untouched. Regenerate them by
