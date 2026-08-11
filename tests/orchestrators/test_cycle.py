@@ -4343,8 +4343,9 @@ def test_reconcile_sidebar_groups_folds_coworker_prs_into_reviews(tmp_path):
     move.assert_called_once_with("wg:1")
 
 
-def test_reconcile_sidebar_groups_skips_a_lone_review(tmp_path):
-    # cmux drops a one-member group, so a single review stays a loose row.
+def test_reconcile_sidebar_groups_parks_a_lone_review_without_grouping(tmp_path):
+    # cmux drops a one-member group, so a single review stays a loose row — but
+    # still gets parked at the bottom.
     ctx = _stack_ctx(
         tmp_path,
         [("workspace:1", "khivi/a", "main"), ("workspace:2", "them/b", "main")],
@@ -4353,10 +4354,40 @@ def test_reconcile_sidebar_groups_skips_a_lone_review(tmp_path):
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(cycle, "create_workspace_group") as create,
+        patch.object(cycle, "move_workspace_to_end") as move_ws,
     ):
         cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
     create.assert_not_called()
+    move_ws.assert_called_once_with("workspace:2")
+
+
+def test_reconcile_sidebar_groups_parks_a_lone_review_after_ungrouping(tmp_path):
+    # The fold shrank to one member: dissolve it, then park the survivor's own
+    # row (parking a still-grouped workspace would move the group instead).
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "them/b", "main")],
+        coworkers=("workspace:2",),
+    )
+    existing = _group(
+        "wg:1", "reviews (2)", "workspace:2", ["workspace:2", "workspace:9"]
+    )
+    calls: list[str] = []
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "create_workspace_group") as create,
+        patch.object(
+            cycle, "ungroup_workspaces", side_effect=lambda _r: calls.append("ungroup")
+        ),
+        patch.object(
+            cycle, "move_workspace_to_end", side_effect=lambda _r: calls.append("move")
+        ),
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+
+    create.assert_not_called()
+    assert calls == ["ungroup", "move"]
 
 
 def test_reconcile_sidebar_groups_leaves_a_stacked_coworker_pr_in_its_stack(tmp_path):

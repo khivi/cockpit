@@ -29,6 +29,7 @@ from cockpit.lib.cmux import (
     deliver_followup,
     list_workspace_groups,
     move_workspace_group_to_end,
+    move_workspace_to_end,
     nudge_if_idle,
     reconcile_workspace_names,
     remove_from_workspace_group,
@@ -1165,6 +1166,20 @@ def test_move_workspace_group_to_end_clamps_past_the_sidebar():
         "move",
         "workspace_group:1",
         "--to-index",
+        "9999",
+        check=False,
+    )
+
+
+def test_move_workspace_to_end_parks_a_lone_review():
+    with patch("cockpit.lib.cmux.cmux") as cmux_mock:
+        move_workspace_to_end("workspace:2")
+
+    cmux_mock.assert_called_once_with(
+        "reorder-workspace",
+        "--workspace",
+        "workspace:2",
+        "--index",
         "9999",
         check=False,
     )
