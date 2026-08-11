@@ -6,6 +6,7 @@ mapping from `decide_pills` output).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,17 +21,23 @@ from cockpit.lib.cmux import (
     WORKSPACE_COLORS,
     YELLOW,
     CmuxUnavailable,
+    add_to_workspace_group,
     apply_devdone_pill,
     apply_pills,
     cmux_close_workspace_best_effort,
+    create_workspace_group,
     deliver_followup,
+    list_workspace_groups,
     nudge_if_idle,
     reconcile_workspace_names,
+    remove_from_workspace_group,
+    rename_workspace_group,
     rename_workspace_if_needed,
     select_workspace,
     set_workspace_color,
     spawn_workspace,
     status_pills,
+    ungroup_workspaces,
     workspace_cwds,
     workspace_names,
     workspace_state,
@@ -724,7 +731,7 @@ def test_set_workspace_color_builds_workspace_action_argv():
 
 
 def test_set_workspace_color_noops_on_limux():
-    """workspace-action is gated cmux-only (in _PILL_VERBS) — on limux it must
+    """workspace-action is gated cmux-only (in _CMUX_ONLY_VERBS) — on limux it must
     resolve to no binary and never shell out, so limux users silently skip the
     sidebar tint rather than erroring."""
     with (
@@ -1005,3 +1012,157 @@ def test_native_claude_state_parsing():
     assert _native_claude_state([_native_line("Running")]) == "Running"
     assert _native_claude_state(["  claude_code=Idle"]) == "Idle"
     assert _native_claude_state(["idle=1", "ci=✓ ci"]) is None
+
+
+# ── workspace groups (stacked PRs) ───────────────────────────────────────────
+
+
+def _group_json(ref: str, name: str, anchor: str, members: list[str]) -> dict:
+    return {
+        "ref": ref,
+        "name": name,
+        "anchor_workspace_ref": anchor,
+        "member_workspace_refs": members,
+        "custom_color": None,
+        "icon_symbol": None,
+        "is_collapsed": False,
+        "is_pinned": False,
+        "member_count": len(members),
+    }
+
+
+def test_list_workspace_groups_parses_cmux_json():
+    payload = json.dumps(
+        {
+            "groups": [
+                _group_json("workspace_group:1", "auth (2)", "w:1", ["w:1", "w:2"])
+            ],
+            "window_ref": "window:1",
+        }
+    )
+
+    with patch("cockpit.lib.cmux.cmux", return_value=payload):
+        groups = list_workspace_groups()
+
+    assert len(groups) == 1
+    assert groups[0].ref == "workspace_group:1"
+    assert groups[0].name == "auth (2)"
+    assert groups[0].anchor == "w:1"
+    assert groups[0].members == ("w:1", "w:2")
+
+
+def test_list_workspace_groups_survives_garbage():
+    # Grouping is additive — a broken read means "reconcile nothing", never a
+    # traceback into the tick.
+    with patch("cockpit.lib.cmux.cmux", return_value="not json"):
+        assert list_workspace_groups() == []
+
+
+class _FakeCmux:
+    """Stand-in for the cmux CLI covering the create-group dance.
+
+    `cmux workspace-group create` always spawns a fresh workspace to own the
+    group, so the fake mirrors that: the created group is anchored on a
+    workspace the caller never asked for.
+    """
+
+    def __init__(self, *, reanchor_works: bool = True):
+        self.calls: list[tuple] = []
+        self.reanchor_works = reanchor_works
+        self.anchor = "workspace:99"  # the spawned anchor
+        self.members = ["workspace:99", "workspace:2", "workspace:1"]
+
+    def __call__(self, *args, **_kwargs):
+        self.calls.append(args)
+        if args[:2] == ("workspace-group", "create"):
+            return json.dumps(
+                {
+                    "group": _group_json(
+                        "workspace_group:5", "auth (2)", self.anchor, self.members
+                    )
+                }
+            )
+        if args[:2] == ("workspace-group", "set-anchor"):
+            if self.reanchor_works:
+                self.anchor = "workspace:1"
+            return "{}"
+        if args[:2] == ("workspace-group", "list"):
+            return json.dumps(
+                {
+                    "groups": [
+                        _group_json(
+                            "workspace_group:5", "auth (2)", self.anchor, self.members
+                        )
+                    ]
+                }
+            )
+        if args[0] == "close-workspace":
+            self.members = [m for m in self.members if m != args[2]]
+        return ""
+
+    def verbs(self) -> list[tuple]:
+        return [a[:2] for a in self.calls if a[0] == "workspace-group"]
+
+
+def test_create_workspace_group_reanchors_then_closes_the_spawned_anchor():
+    fake = _FakeCmux()
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake):
+        group = create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
+
+    assert group is not None
+    assert group.anchor == "workspace:1"  # the stack root owns the group header
+    assert "workspace:99" not in group.members  # spawned anchor is gone
+    assert fake.verbs() == [
+        ("workspace-group", "create"),
+        ("workspace-group", "set-anchor"),
+        ("workspace-group", "list"),
+        ("workspace-group", "set-icon"),
+    ]
+    closed = [a for a in fake.calls if a[0] == "close-workspace"]
+    assert closed == [("close-workspace", "--workspace", "workspace:99")]
+
+
+def test_create_workspace_group_passes_refs_leaf_first():
+    # cmux prepends each --from entry, so the root has to go last to land on top.
+    fake = _FakeCmux()
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake):
+        create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
+
+    create = next(a for a in fake.calls if a[:2] == ("workspace-group", "create"))
+    assert "workspace:2,workspace:1" in create
+
+
+def test_create_workspace_group_keeps_spawned_anchor_when_reanchor_fails():
+    # Closing the anchor dissolves the group, so an unverified close would undo
+    # the very grouping it was meant to finish.
+    fake = _FakeCmux(reanchor_works=False)
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake):
+        group = create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
+
+    assert group is None
+    assert [a for a in fake.calls if a[0] == "close-workspace"] == []
+
+
+def test_create_workspace_group_refuses_a_single_member():
+    with patch("cockpit.lib.cmux.cmux") as cmux_mock:
+        assert create_workspace_group("auth (1)", ["workspace:1"]) is None
+
+    cmux_mock.assert_not_called()
+
+
+def test_group_verbs_noop_on_limux():
+    # workspace-group is cmux-only; limux users silently skip stack folding.
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="limux"),
+        patch("cockpit.lib.cmux.run") as run_mock,
+    ):
+        assert list_workspace_groups() == []
+        add_to_workspace_group("workspace_group:1", "workspace:2")
+        remove_from_workspace_group("workspace:2")
+        rename_workspace_group("workspace_group:1", "auth (2)")
+        ungroup_workspaces("workspace_group:1")
+
+    run_mock.assert_not_called()

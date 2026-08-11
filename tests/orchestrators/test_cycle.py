@@ -4090,3 +4090,191 @@ def test_github_transition_noop_when_dry(tmp_path):
     ):
         cycle._transition_merged_tickets(ctx)
     close.assert_not_called()
+
+
+# ── stacked-PR sidebar groups ────────────────────────────────────────────────
+
+
+def _stack_pr(number: int, branch: str, base: str, *, state: str = "OPEN") -> PR:
+    return PR(
+        number=number,
+        title=f"pr {number}",
+        branch=branch,
+        url="",
+        author="khivi",
+        is_draft=False,
+        review_decision="",
+        mergeable="MERGEABLE",
+        ci="passed",
+        unaddressed=0,
+        total_from_others=0,
+        state=state,
+        base=base,
+    )
+
+
+def _stack_ctx(tmp_path, chain, *, dry=False, extra_prs=()):
+    """RepoCycle with one tracked workspace per (ref, branch, base) in `chain`."""
+    repo = tmp_path / "repo"
+    wts, prs, tracked, cwds = [], [], {}, {}
+    for i, (ref, branch, base) in enumerate(chain, start=1):
+        wt = Worktree(path=repo / f"wt-{i}", branch=branch)
+        pr = _stack_pr(i, branch, base)
+        wts.append(wt)
+        prs.append(pr)
+        tracked[ref] = (pr, wt)
+        cwds[ref] = wt.path
+    ctx = _color_ctx(tmp_path, repo_path=repo, wts=wts, cwds=cwds, dry=dry)
+    ctx.prs = [*prs, *extra_prs]
+    ctx.tracked = tracked
+    return ctx
+
+
+def _group(ref, name, anchor, members):
+    from cockpit.lib.cmux import WorkspaceGroup
+
+    return WorkspaceGroup(ref=ref, name=name, anchor=anchor, members=tuple(members))
+
+
+def test_reconcile_stack_groups_creates_a_group_root_first(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group") as create,
+    ):
+        cycle._reconcile_stack_groups(ctx, {"workspace:1", "workspace:2"})
+
+    root_label = ctx.tracked["workspace:1"][1].label
+    create.assert_called_once_with(f"{root_label} (2)", ["workspace:1", "workspace:2"])
+
+
+def test_reconcile_stack_groups_ignores_unstacked_prs(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "main")],
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group") as create,
+    ):
+        cycle._reconcile_stack_groups(ctx, {"workspace:1", "workspace:2"})
+
+    create.assert_not_called()
+
+
+def test_reconcile_stack_groups_skips_stack_without_two_workspaces(tmp_path):
+    # #2 is stacked on #1 but has no local worktree — nothing to fold together.
+    ctx = _stack_ctx(tmp_path, [("workspace:1", "khivi/a", "main")])
+    ctx.prs.append(_stack_pr(2, "khivi/b", "khivi/a"))
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group") as create,
+    ):
+        cycle._reconcile_stack_groups(ctx, {"workspace:1"})
+
+    create.assert_not_called()
+
+
+def test_reconcile_stack_groups_adds_new_member_to_existing_group(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [
+            ("workspace:1", "khivi/a", "main"),
+            ("workspace:2", "khivi/b", "khivi/a"),
+            ("workspace:3", "khivi/c", "khivi/b"),
+        ],
+    )
+    existing = _group("wg:1", "old", "workspace:1", ["workspace:1", "workspace:2"])
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "create_workspace_group") as create,
+        patch.object(cycle, "add_to_workspace_group") as add,
+        patch.object(cycle, "rename_workspace_group") as rename,
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+    ):
+        cycle._reconcile_stack_groups(
+            ctx, {"workspace:1", "workspace:2", "workspace:3"}
+        )
+
+    create.assert_not_called()
+    ungroup.assert_not_called()
+    add.assert_called_once_with("wg:1", "workspace:3")
+    rename.assert_called_once()  # "old" → "<label> (3)"
+
+
+def test_reconcile_stack_groups_removes_departed_member(tmp_path):
+    # #3 was re-based off the stack onto the trunk — it leaves the fold, while
+    # the group itself survives for the two PRs still stacked.
+    ctx = _stack_ctx(
+        tmp_path,
+        [
+            ("workspace:1", "khivi/a", "main"),
+            ("workspace:2", "khivi/b", "khivi/a"),
+            ("workspace:3", "khivi/c", "main"),
+        ],
+    )
+    existing = _group(
+        "wg:1",
+        "x",
+        "workspace:1",
+        ["workspace:1", "workspace:2", "workspace:3"],
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "remove_from_workspace_group") as remove,
+    ):
+        cycle._reconcile_stack_groups(
+            ctx, {"workspace:1", "workspace:2", "workspace:3"}
+        )
+
+    remove.assert_called_once_with("workspace:3")
+
+
+def test_reconcile_stack_groups_dissolves_a_group_whose_stack_is_gone(tmp_path):
+    # The root merged, so the survivors are no longer stacked on anything.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "main")],
+    )
+    existing = _group("wg:1", "x", "workspace:1", ["workspace:1", "workspace:2"])
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+    ):
+        cycle._reconcile_stack_groups(ctx, {"workspace:1", "workspace:2"})
+
+    ungroup.assert_called_once_with("wg:1")
+
+
+def test_reconcile_stack_groups_leaves_foreign_groups_alone(tmp_path):
+    # A group the user built by hand around unrelated workspaces is not ours to
+    # rename, re-member, or dissolve.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "main")],
+    )
+    foreign = _group("wg:9", "mine", "workspace:8", ["workspace:8", "workspace:7"])
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[foreign]),
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+        patch.object(cycle, "remove_from_workspace_group") as remove,
+    ):
+        cycle._reconcile_stack_groups(ctx, {"workspace:1", "workspace:2"})
+
+    ungroup.assert_not_called()
+    remove.assert_not_called()
+
+
+def test_reconcile_stack_groups_dry_noops(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
+        dry=True,
+    )
+    with patch.object(cycle, "list_workspace_groups") as lst:
+        cycle._reconcile_stack_groups(ctx, {"workspace:1", "workspace:2"})
+
+    lst.assert_not_called()
