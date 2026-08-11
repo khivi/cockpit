@@ -194,8 +194,10 @@ class WorkspaceGroup:
     """A cmux sidebar group: a collapsible fold over member workspaces.
 
     `ref` is a `workspace_group:N` handle (window-scoped, like `workspace:N`).
-    `anchor` is the member whose sidebar row *is* the group header — closing it
-    dissolves the group, so cockpit always anchors a stack on its root PR.
+    `anchor` is the member whose sidebar row *is* the group header — so cockpit
+    leaves the group on the throwaway workspace cmux spawns for it, keeping
+    every stack member visible as its own row below (see
+    `create_workspace_group`).
     """
 
     ref: str
@@ -232,17 +234,21 @@ def list_workspace_groups() -> list[WorkspaceGroup]:
 def create_workspace_group(
     name: str, refs: list[str], *, icon: str = STACK_GROUP_ICON
 ) -> WorkspaceGroup | None:
-    """Fold `refs` into one sidebar group named `name`, anchored on `refs[0]`.
+    """Fold `refs` into one sidebar group named `name`, headed by its own row.
 
     `cmux workspace-group create` always spawns a *fresh* workspace to own the
-    group (the anchor's row is the group header), so this does the three-step
-    dance the CLI has no single verb for: create with the members captured,
-    re-anchor onto `refs[0]` (the stack root), then close the spawned anchor.
-    The close is gated on the re-anchor having actually taken effect — closing
-    the anchor dissolves the whole group, so an unverified close would silently
-    undo the grouping it was meant to finish.
+    group, and the anchor's sidebar row **is** the group header. Anchoring the
+    group on a stack member would therefore swallow that member's row — a
+    four-PR stack rendering three rows under a header that says four. So the
+    spawned anchor is kept as a dedicated header instead: the fold reads
+    `<root> (N)` with all N members listed below it.
 
-    Returns the group as it stands after the dance, or None if anything failed.
+    The anchor is spawned in `$HOME`, outside every registered repo, so
+    `_reap_workspace_orphans` (which only owns workspaces whose cwd sits under
+    a repo) never reaps it out from under the group. It is cockpit's to close
+    when the stack dissolves — see `_reconcile_sidebar_groups`.
+
+    Returns the created group, or None if anything failed.
     """
     if len(refs) < 2:
         return None  # cmux drops a group the moment it has one member left
@@ -253,6 +259,8 @@ def create_workspace_group(
         "create",
         "--name",
         name,
+        "--cwd",
+        str(Path.home()),
         "--from",
         ",".join(reversed(refs)),
         "--json",
@@ -264,31 +272,8 @@ def create_workspace_group(
         return None
     if group is None:
         return None
-    spawned_anchor = group.anchor
-    if spawned_anchor == refs[0]:  # cmux stopped spawning one — nothing to undo
-        _set_group_icon(group.ref, icon)
-        return group
-    cmux(
-        "workspace-group",
-        "set-anchor",
-        "--group",
-        group.ref,
-        "--workspace",
-        refs[0],
-        check=False,
-    )
-    current = next((g for g in list_workspace_groups() if g.ref == group.ref), None)
-    if current is None or current.anchor != refs[0]:
-        return None  # re-anchor failed; leave the spawned anchor rather than
-        # close it and take the group down with it
-    cmux_close_workspace_best_effort(spawned_anchor)
     _set_group_icon(group.ref, icon)
-    return WorkspaceGroup(
-        ref=current.ref,
-        name=current.name,
-        anchor=current.anchor,
-        members=tuple(r for r in current.members if r != spawned_anchor),
-    )
+    return group
 
 
 def _set_group_icon(group_ref: str, icon: str) -> None:

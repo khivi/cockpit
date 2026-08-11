@@ -12,7 +12,10 @@ tinted with the repo's `sidebar_color`), so same-named worktrees (every repo's
 `repo/label` prefix needed. The worktree rows below each header keep the same
 `sidebar_color` tint on their label (matching the cmux sidebar). Header rows
 carry no workspace, so `current_path()` returns None on them and every row
-action no-ops there. The Author column (just before Title, since it's rarely
+action no-ops there. Within a repo, a worktree whose PR is *stacked* on another
+worktree's PR sorts directly under it and indents behind a `└` (`_stack_rows`,
+off the daemon-written `pr-base` cell) — the table's own rendering of the same
+chain the cmux sidebar folds into a group. The Author column (just before Title, since it's rarely
 populated) shows the PR author's login prefixed with `@`, populated by the daemon
 only for other-authored PRs (coworker / review PRs) and blank for my own. The
 Dirty column (headed with the
@@ -68,6 +71,7 @@ from cockpit.lib.cmux import DEVDONE_ICON
 from cockpit.lib.colors import CMUX_COLOR_ANSI
 from cockpit.lib.constants import MAIN_BRANCHES
 from cockpit.lib.git import Worktree
+from cockpit.lib.stacks import stack_order
 from cockpit.lib.starship import (
     _PR_STATE_ICON,
     ICON_PR_MUTED,
@@ -213,6 +217,23 @@ def _display_label(wt: Worktree) -> str:
     return wt.label or wt.short
 
 
+def _stack_rows(wts: list[Worktree]) -> list[tuple[Worktree, int]]:
+    """One repo's worktrees in render order, each with its stacked-PR depth.
+
+    A stacked PR is one whose base branch is another PR's head, so the chain is
+    read straight off the daemon-written `pr-base` cells — no network, nothing
+    stored, the same derivation `lib.stacks.find_stacks` runs on the daemon
+    side for the cmux sidebar fold. Members sort contiguously under their root;
+    every other worktree keeps its `git worktree list` order at depth 0."""
+    return [
+        (wts[i], depth)
+        for i, depth in stack_order(
+            [wt.branch for wt in wts],
+            lambda branch: read_text(branch_cache("pr-base", branch)),
+        )
+    ]
+
+
 def _header_cells(
     repo_name: str, repo_color: str | None, ncols: int, *, hidden: bool = False
 ) -> list[Text]:
@@ -260,12 +281,17 @@ def _workspace_cell(
     *,
     muted: bool,
     nudge: bool,
+    depth: int = 0,
 ) -> Text:
     """The workspace name, tinted with the repo's cmux colour when set and
     prefixed with a status glyph: 🔇 when the PR's nudges are muted, else 🔔 when
     the PR has an actionable, unmuted nudge condition (failing CI / unresolved
     threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute wins: a muted
     PR fires no nudge, so it shows 🔇, never 🔔. No glyph when neither holds.
+
+    `depth` is the row's position in a stacked-PR chain (0 = not stacked, or the
+    stack's root): each level indents the label one step behind a `└` so a stack
+    reads as a tree instead of as unrelated sibling rows.
 
     Same-named worktrees across repos are disambiguated by their group-header
     row, not a `repo/` prefix, so the label renders bare."""
@@ -277,9 +303,11 @@ def _workspace_cell(
     else:
         cell = Text(label, style="bold")
     if muted:
-        return Text.assemble((f"{ICON_PR_MUTED} ", "yellow"), cell)
-    if nudge:
-        return Text.assemble((f"{ICON_PR_NUDGE} ", "yellow"), cell)
+        cell = Text.assemble((f"{ICON_PR_MUTED} ", "yellow"), cell)
+    elif nudge:
+        cell = Text.assemble((f"{ICON_PR_NUDGE} ", "yellow"), cell)
+    if depth:
+        cell = Text.assemble(("  " * (depth - 1) + "└ ", "dim"), cell)
     return cell
 
 
@@ -412,12 +440,16 @@ def worktree_cells(
     tickets_provider: str,
     *,
     show_tickets: bool,
+    depth: int = 0,
 ) -> list[Text]:
     """Build one row's cells (Rich Text, so colours survive), in `column_labels`
     order: PR, Dirty, then the rest of the GitHub cluster (state / CI / comments),
     then the ticket cluster (Ticket / Status) when `show_tickets` (blank for a row
     whose repo has no ticket provider, `tickets_provider == "none"`), then Author
-    and Title."""
+    and Title.
+
+    `depth` indents the Workspace cell when the row is stacked on another PR
+    (see `_stack_rows`)."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
@@ -439,6 +471,7 @@ def worktree_cells(
             repo_color,
             muted=bool(cell("pr-muted")),
             nudge=bool(cell("pr-nudge")),
+            depth=depth,
         ),
         Text(f"#{num}") if num else Text(""),
         _dirty_cell(wt),
@@ -781,7 +814,7 @@ class WorktreeTable(DataTable):
             )
             self._row_caps[hkey] = frozenset({HEADER_CAP})
             self._row_repo[hkey] = repo_name
-            for wt in wts:
+            for wt, depth in _stack_rows(wts):
                 self.add_row(
                     *worktree_cells(
                         wt,
@@ -789,6 +822,7 @@ class WorktreeTable(DataTable):
                         repo_color,
                         tickets_provider,
                         show_tickets=self._show_tickets,
+                        depth=depth,
                     ),
                     key=str(wt.path),
                 )

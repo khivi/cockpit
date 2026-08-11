@@ -37,6 +37,7 @@ from cockpit.tui.widgets.worktree_table import (
     _comments_cell,
     _header_cells,
     _linear_status_icon,
+    _stack_rows,
     column_labels,
     row_capabilities,
     row_tooltips,
@@ -680,3 +681,49 @@ async def test_update_inventory_keys_cache_by_nwo_not_label(cache_dir, monkeypat
         ticket = row[_col("Ticket", show_tickets=True)]
         assert ticket.plain == "PE-7"  # Ticket cell (ticket cluster), keyed by nwo
     assert "beta" in seen and "Envesya" not in seen
+
+
+# ── stacked-PR indentation (rows derived off the `pr-base` cells) ───────────
+
+
+def test_stacked_row_is_indented_under_its_base(cache_dir):
+    root = _wt(path="/tmp/root", branch="khivi/a")
+    child = _wt(path="/tmp/child", branch="khivi/b")
+    cache_mod.branch_cache("pr-base", child.branch).write_text(root.branch)
+    rows = _stack_rows([root, child])
+    assert [(wt.path, depth) for wt, depth in rows] == [(root.path, 0), (child.path, 1)]
+    assert worktree_cells(child, "r", None, "none", show_tickets=False, depth=1)[
+        0
+    ].plain.startswith("└ ")
+
+
+def test_unstacked_row_has_no_indent(cache_dir):
+    wt = _wt(path="/tmp/solo", branch="khivi/solo")
+    assert _stack_rows([wt]) == [(wt, 0)]
+    assert not _plain(wt)[0].startswith("└")
+
+
+def test_indent_precedes_the_nudge_glyph(cache_dir):
+    # The tree spine has to stay leftmost or the indent column ragged-edges on
+    # whichever rows happen to carry a bell.
+    wt = _wt(path="/tmp/bell", branch="khivi/b")
+    cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False, depth=1)[0].plain
+    assert cell.startswith(f"└ {ICON_PR_NUDGE}")
+
+
+@pytest.mark.asyncio
+async def test_update_inventory_renders_a_stack_root_first(cache_dir):
+    # git lists worktrees alphabetically-ish; the child must still land under
+    # its root rather than in git's order.
+    root = _wt(path="/tmp/stack-root", branch="khivi/root")
+    child = _wt(path="/tmp/stack-child", branch="khivi/child")
+    cache_mod.branch_cache("pr-base", child.branch).write_text(root.branch)
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [child, root])])
+        await pilot.pause()
+        # Row 0 is the repo group header.
+        assert table.get_row_at(1)[0].plain == "khivi-root"
+        assert table.get_row_at(2)[0].plain == "└ khivi-child"

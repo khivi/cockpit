@@ -1060,16 +1060,15 @@ def test_list_workspace_groups_survives_garbage():
 
 
 class _FakeCmux:
-    """Stand-in for the cmux CLI covering the create-group dance.
+    """Stand-in for the cmux CLI covering group creation.
 
     `cmux workspace-group create` always spawns a fresh workspace to own the
     group, so the fake mirrors that: the created group is anchored on a
     workspace the caller never asked for.
     """
 
-    def __init__(self, *, reanchor_works: bool = True):
+    def __init__(self):
         self.calls: list[tuple] = []
-        self.reanchor_works = reanchor_works
         self.anchor = "workspace:99"  # the spawned anchor
         self.members = ["workspace:99", "workspace:2", "workspace:1"]
 
@@ -1083,10 +1082,6 @@ class _FakeCmux:
                     )
                 }
             )
-        if args[:2] == ("workspace-group", "set-anchor"):
-            if self.reanchor_works:
-                self.anchor = "workspace:1"
-            return "{}"
         if args[:2] == ("workspace-group", "list"):
             return json.dumps(
                 {
@@ -1105,23 +1100,35 @@ class _FakeCmux:
         return [a[:2] for a in self.calls if a[0] == "workspace-group"]
 
 
-def test_create_workspace_group_reanchors_then_closes_the_spawned_anchor():
+def test_create_workspace_group_keeps_the_spawned_anchor_as_the_header():
+    # The anchor's row IS the group header, so anchoring on a stack member
+    # would swallow that member's row — a 2-PR stack showing one row under a
+    # header that says (2). The spawned anchor stays as a dedicated header.
     fake = _FakeCmux()
 
     with patch("cockpit.lib.cmux.cmux", side_effect=fake):
         group = create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
 
     assert group is not None
-    assert group.anchor == "workspace:1"  # the stack root owns the group header
-    assert "workspace:99" not in group.members  # spawned anchor is gone
+    assert group.anchor == "workspace:99"
+    assert {"workspace:1", "workspace:2"} <= set(group.members)
     assert fake.verbs() == [
         ("workspace-group", "create"),
-        ("workspace-group", "set-anchor"),
-        ("workspace-group", "list"),
         ("workspace-group", "set-icon"),
     ]
-    closed = [a for a in fake.calls if a[0] == "close-workspace"]
-    assert closed == [("close-workspace", "--workspace", "workspace:99")]
+    assert [a for a in fake.calls if a[0] == "close-workspace"] == []
+
+
+def test_create_workspace_group_spawns_the_anchor_outside_every_repo():
+    # An anchor sitting inside a registered repo would be reaped as an orphan
+    # workspace (`_reap_workspace_orphans`), taking the group down with it.
+    fake = _FakeCmux()
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake):
+        create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
+
+    create = next(a for a in fake.calls if a[:2] == ("workspace-group", "create"))
+    assert create[create.index("--cwd") + 1] == str(Path.home())
 
 
 def test_create_workspace_group_passes_refs_leaf_first():
@@ -1135,16 +1142,11 @@ def test_create_workspace_group_passes_refs_leaf_first():
     assert "workspace:2,workspace:1" in create
 
 
-def test_create_workspace_group_keeps_spawned_anchor_when_reanchor_fails():
-    # Closing the anchor dissolves the group, so an unverified close would undo
-    # the very grouping it was meant to finish.
-    fake = _FakeCmux(reanchor_works=False)
-
-    with patch("cockpit.lib.cmux.cmux", side_effect=fake):
-        group = create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
-
-    assert group is None
-    assert [a for a in fake.calls if a[0] == "close-workspace"] == []
+def test_create_workspace_group_returns_none_on_malformed_json():
+    with patch("cockpit.lib.cmux.cmux", return_value="not json"):
+        assert (
+            create_workspace_group("auth (2)", ["workspace:1", "workspace:2"]) is None
+        )
 
 
 def test_create_workspace_group_refuses_a_single_member():

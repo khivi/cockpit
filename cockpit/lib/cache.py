@@ -118,6 +118,10 @@ def write_pr_cache(
         "number": pr.number,
         "title": pr.title,
         "branch": pr.branch,
+        # The PR's base branch — the one link a stack is derived from
+        # (`lib.stacks.find_stacks`), persisted so the fast tick's flat-cell
+        # republish can feed the TUI's indentation without a `gh` round-trip.
+        "base": pr.base,
         "state": pr.state,
         "isDraft": pr.is_draft,
         "ci": pr.ci,
@@ -387,8 +391,9 @@ def _write_pr_flat_cells(
     author: str = "",
     nudge: str = "",
     ticket_id: str = "",
+    base: str = "",
 ) -> None:
-    """Write the nine branch-keyed PR flat cells that every PR writer shares.
+    """Write the ten branch-keyed PR flat cells that every PR writer shares.
 
     `state` is already resolved (see `_resolve_state`). The `pr-checks` cell is
     deliberately NOT written here — its three writers disagree on purpose
@@ -415,6 +420,12 @@ def _write_pr_flat_cells(
     that the statusline `pr-ticket` pill renders, resolved off the footer so a
     Trello codename branch works without a branch regex. Always written so a
     re-aligned or removed footer clears the stale value.
+
+    `base` is the PR's base branch (`PR.base`). It is what makes a stack
+    visible to a renderer: the TUI indents a row under the row whose branch
+    equals this cell, the same `PR.base` link `lib.stacks.find_stacks` follows
+    — derived, never stored as a stack id. Always written so a retarget (or a
+    merged parent) re-flattens the row on the next republish.
     """
     atomic_write(branch_cache("pr-state", branch), state)
     atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
@@ -425,6 +436,7 @@ def _write_pr_flat_cells(
     atomic_write(branch_cache("pr-author", branch), str(author or ""))
     atomic_write(branch_cache("pr-nudge", branch), str(nudge or ""))
     atomic_write(branch_cache("pr-ticket", branch), str(ticket_id or ""))
+    atomic_write(branch_cache("pr-base", branch), str(base or ""))
 
 
 def refresh_pr_data(branch: str) -> None:
@@ -456,6 +468,7 @@ def refresh_pr_data(branch: str) -> None:
             author="",
             nudge="",
             ticket_id="",
+            base="",
         )
         return
     _write_pr_flat_cells(
@@ -473,6 +486,7 @@ def refresh_pr_data(branch: str) -> None:
         author=str(data.get("author") or ""),
         nudge=str(data.get("nudge") or ""),
         ticket_id=ticket_pill_id(data.get("ticket")),
+        base=str(data.get("base") or ""),
     )
 
 
@@ -585,6 +599,7 @@ def write_branch_pr_cache(
     author: str = "",
     nudge: str = "",
     ticket_id: str = "",
+    base: str = "",
 ) -> None:
     """Daemon-tick entrypoint: write pre-resolved PR fields straight to the
     flat cache, no `gh` round-trip needed. Caller (cockpit.py::cycle_repo)
@@ -605,6 +620,8 @@ def write_branch_pr_cache(
 
     `nudge` is `PR.nudge_issue` — the actionable issue category ("" when none)
     rendered as the TUI 🔔; always written so the bell clears same-tick.
+
+    `base` is `PR.base` — the stack link the TUI indents rows by.
     """
     if not branch:
         return
@@ -619,6 +636,7 @@ def write_branch_pr_cache(
         author=author,
         nudge=nudge,
         ticket_id=ticket_id,
+        base=base,
     )
     if ci_glyph:
         atomic_write(branch_cache("pr-checks", branch), ci_glyph)
@@ -634,6 +652,7 @@ _BRANCH_PR_CELLS = (
     "pr-author",
     "pr-nudge",
     "pr-ticket",
+    "pr-base",
     "pr-checks",
 )
 
@@ -661,7 +680,7 @@ def republish_pr_caches_from_disk() -> None:
     pattern. Walks `$COCKPIT_HOME/cache/*__pr-*.json` and, for each
     payload's `branch`, re-writes `pr-state`, `pr-num`, `pr-title`,
     `pr-muted`, `pr-comments`, `pr-comments-total`, `pr-author`, `pr-nudge`,
-    `pr-ticket`, `pr-checks`.
+    `pr-ticket`, `pr-base`, `pr-checks`.
     Pure JSON → flat-cell republish,
     no `gh` calls — safe to run on the fast tick.
 
@@ -706,6 +725,7 @@ def republish_pr_caches_from_disk() -> None:
             author=str(payload.get("author") or ""),
             nudge=str(payload.get("nudge") or ""),
             ticket_id=ticket_pill_id(payload.get("ticket")),
+            base=str(payload.get("base") or ""),
         )
         atomic_write(
             branch_cache("pr-checks", branch), _ci_glyph(str(payload.get("ci") or ""))

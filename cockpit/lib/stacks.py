@@ -13,7 +13,7 @@ nothing here is cached or stored.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -69,3 +69,45 @@ def find_stacks(prs: Iterable[PR]) -> list[list[PR]]:
         if len(chain) > 1:
             stacks.append(chain)
     return stacks
+
+
+def stack_order(
+    branches: Sequence[str], base_of: Callable[[str], str]
+) -> list[tuple[int, int]]:
+    """`(index, depth)` for each of `branches`, stacks contiguous and root-first.
+
+    The renderer-side half of `find_stacks`: same `base` link, but read off the
+    daemon-written `pr-base` cell (`base_of`) rather than a live `PR`, so the
+    TUI can indent a stacked row without a network call or a stored stack id.
+    A branch whose base is another branch in `branches` sorts directly under it
+    at one more level of depth; everything else stays a depth-0 row in its
+    original order.
+
+    Indices, not branch names, so two worktrees that report the same branch
+    (detached HEADs both reading "") each keep their own row. A base cycle
+    (only reachable from a stale cell) leaves its members unvisited by the
+    walk, so they are appended flat at the end rather than dropped.
+    """
+    index_of = {b: i for i, b in enumerate(branches) if b}
+    children: dict[int, list[int]] = {}
+    roots: list[int] = []
+    for i, branch in enumerate(branches):
+        parent = index_of.get(base_of(branch)) if branch else None
+        if parent is None or parent == i:
+            roots.append(i)
+        else:
+            children.setdefault(parent, []).append(i)
+
+    out: list[tuple[int, int]] = []
+    seen: set[int] = set()
+    for root in roots:
+        queue = [(root, 0)]
+        while queue:
+            i, depth = queue.pop()
+            if i in seen:
+                continue
+            seen.add(i)
+            out.append((i, depth))
+            queue.extend((child, depth + 1) for child in reversed(children.get(i, [])))
+    out.extend((i, 0) for i in range(len(branches)) if i not in seen)
+    return out
