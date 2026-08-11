@@ -600,6 +600,27 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     assert (flat / "pr-nudge-khivi-feature").read_text() == "comments"
 
 
+def test_pr_payload_carries_base_for_the_stack_indent(tmp_path, monkeypatch):
+    # The TUI indents a stacked row off the `pr-base` cell, so the base has to
+    # survive in the JSON snapshot the fast tick republishes from.
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    import cockpit.lib.config as cockpit_config
+
+    importlib.reload(cockpit_config)
+    importlib.reload(cache_mod)
+
+    payload = cache_mod.write_pr_cache("testrepo", _pr(base="khivi/root"), _wt())
+    assert payload["base"] == "khivi/root"
+
+    cache_mod.branch_cache("pr-base", "khivi/feature").unlink(missing_ok=True)
+    cache_mod.republish_pr_caches_from_disk()
+    assert (
+        cache_mod.branch_cache("pr-base", "khivi/feature").read_text() == "khivi/root"
+    )
+
+
 def test_republish_pr_caches_no_cache_dir_is_noop(tmp_path, monkeypatch):
     """No JSON snapshots → republisher is a no-op (doesn't crash)."""
     import importlib
@@ -1035,3 +1056,31 @@ def test_republish_open_pr_wins_over_reused_merged_sibling(json_cache):
     flat = cache_mod.FLAT_CACHE_DIR
     assert (flat / "pr-num-khivi-side").read_text() == "99"
     assert (flat / "pr-state-khivi-side").read_text() == "APPROVED"
+
+
+# ── pr-base cell (the stack link the TUI indents by) ────────────────────────
+
+
+def test_write_branch_pr_cache_writes_base(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/child",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=5,
+        title="",
+        base="khivi/root",
+    )
+    assert (cache_dir / "pr-base-khivi-child").read_text() == "khivi/root"
+
+
+def test_write_branch_pr_cache_default_base_empty(cache_dir):
+    cache_mod.write_branch_pr_cache(
+        "khivi/solo",
+        state="OPEN",
+        is_draft=False,
+        review_decision="",
+        number=5,
+        title="",
+    )
+    assert (cache_dir / "pr-base-khivi-solo").read_text() == ""

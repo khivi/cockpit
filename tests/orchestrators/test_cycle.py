@@ -4249,14 +4249,36 @@ def test_reconcile_sidebar_groups_dissolves_a_group_whose_stack_is_gone(tmp_path
         tmp_path,
         [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "main")],
     )
-    existing = _group("wg:1", "x", "workspace:1", ["workspace:1", "workspace:2"])
+    existing = _group("wg:1", "x", "workspace:9", ["workspace:1", "workspace:2"])
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[existing]),
         patch.object(cycle, "ungroup_workspaces") as ungroup,
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close,
     ):
         cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
     ungroup.assert_called_once_with("wg:1")
+    # The header row is cockpit's own spawned anchor — dissolving the group
+    # would otherwise strand it as a loose sidebar row.
+    close.assert_called_once_with("workspace:9")
+
+
+def test_reconcile_sidebar_groups_never_closes_a_member_as_the_anchor(tmp_path):
+    # A hand-made group anchored on a real stack member (or an older cockpit
+    # group) must lose the fold, never the workspace.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "main")],
+    )
+    existing = _group("wg:1", "x", "workspace:1", ["workspace:1", "workspace:2"])
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "ungroup_workspaces"),
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+
+    close.assert_not_called()
 
 
 def test_reconcile_sidebar_groups_leaves_foreign_groups_alone(tmp_path):

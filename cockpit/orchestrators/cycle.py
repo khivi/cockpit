@@ -1565,6 +1565,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             author=other_author,
             nudge=pr.nudge_issue,
             ticket_id=ticket_pill_id(ticket),
+            base=pr.base,
         )
     # After the live snapshots are on disk, drop any superseded snapshot
     # sharing a branch (reused branch: old merged PR alongside the live one)
@@ -2150,9 +2151,9 @@ def _apply_repo_colors(ctx: RepoCycle, repo_entry: dict, keep_refs: set[str]) ->
 def _stack_group_name(root: Worktree, size: int) -> str:
     """Sidebar header for a stack: the root PR's workspace label + its depth.
 
-    The label alone would read exactly like the root's own workspace row (the
-    anchor's row *is* the group header), so the count is what marks the row as
-    a fold rather than a workspace.
+    The header is a dedicated row (`create_workspace_group` keeps cmux's own
+    spawned anchor), so `size` is exactly the number of member rows folded
+    below it — the count and the fold agree.
     """
     return f"{root.label} ({size})"
 
@@ -2249,6 +2250,11 @@ def _reconcile_sidebar_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
     for group in groups:
         if group.ref not in matched:
             ungroup_workspaces(group.ref)
+            # The header is cockpit's own throwaway anchor (never a group
+            # member — see `create_workspace_group`), so dissolving the group
+            # would otherwise leave it behind as a stray sidebar row.
+            if group.anchor and group.anchor not in owned:
+                cmux_close_workspace_best_effort(group.anchor)
             print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
 
 

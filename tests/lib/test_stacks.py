@@ -6,7 +6,7 @@ Pure function over `PR.base` — no network, no git, no cmux.
 from __future__ import annotations
 
 from cockpit.lib.gh import PR
-from cockpit.lib.stacks import find_stacks
+from cockpit.lib.stacks import find_stacks, stack_order
 
 
 def _pr(number: int, branch: str, base: str, *, state: str = "OPEN") -> PR:
@@ -121,3 +121,60 @@ def test_duplicate_branch_keeps_the_live_pr():
         _pr(10, "khivi/b", "khivi/a"),
     ]
     assert _numbers(find_stacks(prs)) == [[9, 10]]
+
+
+# ── stack_order (renderer-side derivation off the `pr-base` cells) ──────────
+
+
+def _order(branches: list[str], bases: dict[str, str]) -> list[tuple[str, int]]:
+    return [
+        (branches[i], depth)
+        for i, depth in stack_order(branches, lambda b: bases.get(b, ""))
+    ]
+
+
+def test_stack_order_nests_a_child_under_its_base():
+    order = _order(["khivi/a", "khivi/b"], {"khivi/a": "main", "khivi/b": "khivi/a"})
+    assert order == [("khivi/a", 0), ("khivi/b", 1)]
+
+
+def test_stack_order_deepens_with_each_level():
+    order = _order(
+        ["khivi/a", "khivi/b", "khivi/c"],
+        {"khivi/b": "khivi/a", "khivi/c": "khivi/b"},
+    )
+    assert order == [("khivi/a", 0), ("khivi/b", 1), ("khivi/c", 2)]
+
+
+def test_stack_order_pulls_a_child_up_next_to_its_root():
+    # The chain renders contiguously even when git listed an unrelated worktree
+    # between the two — a stack that reads as a tree has to be adjacent.
+    order = _order(["khivi/a", "khivi/z", "khivi/b"], {"khivi/b": "khivi/a"})
+    assert order == [("khivi/a", 0), ("khivi/b", 1), ("khivi/z", 0)]
+
+
+def test_stack_order_keeps_unstacked_rows_flat_and_in_order():
+    order = _order(["khivi/b", "khivi/a"], {"khivi/a": "main", "khivi/b": "main"})
+    assert order == [("khivi/b", 0), ("khivi/a", 0)]
+
+
+def test_stack_order_forked_stack_indents_both_children():
+    order = _order(
+        ["khivi/a", "khivi/b", "khivi/c"],
+        {"khivi/b": "khivi/a", "khivi/c": "khivi/a"},
+    )
+    assert order == [("khivi/a", 0), ("khivi/b", 1), ("khivi/c", 1)]
+
+
+def test_stack_order_keeps_every_row_when_branches_repeat():
+    # Two detached worktrees both report "" — neither row may be dropped.
+    assert stack_order(["", ""], lambda b: "") == [(0, 0), (1, 0)]
+
+
+def test_stack_order_base_cycle_falls_back_to_flat_rows():
+    order = _order(["khivi/a", "khivi/b"], {"khivi/a": "khivi/b", "khivi/b": "khivi/a"})
+    assert sorted(order) == [("khivi/a", 0), ("khivi/b", 0)]
+
+
+def test_stack_order_self_base_is_a_root():
+    assert _order(["khivi/a"], {"khivi/a": "khivi/a"}) == [("khivi/a", 0)]
