@@ -190,13 +190,26 @@ with `pre-commit run ... --files`, not the whole tree.
 
 ## Release versioning
 
-The version is **static** in `pyproject.toml` (`[project] version = "..."`), read at runtime via `importlib.metadata` (`version.running_version`, surfaced by `cockpit --version`). To cut a release: bump that `version`, commit, tag `v<version>`, and push the tag — the release CI (`.github/workflows/release.yml`) then bumps the `khivi/homebrew-cockpit` tap's `url`+`sha256` to that tag, and `brew upgrade` picks it up. There is **no** per-merge auto-bump hook and no self-update path. `ci.yml` skips only `no-commit-to-branch` (local-dev-only).
+The version is **static** in `pyproject.toml` (`[project] version = "..."`), read at runtime via `importlib.metadata` (`version.running_version`, surfaced by `cockpit --version`). There is **no** per-merge auto-bump hook and no self-update path. `ci.yml` skips only `no-commit-to-branch` (local-dev-only).
+
+To cut a release — `main` is protected, so the bump lands through a PR like any other change, and the tag goes on the **merged** commit:
+
+```bash
+# 1. bump [project] version in pyproject.toml on a branch, PR titled `chore(release): <version>`
+gh pr merge <N> --squash --admin          # see the merge note below
+git fetch origin && git switch -          # tag origin/main, NOT the pre-merge branch tip
+git tag v<version> origin/main && git push origin v<version>
+```
+
+The tag must point at a tree whose `pyproject.toml` version equals the tag (minus the `v`) — the release job's first step re-reads `pyproject.toml` at the tag and hard-fails on a mismatch, which is what tagging the un-merged branch tip or forgetting the bump trips. On success it hands `mislav/bump-homebrew-formula-action` the tag tarball URL; the action computes the sha256 and **commits the new `url`+`sha256` straight onto `khivi/homebrew-cockpit`** (a direct push, not a PR — it holds `COCKPIT_GITHUB_API_TOKEN`, a PAT with Contents + Pull-requests write on the tap, since the default `GITHUB_TOKEN` can't reach another repo). `brew upgrade cockpit` picks it up from there. The formula's `resource` blocks are **not** touched — regenerate them by hand on a dependency bump (`brew update-python-resources Formula/cockpit.rb`).
 
 ## Commit / PR-title convention
 
 We squash-merge, so the **PR title** becomes the squash commit subject on `main` (the `type(scope): summary (#N)` lines in `git log`). Use [Conventional Commits](https://www.conventionalcommits.org/) for the PR title: `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert`, optional scope. Local WIP commit messages are unconstrained — they get squashed away.
 
-Enforced by `.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`, commitlint's `config-conventional` ruleset) as the required `lint-pr-title` status check on `main`. It runs alone (not in `ci.yml`) so a title edit re-checks the title without re-triggering pytest/mypy. Branch protection requires `lint-pr-title` + `pre-commit` + `ci`; admins are exempt (`gh pr merge --admin` still works).
+Enforced by `.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`, commitlint's `config-conventional` ruleset) as the required `lint-pr-title` status check on `main`. It runs alone (not in `ci.yml`) so a title edit re-checks the title without re-triggering pytest/mypy.
+
+`main` is guarded by **two** stacked mechanisms, and the second is why a plain `gh pr merge` reports "the base branch policy prohibits the merge" even with everything green: classic **branch protection** requires the `lint-pr-title` + `pre-commit` + `ci` checks, and a **repository ruleset** (`main`, active) additionally requires 1 approving review, code-owner review, resolved threads, and squash-only merges. A solo author can't approve their own PR, so every merge here is `gh pr merge <N> --squash --admin` — admins are exempt from both (`enforce_admins: false`). Check the ruleset with `gh api repos/khivi/cockpit/rulesets`, not just `.../branches/main/protection` — the latter shows the checks but none of the review requirements.
 
 ## Test layout
 
