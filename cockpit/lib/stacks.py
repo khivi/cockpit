@@ -74,14 +74,18 @@ def find_stacks(prs: Iterable[PR]) -> list[list[PR]]:
 def stack_order(
     branches: Sequence[str], base_of: Callable[[str], str]
 ) -> list[tuple[int, int]]:
-    """`(index, depth)` for each of `branches`, stacks contiguous and root-first.
+    """`(index, depth)` for each of `branches`, stacks contiguous and tip-first.
 
     The renderer-side half of `find_stacks`: same `base` link, but read off the
     daemon-written `pr-base` cell (`base_of`) rather than a live `PR`, so the
     TUI can indent a stacked row without a network call or a stored stack id.
-    A branch whose base is another branch in `branches` sorts directly under it
-    at one more level of depth; everything else stays a depth-0 row in its
-    original order.
+
+    A stack renders as a stack: its **tip** — the deepest PR, the last one
+    pushed — heads the group at depth 0, and every PR it is stacked on lists
+    flat beneath it at depth 1. Nesting is exactly one level, never a cascade:
+    a four-PR chain stepping right four times is unreadable at any width, and
+    the depth number carries nothing the order doesn't already say. Everything
+    unstacked stays a depth-0 row in its original order.
 
     Indices, not branch names, so two worktrees that report the same branch
     (detached HEADs both reading "") each keep their own row. A base cycle
@@ -101,13 +105,20 @@ def stack_order(
     out: list[tuple[int, int]] = []
     seen: set[int] = set()
     for root in roots:
+        chain: list[tuple[int, int]] = []
         queue = [(root, 0)]
         while queue:
             i, depth = queue.pop()
             if i in seen:
                 continue
             seen.add(i)
-            out.append((i, depth))
+            chain.append((i, depth))
             queue.extend((child, depth + 1) for child in reversed(children.get(i, [])))
+        # The deepest member is the tip; it heads the group, the rest flatten
+        # under it. A fork has no single tip, so the deepest branch of it wins
+        # (ties → the one walked first) — one row has to be the head.
+        tip, _ = max(chain, key=lambda pair: pair[1])
+        out.append((tip, 0))
+        out.extend((i, 1) for i, _ in chain if i != tip)
     out.extend((i, 0) for i in range(len(branches)) if i not in seen)
     return out

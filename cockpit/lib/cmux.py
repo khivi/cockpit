@@ -241,7 +241,7 @@ def create_workspace_group(
     group on a stack member would therefore swallow that member's row — a
     four-PR stack rendering three rows under a header that says four. So the
     spawned anchor is kept as a dedicated header instead: the fold reads
-    `<root> (N)` with all N members listed below it.
+    `<tip> (N)` with all N members listed below it.
 
     The anchor is spawned in `$HOME`, outside every registered repo, so
     `_reap_workspace_orphans` (which only owns workspaces whose cwd sits under
@@ -252,8 +252,8 @@ def create_workspace_group(
     """
     if len(refs) < 2:
         return None  # cmux drops a group the moment it has one member left
-    # cmux prepends each `--from` entry, so pass them leaf-first to land the
-    # stack root at the top of the fold.
+    # cmux prepends each `--from` entry, so pass them reversed to land the
+    # caller's first ref (a stack's tip) at the top of the fold.
     created = cmux(
         "workspace-group",
         "create",

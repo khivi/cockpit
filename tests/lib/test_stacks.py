@@ -133,24 +133,31 @@ def _order(branches: list[str], bases: dict[str, str]) -> list[tuple[str, int]]:
     ]
 
 
-def test_stack_order_nests_a_child_under_its_base():
+def test_stack_order_heads_the_chain_with_its_tip():
     order = _order(["khivi/a", "khivi/b"], {"khivi/a": "main", "khivi/b": "khivi/a"})
-    assert order == [("khivi/a", 0), ("khivi/b", 1)]
+    assert order == [("khivi/b", 0), ("khivi/a", 1)]
 
 
-def test_stack_order_deepens_with_each_level():
+def test_stack_order_never_nests_deeper_than_one_level():
+    # Four PRs stepping right four times is unreadable: the tip heads the group
+    # and the three it is stacked on all sit at the same single indent.
     order = _order(
-        ["khivi/a", "khivi/b", "khivi/c"],
-        {"khivi/b": "khivi/a", "khivi/c": "khivi/b"},
+        ["khivi/a", "khivi/b", "khivi/c", "khivi/d"],
+        {"khivi/b": "khivi/a", "khivi/c": "khivi/b", "khivi/d": "khivi/c"},
     )
-    assert order == [("khivi/a", 0), ("khivi/b", 1), ("khivi/c", 2)]
+    assert order == [
+        ("khivi/d", 0),
+        ("khivi/a", 1),
+        ("khivi/b", 1),
+        ("khivi/c", 1),
+    ]
 
 
-def test_stack_order_pulls_a_child_up_next_to_its_root():
+def test_stack_order_pulls_a_chain_together_around_an_unrelated_row():
     # The chain renders contiguously even when git listed an unrelated worktree
-    # between the two — a stack that reads as a tree has to be adjacent.
+    # between the two — a stack that reads as a group has to be adjacent.
     order = _order(["khivi/a", "khivi/z", "khivi/b"], {"khivi/b": "khivi/a"})
-    assert order == [("khivi/a", 0), ("khivi/b", 1), ("khivi/z", 0)]
+    assert order == [("khivi/b", 0), ("khivi/a", 1), ("khivi/z", 0)]
 
 
 def test_stack_order_keeps_unstacked_rows_flat_and_in_order():
@@ -158,12 +165,14 @@ def test_stack_order_keeps_unstacked_rows_flat_and_in_order():
     assert order == [("khivi/b", 0), ("khivi/a", 0)]
 
 
-def test_stack_order_forked_stack_indents_both_children():
+def test_stack_order_forked_stack_still_nests_once():
+    # No single tip when a stack forks: the first-walked deepest member heads
+    # the group, its root and sibling flatten under it like any other chain.
     order = _order(
         ["khivi/a", "khivi/b", "khivi/c"],
         {"khivi/b": "khivi/a", "khivi/c": "khivi/a"},
     )
-    assert order == [("khivi/a", 0), ("khivi/b", 1), ("khivi/c", 1)]
+    assert order == [("khivi/b", 0), ("khivi/a", 1), ("khivi/c", 1)]
 
 
 def test_stack_order_keeps_every_row_when_branches_repeat():

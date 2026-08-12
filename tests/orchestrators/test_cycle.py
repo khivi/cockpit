@@ -4144,20 +4144,30 @@ def _group(ref, name, anchor, members):
     return WorkspaceGroup(ref=ref, name=name, anchor=anchor, members=tuple(members))
 
 
-def test_reconcile_sidebar_groups_creates_a_group_root_first(tmp_path):
+def test_reconcile_sidebar_groups_creates_a_group_named_for_the_tip(tmp_path):
+    # The tip names the fold and leads it (`create_workspace_group` lands the
+    # first ref at the top), the same order the TUI renders the chain in.
     ctx = _stack_ctx(
         tmp_path,
-        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
+        [
+            ("workspace:1", "khivi/a", "main"),
+            ("workspace:2", "khivi/b", "khivi/a"),
+            ("workspace:3", "khivi/c", "khivi/b"),
+        ],
     )
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(cycle, "create_workspace_group") as create,
     ):
-        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+        cycle._reconcile_sidebar_groups(
+            ctx, {"workspace:1", "workspace:2", "workspace:3"}
+        )
 
-    root_label = ctx.tracked["workspace:1"][1].label
+    tip_label = ctx.tracked["workspace:3"][1].label
     create.assert_called_once_with(
-        f"{root_label} (2)", ["workspace:1", "workspace:2"], icon=STACK_GROUP_ICON
+        f"{tip_label} (3)",
+        ["workspace:3", "workspace:1", "workspace:2"],
+        icon=STACK_GROUP_ICON,
     )
 
 
@@ -4404,9 +4414,9 @@ def test_reconcile_sidebar_groups_leaves_a_stacked_coworker_pr_in_its_stack(tmp_
     ):
         cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
-    root_label = ctx.tracked["workspace:1"][1].label
+    tip_label = ctx.tracked["workspace:2"][1].label
     create.assert_called_once_with(
-        f"{root_label} (2)", ["workspace:1", "workspace:2"], icon=STACK_GROUP_ICON
+        f"{tip_label} (2)", ["workspace:2", "workspace:1"], icon=STACK_GROUP_ICON
     )
 
 

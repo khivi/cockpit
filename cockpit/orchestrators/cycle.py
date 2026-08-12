@@ -2149,14 +2149,18 @@ def _apply_repo_colors(ctx: RepoCycle, repo_entry: dict, keep_refs: set[str]) ->
         ctx.pill_state[f"color:{ref}"] = color
 
 
-def _stack_group_name(root: Worktree, size: int) -> str:
-    """Sidebar header for a stack: the root PR's workspace label + its depth.
+def _stack_group_name(tip: Worktree, size: int) -> str:
+    """Sidebar header for a stack: the tip PR's workspace label + its depth.
+
+    Named for the *tip* — the deepest PR, the one the stack is currently about
+    — matching the TUI, where the same tip heads the chain and everything it is
+    stacked on lists flat beneath it.
 
     The header is a dedicated row (`create_workspace_group` keeps cmux's own
     spawned anchor), so `size` is exactly the number of member rows folded
     below it — the count and the fold agree.
     """
-    return f"{root.label} ({size})"
+    return f"{tip.label} ({size})"
 
 
 def _review_group_name(size: int) -> str:
@@ -2208,9 +2212,13 @@ def _reconcile_sidebar_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
         members = [tracked[pr.branch] for pr in chain if pr.branch in tracked]
         if len(members) < 2:
             continue  # a stack with fewer than two local workspaces isn't a fold
-        refs = [ref for ref, _ in members]
+        # `find_stacks` walks root-first, so the last member is the tip: it
+        # names the group and leads the fold (`create_workspace_group` lands
+        # the first ref at the top), the same order the TUI renders.
+        ordered = [members[-1], *members[:-1]]
+        refs = [ref for ref, _ in ordered]
         stacked.update(refs)
-        desired.append((_stack_group_name(members[0][1], len(refs)), refs, False))
+        desired.append((_stack_group_name(ordered[0][1], len(refs)), refs, False))
 
     reviews = [
         ref
