@@ -686,15 +686,30 @@ async def test_update_inventory_keys_cache_by_nwo_not_label(cache_dir, monkeypat
 # ── stacked-PR indentation (rows derived off the `pr-base` cells) ───────────
 
 
-def test_stacked_row_is_indented_under_its_base(cache_dir):
+def test_stacked_row_is_indented_under_the_chain_tip(cache_dir):
     root = _wt(path="/tmp/root", branch="khivi/a")
     child = _wt(path="/tmp/child", branch="khivi/b")
     cache_mod.branch_cache("pr-base", child.branch).write_text(root.branch)
     rows = _stack_rows([root, child])
-    assert [(wt.path, depth) for wt, depth in rows] == [(root.path, 0), (child.path, 1)]
-    assert worktree_cells(child, "r", None, "none", show_tickets=False, depth=1)[
+    assert [(wt.path, depth) for wt, depth in rows] == [(child.path, 0), (root.path, 1)]
+    assert worktree_cells(root, "r", None, "none", show_tickets=False, depth=1)[
         0
     ].plain.startswith("└ ")
+
+
+def test_a_deep_stack_indents_every_member_the_same_single_step(cache_dir):
+    # Three PRs deep must not step right three times — one level, flat under
+    # the tip, matching the cmux sidebar's single fold.
+    a = _wt(path="/tmp/a", branch="khivi/a")
+    b = _wt(path="/tmp/b", branch="khivi/b")
+    c = _wt(path="/tmp/c", branch="khivi/c")
+    cache_mod.branch_cache("pr-base", b.branch).write_text(a.branch)
+    cache_mod.branch_cache("pr-base", c.branch).write_text(b.branch)
+    assert [(wt.path, depth) for wt, depth in _stack_rows([a, b, c])] == [
+        (c.path, 0),
+        (a.path, 1),
+        (b.path, 1),
+    ]
 
 
 def test_unstacked_row_has_no_indent(cache_dir):
@@ -713,17 +728,17 @@ def test_indent_precedes_the_nudge_glyph(cache_dir):
 
 
 @pytest.mark.asyncio
-async def test_update_inventory_renders_a_stack_root_first(cache_dir):
-    # git lists worktrees alphabetically-ish; the child must still land under
-    # its root rather than in git's order.
+async def test_update_inventory_renders_a_stack_tip_first(cache_dir):
+    # git lists worktrees alphabetically-ish; the chain must still render as
+    # tip-then-members rather than in git's order.
     root = _wt(path="/tmp/stack-root", branch="khivi/root")
     child = _wt(path="/tmp/stack-child", branch="khivi/child")
     cache_mod.branch_cache("pr-base", child.branch).write_text(root.branch)
     app = _Host()
     async with app.run_test() as pilot:
         table = app.query_one(WorktreeTable)
-        table.update_inventory([("R", "R", None, "none", [child, root])])
+        table.update_inventory([("R", "R", None, "none", [root, child])])
         await pilot.pause()
         # Row 0 is the repo group header.
-        assert table.get_row_at(1)[0].plain == "khivi-root"
-        assert table.get_row_at(2)[0].plain == "└ khivi-child"
+        assert table.get_row_at(1)[0].plain == "khivi-child"
+        assert table.get_row_at(2)[0].plain == "└ khivi-root"

@@ -12,10 +12,11 @@ tinted with the repo's `sidebar_color`), so same-named worktrees (every repo's
 `repo/label` prefix needed. The worktree rows below each header keep the same
 `sidebar_color` tint on their label (matching the cmux sidebar). Header rows
 carry no workspace, so `current_path()` returns None on them and every row
-action no-ops there. Within a repo, a worktree whose PR is *stacked* on another
-worktree's PR sorts directly under it and indents behind a `└` (`_stack_rows`,
-off the daemon-written `pr-base` cell) — the table's own rendering of the same
-chain the cmux sidebar folds into a group. The Author column (just before Title, since it's rarely
+action no-ops there. Within a repo, a *stacked* chain of PRs renders as one
+group: its tip heads the run and every PR it is stacked on lists under it,
+indented one level behind a `└` (`_stack_rows`, off the daemon-written
+`pr-base` cell) — the table's own rendering of the same chain the cmux sidebar
+folds into a group. The Author column (just before Title, since it's rarely
 populated) shows the PR author's login prefixed with `@`, populated by the daemon
 only for other-authored PRs (coworker / review PRs) and blank for my own. The
 Dirty column (headed with the
@@ -223,8 +224,9 @@ def _stack_rows(wts: list[Worktree]) -> list[tuple[Worktree, int]]:
     A stacked PR is one whose base branch is another PR's head, so the chain is
     read straight off the daemon-written `pr-base` cells — no network, nothing
     stored, the same derivation `lib.stacks.find_stacks` runs on the daemon
-    side for the cmux sidebar fold. Members sort contiguously under their root;
-    every other worktree keeps its `git worktree list` order at depth 0."""
+    side for the cmux sidebar fold. A chain sorts contiguously under its tip at
+    one level of indent; every other worktree keeps its `git worktree list`
+    order at depth 0."""
     return [
         (wts[i], depth)
         for i, depth in stack_order(
@@ -289,9 +291,10 @@ def _workspace_cell(
     threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute wins: a muted
     PR fires no nudge, so it shows 🔇, never 🔔. No glyph when neither holds.
 
-    `depth` is the row's position in a stacked-PR chain (0 = not stacked, or the
-    stack's root): each level indents the label one step behind a `└` so a stack
-    reads as a tree instead of as unrelated sibling rows.
+    `depth` is the row's place in a stacked-PR chain: 0 for an unstacked row or
+    the stack's tip (which heads the group), 1 for a PR the tip is stacked on,
+    indented behind a `└`. `stack_order` never returns a deeper level — a stack
+    nests exactly once, so the whole chain reads as one group.
 
     Same-named worktrees across repos are disambiguated by their group-header
     row, not a `repo/` prefix, so the label renders bare."""
@@ -307,7 +310,7 @@ def _workspace_cell(
     elif nudge:
         cell = Text.assemble((f"{ICON_PR_NUDGE} ", "yellow"), cell)
     if depth:
-        cell = Text.assemble(("  " * (depth - 1) + "└ ", "dim"), cell)
+        cell = Text.assemble(("└ ", "dim"), cell)
     return cell
 
 
