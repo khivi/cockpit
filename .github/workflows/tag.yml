@@ -1,0 +1,41 @@
+name: tag
+
+# When a version bump lands on `main`, push the matching `v<version>` tag. That
+# tag is what fires release.yml (Homebrew tap bump) and publish.yml (PyPI), so
+# a merged `chore(release): <version>` PR ships on its own — no manual
+# `git tag && git push`. See AGENTS.md "Release versioning".
+#
+# The tag is pushed with COCKPIT_GITHUB_API_TOKEN, NOT the default GITHUB_TOKEN:
+# a ref pushed by GITHUB_TOKEN does not trigger other workflows (GitHub's
+# recursion guard), so release.yml/publish.yml would silently never run. The PAT
+# therefore needs Contents: write on *this* repo as well as on the tap.
+#
+# Idempotent: an already-existing tag is a no-op, so a later push touching
+# pyproject.toml without a version change does nothing.
+
+on:
+  push:
+    branches: [main]
+    paths: ["pyproject.toml"]
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.COCKPIT_GITHUB_API_TOKEN }}
+
+      - name: Push v<version> tag if missing
+        run: |
+          v="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null 2>&1; then
+            echo "v$v already tagged — nothing to do"
+            exit 0
+          fi
+          echo "tagging v$v at $GITHUB_SHA"
+          git tag "v$v"
+          git push origin "v$v"
