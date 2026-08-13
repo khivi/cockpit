@@ -221,6 +221,8 @@ Two settings in that workflow are load-bearing, both for the same GitHub recursi
 
 State lives in `release-please-config.json` (release type `python`, which updates PEP 621 `[project] version`) and `.release-please-manifest.json` (the last released version — the one file to correct by hand if a release is ever cut out of band).
 
+`CHANGELOG.md` is **release-please's file** from 1.8.0 on — don't hand-edit it. It's excluded from `markdownlint` in `.pre-commit-config.yaml` because release-please writes `*` bullets into a file that was hand-written with `-` ones, and MD004 would fail every release PR.
+
 **`include-component-in-tag: false` is required, not cosmetic.** Left at its default (`true`), release-please names tags `cockpit-v<version>` while `tag.yml` pushes `v<version>` — so it can't find the previous release, treats the repo as never released, and regenerates `CHANGELOG.md` from the entire history (203 entries on the first run, with compare links to tags that don't exist). The tag format has to match `tag.yml`'s even though `skip-github-release` means release-please never pushes one.
 
 `./cut-release.sh <version>` is the **manual fallback**, for when the action is broken or a version has to be forced: it bumps `[project] version`, commits `chore(release): <version>`, opens the PR, and merges it `--squash --admin` (confirming first unless passed `-y`). It refuses a dirty tree, a non-semver argument, `main`/`master`, and a bump to the version already in `pyproject.toml`. Its guard paths are covered by `tests/test_cut_release.py`; the happy path ends in a real merge and is deliberately untested. Using it means `.release-please-manifest.json` must be updated to match, or release-please will propose a bump from the stale baseline.
