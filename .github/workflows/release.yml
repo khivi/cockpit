@@ -14,9 +14,16 @@ name: release
 # bump, NOT every release — this CI leaves them untouched. Regenerate them by
 # hand when deps move: `brew update-python-resources Formula/cockpit.rb`.
 #
-# Requires an Actions secret `COCKPIT_GITHUB_API_TOKEN`: a PAT with Contents +
-# Pull-requests write on khivi/homebrew-cockpit (the default GITHUB_TOKEN can't
-# write to a different repo).
+# `create-branch: false` is load-bearing: the action branches (then opens a PR)
+# whenever the tap's base branch reports `protected`, and the tap's `main` has a
+# ruleset so it always does. That PR needs `Pull requests: write` on the tap,
+# which the PAT lacks — it 403'd *after* pushing a correct `update-cockpit.rb-*`
+# branch, so v1.5.1 and v1.6.0 silently never reached the tap. The ruleset only
+# blocks deletion + non-fast-forward, so a direct commit is allowed.
+#
+# Requires an Actions secret `COCKPIT_GITHUB_API_TOKEN`: a PAT with Contents
+# write on khivi/homebrew-cockpit (the default GITHUB_TOKEN can't write to a
+# different repo).
 
 on:
   push:
@@ -50,5 +57,7 @@ jobs:
           formula-name: cockpit
           homebrew-tap: khivi/homebrew-cockpit
           download-url: https://github.com/khivi/cockpit/archive/refs/tags/${{ github.ref_name }}.tar.gz
+          # Commit straight onto the tap's main — see the note above.
+          create-branch: false
         env:
           COMMITTER_TOKEN: ${{ secrets.COCKPIT_GITHUB_API_TOKEN }}
