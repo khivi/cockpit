@@ -1019,14 +1019,16 @@ def test_native_claude_state_parsing():
 # ── workspace groups (stacked PRs) ───────────────────────────────────────────
 
 
-def _group_json(ref: str, name: str, anchor: str, members: list[str]) -> dict:
+def _group_json(
+    ref: str, name: str, anchor: str, members: list[str], icon: str | None = None
+) -> dict:
     return {
         "ref": ref,
         "name": name,
         "anchor_workspace_ref": anchor,
         "member_workspace_refs": members,
         "custom_color": None,
-        "icon_symbol": None,
+        "icon_symbol": icon,
         "is_collapsed": False,
         "is_pinned": False,
         "member_count": len(members),
@@ -1037,7 +1039,13 @@ def test_list_workspace_groups_parses_cmux_json():
     payload = json.dumps(
         {
             "groups": [
-                _group_json("workspace_group:1", "auth (2)", "w:1", ["w:1", "w:2"])
+                _group_json(
+                    "workspace_group:1",
+                    "auth (2)",
+                    "w:1",
+                    ["w:1", "w:2"],
+                    icon="square.stack",
+                )
             ],
             "window_ref": "window:1",
         }
@@ -1051,6 +1059,9 @@ def test_list_workspace_groups_parses_cmux_json():
     assert groups[0].name == "auth (2)"
     assert groups[0].anchor == "w:1"
     assert groups[0].members == ("w:1", "w:2")
+    # The icon is how the reconcile tells cockpit's own stranded anchor-only
+    # group from a fold the user built by hand.
+    assert groups[0].icon == "square.stack"
 
 
 def test_list_workspace_groups_survives_garbage():
