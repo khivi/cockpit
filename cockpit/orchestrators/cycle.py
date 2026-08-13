@@ -1093,6 +1093,20 @@ def _maybe_autoclose(
             )
             continue
         pr = pr_by_branch.get(wt.branch)
+        if pr is not None and pr.state == "OPEN":
+            # A branch reused after its old PR merged: it still descends from the
+            # recorded merge head (so `_is_post_merge_stale` says stale) but it
+            # now carries live, unmerged work. Tearing it down here would fight
+            # `_spawn_missing_workspaces`, which re-creates the worktree for the
+            # open PR next cycle — a spawn/teardown loop. Agree with the manual
+            # gate (`probe_blockers`' "PR #N is OPEN"), which `forced=True`
+            # teardown would otherwise bypass.
+            print(
+                f"  {verb('autoclose')} "
+                f"{dim(f'skipped (PR #{pr.number} open) {wt.short}')}",
+                flush=True,
+            )
+            continue
         if pr is not None:
             reasons: list[str] = []
             if pr.is_draft:
