@@ -332,6 +332,35 @@ def test_autoclose_smart_skip_on_pr_signals(tmp_path, pr_kwargs, reason):
     remove_mock.assert_not_called(), f"expected skip on {reason}"
 
 
+def test_autoclose_skips_branch_reused_for_an_open_pr(tmp_path):
+    """A branch reused after its old PR merged still descends from the recorded
+    merge head, so `_is_post_merge_stale` says stale — but its new PR is OPEN.
+    Tearing it down fights `_spawn_missing_workspaces`, which re-creates the
+    worktree next cycle (a spawn/teardown loop)."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+
+    with (
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as remove_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch"),
+        patch.object(cycle, "is_ancestor", return_value=True),
+    ):
+        cycle._maybe_autoclose(
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"ws-ref": wt_path},
+            prs=[_pr("khivi/feat", state="OPEN")],
+            dry=False,
+        )
+
+    close_mock.assert_not_called()
+    remove_mock.assert_not_called()
+
+
 def test_autoclose_fires_when_no_pr_in_list(tmp_path):
     """A merged branch with no PR object (e.g. coworker's merged-and-fetched
     branch not in our self-relevant list) still autocloses."""
