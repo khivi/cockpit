@@ -86,16 +86,21 @@ from cockpit.lib.colors import (
 from cockpit.lib.config import (
     COCKPIT_HOME,
     base_remote,
+    credential_env_names,
     ensure_state_dirs,
+    jira_api_token,
     jira_email,
     jira_merge_done_status,
     jira_site_url,
+    linear_api_key,
     linear_merge_done_state,
     linear_team_keys,
     orphan_nudge_grace_seconds,
     review_command,
     review_external,
     ticket_close_on_merge,
+    trello_api_key,
+    trello_api_token,
     trello_merge_done_list,
 )
 from cockpit.lib.constants import MAIN_BRANCHES
@@ -136,9 +141,6 @@ from cockpit.lib.github_issues import (
 from cockpit.lib.hidden import load_hidden
 from cockpit.lib.issue_color import issue_color
 from cockpit.lib.jira import (
-    JIRA_API_TOKEN_ENV,
-)
-from cockpit.lib.jira import (
     fetch_issue_meta as jira_fetch_issue_meta,
 )
 from cockpit.lib.jira import (
@@ -148,7 +150,6 @@ from cockpit.lib.jira import (
     transition_issue as jira_transition_issue,
 )
 from cockpit.lib.linear import (
-    LINEAR_API_KEY_ENV,
     fetch_team_states,
     fetch_ticket_meta,
     fetch_viewer_id,
@@ -162,10 +163,6 @@ from cockpit.lib.prompts import claude_command, shell_quote, split_prompt_prefix
 from cockpit.lib.stacks import find_stacks
 from cockpit.lib.tickets import TicketProvider, provider_for
 from cockpit.lib.tool import has_workspace_backend, is_cmux
-from cockpit.lib.trello import (
-    TRELLO_API_KEY_ENV,
-    TRELLO_API_TOKEN_ENV,
-)
 from cockpit.lib.trello import (
     fetch_card_meta as trello_fetch_card_meta,
 )
@@ -597,27 +594,38 @@ def _cached_linear_identity[T](
     return value
 
 
-def _env_fingerprint(env_var: str) -> str:
-    """Non-secret sha256[:12] fingerprint of an env var's value (empty string
-    when unset), used to key identity caches so rotating the credential
-    invalidates the entry without ever storing the raw value."""
-    raw = os.environ.get(env_var) or ""
-    return hashlib.sha256(raw.encode()).hexdigest()[:12]
+def _secret_fingerprint(*parts: str) -> str:
+    """Non-secret sha256[:12] fingerprint of a *resolved* credential (plus any
+    identity-scoping context like a Jira site), used to key identity caches.
+
+    Fingerprinting the resolved value — not the env var *name* — is what keeps
+    per-org credentials isolated: two repos whose `tickets.api_key_env` points at
+    different env vars land in different `pill_state` slots, so org B never reads
+    org A's viewer id (which would silently skip every one of its tickets, since
+    the viewer gate could never match). Rotating a credential invalidates its
+    entry for free, and the raw value is never stored.
+    """
+    return hashlib.sha256("\x00".join(parts).encode()).hexdigest()[:12]
 
 
-def _cached_viewer_id(ctx: RepoCycle) -> str | None:
-    """The API key's `viewer` id, cached across ticks. Keyed by a non-secret
-    fingerprint of the key so rotating `LINEAR_API_KEY` invalidates the entry
-    (the raw key is never stored in `pill_state`)."""
-    fp = _env_fingerprint(LINEAR_API_KEY_ENV)
-    return _cached_linear_identity(ctx, f"linear-viewer:{fp}", fetch_viewer_id)
-
-
-def _cached_team_states(ctx: RepoCycle, team_id: str) -> dict | None:
-    """A team's workflow-state name→UUID map, cached across ticks (subsumes the
-    old per-cycle dedupe — a same-tick second lookup is a cache hit)."""
+def _cached_viewer_id(ctx: RepoCycle, api_key: str) -> str | None:
+    """The API key's `viewer` id, cached across ticks, one slot per distinct
+    key (see `_secret_fingerprint`)."""
+    fp = _secret_fingerprint(api_key)
     return _cached_linear_identity(
-        ctx, f"linear-team-states:{team_id}", lambda: fetch_team_states(team_id)
+        ctx, f"linear-viewer:{fp}", lambda: fetch_viewer_id(api_key=api_key)
+    )
+
+
+def _cached_team_states(ctx: RepoCycle, team_id: str, api_key: str) -> dict | None:
+    """A team's workflow-state name→UUID map, cached across ticks (subsumes the
+    old per-cycle dedupe — a same-tick second lookup is a cache hit). Keyed by
+    team id alone: a Linear team UUID is globally unique, so it can't collide
+    across workspaces."""
+    return _cached_linear_identity(
+        ctx,
+        f"linear-team-states:{team_id}",
+        lambda: fetch_team_states(team_id, api_key=api_key),
     )
 
 
@@ -666,7 +674,8 @@ def _transition_merged_linear(ctx: RepoCycle) -> None:
 
     Gates, all of which must hold:
       * `linear_done_on_merge` enabled for this repo (per-repo over global);
-      * the repo is Linear-configured (`linear_keys`) and `LINEAR_API_KEY` set;
+      * the repo is Linear-configured (`linear_keys`) and its API key env var
+        (`tickets.api_key_env`, default `LINEAR_API_KEY`) set;
       * not a dry run.
 
     Per delivered ticket (read from the cached PR snapshot's `linear` block —
@@ -690,7 +699,8 @@ def _transition_merged_linear(ctx: RepoCycle) -> None:
         return
     if not linear_team_keys(ctx.cfg, ctx.repo_entry):
         return
-    if not os.environ.get(LINEAR_API_KEY_ENV):
+    api_key = linear_api_key(ctx.cfg, ctx.repo_entry)
+    if not api_key:
         return
 
     target = linear_merge_done_state(ctx.cfg, ctx.repo_entry)
@@ -715,13 +725,13 @@ def _transition_merged_linear(ctx: RepoCycle) -> None:
             if ctx.pill_state.get(marker):
                 continue
             if not viewer_resolved:
-                viewer_id = _cached_viewer_id(ctx)
+                viewer_id = _cached_viewer_id(ctx, api_key)
                 viewer_resolved = True
             if not viewer_id:
                 # Can't confirm ownership → move nothing (fail-safe). No marker,
                 # so a transient viewer-query failure retries next tick.
                 continue
-            meta = fetch_ticket_meta(tid)
+            meta = fetch_ticket_meta(tid, api_key=api_key)
             if not meta:
                 continue  # transient failure → no marker, retry next tick
             # From here the ticket has been evaluated; mark it so a kept merged
@@ -735,7 +745,7 @@ def _transition_merged_linear(ctx: RepoCycle) -> None:
             team_id = meta.get("team_id")
             if not team_id:
                 continue
-            states = _cached_team_states(ctx, team_id)
+            states = _cached_team_states(ctx, team_id, api_key)
             state_id = (states or {}).get(target_cf)
             if not state_id:
                 print(
@@ -744,7 +754,7 @@ def _transition_merged_linear(ctx: RepoCycle) -> None:
                     flush=True,
                 )
                 continue
-            if update_ticket_state(meta["id"], state_id):
+            if update_ticket_state(meta["id"], state_id, api_key=api_key):
                 print(
                     f"  {verb('linear')} {tid} → {target} "
                     f"{dim(f'(merged {wt.short})')}",
@@ -831,16 +841,19 @@ def _transition_merged_github(ctx: RepoCycle) -> None:
                 )
 
 
-def _cached_jira_viewer(ctx: RepoCycle, site: str, email: str) -> str | None:
+def _cached_jira_viewer(
+    ctx: RepoCycle, site: str, email: str, token: str
+) -> str | None:
     """The authenticated Jira user's `accountId`, cached across ticks like the
     Linear/GitHub viewers — the "only transition my own issues" gate. Keyed by a
-    non-secret fingerprint of `$JIRA_API_TOKEN` so rotating the token invalidates
-    the entry (the raw token is never stored in `pill_state`)."""
-    fp = _env_fingerprint(JIRA_API_TOKEN_ENV)
+    non-secret fingerprint of the resolved token *plus* the site+email it
+    authenticates against, so two orgs on separate Jira sites keep separate
+    slots and a rotation invalidates the entry."""
+    fp = _secret_fingerprint(token, site, email)
     return _cached_linear_identity(
         ctx,
         f"jira-viewer:{fp}",
-        lambda: jira_fetch_myself(site_url=site, email=email),
+        lambda: jira_fetch_myself(site_url=site, email=email, token=token),
     )
 
 
@@ -851,8 +864,9 @@ def _transition_merged_jira(ctx: RepoCycle) -> None:
     transition.
 
     Gates, all of which must hold: `close_on_merge` enabled (per-repo over
-    global), a configured `site_url` + `email`, `$JIRA_API_TOKEN` set. (The
-    dispatcher already checked `dry`.)
+    global), a configured `site_url` + `email`, and the token env var
+    (`tickets.token_env`, default `JIRA_API_TOKEN`) set. (The dispatcher already
+    checked `dry`.)
 
     Per delivered issue (read from the cached PR snapshot — the strict footer
     set, no extra network to discover them):
@@ -867,7 +881,8 @@ def _transition_merged_jira(ctx: RepoCycle) -> None:
         return
     site = jira_site_url(ctx.cfg, ctx.repo_entry)
     email = jira_email(ctx.cfg, ctx.repo_entry)
-    if not site or not email or not os.environ.get(JIRA_API_TOKEN_ENV):
+    token = jira_api_token(ctx.cfg, ctx.repo_entry)
+    if not site or not email or not token:
         return
 
     target = jira_merge_done_status(ctx.cfg, ctx.repo_entry)
@@ -892,13 +907,13 @@ def _transition_merged_jira(ctx: RepoCycle) -> None:
             if ctx.pill_state.get(marker):
                 continue
             if not viewer_resolved:
-                viewer = _cached_jira_viewer(ctx, site, email)
+                viewer = _cached_jira_viewer(ctx, site, email, token)
                 viewer_resolved = True
             if not viewer:
                 # Can't confirm ownership → move nothing (fail-safe). No marker,
                 # so a transient viewer-query failure retries next tick.
                 continue
-            meta = jira_fetch_issue_meta(key, site_url=site, email=email)
+            meta = jira_fetch_issue_meta(key, site_url=site, email=email, token=token)
             if not meta:
                 continue  # transient failure → no marker, retry next tick
             # Evaluated; mark so a kept merged worktree doesn't re-query each tick.
@@ -907,7 +922,9 @@ def _transition_merged_jira(ctx: RepoCycle) -> None:
                 continue
             if (meta.get("status") or "").casefold() == target_cf:
                 continue  # already done
-            if jira_transition_issue(key, target, site_url=site, email=email):
+            if jira_transition_issue(
+                key, target, site_url=site, email=email, token=token
+            ):
                 print(
                     f"  {verb('jira')} {key} → {target} {dim(f'(merged {wt.short})')}",
                     flush=True,
@@ -922,16 +939,17 @@ def _transition_merged_jira(ctx: RepoCycle) -> None:
                 )
 
 
-def _cached_trello_viewer(ctx: RepoCycle) -> str | None:
+def _cached_trello_viewer(ctx: RepoCycle, key: str, token: str) -> str | None:
     """The authenticated Trello member's id, cached across ticks like the
     Linear/GitHub/Jira viewers — the "only move my own cards" gate. Keyed by a
-    non-secret fingerprint of `$TRELLO_API_TOKEN` so rotating the token
-    invalidates the entry (the raw token is never stored in `pill_state`)."""
-    fp = _env_fingerprint(TRELLO_API_TOKEN_ENV)
+    non-secret fingerprint of the resolved key+token pair, so two orgs on
+    separate Trello accounts keep separate slots and a rotation invalidates the
+    entry (the raw values are never stored in `pill_state`)."""
+    fp = _secret_fingerprint(key, token)
     return _cached_linear_identity(
         ctx,
         f"trello-viewer:{fp}",
-        trello_fetch_myself,
+        lambda: trello_fetch_myself(key=key, token=token),
     )
 
 
@@ -942,8 +960,9 @@ def _transition_merged_trello(ctx: RepoCycle) -> None:
 
     Gates, all of which must hold: `close_on_merge` enabled (per-repo over
     global), a configured `merge_done_list` (no default — an unset value leaves
-    the move off), `$TRELLO_API_KEY` + `$TRELLO_API_TOKEN` set. (The dispatcher
-    already checked `dry`.)
+    the move off), and both credential env vars (`tickets.key_env` /
+    `tickets.token_env`, defaults `TRELLO_API_KEY` / `TRELLO_API_TOKEN`) set.
+    (The dispatcher already checked `dry`.)
 
     Per delivered card (read from the cached PR snapshot — the strict footer set,
     no extra network to discover them):
@@ -959,9 +978,9 @@ def _transition_merged_trello(ctx: RepoCycle) -> None:
     target = trello_merge_done_list(ctx.cfg, ctx.repo_entry)
     if not target:
         return
-    if not os.environ.get(TRELLO_API_KEY_ENV) or not os.environ.get(
-        TRELLO_API_TOKEN_ENV
-    ):
+    api_key = trello_api_key(ctx.cfg, ctx.repo_entry)
+    api_token = trello_api_token(ctx.cfg, ctx.repo_entry)
+    if not api_key or not api_token:
         return
 
     target_cf = target.casefold()
@@ -985,13 +1004,13 @@ def _transition_merged_trello(ctx: RepoCycle) -> None:
             if ctx.pill_state.get(marker):
                 continue
             if not viewer_resolved:
-                viewer = _cached_trello_viewer(ctx)
+                viewer = _cached_trello_viewer(ctx, api_key, api_token)
                 viewer_resolved = True
             if not viewer:
                 # Can't confirm ownership → move nothing (fail-safe). No marker,
                 # so a transient viewer-query failure retries next tick.
                 continue
-            meta = trello_fetch_card_meta(ref)
+            meta = trello_fetch_card_meta(ref, key=api_key, token=api_token)
             if not meta:
                 continue  # transient failure → no marker, retry next tick
             # Evaluated; mark so a kept merged worktree doesn't re-query each tick.
@@ -1000,7 +1019,7 @@ def _transition_merged_trello(ctx: RepoCycle) -> None:
                 continue
             if (meta.get("list") or "").casefold() == target_cf:
                 continue  # already done
-            if trello_move_card(ref, target):
+            if trello_move_card(ref, target, key=api_key, token=api_token):
                 print(
                     f"  {verb('trello')} {ref} → {target} "
                     f"{dim(f'(merged {wt.short})')}",
@@ -1898,6 +1917,14 @@ def _bg_spawn_pr(
     resolves the repo from `ctx.repo_path`. An in-flight guard keyed by branch
     in `pill_state` keeps back-to-back ticks from double-spawning; stderr/stdout
     land in `spawn.log` so detached failures are not silent.
+
+    The child inherits the daemon's environment **minus every ticket-provider
+    credential** (`config.credential_env_names` — the resolved names across all
+    repos/orgs, plus the defaults). A spawned agent reads trackers through its
+    MCP connectors, never the REST keys, and a `review_prs` session runs over a
+    coworker's untrusted PR content; the daemon holds the credentials, the agent
+    doesn't. Everything else passes through untouched (`PATH`, `COCKPIT_HOME`,
+    `CMUX_*`) — the child is a full `cockpit new`.
     """
     key = f"spawn:{ctx.owner}/{ctx.name}:{branch}"
     last = ctx.pill_state.get(key)
@@ -1919,6 +1946,8 @@ def _bg_spawn_pr(
     except OSError:
         logfile = None
     sink: IO[bytes] | int = logfile if logfile is not None else subprocess.DEVNULL
+    secrets = credential_env_names(ctx.cfg)
+    child_env = {k: v for k, v in os.environ.items() if k not in secrets}
     try:
         subprocess.Popen(
             cmd,
@@ -1927,6 +1956,7 @@ def _bg_spawn_pr(
             stderr=sink,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
+            env=child_env,
         )
     except OSError as e:
         print(

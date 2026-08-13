@@ -23,11 +23,15 @@ from pathlib import Path
 
 from .config import (
     github_dev_done_label,
+    jira_api_token,
     jira_dev_done_status,
     jira_email,
     jira_site_url,
+    linear_api_key,
     linear_dev_done_state,
     repo_tickets,
+    trello_api_key,
+    trello_api_token,
     trello_dev_done_list,
 )
 from .gh import pr_body
@@ -87,6 +91,10 @@ def tickets_field_errors(block: dict, provider_name: str) -> list[str]:
     unknown fields and type mismatches — as ready-to-print messages (each begins
     `tickets.…`). Empty when valid. Pure: no exit, so preflight maps the first to
     its own `_die`. `none`/unknown providers accept only the common fields.
+
+    The allowed set is composed from the *active* provider only, so a field name
+    two providers share (`token_env`, declared by both Jira and Trello) validates
+    under either without being accepted under Linear/GitHub.
     """
     allowed = dict(
         _COMMON_CONFIG_FIELDS + _PROVIDER_CONFIG_FIELDS.get(provider_name, ())
@@ -219,10 +227,11 @@ def _linear_fetch_states(
     repo_entry: dict | None = None,
 ) -> dict[str, str | None]:
     """`{id: workflow-state name}` via the batched Linear query (one per team).
-    The repo_nwo/repo_dir/cfg/repo_entry kwargs are unused — Linear keys off the
-    global `LINEAR_API_KEY` — but kept for a uniform `fetch_states` signature.
+    The API key is resolved per-repo (`config.linear_api_key` → the env var named
+    by `tickets.api_key_env`), so two orgs can use different Linear workspaces.
+    repo_nwo/repo_dir are unused, kept for a uniform `fetch_states` signature.
     """
-    return fetch_ticket_states(ids)
+    return fetch_ticket_states(ids, api_key=linear_api_key(cfg, repo_entry) or None)
 
 
 def _linear_fetch_titles(
@@ -233,10 +242,10 @@ def _linear_fetch_titles(
     cfg: dict,
     repo_entry: dict | None = None,
 ) -> dict[str, str | None]:
-    """`{id: title}` via the batched Linear query (one per team). Unused kwargs
-    kept for the uniform `fetch_titles` signature (Linear keys off
-    `LINEAR_API_KEY`)."""
-    return fetch_ticket_titles(ids)
+    """`{id: title}` via the batched Linear query (one per team). Same per-repo
+    key resolution as `_linear_fetch_states`; repo_nwo/repo_dir unused, kept for
+    the uniform `fetch_titles` signature."""
+    return fetch_ticket_titles(ids, api_key=linear_api_key(cfg, repo_entry) or None)
 
 
 def _jira_fetch_states(
@@ -248,15 +257,18 @@ def _jira_fetch_states(
     repo_entry: dict | None = None,
 ) -> dict[str, str | None]:
     """`{key: status name}` via the Jira REST API (one GET per key). `site_url`
-    and `email` come from the `tickets` config block; the token from
-    `$JIRA_API_TOKEN`. The repo_nwo/repo_dir kwargs are unused — Jira keys off
-    the global site/email/token — but kept for a uniform `fetch_states` signature.
-    All keys map to None when the site or email is unconfigured (feature off)."""
+    and `email` come from the `tickets` config block; the token from the env var
+    named by `tickets.token_env` (default `JIRA_API_TOKEN`), resolved per-repo so
+    two orgs can hit different Jira sites. The repo_nwo/repo_dir kwargs are
+    unused, kept for a uniform `fetch_states` signature. All keys map to None
+    when the site or email is unconfigured (feature off)."""
     site = jira_site_url(cfg, repo_entry)
     email = jira_email(cfg, repo_entry)
     if not site or not email:
         return {i: None for i in ids}
-    return fetch_issue_statuses(ids, site_url=site, email=email)
+    return fetch_issue_statuses(
+        ids, site_url=site, email=email, token=jira_api_token(cfg, repo_entry) or None
+    )
 
 
 def _jira_fetch_titles(
@@ -273,7 +285,9 @@ def _jira_fetch_titles(
     email = jira_email(cfg, repo_entry)
     if not site or not email:
         return {i: None for i in ids}
-    return fetch_issue_summaries(ids, site_url=site, email=email)
+    return fetch_issue_summaries(
+        ids, site_url=site, email=email, token=jira_api_token(cfg, repo_entry) or None
+    )
 
 
 def _jira_ticket_url(
@@ -303,11 +317,16 @@ def _trello_fetch_states(
     repo_entry: dict | None = None,
 ) -> dict[str, str | None]:
     """`{short_link: list-name}` via the Trello REST API (one GET per card). The
-    repo_nwo/repo_dir/cfg/repo_entry kwargs are unused — Trello keys off the
-    global `TRELLO_API_KEY`/`TRELLO_API_TOKEN` — but kept for a uniform
-    `fetch_states` signature. All ids map to None when creds are unset (feature
-    off)."""
-    return fetch_card_lists(ids)
+    key+token are resolved per-repo (the env vars named by `tickets.key_env` /
+    `tickets.token_env`, defaults `TRELLO_API_KEY`/`TRELLO_API_TOKEN`), so two
+    orgs can use different Trello accounts. repo_nwo/repo_dir are unused, kept
+    for a uniform `fetch_states` signature. All ids map to None when creds are
+    unset (feature off)."""
+    return fetch_card_lists(
+        ids,
+        key=trello_api_key(cfg, repo_entry) or None,
+        token=trello_api_token(cfg, repo_entry) or None,
+    )
 
 
 def _trello_fetch_titles(
@@ -318,9 +337,14 @@ def _trello_fetch_titles(
     cfg: dict,
     repo_entry: dict | None = None,
 ) -> dict[str, str | None]:
-    """`{short_link: card_name}` via the Trello REST API (one GET per card). All
-    ids map to None when creds are unset (feature off)."""
-    return fetch_card_names(ids)
+    """`{short_link: card_name}` via the Trello REST API (one GET per card). Same
+    per-repo cred resolution as `_trello_fetch_states`. All ids map to None when
+    creds are unset (feature off)."""
+    return fetch_card_names(
+        ids,
+        key=trello_api_key(cfg, repo_entry) or None,
+        token=trello_api_token(cfg, repo_entry) or None,
+    )
 
 
 def _trello_ticket_url(

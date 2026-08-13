@@ -35,6 +35,9 @@ from pathlib import Path
 from typing import Any
 
 from .git import main_worktree_path
+from .jira import JIRA_API_TOKEN_ENV
+from .linear import LINEAR_API_KEY_ENV
+from .trello import TRELLO_API_KEY_ENV, TRELLO_API_TOKEN_ENV
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -706,6 +709,28 @@ def linear_merge_done_state(
     return str(cfg.get("linear_merge_done_state") or "Done").strip() or "Done"
 
 
+def linear_api_key_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """Name of the env var holding this repo's Linear API key (`tickets
+    .api_key_env`, default ``LINEAR_API_KEY``).
+
+    Config stores the env var *name*, never the key itself — the indirection is
+    what lets two orgs on separate Linear workspaces each point at their own
+    credential (`api_key_env` resolves repo → org → global → default like every
+    other `tickets` field, so an org block covers all its repos for free).
+    """
+    val = _tickets_field(cfg, repo_entry, "api_key_env")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return LINEAR_API_KEY_ENV
+
+
+def linear_api_key(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The Linear API key for this repo — `os.environ` read of the env var named
+    by `linear_api_key_env`. Empty when unset (the Linear feature is then off).
+    Never logged, never written to config or the cache."""
+    return os.environ.get(linear_api_key_env(cfg, repo_entry)) or ""
+
+
 def jira_site_url(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """The Jira Cloud site base URL (e.g. ``https://acme.atlassian.net``) used by
     the `tickets: jira` provider's REST calls. Read from the `tickets` block's
@@ -729,6 +754,23 @@ def jira_email(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     if isinstance(val, str) and val.strip():
         return val.strip()
     return ""
+
+
+def jira_token_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """Name of the env var holding this repo's Jira API token (`tickets
+    .token_env`, default ``JIRA_API_TOKEN``) — the Jira half of the same env-name
+    indirection as `linear_api_key_env`, so two orgs on separate Jira sites each
+    carry their own token."""
+    val = _tickets_field(cfg, repo_entry, "token_env")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return JIRA_API_TOKEN_ENV
+
+
+def jira_api_token(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The Jira API token for this repo — `os.environ` read of the env var named
+    by `jira_token_env`. Empty when unset (Jira REST is then off)."""
+    return os.environ.get(jira_token_env(cfg, repo_entry)) or ""
 
 
 def jira_dev_done_status(
@@ -788,6 +830,83 @@ def trello_merge_done_list(
     if isinstance(val, str) and val.strip():
         return val.strip()
     return ""
+
+
+def trello_key_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """Name of the env var holding this repo's Trello API key (`tickets.key_env`,
+    default ``TRELLO_API_KEY``). Trello needs a key *and* a token, so it has two
+    name fields (`key_env` / `token_env`) where Linear/Jira have one."""
+    val = _tickets_field(cfg, repo_entry, "key_env")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return TRELLO_API_KEY_ENV
+
+
+def trello_token_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """Name of the env var holding this repo's Trello API token (`tickets
+    .token_env`, default ``TRELLO_API_TOKEN``). Shares the field *name* with
+    Jira's token — the provider decides which one is in play, so preflight
+    accepts `token_env` under either."""
+    val = _tickets_field(cfg, repo_entry, "token_env")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return TRELLO_API_TOKEN_ENV
+
+
+def trello_api_key(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The Trello API key for this repo — `os.environ` read of `trello_key_env`.
+    Empty when unset (Trello REST is then off)."""
+    return os.environ.get(trello_key_env(cfg, repo_entry)) or ""
+
+
+def trello_api_token(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+    """The Trello API token for this repo — `os.environ` read of
+    `trello_token_env`. Empty when unset (Trello REST is then off)."""
+    return os.environ.get(trello_token_env(cfg, repo_entry)) or ""
+
+
+# The env-*name* readers, one per credential. Used to enumerate every name a
+# config could resolve to (`credential_env_names`).
+_CREDENTIAL_ENV_READERS = (
+    linear_api_key_env,
+    jira_token_env,
+    trello_key_env,
+    trello_token_env,
+)
+
+# The names cockpit uses when nothing is configured — always treated as
+# credential-bearing, even if some repo points its own field elsewhere.
+_DEFAULT_CREDENTIAL_ENVS = frozenset(
+    {
+        LINEAR_API_KEY_ENV,
+        JIRA_API_TOKEN_ENV,
+        TRELLO_API_KEY_ENV,
+        TRELLO_API_TOKEN_ENV,
+    }
+)
+
+
+def credential_env_names(cfg: dict | None = None) -> set[str]:
+    """Every env var *name* that holds a ticket-provider credential under `cfg`.
+
+    The union of each provider's resolved name across the global `tickets` block,
+    every repo entry, and every `orgs` block (orgs are scanned directly as well as
+    via their already-merged member repos, so a name is caught even from an org
+    with no loaded member), plus the four defaults.
+
+    The daemon holds these; spawned agent sessions must not (they read trackers
+    through their MCP connectors), so `_bg_spawn_pr` strips exactly this set from
+    the child environment. Names only — a value never leaves `os.environ`.
+    """
+    cfg = cfg if cfg is not None else load_config()
+    sources: list[dict | None] = [None]
+    sources += [r for r in cfg.get("repos", []) if isinstance(r, dict)]
+    orgs = cfg.get("orgs")
+    if isinstance(orgs, dict):
+        sources += [o for o in orgs.values() if isinstance(o, dict)]
+    return set(_DEFAULT_CREDENTIAL_ENVS) | {
+        reader(cfg, src) for reader in _CREDENTIAL_ENV_READERS for src in sources
+    }
 
 
 def orphan_nudge_grace_seconds(

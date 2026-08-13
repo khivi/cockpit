@@ -109,9 +109,26 @@ export `CONFIG_FIELDS`); preflight rejects a field belonging to another provider
 | `merge_done_status` | jira | `Done` | Jira status a delivered issue transitions to on merge. |
 | `dev_done_list` | trello | `""` (off) | Trello list (column) that lights the `devdone=` pill. No default — boards name lists arbitrarily. |
 | `merge_done_list` | trello | `""` (off) | Trello list a delivered card moves to on merge. No default. |
+| `api_key_env` | linear | `LINEAR_API_KEY` | **Name** of the env var holding the Linear API key. |
+| `token_env` | jira, trello | `JIRA_API_TOKEN` / `TRELLO_API_TOKEN` | **Name** of the env var holding the Jira API token / Trello API token (the provider decides which). |
+| `key_env` | trello | `TRELLO_API_KEY` | **Name** of the env var holding the Trello API key. |
 
 Secrets are **env-only**, never config: `LINEAR_API_KEY`, `JIRA_API_TOKEN`,
-`TRELLO_API_KEY`, `TRELLO_API_TOKEN`.
+`TRELLO_API_KEY`, `TRELLO_API_TOKEN`. The `*_env` fields above store an env var
+*name*, never a value — which is how two orgs on separate Linear workspaces (or
+Trello accounts) each get their own credential: set `api_key_env` once in the
+`orgs` block and every member repo inherits it through the same per-field chain.
+
+```json
+"orgs": {
+  "acme": {"tickets": {"provider": "linear", "keys": ["ACME"],
+                       "api_key_env": "LINEAR_API_KEY_ACME"}}
+}
+```
+
+Credentials are **daemon-only**: `cockpit new` processes the daemon spawns get an
+environment with every configured credential var stripped. A spawned agent reads
+its tracker through the Linear/Jira/Trello MCP connector, not the REST key.
 
 ## `skills` block
 

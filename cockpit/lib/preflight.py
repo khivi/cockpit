@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import NoReturn
 
 from .colors import yellow
-from .linear import LINEAR_API_KEY_ENV
 from .tool import resolve_tool
 
 REQUIRED_BINARIES = ("gh", "git")
@@ -310,16 +309,32 @@ def _validate_orphan_nudge_grace(cfg: dict) -> None:
     _validate_field(cfg, "orphan_nudge_grace_hours", _check, per_repo_key_suffix=False)
 
 
+def _unset_linear_key_envs(cfg: dict, repos: list[dict | None]) -> list[str]:
+    """The distinct Linear API-key env var *names* `repos` resolve to
+    (`tickets.api_key_env` per-repo → org → global → `LINEAR_API_KEY`) that are
+    currently unset, sorted.
+
+    Names only — a resolved key value never reaches a warning message. `None` in
+    `repos` resolves at global level (a repo-less config).
+    """
+    from .config import linear_api_key_env
+
+    names = {linear_api_key_env(cfg, r) for r in repos}
+    return sorted(n for n in names if not os.environ.get(n))
+
+
 def _validate_linear_dev_done(cfg: dict) -> None:
     """Validate the dev-done pill config and warn on a missing API key.
 
     `linear_dev_done_state`, when present, must be a string (a non-string would
     silently never match a Linear state name) — rejected like `sidebar_color`.
 
-    Then, if any repo is Linear-configured (`linear_keys`) but `LINEAR_API_KEY`
-    is unset, the daemon can't query Linear, so the `devdone=` pill silently
-    stays off. That's a soft degrade, not a config error — warn once at start so
-    it isn't a mystery cycles later.
+    Then, for every repo that is Linear-configured (`linear_keys`) whose resolved
+    API-key env var is unset, the daemon can't query Linear, so the `devdone=`
+    pill silently stays off. That's a soft degrade, not a config error — warn
+    once per distinct env var name at start so it isn't a mystery cycles later.
+    The warning names the *variable* each repo actually reads (per-org configs
+    point at different ones), never its value.
     """
     state = cfg.get("linear_dev_done_state")
     if state is not None and not isinstance(state, str):
@@ -327,12 +342,14 @@ def _validate_linear_dev_done(cfg: dict) -> None:
 
     from .config import linear_team_keys
 
-    has_linear_repo = any(linear_team_keys(cfg, r) for r in cfg.get("repos", []))
-    if has_linear_repo and not os.environ.get(LINEAR_API_KEY_ENV):
+    linear_repos: list[dict | None] = [
+        r for r in cfg.get("repos", []) if linear_team_keys(cfg, r)
+    ]
+    for env_name in _unset_linear_key_envs(cfg, linear_repos):
         print(
             f"{yellow('cockpit:')} a repo sets Linear team keys but "
-            f"{LINEAR_API_KEY_ENV} is unset — the Linear dev-done pill stays "
-            f"off. Export {LINEAR_API_KEY_ENV} to enable it.",
+            f"{env_name} is unset — the Linear dev-done pill stays "
+            f"off. Export {env_name} to enable it.",
             file=sys.stderr,
             flush=True,
         )
@@ -345,9 +362,10 @@ def _validate_linear_done_on_merge(cfg: dict) -> None:
     truthy string would silently enable a Linear *write*, so it's rejected like
     `review_prs`. `linear_merge_done_state`, when present, must be a string.
 
-    Then, if the feature is enabled anywhere (global or any repo) but
-    `LINEAR_API_KEY` is unset, the daemon can't perform the transition — warn
-    once (soft degrade, not an error), matching `_validate_linear_dev_done`.
+    Then, if the feature is enabled anywhere (global or any repo) but the
+    resolved Linear API-key env var is unset, the daemon can't perform the
+    transition — warn once per distinct variable name (soft degrade, not an
+    error), matching `_validate_linear_dev_done`.
     """
     top = cfg.get("linear_done_on_merge")
     if top is not None and not isinstance(top, bool):
@@ -358,23 +376,28 @@ def _validate_linear_done_on_merge(cfg: dict) -> None:
         _die(f"linear_merge_done_state must be a string, got {state!r}.")
 
     enabled = bool(top)
+    # The repos the feature is on for — every repo when the global flag is set,
+    # else just those opting in. Their resolved key env var is what to check.
+    on_repos: list[dict | None] = []
     for repo in cfg.get("repos", []):
         val = repo.get("linear_done_on_merge")
-        if val is None:
-            continue
-        if not isinstance(val, bool):
+        if val is not None and not isinstance(val, bool):
             name = repo.get("name") or repo.get("path", "?")
             _die(
                 f"repo {name!r}: linear_done_on_merge must be true or false, "
                 f"got {val!r}."
             )
-        enabled = enabled or val
+        if bool(top) or val:
+            on_repos.append(repo)
+        enabled = enabled or bool(val)
 
-    if enabled and not os.environ.get(LINEAR_API_KEY_ENV):
+    if not enabled:
+        return
+    for env_name in _unset_linear_key_envs(cfg, on_repos or [None]):
         print(
             f"{yellow('cockpit:')} linear_done_on_merge is enabled but "
-            f"{LINEAR_API_KEY_ENV} is unset — linked tickets won't transition "
-            f"on merge. Export {LINEAR_API_KEY_ENV} to enable it.",
+            f"{env_name} is unset — linked tickets won't transition "
+            f"on merge. Export {env_name} to enable it.",
             file=sys.stderr,
             flush=True,
         )
