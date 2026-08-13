@@ -14,10 +14,11 @@ MCP. But the daemon *does* make direct REST calls (Jira Cloud REST API v3):
     `close_on_merge` path in the slow tick (`cycle._transition_merged_jira`); the
     *policy* (which issue, when) lives there, this module just performs the call.
 
-Auth is HTTP Basic with `email:token`: the secret `JIRA_API_TOKEN` comes from the
-env, the non-secret `site_url` + `email` from the `tickets` config block (see the
-`config.jira_*` readers). The token is sent in the `Authorization` header and
-never logged.
+Auth is HTTP Basic with `email:token`: the secret token comes from the env var
+named by `tickets.token_env` (default `JIRA_API_TOKEN`, also the fallback when a
+caller passes no `token=`), the non-secret `site_url` + `email` from the
+`tickets` config block (see the `config.jira_*` readers). The token is sent in
+the `Authorization` header and never logged.
 """
 
 from __future__ import annotations
@@ -37,11 +38,15 @@ JIRA_API_TOKEN_ENV = "JIRA_API_TOKEN"
 # like `provider`/`close_on_merge` are added by `tickets.py`). Keep in sync with
 # the Jira readers in `config.py` (`jira_site_url`, `jira_email`,
 # `jira_dev_done_status`, `jira_merge_done_status`).
+# `token_env` names the env var the token is read from (default
+# `JIRA_API_TOKEN`) — never the token itself. Trello declares a `token_env` too;
+# `tickets.py` composes per *active* provider, so the shared name is fine.
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("site_url", "str"),
     ("email", "str"),
     ("dev_done_status", "str"),
     ("merge_done_status", "str"),
+    ("token_env", "str"),
 )
 
 # A Jira issue key: a project key (a letter then alphanumerics) joined to an

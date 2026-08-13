@@ -24,7 +24,9 @@ daemon can't reach the MCP. But the daemon *does* make direct GraphQL calls:
     `cycle._transition_merged_tickets`); the *policy* (which ticket, when,
     skip-if-already-done) lives there, this module just performs the call.
 
-Every call is gated on the `LINEAR_API_KEY` env var and degrades to
+Every call takes an explicit `api_key` (the caller resolves it per repo via
+`config.linear_api_key` — the env var named by `tickets.api_key_env`, default
+`LINEAR_API_KEY`, which is also the back-compat fallback here) and degrades to
 None/False — never raises — on a missing key, timeout, or API error.
 """
 
@@ -47,10 +49,14 @@ LINEAR_RE_CI = re.compile(r"[A-Za-z]{2,6}-[0-9]+")
 # `provider`/`close_on_merge` are added by `tickets.py`). Keep in sync with the
 # Linear readers in `config.py` (`linear_team_keys`, `linear_dev_done_state`,
 # `linear_merge_done_state`).
+# `api_key_env` names the env var the key is read from (default
+# `LINEAR_API_KEY`) — never the key itself. That indirection is what lets two
+# orgs on separate Linear workspaces each carry their own credential.
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("keys", "str_list"),
     ("dev_done_state", "str"),
     ("merge_done_state", "str"),
+    ("api_key_env", "str"),
 )
 
 # A PR *delivers* a ticket only via the explicit `Linear: [PE-1234](url)` footer

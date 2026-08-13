@@ -22,9 +22,10 @@ reach an MCP. But the daemon *does* make direct REST calls (Trello REST API v1):
     (which card, when) lives there, this module just performs the call.
 
 Auth is Trello's classic key+token, passed as query params: both come from the
-env (`TRELLO_API_KEY` + `TRELLO_API_TOKEN`). This is separate from the OAuth the
-MCP uses — the daemon is headless, so it uses the REST credential pair. Neither
-value is ever logged.
+env vars named by `tickets.key_env` / `tickets.token_env` (defaults
+`TRELLO_API_KEY` + `TRELLO_API_TOKEN`, also the fallbacks here when a caller
+passes neither). This is separate from the OAuth the MCP uses — the daemon is
+headless, so it uses the REST credential pair. Neither value is ever logged.
 """
 
 from __future__ import annotations
@@ -40,15 +41,19 @@ TRELLO_API_KEY_ENV = "TRELLO_API_KEY"
 TRELLO_API_TOKEN_ENV = "TRELLO_API_TOKEN"
 
 # The Trello-specific fields the `tickets` config block accepts, as `(name,
-# kind)` (kind resolved to a validator in `tickets.py`). No credential fields —
-# key+token are env-only (see the module docstring). Neither list field has a
-# default: an unset `dev_done_list` leaves the pill off, an unset
-# `merge_done_list` leaves the merge-move off (Trello list names are arbitrary,
-# so there's nothing safe to guess). Keep in sync with the readers in
-# `config.py` (`trello_dev_done_list`, `trello_merge_done_list`).
+# kind)` (kind resolved to a validator in `tickets.py`). No credential *values* —
+# `key_env`/`token_env` name the env vars the key+token are read from (defaults
+# `TRELLO_API_KEY`/`TRELLO_API_TOKEN`), so two orgs on separate Trello accounts
+# each carry their own pair. Neither list field has a default: an unset
+# `dev_done_list` leaves the pill off, an unset `merge_done_list` leaves the
+# merge-move off (Trello list names are arbitrary, so there's nothing safe to
+# guess). Keep in sync with the readers in `config.py` (`trello_dev_done_list`,
+# `trello_merge_done_list`, `trello_key_env`, `trello_token_env`).
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("dev_done_list", "str"),
     ("merge_done_list", "str"),
+    ("key_env", "str"),
+    ("token_env", "str"),
 )
 
 # A Trello card short link — the `[A-Za-z0-9]+` id in `trello.com/c/<shortLink>`.

@@ -16,7 +16,8 @@
         "provider": "linear",
         "keys": ["TEAM"],
         "close_on_merge": false,
-        "merge_done_state": "Done"
+        "merge_done_state": "Done",
+        "api_key_env": "LINEAR_API_KEY"
       }
     },
     {
@@ -43,7 +44,8 @@
         "email": "you@example.com",
         "dev_done_status": "Dev Done",
         "merge_done_status": "Done",
-        "close_on_merge": false
+        "close_on_merge": false,
+        "token_env": "JIRA_API_TOKEN"
       }
     },
     {
@@ -55,7 +57,9 @@
         "provider": "trello",
         "dev_done_list": "Review",
         "merge_done_list": "Done",
-        "close_on_merge": false
+        "close_on_merge": false,
+        "key_env": "TRELLO_API_KEY",
+        "token_env": "TRELLO_API_TOKEN"
       }
     },
     {
@@ -83,6 +87,15 @@
       "use_worktree": false,
       "tickets": {
         "provider": "github"
+      }
+    },
+    "acme-labs": {
+      "sidebar_color": "Cyan",
+      "branch_prefix": "yourusername/",
+      "tickets": {
+        "provider": "linear",
+        "keys": ["LABS"],
+        "api_key_env": "LINEAR_API_KEY_ACME_LABS"
       }
     }
   },

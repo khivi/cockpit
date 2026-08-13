@@ -826,6 +826,159 @@ def test_preflight_silent_when_done_on_merge_disabled_without_key(
     assert capsys.readouterr().err == ""
 
 
+# ── per-repo credential env-var names in the soft warnings ──────────────────
+
+
+def test_preflight_warns_naming_the_repos_resolved_key_env(
+    tmp_path, monkeypatch, capsys
+):
+    """The warning must name the variable *that repo* reads — with per-org
+    credentials the global default is the wrong thing to tell the user to set."""
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("LINEAR_API_KEY", "default-secret")
+    monkeypatch.delenv("LIN_ACME", raising=False)
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [
+                {
+                    "name": "r",
+                    "linear_keys": ["PE"],
+                    "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+                }
+            ],
+        }
+    )
+    err = capsys.readouterr().err
+    assert "LIN_ACME is unset" in err
+    assert "dev-done pill" in err
+
+
+def test_preflight_warning_never_contains_a_resolved_secret(
+    tmp_path, monkeypatch, capsys
+):
+    # Config holds env var *names*; a value must never reach a message.
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("LINEAR_API_KEY", "lin_super_secret_value")
+    monkeypatch.delenv("LIN_ACME", raising=False)
+    preflight(
+        {
+            "tool": "cmux",
+            "linear_done_on_merge": True,
+            "repos": [
+                {
+                    "name": "r",
+                    "linear_keys": ["PE"],
+                    "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+                }
+            ],
+        }
+    )
+    err = capsys.readouterr().err
+    assert "LIN_ACME" in err
+    assert "lin_super_secret_value" not in err
+
+
+def test_preflight_warns_once_per_distinct_env_var(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.delenv("LIN_A", raising=False)
+    monkeypatch.delenv("LIN_B", raising=False)
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [
+                {
+                    "name": "a1",
+                    "linear_keys": ["A"],
+                    "tickets": {"provider": "linear", "api_key_env": "LIN_A"},
+                },
+                {
+                    "name": "a2",
+                    "linear_keys": ["A"],
+                    "tickets": {"provider": "linear", "api_key_env": "LIN_A"},
+                },
+                {
+                    "name": "b1",
+                    "linear_keys": ["B"],
+                    "tickets": {"provider": "linear", "api_key_env": "LIN_B"},
+                },
+            ],
+        }
+    )
+    err = capsys.readouterr().err
+    assert err.count("LIN_A is unset") == 1  # two repos, one variable, one warning
+    assert err.count("LIN_B is unset") == 1
+
+
+def test_preflight_silent_when_the_orgs_key_env_is_set(tmp_path, monkeypatch, capsys):
+    # The org rung comes from apply_org_defaults, which validate_config runs.
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    monkeypatch.setenv("LIN_ACME", "acme-secret")
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [{"name": "r", "path": "/r", "org": "acme"}],
+            "orgs": {
+                "acme": {
+                    "tickets": {
+                        "provider": "linear",
+                        "keys": ["PE"],
+                        "api_key_env": "LIN_ACME",
+                    }
+                }
+            },
+        }
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_accepts_credential_env_name_fields(tmp_path, monkeypatch):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("JIRA_ACME", "x")
+    monkeypatch.setenv("TRELLO_K", "x")
+    monkeypatch.setenv("TRELLO_T", "x")
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [
+                {
+                    "name": "j",
+                    "tickets": {"provider": "jira", "token_env": "JIRA_ACME"},
+                },
+                {
+                    "name": "t",
+                    "tickets": {
+                        "provider": "trello",
+                        "key_env": "TRELLO_K",
+                        "token_env": "TRELLO_T",
+                    },
+                },
+            ],
+        }
+    )
+
+
+def test_preflight_rejects_a_credential_field_for_the_wrong_provider(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight(
+            {
+                "tool": "cmux",
+                "repos": [
+                    {
+                        "name": "r",
+                        "tickets": {"provider": "linear", "token_env": "NOPE"},
+                    }
+                ],
+            }
+        )
+    assert exc.value.code == 2
+    assert "token_env" in capsys.readouterr().err
+
+
 # ── shipped config.example.json must be accepted ─────────────────────────────
 
 

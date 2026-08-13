@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from cockpit.lib import tickets
 
@@ -86,7 +86,7 @@ def test_linear_fetch_states_delegates():
             ["PE-1"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=None
         )
     assert out == {"PE-1": "Dev Done"}
-    f.assert_called_once_with(["PE-1"])
+    f.assert_called_once_with(["PE-1"], api_key=ANY)
 
 
 def test_github_ticket_url_is_deterministic():
@@ -163,7 +163,7 @@ def test_jira_fetch_states_delegates_with_site_and_email():
         )
     assert out == {"PROJ-1": "Done"}
     f.assert_called_once_with(
-        ["PROJ-1"], site_url="https://x.atlassian.net", email="me@x.com"
+        ["PROJ-1"], site_url="https://x.atlassian.net", email="me@x.com", token=ANY
     )
 
 
@@ -199,3 +199,89 @@ def test_jira_config_fields_rejected_for_other_provider():
         {"provider": "github", "site_url": "x"}, "github"
     )
     assert errs and "site_url" in errs[0]
+
+
+# ── credential env-*name* fields (shared `token_env` across two providers) ───
+
+
+def test_token_env_is_valid_under_both_jira_and_trello():
+    # The one field name two providers declare. The allowed set is composed per
+    # *active* provider, so a shared name must validate under either.
+    assert tickets.tickets_field_errors({"token_env": "JIRA_ACME"}, "jira") == []
+    assert tickets.tickets_field_errors({"token_env": "TRELLO_ACME"}, "trello") == []
+
+
+def test_token_env_is_still_rejected_for_providers_that_dont_declare_it():
+    for provider in ("linear", "github", "none"):
+        errs = tickets.tickets_field_errors({"token_env": "X"}, provider)
+        assert len(errs) == 1 and "token_env" in errs[0]
+
+
+def test_credential_env_fields_are_per_provider():
+    assert tickets.tickets_field_errors({"api_key_env": "LIN"}, "linear") == []
+    assert tickets.tickets_field_errors({"api_key_env": "LIN"}, "trello") != []
+    assert tickets.tickets_field_errors({"key_env": "K"}, "trello") == []
+    assert tickets.tickets_field_errors({"key_env": "K"}, "jira") != []
+
+
+def test_credential_env_fields_must_be_strings():
+    errs = tickets.tickets_field_errors({"api_key_env": 7}, "linear")
+    assert len(errs) == 1 and "must be a string" in errs[0]
+
+
+def test_linear_fetch_states_threads_the_resolved_key(monkeypatch):
+    monkeypatch.setenv("LIN_ACME", "lin_secret")
+    repo = {"tickets": {"provider": "linear", "api_key_env": "LIN_ACME"}}
+    with patch.object(tickets, "fetch_ticket_states", return_value={}) as f:
+        tickets.LINEAR.fetch_states(
+            ["PE-1"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=repo
+        )
+    f.assert_called_once_with(["PE-1"], api_key="lin_secret")
+
+
+def test_linear_fetch_titles_threads_the_resolved_key(monkeypatch):
+    monkeypatch.setenv("LIN_ACME", "lin_secret")
+    repo = {"tickets": {"provider": "linear", "api_key_env": "LIN_ACME"}}
+    with patch.object(tickets, "fetch_ticket_titles", return_value={}) as f:
+        tickets.LINEAR.fetch_titles(
+            ["PE-1"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=repo
+        )
+    f.assert_called_once_with(["PE-1"], api_key="lin_secret")
+
+
+def test_linear_fetch_states_passes_none_when_the_named_var_is_unset(monkeypatch):
+    monkeypatch.delenv("LIN_MISSING", raising=False)
+    repo = {"tickets": {"provider": "linear", "api_key_env": "LIN_MISSING"}}
+    with patch.object(tickets, "fetch_ticket_states", return_value={}) as f:
+        tickets.LINEAR.fetch_states(
+            ["PE-1"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=repo
+        )
+    f.assert_called_once_with(["PE-1"], api_key=None)
+
+
+def test_jira_fetch_states_threads_the_resolved_token(monkeypatch):
+    monkeypatch.setenv("JIRA_ACME", "jira_secret")
+    cfg = {"tickets": {"provider": "jira", "site_url": "https://x.atlassian.net"}}
+    repo = {"tickets": {"email": "me@x.com", "token_env": "JIRA_ACME"}}
+    with patch.object(tickets, "fetch_issue_statuses", return_value={}) as f:
+        tickets.JIRA.fetch_states(
+            ["PROJ-1"], repo_nwo="o/r", repo_dir="/", cfg=cfg, repo_entry=repo
+        )
+    assert f.call_args.kwargs["token"] == "jira_secret"
+
+
+def test_trello_fetch_states_threads_the_resolved_key_and_token(monkeypatch):
+    monkeypatch.setenv("TRELLO_K", "k1")
+    monkeypatch.setenv("TRELLO_T", "t1")
+    repo = {
+        "tickets": {
+            "provider": "trello",
+            "key_env": "TRELLO_K",
+            "token_env": "TRELLO_T",
+        }
+    }
+    with patch.object(tickets, "fetch_card_lists", return_value={}) as f:
+        tickets.TRELLO.fetch_states(
+            ["aB3"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=repo
+        )
+    f.assert_called_once_with(["aB3"], key="k1", token="t1")

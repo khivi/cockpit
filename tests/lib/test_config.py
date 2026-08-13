@@ -1832,3 +1832,125 @@ def test_repos_grouped_by_org_leaves_an_org_less_config_untouched():
     cfg = {"repos": [{"name": "c"}, {"name": "a"}, {"name": "b"}]}
     assert config_mod.repos_grouped_by_org(cfg) == cfg["repos"]
     assert config_mod.repos_grouped_by_org({}) == []
+
+
+# ── ticket-credential env-*name* indirection (per-org credentials) ───────────
+
+
+def test_credential_env_name_readers_default_to_todays_env_vars():
+    # Absent config must be byte-identical to the pre-indirection behaviour.
+    assert config_mod.linear_api_key_env({}, None) == "LINEAR_API_KEY"
+    assert config_mod.jira_token_env({}, None) == "JIRA_API_TOKEN"
+    assert config_mod.trello_key_env({}, None) == "TRELLO_API_KEY"
+    assert config_mod.trello_token_env({}, None) == "TRELLO_API_TOKEN"
+
+
+def test_credential_env_names_resolve_per_field_repo_over_global():
+    cfg = {"tickets": {"provider": "linear", "api_key_env": "LINEAR_GLOBAL"}}
+    repo = {"tickets": {"api_key_env": "LINEAR_REPO"}}
+    assert config_mod.linear_api_key_env(cfg, repo) == "LINEAR_REPO"
+    # A repo block that omits the field still inherits the global one — the
+    # per-field chain, not whole-block replacement.
+    assert config_mod.linear_api_key_env(cfg, {"tickets": {"keys": ["PE"]}}) == (
+        "LINEAR_GLOBAL"
+    )
+
+
+def test_credential_env_name_inherited_from_the_org_block():
+    # The headline case: two orgs, two Linear workspaces, two credentials — and
+    # no org-aware machinery, just `_tickets_field` over the merged repo entry.
+    cfg: dict = {
+        "repos": [
+            {"name": "a", "path": "/a", "org": "acme"},
+            {"name": "b", "path": "/b", "org": "globex"},
+            {"name": "c", "path": "/c"},
+        ],
+        "orgs": {
+            "acme": {"tickets": {"provider": "linear", "api_key_env": "LIN_ACME"}},
+            "globex": {"tickets": {"provider": "linear", "api_key_env": "LIN_GLOBEX"}},
+        },
+    }
+    config_mod.apply_org_defaults(cfg)
+    a, b, c = cfg["repos"]
+    assert config_mod.linear_api_key_env(cfg, a) == "LIN_ACME"
+    assert config_mod.linear_api_key_env(cfg, b) == "LIN_GLOBEX"
+    assert config_mod.linear_api_key_env(cfg, c) == "LINEAR_API_KEY"
+
+
+def test_org_credential_names_cover_jira_and_trello_too():
+    cfg: dict = {
+        "repos": [
+            {"name": "j", "path": "/j", "org": "jira-org"},
+            {"name": "t", "path": "/t", "org": "trello-org"},
+        ],
+        "orgs": {
+            "jira-org": {"tickets": {"provider": "jira", "token_env": "JIRA_ACME"}},
+            "trello-org": {
+                "tickets": {
+                    "provider": "trello",
+                    "key_env": "TRELLO_K_ACME",
+                    "token_env": "TRELLO_T_ACME",
+                }
+            },
+        },
+    }
+    config_mod.apply_org_defaults(cfg)
+    j, t = cfg["repos"]
+    assert config_mod.jira_token_env(cfg, j) == "JIRA_ACME"
+    assert config_mod.trello_key_env(cfg, t) == "TRELLO_K_ACME"
+    assert config_mod.trello_token_env(cfg, t) == "TRELLO_T_ACME"
+
+
+def test_credential_value_resolvers_read_the_named_env_var(monkeypatch):
+    monkeypatch.setenv("LIN_ACME", "lin_secret")
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    repo = {"tickets": {"provider": "linear", "api_key_env": "LIN_ACME"}}
+    assert config_mod.linear_api_key({}, repo) == "lin_secret"
+    # Unset named var → empty (feature off), never a fall-through to the default.
+    other = {"tickets": {"provider": "linear", "api_key_env": "LIN_MISSING"}}
+    monkeypatch.setenv("LINEAR_API_KEY", "default_secret")
+    assert config_mod.linear_api_key({}, other) == ""
+
+
+def test_credential_value_resolvers_cover_jira_and_trello(monkeypatch):
+    monkeypatch.setenv("JIRA_T", "jira_secret")
+    monkeypatch.setenv("TRELLO_K", "trello_key")
+    monkeypatch.setenv("TRELLO_T", "trello_token")
+    repo = {
+        "tickets": {
+            "provider": "trello",
+            "key_env": "TRELLO_K",
+            "token_env": "TRELLO_T",
+        }
+    }
+    assert config_mod.trello_api_key({}, repo) == "trello_key"
+    assert config_mod.trello_api_token({}, repo) == "trello_token"
+    assert config_mod.jira_api_token({}, {"tickets": {"token_env": "JIRA_T"}}) == (
+        "jira_secret"
+    )
+
+
+def test_credential_env_names_unions_repos_orgs_globals_and_defaults():
+    cfg = {
+        "tickets": {"provider": "linear", "api_key_env": "LIN_GLOBAL"},
+        "repos": [{"name": "r", "path": "/r", "tickets": {"token_env": "JIRA_REPO"}}],
+        "orgs": {"acme": {"tickets": {"key_env": "TRELLO_ORG"}}},
+    }
+    names = config_mod.credential_env_names(cfg)
+    assert {"LIN_GLOBAL", "JIRA_REPO", "TRELLO_ORG"} <= names
+    # The four defaults are always credential-bearing, whatever a repo overrides.
+    assert {
+        "LINEAR_API_KEY",
+        "JIRA_API_TOKEN",
+        "TRELLO_API_KEY",
+        "TRELLO_API_TOKEN",
+    } <= names
+    # Names only — no values anywhere near this.
+    assert all(isinstance(n, str) and n for n in names)
+
+
+def test_credential_env_names_tolerates_a_malformed_config():
+    # Runs on whatever load_config returned; a junk repos/orgs entry must not
+    # raise (preflight is what rejects it).
+    names = config_mod.credential_env_names({"repos": ["junk"], "orgs": "junk"})
+    assert "LINEAR_API_KEY" in names

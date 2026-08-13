@@ -10,8 +10,9 @@ Sections:
 from __future__ import annotations
 
 import importlib
+import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 
@@ -1603,7 +1604,7 @@ def test_transition_happy_path_moves_ticket(tmp_path, monkeypatch):
         patch.object(cycle, "update_ticket_state", return_value=True) as upd,
     ):
         cycle._transition_merged_tickets(ctx)
-    upd.assert_called_once_with("issue-uuid", "s-done")
+    upd.assert_called_once_with("issue-uuid", "s-done", api_key="k")
     assert ctx.pill_state.get("merged-done:o/n:PE-1") is True
 
 
@@ -1846,7 +1847,9 @@ def test_transition_viewer_and_team_states_fetched_once(tmp_path, monkeypatch):
             cycle, "find_pr_payload", side_effect=lambda b, n: payloads.get(b)
         ),
         patch.object(cycle, "fetch_viewer_id", return_value="u-me") as viewer,
-        patch.object(cycle, "fetch_ticket_meta", side_effect=lambda t: metas.get(t)),
+        patch.object(
+            cycle, "fetch_ticket_meta", side_effect=lambda t, **_kw: metas.get(t)
+        ),
         patch.object(
             cycle, "fetch_team_states", return_value={"done": "s-done"}
         ) as teams,
@@ -1916,7 +1919,11 @@ def test_jira_transition_happy_path(tmp_path, monkeypatch):
     ):
         cycle._transition_merged_tickets(ctx)
     tr.assert_called_once_with(
-        "PROJ-1", "Done", site_url="https://acme.atlassian.net", email="me@acme.com"
+        "PROJ-1",
+        "Done",
+        site_url="https://acme.atlassian.net",
+        email="me@acme.com",
+        token="tok",
     )
     assert ctx.pill_state.get("merged-done:o/n:PROJ-1") is True
 
@@ -2056,7 +2063,7 @@ def test_trello_transition_happy_path(tmp_path, monkeypatch):
         patch.object(cycle, "trello_move_card", return_value=True) as mv,
     ):
         cycle._transition_merged_tickets(ctx)
-    mv.assert_called_once_with("aB3dZ9", "Done")
+    mv.assert_called_once_with("aB3dZ9", "Done", key="k", token="tok")
     assert ctx.pill_state.get("merged-done:o/n:aB3dZ9") is True
 
 
@@ -2199,19 +2206,17 @@ def test_cached_linear_identity_does_not_cache_falsy(tmp_path):
     assert "k" not in ctx.pill_state
 
 
-def test_cached_viewer_id_keyed_by_api_key_fingerprint(tmp_path, monkeypatch):
+def test_cached_viewer_id_keyed_by_api_key_fingerprint(tmp_path):
     ctx = _stub_repo_cycle(tmp_path)
-    monkeypatch.setenv("LINEAR_API_KEY", "key-one")
     with (
         patch.object(cycle, "fetch_viewer_id", return_value="u-1") as fetch,
         patch.object(cycle.time, "time", return_value=1000.0),
     ):
-        assert cycle._cached_viewer_id(ctx) == "u-1"
-        assert cycle._cached_viewer_id(ctx) == "u-1"  # cache hit, same key
+        assert cycle._cached_viewer_id(ctx, "key-one") == "u-1"
+        assert cycle._cached_viewer_id(ctx, "key-one") == "u-1"  # hit, same key
         # Rotate the key → different fingerprint → cache miss → refetch.
-        monkeypatch.setenv("LINEAR_API_KEY", "key-two")
         fetch.return_value = "u-2"
-        assert cycle._cached_viewer_id(ctx) == "u-2"
+        assert cycle._cached_viewer_id(ctx, "key-two") == "u-2"
     assert fetch.call_count == 2
     assert not any("key-one" in k or "key-two" in k for k in ctx.pill_state)
 
@@ -3008,8 +3013,8 @@ def test_prefetch_linear_blocks_fetches_when_no_prior(tmp_path):
         "fetched_at": 1000.0,
         "provider": "linear",
     }
-    fetch.assert_called_once_with(["PE-1234"])
-    fetch_titles.assert_called_once_with(["PE-1234"])
+    fetch.assert_called_once_with(["PE-1234"], api_key=ANY)
+    fetch_titles.assert_called_once_with(["PE-1234"], api_key=ANY)
 
 
 def test_prefetch_linear_blocks_carries_forward_when_unchanged_and_fresh(tmp_path):
@@ -3055,7 +3060,7 @@ def test_prefetch_linear_blocks_rebuilds_provider_less_prior(tmp_path):
 
     assert block is not prior
     assert block["provider"] == "linear"
-    fetch.assert_called_once_with(["PE-1234"])
+    fetch.assert_called_once_with(["PE-1234"], api_key=ANY)
 
 
 def test_prefetch_linear_blocks_refetches_when_footer_changed(tmp_path):
@@ -3086,7 +3091,7 @@ def test_prefetch_linear_blocks_refetches_when_footer_changed(tmp_path):
     assert block["tickets"] == [
         {"id": "PE-1234", "state": "In Progress", "title": "Fix the login flow"}
     ]
-    fetch.assert_called_once_with(["PE-1234"])
+    fetch.assert_called_once_with(["PE-1234"], api_key=ANY)
 
 
 def test_prefetch_linear_blocks_refetches_when_stale(tmp_path):
@@ -3109,7 +3114,7 @@ def test_prefetch_linear_blocks_refetches_when_stale(tmp_path):
     ):
         _prefetch_one(ctx, pr)
 
-    fetch.assert_called_once_with(["PE-1234"])
+    fetch.assert_called_once_with(["PE-1234"], api_key=ANY)
 
 
 def test_prefetch_linear_blocks_batches_across_prs_one_call(tmp_path):
@@ -3133,8 +3138,8 @@ def test_prefetch_linear_blocks_batches_across_prs_one_call(tmp_path):
     ):
         cycle._prefetch_linear_blocks(ctx)
 
-    fetch.assert_called_once_with(["ENG-3", "PE-1", "PE-2"])  # union, sorted
-    fetch_titles.assert_called_once_with(["ENG-3", "PE-1", "PE-2"])  # titles too
+    fetch.assert_called_once_with(["ENG-3", "PE-1", "PE-2"], api_key=ANY)  # sorted
+    fetch_titles.assert_called_once_with(["ENG-3", "PE-1", "PE-2"], api_key=ANY)
     assert ctx.linear_blocks["khivi/pe-a"]["tickets"] == [
         {"id": "PE-1", "state": "Dev Done", "title": "A"}
     ]
@@ -4535,3 +4540,179 @@ def test_reconcile_sidebar_groups_reparks_an_existing_reviews_fold(tmp_path):
     create.assert_not_called()
     ungroup.assert_not_called()
     move.assert_called_once_with("wg:1")
+
+
+# ── per-org ticket credentials: cache isolation + spawn env hygiene ──────────
+
+
+def test_cached_viewer_id_isolates_two_orgs_credentials(tmp_path):
+    """org B must not read org A's cached viewer id — that id can never match
+    org B's assignees, so every one of its tickets would be silently skipped."""
+    ctx = _stub_repo_cycle(tmp_path)
+    viewers = {"key-a": "user-a", "key-b": "user-b"}
+    with (
+        patch.object(
+            cycle, "fetch_viewer_id", side_effect=lambda *, api_key: viewers[api_key]
+        ) as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        assert cycle._cached_viewer_id(ctx, "key-a") == "user-a"
+        assert cycle._cached_viewer_id(ctx, "key-b") == "user-b"
+        # Both stay cached independently, within one TTL.
+        assert cycle._cached_viewer_id(ctx, "key-a") == "user-a"
+        assert cycle._cached_viewer_id(ctx, "key-b") == "user-b"
+    assert fetch.call_count == 2
+    # Two distinct slots, and neither holds the raw secret.
+    slots = [k for k in ctx.pill_state if k.startswith("linear-viewer:")]
+    assert len(slots) == 2
+    assert not any("key-a" in k or "key-b" in k for k in ctx.pill_state)
+
+
+def test_cached_jira_viewer_isolates_two_sites(tmp_path):
+    ctx = _stub_repo_cycle(tmp_path)
+    with (
+        patch.object(
+            cycle,
+            "jira_fetch_myself",
+            side_effect=lambda *, site_url, email, token: token,
+        ) as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        assert (
+            cycle._cached_jira_viewer(ctx, "https://a.net", "a@x", "tok-a") == "tok-a"
+        )
+        assert (
+            cycle._cached_jira_viewer(ctx, "https://b.net", "b@x", "tok-b") == "tok-b"
+        )
+        assert (
+            cycle._cached_jira_viewer(ctx, "https://a.net", "a@x", "tok-a") == "tok-a"
+        )
+    assert fetch.call_count == 2
+    assert len([k for k in ctx.pill_state if k.startswith("jira-viewer:")]) == 2
+    assert not any("tok-a" in k or "tok-b" in k for k in ctx.pill_state)
+
+
+def test_cached_trello_viewer_isolates_two_accounts(tmp_path):
+    ctx = _stub_repo_cycle(tmp_path)
+    with (
+        patch.object(
+            cycle,
+            "trello_fetch_myself",
+            side_effect=lambda *, key, token: f"{key}:{token}",
+        ) as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        assert cycle._cached_trello_viewer(ctx, "k-a", "t-a") == "k-a:t-a"
+        assert cycle._cached_trello_viewer(ctx, "k-b", "t-b") == "k-b:t-b"
+        assert cycle._cached_trello_viewer(ctx, "k-a", "t-a") == "k-a:t-a"
+    assert fetch.call_count == 2
+    assert len([k for k in ctx.pill_state if k.startswith("trello-viewer:")]) == 2
+    assert not any("t-a" in k or "t-b" in k for k in ctx.pill_state)
+
+
+def test_transition_uses_the_repos_own_linear_key(tmp_path, monkeypatch):
+    """The whole point of the indirection: an org-scoped `api_key_env` is what
+    authenticates, not the process-wide default."""
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    monkeypatch.setenv("LIN_ACME", "acme-secret")
+    ctx = _transition_ctx(
+        tmp_path,
+        repo_entry={
+            "linear_keys": ["PE"],
+            "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+        },
+    )
+    with (
+        _enter_all(_transition_patches()),
+        patch.object(cycle, "update_ticket_state", return_value=True) as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_called_once_with("issue-uuid", "s-done", api_key="acme-secret")
+
+
+def test_transition_noop_when_the_orgs_named_key_is_unset(tmp_path, monkeypatch):
+    # The default var being set must not rescue a repo pointing elsewhere.
+    monkeypatch.setenv("LINEAR_API_KEY", "default-secret")
+    monkeypatch.delenv("LIN_ACME", raising=False)
+    ctx = _transition_ctx(
+        tmp_path,
+        repo_entry={
+            "linear_keys": ["PE"],
+            "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+        },
+    )
+    with (
+        _enter_all(_transition_patches()),
+        patch.object(cycle, "update_ticket_state") as upd,
+    ):
+        cycle._transition_merged_tickets(ctx)
+    upd.assert_not_called()
+
+
+def test_bg_spawn_pr_strips_ticket_credentials_from_the_child_env(
+    tmp_path, monkeypatch
+):
+    """A spawned session reads trackers through its MCP connectors — it must not
+    inherit the daemon's REST credentials (a `review_prs` session runs over a
+    coworker's untrusted PR content)."""
+    monkeypatch.setattr(cycle, "_SPAWN_LOG", tmp_path / "spawn.log")
+    for name in (
+        "LINEAR_API_KEY",
+        "JIRA_API_TOKEN",
+        "TRELLO_API_KEY",
+        "TRELLO_API_TOKEN",
+        "LIN_ACME",
+        "JIRA_GLOBEX",
+        "TRELLO_K_ORG",
+        "TRELLO_T_ORG",
+    ):
+        monkeypatch.setenv(name, "s3cret")
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:1")
+    ctx = _spawn_ctx(tmp_path)
+    ctx.cfg = {
+        "repos": [
+            {
+                "name": "n",
+                "path": str(tmp_path),
+                "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+            },
+            {
+                "name": "j",
+                "path": "/j",
+                "tickets": {"provider": "jira", "token_env": "JIRA_GLOBEX"},
+            },
+        ],
+        "orgs": {
+            "acme": {
+                "tickets": {
+                    "provider": "trello",
+                    "key_env": "TRELLO_K_ORG",
+                    "token_env": "TRELLO_T_ORG",
+                }
+            }
+        },
+    }
+    with (
+        patch.object(cycle.subprocess, "Popen") as popen,
+        patch.object(cycle.time, "monotonic", return_value=1.0),
+    ):
+        cycle._bg_spawn_pr(ctx, "n", 9, "coworker/x", review=True)
+    child_env = popen.call_args.kwargs["env"]
+    # Every configured credential name — org-scoped ones included — is gone.
+    for name in (
+        "LINEAR_API_KEY",
+        "JIRA_API_TOKEN",
+        "TRELLO_API_KEY",
+        "TRELLO_API_TOKEN",
+        "LIN_ACME",
+        "JIRA_GLOBEX",
+        "TRELLO_K_ORG",
+        "TRELLO_T_ORG",
+    ):
+        assert name not in child_env
+    assert "s3cret" not in child_env.values()
+    # …and nothing else is disturbed — the child is a full `cockpit new`.
+    assert child_env["COCKPIT_HOME"] == str(tmp_path)
+    assert child_env["CMUX_WORKSPACE_ID"] == "workspace:1"
+    assert child_env.get("PATH") == os.environ.get("PATH")
