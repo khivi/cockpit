@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from cockpit.lib.config import apply_org_defaults
 from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
 from cockpit.tui.widgets.config_screen import ConfigScreen
@@ -1327,6 +1328,38 @@ async def test_gather_inventory_hides_workspaceless_no_worktree_row(
     assert [(name, wts) for name, _, _, _, wts in app._gather_inventory(live)] == [
         ("scratch", [swt]),
         ("managed", [mwt]),
+    ]
+
+
+async def test_gather_inventory_clumps_an_orgs_repos(monkeypatch, tmp_path):
+    # Repos sharing an `org` render adjacent even when `cockpit new` appended
+    # them interleaved, and each carries the org's merged sidebar_color — that
+    # pair is what makes an org read as one block in the table.
+    paths = {}
+    for name in ("acme-1", "solo", "acme-2"):
+        paths[name] = tmp_path / name
+        paths[name].mkdir()
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: apply_org_defaults(
+            {
+                "repos": [
+                    {"name": "acme-1", "path": str(paths["acme-1"]), "org": "acme"},
+                    {"name": "solo", "path": str(paths["solo"])},
+                    {"name": "acme-2", "path": str(paths["acme-2"]), "org": "acme"},
+                ],
+                "orgs": {"acme": {"sidebar_color": "Magenta"}},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees", lambda p, prefix="", repo_name="": []
+    )
+    app, _ = _make_app()
+    assert [(name, color) for name, _, color, _, _ in app._gather_inventory(set())] == [
+        ("acme-1", "Magenta"),
+        ("acme-2", "Magenta"),
+        ("solo", None),
     ]
 
 

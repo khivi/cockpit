@@ -38,9 +38,54 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `use_worktree` | bool | `true` | When `false`, the user works directly in the main checkout and cockpit never spawns PR/review/orphan worktrees for the repo (and `n` on its row creates a single named workspace on the checkout, no worktree). Absent = `true` = normal worktree-managed repo. Set to `false` by bare `cockpit new`. |
 | `orphan_nudge_grace_hours` | number | `4` | Grace before a no-PR ("orphan") worktree draws the push-or-close nudge. `0` disables. Also a top-level default. |
 | `tickets` | object\|string | `{}` | Ticket-provider block (below). Bare string `"github"` == `{"provider": "github"}`. |
+| `org` | string | unset | Name of an entry in the top-level `orgs` object whose defaults this repo inherits (below). Must be defined there — a dangling reference hard-fails at start. |
 
 Legacy flat keys still honored as fallbacks (superseded by the `tickets` block):
 `linear_keys`, `linear_dev_done_state`, `linear_merge_done_state`, `linear_done_on_merge`.
+
+## `orgs` block
+
+A named bundle of **per-repo defaults**, for when you watch several small repos
+belonging to the same organisation instead of one big one. Any per-repo field
+(above) may appear in an org block except `name`, `path`, and `org` itself —
+those identify one repo, so preflight rejects them there.
+
+```json
+{
+  "repos": [
+    { "name": "svc-auth",    "path": "~/src/acme/svc-auth",    "org": "acme" },
+    { "name": "svc-billing", "path": "~/src/acme/svc-billing", "org": "acme" },
+    { "name": "svc-web",     "path": "~/src/acme/svc-web",     "org": "acme",
+      "sidebar_color": "Cyan" }
+  ],
+  "orgs": {
+    "acme": {
+      "sidebar_color": "Magenta",
+      "branch_prefix": "khivi/",
+      "use_worktree": false,
+      "tickets": { "provider": "github" }
+    }
+  }
+}
+```
+
+Resolution is **repo → org → global → default**: the org fills only keys the repo
+itself doesn't set, so `svc-web` above keeps Cyan while its siblings take Magenta.
+The merge is shallow — a repo's own `tickets`/`skills` block wins outright over
+the org's, the same way it already wins over the global one.
+
+Two effects, both falling out of that merge (`config.py::apply_org_defaults`,
+applied at load):
+
+- **One colour per org.** `sidebar_color` drives both the cmux sidebar tint and
+  the TUI row tint, so an org's repos read as one block.
+- **One `use_worktree: false` per org**, not one per repo — the usual shape when
+  the org is many small repos you work in-place and only occasionally pull.
+
+The TUI additionally renders an org's repos **adjacent**
+(`config.py::repos_grouped_by_org`), each org sitting where its first member
+appears in `config.json`; repos with no org keep their config position. Ordering
+only — parking (`h`) is still per repo.
 
 ## `tickets` block
 
@@ -85,6 +130,7 @@ Slash commands seeded as a spawned workspace's first turn. Fields resolve
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `repos` | array | `[]` | Watched repos (above). |
+| `orgs` | object | `{}` | Named bundles of per-repo defaults, inherited by repos naming them in `org` (above). |
 | `slow_poll_interval_seconds` | number | `300` | Full reconcile cadence (gh fetch, PR JSON, pills). |
 | `fast_poll_interval_seconds` | number | `30` | Network-free republish cadence (git-state + PR flat cells from disk). |
 | `autoclose_age_days` | number | `14` | Age past which an abandoned worktree is autoclosed. |

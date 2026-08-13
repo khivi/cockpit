@@ -56,6 +56,53 @@ def _validate_sidebar_colors(cfg: dict) -> None:
             )
 
 
+# Keys that identify one specific repo, so they can never be an org-wide default.
+_ORG_FORBIDDEN_KEYS = ("name", "path", "org")
+
+
+def _validate_orgs(cfg: dict) -> None:
+    """Validate the top-level `orgs` object and every repo's `org` reference.
+
+    An org block is merged into its member repos at load
+    (`config.apply_org_defaults`), so its *values* are checked by the same
+    per-repo validators as any other repo key — `validate_config` merges before
+    running them. What only this can catch is the wiring: a repo pointing at an
+    org that isn't defined silently loses every default it expected (no tint, no
+    `use_worktree: false`), which is exactly the quiet misconfiguration preflight
+    exists to turn into a startup error.
+    """
+    orgs = cfg.get("orgs")
+    if orgs is None:
+        orgs = {}
+    elif not isinstance(orgs, dict):
+        _die(f"orgs must be an object of org-name → defaults, got {orgs!r}.")
+    for org_name, block in orgs.items():
+        if not isinstance(block, dict):
+            _die(
+                f"orgs[{org_name!r}] must be an object of repo defaults, "
+                f"got {block!r}."
+            )
+        for key in _ORG_FORBIDDEN_KEYS:
+            if key in block:
+                _die(
+                    f"orgs[{org_name!r}]: {key!r} identifies one repo — "
+                    "it can't be an org-wide default."
+                )
+    for repo in cfg.get("repos", []):
+        org = repo.get("org")
+        if org is None:
+            continue
+        name = repo.get("name") or repo.get("path", "?")
+        if not isinstance(org, str) or not org:
+            _die(f"repo {name!r}: org must be a non-empty string, got {org!r}.")
+        if org not in orgs:
+            known = ", ".join(sorted(orgs)) or "none defined"
+            _die(
+                f"repo {name!r}: org {org!r} has no entry in the top-level "
+                f"`orgs` object (defined: {known})."
+            )
+
+
 def _validate_repo_bool(cfg: dict, key: str) -> None:
     """Hard-fail on a per-repo `key` that's present but isn't a bool.
 
@@ -399,6 +446,16 @@ def validate_config(cfg: dict) -> None:
     toolchain on PATH. Add a new `_validate_*` here and the example-config test
     covers it automatically.
     """
+    from .config import apply_org_defaults
+
+    # Orgs first (shape + a repo pointing at an undefined one), then merge them
+    # down onto their repos so every validator below sees the *effective* value:
+    # an org-inherited bad `sidebar_color` must fail exactly like a repo-level
+    # one. The merge is idempotent, so re-running it on an already-loaded config
+    # is a no-op.
+    _validate_orgs(cfg)
+    apply_org_defaults(cfg)
+
     _validate_sidebar_colors(cfg)
     _validate_repo_bool(cfg, "review_prs")
     _validate_repo_bool(cfg, "use_worktree")

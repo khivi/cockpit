@@ -3,6 +3,8 @@
 Owns:
   - filesystem paths under $COCKPIT_HOME
   - config.json read
+  - apply_org_defaults(): merge the `orgs` block into its member repo entries at
+    load, so every downstream `repo_entry.get(...)` gains an org rung for free
   - state-dir bootstrap (copies config.example.json on first run)
   - discover_repo(): resolve cwd to a registered repo entry
   - install_cship_statusline_if_configured(): declarative statusLine writer,
@@ -198,6 +200,63 @@ def _read_config() -> dict:
         return data
 
 
+def apply_org_defaults(cfg: dict) -> dict:
+    """Fill each repo's unset keys from its org's block in the top-level `orgs`
+    object, in place. Returns the same dict for chaining.
+
+    An org is nothing but a *named block of repo defaults* — one `sidebar_color`
+    so a whole org tints alike in the cmux sidebar and the TUI, one
+    `use_worktree: false` instead of the same key on twenty small repos, a shared
+    `branch_prefix` / `tickets`. Merging it in here is the whole feature: every
+    reader already resolves repo → global → default off `repo_entry.get(...)`,
+    so an org rung slots in with **zero** call-site changes and nothing below
+    this function ever learns orgs exist.
+
+    Shallow on purpose: a repo's own `tickets`/`skills` block wins outright over
+    the org's, exactly as it already wins over the global one. Idempotent (a
+    second pass finds every key set), which is what lets `preflight.validate_config`
+    call it on a raw dict. Config *writers* (`registry.register_cwd`,
+    `save_config_value`) re-read `config.json` from disk rather than reusing
+    `load_config()`, so an inherited value is never persisted onto the repo entry.
+    """
+    orgs = cfg.get("orgs")
+    if not isinstance(orgs, dict):
+        return cfg
+    for repo in cfg.get("repos", []):
+        org = repo.get("org")
+        # A non-string org is rejected by preflight; skip it here rather than
+        # blowing up on an unhashable dict key — load runs before validation.
+        defaults = orgs.get(org) if isinstance(org, str) else None
+        if isinstance(defaults, dict):
+            for key, val in defaults.items():
+                repo.setdefault(key, val)
+    return cfg
+
+
+def repos_grouped_by_org(cfg: dict) -> list[dict]:
+    """Configured repos with same-`org` entries adjacent, each org sitting at the
+    position of its first member.
+
+    Display ordering only — nothing here changes what a repo *is*. `cockpit new`
+    appends to `config.json`, so without this an org's repos interleave with
+    everyone else's as they accumulate, and "kept together" degrades to whatever
+    order they happened to be registered in. A repo with no org keeps its own
+    config position, so an org-less config renders in exactly the order it always
+    did.
+    """
+    repos = list(cfg.get("repos", []) or [])
+    first: dict[str, int] = {}
+    order: list[int] = []
+    for i, repo in enumerate(repos):
+        org = repo.get("org")
+        org = org if isinstance(org, str) and org else ""
+        order.append(first.setdefault(org, i) if org else i)
+    return [
+        repo
+        for _, repo in sorted(zip(order, repos, strict=True), key=lambda pair: pair[0])
+    ]
+
+
 def load_config() -> dict:
     """Return the cockpit config, read from disk once per process.
 
@@ -213,7 +272,7 @@ def load_config() -> dict:
     """
     global _CONFIG_CACHE
     if _CONFIG_CACHE is None:
-        _CONFIG_CACHE = _read_config()
+        _CONFIG_CACHE = apply_org_defaults(_read_config())
     return _CONFIG_CACHE
 
 
