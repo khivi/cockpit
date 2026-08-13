@@ -2,6 +2,12 @@
 # Cut a release: bump [project] version in pyproject.toml, open the
 # `chore(release): <version>` PR, and merge it.
 #
+# MANUAL FALLBACK. The normal path is release-please, which keeps a rolling
+# release PR open — merging it does all of this for you. Reach for this script
+# when that action is broken or a version has to be forced, and update
+# .release-please-manifest.json to match afterwards or release-please will
+# propose its next bump from the stale baseline.
+#
 # That merge is the whole trigger — tag.yml sees pyproject.toml change on main
 # and pushes `v<version>`, which fires release.yml (Homebrew tap bump) and
 # publish.yml (PyPI). Nothing here tags anything. See AGENTS.md "Release

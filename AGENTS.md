@@ -208,17 +208,20 @@ with `pre-commit run ... --files`, not the whole tree.
 
 ## Release versioning
 
-The version is **static** in `pyproject.toml` (`[project] version = "..."`), read at runtime via `importlib.metadata` (`version.running_version`, surfaced by `cockpit --version`). There is **no** per-merge auto-bump hook and no self-update path. `ci.yml` skips only `no-commit-to-branch` (local-dev-only).
+The version is **static** in `pyproject.toml` (`[project] version = "..."`), read at runtime via `importlib.metadata` (`version.running_version`, surfaced by `cockpit --version`). There is no self-update path. `ci.yml` skips only `no-commit-to-branch` (local-dev-only).
 
-**Every merge to `main` that ships user-visible behaviour gets a release** — brew is the only delivery path, so an unreleased merge reaches nobody; bump semver off the change (`feat` → minor, `fix` → patch).
+**Every merge to `main` that ships user-visible behaviour gets a release** — brew is the only delivery path, so an unreleased merge reaches nobody. The semver bump is derived from the conventional-commit types on `main` (`feat` → minor, `fix` → patch), which `pr-title.yml` already enforces on every squash subject.
 
-To cut a release — `main` is protected, so the bump lands through a PR like any other change, and **the tag is pushed for you**:
+**The release PR writes itself.** `.github/workflows/release-please.yml` (`googleapis/release-please-action@v4`) keeps one rolling `chore(main): release <version>` PR open, accumulating every conventional commit merged since the last release and maintaining `CHANGELOG.md`. **Merging that PR is the only human step in a release** — it bumps `[project] version`, which is the trigger `tag.yml` watches, so tag → tap → PyPI all follow on their own. Several merges therefore batch into one release rather than cutting a version each, which matters because PyPI refuses a re-upload of a version.
 
-```bash
-./cut-release.sh 1.6.0    # from a worktree on a feature branch, never on main
-```
+Two settings in that workflow are load-bearing, both for the same GitHub recursion rule that shaped `tag.yml`:
 
-`cut-release.sh` is the whole procedure: it bumps `[project] version`, commits `chore(release): <version>`, opens the PR, and merges it `--squash --admin` (confirming first unless passed `-y`). It refuses a dirty tree, a non-semver argument, `main`/`master`, and a bump to the version already in `pyproject.toml`. Its guard paths are covered by `tests/test_cut_release.py`; the happy path ends in a real merge and is deliberately untested. Doing it by hand is the same two steps — bump `pyproject.toml` on a branch, then `gh pr merge <N> --squash --admin` (see the merge note below).
+- **`skip-github-release: true`** — left to default, release-please pushes the tag and cuts the GitHub release itself, duplicating `tag.yml` *and* doing it under a token whose pushes don't trigger workflows, so `release.yml`/`publish.yml` would silently never run. `tag.yml` stays the only tagger; release-please only ever writes the PR.
+- **`token: COCKPIT_GITHUB_API_TOKEN`** — a PR opened by the default `GITHUB_TOKEN` doesn't trigger workflows, so the release PR would sit forever with none of `main`'s required checks reporting and could never be merged.
+
+State lives in `release-please-config.json` (release type `python`, which updates PEP 621 `[project] version`) and `.release-please-manifest.json` (the last released version — the one file to correct by hand if a release is ever cut out of band).
+
+`./cut-release.sh <version>` is the **manual fallback**, for when the action is broken or a version has to be forced: it bumps `[project] version`, commits `chore(release): <version>`, opens the PR, and merges it `--squash --admin` (confirming first unless passed `-y`). It refuses a dirty tree, a non-semver argument, `main`/`master`, and a bump to the version already in `pyproject.toml`. Its guard paths are covered by `tests/test_cut_release.py`; the happy path ends in a real merge and is deliberately untested. Using it means `.release-please-manifest.json` must be updated to match, or release-please will propose a bump from the stale baseline.
 
 `.github/workflows/tag.yml` watches `pyproject.toml` on `main`: when the bump lands it reads the new version and pushes `v<version>` at that merge commit (a no-op if the tag already exists, so an unrelated `pyproject.toml` edit does nothing). That tag then fires `release.yml` + `publish.yml`. It pushes with **`COCKPIT_GITHUB_API_TOKEN`, not the default `GITHUB_TOKEN`** — a ref pushed by `GITHUB_TOKEN` doesn't trigger other workflows, so the two downstream jobs would silently never run; the PAT consequently needs `Contents: write` on **this** repo as well as on the tap. Hand-tagging (`git tag v<version> origin/main && git push origin v<version>` on a fetched `origin/main`, never the pre-merge branch tip) still works and is the fallback if the PAT lapses.
 

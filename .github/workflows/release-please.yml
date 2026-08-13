@@ -1,0 +1,40 @@
+name: release-please
+
+# Keeps a rolling `chore(main): release <version>` PR open against `main`,
+# accumulating every conventional commit merged since the last release and
+# deriving the semver bump from their types (`feat` -> minor, `fix` -> patch).
+# Merging that PR bumps `[project] version` in pyproject.toml — which is exactly
+# the trigger tag.yml already watches — so the tag, the Homebrew tap bump
+# (release.yml) and the PyPI upload (publish.yml) all follow unchanged. The one
+# human step is merging the release PR. See AGENTS.md "Release versioning".
+#
+# `skip-github-release: true` is load-bearing, for the same reason tag.yml
+# exists in the shape it does. Left to default, release-please would push the
+# tag and cut the GitHub release itself — duplicating tag.yml, and doing it
+# under a token whose pushes do not trigger other workflows, so release.yml and
+# publish.yml would silently never run. tag.yml stays the only tagger; this
+# workflow only ever writes the release PR.
+#
+# It runs under COCKPIT_GITHUB_API_TOKEN rather than the default GITHUB_TOKEN
+# for the other half of that recursion rule: a pull request opened by
+# GITHUB_TOKEN does not trigger workflows, so the release PR would sit forever
+# with none of `main`'s required checks (ci, pre-commit, lint-pr-title) ever
+# reporting, and could not be merged.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.COCKPIT_GITHUB_API_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true
