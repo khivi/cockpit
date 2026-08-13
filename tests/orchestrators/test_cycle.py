@@ -4238,7 +4238,7 @@ def test_reconcile_sidebar_groups_adds_new_member_to_existing_group(tmp_path):
             ("workspace:3", "khivi/c", "khivi/b"),
         ],
     )
-    existing = _group("wg:1", "old", "workspace:1", ["workspace:1", "workspace:2"])
+    existing = _group("wg:1", "old", "workspace:9", ["workspace:1", "workspace:2"])
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[existing]),
         patch.object(cycle, "create_workspace_group") as create,
@@ -4270,7 +4270,7 @@ def test_reconcile_sidebar_groups_removes_departed_member(tmp_path):
     existing = _group(
         "wg:1",
         "x",
-        "workspace:1",
+        "workspace:9",
         ["workspace:1", "workspace:2", "workspace:3"],
     )
     with (
@@ -4320,6 +4320,30 @@ def test_reconcile_sidebar_groups_never_closes_a_member_as_the_anchor(tmp_path):
         cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
     close.assert_not_called()
+
+
+def test_reconcile_sidebar_groups_rebuilds_a_group_anchored_on_a_member(tmp_path):
+    # The anchor's row IS the header, so a group headed by a stack member folds
+    # N-1 rows under a header that says N. Dissolve and rebuild it on cmux's own
+    # throwaway anchor — the member is preserved, only the fold is remade.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
+    )
+    existing = _group(
+        "wg:1", "b (2)", "workspace:1", ["workspace:1", "workspace:2"], STACK_GROUP_ICON
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "create_workspace_group") as create,
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+
+    create.assert_called_once()
+    ungroup.assert_called_once_with("wg:1")
+    close.assert_not_called()  # the anchor is a real workspace of ours
 
 
 def test_reconcile_sidebar_groups_reaps_a_stranded_anchor_only_group(tmp_path):
@@ -4498,7 +4522,7 @@ def test_reconcile_sidebar_groups_reparks_an_existing_reviews_fold(tmp_path):
         coworkers=("workspace:1", "workspace:2"),
     )
     existing = _group(
-        "wg:1", "reviews (2)", "workspace:1", ["workspace:1", "workspace:2"]
+        "wg:1", "reviews (2)", "workspace:9", ["workspace:1", "workspace:2"]
     )
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[existing]),

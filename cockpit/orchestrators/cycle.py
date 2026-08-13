@@ -2248,7 +2248,13 @@ def _reconcile_sidebar_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
         desired.append((_review_group_name(len(reviews)), reviews, True))
 
     all_groups = list_workspace_groups()
-    groups = [g for g in all_groups if owned & set(g.members)]
+    mine = [g for g in all_groups if owned & set(g.members)]
+    # A group headed by one of *this repo's* workspaces is swallowing that
+    # member's row (see `create_workspace_group`) — a group cockpit built before
+    # the anchor was split out, or a fold the user made by hand. Keep it in the
+    # sweep but out of the match, so it dissolves and is rebuilt on a throwaway
+    # anchor; every member is preserved either way.
+    groups = [g for g in mine if g.anchor not in owned]
     # Cockpit's own anchor outlives its members: when a stack's last workspace
     # closes, the group is left holding nothing but its header, and `owned` can
     # never intersect it again — so a respawn builds a *second* group and the
@@ -2257,7 +2263,7 @@ def _reconcile_sidebar_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
     strays = [
         g
         for g in all_groups
-        if g not in groups
+        if g not in mine
         and g.icon in (STACK_GROUP_ICON, REVIEW_GROUP_ICON)
         and set(g.members) <= {g.anchor}
     ]
@@ -2288,7 +2294,7 @@ def _reconcile_sidebar_groups(ctx: RepoCycle, keep_refs: set[str]) -> None:
                 remove_from_workspace_group(ref)
         if is_review:
             move_workspace_group_to_end(group.ref)
-    for group in groups + strays:
+    for group in mine + strays:
         if group.ref not in matched:
             ungroup_workspaces(group.ref)
             # The header is cockpit's own throwaway anchor (never a group
