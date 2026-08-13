@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0](https://github.com/khivi/cockpit/compare/v1.7.1...v1.8.0) (2026-08-13)
+
+
+### Features
+
+* **tickets:** resolve provider credentials per org, keep them out of spawned sessions ([#299](https://github.com/khivi/cockpit/issues/299)) ([a5c9ea0](https://github.com/khivi/cockpit/commit/a5c9ea0b28b2533ec28a0a825bff7b6f3a9387e5))
+
+
+### Bug Fixes
+
+* **release:** match release-please's tag format to tag.yml's ([#302](https://github.com/khivi/cockpit/issues/302)) ([0d1649c](https://github.com/khivi/cockpit/commit/0d1649ccf46efc0e7183054818d6e4f1ccf3ecc0))
+
+## Changelog
+
 All notable changes to this project are documented here, in the style of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
