@@ -64,8 +64,28 @@
       "branch_prefix": "yourusername/",
       "default_base": "main",
       "use_worktree": false
+    },
+    {
+      "name": "svc-auth",
+      "path": "/absolute/path/to/acme/svc-auth",
+      "org": "acme"
+    },
+    {
+      "name": "svc-billing",
+      "path": "/absolute/path/to/acme/svc-billing",
+      "org": "acme"
     }
   ],
+  "orgs": {
+    "acme": {
+      "sidebar_color": "Magenta",
+      "branch_prefix": "yourusername/",
+      "use_worktree": false,
+      "tickets": {
+        "provider": "github"
+      }
+    }
+  },
   "slow_poll_interval_seconds": 300,
   "fast_poll_interval_seconds": 30,
   "autoclose_age_days": 14,

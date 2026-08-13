@@ -864,3 +864,57 @@ def test_preflight_for_setup_skips_cship_hardfail(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         pf.preflight(cfg)  # default: hard-fails on missing cship
     assert exc.value.code == 2
+
+
+# ── orgs: the wiring only preflight can catch ────────────────────────────────
+
+
+def _org_cfg(**over) -> dict:
+    cfg = {
+        "repos": [{"name": "svc-auth", "path": "/a", "org": "acme"}],
+        "orgs": {"acme": {"sidebar_color": "Magenta", "use_worktree": False}},
+    }
+    cfg.update(over)
+    return cfg
+
+
+def test_validate_orgs_accepts_a_well_formed_block():
+    validate_config(_org_cfg())
+
+
+def test_validate_orgs_rejects_a_repo_naming_an_undefined_org():
+    # The silent failure this exists for: a typo'd org means the repo quietly
+    # loses every default it expected (no tint, no use_worktree: false).
+    cfg = _org_cfg()
+    cfg["repos"][0]["org"] = "acmee"
+    with pytest.raises(SystemExit):
+        validate_config(cfg)
+
+
+def test_validate_orgs_rejects_a_non_string_org():
+    cfg = _org_cfg()
+    cfg["repos"][0]["org"] = ["acme"]
+    with pytest.raises(SystemExit):
+        validate_config(cfg)
+
+
+def test_validate_orgs_rejects_a_non_object_orgs_key():
+    with pytest.raises(SystemExit):
+        validate_config(_org_cfg(orgs=["acme"]))
+    with pytest.raises(SystemExit):
+        validate_config(_org_cfg(orgs={"acme": "Magenta"}))
+
+
+@pytest.mark.parametrize("key", ["name", "path", "org"])
+def test_validate_orgs_rejects_repo_identity_keys_as_org_defaults(key):
+    with pytest.raises(SystemExit):
+        validate_config(_org_cfg(orgs={"acme": {key: "x"}}))
+
+
+def test_validate_config_checks_org_inherited_values(capsys):
+    # The org block's *values* get no validator of their own — validate_config
+    # merges first, so an org-level bad sidebar_color fails exactly like a
+    # repo-level one would.
+    with pytest.raises(SystemExit):
+        validate_config(_org_cfg(orgs={"acme": {"sidebar_color": "Chartreuse"}}))
+    assert "sidebar_color 'Chartreuse'" in capsys.readouterr().err

@@ -65,6 +65,7 @@ from cockpit.lib.config import (
     ensure_state_dirs,
     load_config,
     repo_tickets,
+    repos_grouped_by_org,
     reset_config_cache,
     resolve_theme,
     resolve_tui_theme,
@@ -490,12 +491,16 @@ class CockpitApp(App[None]):
         Those rows are dropped, leaving just the repo's group header, from which
         `n` starts a workspace on demand. `workspace_paths` is the app's live
         `workspace_cwds()` read; omitted (or empty on a backend hiccup) it hides
-        those rows, which is the same "start one when you need it" state."""
+        those rows, which is the same "start one when you need it" state.
+
+        Repos sharing an `org` render adjacent (`repos_grouped_by_org`) — with the
+        org's `sidebar_color` merged onto each member at load, an org reads as one
+        block of same-tinted repos rather than a colour scattered down the table."""
         ws = workspace_paths or set()
         hidden = load_hidden()
         out: Inventory = []
         cfg = load_config()
-        for repo in cfg.get("repos", []):
+        for repo in repos_grouped_by_org(cfg):
             path = Path(os.path.expanduser(repo["path"]))
             if not path.is_dir():
                 continue

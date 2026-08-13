@@ -1725,3 +1725,110 @@ def test_repin_statusline_ignores_user_statusline(tmp_path):
     )
     assert config_mod._repin_statusline(settings) is False
     assert "/old/py my-own-status" in settings.read_text()
+
+
+# ---- orgs: per-repo defaults merged at load ---------------------------------
+
+
+def _acme_cfg() -> dict:
+    return {
+        "repos": [
+            {"name": "svc-auth", "path": "/a", "org": "acme"},
+            {"name": "svc-web", "path": "/b", "org": "acme", "sidebar_color": "Cyan"},
+            {"name": "solo", "path": "/c"},
+        ],
+        "orgs": {
+            "acme": {
+                "sidebar_color": "Magenta",
+                "use_worktree": False,
+                "tickets": {"provider": "github"},
+            }
+        },
+    }
+
+
+def test_apply_org_defaults_fills_unset_keys_and_the_repo_always_wins():
+    cfg = config_mod.apply_org_defaults(_acme_cfg())
+    auth, web, solo = cfg["repos"]
+    # Unset on the repo → inherited, which is the whole point: one colour and one
+    # use_worktree per org instead of per small repo.
+    assert auth["sidebar_color"] == "Magenta"
+    assert auth["use_worktree"] is False
+    assert auth["tickets"] == {"provider": "github"}
+    # Set on the repo → untouched (repo → org → global → default).
+    assert web["sidebar_color"] == "Cyan"
+    assert web["use_worktree"] is False
+    # No org → nothing inherited.
+    assert "sidebar_color" not in solo and "use_worktree" not in solo
+
+
+def test_apply_org_defaults_is_idempotent():
+    # validate_config re-applies it on a config load_config already merged, so a
+    # second pass must be a no-op rather than re-deriving anything.
+    once = config_mod.apply_org_defaults(_acme_cfg())
+    twice = config_mod.apply_org_defaults(json.loads(json.dumps(once)))
+    assert twice == once
+
+
+def test_apply_org_defaults_does_not_deep_merge_blocks():
+    # A repo's own `tickets` block wins outright over the org's, exactly as it
+    # already wins over the global one — no key-level union.
+    cfg: dict = {
+        "repos": [{"name": "r", "path": "/r", "org": "acme", "tickets": {"keys": []}}],
+        "orgs": {"acme": {"tickets": {"provider": "github", "close_on_merge": True}}},
+    }
+    config_mod.apply_org_defaults(cfg)
+    assert cfg["repos"][0]["tickets"] == {"keys": []}
+
+
+def test_apply_org_defaults_tolerates_missing_and_malformed_orgs():
+    # Runs before preflight validates, so a dangling reference or a non-string
+    # org must be skipped, never raise (an unhashable org key would TypeError).
+    cfg = {
+        "repos": [
+            {"name": "a", "path": "/a", "org": "nope"},
+            {"name": "b", "path": "/b", "org": {"not": "a name"}},
+            {"name": "c", "path": "/c"},
+        ],
+        "orgs": {"acme": {"sidebar_color": "Blue"}},
+    }
+    assert config_mod.apply_org_defaults(cfg)["repos"] == cfg["repos"]
+    assert config_mod.apply_org_defaults({"repos": [{"name": "a", "org": "x"}]})
+
+
+def test_load_config_merges_org_defaults(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(_acme_cfg()))
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
+    config_mod.reset_config_cache()
+    repos = config_mod.load_config()["repos"]
+    assert repos[0]["sidebar_color"] == "Magenta"
+    # The merge is in-memory only: the writers re-read config.json from disk, so
+    # an inherited value must never be persisted back onto the repo entry.
+    assert "sidebar_color" not in json.loads(path.read_text())["repos"][0]
+    config_mod.reset_config_cache()
+
+
+def test_repos_grouped_by_org_clumps_members_at_the_first_members_position():
+    cfg = {
+        "repos": [
+            {"name": "acme-1", "org": "acme"},
+            {"name": "solo"},
+            {"name": "env-1", "org": "envesya"},
+            {"name": "acme-2", "org": "acme"},
+            {"name": "env-2", "org": "envesya"},
+        ]
+    }
+    assert [r["name"] for r in config_mod.repos_grouped_by_org(cfg)] == [
+        "acme-1",
+        "acme-2",
+        "solo",
+        "env-1",
+        "env-2",
+    ]
+
+
+def test_repos_grouped_by_org_leaves_an_org_less_config_untouched():
+    cfg = {"repos": [{"name": "c"}, {"name": "a"}, {"name": "b"}]}
+    assert config_mod.repos_grouped_by_org(cfg) == cfg["repos"]
+    assert config_mod.repos_grouped_by_org({}) == []
