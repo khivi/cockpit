@@ -204,6 +204,7 @@ class WorkspaceGroup:
     name: str
     anchor: str
     members: tuple[str, ...]
+    icon: str = ""
 
 
 def _group_from_json(blob: dict) -> WorkspaceGroup | None:
@@ -215,6 +216,7 @@ def _group_from_json(blob: dict) -> WorkspaceGroup | None:
         name=blob.get("name") or "",
         anchor=blob.get("anchor_workspace_ref") or "",
         members=tuple(blob.get("member_workspace_refs") or ()),
+        icon=blob.get("icon_symbol") or "",
     )
 
 

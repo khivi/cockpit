@@ -4167,10 +4167,12 @@ def _stack_ctx(tmp_path, chain, *, dry=False, extra_prs=(), coworkers=()):
     return ctx
 
 
-def _group(ref, name, anchor, members):
+def _group(ref, name, anchor, members, icon=""):
     from cockpit.lib.cmux import WorkspaceGroup
 
-    return WorkspaceGroup(ref=ref, name=name, anchor=anchor, members=tuple(members))
+    return WorkspaceGroup(
+        ref=ref, name=name, anchor=anchor, members=tuple(members), icon=icon
+    )
 
 
 def test_reconcile_sidebar_groups_creates_a_group_named_for_the_tip(tmp_path):
@@ -4317,6 +4319,46 @@ def test_reconcile_sidebar_groups_never_closes_a_member_as_the_anchor(tmp_path):
     ):
         cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
+    close.assert_not_called()
+
+
+def test_reconcile_sidebar_groups_reaps_a_stranded_anchor_only_group(tmp_path):
+    # The stack's workspaces were closed and respawned under new refs, leaving
+    # cockpit's old anchor alone in its group. `owned` can never intersect it
+    # again, so without this sweep it strands as a duplicate sidebar header.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:5", "khivi/a", "main"), ("workspace:6", "khivi/b", "khivi/a")],
+    )
+    stray = _group("wg:1", "b (2)", "workspace:1", ["workspace:1"], STACK_GROUP_ICON)
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[stray]),
+        patch.object(cycle, "create_workspace_group"),
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:5", "workspace:6"})
+
+    ungroup.assert_called_once_with("wg:1")
+    close.assert_called_once_with("workspace:1")
+
+
+def test_reconcile_sidebar_groups_spares_a_stranded_group_without_our_icon(tmp_path):
+    # An empty fold the user built by hand is still theirs.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:5", "khivi/a", "main"), ("workspace:6", "khivi/b", "khivi/a")],
+    )
+    stray = _group("wg:1", "scratch", "workspace:1", ["workspace:1"], "folder")
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[stray]),
+        patch.object(cycle, "create_workspace_group"),
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:5", "workspace:6"})
+
+    ungroup.assert_not_called()
     close.assert_not_called()
 
 
