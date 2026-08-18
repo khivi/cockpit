@@ -1,17 +1,34 @@
 name: tag
 
-# When a version bump lands on `main`, push the matching `v<version>` tag. That
-# tag is what fires release.yml (Homebrew tap bump) and publish.yml (PyPI), so
-# a merged `chore(release): <version>` PR ships on its own — no manual
-# `git tag && git push`. See AGENTS.md "Release versioning".
+# When a version bump lands on `main`, push the matching `v<version>` tag and
+# cut the GitHub Release for it. That tag is what fires release.yml (Homebrew
+# tap bump) and publish.yml (PyPI), so a merged `chore(main): release <version>`
+# PR ships on its own — no manual `git tag && git push`. See AGENTS.md "Release
+# versioning".
 #
 # The tag is pushed with COCKPIT_GITHUB_API_TOKEN, NOT the default GITHUB_TOKEN:
 # a ref pushed by GITHUB_TOKEN does not trigger other workflows (GitHub's
 # recursion guard), so release.yml/publish.yml would silently never run. The PAT
 # therefore needs Contents: write on *this* repo as well as on the tap.
 #
-# Idempotent: an already-existing tag is a no-op, so a later push touching
-# pyproject.toml without a version change does nothing.
+# The Release is created here rather than by release-please (which is run with
+# `skip-github-release: true`, so it never tags and never releases — see
+# release-please.yml). It is not cosmetic: release-please decides whether a
+# merged release PR is still outstanding by looking for a GitHub *Release* on
+# its tag, NOT for the git tag. With the tag pushed but no Release, every
+# subsequent run aborted with "There are untagged, merged release PRs
+# outstanding" and never opened the next release PR — the pipeline wedged after
+# v1.8.0 and 1.9.0's PR was never written.
+#
+# `gh release create` on an already-pushed tag publishes no ref, so it cannot
+# re-fire release.yml/publish.yml — which matters because PyPI refuses a
+# re-upload of a version.
+#
+# Idempotent on both halves: an existing tag skips the push, an existing Release
+# skips the create, so a later push touching pyproject.toml without a version
+# change does nothing. The Release step runs even when the tag already exists,
+# so a run that tagged but failed to release self-heals on the next push
+# instead of wedging release-please again.
 
 on:
   push:
@@ -29,13 +46,25 @@ jobs:
         with:
           token: ${{ secrets.COCKPIT_GITHUB_API_TOKEN }}
 
-      - name: Push v<version> tag if missing
+      - name: Push v<version> tag and cut its Release, if missing
+        env:
+          GH_TOKEN: ${{ secrets.COCKPIT_GITHUB_API_TOKEN }}
         run: |
           v="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+
           if git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null 2>&1; then
-            echo "v$v already tagged — nothing to do"
-            exit 0
+            echo "v$v already tagged"
+          else
+            echo "tagging v$v at $GITHUB_SHA"
+            git tag "v$v"
+            git push origin "v$v"
           fi
-          echo "tagging v$v at $GITHUB_SHA"
-          git tag "v$v"
-          git push origin "v$v"
+
+          # Unwedges release-please: it treats a merged release PR as
+          # outstanding until a Release (not just a tag) exists for it.
+          if gh release view "v$v" >/dev/null 2>&1; then
+            echo "release v$v already exists"
+          else
+            echo "creating release v$v"
+            gh release create "v$v" --verify-tag --title "v$v" --generate-notes
+          fi
