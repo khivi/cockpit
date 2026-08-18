@@ -13,12 +13,11 @@ name: tag
 #
 # The Release is created here rather than by release-please (which is run with
 # `skip-github-release: true`, so it never tags and never releases — see
-# release-please.yml). It is not cosmetic: release-please decides whether a
-# merged release PR is still outstanding by looking for a GitHub *Release* on
-# its tag, NOT for the git tag. With the tag pushed but no Release, every
-# subsequent run aborted with "There are untagged, merged release PRs
-# outstanding" and never opened the next release PR — the pipeline wedged after
-# v1.8.0 and 1.9.0's PR was never written.
+# release-please.yml). It is presentation only: a Releases page with notes for
+# a brew-distributed tool. Nothing in the pipeline reads it, and it is NOT what
+# keeps release-please unwedged — that is `skip-labeling: true`, because
+# release-please tracks release state on the release PR's `autorelease: pending`
+# label, not on a Release. Don't mistake this step for that fix.
 #
 # `gh release create` on an already-pushed tag publishes no ref, so it cannot
 # re-fire release.yml/publish.yml — which matters because PyPI refuses a
@@ -27,8 +26,7 @@ name: tag
 # Idempotent on both halves: an existing tag skips the push, an existing Release
 # skips the create, so a later push touching pyproject.toml without a version
 # change does nothing. The Release step runs even when the tag already exists,
-# so a run that tagged but failed to release self-heals on the next push
-# instead of wedging release-please again.
+# so a run that tagged but failed to release still backfills the notes.
 
 on:
   push:

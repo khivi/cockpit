@@ -15,6 +15,19 @@ name: release-please
 # publish.yml would silently never run. tag.yml stays the only tagger; this
 # workflow only ever writes the release PR.
 #
+# `skip-labeling: true` is the necessary companion to that, not a tidiness
+# setting. release-please tracks release state on the *label* of the merged
+# release PR: it opens the PR as `autorelease: pending` and flips it to
+# `autorelease: tagged` in the release step — the very step skip-github-release
+# turns off. So the label never flips, and every later run finds that PR still
+# pending and aborts with "There are untagged, merged release PRs outstanding"
+# *before* proposing the next version. That wedged the pipeline after v1.8.0:
+# 1.9.0's PR was never opened and a merged feature sat unshipped. Note the state
+# is the label, NOT a GitHub Release — cutting the missing Release for the tag
+# does not clear it. With labeling off there is no pending PR to find, and the
+# version baseline still comes from .release-please-manifest.json plus the git
+# tags, which is all this workflow needs.
+#
 # It runs under COCKPIT_GITHUB_API_TOKEN rather than the default GITHUB_TOKEN
 # for the other half of that recursion rule: a pull request opened by
 # GITHUB_TOKEN does not trigger workflows, so the release PR would sit forever
@@ -38,3 +51,4 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-release: true
+          skip-labeling: true
