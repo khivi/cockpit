@@ -246,7 +246,7 @@ def test_fetch_card_board_degrades_to_none_on_every_failure():
         (None, _FakeResp({})),
     ):
         kwargs = {"side_effect": side} if side is not None else {"return_value": ret}
-        with patch("cockpit.lib.trello.urllib.request.urlopen", **kwargs):  # type: ignore[arg-type]
+        with patch("cockpit.lib.trello.urllib.request.urlopen", **kwargs):
             assert fetch_card_board("aB3dZ9", key=KEY, token=TOKEN) is None
 
 
