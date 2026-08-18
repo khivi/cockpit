@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -1639,6 +1640,169 @@ def test_linear_key_routing_no_match_falls_back_to_cwd(
     assert code != 0
     assert "cannot determine repo" in err
     assert "matches multiple repos" not in err  # silent on no-match
+
+
+# ── jira project-key routing ──────────────────────────────────────────────
+#
+# A Jira project key IS the identifier prefix — the analogue of a Linear team —
+# so it routes through the very same `tickets.keys` lookup, with no `project`
+# tiebreaker below it (JIRA is a `_no_narrow` passthrough).
+
+
+def _set_repo_tickets(cockpit_repo, block: dict, repo_name: str = "testrepo") -> None:
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    for r in data["repos"]:
+        if r["name"] == repo_name:
+            r["tickets"] = block
+    cfg_path.write_text(json.dumps(data))
+
+
+def test_jira_key_routes_to_matching_repo_without_repo_flag(spawn_main, cockpit_repo):
+    _set_config_key(cockpit_repo, "tickets", "jira")
+    _set_repo_tickets(cockpit_repo, {"keys": ["PROJ"]})
+    code, out, _err = spawn_main(["PROJ-123"])
+    assert code == 0
+    assert "on khivi/proj-123" in out
+
+
+def test_jira_key_routing_no_match_falls_back_to_cwd(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    _set_config_key(cockpit_repo, "tickets", "jira")
+    _set_repo_tickets(cockpit_repo, {"keys": ["OTHER"]})
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "discover_repo", lambda: None)
+    code, _out, err = spawn_main(["PROJ-123"])
+    assert code != 0
+    assert "cannot determine repo" in err
+    assert "matches multiple repos" not in err
+
+
+def test_jira_key_routing_multi_match_warns_and_falls_back(
+    spawn_main, cockpit_repo, monkeypatch, tmp_path
+):
+    """Two repos declaring `PROJ` → the shared ambiguity note, then cwd fallback
+    (which fails under tests). Jira has no tiebreaker, so nothing is fetched."""
+    _set_config_key(cockpit_repo, "tickets", "jira")
+    _set_repo_tickets(cockpit_repo, {"keys": ["PROJ"]})
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data["repos"].append(
+        {
+            "name": "second",
+            "path": str(tmp_path / "second"),
+            "branch_prefix": "khivi/",
+            "default_base": "main",
+            "tickets": {"keys": ["PROJ"]},
+        }
+    )
+    cfg_path.write_text(json.dumps(data))
+
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "discover_repo", lambda: None)
+    code, _out, err = spawn_main(["PROJ-123"])
+    assert code != 0
+    assert "matches multiple repos" in err
+    assert "testrepo" in err and "second" in err
+
+
+# ── trello board routing ───────────────────────────────────────────────────
+#
+# A card short link carries no board, so there is no free first-stage match:
+# declaring `tickets.board` is the opt-in, and only ≥2 declarers pay a fetch.
+
+
+def test_trello_card_routes_to_the_lone_repo_declaring_a_board(
+    spawn_main, cockpit_repo
+):
+    _set_config_key(cockpit_repo, "tickets", "trello")
+    _set_repo_tickets(cockpit_repo, {"board": "Engineering"})
+    with patch("cockpit.lib.tickets.fetch_card_board") as fetch:
+        code, out, _err = spawn_main([_TRELLO_URL])
+    assert code == 0
+    assert "on khivi/" in out
+    # One candidate is already an answer — the free match, no round-trip.
+    fetch.assert_not_called()
+
+
+def test_trello_card_routing_makes_no_network_call_without_a_board(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """No repo opts in → empty candidate set → zero fetches and the pre-existing
+    cwd-discovery route (which fails under tests)."""
+    _set_config_key(cockpit_repo, "tickets", "trello")
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "discover_repo", lambda: None)
+    with patch("cockpit.lib.tickets.fetch_card_board") as fetch:
+        code, _out, err = spawn_main([_TRELLO_URL])
+    assert code != 0
+    assert "cannot determine repo" in err
+    fetch.assert_not_called()
+
+
+def test_trello_card_routing_narrows_by_board_when_several_declare_one(
+    spawn_main, cockpit_repo, monkeypatch, tmp_path
+):
+    _set_config_key(cockpit_repo, "tickets", "trello")
+    _set_repo_tickets(cockpit_repo, {"board": "Engineering"})
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data["repos"].append(
+        {
+            "name": "second",
+            "path": str(tmp_path / "second"),
+            "branch_prefix": "khivi/",
+            "default_base": "main",
+            "tickets": {"board": "Marketing"},
+        }
+    )
+    cfg_path.write_text(json.dumps(data))
+    monkeypatch.setenv("TRELLO_API_KEY", "k")
+    monkeypatch.setenv("TRELLO_API_TOKEN", "t")
+
+    with patch(
+        "cockpit.lib.tickets.fetch_card_board", return_value="Engineering"
+    ) as fetch:
+        code, out, _err = spawn_main([_TRELLO_URL])
+    assert code == 0
+    assert "on khivi/" in out
+    fetch.assert_called_once_with("aB3dZ9", key="k", token="t")
+
+
+def test_trello_card_routing_inconclusive_fetch_warns_and_falls_back(
+    spawn_main, cockpit_repo, monkeypatch, tmp_path
+):
+    """`narrow_repos` never narrows to zero, so a failed fetch leaves both
+    candidates and prints the shared ambiguity note."""
+    _set_config_key(cockpit_repo, "tickets", "trello")
+    _set_repo_tickets(cockpit_repo, {"board": "Engineering"})
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data["repos"].append(
+        {
+            "name": "second",
+            "path": str(tmp_path / "second"),
+            "branch_prefix": "khivi/",
+            "default_base": "main",
+            "tickets": {"board": "Marketing"},
+        }
+    )
+    cfg_path.write_text(json.dumps(data))
+    monkeypatch.setenv("TRELLO_API_KEY", "k")
+    monkeypatch.setenv("TRELLO_API_TOKEN", "t")
+
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "discover_repo", lambda: None)
+    with patch("cockpit.lib.tickets.fetch_card_board", return_value=None):
+        code, _out, err = spawn_main([_TRELLO_URL])
+    assert code != 0
+    assert "matches multiple repos" in err
+    assert "testrepo" in err and "second" in err
 
 
 # ── --skill semantics ──────────────────────────────────────────────────────

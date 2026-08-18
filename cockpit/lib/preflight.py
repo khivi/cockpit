@@ -329,21 +329,27 @@ def _validate_linear_dev_done(cfg: dict) -> None:
     `linear_dev_done_state`, when present, must be a string (a non-string would
     silently never match a Linear state name) — rejected like `sidebar_color`.
 
-    Then, for every repo that is Linear-configured (`linear_keys`) whose resolved
+    Then, for every repo that is Linear-configured (`tickets.keys`) whose resolved
     API-key env var is unset, the daemon can't query Linear, so the `devdone=`
     pill silently stays off. That's a soft degrade, not a config error — warn
     once per distinct env var name at start so it isn't a mystery cycles later.
     The warning names the *variable* each repo actually reads (per-org configs
     point at different ones), never its value.
+
+    `tickets.keys` is Jira's routing field too, so the resolved *provider* gates
+    the list — else every Jira repo would be warned about an unset LINEAR_API_KEY.
     """
     state = cfg.get("linear_dev_done_state")
     if state is not None and not isinstance(state, str):
         _die(f"linear_dev_done_state must be a string, got {state!r}.")
 
     from .config import linear_team_keys
+    from .tickets import LINEAR, provider_for
 
     linear_repos: list[dict | None] = [
-        r for r in cfg.get("repos", []) if linear_team_keys(cfg, r)
+        r
+        for r in cfg.get("repos", [])
+        if linear_team_keys(cfg, r) and provider_for(cfg, r) is LINEAR
     ]
     for env_name in _unset_linear_key_envs(cfg, linear_repos):
         print(

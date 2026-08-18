@@ -71,8 +71,13 @@ those identify one repo, so preflight rejects them there.
 
 Resolution is **repo → org → global → default**: the org fills only keys the repo
 itself doesn't set, so `svc-web` above keeps Cyan while its siblings take Magenta.
-The merge is shallow — a repo's own `tickets`/`skills` block wins outright over
-the org's, the same way it already wins over the global one.
+
+Block-valued keys (`tickets`, `skills`) merge **one level deep**, per field, with
+the repo's value winning — the same granularity a repo already has over the
+global block. So a repo can set just `tickets.project` and keep the org's
+`provider` / `keys` / `api_key_env`, which is the point: `project` is the routing
+discriminator meant to differ *within* an org. Everything else (scalars, lists)
+is taken whole from whichever side sets it, repo first.
 
 Two effects, both falling out of that merge (`config.py::apply_org_defaults`,
 applied at load):
@@ -98,7 +103,8 @@ export `CONFIG_FIELDS`); preflight rejects a field belonging to another provider
 |---|---|---|---|
 | `provider` | all | `none` | `none` \| `linear` \| `github` \| `jira` \| `trello`. |
 | `close_on_merge` | all | `false` | Daemon transitions the delivered ticket to its terminal state on PR merge (opt-in — makes the daemon a tracker *writer*). |
-| `keys` | linear | `[]` | Team-key prefixes (e.g. `["PE"]`) — routes `PE-1234` spawns, gates Linear reads/writes. |
+| `keys` | linear, jira | `[]` | Identifier prefixes (Linear team `["PE"]`, Jira project `["PROJ"]`) — routes a `PE-1234` / `PROJ-123` spawn to this repo, and gates the Linear reads/writes. |
+| `project` | linear | unset | Linear project this repo's work lives in. Tiebreaker when several repos share a team and so share `keys`: `PE-1234` then matches them all, and cockpit resolves the ticket's project (one fetch, made **only** on that ambiguity) to pick one. Matched by name, case-insensitively. (Jira has no equivalent — a Jira *project key* is `keys`, i.e. the team analogue.) |
 | `dev_done_state` | linear | `Dev Done` | Linear state that lights the `devdone=` pill. |
 | `merge_done_state` | linear | `Done` | Linear state a delivered ticket moves to on merge (if `close_on_merge`). |
 | `dev_done_label` | github | `ready for review` | Issue label that lights the `devdone=` pill. |
@@ -107,6 +113,7 @@ export `CONFIG_FIELDS`); preflight rejects a field belonging to another provider
 | `email` | jira | `""` | Jira account email (paired with `$JIRA_API_TOKEN` for Basic auth). |
 | `dev_done_status` | jira | `Dev Done` | Jira status that lights the `devdone=` pill. |
 | `merge_done_status` | jira | `Done` | Jira status a delivered issue transitions to on merge. |
+| `board` | trello | unset | Trello board this repo's cards live on — routes a `cockpit new https://trello.com/c/<id>` spawn. A card short link carries no board, so this is the *whole* route (not a tiebreaker): unset on every repo → zero fetches and no routing; declared on several → one fetch resolves the card's board. Matched by name, case-insensitively. |
 | `dev_done_list` | trello | `""` (off) | Trello list (column) that lights the `devdone=` pill. No default — boards name lists arbitrarily. |
 | `merge_done_list` | trello | `""` (off) | Trello list a delivered card moves to on merge. No default. |
 | `api_key_env` | linear | `LINEAR_API_KEY` | **Name** of the env var holding the Linear API key. |

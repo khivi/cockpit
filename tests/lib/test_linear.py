@@ -19,6 +19,7 @@ from cockpit.lib.linear import (
     extract_ticket,
     fetch_team_states,
     fetch_ticket_meta,
+    fetch_ticket_project,
     fetch_ticket_states,
     fetch_ticket_titles,
     fetch_viewer_id,
@@ -543,3 +544,58 @@ def test_update_ticket_state_no_key_or_args_skips_network():
 def test_update_ticket_state_error_is_false():
     with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
         assert update_ticket_state("i", "s", api_key="k") is False
+
+
+# ── fetch_ticket_project (the ticket→repo routing tiebreaker) ───────────────
+
+
+def test_fetch_ticket_project_happy_path():
+    def fake_urlopen(req, timeout=None):
+        body = json.loads(req.data.decode())
+        assert body["variables"] == {"team": "PE", "number": 1234.0}
+        return _batch_resp([{"project": {"name": "Payments API"}}])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", fake_urlopen):
+        assert fetch_ticket_project("PE-1234", api_key="k") == "Payments API"
+
+
+def test_fetch_ticket_project_lowercase_id_uppercases_team():
+    def fake_urlopen(req, timeout=None):
+        assert json.loads(req.data.decode())["variables"]["team"] == "PE"
+        return _batch_resp([{"project": {"name": "Payments API"}}])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", fake_urlopen):
+        assert fetch_ticket_project("pe-1234", api_key="k") == "Payments API"
+
+
+def test_fetch_ticket_project_unprojected_issue_is_none():
+    # `Issue.project` is nullable — an issue filed outside any project.
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_batch_resp([{"project": None}]),
+    ):
+        assert fetch_ticket_project("PE-1234", api_key="k") is None
+
+
+def test_fetch_ticket_project_no_match_is_none():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_batch_resp([]),
+    ):
+        assert fetch_ticket_project("PE-1234", api_key="k") is None
+
+
+def test_fetch_ticket_project_error_is_none():
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
+        assert fetch_ticket_project("PE-1234", api_key="k") is None
+
+
+def test_fetch_ticket_project_no_key_or_bad_id_skips_network():
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_ticket_project("PE-1234") is None  # no key (env cleared)
+        assert fetch_ticket_project("not-a-ticket", api_key="k") is None
+        assert fetch_ticket_project("", api_key="k") is None
+    urlopen.assert_not_called()

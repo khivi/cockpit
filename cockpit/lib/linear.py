@@ -15,7 +15,8 @@ The Linear ticket *body* (title, description) is still fetched by Claude
 itself via the Linear MCP on the first turn of a spawned workspace — the
 daemon can't reach the MCP. But the daemon *does* make direct GraphQL calls:
 
-  * read-only — `fetch_ticket_states` (the `devdone=` pill), plus
+  * read-only — `fetch_ticket_states` (the `devdone=` pill),
+    `fetch_ticket_project` (the ticket→repo routing tiebreaker), plus
     `fetch_viewer_id` / `fetch_ticket_meta` /
     `fetch_team_states` (the merge-transition eligibility checks);
   * the one *write* — `update_ticket_state`, the `issueUpdate` mutation that
@@ -52,8 +53,15 @@ LINEAR_RE_CI = re.compile(r"[A-Za-z]{2,6}-[0-9]+")
 # `api_key_env` names the env var the key is read from (default
 # `LINEAR_API_KEY`) — never the key itself. That indirection is what lets two
 # orgs on separate Linear workspaces each carry their own credential.
+# `project` names the Linear *project* this repo's work lives in — the
+# tiebreaker for the many-repos-one-team shape, where every repo declares the
+# same `keys` and a bare `ENG-1234` can't say which repo it belongs to. It is
+# routing-only (nothing else reads it), and the project is *not* in the
+# identifier, so resolving it costs a fetch — which is why callers narrow only
+# when the free `keys` match is already ambiguous.
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("keys", "str_list"),
+    ("project", "str"),
     ("dev_done_state", "str"),
     ("merge_done_state", "str"),
     ("api_key_env", "str"),
@@ -117,6 +125,16 @@ _TICKET_META_QUERY = (
     "query($team:String!,$number:Float!){"
     "issues(filter:{team:{key:{eq:$team}},number:{eq:$number}}){"
     "nodes{id identifier state{name type} assignee{id} team{id}}}}"
+)
+
+# The ticket's Linear *project* — the routing tiebreaker (see `CONFIG_FIELDS`).
+# Same team-key + number filter as `_TICKET_META_QUERY`, pulling only the project
+# name. `Issue.project` is nullable: an issue filed outside any project resolves
+# to None, which narrows nothing.
+_TICKET_PROJECT_QUERY = (
+    "query($team:String!,$number:Float!){"
+    "issues(filter:{team:{key:{eq:$team}},number:{eq:$number}}){"
+    "nodes{project{name}}}}"
 )
 
 # The API key's own user ("me") — the gate for "only transition tickets
@@ -335,6 +353,40 @@ def fetch_ticket_titles(
             if orig is not None:
                 out[orig] = node.get("title") or None
     return out
+
+
+def fetch_ticket_project(ticket_id: str, *, api_key: str | None = None) -> str | None:
+    """Return the name of the Linear project `ticket_id` belongs to, or None.
+
+    The routing tiebreaker: an identifier names its *team* (`ENG-1234`) but never
+    its project, so a repo declaring `tickets.project` can only be matched after
+    this fetch. Callers pay it lazily — only when the free team-key match already
+    returned more than one repo.
+
+    None — never raises — on a missing key, an unparsable id, an issue filed
+    outside any project (`Issue.project` is nullable), or any API failure. Every
+    None case simply leaves the caller's candidate set un-narrowed.
+    """
+    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    if not key:
+        return None
+    if not LINEAR_RE_CI.fullmatch(ticket_id or ""):
+        return None
+    team, _, num = ticket_id.partition("-")
+    try:
+        number = float(int(num))
+    except ValueError:
+        return None
+    data = _post_graphql(
+        _TICKET_PROJECT_QUERY,
+        {"team": team.upper(), "number": number},
+        api_key=key,
+        timeout=_TICKET_STATE_TIMEOUT_SECONDS,
+    )
+    nodes = ((data or {}).get("issues") or {}).get("nodes")
+    if not nodes:
+        return None
+    return ((nodes[0].get("project") or {}).get("name")) or None
 
 
 def fetch_viewer_id(*, api_key: str | None = None) -> str | None:

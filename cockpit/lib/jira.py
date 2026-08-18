@@ -41,7 +41,12 @@ JIRA_API_TOKEN_ENV = "JIRA_API_TOKEN"
 # `token_env` names the env var the token is read from (default
 # `JIRA_API_TOKEN`) — never the token itself. Trello declares a `token_env` too;
 # `tickets.py` composes per *active* provider, so the shared name is fine.
+# `keys` is the same field Linear declares, and means the same thing: the
+# identifier prefixes that route `PROJ-123` to this repo. A Jira *project* key IS
+# the identifier prefix — the analogue of a Linear *team*, not of a Linear
+# project — so Jira wants `keys`, and has no `project` field / no `narrow_repos`.
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
+    ("keys", "str_list"),
     ("site_url", "str"),
     ("email", "str"),
     ("dev_done_status", "str"),

@@ -48,8 +48,12 @@ TRELLO_API_TOKEN_ENV = "TRELLO_API_TOKEN"
 # `dev_done_list` leaves the pill off, an unset `merge_done_list` leaves the
 # merge-move off (Trello list names are arbitrary, so there's nothing safe to
 # guess). Keep in sync with the readers in `config.py` (`trello_dev_done_list`,
-# `trello_merge_done_list`, `trello_key_env`, `trello_token_env`).
+# `trello_merge_done_list`, `trello_board`, `trello_key_env`, `trello_token_env`).
+# `board` is routing-only (`tickets._trello_narrow_repos`) — the Trello analogue
+# of Linear's `project`, except it is the *whole* route rather than a tiebreaker,
+# since a card short link carries no container at all.
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
+    ("board", "str"),
     ("dev_done_list", "str"),
     ("merge_done_list", "str"),
     ("key_env", "str"),
@@ -223,6 +227,32 @@ def fetch_card_names(
         if isinstance(data, dict):
             out[sl] = data.get("name") or None
     return out
+
+
+def fetch_card_board(
+    short_link: str, *, key: str | None = None, token: str | None = None
+) -> str | None:
+    """The name of the board card `short_link` lives on, or None — the discriminator
+    `tickets._trello_narrow_repos` routes a `cockpit new <card-url>` spawn by.
+
+    One `GET /cards/{id}?board=true&board_fields=name`. None — never raises — on
+    unset creds, a missing card, or any API failure, which the caller reads as
+    "inconclusive" and leaves its candidate repos unnarrowed.
+    """
+    creds = _creds(key, token)
+    if not creds or not short_link:
+        return None
+    k, tok = creds
+    data = _request(
+        "GET",
+        f"/cards/{short_link}",
+        key=k,
+        token=tok,
+        params={"fields": "id", "board": "true", "board_fields": "name"},
+    )
+    if isinstance(data, dict):
+        return ((data.get("board") or {}).get("name")) or None
+    return None
 
 
 def fetch_myself(*, key: str | None = None, token: str | None = None) -> str | None:
