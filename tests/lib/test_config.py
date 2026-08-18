@@ -1143,6 +1143,27 @@ def test_trello_readers_fall_back_to_global(tmp_path, monkeypatch):
     assert cockpit_config.trello_merge_done_list(repo_entry={}) == "Global Done"
 
 
+def test_trello_board_defaults_to_none(tmp_path, monkeypatch):
+    # Unset (or blank) means "no repo opted in" — which is what keeps Trello
+    # routing at zero network calls for a config that never declares a board.
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.trello_board() is None
+    assert cockpit_config.trello_board(repo_entry={"tickets": {"board": "  "}}) is None
+
+
+def test_trello_board_repo_over_global(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {"repos": [], "tickets": {"provider": "trello", "board": "Global Board"}},
+    )
+    assert cockpit_config.trello_board(repo_entry={}) == "Global Board"
+    assert (
+        cockpit_config.trello_board(repo_entry={"tickets": {"board": "Engineering"}})
+        == "Engineering"
+    )
+
+
 def test_ticket_close_on_merge_defaults_false(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     assert cockpit_config.ticket_close_on_merge() is False
@@ -1361,14 +1382,14 @@ def test_orphan_nudge_grace_negative_clamped_to_zero():
     )
 
 
-# ── find_repos_by_linear_key ────────────────────────────────────────────────
+# ── find_repos_by_ticket_key ────────────────────────────────────────────────
 
 
 def _repos_cfg(*repos):
     return {"repos": list(repos)}
 
 
-def test_find_repos_by_linear_key_single_match(tmp_path, monkeypatch):
+def test_find_repos_by_ticket_key_single_match(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
@@ -1377,25 +1398,25 @@ def test_find_repos_by_linear_key_single_match(tmp_path, monkeypatch):
             {"name": "beta", "path": "/b", "linear_keys": ["ENG"]},
         ),
     )
-    matches = cockpit_config.find_repos_by_linear_key("PE-1234")
+    matches = cockpit_config.find_repos_by_ticket_key("PE-1234")
     assert [r["name"] for r in matches] == ["alpha"]
 
 
-def test_find_repos_by_linear_key_case_insensitive(tmp_path, monkeypatch):
+def test_find_repos_by_ticket_key_case_insensitive(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
         _repos_cfg({"name": "alpha", "path": "/a", "linear_keys": ["pe"]}),
     )
-    assert [r["name"] for r in cockpit_config.find_repos_by_linear_key("PE-1")] == [
+    assert [r["name"] for r in cockpit_config.find_repos_by_ticket_key("PE-1")] == [
         "alpha"
     ]
-    assert [r["name"] for r in cockpit_config.find_repos_by_linear_key("pe-1")] == [
+    assert [r["name"] for r in cockpit_config.find_repos_by_ticket_key("pe-1")] == [
         "alpha"
     ]
 
 
-def test_find_repos_by_linear_key_multiple_matches(tmp_path, monkeypatch):
+def test_find_repos_by_ticket_key_multiple_matches(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
@@ -1404,37 +1425,64 @@ def test_find_repos_by_linear_key_multiple_matches(tmp_path, monkeypatch):
             {"name": "beta", "path": "/b", "linear_keys": ["PE", "ENG"]},
         ),
     )
-    names = [r["name"] for r in cockpit_config.find_repos_by_linear_key("PE-1234")]
+    names = [r["name"] for r in cockpit_config.find_repos_by_ticket_key("PE-1234")]
     assert names == ["alpha", "beta"]
 
 
-def test_find_repos_by_linear_key_no_match(tmp_path, monkeypatch):
+def test_find_repos_by_ticket_key_no_match(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
         _repos_cfg({"name": "alpha", "path": "/a", "linear_keys": ["ENG"]}),
     )
-    assert cockpit_config.find_repos_by_linear_key("PE-1234") == []
+    assert cockpit_config.find_repos_by_ticket_key("PE-1234") == []
 
 
-def test_find_repos_by_linear_key_missing_field(tmp_path, monkeypatch):
+def test_find_repos_by_ticket_key_missing_field(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
         _repos_cfg({"name": "alpha", "path": "/a"}),
     )
-    assert cockpit_config.find_repos_by_linear_key("PE-1234") == []
+    assert cockpit_config.find_repos_by_ticket_key("PE-1234") == []
 
 
-def test_find_repos_by_linear_key_rejects_non_linear_identifier(tmp_path, monkeypatch):
+def test_find_repos_by_ticket_key_matches_a_jira_project_key(tmp_path, monkeypatch):
+    # A Jira project key is the same prefix-in-the-identifier shape as a Linear
+    # team key, so it routes through the same `tickets.keys` lookup.
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        _repos_cfg(
+            {
+                "name": "alpha",
+                "path": "/a",
+                "tickets": {"provider": "jira", "keys": ["PROJ"]},
+            },
+            {
+                "name": "beta",
+                "path": "/b",
+                "tickets": {"provider": "linear", "keys": ["PE"]},
+            },
+        ),
+    )
+    assert [r["name"] for r in cockpit_config.find_repos_by_ticket_key("PROJ-123")] == [
+        "alpha"
+    ]
+    assert [r["name"] for r in cockpit_config.find_repos_by_ticket_key("PE-1")] == [
+        "beta"
+    ]
+
+
+def test_find_repos_by_ticket_key_rejects_non_ticket_identifier(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
         _repos_cfg({"name": "alpha", "path": "/a", "linear_keys": ["PE"]}),
     )
-    assert cockpit_config.find_repos_by_linear_key("not-a-key") == []
-    assert cockpit_config.find_repos_by_linear_key("PE-") == []
-    assert cockpit_config.find_repos_by_linear_key("HTTP-200") == []
+    assert cockpit_config.find_repos_by_ticket_key("not-a-key") == []
+    assert cockpit_config.find_repos_by_ticket_key("PE-") == []
+    assert cockpit_config.find_repos_by_ticket_key("HTTP-200") == []
 
 
 # ---- install_claude_hooks (cockpit setup → ~/.claude/settings.json) ---------
@@ -1770,15 +1818,115 @@ def test_apply_org_defaults_is_idempotent():
     assert twice == once
 
 
-def test_apply_org_defaults_does_not_deep_merge_blocks():
-    # A repo's own `tickets` block wins outright over the org's, exactly as it
-    # already wins over the global one — no key-level union.
+def test_apply_org_defaults_merges_blocks_per_field_with_the_repo_winning():
+    # A block-valued key unions one level deep — the same per-field granularity
+    # `_tickets_field` already gives repo-over-global.
     cfg: dict = {
-        "repos": [{"name": "r", "path": "/r", "org": "acme", "tickets": {"keys": []}}],
-        "orgs": {"acme": {"tickets": {"provider": "github", "close_on_merge": True}}},
+        "repos": [
+            {
+                "name": "r",
+                "path": "/r",
+                "org": "acme",
+                "tickets": {"keys": ["OWN"], "close_on_merge": False},
+            }
+        ],
+        "orgs": {
+            "acme": {
+                "tickets": {
+                    "provider": "linear",
+                    "keys": ["ORG"],
+                    "close_on_merge": True,
+                }
+            }
+        },
     }
     config_mod.apply_org_defaults(cfg)
-    assert cfg["repos"][0]["tickets"] == {"keys": []}
+    assert cfg["repos"][0]["tickets"] == {
+        "provider": "linear",  # only the org sets it → inherited
+        "keys": ["OWN"],  # both set it → repo wins
+        "close_on_merge": False,  # repo's False is a value, not "unset"
+    }
+
+
+def test_apply_org_defaults_keeps_org_routing_fields_when_a_repo_adds_project():
+    # The regression this merge depth exists for: `tickets.project` is the one
+    # field meant to be per-repo *inside* an org. Under a whole-block override the
+    # repo would silently lose the org's `keys` (stops matching its own team) and
+    # `api_key_env` (reads the wrong credential).
+    cfg: dict = {
+        "repos": [
+            {"name": "a", "path": "/a", "org": "acme"},
+            {
+                "name": "b",
+                "path": "/b",
+                "org": "acme",
+                "tickets": {"project": "Payments API"},
+            },
+        ],
+        "orgs": {
+            "acme": {
+                "tickets": {
+                    "provider": "linear",
+                    "keys": ["ENG"],
+                    "api_key_env": "LINEAR_API_KEY_ACME",
+                }
+            }
+        },
+    }
+    config_mod.apply_org_defaults(cfg)
+    a, b = cfg["repos"]
+    assert config_mod.linear_team_keys(cfg, b) == ["ENG"]
+    assert config_mod.linear_api_key_env(cfg, b) == "LINEAR_API_KEY_ACME"
+    assert config_mod.linear_project(cfg, b) == "Payments API"
+    # ...and the sibling that set nothing is unaffected in either direction.
+    assert config_mod.linear_team_keys(cfg, a) == ["ENG"]
+    assert config_mod.linear_project(cfg, a) is None
+
+
+def test_apply_org_defaults_never_aliases_the_orgs_block_across_siblings():
+    # One org block is shared by every member; handing out the same object would
+    # make a later mutation of one repo's block hit all its siblings'.
+    org_block = {"provider": "linear", "keys": ["ENG"]}
+    cfg: dict = {
+        "repos": [
+            {"name": "a", "path": "/a", "org": "acme"},
+            {"name": "b", "path": "/b", "org": "acme"},
+        ],
+        "orgs": {"acme": {"tickets": org_block}},
+    }
+    config_mod.apply_org_defaults(cfg)
+    a, b = cfg["repos"]
+    assert a["tickets"] is not b["tickets"]
+    assert a["tickets"] is not org_block
+    a["tickets"]["keys"] = ["MUTATED"]
+    assert b["tickets"]["keys"] == ["ENG"]
+    assert org_block["keys"] == ["ENG"]
+
+
+def test_apply_org_defaults_block_merge_is_idempotent():
+    # validate_config re-applies the merge on an already-merged config; a second
+    # union of a block with itself must not drift.
+    cfg: dict = {
+        "repos": [
+            {"name": "r", "path": "/r", "org": "acme", "tickets": {"keys": ["OWN"]}}
+        ],
+        "orgs": {"acme": {"tickets": {"provider": "linear", "keys": ["ORG"]}}},
+    }
+    once = config_mod.apply_org_defaults(cfg)
+    twice = config_mod.apply_org_defaults(json.loads(json.dumps(once)))
+    assert twice == once
+    assert twice["repos"][0]["tickets"]["keys"] == ["OWN"]
+
+
+def test_apply_org_defaults_scalar_still_wins_whole():
+    # Only *block* values union; a scalar the repo sets is untouched.
+    cfg: dict = {
+        "repos": [{"name": "r", "path": "/r", "org": "acme", "sidebar_color": "Cyan"}],
+        "orgs": {"acme": {"sidebar_color": "Magenta", "use_worktree": False}},
+    }
+    config_mod.apply_org_defaults(cfg)
+    assert cfg["repos"][0]["sidebar_color"] == "Cyan"
+    assert cfg["repos"][0]["use_worktree"] is False
 
 
 def test_apply_org_defaults_tolerates_missing_and_malformed_orgs():

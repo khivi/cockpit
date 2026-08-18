@@ -28,11 +28,16 @@ from .config import (
     jira_email,
     jira_site_url,
     linear_api_key,
+    linear_api_key_env,
     linear_dev_done_state,
+    linear_project,
     repo_tickets,
     trello_api_key,
     trello_api_token,
+    trello_board,
     trello_dev_done_list,
+    trello_key_env,
+    trello_token_env,
 )
 from .gh import pr_body
 from .github_issues import CONFIG_FIELDS as _GITHUB_CONFIG_FIELDS
@@ -46,6 +51,7 @@ from .jira import (
 )
 from .linear import CONFIG_FIELDS as _LINEAR_CONFIG_FIELDS
 from .linear import (
+    fetch_ticket_project,
     fetch_ticket_states,
     fetch_ticket_titles,
     parse_linear_footer_links,
@@ -53,6 +59,8 @@ from .linear import (
 )
 from .trello import CONFIG_FIELDS as _TRELLO_CONFIG_FIELDS
 from .trello import (
+    card_short_link,
+    fetch_card_board,
     fetch_card_lists,
     fetch_card_names,
     parse_trello_footer_links,
@@ -138,6 +146,18 @@ class TicketProvider:
     # cache so a statusline consumer (cship) shows the ticket name beside its id
     # without its own API round-trip. None per id on any failure/unset creds.
     fetch_titles: Callable[..., dict[str, str | None]]
+    # (ref, candidates, cfg) → the subset of `candidates` (config repo entries)
+    # the ticket `ref` belongs to. The tiebreaker for a ticket id that routes to
+    # more than one repo — the *identifier* carries only the outer container
+    # (Linear team, Jira project key) or none at all (a Trello card short link),
+    # and repos sharing one all match it. Called ONLY when a cheap match already
+    # returned >1 candidate, so the providers that need a network fetch to answer
+    # (Linear: the issue's project; Trello: the card's board) never pay for it in
+    # the common single-match case. Returns `candidates` unchanged when it
+    # can't improve on them — no repo configures the discriminator, the fetch
+    # failed, or nothing matched — so an inconclusive narrow degrades to the
+    # caller's existing ambiguity path rather than narrowing to zero.
+    narrow_repos: Callable[[str, list[dict], dict], list[dict]]
     # (ref, *, repo_nwo, repo_dir, pr_number) → the ticket's web URL, or None.
     # GitHub builds it deterministically from ref + repo_nwo; Linear has no
     # constructable URL (workspace slug unknown), so it reads the PR body's
@@ -365,12 +385,113 @@ def _trello_ticket_url(
     return links.get(ref)
 
 
+def _no_narrow(ref: str, candidates: list[dict], cfg: dict) -> list[dict]:
+    """`narrow_repos` for a provider whose identifier already resolves the repo as
+    far as it can: GitHub (the issue ref carries `owner/repo`, so routing never
+    reaches an ambiguous set) and Jira (its "project" **is** the key prefix the
+    free match already used — the Linear *team* analogue, not the Linear *project*
+    one — so there is no container left below it to discriminate on). Leaves the
+    candidates alone."""
+    return candidates
+
+
+def _linear_narrow_repos(ref: str, candidates: list[dict], cfg: dict) -> list[dict]:
+    """Narrow `candidates` to the repos whose `tickets.project` is the Linear
+    project ticket `ref` belongs to.
+
+    The many-repos-one-team case: they all declare the same `tickets.keys`, so the
+    identifier alone matches every one of them. The project isn't in the
+    identifier, so this costs one GraphQL fetch — paid only here, i.e. only once
+    the free key match came back ambiguous.
+
+    Returns `candidates` untouched when no candidate declares a project, the fetch
+    fails, or the resolved project matches none of them — so the caller's existing
+    "ambiguous, fall back" path still runs instead of this narrowing to zero.
+
+    Candidates are grouped by their **resolved credential** (`linear_api_key_env`,
+    which walks repo → org → global → default), and each group is asked with its
+    own key. A team key is *workspace*-scoped, so two orgs on separate Linear
+    workspaces can each own an `ENG` team and both match `ENG-1234` — querying one
+    org's workspace about the other's ticket would answer about a *different*
+    issue that merely shares an identifier, and mis-route the spawn. Grouping is
+    also why this costs exactly one fetch in the ordinary single-workspace case:
+    the extra round-trips appear only when the candidates genuinely span
+    workspaces, which is the only way to answer correctly. Repos declaring no
+    project never join a group, so they never trigger a fetch.
+
+    Groups are tried in config order and the first confident hit wins. Two
+    workspaces both holding a live `ENG-1234` in a project some repo claims is
+    irreducibly ambiguous — the identifier cannot distinguish them — so first-hit
+    is as good as any rule and never worse than the un-narrowed fallback.
+    """
+    by_env: dict[str, list[dict]] = {}
+    for repo in candidates:
+        if linear_project(cfg, repo):
+            by_env.setdefault(linear_api_key_env(cfg, repo), []).append(repo)
+    for group in by_env.values():
+        key = linear_api_key(cfg, group[0]) or None
+        if not key:
+            continue
+        project = fetch_ticket_project(ref, api_key=key)
+        if not project:
+            continue
+        wanted = project.casefold()
+        hit = [r for r in group if (linear_project(cfg, r) or "").casefold() == wanted]
+        if hit:
+            return hit
+    return candidates
+
+
+def _trello_narrow_repos(ref: str, candidates: list[dict], cfg: dict) -> list[dict]:
+    """Narrow `candidates` to the repos whose `tickets.board` is the board the
+    card `ref` (a card URL or a bare short link) lives on.
+
+    Trello's whole route, not a tiebreaker: a short link carries no board, no
+    project and no key prefix, so there is nothing free to match on first — which
+    is exactly why the *caller* only reaches this once some repo has opted in by
+    declaring a `board`. A candidate declaring none never joins a group, so a
+    config with no boards costs zero network calls and narrows nothing.
+
+    Mirrors `_linear_narrow_repos`'s three properties. It never narrows to zero
+    (no board configured, the fetch failed, or the resolved board matches nobody →
+    `candidates` unchanged, so the caller's ambiguity path still runs). It groups
+    candidates by their **resolved credential pair** (`trello_key_env` +
+    `trello_token_env`, each walking repo → org → global → default) and asks each
+    group with its own key+token: a board name is *account*-scoped exactly as a
+    Linear team key is workspace-scoped, so two orgs can each own an "Engineering"
+    board, and asking one account about the other's card answers about a different
+    card — or 404s — and mis-routes the spawn. And it is routing-only: nothing
+    downstream reads `board`. Groups are tried in config order, first confident hit
+    wins, and a group whose credentials are unset is skipped (it can't be asked).
+    """
+    short = card_short_link(ref) or ref
+    by_creds: dict[tuple[str, str], list[dict]] = {}
+    for repo in candidates:
+        if trello_board(cfg, repo):
+            creds = (trello_key_env(cfg, repo), trello_token_env(cfg, repo))
+            by_creds.setdefault(creds, []).append(repo)
+    for group in by_creds.values():
+        key = trello_api_key(cfg, group[0]) or None
+        token = trello_api_token(cfg, group[0]) or None
+        if not key or not token:
+            continue
+        board = fetch_card_board(short, key=key, token=token)
+        if not board:
+            continue
+        wanted = board.casefold()
+        hit = [r for r in group if (trello_board(cfg, r) or "").casefold() == wanted]
+        if hit:
+            return hit
+    return candidates
+
+
 LINEAR = TicketProvider(
     name="linear",
     dev_done_value=linear_dev_done_state,
     parse_footers=lambda body, _nwo: parse_linear_footers(body),
     fetch_states=_linear_fetch_states,
     fetch_titles=_linear_fetch_titles,
+    narrow_repos=_linear_narrow_repos,
     ticket_url=_linear_ticket_url,
 )
 
@@ -380,6 +501,7 @@ JIRA = TicketProvider(
     parse_footers=lambda body, _nwo: parse_jira_footers(body),
     fetch_states=_jira_fetch_states,
     fetch_titles=_jira_fetch_titles,
+    narrow_repos=_no_narrow,
     ticket_url=_jira_ticket_url,
 )
 
@@ -389,6 +511,7 @@ GITHUB = TicketProvider(
     parse_footers=parse_github_issue_refs,
     fetch_states=_github_fetch_states,
     fetch_titles=_github_fetch_titles,
+    narrow_repos=_no_narrow,
     ticket_url=_github_ticket_url,
 )
 
@@ -398,6 +521,7 @@ TRELLO = TicketProvider(
     parse_footers=lambda body, _nwo: parse_trello_footers(body),
     fetch_states=_trello_fetch_states,
     fetch_titles=_trello_fetch_titles,
+    narrow_repos=_trello_narrow_repos,
     ticket_url=_trello_ticket_url,
 )
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import ANY, patch
 
+import pytest
+
 from cockpit.lib import tickets
 
 
@@ -285,3 +287,305 @@ def test_trello_fetch_states_threads_the_resolved_key_and_token(monkeypatch):
             ["aB3"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=repo
         )
     f.assert_called_once_with(["aB3"], key="k1", token="t1")
+
+
+# ── narrow_repos — the ticket→repo routing tiebreaker ───────────────────────
+#
+# Only Linear implements it (the ticket's project); every other provider's
+# identifier already resolves as far as it can, so theirs is a passthrough.
+
+_CFG = {"tickets": {"provider": "linear"}}
+
+
+def _repo(name: str, project: str | None = None) -> dict:
+    entry: dict = {"name": name, "tickets": {"keys": ["PE"]}}
+    if project is not None:
+        entry["tickets"]["project"] = project
+    return entry
+
+
+@pytest.fixture
+def linear_key(monkeypatch):
+    """Make the default credential resolvable. A candidate group whose key is
+    unset is skipped outright (it cannot be asked), so every test that expects a
+    fetch against the default `LINEAR_API_KEY` needs this."""
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+
+
+def test_narrow_repos_picks_the_repo_owning_the_project(linear_key):
+    cands = [_repo("payments", "Payments API"), _repo("web", "Web Checkout")]
+    with patch(
+        "cockpit.lib.tickets.fetch_ticket_project", return_value="Web Checkout"
+    ) as fetch:
+        got = tickets.LINEAR.narrow_repos("PE-1234", cands, _CFG)
+    assert [r["name"] for r in got] == ["web"]
+    fetch.assert_called_once_with("PE-1234", api_key=ANY)
+
+
+def test_narrow_repos_matches_project_case_insensitively(linear_key):
+    cands = [_repo("payments", "Payments API"), _repo("web", "Web Checkout")]
+    with patch("cockpit.lib.tickets.fetch_ticket_project", return_value="payments api"):
+        got = tickets.LINEAR.narrow_repos("PE-1234", cands, _CFG)
+    assert [r["name"] for r in got] == ["payments"]
+
+
+def test_narrow_repos_no_project_configured_skips_the_fetch():
+    # Nothing to narrow *by* — must stay offline and leave the set alone.
+    cands = [_repo("payments"), _repo("web")]
+    with patch("cockpit.lib.tickets.fetch_ticket_project") as fetch:
+        got = tickets.LINEAR.narrow_repos("PE-1234", cands, _CFG)
+    assert got == cands
+    fetch.assert_not_called()
+
+
+def test_narrow_repos_failed_fetch_leaves_candidates_unchanged(linear_key):
+    cands = [_repo("payments", "Payments API"), _repo("web", "Web Checkout")]
+    with patch("cockpit.lib.tickets.fetch_ticket_project", return_value=None):
+        assert tickets.LINEAR.narrow_repos("PE-1234", cands, _CFG) == cands
+
+
+def test_narrow_repos_unknown_project_never_narrows_to_zero(linear_key):
+    # The ticket's project isn't any repo's — degrade to the caller's existing
+    # ambiguity path rather than routing the spawn nowhere.
+    cands = [_repo("payments", "Payments API"), _repo("web", "Web Checkout")]
+    with patch("cockpit.lib.tickets.fetch_ticket_project", return_value="Mobile"):
+        assert tickets.LINEAR.narrow_repos("PE-1234", cands, _CFG) == cands
+
+
+def test_narrow_repos_keeps_every_repo_sharing_one_project(linear_key):
+    cands = [_repo("api", "Payments API"), _repo("web", "Payments API")]
+    with patch("cockpit.lib.tickets.fetch_ticket_project", return_value="Payments API"):
+        got = tickets.LINEAR.narrow_repos("PE-1234", cands, _CFG)
+    assert [r["name"] for r in got] == ["api", "web"]
+
+
+def _org_repo(name: str, project: str, env: str) -> dict:
+    return {"name": name, "tickets": {"project": project, "api_key_env": env}}
+
+
+def test_narrow_repos_one_fetch_when_candidates_share_a_credential(monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY_ACME", "acme-key")
+    cands = [
+        _org_repo("a", "P1", "LINEAR_API_KEY_ACME"),
+        _org_repo("b", "P2", "LINEAR_API_KEY_ACME"),
+    ]
+    with patch("cockpit.lib.tickets.fetch_ticket_project", return_value="P2") as fetch:
+        got = tickets.LINEAR.narrow_repos("PE-1", cands, _CFG)
+    assert [r["name"] for r in got] == ["b"]
+    fetch.assert_called_once_with("PE-1", api_key="acme-key")
+
+
+def test_narrow_repos_asks_each_org_with_its_own_key(monkeypatch):
+    # A team key is workspace-scoped: two orgs can each own a `PE` team, so both
+    # repos match `PE-1`. Querying only the first org's workspace would answer
+    # about a *different* issue that merely shares the identifier.
+    monkeypatch.setenv("LINEAR_API_KEY_ACME", "acme-key")
+    monkeypatch.setenv("LINEAR_API_KEY_BETA", "beta-key")
+    cands = [
+        _org_repo("acme-svc", "Acme Billing", "LINEAR_API_KEY_ACME"),
+        _org_repo("beta-svc", "Beta Search", "LINEAR_API_KEY_BETA"),
+    ]
+
+    def fake_fetch(ref, *, api_key):
+        # Only Beta's workspace holds this ticket.
+        return "Beta Search" if api_key == "beta-key" else None
+
+    with patch("cockpit.lib.tickets.fetch_ticket_project", side_effect=fake_fetch):
+        got = tickets.LINEAR.narrow_repos("PE-1", cands, _CFG)
+    assert [r["name"] for r in got] == ["beta-svc"]
+
+
+def test_narrow_repos_never_matches_a_project_across_workspaces(monkeypatch):
+    # Both orgs have a `PE-1`, and Acme's happens to sit in a project named the
+    # same as Beta's repo claims. The match must stay inside the group whose key
+    # answered — else the spawn routes to the wrong org's repo.
+    monkeypatch.setenv("LINEAR_API_KEY_ACME", "acme-key")
+    monkeypatch.setenv("LINEAR_API_KEY_BETA", "beta-key")
+    cands = [
+        _org_repo("acme-svc", "Acme Billing", "LINEAR_API_KEY_ACME"),
+        _org_repo("beta-svc", "Shared Name", "LINEAR_API_KEY_BETA"),
+    ]
+
+    def fake_fetch(ref, *, api_key):
+        return "Shared Name" if api_key == "acme-key" else "Beta Search"
+
+    with patch("cockpit.lib.tickets.fetch_ticket_project", side_effect=fake_fetch):
+        got = tickets.LINEAR.narrow_repos("PE-1", cands, _CFG)
+    # Acme answered "Shared Name" but no *Acme* repo claims it; Beta answered
+    # "Beta Search" which no Beta repo claims → inconclusive, unchanged.
+    assert got == cands
+
+
+def test_narrow_repos_skips_a_group_whose_credential_is_unset(monkeypatch):
+    monkeypatch.delenv("LINEAR_API_KEY_ACME", raising=False)
+    monkeypatch.setenv("LINEAR_API_KEY_BETA", "beta-key")
+    cands = [
+        _org_repo("acme-svc", "Acme Billing", "LINEAR_API_KEY_ACME"),
+        _org_repo("beta-svc", "Beta Search", "LINEAR_API_KEY_BETA"),
+    ]
+    with patch(
+        "cockpit.lib.tickets.fetch_ticket_project", return_value="Beta Search"
+    ) as fetch:
+        got = tickets.LINEAR.narrow_repos("PE-1", cands, _CFG)
+    assert [r["name"] for r in got] == ["beta-svc"]
+    fetch.assert_called_once_with("PE-1", api_key="beta-key")
+
+
+def test_narrow_repos_is_a_passthrough_for_github_and_jira():
+    # GitHub's ref carries `owner/repo`; Jira's "project" *is* the key prefix the
+    # free match already used. Neither has a container left to discriminate on.
+    cands = [{"name": "a"}, {"name": "b"}]
+    for provider in (tickets.GITHUB, tickets.JIRA):
+        assert provider.narrow_repos("ref", cands, _CFG) == cands
+
+
+# ── narrow_repos, Trello — the *whole* route, not a tiebreak ────────────────
+#
+# A card short link carries no board, so there is no free first-stage match;
+# declaring `tickets.board` is the opt-in that makes the fetch worth paying for.
+
+_TRELLO_CFG = {"tickets": {"provider": "trello"}}
+_CARD_URL = "https://trello.com/c/aB3dZ9/7-fix-oauth"
+
+
+def _trello_repo(name: str, board: str | None = None, **envs: str) -> dict:
+    entry: dict = {"name": name, "tickets": dict(envs)}
+    if board is not None:
+        entry["tickets"]["board"] = board
+    return entry
+
+
+@pytest.fixture
+def trello_creds(monkeypatch):
+    """The default key+token pair resolvable. A group missing either is skipped
+    outright (it cannot be asked), so any test expecting a fetch needs this."""
+    monkeypatch.setenv("TRELLO_API_KEY", "k")
+    monkeypatch.setenv("TRELLO_API_TOKEN", "t")
+
+
+def test_trello_narrow_picks_the_repo_owning_the_board(trello_creds):
+    cands = [_trello_repo("api", "Platform"), _trello_repo("web", "Engineering")]
+    with patch(
+        "cockpit.lib.tickets.fetch_card_board", return_value="Engineering"
+    ) as fetch:
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["web"]
+    # The URL is reduced to the card's short link before the fetch.
+    fetch.assert_called_once_with("aB3dZ9", key="k", token="t")
+
+
+def test_trello_narrow_accepts_a_bare_short_link(trello_creds):
+    cands = [_trello_repo("api", "Platform"), _trello_repo("web", "Engineering")]
+    with patch(
+        "cockpit.lib.tickets.fetch_card_board", return_value="Platform"
+    ) as fetch:
+        got = tickets.TRELLO.narrow_repos("aB3dZ9", cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["api"]
+    fetch.assert_called_once_with("aB3dZ9", key="k", token="t")
+
+
+def test_trello_narrow_matches_board_case_insensitively(trello_creds):
+    cands = [_trello_repo("api", "Platform"), _trello_repo("web", "Engineering")]
+    with patch("cockpit.lib.tickets.fetch_card_board", return_value="engineering"):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["web"]
+
+
+def test_trello_narrow_no_board_configured_skips_the_fetch():
+    # The opt-in gate: nobody declares a board → zero network calls, no narrowing.
+    cands = [_trello_repo("api"), _trello_repo("web")]
+    with patch("cockpit.lib.tickets.fetch_card_board") as fetch:
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert got == cands
+    fetch.assert_not_called()
+
+
+def test_trello_narrow_failed_fetch_leaves_candidates_unchanged(trello_creds):
+    cands = [_trello_repo("api", "Platform"), _trello_repo("web", "Engineering")]
+    with patch("cockpit.lib.tickets.fetch_card_board", return_value=None):
+        assert tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG) == cands
+
+
+def test_trello_narrow_unknown_board_never_narrows_to_zero(trello_creds):
+    cands = [_trello_repo("api", "Platform"), _trello_repo("web", "Engineering")]
+    with patch("cockpit.lib.tickets.fetch_card_board", return_value="Marketing"):
+        assert tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG) == cands
+
+
+def test_trello_narrow_keeps_every_repo_sharing_one_board(trello_creds):
+    cands = [_trello_repo("api", "Engineering"), _trello_repo("web", "Engineering")]
+    with patch("cockpit.lib.tickets.fetch_card_board", return_value="Engineering"):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["api", "web"]
+
+
+def test_trello_narrow_asks_each_account_with_its_own_credential_pair(monkeypatch):
+    # A board name is account-scoped exactly as a Linear team key is
+    # workspace-scoped: two orgs can each own an "Engineering" board, and asking
+    # one account about the other's card answers about a different card / 404s.
+    monkeypatch.setenv("TK_ACME", "acme-k")
+    monkeypatch.setenv("TT_ACME", "acme-t")
+    monkeypatch.setenv("TK_BETA", "beta-k")
+    monkeypatch.setenv("TT_BETA", "beta-t")
+    cands = [
+        _trello_repo("acme-svc", "Acme Eng", key_env="TK_ACME", token_env="TT_ACME"),
+        _trello_repo("beta-svc", "Beta Eng", key_env="TK_BETA", token_env="TT_BETA"),
+    ]
+
+    def fake_fetch(short, *, key, token):
+        return "Beta Eng" if (key, token) == ("beta-k", "beta-t") else None
+
+    with patch("cockpit.lib.tickets.fetch_card_board", side_effect=fake_fetch):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["beta-svc"]
+
+
+def test_trello_narrow_never_matches_a_board_across_accounts(monkeypatch):
+    # Acme's account answers with a name Beta's repo claims. The match must stay
+    # inside the group whose credentials answered, else the spawn routes to the
+    # wrong org's repo.
+    monkeypatch.setenv("TK_ACME", "acme-k")
+    monkeypatch.setenv("TT_ACME", "acme-t")
+    monkeypatch.setenv("TK_BETA", "beta-k")
+    monkeypatch.setenv("TT_BETA", "beta-t")
+    cands = [
+        _trello_repo("acme-svc", "Acme Eng", key_env="TK_ACME", token_env="TT_ACME"),
+        _trello_repo("beta-svc", "Shared Name", key_env="TK_BETA", token_env="TT_BETA"),
+    ]
+
+    def fake_fetch(short, *, key, token):
+        return "Shared Name" if key == "acme-k" else "Beta Eng"
+
+    with patch("cockpit.lib.tickets.fetch_card_board", side_effect=fake_fetch):
+        assert tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG) == cands
+
+
+def test_trello_narrow_one_fetch_when_candidates_share_a_credential(monkeypatch):
+    monkeypatch.setenv("TK_ACME", "acme-k")
+    monkeypatch.setenv("TT_ACME", "acme-t")
+    cands = [
+        _trello_repo("a", "B1", key_env="TK_ACME", token_env="TT_ACME"),
+        _trello_repo("b", "B2", key_env="TK_ACME", token_env="TT_ACME"),
+    ]
+    with patch("cockpit.lib.tickets.fetch_card_board", return_value="B2") as fetch:
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["b"]
+    fetch.assert_called_once_with("aB3dZ9", key="acme-k", token="acme-t")
+
+
+def test_trello_narrow_skips_a_group_missing_half_its_credential_pair(monkeypatch):
+    # Trello needs key *and* token; a group with only one can't be asked.
+    monkeypatch.setenv("TK_ACME", "acme-k")
+    monkeypatch.delenv("TT_ACME", raising=False)
+    monkeypatch.setenv("TK_BETA", "beta-k")
+    monkeypatch.setenv("TT_BETA", "beta-t")
+    cands = [
+        _trello_repo("acme-svc", "Acme Eng", key_env="TK_ACME", token_env="TT_ACME"),
+        _trello_repo("beta-svc", "Beta Eng", key_env="TK_BETA", token_env="TT_BETA"),
+    ]
+    with patch(
+        "cockpit.lib.tickets.fetch_card_board", return_value="Beta Eng"
+    ) as fetch:
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["beta-svc"]
+    fetch.assert_called_once_with("aB3dZ9", key="beta-k", token="beta-t")

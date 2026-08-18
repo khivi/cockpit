@@ -120,10 +120,11 @@ from cockpit.lib.config import (
     discover_repo,
     find_repo_by_name,
     find_repo_by_nwo,
-    find_repos_by_linear_key,
+    find_repos_by_ticket_key,
     github_start_label,
     load_config,
     plan_command,
+    trello_board,
 )
 from cockpit.lib.config import (
     tickets as cfg_tickets,
@@ -157,12 +158,43 @@ from cockpit.lib.prompts import claude_command, split_prompt_prefix
 from cockpit.lib.registry import register_cwd
 from cockpit.lib.slack import SLACK_URL_RE, slack_seed
 from cockpit.lib.templates import render
+from cockpit.lib.tickets import provider_for
 from cockpit.lib.trello import TRELLO_CARD_URL_RE, trello_seed
 
 
 def _die(msg: str, code: int = 1) -> int:
     print(f"ERROR: {msg}", file=sys.stderr)
     return code
+
+
+def _route_by_ticket(ref: str, candidates: list[dict], cfg: dict) -> str | None:
+    """The name of the repo ticket `ref` routes to, or None when the candidate set
+    can't be reduced to exactly one (caller falls back to cwd discovery).
+
+    Stage two of the two-stage route. The caller supplies whatever its free,
+    offline first stage matched — `find_repos_by_ticket_key` for a Linear team /
+    Jira project key, the repos declaring a `tickets.board` for a Trello card
+    (whose short link carries nothing to match on). Only a still-ambiguous set
+    reaches the provider's `narrow_repos`, so a single match never pays a fetch,
+    and `narrow_repos` never narrows to zero, so >1 survivors print the ambiguity
+    note exactly as an un-narrowed set would.
+    """
+    if len(candidates) > 1:
+        provider = provider_for(cfg, candidates[0])
+        if provider is not None:
+            candidates = provider.narrow_repos(ref, candidates, cfg)
+    if len(candidates) == 1:
+        return str(candidates[0]["name"])
+    if len(candidates) > 1:
+        names = ", ".join(c["name"] for c in candidates)
+        print(
+            f"note: ticket {ref!r} matches multiple repos ({names}); falling back "
+            f"to cwd-based discovery. Set the per-repo routing discriminator "
+            f"(Linear `tickets.project`, Trello `tickets.board`), or pass "
+            f"--repo <name>, to disambiguate.",
+            file=sys.stderr,
+        )
+    return None
 
 
 def _repo_names() -> list[str]:
@@ -827,6 +859,17 @@ def main(argv: list[str] | None = None) -> int:
             branch = codename(trello_seed(value))
             from_name = True
             is_trello = True
+            if not args.repo:
+                # A card short link carries no board, project or key prefix, so
+                # there is no free first-stage match to gate the fetch on —
+                # declaring `tickets.board` IS the opt-in. With no repo declaring
+                # one the candidate set is empty, so this costs zero network calls
+                # and routes exactly as it did before the field existed.
+                spawn_cfg = load_config()
+                cands = [
+                    r for r in spawn_cfg.get("repos", []) if trello_board(spawn_cfg, r)
+                ]
+                args.repo = _route_by_ticket(value, cands, spawn_cfg) or args.repo
             if cfg_tickets() == "trello":
                 seeded_prompt = _trello_prompt(branch, value)
         elif mode == "gh-issue":
@@ -849,17 +892,20 @@ def main(argv: list[str] | None = None) -> int:
             branch = value.lower()
             from_name = True
             is_linear = True
-            if cfg_tickets() == "linear" and not args.repo:
-                matches = find_repos_by_linear_key(value)
-                if len(matches) == 1:
-                    args.repo = matches[0]["name"]
-                elif len(matches) > 1:
-                    names = ", ".join(m["name"] for m in matches)
-                    print(
-                        f"note: Linear key {value!r} matches multiple repos "
-                        f"({names}); falling back to cwd-based discovery. "
-                        f"Pass --repo <name> to disambiguate.",
-                        file=sys.stderr,
+            if not args.repo:
+                # `tickets.keys` is the free, offline first stage, and it serves
+                # Linear *and* Jira: a Linear team key and a Jira project key are
+                # the same prefix-baked-into-the-identifier shape (which is also
+                # why `detect_source` classifies both as `linear` mode). Gated on
+                # a ticket provider being configured at all, so `tickets: none`
+                # keeps routing off entirely.
+                spawn_cfg = load_config()
+                if provider_for(spawn_cfg) is not None:
+                    args.repo = (
+                        _route_by_ticket(
+                            value, find_repos_by_ticket_key(value), spawn_cfg
+                        )
+                        or args.repo
                     )
             if cfg_tickets() == "linear":
                 mcp = linear_mcp_available()
@@ -878,8 +924,12 @@ def main(argv: list[str] | None = None) -> int:
                 # is claude.ai-managed (that probe is unreliable; the prompt's own
                 # retry-then-STOP logic handles a truly-absent MCP, mirroring
                 # Slack). ponytail: a project key with digits or >6 letters won't
-                # match LINEAR_RE_CI and falls to plain branch mode (worktree still
-                # created, just unseeded) — broaden detect_source if that bites.
+                # match LINEAR_RE_CI, so it neither seeds a prompt nor routes to a
+                # repo — it falls to plain branch mode (worktree still created,
+                # just unseeded and cwd-routed). Widening the regex here alone
+                # would be a no-op (this is the *classifier*), and widening it for
+                # real reclassifies plain branches like `feature2-1` as tickets —
+                # so both stay as-is until someone actually hits it.
                 seeded_prompt = _jira_prompt(branch, value)
         else:
             branch = value

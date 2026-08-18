@@ -17,6 +17,7 @@ from io import BytesIO
 from unittest.mock import patch
 
 from cockpit.lib.jira import (
+    CONFIG_FIELDS,
     fetch_issue_meta,
     fetch_issue_statuses,
     fetch_issue_summaries,
@@ -25,6 +26,24 @@ from cockpit.lib.jira import (
     parse_jira_footers,
     transition_issue,
 )
+
+# ────────────────────────────────────────────────────────────────────────────
+# config schema
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_config_fields_declare_keys_for_routing():
+    # A Jira *project key* is the identifier prefix — the analogue of a Linear
+    # team, not of a Linear project — so Jira declares the same `keys` field
+    # Linear does, and gets `PROJ-123` → repo routing from it.
+    assert ("keys", "str_list") in CONFIG_FIELDS
+
+
+def test_config_fields_have_no_project_field():
+    # `project` is Linear's *tiebreaker below the team*. Jira has no container
+    # below its key, so adding one would be meaningless config surface.
+    assert "project" not in dict(CONFIG_FIELDS)
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # footer parsing — the strict delivery signal

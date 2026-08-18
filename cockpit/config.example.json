@@ -15,6 +15,7 @@
       "tickets": {
         "provider": "linear",
         "keys": ["TEAM"],
+        "project": "My Project",
         "close_on_merge": false,
         "merge_done_state": "Done",
         "api_key_env": "LINEAR_API_KEY"
@@ -40,6 +41,7 @@
       "default_base": "main",
       "tickets": {
         "provider": "jira",
+        "keys": ["PROJ"],
         "site_url": "https://yourteam.atlassian.net",
         "email": "you@example.com",
         "dev_done_status": "Dev Done",
@@ -55,6 +57,7 @@
       "default_base": "main",
       "tickets": {
         "provider": "trello",
+        "board": "Engineering",
         "dev_done_list": "Review",
         "merge_done_list": "Done",
         "close_on_merge": false,

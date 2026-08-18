@@ -15,8 +15,10 @@ from io import BytesIO
 from unittest.mock import patch
 
 from cockpit.lib.trello import (
+    CONFIG_FIELDS,
     TRELLO_CARD_URL_RE,
     card_short_link,
+    fetch_card_board,
     fetch_card_lists,
     fetch_card_meta,
     fetch_card_names,
@@ -195,6 +197,57 @@ def test_fetch_card_lists_http_error_is_none():
     with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=err):
         out = fetch_card_lists(["aB3dZ9"], key=KEY, token=TOKEN)
     assert out == {"aB3dZ9": None}
+
+
+def test_config_fields_declare_board_for_routing():
+    # `tickets.board` is the whole of Trello's ticket→repo route; the provider
+    # owns its config schema, so preflight only accepts the field if it's here.
+    assert ("board", "str") in CONFIG_FIELDS
+
+
+def test_fetch_card_board_returns_the_board_name():
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        return _FakeResp({"board": {"name": "Engineering"}})
+
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=fake_urlopen):
+        assert fetch_card_board("aB3dZ9", key=KEY, token=TOKEN) == "Engineering"
+    # Only the board's *name* is requested — never the whole card payload.
+    assert "board=true" in captured["url"] and "board_fields=name" in captured["url"]
+    assert captured["url"].startswith("https://api.trello.com/1/cards/aB3dZ9?")
+
+
+def test_fetch_card_board_no_creds_skips_network():
+    with (
+        patch("cockpit.lib.trello.urllib.request.urlopen") as urlopen,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        assert fetch_card_board("aB3dZ9") is None
+    urlopen.assert_not_called()
+
+
+def test_fetch_card_board_blank_short_link_skips_network():
+    with patch("cockpit.lib.trello.urllib.request.urlopen") as urlopen:
+        assert fetch_card_board("", key=KEY, token=TOKEN) is None
+    urlopen.assert_not_called()
+
+
+def test_fetch_card_board_degrades_to_none_on_every_failure():
+    # A 404 (unknown card), a timeout, an unparsable body, and a board-less
+    # payload all collapse to None — the caller reads that as "inconclusive".
+    err = urllib.error.HTTPError("u", 404, "not found", {}, BytesIO(b""))  # type: ignore[arg-type]
+    for side, ret in (
+        (err, None),
+        (TimeoutError(), None),
+        (None, _FakeResp(raw=b"not json {")),
+        (None, _FakeResp({"board": {}})),
+        (None, _FakeResp({})),
+    ):
+        kwargs = {"side_effect": side} if side is not None else {"return_value": ret}
+        with patch("cockpit.lib.trello.urllib.request.urlopen", **kwargs):  # type: ignore[arg-type]
+            assert fetch_card_board("aB3dZ9", key=KEY, token=TOKEN) is None
 
 
 def test_fetch_myself_returns_member_id():

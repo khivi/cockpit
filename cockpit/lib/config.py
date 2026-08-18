@@ -215,12 +215,26 @@ def apply_org_defaults(cfg: dict) -> dict:
     so an org rung slots in with **zero** call-site changes and nothing below
     this function ever learns orgs exist.
 
-    Shallow on purpose: a repo's own `tickets`/`skills` block wins outright over
-    the org's, exactly as it already wins over the global one. Idempotent (a
-    second pass finds every key set), which is what lets `preflight.validate_config`
-    call it on a raw dict. Config *writers* (`registry.register_cwd`,
-    `save_config_value`) re-read `config.json` from disk rather than reusing
-    `load_config()`, so an inherited value is never persisted onto the repo entry.
+    **One level deep for block-valued keys.** A scalar the repo sets wins whole;
+    but where both sides hold a dict (`tickets`, `skills`), the two are unioned
+    per *field* with the repo's winning — the same per-field granularity
+    `_tickets_field` / `_skills_field` already give repo-over-global. A whole-block
+    override would defeat the one field meant to be set per repo *inside* an org:
+    a repo adding `tickets.project` (the routing discriminator) would silently
+    drop the org's `keys` and `api_key_env`, so it would stop matching its own
+    team and read the wrong credential. Exactly one level — nothing nests below a
+    block, and a recursive merge would be harder to reason about than the config
+    it serves.
+
+    Block values are always rebuilt into a fresh dict, never aliased onto the
+    repo: an org's block is shared by every member, so handing out the same object
+    would make any later mutation of one repo's block hit all its siblings'.
+
+    Idempotent (a second pass re-unions an already-merged block to itself), which
+    is what lets `preflight.validate_config` call it on a raw dict. Config
+    *writers* (`registry.register_cwd`, `save_config_value`) re-read `config.json`
+    from disk rather than reusing `load_config()`, so an inherited value is never
+    persisted onto the repo entry.
     """
     orgs = cfg.get("orgs")
     if not isinstance(orgs, dict):
@@ -230,8 +244,15 @@ def apply_org_defaults(cfg: dict) -> dict:
         # A non-string org is rejected by preflight; skip it here rather than
         # blowing up on an unhashable dict key — load runs before validation.
         defaults = orgs.get(org) if isinstance(org, str) else None
-        if isinstance(defaults, dict):
-            for key, val in defaults.items():
+        if not isinstance(defaults, dict):
+            continue
+        for key, val in defaults.items():
+            own = repo.get(key)
+            if isinstance(val, dict) and isinstance(own, dict):
+                repo[key] = {**val, **own}  # per-field union, repo wins
+            elif isinstance(val, dict) and key not in repo:
+                repo[key] = dict(val)  # copy: never alias the org's block
+            else:
                 repo.setdefault(key, val)
     return cfg
 
@@ -319,14 +340,24 @@ def find_repo_by_name(name: str) -> dict | None:
     return None
 
 
-def find_repos_by_linear_key(identifier: str) -> list[dict]:
-    """Return configured repos whose Linear team keys contain the prefix
-    of `identifier` (case-insensitive match on `<PREFIX>-<digits>`).
+def find_repos_by_ticket_key(identifier: str) -> list[dict]:
+    """Return configured repos whose `tickets.keys` contain the prefix of
+    `identifier` (case-insensitive match on `<PREFIX>-<digits>`).
 
-    Keys come from `tickets.keys` (or the legacy flat `linear_keys`) via
-    `linear_team_keys`. Empty list when the identifier doesn't parse as a Linear
-    id or no repo declares the prefix. Callers handle the empty / single / multi
-    cases explicitly — this function does not pick a winner on a multi match.
+    Provider-neutral in substance: a Linear *team* key (`PE-1234`) and a Jira
+    *project* key (`PROJ-123`) are the same thing — the outer container baked
+    into the identifier — so both route through `tickets.keys` (or the legacy
+    flat `linear_keys`) via `linear_team_keys`. Empty list when the identifier
+    doesn't parse or no repo declares the prefix. Callers handle the empty /
+    single / multi cases explicitly — this function does not pick a winner on a
+    multi match.
+
+    ponytail: the shape gate is `LINEAR_RE_CI` (2-6 letters + digits), shared
+    with `spawn.detect_source` — which is what classifies the positional as a
+    ticket in the first place, so widening it *here* alone would be a no-op. A
+    Jira project key with digits or >6 letters therefore doesn't route (it falls
+    to plain branch mode). Widen both together if that ever bites, accepting that
+    a plain branch named `feature2-1` then reads as a ticket.
     """
     from .linear import LINEAR_RE_CI
 
@@ -524,6 +555,24 @@ def linear_team_keys(
     if repo_entry is not None and isinstance(repo_entry.get("linear_keys"), list):
         return [str(k) for k in repo_entry["linear_keys"]]
     return []
+
+
+def linear_project(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> str | None:
+    """The Linear project this repo's work lives in (`tickets.project`), or None.
+
+    Routing-only, and only a *tiebreaker*: when several repos share a Linear team
+    they all declare the same `keys`, so `ENG-1234` matches them all. The project
+    isn't in the identifier, so `tickets.narrow_repos` resolves it with one fetch
+    — but only once the cheap key match is already ambiguous, so a config without
+    this field costs nothing. Matched by name, casefolded, like every other
+    provider state/list/status name.
+    """
+    val = _tickets_field(cfg, repo_entry, "project")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return None
 
 
 def github_start_label(
@@ -830,6 +879,26 @@ def trello_merge_done_list(
     if isinstance(val, str) and val.strip():
         return val.strip()
     return ""
+
+
+def trello_board(cfg: dict | None = None, repo_entry: dict | None = None) -> str | None:
+    """The Trello board this repo's cards live on (`tickets.board`), or None.
+
+    Routing-only, and the *whole* of Trello's ticket→repo routing: a card short
+    link (`trello.com/c/aB3xY`) carries no board, no project and no key prefix,
+    so unlike Linear/Jira there's no free identifier match to start from — the
+    board has to be fetched. Declaring it is therefore the opt-in: with no repo
+    declaring a board, `cockpit new <card-url>` makes zero network calls and
+    routes exactly as before. Matched by name, casefolded, like every other
+    provider state/list/status name.
+
+    (The Linear analogue is `tickets.project`; there is deliberately no Trello
+    `project` field — a board is the container a card's identity is missing.)
+    """
+    val = _tickets_field(cfg, repo_entry, "board")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return None
 
 
 def trello_key_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
