@@ -25,7 +25,7 @@ registered on PyPI exactly:
 | Workflow    | `publish.yml` |
 | Environment | `pypi`        |
 
-## One-time setup
+## One-time setup (done)
 
 1. **GitHub Actions environment** — a repo environment literally named `pypi`
    (Settings → Environments). It can be **empty**; no secrets go in it for OIDC.
@@ -35,7 +35,9 @@ registered on PyPI exactly:
 2. **PyPI pending publisher** — <https://pypi.org/manage/account/publishing/> →
    "Add a new pending publisher", filled with the four claims above and PyPI
    project name `cmux-cockpit`. PyPI creates the project on the first successful
-   publish; no manual project creation needed first.
+   publish; no manual project creation needed first. **Registered** — the
+   publisher is live and became a permanent publisher on the first successful
+   publish (v1.8.0).
 
 ## Publishing a release
 
@@ -43,23 +45,25 @@ Covered by the tag flow in `AGENTS.md` → *Release versioning*: bump
 `pyproject.toml` `version`, commit, tag `v<version>`, push the tag. That fires
 both `publish.yml` (PyPI) and `release.yml` (Homebrew tap bump) independently.
 
-## Recovery — account currently blocked
+## Recovery — how the initial block was cleared
 
-As of this writing the `cmux-cockpit` publisher is **not yet registered**: the
-owning PyPI account is blocked on an unverified email (the 2018 credential is
-lost), so step 2 above can't be completed. The first `publish.yml` run failed
-with `invalid-publisher` (valid OIDC token, no matching publisher) — this fails
-*before* upload, so version `1.0.0` is **not consumed** and re-runs cleanly.
+`cmux-cockpit 1.8.0` is now live on PyPI. Earlier this was blocked: the owning
+PyPI account was locked out on an unverified email, so the pending publisher
+(step 2) couldn't be registered, and every `publish.yml` run failed with
+`invalid-publisher` (valid OIDC token, no matching publisher). That failure
+happens *before* upload, so no version was ever consumed and the runs re-ran
+cleanly once unblocked.
 
-To unblock:
+The sequence that cleared it, kept here as the playbook if a re-block ever
+happens:
 
-1. Trigger PyPI's email-verification / password-reset flow to the address the
-   account registered with, and regain access (or register a fresh account you
-   control and adjust the `Owner` claim here + in `publish.yml` if it changes).
+1. Regain PyPI account access (email-verification / password-reset to the
+   registered address) — or register a fresh account and adjust the `Owner`
+   claim here + in `publish.yml`.
 2. Register the pending publisher (setup step 2).
 3. Re-run the failed publish: `gh run rerun <run-id>` (or push a fresh tag).
 
-Nothing in this repo needs to change for the OIDC path — the fix is entirely on
-PyPI's side.
+Nothing in this repo changed for the OIDC path — the fix was entirely on PyPI's
+side.
 
 [PyPI Trusted Publishing]: https://docs.pypi.org/trusted-publishers/
