@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/khivi/cockpit/compare/v1.11.0...v1.12.0) (2026-08-20)
+
+
+### Features
+
+* **tui:** align row status glyphs and let a snooze supersede a mute ([#319](https://github.com/khivi/cockpit/issues/319)) ([883abc5](https://github.com/khivi/cockpit/commit/883abc5f1b8d4dff76e8dea23c632e967d5b508c))
+
 ## [1.11.0](https://github.com/khivi/cockpit/compare/v1.10.1...v1.11.0) (2026-08-20)
 
 
