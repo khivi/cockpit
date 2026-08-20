@@ -32,6 +32,7 @@ from cockpit.tui.widgets.worktree_table import (
     _PR_STATE_ICON,
     _RULE_WIDTH,
     _STATUS_ICON,
+    _STATUS_SLOT,
     _TICKET_MAX,
     DEVDONE_ICON,
     HEADER_KEY_PREFIX,
@@ -68,11 +69,13 @@ def _plain(wt, repo="repo", color=None, provider="none", show_tickets=False):
     return [c.plain for c in cells]
 
 
-def _ws(label, *, depth=0):
+def _ws(label, *, depth=0, glyph=""):
     """The Workspace cell's expected plain text for `label` — every worktree row
-    hangs under its repo header behind `ROW_INDENT`. Kept in one place so a
-    change to the indent doesn't churn every assertion in the module."""
-    return f"{ROW_INDENT}{'  └ ' if depth else ''}{label}"
+    hangs under its repo header behind `ROW_INDENT`, then pays `_STATUS_SLOT`
+    cells for its status glyph whether or not it has one. Kept in one place so a
+    change to the indent or the slot doesn't churn every assertion here."""
+    slot = glyph + " " * (_STATUS_SLOT - cell_len(glyph))
+    return f"{ROW_INDENT}{'  └ ' if depth else ''}{slot}{label}"
 
 
 def _col(label, *, show_tickets=False):
@@ -445,7 +448,7 @@ def test_muted_pr_prefixes_workspace_glyph(cache_dir):
     wt = _wt(branch="khivi/silence", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == _ws(f"{ICON_PR_MUTED} silence")
+    assert cell.plain == _ws("silence", glyph=ICON_PR_MUTED)
 
 
 def test_unmuted_pr_has_no_glyph(cache_dir):
@@ -460,7 +463,7 @@ def test_nudge_pr_prefixes_bell_glyph(cache_dir):
     wt = _wt(branch="khivi/ringing", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == _ws(f"{ICON_PR_NUDGE} ringing")
+    assert cell.plain == _ws("ringing", glyph=ICON_PR_NUDGE)
 
 
 def test_mute_wins_over_nudge_glyph(cache_dir):
@@ -470,7 +473,7 @@ def test_mute_wins_over_nudge_glyph(cache_dir):
     cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("comments")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == _ws(f"{ICON_PR_MUTED} quiet")
+    assert cell.plain == _ws("quiet", glyph=ICON_PR_MUTED)
 
 
 def test_empty_nudge_cell_has_no_glyph(cache_dir):
@@ -584,31 +587,29 @@ def test_long_ticket_is_ellipsized_with_the_full_text_on_hover(cache_dir, monkey
 
 
 def test_a_typical_widest_row_fits_the_header_rule(cache_dir):
-    """`_RULE_WIDTH` covers the two *typical* widest rows — a max-length label
-    that is either belled or stacked — so the rule reaches the column edge
-    instead of dangling short. Holds the arithmetic behind the constants: nudge
-    one and this fails."""
+    """`_RULE_WIDTH` covers the typical widest row — a max-length label in an
+    unstacked row — so the rule reaches the column edge instead of dangling
+    short. The status slot is paid whether or not the row carries a glyph, so a
+    belled row is exactly as wide as a quiet one. Holds the arithmetic behind the
+    constants: nudge one and this fails."""
     assert cell_len(_header_cells("R", None, 8)[0].plain) == _RULE_WIDTH
     belled = _wt(branch="khivi/" + "w" * 40, branch_prefix="khivi/")
     cache_mod.branch_cache("pr-nudge", belled.branch).write_text("ci")
     belled_cell = worktree_cells(belled, "r", None, "none", show_tickets=False)[0]
-    stacked = _wt(path="/tmp/st", branch="khivi/" + "s" * 40, branch_prefix="khivi/")
-    stacked_cell = worktree_cells(
-        stacked, "r", None, "none", show_tickets=False, depth=1
-    )[0]
-    assert cell_len(belled_cell.plain) <= _RULE_WIDTH
-    assert cell_len(stacked_cell.plain) == _RULE_WIDTH  # the wider of the two
+    quiet = _wt(path="/tmp/q", branch="khivi/" + "q" * 40, branch_prefix="khivi/")
+    quiet_cell = worktree_cells(quiet, "r", None, "none", show_tickets=False)[0]
+    assert cell_len(belled_cell.plain) == cell_len(quiet_cell.plain) == _RULE_WIDTH
 
 
-def test_a_stacked_and_belled_row_overhangs_the_rule_by_design(cache_dir):
-    """The one combination `_RULE_WIDTH` deliberately doesn't cover: pinning the
-    column three columns wider on every render, for a row that is both stacked
-    and carrying a nudge, isn't worth it when Workspace is competing with Title
-    for the terminal's width."""
+def test_a_stacked_row_overhangs_the_rule_by_design(cache_dir):
+    """The one case `_RULE_WIDTH` deliberately doesn't cover: a stacked row
+    overhangs by exactly its `└` spine. Pinning the column four columns wider on
+    every render, for the rows that aren't stacked, isn't worth it when Workspace
+    is competing with Title for the terminal's width."""
     wt = _wt(branch="khivi/" + "w" * 40, branch_prefix="khivi/")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
     row = worktree_cells(wt, "r", None, "none", show_tickets=False, depth=1)[0]
-    assert cell_len(row.plain) == _RULE_WIDTH + 3
+    assert cell_len(row.plain) == _RULE_WIDTH + 4
 
 
 def test_header_cells_repo_name_and_blank_tail():
@@ -902,7 +903,7 @@ def test_indent_precedes_the_nudge_glyph(cache_dir):
     wt = _wt(path="/tmp/bell", branch="khivi/b")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False, depth=1)[0].plain
-    assert cell == _ws(f"{ICON_PR_NUDGE} khivi-b", depth=1)
+    assert cell == _ws("khivi-b", glyph=ICON_PR_NUDGE, depth=1)
 
 
 @pytest.mark.asyncio
@@ -926,7 +927,7 @@ def test_snoozed_pr_prefixes_sleep_glyph(cache_dir):
     wt = _wt(branch="khivi/dozing", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == _ws(f"{ICON_PR_SNOOZED} dozing")
+    assert cell.plain == _ws("dozing", glyph=ICON_PR_SNOOZED)
 
 
 def test_snooze_wins_over_nudge_glyph(cache_dir):
@@ -936,7 +937,26 @@ def test_snooze_wins_over_nudge_glyph(cache_dir):
     cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == _ws(f"{ICON_PR_SNOOZED} resting")
+    assert cell.plain == _ws("resting", glyph=ICON_PR_SNOOZED)
+
+
+def test_every_glyph_takes_the_same_slot_so_labels_align(cache_dir):
+    """The whole point of the fixed slot: a belled row, a snoozed row, a muted
+    row and a quiet one all start their label at the same column. The three
+    glyphs differ in ink width per font, so this asserts *cells*, not bytes."""
+    starts = set()
+    for cell_name, value in (
+        ("pr-muted", "muted"),
+        ("pr-snoozed", "snoozed"),
+        ("pr-nudge", "ci"),
+        (None, None),
+    ):
+        wt = _wt(path=f"/tmp/{cell_name}", branch=f"khivi/{cell_name}")
+        if cell_name:
+            cache_mod.branch_cache(cell_name, wt.branch).write_text(value)
+        plain = worktree_cells(wt, "r", None, "none", show_tickets=False)[0].plain
+        starts.add(cell_len(plain[: plain.index("khivi")]))
+    assert starts == {len(ROW_INDENT) + _STATUS_SLOT}
 
 
 def test_mute_wins_over_snooze_glyph(cache_dir):
@@ -944,7 +964,7 @@ def test_mute_wins_over_snooze_glyph(cache_dir):
     cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
     cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == _ws(f"{ICON_PR_MUTED} both")
+    assert cell.plain == _ws("both", glyph=ICON_PR_MUTED)
 
 
 def test_row_capabilities_snoozed(cache_dir, monkeypatch):
