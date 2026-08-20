@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/khivi/cockpit/compare/v1.10.1...v1.11.0) (2026-08-20)
+
+
+### Features
+
+* **tui:** sink reviews and snoozed rows below the active queue ([#317](https://github.com/khivi/cockpit/issues/317)) ([bb7e64c](https://github.com/khivi/cockpit/commit/bb7e64c84698f97ea8cc250820981df5e0415b6c))
+
 ## [1.10.1](https://github.com/khivi/cockpit/compare/v1.10.0...v1.10.1) (2026-08-20)
 
 
