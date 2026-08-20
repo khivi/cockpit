@@ -28,6 +28,23 @@ name: release-please
 # version baseline still comes from .release-please-manifest.json plus the git
 # tags, which is all this workflow needs.
 #
+# The job's `if:` guard is the third load-bearing setting here, and it exists
+# because this workflow re-runs on the very commit it causes. Merging the
+# release PR is a push to `main`, so release-please and tag.yml both fire on
+# that sha and race: tag.yml pushes `v<version>` about a minute later, so at the
+# moment release-please starts, the tag for the release just merged does not
+# exist yet. With no baseline tag it treats the repo as never released and
+# regenerates the changelog from the entire history — PR #309 proposed 1.10.0
+# with a 225-line CHANGELOG replaying PRs shipped long before, on a `main` with
+# zero commits since v1.9.0. It looks plausible because the version comes from
+# .release-please-manifest.json rather than from a tag. Nothing is ever
+# releasable on this push (the release PR just consumed every pending commit),
+# so skipping loses no coverage and the next real feature merge opens a correct,
+# tag-bounded PR. The guard matches release-please's own PR title, so do not set
+# `pull-request-title-pattern` in release-please-config.json without updating it
+# here. cut-release.sh commits `chore(release): <version>` — a different prefix,
+# so a manual release still triggers a run, which is right: it tags out of band.
+#
 # It runs under COCKPIT_GITHUB_API_TOKEN rather than the default GITHUB_TOKEN
 # for the other half of that recursion rule: a pull request opened by
 # GITHUB_TOKEN does not trigger workflows, so the release PR would sit forever
@@ -43,6 +60,8 @@ permissions:
 
 jobs:
   release-please:
+    # Skip the push that merged the release PR — its tag does not exist yet.
+    if: "!startsWith(github.event.head_commit.message, 'chore(main): release')"
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v4
