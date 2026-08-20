@@ -111,11 +111,12 @@ def test_message_passed_through_verbatim(monkeypatch):
 def test_nudge_called_with_broadcast_tag(monkeypatch):
     monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
     recorded = []
-    monkeypatch.setattr(
-        broadcast,
-        "nudge_if_idle",
-        lambda *a, **k: recorded.append(call(*a, **k)) or True,
-    )
+
+    def fake_nudge(*a, **k):
+        recorded.append(call(*a, **k))
+        return True
+
+    monkeypatch.setattr(broadcast, "nudge_if_idle", fake_nudge)
 
     broadcast.main(["/compact"])
     assert recorded == [call("workspace:a", "/compact", dry=False, tag="broadcast")]
