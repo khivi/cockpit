@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 from textual.app import App, ComposeResult
 
 import cockpit.lib.cache as cache_mod
@@ -26,13 +27,17 @@ from cockpit.tui.widgets.worktree_table import (
     _APPROVAL_ICON,
     _DIRTY_ICON,
     _HEADER_TOOLTIPS,
+    _LABEL_MAX,
     _LINEAR_STATUS_FALLBACK,
     _PR_STATE_ICON,
+    _RULE_WIDTH,
     _STATUS_ICON,
+    _TICKET_MAX,
     DEVDONE_ICON,
     HEADER_KEY_PREFIX,
     ICON_PR_MUTED,
     ICON_PR_NUDGE,
+    ROW_INDENT,
     WorktreeTable,
     _comments_cell,
     _header_cells,
@@ -60,6 +65,13 @@ def _wt(path="/tmp/feat", branch="khivi/feat-x", **kw):
 def _plain(wt, repo="repo", color=None, provider="none", show_tickets=False):
     cells = worktree_cells(wt, repo, color, provider, show_tickets=show_tickets)
     return [c.plain for c in cells]
+
+
+def _ws(label, *, depth=0):
+    """The Workspace cell's expected plain text for `label` — every worktree row
+    hangs under its repo header behind `ROW_INDENT`. Kept in one place so a
+    change to the indent doesn't churn every assertion in the module."""
+    return f"{ROW_INDENT}{'  └ ' if depth else ''}{label}"
 
 
 def _col(label, *, show_tickets=False):
@@ -105,22 +117,24 @@ def test_cell_count_matches_columns(cache_dir):
 def test_workspace_label_strips_prefix(cache_dir):
     # branch_prefix is threaded onto the Worktree from repo config in production.
     wt = _wt(branch="khivi/my-feature", branch_prefix="khivi/")
-    assert _plain(wt)[0] == "my-feature"
+    assert _plain(wt)[0] == _ws("my-feature")
 
 
 def test_workspace_tinted_by_repo_color(cache_dir):
     wt = _wt(branch="khivi/c", branch_prefix="khivi/")
     colored = worktree_cells(wt, "r", "Blue", "none", show_tickets=False)[0]
     plain = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert colored.plain == "c" == plain.plain
+    assert colored.plain == _ws("c") == plain.plain
     assert colored.spans  # Text.from_ansi(colorizer(...)) → colour spans
-    assert not plain.spans
-    assert "bold" in str(plain.style)
+    # Untinted path carries no colour — only the bold span over the label
+    # (`ROW_INDENT` is prepended unstyled, so the style is a span, not the
+    # whole-Text style).
+    assert [str(sp.style) for sp in plain.spans] == ["bold"]
 
 
 def test_unknown_color_falls_back_to_plain(cache_dir):
     cell = worktree_cells(_wt(), "r", "NotAColor", "none", show_tickets=False)[0]
-    assert not cell.spans
+    assert [str(sp.style) for sp in cell.spans] == ["bold"]
 
 
 def test_pr_columns_with_state_icon(cache_dir):
@@ -430,13 +444,13 @@ def test_muted_pr_prefixes_workspace_glyph(cache_dir):
     wt = _wt(branch="khivi/silence", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == f"{ICON_PR_MUTED} silence"
+    assert cell.plain == _ws(f"{ICON_PR_MUTED} silence")
 
 
 def test_unmuted_pr_has_no_glyph(cache_dir):
     wt = _wt(branch="khivi/loud", branch_prefix="khivi/")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == "loud"
+    assert cell.plain == _ws("loud")
 
 
 def test_nudge_pr_prefixes_bell_glyph(cache_dir):
@@ -445,7 +459,7 @@ def test_nudge_pr_prefixes_bell_glyph(cache_dir):
     wt = _wt(branch="khivi/ringing", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == f"{ICON_PR_NUDGE} ringing"
+    assert cell.plain == _ws(f"{ICON_PR_NUDGE} ringing")
 
 
 def test_mute_wins_over_nudge_glyph(cache_dir):
@@ -455,7 +469,7 @@ def test_mute_wins_over_nudge_glyph(cache_dir):
     cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("comments")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == f"{ICON_PR_MUTED} quiet"
+    assert cell.plain == _ws(f"{ICON_PR_MUTED} quiet")
 
 
 def test_empty_nudge_cell_has_no_glyph(cache_dir):
@@ -463,7 +477,7 @@ def test_empty_nudge_cell_has_no_glyph(cache_dir):
     wt = _wt(branch="khivi/calm", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == "calm"
+    assert cell.plain == _ws("calm")
 
 
 def test_dirty_column_renders_counts(cache_dir):
@@ -501,20 +515,111 @@ def test_label_stays_bare_across_repos(cache_dir):
     # Same-named worktrees in different repos render bare — the group-header row
     # disambiguates them, not a `repo/` prefix.
     wt = _wt(branch="master")
-    assert worktree_cells(wt, "Cockpit", None, "none", show_tickets=False)[0].plain == (
-        "master"
-    )
+    assert worktree_cells(wt, "Cockpit", None, "none", show_tickets=False)[
+        0
+    ].plain == _ws("master")
     assert worktree_cells(wt, "dotfiles", None, "none", show_tickets=False)[
         0
-    ].plain == ("master")
+    ].plain == _ws("master")
+
+
+# ── column caps (one long value must not starve the trailing Title column) ──
+
+
+def test_long_workspace_label_is_ellipsized(cache_dir):
+    # `branch_label` already caps at 30, so the untruncated label is `wt.label`,
+    # not the raw branch — the cap here trims that further to keep the column
+    # deterministic (and guards the uncapped `wt.short` dir-basename fallback).
+    wt = _wt(branch="khivi/" + "x" * 40, branch_prefix="khivi/")
+    assert len(wt.label) > _LABEL_MAX + 1
+    assert _plain(wt)[0] == _ws(wt.label[:_LABEL_MAX] + "…")
+
+
+def test_label_one_over_the_cap_passes_through_whole(cache_dir):
+    # Swapping a single character for an ellipsis saves no width and loses
+    # information, so the cap is deliberately soft by one.
+    exact = "x" * (_LABEL_MAX + 1)
+    wt = _wt(branch=f"khivi/{exact}", branch_prefix="khivi/")
+    assert wt.label == exact  # under `branch_label`'s own 30-char cap
+    assert _plain(wt)[0] == _ws(exact)
+
+
+def test_truncated_label_stays_readable_on_the_tooltip(cache_dir):
+    wt = _wt(branch="khivi/" + "y" * 40, branch_prefix="khivi/")
+    tips = row_tooltips(wt, "r", "none", show_tickets=False)
+    assert tips[_col("Workspace")] == wt.label
+
+
+def test_truncated_label_tooltip_keeps_the_glyph_decode(cache_dir):
+    # The mute/nudge decode and the full name share one cell, so the tooltip has
+    # to carry both rather than one silently replacing the other.
+    wt = _wt(branch="khivi/" + "z" * 40, branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
+    tip = row_tooltips(wt, "r", "none", show_tickets=False)[_col("Workspace")]
+    assert tip == f"{wt.label} — Nudges muted"
+
+
+def test_short_label_leaves_the_tooltip_to_the_column_meaning(cache_dir):
+    # Untruncated and unglyphed → None, so hovering falls back to the column
+    # meaning instead of echoing the text already on screen.
+    wt = _wt(branch="khivi/short", branch_prefix="khivi/")
+    assert row_tooltips(wt, "r", "none", show_tickets=False)[_col("Workspace")] is None
+
+
+def test_long_ticket_is_ellipsized_with_the_full_text_on_hover(cache_dir, monkeypatch):
+    # Trello renders card *titles* in the Ticket column, which run long.
+    title = "Fix the analytics errors on the checkout page"
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: {
+            "ticket": {"tickets": [{"id": "abc123", "title": title, "state": "Doing"}]}
+        },
+    )
+    wt = _wt(branch="khivi/card")
+    cells = worktree_cells(wt, "r", None, "trello", show_tickets=True)
+    assert cells[_col("Ticket", show_tickets=True)].plain == (title[:_TICKET_MAX] + "…")
+    tips = row_tooltips(wt, "r", "trello", show_tickets=True)
+    assert tips[_col("Ticket", show_tickets=True)] == title
+
+
+def test_a_typical_widest_row_fits_the_header_rule(cache_dir):
+    """`_RULE_WIDTH` covers the two *typical* widest rows — a max-length label
+    that is either belled or stacked — so the rule reaches the column edge
+    instead of dangling short. Holds the arithmetic behind the constants: nudge
+    one and this fails."""
+    assert cell_len(_header_cells("R", None, 8)[0].plain) == _RULE_WIDTH
+    belled = _wt(branch="khivi/" + "w" * 40, branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-nudge", belled.branch).write_text("ci")
+    belled_cell = worktree_cells(belled, "r", None, "none", show_tickets=False)[0]
+    stacked = _wt(path="/tmp/st", branch="khivi/" + "s" * 40, branch_prefix="khivi/")
+    stacked_cell = worktree_cells(
+        stacked, "r", None, "none", show_tickets=False, depth=1
+    )[0]
+    assert cell_len(belled_cell.plain) <= _RULE_WIDTH
+    assert cell_len(stacked_cell.plain) == _RULE_WIDTH  # the wider of the two
+
+
+def test_a_stacked_and_belled_row_overhangs_the_rule_by_design(cache_dir):
+    """The one combination `_RULE_WIDTH` deliberately doesn't cover: pinning the
+    column three columns wider on every render, for a row that is both stacked
+    and carrying a nudge, isn't worth it when Workspace is competing with Title
+    for the terminal's width."""
+    wt = _wt(branch="khivi/" + "w" * 40, branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
+    row = worktree_cells(wt, "r", None, "none", show_tickets=False, depth=1)[0]
+    assert cell_len(row.plain) == _RULE_WIDTH + 3
 
 
 def test_header_cells_repo_name_and_blank_tail():
     ncols = len(column_labels(show_tickets=False))
     cells = _header_cells("Cockpit", None, ncols)
     assert len(cells) == ncols
-    assert cells[0].plain == "▸ Cockpit"
-    assert "bold" in str(cells[0].style)
+    # Repo name, then a dim rule filling the Workspace column so the header
+    # reads as a break above its indented rows rather than as another row.
+    assert cells[0].plain.startswith("Cockpit ─")
+    assert set(cells[0].plain[8:]) == {"─"}
+    assert any("bold" in str(sp.style) for sp in cells[0].spans)
+    assert any("dim" in str(sp.style) for sp in cells[0].spans)
     assert all(c.plain == "" for c in cells[1:])
 
 
@@ -522,9 +627,13 @@ def test_header_cells_tinted_by_repo_color():
     ncols = len(column_labels(show_tickets=False))
     tinted = _header_cells("Cockpit", "Blue", ncols)[0]
     plain = _header_cells("Cockpit", None, ncols)[0]
-    assert tinted.plain == plain.plain == "▸ Cockpit"
-    assert tinted.spans  # colorizer ANSI → colour spans
-    assert not plain.spans
+    assert tinted.plain == plain.plain
+    # The tint lands on the name; the rule stays dim either way, so it reads as
+    # structure rather than as more of the repo's colour.
+    # The tinted spans carry a parsed Style with a colour; the untinted ones are
+    # bare style *strings* ("bold" / "dim"), which have no `.color`.
+    assert any(getattr(sp.style, "color", None) for sp in tinted.spans)
+    assert not any(getattr(sp.style, "color", None) for sp in plain.spans)
 
 
 def test_header_key_prefix_is_nul_led():
@@ -565,7 +674,7 @@ def test_row_tooltips_aligned_and_decode(cache_dir, monkeypatch):
     assert tip(_APPROVAL_ICON) == "Changes requested"  # 🔀 decoded
     assert tip("CI") == "CI failing"
     assert tip("💬") == "2 of 5 review threads unaddressed"
-    assert tip("Ticket") is None  # ticket id self-evident
+    assert tip("Ticket") == "PE-1"  # full id, in case `_TICKET_MAX` clipped it
     assert tip(_STATUS_ICON) == "PE-1: In Review"  # 📍 decoded
     assert tip(_DIRTY_ICON) == "1 staged, 2 modified"  # ✎, zero segment dropped
     assert tip("Title") is None
@@ -694,7 +803,7 @@ def test_stacked_row_is_indented_under_the_chain_tip(cache_dir):
     assert [(wt.path, depth) for wt, depth in rows] == [(child.path, 0), (root.path, 1)]
     assert worktree_cells(root, "r", None, "none", show_tickets=False, depth=1)[
         0
-    ].plain.startswith("└ ")
+    ].plain == _ws("khivi-a", depth=1)
 
 
 def test_a_deep_stack_indents_every_member_the_same_single_step(cache_dir):
@@ -715,7 +824,7 @@ def test_a_deep_stack_indents_every_member_the_same_single_step(cache_dir):
 def test_unstacked_row_has_no_indent(cache_dir):
     wt = _wt(path="/tmp/solo", branch="khivi/solo")
     assert _stack_rows([wt]) == [(wt, 0)]
-    assert not _plain(wt)[0].startswith("└")
+    assert _plain(wt)[0] == _ws("khivi-solo")
 
 
 def test_indent_precedes_the_nudge_glyph(cache_dir):
@@ -724,7 +833,7 @@ def test_indent_precedes_the_nudge_glyph(cache_dir):
     wt = _wt(path="/tmp/bell", branch="khivi/b")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False, depth=1)[0].plain
-    assert cell.startswith(f"└ {ICON_PR_NUDGE}")
+    assert cell == _ws(f"{ICON_PR_NUDGE} khivi-b", depth=1)
 
 
 @pytest.mark.asyncio
@@ -740,5 +849,5 @@ async def test_update_inventory_renders_a_stack_tip_first(cache_dir):
         table.update_inventory([("R", "R", None, "none", [root, child])])
         await pilot.pause()
         # Row 0 is the repo group header.
-        assert table.get_row_at(1)[0].plain == "khivi-child"
-        assert table.get_row_at(2)[0].plain == "└ khivi-root"
+        assert table.get_row_at(1)[0].plain == _ws("khivi-child")
+        assert table.get_row_at(2)[0].plain == _ws("khivi-root", depth=1)
