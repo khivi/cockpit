@@ -369,7 +369,7 @@ def _workspace_cell(
     if muted:
         cell = Text.assemble((f"{ICON_PR_MUTED} ", "yellow"), cell)
     elif snoozed:
-        cell = Text.assemble((f"{ICON_PR_SNOOZED} ", "blue"), cell)
+        cell = Text.assemble((f"{ICON_PR_SNOOZED} ", "bright_blue"), cell)
     elif nudge:
         cell = Text.assemble((f"{ICON_PR_NUDGE} ", "yellow"), cell)
     if depth:
