@@ -73,6 +73,7 @@ from cockpit.lib.config import (
 )
 from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.daemon_signal import enqueue
+from cockpit.lib.events import watch_workspace_events
 from cockpit.lib.gh import PR, repo_nwo
 from cockpit.lib.git import Worktree, origin_head_branch, worktrees
 from cockpit.lib.hidden import load_hidden, toggle_hidden
@@ -212,6 +213,13 @@ class CockpitApp(App[None]):
         self._fast_started = False
         self._next_slow = 0.0
         self._next_fast = 0.0
+        # `cmux events` doorbell (lib/events.py): a workspace created or closed
+        # out from under us wakes the fast tick immediately instead of waiting
+        # out the interval. `_events_pending` coalesces events that arrive while
+        # a fast tick is already running — that tick may have read workspace
+        # state before they happened, so one more is owed when it lands.
+        self._events_stop = threading.Event()
+        self._events_pending = False
         self._log_q: queue.SimpleQueue[str] = queue.SimpleQueue()
         # Bounded on-disk tail of tick output (last N lines), rewritten on drain.
         self._log_tail: deque[str] = deque(maxlen=_LOG_TAIL_LINES)
@@ -288,6 +296,10 @@ class CockpitApp(App[None]):
         # the PR caches (so the first fast republish isn't a no-op).
         self._kick_slow()
 
+        # Independent of that ordering — the doorbell only ever *kicks* the fast
+        # tick, which self-guards until `_start_fast` has run.
+        self._watch_events()
+
     def _apply_saved_theme(self) -> None:
         """Apply the persisted `tui_theme`, then persist any later palette pick.
 
@@ -323,6 +335,9 @@ class CockpitApp(App[None]):
     def on_unmount(self) -> None:
         import sys
 
+        # Stops the reader loop AND kills the `cmux events` child, which would
+        # otherwise outlive the TUI (it blocks on a pipe nobody reads).
+        self._events_stop.set()
         self._set_loop_pill(False)
         if self._saved_stdout is not None:
             sys.stdout = self._saved_stdout
@@ -367,6 +382,23 @@ class CockpitApp(App[None]):
         self._fast_phase = "waiting"
         self._next_fast = time.monotonic() + self._fast_secs
         self._run_fast()
+
+    @work(thread=True, group="events", exit_on_error=False)
+    def _watch_events(self) -> None:
+        """Long-lived `cmux events` reader — see lib/events.py. No-ops on
+        limux/none. Never touches state: an event only rings `_on_workspace_event`,
+        and the tick it wakes re-derives everything from scratch."""
+        watch_workspace_events(
+            lambda: self.call_from_thread(self._on_workspace_event),
+            self._events_stop,
+        )
+
+    def _on_workspace_event(self) -> None:
+        """Doorbell (UI thread): a workspace was created or closed."""
+        if self._fast_phase != "idle":
+            self._events_pending = True  # re-kick when the running tick lands
+            return
+        self._kick_fast()
 
     @work(thread=True, group="slow", exit_on_error=False)
     def _run_slow(self, only_repo: str | None = None) -> None:
@@ -418,6 +450,11 @@ class CockpitApp(App[None]):
         finally:
             self._fast_phase = "idle"
             self._publish_inventory()
+            if self._events_pending:
+                # Events landed mid-tick — this run may predate them, so owe one
+                # more. Cleared before kicking so the next batch can re-arm.
+                self._events_pending = False
+                self.call_from_thread(self._kick_fast)
 
     # ---- ui updates ------------------------------------------------------
 

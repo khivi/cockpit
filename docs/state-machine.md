@@ -335,6 +335,7 @@ flowchart LR
   GH["gh API"] --> SLOW["Slow tick · 300s"]
   GIT["git worktrees"] --> SLOW
   GIT --> FAST["Fast tick · 30s"]
+  EV["cmux events<br/>workspace.created/closed"] -.kick, no state.-> FAST
 
   SLOW --> DISK[("PR JSON<br/>on disk")]
   DISK -.republish.-> FAST
@@ -376,7 +377,11 @@ Why two ticks:
   `sidebar_color` (`_tint_repo_workspaces`), and republishes PR flat cells from
   the persistent JSON, so a `git checkout`, a drifted workspace name, a
   freshly spawned workspace's colour, or an OS tmpdir wipe recovers within ~30s
-  instead of ~300s.
+  instead of ~300s. Its 30s interval is the *floor*, not the only trigger: the
+  `cmux events` doorbell (`lib/events.py`, cmux-only) kicks it the moment a
+  workspace is created or closed, so a spawn or close lands immediately. The
+  event carries **no state** — it only wakes the tick, which re-derives
+  everything exactly as the timer would.
 
 Both hold `_tick_lock` (`tui/app.py`) so they never collide on the same cells.
 
