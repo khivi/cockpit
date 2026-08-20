@@ -76,7 +76,13 @@ from cockpit.lib.daemon_signal import enqueue
 from cockpit.lib.gh import PR, repo_nwo
 from cockpit.lib.git import Worktree, origin_head_branch, worktrees
 from cockpit.lib.hidden import load_hidden, toggle_hidden
-from cockpit.lib.nudges import NudgePref, load_pref, save_pref, wake_signature
+from cockpit.lib.nudges import (
+    NudgePref,
+    load_pref,
+    pref_key,
+    save_pref,
+    wake_signature,
+)
 from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
@@ -971,7 +977,9 @@ class CockpitApp(App[None]):
         )
         if payload:
             pr = _pr_from_payload(payload)
-            new_ref = spawn_pr_workspace(pr, wt, pref=load_pref(pr.number))
+            new_ref = spawn_pr_workspace(
+                pr, wt, pref=load_pref(pref_key(self._cache_repo_name(repo), pr.number))
+            )
         else:
             new_ref = spawn_orphan_workspace(wt)
         if new_ref is None:
@@ -1120,11 +1128,15 @@ class CockpitApp(App[None]):
 
     def _resolve_row_pref(
         self, path_str: str, verb: str
-    ) -> tuple[dict, Worktree, int, NudgePref] | None:
+    ) -> tuple[dict, Worktree, int, str, NudgePref] | None:
         # Shared prologue for the two per-PR pref keys (`m` mute, `z` snooze):
         # resolve the row's worktree, read its PR number off the daemon-written
         # `pr-num` cell, and load the pref. `verb` only names the action in the
         # failure toasts. None when the row has no worktree or no PR.
+        #
+        # Returns the `pref_key` alongside the number so the caller saves under
+        # the same repo-scoped key this loaded — a bare number is shared with
+        # every other repo's PR of that number.
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
             self._notify(f"{verb}: no worktree at {path_str}", severity="error")
@@ -1138,7 +1150,8 @@ class CockpitApp(App[None]):
                 f"{verb}: no PR for {wt.label or wt.short}", severity="warning"
             )
             return None
-        return repo, wt, pr, load_pref(pr)
+        key = pref_key(self._cache_repo_name(repo), pr)
+        return repo, wt, pr, key, load_pref(key)
 
     @work(thread=True, group="mute", exit_on_error=False)
     def _toggle_mute(self, path_str: str) -> None:
@@ -1149,11 +1162,11 @@ class CockpitApp(App[None]):
         got = self._resolve_row_pref(path_str, "mute")
         if got is None:
             return
-        repo, wt, pr, pref = got
+        repo, wt, pr, key, pref = got
         pref.muted = not pref.muted
         pref.until = None
         pref.reason = "muted from TUI" if pref.muted else ""
-        save_pref(pr, pref)
+        save_pref(key, pref)
         self._notify(
             f"{'muted' if pref.muted else 'unmuted'} {wt.label or wt.short} (#{pr})"
         )
@@ -1173,14 +1186,18 @@ class CockpitApp(App[None]):
         got = self._resolve_row_pref(path_str, "snooze")
         if got is None:
             return
-        repo, wt, pr, pref = got
+        repo, wt, pr, key, pref = got
         if pref.snoozed:
             pref.snoozed = False
             pref.wake_on = ""
             pref.wake_nudge = ""
             self._notify(f"woke {wt.label or wt.short} (#{pr})")
         else:
-            payload = find_pr_payload(wt.branch, repo.get("name") or "") or {}
+            # nwo name, not the config label — the daemon wrote the payload under
+            # the nwo (`_cache_repo_name`). Keying by the label misses every file,
+            # so `wake_on` would be built from an empty payload ("0|") and the very
+            # next slow tick would wake the snooze it just set.
+            payload = find_pr_payload(wt.branch, self._cache_repo_name(repo)) or {}
             pref.snoozed = True
             pref.wake_on = wake_signature(
                 int(payload.get("total") or 0), str(payload.get("review") or "")
@@ -1197,7 +1214,7 @@ class CockpitApp(App[None]):
                 f"snoozed {wt.label or wt.short} (#{pr}) — wakes on a new "
                 f"comment, review, or CI/conflict issue"
             )
-        save_pref(pr, pref)
+        save_pref(key, pref)
         self.call_from_thread(
             self._kick_slow, str(Path(os.path.expanduser(repo["path"])))
         )

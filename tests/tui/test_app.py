@@ -791,8 +791,10 @@ async def test_mute_key_mutes_unmuted_pr(monkeypatch, tmp_path):
         await pilot.press("m")
         await pilot.pause(0.6)
     assert len(saved) == 1
-    pr, pref = saved[0]
-    assert pr == 123
+    key, pref = saved[0]
+    # Per-repo key, not a bare "123" — PR numbers collide across repos, and a
+    # shared file would mute every repo's #123 at once.
+    assert key == f"{tmp_path.name}__123"
     assert pref.muted  # muted
     assert calls["slow"] > before  # kicks the slow tick to republish pr-muted
     # The kick is scoped to the row's repo path, not a full all-repos reconcile,
@@ -873,8 +875,8 @@ async def test_mute_key_unmutes_muted_pr(monkeypatch, tmp_path):
         await pilot.press("m")
         await pilot.pause(0.6)
     assert len(saved) == 1
-    pr, pref = saved[0]
-    assert pr == 123
+    key, pref = saved[0]
+    assert key == f"{tmp_path.name}__123"
     assert not pref.muted  # cleared → unmuted
 
 
@@ -2059,3 +2061,42 @@ async def test_footer_hides_snooze_on_a_row_without_a_pr():
     assert fb._skip("snooze_row")
     fb._row_caps = frozenset({"workspace", "pr"})
     assert not fb._skip("snooze_row")
+
+
+async def test_snooze_reads_the_wake_payload_under_the_nwo_key(monkeypatch, tmp_path):
+    # `z` builds `wake_on` from the cached PR payload, which the daemon writes
+    # under the git *nwo* name — not the config `name` label. Keying by the label
+    # ("Envesya" vs repo "beta") found no file, so the snooze was written with the
+    # empty-payload signature "0|" and the very next slow tick woke it again.
+    from cockpit.lib.nudges import NudgePref
+
+    app, _ = _make_app()
+    repo_path = tmp_path / "beta"
+    repo_path.mkdir()
+    repo = {"name": "Envesya", "path": str(repo_path)}
+    wt = Worktree(path=repo_path / "fnox", branch="khivi/fnox")
+    seen: list[str] = []
+    saved: dict[int, NudgePref] = {}
+
+    def fake_find(branch, repo_name=None):
+        seen.append(repo_name)
+        # Only the nwo-keyed lookup resolves, exactly like the real cache glob.
+        return {"total": 3, "review": "APPROVED"} if repo_name == "beta" else None
+
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", fake_find)
+    monkeypatch.setattr(
+        "cockpit.tui.app.save_pref", lambda key, pref: saved.__setitem__(key, pref)
+    )
+    monkeypatch.setattr(
+        app,
+        "_resolve_row_pref",
+        lambda p, verb: (repo, wt, 269, "beta__269", NudgePref()),
+    )
+    monkeypatch.setattr(app, "_notify", lambda *a, **k: None)
+    monkeypatch.setattr(app, "call_from_thread", lambda fn, *a, **k: None)
+
+    CockpitApp._toggle_snooze.__wrapped__(app, str(wt.path))
+
+    assert seen == ["beta"]  # nwo, not the "Envesya" label
+    assert saved["beta__269"].snoozed
+    assert saved["beta__269"].wake_on == "3|APPROVED"  # not the empty-payload "0|"
