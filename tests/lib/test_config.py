@@ -1594,9 +1594,13 @@ def test_install_claude_commands_writes_expected_files(tmp_path):
     commands_dir = tmp_path / "commands"
     config_mod.install_claude_commands(commands_dir)
     names = {p.name for p in commands_dir.iterdir()}
-    assert names == {"cockpit-new.md", "cockpit-close.md"}
+    assert names == {"cockpit-new.md", "cockpit-close.md", "cockpit-broadcast.md"}
     assert "cockpit new $ARGUMENTS" in (commands_dir / "cockpit-new.md").read_text()
     assert "cockpit close $ARGUMENTS" in (commands_dir / "cockpit-close.md").read_text()
+    assert (
+        'cockpit broadcast "$ARGUMENTS"'
+        in (commands_dir / "cockpit-broadcast.md").read_text()
+    )
 
 
 def test_install_claude_commands_is_idempotent(tmp_path):
@@ -1619,6 +1623,7 @@ def test_install_claude_commands_preserves_unrelated_user_command(tmp_path):
     assert user_cmd.read_text() == "do the thing"
     assert (commands_dir / "cockpit-new.md").exists()
     assert (commands_dir / "cockpit-close.md").exists()
+    assert (commands_dir / "cockpit-broadcast.md").exists()
 
 
 # ---- teardown (cockpit teardown → reverse the setup writes) ------------------
