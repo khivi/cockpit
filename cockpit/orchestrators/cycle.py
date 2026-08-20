@@ -58,7 +58,6 @@ from cockpit.lib.cmux import (
     find_cockpit_workspaces,
     list_workspace_groups,
     move_workspace_group_to_end,
-    move_workspace_to_end,
     nudge_if_idle,
     remove_from_workspace_group,
     rename_workspace_group,
@@ -2212,10 +2211,9 @@ def _review_bucket_key(repo_entry: dict) -> str:
     own name when it has none.
 
     An org is a team, and a team's PRs are one review queue however many repos
-    they span — bucketing per repo instead scattered them, and (worse) left a
-    repo whose single coworker PR couldn't fold at all as a loose row, since
-    cmux drops a one-member group. Org-less repos keep a bucket of their own,
-    which is exactly the old per-repo behaviour.
+    they span — bucketing per repo instead scattered one queue across as many
+    sidebar folds as the org has repos. Org-less repos keep a bucket of their
+    own, which is exactly the old per-repo behaviour.
     """
     return str(repo_entry.get("org") or repo_entry.get("name") or "")
 
@@ -2375,15 +2373,19 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
     pass owns the whole set: one that matches no bucket is dissolved, which also
     reaps a stranded anchor-only header for free. Each surviving fold is
     re-parked at the bottom of the sidebar — reviews are the passive pile, out
-    of the way of my own rows. A *lone* review can't be a group at all (cmux
-    drops a one-member group), so its bare workspace row is parked instead.
+    of the way of my own rows.
+
+    **A single review folds too.** Unlike a stack (one PR is not a chain), a
+    one-member reviews group is the point: it is the queue, and the queue reads
+    the same at one item as at five. The dedicated anchor makes it possible —
+    cmux only drops a group whose *anchor* is its last workspace.
     """
     if dry:
         return
     groups = [g for g in list_workspace_groups() if g.icon == REVIEW_GROUP_ICON]
     matched: set[str] = set()
     for key, refs in sorted(folds.buckets.items()):
-        if len(refs) < 2:  # cmux drops a group the moment it has one member left
+        if not refs:
             continue
         name = _review_group_name(key, len(refs))
         # An anchor that is one of the pile's own workspaces is swallowing that
@@ -2419,11 +2421,6 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
             if group.anchor and group.anchor not in folds.owned:
                 cmux_close_workspace_best_effort(group.anchor)
             print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
-    for refs in folds.buckets.values():
-        if len(refs) == 1:
-            # After the ungroup sweep, in case it was just dissolved out of a
-            # fold that shrank to one.
-            move_workspace_to_end(refs[0])
 
 
 def _match_stack_group(

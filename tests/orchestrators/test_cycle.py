@@ -4534,7 +4534,6 @@ def test_reconcile_review_groups_folds_an_org_across_its_repos(tmp_path):
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(cycle, "create_workspace_group", return_value=None) as create,
-        patch.object(cycle, "move_workspace_to_end") as move_ws,
     ):
         cycle._reconcile_review_groups(folds, dry=False)
 
@@ -4543,7 +4542,6 @@ def test_reconcile_review_groups_folds_an_org_across_its_repos(tmp_path):
         ["workspace:1", "workspace:2"],
         icon=REVIEW_GROUP_ICON,
     )
-    move_ws.assert_not_called()
 
 
 def test_reconcile_review_groups_keeps_orgs_in_separate_folds(tmp_path):
@@ -4576,9 +4574,10 @@ def test_reconcile_review_groups_keeps_orgs_in_separate_folds(tmp_path):
     ]
 
 
-def test_reconcile_review_groups_parks_a_lone_review_without_grouping(tmp_path):
-    # cmux drops a one-member group, so a single review stays a loose row — but
-    # still gets parked at the bottom.
+def test_reconcile_review_groups_folds_a_lone_review(tmp_path):
+    # The dedicated anchor means one member is a real group (cmux only drops a
+    # group whose *anchor* is its last workspace), so the queue reads the same
+    # at one review as at five instead of leaving a loose row.
     ctx = _stack_ctx(
         tmp_path,
         [("workspace:1", "khivi/a", "main"), ("workspace:2", "them/b", "main")],
@@ -4587,24 +4586,31 @@ def test_reconcile_review_groups_parks_a_lone_review_without_grouping(tmp_path):
     folds = _folds((ctx, {"workspace:1", "workspace:2"}))
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[]),
-        patch.object(cycle, "create_workspace_group") as create,
-        patch.object(cycle, "move_workspace_to_end") as move_ws,
+        patch.object(
+            cycle,
+            "create_workspace_group",
+            return_value=_group("wg:1", "n reviews (1)", "workspace:9", []),
+        ) as create,
+        patch.object(cycle, "move_workspace_group_to_end") as move,
     ):
         cycle._reconcile_review_groups(folds, dry=False)
 
-    create.assert_not_called()
-    move_ws.assert_called_once_with("workspace:2")
+    create.assert_called_once_with(
+        "n reviews (1)", ["workspace:2"], icon=REVIEW_GROUP_ICON
+    )
+    move.assert_called_once_with("wg:1")
 
 
-def test_reconcile_review_groups_parks_a_lone_review_after_ungrouping(tmp_path):
-    # The fold shrank to one member: dissolve it, then park the survivor's own
-    # row (parking a still-grouped workspace would move the group instead).
+def test_reconcile_review_groups_shrinks_a_fold_to_one_instead_of_dissolving(tmp_path):
+    # The fold lost a member: drop that ref and rename, don't ungroup — the
+    # survivor keeps its header.
     ctx = _stack_ctx(
         tmp_path,
         [("workspace:1", "khivi/a", "main"), ("workspace:2", "them/b", "main")],
         coworkers=("workspace:2",),
     )
     folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+    folds.owned.add("workspace:8")  # the departed review, still a live workspace
     existing = _group(
         "wg:1",
         "n reviews (2)",
@@ -4612,22 +4618,20 @@ def test_reconcile_review_groups_parks_a_lone_review_after_ungrouping(tmp_path):
         ["workspace:2", "workspace:8"],
         icon=REVIEW_GROUP_ICON,
     )
-    calls: list[str] = []
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[existing]),
         patch.object(cycle, "create_workspace_group") as create,
-        patch.object(
-            cycle, "ungroup_workspaces", side_effect=lambda _r: calls.append("ungroup")
-        ),
-        patch.object(cycle, "cmux_close_workspace_best_effort"),
-        patch.object(
-            cycle, "move_workspace_to_end", side_effect=lambda _r: calls.append("move")
-        ),
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+        patch.object(cycle, "remove_from_workspace_group") as remove,
+        patch.object(cycle, "rename_workspace_group") as rename,
+        patch.object(cycle, "move_workspace_group_to_end"),
     ):
         cycle._reconcile_review_groups(folds, dry=False)
 
     create.assert_not_called()
-    assert calls == ["ungroup", "move"]
+    ungroup.assert_not_called()
+    remove.assert_called_once_with("workspace:8")
+    rename.assert_called_once_with("wg:1", "n reviews (1)")
 
 
 def test_reconcile_review_groups_spares_a_hand_added_member(tmp_path):
