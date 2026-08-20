@@ -50,6 +50,28 @@ jobs:
         env:
           PRE_COMMIT_USE_UV: "1"
 
+      # tests/e2e/test_cship_starship.py module-skips without both binaries, so
+      # without this the 10 statusline integration tests never run in CI and the
+      # only signal is a maintainer running pytest locally. Installed straight
+      # from the release asset rather than via https://cship.dev/install.sh —
+      # the installer also writes ~/.claude/settings.json, seeds ~/.config/cship.toml
+      # and apt-gets libsecret-tools, none of which the tests want (they isolate
+      # HOME/XDG_CONFIG_HOME into a tmpdir and only keep the host PATH).
+      # Deliberately unpinned: the regression this module exists to catch is
+      # upstream schema drift (the `[cship]/lines` wrapper change in #62), which
+      # a pinned version would hide until someone bumped it.
+      - name: Install cship + starship (e2e statusline tests)
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL --retry 3 \
+            https://github.com/stephenleo/cship/releases/latest/download/cship-x86_64-unknown-linux-musl \
+            -o "$HOME/.local/bin/cship"
+          chmod +x "$HOME/.local/bin/cship"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          curl -sS https://starship.rs/install.sh | sh -s -- --yes
+          "$HOME/.local/bin/cship" --version
+          starship --version
+
       - name: Run pre-push stage hooks (pytest)
         run: pre-commit run --all-files --hook-stage pre-push
         env:
