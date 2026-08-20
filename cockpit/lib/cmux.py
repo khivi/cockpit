@@ -250,10 +250,18 @@ def create_workspace_group(
     a repo) never reaps it out from under the group. It is cockpit's to close
     when the stack dissolves — see `_reconcile_sidebar_groups`.
 
+    **One member is a valid group.** cmux drops a group only when the *anchor*
+    is its sole workspace, and the dedicated anchor means a one-member fold
+    still holds two — so a single coworker review folds under its own
+    `<org> reviews (1)` header rather than sitting loose in the sidebar. (This
+    guard used to be `< 2`, from before the anchor was split out of the
+    members.) Callers that need a real minimum enforce their own: a one-PR
+    chain isn't a stack, so `_reconcile_sidebar_groups` still skips it.
+
     Returns the created group, or None if anything failed.
     """
-    if len(refs) < 2:
-        return None  # cmux drops a group the moment it has one member left
+    if not refs:
+        return None
     # cmux prepends each `--from` entry, so pass them reversed to land the
     # caller's first ref (a stack's tip) at the top of the fold.
     created = cmux(
@@ -304,16 +312,6 @@ def move_workspace_group_to_end(group_ref: str) -> None:
     index). Best-effort like every other group verb.
     """
     cmux("workspace-group", "move", group_ref, "--to-index", "9999", check=False)
-
-
-def move_workspace_to_end(ref: str) -> None:
-    """Park a single workspace at the bottom of the sidebar.
-
-    The ungrouped counterpart of `move_workspace_group_to_end`, for a lone
-    review that has no group to park (cmux drops a one-member group).
-    `--index` clamps the same way, so 9999 is "last".
-    """
-    cmux("reorder-workspace", "--workspace", ref, "--index", "9999", check=False)
 
 
 def ungroup_workspaces(group_ref: str) -> None:

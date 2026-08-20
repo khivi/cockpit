@@ -246,9 +246,11 @@ Key gates (all from `cycle.py`):
   - **cmux-only** (`not ctx.headless` ⇔ `is_cmux`): pills
     (`_refresh_tracked_pills`, orphan/wip/stale), colors (`_apply_repo_colors`),
     sidebar folds (`_reconcile_sidebar_groups` — stacks derived from `PR.base`
-    via `stacks.find_stacks`, plus a trailing `reviews` fold of the repo's
-    `not PR.mine` workspaces; both reconciled against cmux's live
-    `workspace-group list`, never stored),
+    via `stacks.find_stacks`, reconciled against cmux's live
+    `workspace-group list`, never stored; it also collects the repo's
+    `not PR.mine` workspaces into the `ReviewFolds` accumulator that the
+    repo-spanning `_reconcile_review_groups` drains at the end of `cycle_all`
+    into one trailing `<org> reviews (N)` fold per org),
     `_dedupe_workspaces` (scoped to workspaces whose cwd resolves under this
     repo's worktrees — a foreign repo's same-named workspace is never grouped or
     closed; sorts by the PID in cmux `workspace:<pid>` refs — limux refs are

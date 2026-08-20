@@ -29,7 +29,6 @@ from cockpit.lib.cmux import (
     deliver_followup,
     list_workspace_groups,
     move_workspace_group_to_end,
-    move_workspace_to_end,
     nudge_if_idle,
     reconcile_workspace_names,
     remove_from_workspace_group,
@@ -1161,9 +1160,32 @@ def test_create_workspace_group_returns_none_on_malformed_json():
         )
 
 
-def test_create_workspace_group_refuses_a_single_member():
+def test_create_workspace_group_accepts_a_single_member():
+    # cmux drops a group only when its *anchor* is the last workspace, and the
+    # anchor is dedicated — so one member plus the header is a real group, which
+    # is what lets a lone coworker review fold instead of sitting loose.
+    with patch(
+        "cockpit.lib.cmux.cmux",
+        return_value=json.dumps(
+            {
+                "group": {
+                    "ref": "workspace_group:1",
+                    "name": "acme reviews (1)",
+                    "anchor_workspace_ref": "workspace:9",
+                    "member_workspace_refs": ["workspace:9", "workspace:1"],
+                }
+            }
+        ),
+    ):
+        group = create_workspace_group("acme reviews (1)", ["workspace:1"])
+
+    assert group is not None
+    assert group.ref == "workspace_group:1"
+
+
+def test_create_workspace_group_refuses_an_empty_member_list():
     with patch("cockpit.lib.cmux.cmux") as cmux_mock:
-        assert create_workspace_group("auth (1)", ["workspace:1"]) is None
+        assert create_workspace_group("acme reviews (0)", []) is None
 
     cmux_mock.assert_not_called()
 
@@ -1177,20 +1199,6 @@ def test_move_workspace_group_to_end_clamps_past_the_sidebar():
         "move",
         "workspace_group:1",
         "--to-index",
-        "9999",
-        check=False,
-    )
-
-
-def test_move_workspace_to_end_parks_a_lone_review():
-    with patch("cockpit.lib.cmux.cmux") as cmux_mock:
-        move_workspace_to_end("workspace:2")
-
-    cmux_mock.assert_called_once_with(
-        "reorder-workspace",
-        "--workspace",
-        "workspace:2",
-        "--index",
         "9999",
         check=False,
     )
