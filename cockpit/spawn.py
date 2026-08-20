@@ -257,11 +257,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "`review_command`, e.g. `/review` or `/pr-review`",
     )
     p.add_argument(
-        "--context-text",
-        help="caller-supplied summary of the current session, injected into the "
-        "seeded first-turn prompt under a 'Caller session context' heading. The "
-        "the new-workspace flow fills this from `--context` by summarizing the live "
-        "session before invoking spawn.py.",
+        "--context",
+        nargs="?",
+        const="",
+        help="summary of the current session, injected into the seeded "
+        "first-turn prompt under a 'Caller session context' heading. Bare "
+        "`--context` means 'summarize this session' — only the calling agent "
+        "can do that, so `/cockpit-new` expands it to `--context <summary>` "
+        "before invoking the CLI; reaching the CLI bare is an error.",
     )
     raw = sys.argv[1:] if argv is None else argv
     if "--" in raw:
@@ -271,6 +274,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     else:
         pre, addendum = raw, None
     args = p.parse_args(pre)
+    if args.context == "":
+        # Bare `--context`: the summary was never written. Fail loudly rather
+        # than spawning a workspace that silently inherits nothing.
+        p.error(
+            "--context with no text: run /cockpit-new (which writes the session "
+            "summary for you), or pass the summary yourself: --context '<text>'"
+        )
     args.claude_addendum = addendum
     return args
 
@@ -1031,7 +1041,7 @@ def main(argv: list[str] | None = None) -> int:
             or is_slack
             or is_trello
             or is_gh_issue
-            or args.context_text
+            or args.context
             or args.claude_addendum
         ):
             # Plan-only fires only when there's something to study first: a PR,
@@ -1049,8 +1059,8 @@ def main(argv: list[str] | None = None) -> int:
             f"{prompt}\n\n{args.claude_addendum}" if prompt else args.claude_addendum
         )
 
-    if args.context_text:
-        ctx = f"## Caller session context\n\n{args.context_text}"
+    if args.context:
+        ctx = f"## Caller session context\n\n{args.context}"
         prompt = f"{prompt}\n\n{ctx}" if prompt else ctx
 
     ws_name = short
