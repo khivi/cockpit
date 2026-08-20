@@ -6,11 +6,14 @@ preserving the daemon-is-sole-writer invariant. Rows are keyed by worktree path
 so the app's `f`/`c` keybindings can resolve the cursor row (`current_path`)
 back to its workspace for focus / close.
 
-Repos are grouped under a per-repo *header row* (`HEADER_KEY_PREFIX`, `▸ <repo>`
-tinted with the repo's `sidebar_color`), so same-named worktrees (every repo's
-`master`) are disambiguated structurally by which header they sit under — no
-`repo/label` prefix needed. The worktree rows below each header keep the same
-`sidebar_color` tint on their label (matching the cmux sidebar). Header rows
+Repos are grouped under a per-repo *header row* (`HEADER_KEY_PREFIX`, the repo
+name trailed by a dim `─` rule out to `_RULE_WIDTH`, tinted with the repo's
+`sidebar_color`), so same-named worktrees (every repo's `master`) are
+disambiguated structurally by which header they sit under — no `repo/label`
+prefix needed. The worktree rows below each header keep the same `sidebar_color`
+tint on their label (matching the cmux sidebar) and hang under it behind
+`ROW_INDENT`: header and row both write into the Workspace column, so without
+the rule + indent the two read as siblings rather than parent/child. Header rows
 carry no workspace, so `current_path()` returns None on them and every row
 action no-ops there. Within a repo, a *stacked* chain of PRs renders as one
 group: its tip heads the run and every PR it is stacked on lists under it,
@@ -195,6 +198,38 @@ _CI_STYLE = {"✓": "green", "✗": "red", "•": "yellow", "?": "grey50"}
 # rather than the word "Dirty".
 _DIRTY_ICON = ICON_UNSTAGED
 
+# Worktree rows hang under their repo's header row. Both write into the same
+# Workspace column, so this indent is the only thing that reads as nesting.
+ROW_INDENT = "   "
+
+# Extra indent for a stacked-PR row, on top of `ROW_INDENT` — the `└ ` spine then
+# sits proud of its chain tip without stepping the whole column right.
+_STACK_INDENT = "  "
+
+# Display width the header's trailing `─` rule fills. Sized to cover a *typical*
+# widest row — `ROW_INDENT` (3) + either a 🔔/🔇 glyph (3 cells) or a
+# `_STACK_INDENT` + `└ ` spine (4) + `_LABEL_MAX` (22) + an ellipsis (1) — and
+# deliberately NOT the absolute worst case (a row that is stacked *and* belled,
+# which overhangs by 3). Covering that would pin the column three columns wider
+# on every render for a rare combination, and Workspace is competing with Title
+# for width; a rule that stops a little short still reads as a rule.
+# `test_a_typical_widest_row_fits_the_header_rule` holds the arithmetic — adjust
+# one constant and it fails.
+_RULE_WIDTH = 30
+_LABEL_MAX = 22
+
+# Ceiling on the Ticket cell. Trello renders card *titles* there, which run long
+# enough to push the trailing Title column off a normal-width terminal. The full
+# value stays on the hover tooltip.
+_TICKET_MAX = 18
+
+
+def _ellipsize(text: str, limit: int) -> str:
+    """Cap `text` at `limit` characters with a trailing `…`. One character over
+    the limit passes through whole — swapping a single character for an ellipsis
+    saves no width and loses information."""
+    return text if len(text) <= limit + 1 else text[:limit] + "…"
+
 
 def column_labels(*, show_tickets: bool) -> tuple[str, ...]:
     """Column headers in display order, grouped by domain. The local `✎` dirty
@@ -211,11 +246,16 @@ def column_labels(*, show_tickets: bool) -> tuple[str, ...]:
     return tuple(cols)
 
 
-def _display_label(wt: Worktree) -> str:
-    """The bare workspace label shown in the Workspace column (before any repo
-    prefix or status glyph) — the branch-derived `label`, falling back to the
-    dir basename."""
+def _full_label(wt: Worktree) -> str:
+    """The untruncated workspace label — the branch-derived `label`, falling back
+    to the dir basename."""
     return wt.label or wt.short
+
+
+def _display_label(wt: Worktree) -> str:
+    """`_full_label` capped at `_LABEL_MAX` so one long branch name can't starve
+    the trailing Title column. `row_tooltips` surfaces the full name on hover."""
+    return _ellipsize(_full_label(wt), _LABEL_MAX)
 
 
 def _stack_rows(wts: list[Worktree]) -> list[tuple[Worktree, int]]:
@@ -239,25 +279,36 @@ def _stack_rows(wts: list[Worktree]) -> list[tuple[Worktree, int]]:
 def _header_cells(
     repo_name: str, repo_color: str | None, ncols: int, *, hidden: bool = False
 ) -> list[Text]:
-    """A repo group-header row: `▸ <repo>` in the Workspace column (bold, tinted
-    with the repo's cmux colour when set), the rest blank. `ncols` is the live
-    column count so the blank tail matches whatever `show_tickets` produced.
+    """A repo group-header row: `<repo> ────…` in the Workspace column (bold,
+    tinted with the repo's cmux colour when set), the rest blank. `ncols` is the
+    live column count so the blank tail matches whatever `show_tickets` produced.
+
+    The trailing rule fills the column out to `_RULE_WIDTH`, so the header reads
+    as a break between groups rather than as another row — the worktree rows
+    below it are the ones carrying `ROW_INDENT`. (The old `▸` prefix also read as
+    a disclosure triangle, which a repo header isn't: only the `▸ N hidden` row
+    expands.)
 
     `hidden` renders a *parked* repo revealed by expanding the hidden row: the
-    repo's colour is dropped for a dim `(hidden)` suffix, so a revealed repo
-    reads as temporarily on screen rather than back in rotation."""
-    label = f"▸ {repo_name}"
+    rule and the repo's colour are both dropped for a dim `(hidden)` suffix, so a
+    revealed repo reads as temporarily on screen rather than back in rotation."""
     if hidden:
+        label = f"▸ {repo_name}"
         return [
             Text.assemble((label, "dim"), (" (hidden)", "dim italic")),
             *(Text("") for _ in range(ncols - 1)),
         ]
     colorizer = CMUX_COLOR_ANSI.get(repo_color or "")
     if colorizer is not None:
-        head = Text.from_ansi(colorizer(label))
+        head = Text.from_ansi(colorizer(repo_name))
         head.stylize("bold")
     else:
-        head = Text(label, style="bold")
+        head = Text(repo_name, style="bold")
+    # The rule stays dim whatever the repo's tint, so it reads as structure
+    # rather than as more of the repo's colour. A name wider than the column
+    # still gets a stub of one, so every header carries the same signal.
+    rule = "─" * max(3, _RULE_WIDTH - len(repo_name) - 1)
+    head = Text.assemble(head, " ", (rule, "dim"))
     return [head, *(Text("") for _ in range(ncols - 1))]
 
 
@@ -291,10 +342,15 @@ def _workspace_cell(
     threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute wins: a muted
     PR fires no nudge, so it shows 🔇, never 🔔. No glyph when neither holds.
 
+    Every row hangs under its repo's header behind `ROW_INDENT` — header and row
+    share the Workspace column, so the indent is what makes the grouping read as
+    nesting instead of as two rows at the same level.
+
     `depth` is the row's place in a stacked-PR chain: 0 for an unstacked row or
     the stack's tip (which heads the group), 1 for a PR the tip is stacked on,
-    indented behind a `└`. `stack_order` never returns a deeper level — a stack
-    nests exactly once, so the whole chain reads as one group.
+    indented a further `_STACK_INDENT` behind a `└`. `stack_order` never returns
+    a deeper level — a stack nests exactly once, so the whole chain reads as one
+    group.
 
     Same-named worktrees across repos are disambiguated by their group-header
     row, not a `repo/` prefix, so the label renders bare."""
@@ -310,8 +366,8 @@ def _workspace_cell(
     elif nudge:
         cell = Text.assemble((f"{ICON_PR_NUDGE} ", "yellow"), cell)
     if depth:
-        cell = Text.assemble(("└ ", "dim"), cell)
-    return cell
+        cell = Text.assemble((f"{_STACK_INDENT}└ ", "dim"), cell)
+    return Text.assemble(ROW_INDENT, cell)
 
 
 def _dirty_cell(wt: Worktree) -> Text:
@@ -361,18 +417,28 @@ def _comments_cell(unaddressed_raw: str, total_raw: str) -> Text:
     return Text(label, style="red")
 
 
+def _ticket_ids(wt: Worktree, repo_name: str, provider: str) -> str:
+    """The untruncated Ticket-cell text: the delivered id(s), comma-joined —
+    except Trello, whose ids are opaque short links, so `ticket_display` hands
+    back the cached card title(s) (id fallback). Empty with no delivered
+    tickets. Shared by the cell and its hover tooltip so the two can't drift."""
+    payload = find_pr_payload(wt.branch, repo_name) or {}
+    tickets = (payload.get("ticket") or {}).get("tickets") or []
+    return ", ".join(ticket_display(t, provider, missing="?") for t in tickets)
+
+
 def _linear_cells(wt: Worktree, repo_name: str, provider: str) -> tuple[Text, Text]:
     """Delivered ticket id(s) and workflow state(s) from the cached per-PR block,
-    as two cells. The Ticket cell is the comma-joined id(s) — except Trello, whose
-    ids are opaque short links, so it joins the cached card title(s) (id fallback).
-    The Status cell is one workflow-state *icon* per ticket (space-joined), each
-    tinted by its own `_linear_status_icon` style. Both blank when there are no
-    delivered tickets."""
+    as two cells. The Ticket cell is `_ticket_ids` capped at `_TICKET_MAX` (the
+    full text lands on the hover tooltip). The Status cell is one workflow-state
+    *icon* per ticket (space-joined), each tinted by its own
+    `_linear_status_icon` style. Both blank when there are no delivered
+    tickets."""
     payload = find_pr_payload(wt.branch, repo_name) or {}
     tickets = (payload.get("ticket") or {}).get("tickets") or []
     if not tickets:
         return Text(""), Text("")
-    ids = ", ".join(ticket_display(t, provider, missing="?") for t in tickets)
+    ids = _ellipsize(_ticket_ids(wt, repo_name, provider), _TICKET_MAX)
     icons = []
     for t in tickets:
         state = t.get("state")
@@ -489,7 +555,7 @@ def worktree_cells(
         # review) PRs — blank for my own, so the column reads "whose PR is this
         # that isn't mine". Rarely populated → parked just before Title.
         Text(f"@{author}", style="cyan") if author else Text(""),
-        Text((title[:48] + "…") if len(title) > 49 else title, style="grey62"),
+        Text(_ellipsize(title, 48), style="grey62"),
     ]
     return cells
 
@@ -595,8 +661,10 @@ def row_tooltips(
     show_tickets: bool,
 ) -> list[str | None]:
     """Per-cell hover hints for one worktree row, aligned to `column_labels`
-    order. Only the cryptic value columns decode (workspace glyph, PR state, CI,
-    comments, ticket state, dirty); the self-evident text columns are None and
+    order. Two jobs: decode the cryptic value columns (workspace glyph, PR state,
+    CI, comments, ticket state, dirty), and give back whatever the column caps
+    truncated (`_LABEL_MAX` / `_TICKET_MAX`) — a clipped cell has to stay
+    readable *somewhere*. The self-evident, untruncated text columns are None and
     fall back to the column meaning on hover."""
 
     def cell(stem: str) -> str:
@@ -608,6 +676,9 @@ def row_tooltips(
         workspace = "Nudge pending (CI / threads / conflicts)"
     else:
         workspace = None
+    full_label = _full_label(wt)
+    if full_label != _display_label(wt):
+        workspace = f"{full_label} — {workspace}" if workspace else full_label
 
     tips: list[str | None] = [
         workspace,
@@ -619,7 +690,11 @@ def row_tooltips(
     ]
     if show_tickets:
         tips += [
-            None,  # Ticket id (self-evident)
+            # Ticket id — self-evident, so only worth a hint when `_TICKET_MAX`
+            # clipped it (a long Trello card title).
+            _ticket_ids(wt, repo_name, tickets_provider) or None
+            if tickets_provider != "none"
+            else None,
             _ticket_status_tooltip(wt, repo_name, tickets_provider)
             if tickets_provider != "none"
             else None,
