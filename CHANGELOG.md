@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.0](https://github.com/khivi/cockpit/compare/v1.12.0...v1.13.0) (2026-08-20)
+
+
+### Features
+
+* **cli:** add cockpit broadcast to send text to every idle session ([#321](https://github.com/khivi/cockpit/issues/321)) ([805fcc8](https://github.com/khivi/cockpit/commit/805fcc858d62bbb837be02ee78064aba4017eb40))
+* **preflight:** gate startup on the cmux verbs and capabilities cockpit needs ([#324](https://github.com/khivi/cockpit/issues/324)) ([4cfeb67](https://github.com/khivi/cockpit/commit/4cfeb6767e7a0fb6101ab939f411587224029435))
+
+
+### Bug Fixes
+
+* **nudge:** key prefs per repo and resolve the snooze payload by nwo ([#323](https://github.com/khivi/cockpit/issues/323)) ([e4fa850](https://github.com/khivi/cockpit/commit/e4fa85047026de640dd4f88aa90fce0c7f8758d7))
+
 ## [1.12.0](https://github.com/khivi/cockpit/compare/v1.11.0...v1.12.0) (2026-08-20)
 
 
