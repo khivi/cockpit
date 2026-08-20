@@ -828,6 +828,74 @@ def test_unstacked_row_has_no_indent(cache_dir):
     assert _plain(wt)[0] == _ws("khivi-solo")
 
 
+# ── row bands: my queue, then reviews, then snoozed ─────────────────────────
+
+
+def _snooze(wt):
+    cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
+
+
+def _coworker(wt, login="someone"):
+    cache_mod.branch_cache("pr-author", wt.branch).write_text(login)
+
+
+def test_reviews_and_snoozed_rows_sink_below_my_queue(cache_dir):
+    # The pile the sidebar already parks at the bottom must not bury the row
+    # that actually wants me — git's order interleaves them.
+    dozing = _wt(path="/tmp/dozing", branch="khivi/dozing")
+    review = _wt(path="/tmp/review", branch="khivi/review")
+    mine = _wt(path="/tmp/mine", branch="khivi/mine")
+    _snooze(dozing)
+    _coworker(review)
+    rows = _stack_rows([dozing, review, mine])
+    assert [wt.path for wt, _ in rows] == [mine.path, review.path, dozing.path]
+
+
+def test_a_snoozed_coworker_pr_sinks_past_the_reviews_band(cache_dir):
+    # Snooze outranks review: a coworker PR I've already read belongs below the
+    # ones I haven't, matching the sidebar's stacks → snoozed → reviews order.
+    read = _wt(path="/tmp/read", branch="khivi/read")
+    unread = _wt(path="/tmp/unread", branch="khivi/unread")
+    _coworker(read)
+    _coworker(unread)
+    _snooze(read)
+    rows = _stack_rows([read, unread])
+    assert [wt.path for wt, _ in rows] == [unread.path, read.path]
+
+
+def test_banding_keeps_git_order_within_a_band(cache_dir):
+    # Stable sort: rows that share a band must not be reshuffled.
+    a, b, c = (_wt(path=f"/tmp/{n}", branch=f"khivi/{n}") for n in "abc")
+    assert [wt.path for wt, _ in _stack_rows([a, b, c])] == [a.path, b.path, c.path]
+
+
+def test_a_stack_sinks_whole_and_bands_by_its_tip(cache_dir):
+    # A chain with one snoozed member must not split: contiguity under the tip
+    # is what keeps the table and the sidebar reading as the same stack.
+    root = _wt(path="/tmp/root", branch="khivi/root")
+    tip = _wt(path="/tmp/tip", branch="khivi/tip")
+    mine = _wt(path="/tmp/mine", branch="khivi/mine")
+    cache_mod.branch_cache("pr-base", tip.branch).write_text(root.branch)
+    _snooze(tip)  # the tip heads the chain, so the whole chain sinks
+    assert [(wt.path, depth) for wt, depth in _stack_rows([root, tip, mine])] == [
+        (mine.path, 0),
+        (tip.path, 0),
+        (root.path, 1),
+    ]
+
+
+def test_a_muted_row_stays_in_my_queue(cache_dir):
+    # Mute is "stop nudging me about a PR I'm working on", not "not my turn" —
+    # only a snooze sinks.
+    muted = _wt(path="/tmp/muted", branch="khivi/muted")
+    plain = _wt(path="/tmp/plain", branch="khivi/plain")
+    cache_mod.branch_cache("pr-muted", muted.branch).write_text("muted")
+    assert [wt.path for wt, _ in _stack_rows([muted, plain])] == [
+        muted.path,
+        plain.path,
+    ]
+
+
 def test_indent_precedes_the_nudge_glyph(cache_dir):
     # The tree spine has to stay leftmost or the indent column ragged-edges on
     # whichever rows happen to carry a bell.
