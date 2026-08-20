@@ -157,7 +157,7 @@ from cockpit.lib.linear import (
     update_ticket_state,
 )
 from cockpit.lib.log_format import verb
-from cockpit.lib.nudges import NudgePref, save_pref, wake_signature
+from cockpit.lib.nudges import NudgePref, pref_key, save_pref, wake_signature
 from cockpit.lib.nudges import load_pref as _load_nudge_pref
 from cockpit.lib.pills import ci_glyph
 from cockpit.lib.prompts import claude_command, shell_quote, split_prompt_prefix
@@ -215,7 +215,7 @@ def maybe_nudge(
     dry: bool,
     tag: str,
     *,
-    pr_number: int | None = None,
+    pref_key: str | None = None,
 ) -> bool:
     """Nudge `ref` if idle; return True iff the nudge actually fired."""
     if nudge_if_idle(
@@ -223,7 +223,7 @@ def maybe_nudge(
         message,
         dry=dry,
         tag=tag,
-        pr_number=pr_number,
+        pref_key=pref_key,
     ):
         snippet = message if len(message) <= 60 else message[:57] + "..."
         print(
@@ -1380,7 +1380,7 @@ def _repo_name_color(repo_entry: dict) -> Colorizer:
     return CMUX_COLOR_ANSI.get(repo_entry.get("sidebar_color") or "", bold)
 
 
-def _resolve_prefs(prs: list[PR]) -> dict[int, NudgePref]:
+def _resolve_prefs(repo_name: str, prs: list[PR]) -> dict[int, NudgePref]:
     """Load every PR's nudge pref for this cycle, waking any expired snooze.
 
     A snooze (TUI `z`) says "I've read this — come back when it's my turn
@@ -1401,10 +1401,16 @@ def _resolve_prefs(prs: list[PR]) -> dict[int, NudgePref]:
     every downstream consumer (`write_pr_cache`, `write_branch_pr_cache`, the
     pills, the nudge gate, the sidebar fold) sees the woken pref in the same
     tick — a woken PR un-sinks, regains its 🔔, and nudges again together.
+
+    The returned dict is keyed by PR number — unambiguous *within* one repo's
+    cycle. The on-disk pref is keyed by `pref_key(repo_name, number)`: a bare
+    number is shared across repos, so this loop used to wake another repo's
+    same-numbered snooze on every tick (its `wake_on` describes a different PR).
     """
     prefs: dict[int, NudgePref] = {}
     for pr in prs:
-        pref = _load_nudge_pref(pr.number)
+        key = pref_key(repo_name, pr.number)
+        pref = _load_nudge_pref(key)
         reason = ""
         if pref.snoozed:
             if pref.wake_on != wake_signature(pr.total_from_others, pr.review_decision):
@@ -1415,7 +1421,7 @@ def _resolve_prefs(prs: list[PR]) -> dict[int, NudgePref]:
             pref.snoozed = False
             pref.wake_on = ""
             pref.wake_nudge = ""
-            save_pref(pr.number, pref)
+            save_pref(key, pref)
             print(f"  {verb('woke')} #{pr.number} {dim(f'({reason})')}", flush=True)
         prefs[pr.number] = pref
     return prefs
@@ -1534,7 +1540,7 @@ def _prepare_cycle(
     # Resolve nudge prefs once per cycle — the single point of mute-state I/O.
     # Everything downstream (write_pr_cache, write_branch_pr_cache, apply_pills,
     # status_pills) reads from this dict. See AGENTS.md "PR cache writers".
-    prefs = _resolve_prefs(prs)
+    prefs = _resolve_prefs(name, prs)
     mine = sum(1 for pr in prs if pr.author == self_user)
     coworker_relevant = len(prs) - mine
     feature_wts = [w for w in wts if w.branch not in MAIN_BRANCHES]
@@ -1830,7 +1836,7 @@ def _refresh_tracked_pills(
                     f"PR #{pr.number}: {_NUDGE_DESC[pr.display_issue](pr)}.",
                     ctx.dry,
                     label,
-                    pr_number=pr.number,
+                    pref_key=pref_key(ctx.name, pr.number),
                 )
             _track_dev_done(ctx, ref, ctx.linear_blocks.get(pr.branch))
     return printed_refresh, mine_items, others_items

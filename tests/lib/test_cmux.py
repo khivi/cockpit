@@ -854,7 +854,7 @@ def test_nudge_if_idle_does_not_record_nudge_on_send_failure():
             "cockpit.lib.nudges.record_nudge", side_effect=lambda *a: recorded.append(a)
         ),
     ):
-        nudge_if_idle("workspace:1", "fix CI", tag="t", pr_number=42)
+        nudge_if_idle("workspace:1", "fix CI", tag="t", pref_key="acme__42")
 
     assert recorded == []
 
@@ -874,10 +874,10 @@ def test_nudge_if_idle_records_nudge_on_success():
             "cockpit.lib.nudges.record_nudge", side_effect=lambda *a: recorded.append(a)
         ),
     ):
-        result = nudge_if_idle("workspace:1", "fix CI", tag="t", pr_number=42)
+        result = nudge_if_idle("workspace:1", "fix CI", tag="t", pref_key="acme__42")
 
     assert result is True
-    assert recorded == [(42,)]
+    assert recorded == [("acme__42",)]
 
 
 # ── native-state gate (the stale-pill regression + permission safety) ────────
@@ -979,7 +979,7 @@ def test_nudge_skips_muted_pr_without_touching_cmux():
         patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
         patch("cockpit.lib.nudges.should_nudge", return_value=False),
     ):
-        result = nudge_if_idle("workspace:1", "fix CI", tag="t", pr_number=42)
+        result = nudge_if_idle("workspace:1", "fix CI", tag="t", pref_key="acme__42")
 
     assert result is False
     assert calls == []  # short-circuits before list-status

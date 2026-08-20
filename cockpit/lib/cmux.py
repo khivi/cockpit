@@ -584,13 +584,14 @@ def nudge_if_idle(
     *,
     dry: bool = False,
     tag: str = "",
-    pr_number: int | None = None,
+    pref_key: str | None = None,
 ) -> bool:
     """Send `message` + enter to workspace `ref` if it's idle and not parked.
 
-    For PR-attached nudges (`pr_number` set), check the file-backed mute
-    state in `lib.nudges` so the user's `cockpit nudge mute` survives daemon
-    restarts. For orphan (no-PR) nudges, fire unconditionally when idle.
+    For PR-attached nudges (`pref_key` set — `nudges.pref_key(repo, number)`,
+    per-repo because PR numbers collide across repos), check the file-backed
+    mute state in `lib.nudges` so the user's `cockpit nudge mute` survives
+    daemon restarts. For orphan (no-PR) nudges, fire unconditionally when idle.
 
     Gates on two independent at-rest signals so a dropped Stop-hook write can't
     silently suppress nudges forever:
@@ -614,10 +615,10 @@ def nudge_if_idle(
     (`slow_poll_interval_seconds`, default 300s) is the implicit rate limit
     — each tick re-evaluates and re-fires if the underlying issue persists.
     """
-    if pr_number is not None:
+    if pref_key is not None:
         from . import nudges
 
-        if not nudges.should_nudge(pr_number):
+        if not nudges.should_nudge(pref_key):
             return False
     status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
     native = _native_claude_state(status_lines)
@@ -639,10 +640,10 @@ def nudge_if_idle(
     except (RuntimeError, FileNotFoundError) as e:
         print(f"  warn: {tool.resolve_tool()} send failed for {ref}: {e}", flush=True)
         return False
-    if pr_number is not None:
+    if pref_key is not None:
         from . import nudges
 
-        nudges.record_nudge(pr_number)
+        nudges.record_nudge(pref_key)
     return True
 
 

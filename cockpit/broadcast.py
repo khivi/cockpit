@@ -14,7 +14,7 @@ a parallel send path:
     safety story: it refuses a mid-turn (`Running`) session, refuses the
     ambiguous `Needs input` state (a pending y/n permission — typing into it
     would answer the prompt, not deliver the message), and skips a
-    `parked=` session. Called with no `pr_number` it bypasses PR mute/snooze,
+    `parked=` session. Called with no `pref_key` it bypasses PR mute/snooze,
     which is correct here — mute is a PR-nudge concept, not an admin-command
     one.
 

@@ -275,7 +275,7 @@ type into the confirmation. Do not "simplify" the gate to trust it.
 
 ```mermaid
 flowchart TD
-  IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pr_number)"] --> G1{"PR-attached &<br/>PR quiet?<br/>(muted OR snoozed)"}
+  IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pref_key)"] --> G1{"PR-attached &<br/>PR quiet?<br/>(muted OR snoozed)"}
   G1 -->|yes| F1["return False<br/>(user mute/snooze,<br/>survives restart)"]
   G1 -->|"no / orphan nudge"| G2{"native ==<br/>Running?"}
 
@@ -290,11 +290,15 @@ flowchart TD
 
   HEAL -->|yes| SELFHEAL["re-assert idle= pill<br/>(self-heal dropped Stop-hook write)"]
   HEAL -->|no| FIRE
-  SELFHEAL --> FIRE["send msg + send-key enter<br/>→ record_nudge(pr_number)<br/>→ return True"]
+  SELFHEAL --> FIRE["send msg + send-key enter<br/>→ record_nudge(pref_key)<br/>→ return True"]
 ```
 
 There is **no time-based throttle**; the slow-tick cadence is the implicit rate
 limit. Each tick re-evaluates and re-fires if the underlying issue persists.
+
+`pref_key` is `nudges.pref_key(<repo nwo name>, <PR number>)`, not a bare PR
+number: numbers are only unique within a repo, so a bare one made every repo
+share one pref file (see the "Nudge prefs are keyed per repo" invariant).
 
 Truth table (native × `idle=` × `parked=` × quiet → result), where **quiet** is
 `NudgePref.muted or .snoozed` — the two user-set silences. They differ only in
