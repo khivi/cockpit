@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/khivi/cockpit/compare/v1.10.0...v1.10.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **tui:** brighten the snoozed-row icon tint ([#315](https://github.com/khivi/cockpit/issues/315)) ([6e7d77a](https://github.com/khivi/cockpit/commit/6e7d77a3966116d8faa5dd1b1a810c71e255937a))
+
 ## [1.10.0](https://github.com/khivi/cockpit/compare/v1.9.0...v1.10.0) (2026-08-20)
 
 
