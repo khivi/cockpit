@@ -56,19 +56,21 @@ class FooterBar(Horizontal):
             "close_row",
             "force_close_row",
             "mute_row",
+            "snooze_row",
             "nudge_row",
         }
     )
 
     # Row actions that only make sense for a row in a given state — gated on the
-    # highlighted row's capability tokens (`set_row_state`). `p`/`m` act on a PR;
-    # `t` opens a ticket. An action absent here has no per-row requirement (shown
+    # highlighted row's capability tokens (`set_row_state`). `p`/`m`/`z` act on a
+    # PR; `t` opens a ticket. An action absent here has no per-row requirement (shown
     # for any row, subject to backend / `show_tickets` gating). When the row caps
     # are unknown (`None`, e.g. an empty table) nothing is capability-gated, so
     # the footer shows the full row-key legend.
     ACTION_REQUIRES = {
         "open_pr": "pr",
         "mute_row": "pr",
+        "snooze_row": "pr",
         "open_ticket": "ticket",
         # `N` (nudge) reaches an *existing* workspace — it no-ops on a
         # workspace-less row, so only advertise it when one is live. `f` is NOT
@@ -104,6 +106,7 @@ class FooterBar(Horizontal):
         "close_row": "Close",
         "force_close_row": "Force",
         "mute_row": "Mute",
+        "snooze_row": "Snooze",
         "nudge_row": "Nudge",
         "new_workspace": "New",
         "hide_repo": "Hide",
@@ -156,6 +159,9 @@ class FooterBar(Horizontal):
         caps = self._row_caps or frozenset()
         if action == "mute_row" and "muted" in caps:
             return "Unmute"
+        # Same idea for `z`: a snoozed row's key wakes it.
+        if action == "snooze_row" and "snoozed" in caps:
+            return "Wake"
         # `h` is one key with three meanings, read off the cursor row — the hint
         # says which one is live (see `app.action_hide_repo`).
         if action == "hide_repo":

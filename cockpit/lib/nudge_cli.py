@@ -68,7 +68,12 @@ def _fmt_until(until: float | None) -> str:
 
 def _print_status(pr_number: int, pref: NudgePref) -> None:
     if not pref.muted:
-        print(f"PR #{pr_number}: not muted")
+        # A snooze silences nudges too (`NudgePref.quiet`), so "not muted" alone
+        # would read as "will nudge" on a PR that won't.
+        if pref.snoozed:
+            print(f"PR #{pr_number}: snoozed until a new comment or review")
+        else:
+            print(f"PR #{pr_number}: not muted")
         if pref.last_nudge_at:
             ago = int(time.time() - pref.last_nudge_at)
             print(f"  last nudge: {ago}s ago")

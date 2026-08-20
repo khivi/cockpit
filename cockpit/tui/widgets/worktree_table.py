@@ -80,6 +80,7 @@ from cockpit.lib.starship import (
     _PR_STATE_ICON,
     ICON_PR_MUTED,
     ICON_PR_NUDGE,
+    ICON_PR_SNOOZED,
     ICON_STAGED,
     ICON_UNSTAGED,
     ICON_UNTRACKED,
@@ -334,13 +335,17 @@ def _workspace_cell(
     *,
     muted: bool,
     nudge: bool,
+    snoozed: bool = False,
     depth: int = 0,
 ) -> Text:
     """The workspace name, tinted with the repo's cmux colour when set and
-    prefixed with a status glyph: 🔇 when the PR's nudges are muted, else 🔔 when
-    the PR has an actionable, unmuted nudge condition (failing CI / unresolved
-    threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute wins: a muted
-    PR fires no nudge, so it shows 🔇, never 🔔. No glyph when neither holds.
+    prefixed with one status glyph: 🔇 when the PR's nudges are muted, 💤 when it
+    is snoozed until someone comments/approves (`pr-snoozed`), else 🔔 when the
+    PR has an actionable, unsilenced nudge condition (failing CI / unresolved
+    threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute and snooze
+    both silence the nudge, so neither can coexist with 🔔; mute wins over snooze
+    on the (rare) row carrying both, matching the nudge gate's own precedence.
+    No glyph when none holds.
 
     Every row hangs under its repo's header behind `ROW_INDENT` — header and row
     share the Workspace column, so the indent is what makes the grouping read as
@@ -363,6 +368,8 @@ def _workspace_cell(
         cell = Text(label, style="bold")
     if muted:
         cell = Text.assemble((f"{ICON_PR_MUTED} ", "yellow"), cell)
+    elif snoozed:
+        cell = Text.assemble((f"{ICON_PR_SNOOZED} ", "blue"), cell)
     elif nudge:
         cell = Text.assemble((f"{ICON_PR_NUDGE} ", "yellow"), cell)
     if depth:
@@ -473,6 +480,7 @@ def row_capabilities(
         `t` applies;
       * ``"muted"``     — the PR's nudges are muted (`pr-muted`), so `m` reads
         "Unmute";
+      * ``"snoozed"``   — the PR is snoozed (`pr-snoozed`), so `z` reads "Wake";
       * ``"workspace"`` — the row has a live workspace, so `N` (nudge) applies
         (`f` shows regardless — it focuses an existing session or spawns one);
       * ``"primary"``   — the row is a `use_worktree: false` primary checkout
@@ -491,6 +499,8 @@ def row_capabilities(
         caps.add("pr")
     if read_text(branch_cache("pr-muted", wt.branch)):
         caps.add("muted")
+    if read_text(branch_cache("pr-snoozed", wt.branch)):
+        caps.add("snoozed")
     if tickets_provider != "none" and (
         (find_pr_payload(wt.branch, repo_name) or {}).get("ticket") or {}
     ).get("tickets"):
@@ -540,6 +550,7 @@ def worktree_cells(
             repo_color,
             muted=bool(cell("pr-muted")),
             nudge=bool(cell("pr-nudge")),
+            snoozed=bool(cell("pr-snoozed")),
             depth=depth,
         ),
         Text(f"#{num}") if num else Text(""),
@@ -672,6 +683,8 @@ def row_tooltips(
 
     if cell("pr-muted"):
         workspace: str | None = "Nudges muted"
+    elif cell("pr-snoozed"):
+        workspace = "Snoozed until a new comment or review"
     elif cell("pr-nudge"):
         workspace = "Nudge pending (CI / threads / conflicts)"
     else:

@@ -2001,3 +2001,23 @@ async def test_footer_hides_close_on_workspaceless_primary_checkout():
     assert not fb._skip("close_row") and not fb._skip("force_close_row")
     fb._row_caps = frozenset()  # feature row, no workspace
     assert not fb._skip("close_row") and not fb._skip("force_close_row")
+
+
+async def test_footer_snooze_label_flips_to_wake_when_snoozed():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset({"pr"})
+    assert fb._label("snooze_row", "Snooze") == "Snooze"
+    fb._row_caps = frozenset({"pr", "snoozed"})
+    assert fb._label("snooze_row", "Snooze") == "Wake"
+
+
+async def test_footer_hides_snooze_on_a_row_without_a_pr():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset({"workspace"})
+    assert fb._skip("snooze_row")
+    fb._row_caps = frozenset({"workspace", "pr"})
+    assert not fb._skip("snooze_row")

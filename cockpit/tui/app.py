@@ -76,7 +76,7 @@ from cockpit.lib.daemon_signal import enqueue
 from cockpit.lib.gh import PR, repo_nwo
 from cockpit.lib.git import Worktree, origin_head_branch, worktrees
 from cockpit.lib.hidden import load_hidden, toggle_hidden
-from cockpit.lib.nudges import load_pref, save_pref
+from cockpit.lib.nudges import NudgePref, load_pref, save_pref, wake_signature
 from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
@@ -180,6 +180,7 @@ class CockpitApp(App[None]):
         ("c", "close_row", "Close"),
         ("C", "force_close_row", "Force close"),
         ("m", "mute_row", "Mute"),
+        ("z", "snooze_row", "Snooze"),
         ("N", "nudge_row", "Nudge"),
         ("n", "new_workspace", "New"),
         ("h", "hide_repo", "Hide repo"),
@@ -685,6 +686,9 @@ class CockpitApp(App[None]):
     def action_mute_row(self) -> None:
         self._row_act(self._toggle_mute)
 
+    def action_snooze_row(self) -> None:
+        self._row_act(self._toggle_snooze)
+
     def action_nudge_row(self) -> None:
         self._row_act(self._send_nudge)
 
@@ -1114,36 +1118,76 @@ class CockpitApp(App[None]):
         self._notify(f"queued {'force-' if force else ''}close: {wt.label or wt.short}")
         self.call_from_thread(self._kick_slow, str(repo_dir))
 
+    def _resolve_row_pref(
+        self, path_str: str, verb: str
+    ) -> tuple[dict, Worktree, int, NudgePref] | None:
+        # Shared prologue for the two per-PR pref keys (`m` mute, `z` snooze):
+        # resolve the row's worktree, read its PR number off the daemon-written
+        # `pr-num` cell, and load the pref. `verb` only names the action in the
+        # failure toasts. None when the row has no worktree or no PR.
+        resolved = self._resolve_worktree(path_str)
+        if resolved is None:
+            self._notify(f"{verb}: no worktree at {path_str}", severity="error")
+            return None
+        repo, wt = resolved
+        raw = read_text(branch_cache("pr-num", wt.branch)) if wt.branch else ""
+        try:
+            pr = int(raw)
+        except ValueError:
+            self._notify(
+                f"{verb}: no PR for {wt.label or wt.short}", severity="warning"
+            )
+            return None
+        return repo, wt, pr, load_pref(pr)
+
     @work(thread=True, group="mute", exit_on_error=False)
     def _toggle_mute(self, path_str: str) -> None:
         # Toggle the row PR's nudge-mute (full mute, no expiry — same as
         # `cockpit nudge mute`). Writes a NudgePref, NOT a cache cell, so the
         # daemon stays sole writer; the kicked slow tick republishes the
         # `pr-muted` cell + pills, so the 🔇 glyph catches up within the cycle.
-        resolved = self._resolve_worktree(path_str)
-        if resolved is None:
-            self._notify(f"mute: no worktree at {path_str}", severity="error")
+        got = self._resolve_row_pref(path_str, "mute")
+        if got is None:
             return
-        repo, wt = resolved
-        raw = read_text(branch_cache("pr-num", wt.branch)) if wt.branch else ""
-        try:
-            pr = int(raw)
-        except ValueError:
-            self._notify(f"mute: no PR for {wt.label or wt.short}", severity="warning")
+        repo, wt, pr, pref = got
+        pref.muted = not pref.muted
+        pref.until = None
+        pref.reason = "muted from TUI" if pref.muted else ""
+        save_pref(pr, pref)
+        self._notify(
+            f"{'muted' if pref.muted else 'unmuted'} {wt.label or wt.short} (#{pr})"
+        )
+        self.call_from_thread(
+            self._kick_slow, str(Path(os.path.expanduser(repo["path"])))
+        )
+
+    @work(thread=True, group="mute", exit_on_error=False)
+    def _toggle_snooze(self, path_str: str) -> None:
+        # Toggle the row PR's snooze: "I've read this, it's someone else's turn".
+        # Silences the nudge like a mute AND sinks the row into the sidebar's
+        # trailing `snoozed` fold — but expires on an *event*, not a clock. The
+        # wake signature is read from the daemon's cached PR snapshot (no `gh`
+        # here), and the slow tick clears the snooze as soon as the live PR
+        # disagrees with it (`cycle._resolve_prefs`).
+        got = self._resolve_row_pref(path_str, "snooze")
+        if got is None:
             return
-        pref = load_pref(pr)
-        if pref.muted:
-            pref.muted = False
-            pref.until = None
-            pref.reason = ""
-            save_pref(pr, pref)
-            self._notify(f"unmuted {wt.label or wt.short} (#{pr})")
+        repo, wt, pr, pref = got
+        if pref.snoozed:
+            pref.snoozed = False
+            pref.wake_on = ""
+            self._notify(f"woke {wt.label or wt.short} (#{pr})")
         else:
-            pref.muted = True
-            pref.until = None
-            pref.reason = "muted from TUI"
-            save_pref(pr, pref)
-            self._notify(f"muted {wt.label or wt.short} (#{pr})")
+            payload = find_pr_payload(wt.branch, repo.get("name") or "") or {}
+            pref.snoozed = True
+            pref.wake_on = wake_signature(
+                int(payload.get("total") or 0), str(payload.get("review") or "")
+            )
+            self._notify(
+                f"snoozed {wt.label or wt.short} (#{pr}) — wakes on a new "
+                f"comment or review"
+            )
+        save_pref(pr, pref)
         self.call_from_thread(
             self._kick_slow, str(Path(os.path.expanduser(repo["path"])))
         )
