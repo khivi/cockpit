@@ -48,15 +48,35 @@ def test_infer_pr_number_non_int_stdout_is_none():
 # ── _resolve_pr — explicit arg bypasses gh; fallback exits 2 on failure ─────
 
 
-def test_resolve_pr_explicit_arg_skips_gh():
-    with patch("subprocess.run") as run:
-        assert nudge_cli._resolve_pr(42) == 42
+def test_resolve_pr_explicit_arg_skips_gh_pr_view():
+    # The number is given, but the *repo* still has to be resolved — a pref key
+    # is per-repo, so `gh repo view` runs either way.
+    with (
+        patch("subprocess.run") as run,
+        patch.object(nudge_cli, "repo_nwo", return_value=("acme-org", "acme")),
+    ):
+        assert nudge_cli._resolve_pr(42) == (42, "acme__42")
     run.assert_not_called()
 
 
 def test_resolve_pr_falls_back_to_gh_when_no_arg():
-    with patch("subprocess.run", return_value=_completed(stdout="55\n")):
-        assert nudge_cli._resolve_pr(None) == 55
+    with (
+        patch("subprocess.run", return_value=_completed(stdout="55\n")),
+        patch.object(nudge_cli, "repo_nwo", return_value=("acme-org", "acme")),
+    ):
+        assert nudge_cli._resolve_pr(None) == (55, "acme__55")
+
+
+def test_resolve_pr_exits_2_when_the_repo_cannot_be_resolved(capsys):
+    # Off-GitHub / outside a checkout: there is no repo to scope the pref to, and
+    # falling back to a bare number would silently re-share it across repos.
+    with (
+        patch.object(nudge_cli, "repo_nwo", side_effect=RuntimeError("gh failed")),
+        pytest.raises(SystemExit) as exc,
+    ):
+        nudge_cli._resolve_pr(42)
+    assert exc.value.code == 2
+    assert "keyed per repo" in capsys.readouterr().err
 
 
 def test_resolve_pr_exits_2_when_gh_fails_and_no_pr_given(capsys):

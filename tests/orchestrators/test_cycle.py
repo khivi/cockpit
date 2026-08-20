@@ -3319,15 +3319,16 @@ def test_refresh_does_not_nudge_merged_pr_with_failing_ci(tmp_path):
 
 
 def test_refresh_nudges_open_pr_with_failing_ci(tmp_path):
-    """Companion: an OPEN PR with the same failing CI still nudges, keyed by its
-    PR number for the mute lookup."""
+    """Companion: an OPEN PR with the same failing CI still nudges, keyed by
+    repo + PR number for the mute lookup (`nudges.pref_key`) — a bare number is
+    shared with every other repo's PR of that number."""
     wt = Worktree(path=tmp_path / "repo-feat", branch="khivi/feat", dirty_count=0)
     nudge_mock = _refresh_with_mocks(
         _tracked_ctx(tmp_path, _stale_pr(ci="failed:2"), wt)
     )
 
     nudge_mock.assert_called_once()
-    assert nudge_mock.call_args.kwargs["pr_number"] == 1
+    assert nudge_mock.call_args.kwargs["pref_key"] == "n__1"
 
 
 # ── reused-branch merged-PR suppression ──────────────────────────────────────
@@ -4900,7 +4901,7 @@ def test_resolve_prefs_keeps_a_snooze_with_unchanged_activity(tmp_path):
         patch.object(cycle, "_load_nudge_pref", return_value=pref),
         patch.object(cycle, "save_pref") as save,
     ):
-        prefs = cycle._resolve_prefs([pr])
+        prefs = cycle._resolve_prefs("acme", [pr])
     assert prefs[7].snoozed is True
     save.assert_not_called()
 
@@ -4913,7 +4914,7 @@ def test_resolve_prefs_wakes_a_snooze_on_a_new_comment(tmp_path):
         patch.object(cycle, "_load_nudge_pref", return_value=pref),
         patch.object(cycle, "save_pref") as save,
     ):
-        prefs = cycle._resolve_prefs([pr])
+        prefs = cycle._resolve_prefs("acme", [pr])
     assert prefs[7].snoozed is False
     assert prefs[7].wake_on == ""
     save.assert_called_once()
@@ -4927,7 +4928,7 @@ def test_resolve_prefs_wakes_a_snooze_on_approval(tmp_path):
         patch.object(cycle, "_load_nudge_pref", return_value=pref),
         patch.object(cycle, "save_pref"),
     ):
-        prefs = cycle._resolve_prefs([pr])
+        prefs = cycle._resolve_prefs("acme", [pr])
     assert prefs[7].snoozed is False
 
 
@@ -4942,7 +4943,7 @@ def test_resolve_prefs_wakes_a_snooze_when_new_work_appears(tmp_path):
         patch.object(cycle, "_load_nudge_pref", return_value=pref),
         patch.object(cycle, "save_pref") as save,
     ):
-        prefs = cycle._resolve_prefs([pr])
+        prefs = cycle._resolve_prefs("acme", [pr])
     assert prefs[7].snoozed is False
     assert prefs[7].wake_nudge == ""
     save.assert_called_once()
@@ -4959,7 +4960,7 @@ def test_resolve_prefs_keeps_a_snooze_set_on_top_of_an_existing_issue(tmp_path):
         patch.object(cycle, "_load_nudge_pref", return_value=pref),
         patch.object(cycle, "save_pref") as save,
     ):
-        prefs = cycle._resolve_prefs([pr])
+        prefs = cycle._resolve_prefs("acme", [pr])
     assert prefs[7].snoozed is True
     save.assert_not_called()
 
@@ -4974,7 +4975,7 @@ def test_resolve_prefs_keeps_a_snooze_when_the_issue_resolves(tmp_path):
         patch.object(cycle, "_load_nudge_pref", return_value=pref),
         patch.object(cycle, "save_pref") as save,
     ):
-        prefs = cycle._resolve_prefs([pr])
+        prefs = cycle._resolve_prefs("acme", [pr])
     assert prefs[7].snoozed is True
     save.assert_not_called()
 
@@ -4988,9 +4989,25 @@ def test_resolve_prefs_leaves_a_mute_alone(tmp_path):
         patch.object(cycle, "_load_nudge_pref", return_value=pref),
         patch.object(cycle, "save_pref") as save,
     ):
-        prefs = cycle._resolve_prefs([pr])
+        prefs = cycle._resolve_prefs("acme", [pr])
     assert prefs[7].muted is True
     save.assert_not_called()
+
+
+def test_resolve_prefs_reads_and_writes_the_repo_scoped_key(tmp_path):
+    # Two repos each have a PR #7. Keyed by number alone they shared one file,
+    # so each repo's cycle compared the *other* repo's `wake_on` against its own
+    # PR, disagreed, and woke a snooze the user had just set — every tick.
+    pr = _snooze_pr()
+    pr.total_from_others = 3
+    pref = NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, ""))
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref) as load,
+        patch.object(cycle, "save_pref") as save,
+    ):
+        cycle._resolve_prefs("beta", [pr])
+    assert load.call_args.args[0] == "beta__7"
+    assert save.call_args.args[0] == "beta__7"
 
 
 # ── per-org ticket credentials: cache isolation + spawn env hygiene ──────────

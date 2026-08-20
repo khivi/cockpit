@@ -1,9 +1,10 @@
 """Persistent per-PR nudge state (rate limit + user mute/snooze) under COCKPIT_HOME.
 
-One JSON file per PR at `$COCKPIT_HOME/cache/nudges/<pr-number>.json`. Holds
-both the daemon-set `last_nudge_at` timestamp (for rate limiting) and the
-user-set `muted` / `until` mute (set via `cockpit nudge mute`). A mute is
-all-or-nothing — it silences every nudge for the PR.
+One JSON file per PR at `$COCKPIT_HOME/cache/nudges/<repo>__<pr-number>.json`
+(`pref_key` — a PR number alone is not unique across repos). Holds both the
+daemon-set `last_nudge_at` timestamp (for rate limiting) and the user-set
+`muted` / `until` mute (set via `cockpit nudge mute`). A mute is all-or-nothing
+— it silences every nudge for the PR.
 
 `snoozed` is the *separate* "I've read this, it's someone else's turn" state
 (TUI `z`). It silences nudges like a mute, and additionally sinks the PR to the
@@ -102,17 +103,46 @@ def wake_signature(total_from_others: int, review_decision: str) -> str:
     return f"{int(total_from_others)}|{review_decision or ''}"
 
 
-def _pref_path(pr_number: int) -> Path:
-    return NUDGE_DIR / f"{pr_number}.json"
+def pref_key(repo_name: str, pr_number: int) -> str:
+    """The pref file stem for one PR: `<repo>__<number>`.
+
+    PR numbers are only unique *within* a repo, so keying prefs by the number
+    alone made every repo share one file — muting or snoozing `#10` in one repo
+    silenced `#10` in every other, and each repo's cycle woke the others'
+    snoozes (their `wake_on` describes a different PR). `repo_name` is the git
+    nwo name, the same key the PR cache files use (`cache._repo_slug`), so the
+    two agree on what identifies a repo.
+    """
+    return f"{repo_name.replace('/', '_')}__{pr_number}"
 
 
-def load_pref(pr_number: int, *, now: float | None = None) -> NudgePref:
+def _pref_path(key: str) -> Path:
+    return NUDGE_DIR / f"{key}.json"
+
+
+def _legacy_path(key: str) -> Path | None:
+    """The pre-`pref_key` global-by-number file for `key`, if it still exists.
+
+    Read-only fallback: `load_pref` adopts its contents so an existing mute
+    survives the re-key, and the next `save_pref` writes the per-repo file. It
+    is deliberately never unlinked — several repos can share one legacy file,
+    and the first to migrate must not take it from the others.
+    """
+    _, _, number = key.rpartition("__")
+    path = NUDGE_DIR / f"{number}.json"
+    return path if number.isdigit() and path.exists() else None
+
+
+def load_pref(key: str, *, now: float | None = None) -> NudgePref:
     """Load a PR's nudge pref. Auto-expires the mute when `until` has passed and
     persists the expiry, so the daemon resumes nudging without a separate sweep
     step."""
-    path = _pref_path(pr_number)
+    path = _pref_path(key)
     if not path.exists():
-        return NudgePref()
+        legacy = _legacy_path(key)
+        if legacy is None:
+            return NudgePref()
+        path = legacy
     try:
         pref = NudgePref.from_json(json.loads(path.read_text()))
     except (OSError, json.JSONDecodeError):
@@ -122,41 +152,38 @@ def load_pref(pr_number: int, *, now: float | None = None) -> NudgePref:
         pref.muted = False
         pref.until = None
         pref.reason = ""
-        save_pref(pr_number, pref)
+        save_pref(key, pref)
     return pref
 
 
-def save_pref(pr_number: int, pref: NudgePref) -> None:
+def save_pref(key: str, pref: NudgePref) -> None:
     NUDGE_DIR.mkdir(parents=True, exist_ok=True)
-    _pref_path(pr_number).write_text(json.dumps(pref.to_json(), indent=2) + "\n")
+    _pref_path(key).write_text(json.dumps(pref.to_json(), indent=2) + "\n")
 
 
-def delete_pref(pr_number: int) -> bool:
-    path = _pref_path(pr_number)
+def delete_pref(key: str) -> bool:
+    path = _pref_path(key)
     if not path.exists():
         return False
     path.unlink()
     return True
 
 
-def list_prefs() -> dict[int, NudgePref]:
-    """Return all persisted prefs keyed by PR number. Skips garbage files."""
+def list_prefs() -> dict[str, NudgePref]:
+    """Return all persisted prefs keyed by file stem (`pref_key`, or a bare PR
+    number for a not-yet-migrated legacy file). Skips garbage files."""
     if not NUDGE_DIR.exists():
         return {}
-    out: dict[int, NudgePref] = {}
+    out: dict[str, NudgePref] = {}
     for p in sorted(NUDGE_DIR.glob("*.json")):
         try:
-            pr_number = int(p.stem)
-        except ValueError:
-            continue
-        try:
-            out[pr_number] = NudgePref.from_json(json.loads(p.read_text()))
+            out[p.stem] = NudgePref.from_json(json.loads(p.read_text()))
         except (OSError, json.JSONDecodeError):
             continue
     return out
 
 
-def should_nudge(pr_number: int, *, now: float | None = None) -> bool:
+def should_nudge(key: str, *, now: float | None = None) -> bool:
     """True iff nudging this PR is allowed right now.
 
     Blocks when the user has muted the PR (silences all nudges indefinitely) or
@@ -170,14 +197,14 @@ def should_nudge(pr_number: int, *, now: float | None = None) -> bool:
     display "last nudged X ago," but it does not gate future nudges.
     """
     t = time.time() if now is None else now
-    return not load_pref(pr_number, now=t).quiet
+    return not load_pref(key, now=t).quiet
 
 
-def record_nudge(pr_number: int, *, now: float | None = None) -> None:
+def record_nudge(key: str, *, now: float | None = None) -> None:
     t = time.time() if now is None else now
-    pref = load_pref(pr_number, now=t)
+    pref = load_pref(key, now=t)
     pref.last_nudge_at = t
-    save_pref(pr_number, pref)
+    save_pref(key, pref)
 
 
 _DURATION_RE = re.compile(r"^\s*(\d+)\s*([smhdw])\s*$")

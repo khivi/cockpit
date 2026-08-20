@@ -832,8 +832,8 @@ async def test_snooze_key_clears_a_mute_and_snapshots_the_wake_state(
         await pilot.press("z")
         await pilot.pause(0.6)
     assert len(saved) == 1
-    pr, pref = saved[0]
-    assert pr == 123
+    key, pref = saved[0]
+    assert key == f"{tmp_path.name}__123"  # per-repo, not a bare "123"
     assert pref.snoozed
     assert not pref.muted and pref.until is None
     assert pref.wake_on == "2|APPROVED"
@@ -2076,7 +2076,7 @@ async def test_snooze_reads_the_wake_payload_under_the_nwo_key(monkeypatch, tmp_
     repo = {"name": "Envesya", "path": str(repo_path)}
     wt = Worktree(path=repo_path / "fnox", branch="khivi/fnox")
     seen: list[str] = []
-    saved: dict[int, NudgePref] = {}
+    saved: dict[str, NudgePref] = {}
 
     def fake_find(branch, repo_name=None):
         seen.append(repo_name)
@@ -2095,7 +2095,9 @@ async def test_snooze_reads_the_wake_payload_under_the_nwo_key(monkeypatch, tmp_
     monkeypatch.setattr(app, "_notify", lambda *a, **k: None)
     monkeypatch.setattr(app, "call_from_thread", lambda fn, *a, **k: None)
 
-    CockpitApp._toggle_snooze.__wrapped__(app, str(wt.path))
+    # `@work` wraps the method; call the undecorated body so the assertions run
+    # synchronously instead of racing a worker thread.
+    CockpitApp._toggle_snooze.__wrapped__(app, str(wt.path))  # type: ignore[attr-defined]
 
     assert seen == ["beta"]  # nwo, not the "Envesya" label
     assert saved["beta__269"].snoozed
