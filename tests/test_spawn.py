@@ -1434,20 +1434,30 @@ def test_pr_spawn_still_seeds_plan_prompt(spawn_main, monkeypatch):
     assert "#99" in cmd
 
 
-# ── --context-text injection ──────────────────────────────────────────────
+# ── --context injection ───────────────────────────────────────────────────
 
 
-def test_context_text_injected_into_seeded_prompt(spawn_main, monkeypatch):
-    """`--context-text` is folded into the seeded prompt under a labeled
+def test_context_injected_into_seeded_prompt(spawn_main, monkeypatch):
+    """`--context <text>` is folded into the seeded prompt under a labeled
     heading, without clobbering the plan-only guard."""
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
-    spawn_main(["ctx-feat", "--repo", "testrepo", "--context-text", "goal: fix X"])
+    spawn_main(["ctx-feat", "--repo", "testrepo", "--context", "goal: fix X"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "Caller session context" in cmd
     assert "goal: fix X" in cmd
     assert "PLAN ONLY" in cmd  # seeded prompt preserved
+
+
+def test_bare_context_errors(spawn_main):
+    """Bare `--context` means 'summarize this session' — a job only the calling
+    agent can do. Reaching the CLI unexpanded must fail loudly, not spawn a
+    workspace that silently inherits nothing."""
+    code, _out, err = spawn_main(["ctx-feat", "--repo", "testrepo", "--context"])
+    assert code == 2
+    assert "--context with no text" in err
+    assert not spawn_main.cmux_calls
 
 
 # ── attach-path prompt delivery (cmux send) ───────────────────────────────
@@ -1502,7 +1512,7 @@ def test_blank_attach_delivers_nothing(spawn_main, monkeypatch):
 
 
 def test_attach_delivers_addendum_and_context(spawn_main, monkeypatch):
-    """On attach, the `-- <text>` addendum and `--context-text` both ride into
+    """On attach, the `-- <text>` addendum and `--context` both ride into
     the running session via cmux send, same as a fresh spawn's --command."""
     import cockpit.spawn as spawn
 
@@ -1513,7 +1523,7 @@ def test_attach_delivers_addendum_and_context(spawn_main, monkeypatch):
             "ctx-attach",
             "--repo",
             "testrepo",
-            "--context-text",
+            "--context",
             "prior: Y",
             "--",
             "next Z",
