@@ -1084,3 +1084,54 @@ def test_write_branch_pr_cache_default_base_empty(cache_dir):
         title="",
     )
     assert (cache_dir / "pr-base-khivi-solo").read_text() == ""
+
+
+# ── snoozed (pr-snoozed flat cell + JSON field) ──────────────────────────────
+
+
+def test_snoozed_payload_helper_serializes_pref():
+    assert cache_mod.snoozed_payload(None) == ""
+    assert cache_mod.snoozed_payload(NudgePref()) == ""
+    assert cache_mod.snoozed_payload(NudgePref(snoozed=True)) == "snoozed"
+    # Mute and snooze are separate cells — a mute must not populate this one.
+    assert cache_mod.snoozed_payload(NudgePref(muted=True)) == ""
+
+
+def test_write_branch_pr_cache_writes_and_clears_snoozed_cell(cache_dir):
+    def write(**kw):
+        cache_mod.write_branch_pr_cache(
+            "khivi/nap",
+            state="OPEN",
+            is_draft=False,
+            review_decision="",
+            number=1,
+            title="t",
+            **kw,
+        )
+
+    write(snoozed="snoozed")
+    assert (cache_dir / "pr-snoozed-khivi-nap").read_text() == "snoozed"
+    # The daemon's auto-wake clears it on the next tick with no separate path.
+    write()
+    assert (cache_dir / "pr-snoozed-khivi-nap").read_text() == ""
+
+
+def test_refresh_pr_data_copies_snoozed_from_json(cache_dir):
+    payload = {
+        "state": "OPEN",
+        "isDraft": False,
+        "review": "",
+        "number": 7,
+        "title": "x",
+        "snoozed": "snoozed",
+    }
+    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
+        cache_mod.refresh_pr_data("khivi/feat")
+    assert (cache_dir / "pr-snoozed-khivi-feat").read_text() == "snoozed"
+
+
+def test_refresh_pr_data_clears_snoozed_on_no_pr(cache_dir):
+    (cache_dir / "pr-snoozed-khivi-gone").write_text("snoozed")
+    with patch.object(cache_mod, "find_pr_payload", return_value=None):
+        cache_mod.refresh_pr_data("khivi/gone")
+    assert (cache_dir / "pr-snoozed-khivi-gone").read_text() == ""

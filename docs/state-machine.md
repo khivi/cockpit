@@ -248,9 +248,10 @@ Key gates (all from `cycle.py`):
     sidebar folds (`_reconcile_sidebar_groups` — stacks derived from `PR.base`
     via `stacks.find_stacks`, reconciled against cmux's live
     `workspace-group list`, never stored; it also collects the repo's
-    `not PR.mine` workspaces into the `ReviewFolds` accumulator that the
-    repo-spanning `_reconcile_review_groups` drains at the end of `cycle_all`
-    into one trailing `<org> reviews (N)` fold per org),
+    `not PR.mine` workspaces and its snoozed ones (`NudgePref.snoozed`) into the
+    `ReviewFolds` accumulator that the repo-spanning `_reconcile_review_groups`
+    drains at the end of `cycle_all` into two trailing folds per org —
+    `<org> reviews (N)` above `<org> snoozed (N)`),
     `_dedupe_workspaces` (scoped to workspaces whose cwd resolves under this
     repo's worktrees — a foreign repo's same-named workspace is never grouped or
     closed; sorts by the PID in cmux `workspace:<pid>` refs — limux refs are
@@ -274,8 +275,8 @@ type into the confirmation. Do not "simplify" the gate to trust it.
 
 ```mermaid
 flowchart TD
-  IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pr_number)"] --> G1{"PR-attached &<br/>PR muted?"}
-  G1 -->|yes| F1["return False<br/>(user mute, survives restart)"]
+  IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pr_number)"] --> G1{"PR-attached &<br/>PR quiet?<br/>(muted OR snoozed)"}
+  G1 -->|yes| F1["return False<br/>(user mute/snooze,<br/>survives restart)"]
   G1 -->|"no / orphan nudge"| G2{"native ==<br/>Running?"}
 
   G2 -->|yes| F2["return False<br/>(mid-turn; also catches a<br/>stale idle= on a live session)"]
@@ -295,9 +296,13 @@ flowchart TD
 There is **no time-based throttle**; the slow-tick cadence is the implicit rate
 limit. Each tick re-evaluates and re-fires if the underlying issue persists.
 
-Truth table (native × `idle=` × `parked=` × muted → result):
+Truth table (native × `idle=` × `parked=` × quiet → result), where **quiet** is
+`NudgePref.muted or .snoozed` — the two user-set silences. They differ only in
+how they end: a mute is indefinite (cleared by `m` / `cockpit nudge unmute`), a
+snooze auto-clears the moment the PR's review activity changes
+(`cycle._resolve_prefs` vs. `nudges.wake_signature`). Both look identical here.
 
-| native | `idle=` | `parked=` | muted | result |
+| native | `idle=` | `parked=` | quiet | result |
 |---|---|---|---|---|
 | `Running` | any | any | any | **no** (guard 2) |
 | `Idle` | T | F | F | **NUDGE** |

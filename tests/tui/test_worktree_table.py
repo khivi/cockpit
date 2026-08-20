@@ -37,6 +37,7 @@ from cockpit.tui.widgets.worktree_table import (
     HEADER_KEY_PREFIX,
     ICON_PR_MUTED,
     ICON_PR_NUDGE,
+    ICON_PR_SNOOZED,
     ROW_INDENT,
     WorktreeTable,
     _comments_cell,
@@ -851,3 +852,39 @@ async def test_update_inventory_renders_a_stack_tip_first(cache_dir):
         # Row 0 is the repo group header.
         assert table.get_row_at(1)[0].plain == _ws("khivi-child")
         assert table.get_row_at(2)[0].plain == _ws("khivi-root", depth=1)
+
+
+def test_snoozed_pr_prefixes_sleep_glyph(cache_dir):
+    wt = _wt(branch="khivi/dozing", branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
+    assert cell.plain == _ws(f"{ICON_PR_SNOOZED} dozing")
+
+
+def test_snooze_wins_over_nudge_glyph(cache_dir):
+    """A snooze silences the nudge, so 💤 replaces 🔔 — the row can't advertise a
+    bell it won't ring."""
+    wt = _wt(branch="khivi/resting", branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
+    cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
+    assert cell.plain == _ws(f"{ICON_PR_SNOOZED} resting")
+
+
+def test_mute_wins_over_snooze_glyph(cache_dir):
+    wt = _wt(branch="khivi/both", branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
+    cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
+    assert cell.plain == _ws(f"{ICON_PR_MUTED} both")
+
+
+def test_row_capabilities_snoozed(cache_dir, monkeypatch):
+    wt = _wt(branch="khivi/napping")
+    cache_mod.branch_cache("pr-num", wt.branch).write_text("9")
+    cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: None,
+    )
+    assert row_capabilities(wt, "r", "none") == frozenset({"pr", "snoozed"})

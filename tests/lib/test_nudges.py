@@ -207,3 +207,54 @@ def test_cli_mute_rejects_bad_duration(nudge_cli, capsys):
     rc = nudge_cli.main(["mute", "100", "--until", "forever"])
     assert rc == 2
     assert "invalid duration" in capsys.readouterr().err
+
+
+# ── snooze: silences like a mute, but expires on review activity ─────────────
+
+
+def test_snooze_round_trips_through_json(nudges):
+    nudges.save_pref(80, nudges.NudgePref(snoozed=True, wake_on="2|APPROVED"))
+    pref = nudges.load_pref(80)
+    assert pref.snoozed is True
+    assert pref.wake_on == "2|APPROVED"
+
+
+def test_pref_without_snooze_keys_loads_as_awake(nudges):
+    # A pref file written before snooze existed must still load.
+    nudges.NUDGE_DIR.mkdir(parents=True, exist_ok=True)
+    (nudges.NUDGE_DIR / "81.json").write_text('{"muted": true}')
+    pref = nudges.load_pref(81)
+    assert pref.muted is True
+    assert pref.snoozed is False
+    assert pref.wake_on == ""
+
+
+def test_snooze_blocks_nudging(nudges):
+    nudges.save_pref(82, nudges.NudgePref(snoozed=True, wake_on="0|"))
+    assert nudges.should_nudge(82) is False
+
+
+def test_quiet_covers_both_mute_and_snooze(nudges):
+    assert nudges.NudgePref().quiet is False
+    assert nudges.NudgePref(muted=True).quiet is True
+    assert nudges.NudgePref(snoozed=True).quiet is True
+
+
+def test_wake_signature_changes_with_comments_or_decision(nudges):
+    base = nudges.wake_signature(0, "")
+    assert nudges.wake_signature(0, "") == base
+    assert nudges.wake_signature(1, "") != base
+    assert nudges.wake_signature(0, "APPROVED") != base
+
+
+def test_snooze_does_not_expire_on_the_clock(nudges):
+    # `until` is the mute's expiry; a snooze waits on an event, so a far-past
+    # `until` must not silently wake it (only the daemon's signature check does).
+    nudges.save_pref(83, nudges.NudgePref(snoozed=True, wake_on="0|", until=1.0))
+    assert nudges.load_pref(83).snoozed is True
+
+
+def test_cli_status_reports_a_snooze(nudges, nudge_cli, capsys):
+    nudges.save_pref(84, nudges.NudgePref(snoozed=True, wake_on="0|"))
+    assert nudge_cli.main(["status", "84"]) == 0
+    assert "snoozed until a new comment or review" in capsys.readouterr().out

@@ -17,10 +17,11 @@ from unittest.mock import ANY, patch
 import pytest
 
 import cockpit.orchestrators.cycle as cycle
-from cockpit.lib.cmux import REVIEW_GROUP_ICON, STACK_GROUP_ICON
+from cockpit.lib.cmux import REVIEW_GROUP_ICON, SNOOZE_GROUP_ICON, STACK_GROUP_ICON
 from cockpit.lib.gh import PR
 from cockpit.lib.git import Worktree
 from cockpit.lib.hidden import toggle_hidden
+from cockpit.lib.nudges import NudgePref
 from cockpit.orchestrators import teardown as teardown_mod
 
 
@@ -4158,17 +4159,19 @@ def _stack_ctx(
     dry=False,
     extra_prs=(),
     coworkers=(),
+    snoozed=(),
     repo_entry=None,
     repo_dir="repo",
 ):
     """RepoCycle with one tracked workspace per (ref, branch, base) in `chain`.
 
     Refs listed in `coworkers` get a `mine=False` PR — someone else's, i.e. a
-    review workspace. `repo_dir` scopes the worktrees under a distinct root so
-    two ctxs can stand in for two repos of the same org.
+    review workspace. Refs listed in `snoozed` get a snoozed `NudgePref`.
+    `repo_dir` scopes the worktrees under a distinct root so two ctxs can stand
+    in for two repos of the same org.
     """
     repo = tmp_path / repo_dir
-    wts, prs, tracked, cwds = [], [], {}, {}
+    wts, prs, tracked, cwds, prefs = [], [], {}, {}, {}
     for i, (ref, branch, base) in enumerate(chain, start=1):
         wt = Worktree(path=repo / f"wt-{i}", branch=branch)
         pr = _stack_pr(i, branch, base, mine=ref not in coworkers)
@@ -4176,10 +4179,13 @@ def _stack_ctx(
         prs.append(pr)
         tracked[ref] = (pr, wt)
         cwds[ref] = wt.path
+        if ref in snoozed:
+            prefs[pr.number] = NudgePref(snoozed=True, wake_on="0|")
     ctx = _color_ctx(tmp_path, repo_path=repo, wts=wts, cwds=cwds, dry=dry)
     ctx.prs = [*prs, *extra_prs]
     ctx.tracked = tracked
     ctx.repo_entry = repo_entry or {"name": "n"}
+    ctx.prefs = prefs
     return ctx
 
 
@@ -4734,6 +4740,209 @@ def test_reconcile_review_groups_reparks_an_existing_fold(tmp_path):
     create.assert_not_called()
     ungroup.assert_not_called()
     move.assert_called_once_with("wg:1")
+
+
+# ── snoozed fold + event-expiring snooze ─────────────────────────────────────
+
+
+def test_reconcile_sidebar_groups_collects_snoozed_into_its_own_bucket(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [
+            ("workspace:1", "khivi/a", "main"),
+            ("workspace:2", "khivi/b", "main"),
+            ("workspace:3", "khivi/c", "main"),
+        ],
+        snoozed=("workspace:2", "workspace:3"),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2", "workspace:3"}))
+    assert folds.snoozed == {"Cockpit": ["workspace:2", "workspace:3"]}
+    # My own un-snoozed PR is in neither pile.
+    assert folds.buckets == {"Cockpit": []}
+
+
+def test_snoozed_coworker_leaves_the_reviews_bucket(tmp_path):
+    # A coworker PR I've already read belongs in the waiting pile, not the
+    # to-read queue — a workspace can live in exactly one group.
+    ctx = _stack_ctx(
+        tmp_path,
+        [
+            ("workspace:1", "them/a", "main"),
+            ("workspace:2", "them/b", "main"),
+            ("workspace:3", "them/c", "main"),
+        ],
+        coworkers=("workspace:1", "workspace:2", "workspace:3"),
+        snoozed=("workspace:2", "workspace:3"),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2", "workspace:3"}))
+    assert folds.snoozed == {"Cockpit": ["workspace:2", "workspace:3"]}
+    assert folds.buckets == {"Cockpit": ["workspace:1"]}
+
+
+def test_a_stacked_snoozed_pr_stays_in_its_stack(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
+        snoozed=("workspace:1", "workspace:2"),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+    assert folds.snoozed == {"Cockpit": []}
+
+
+def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
+    # Each `--to-index 9999` move lands its target below everything moved
+    # before it, so reviews must be walked first for snoozed to end up lowest.
+    ctx = _stack_ctx(
+        tmp_path,
+        [
+            ("workspace:1", "them/a", "main"),
+            ("workspace:2", "them/b", "main"),
+            ("workspace:3", "khivi/c", "main"),
+            ("workspace:4", "khivi/d", "main"),
+        ],
+        coworkers=("workspace:1", "workspace:2"),
+        snoozed=("workspace:3", "workspace:4"),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {f"workspace:{i}" for i in range(1, 5)}))
+    made = iter(
+        [
+            _group("wg:reviews", "Cockpit reviews (2)", "workspace:9", []),
+            _group("wg:snoozed", "Cockpit snoozed (2)", "workspace:8", []),
+        ]
+    )
+    moved: list[str] = []
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(
+            cycle, "create_workspace_group", side_effect=lambda *a, **k: next(made)
+        ) as create,
+        patch.object(cycle, "move_workspace_group_to_end", side_effect=moved.append),
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    assert [c.args[0] for c in create.call_args_list] == [
+        "Cockpit reviews (2)",
+        "Cockpit snoozed (2)",
+    ]
+    assert [c.kwargs["icon"] for c in create.call_args_list] == [
+        REVIEW_GROUP_ICON,
+        SNOOZE_GROUP_ICON,
+    ]
+    assert moved == ["wg:reviews", "wg:snoozed"]
+
+
+def test_reconcile_review_groups_folds_a_lone_snooze(tmp_path):
+    # Like a lone review: the dedicated anchor makes a one-member fold real.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "main")],
+        snoozed=("workspace:2",),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(
+            cycle,
+            "create_workspace_group",
+            return_value=_group("wg:1", "Cockpit snoozed (1)", "workspace:9", []),
+        ) as create,
+        patch.object(cycle, "move_workspace_group_to_end") as move,
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    create.assert_called_once_with(
+        "Cockpit snoozed (1)", ["workspace:2"], icon=SNOOZE_GROUP_ICON
+    )
+    move.assert_called_once_with("wg:1")
+
+
+def test_per_repo_pass_leaves_a_snoozed_fold_alone(tmp_path):
+    # The stack pass owns stacks only. A snooze-iconed group matches no stack,
+    # so leaving it in `all_groups` would dissolve the fold every cycle.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "main")],
+        snoozed=("workspace:1", "workspace:2"),
+    )
+    existing = _group(
+        "wg:1",
+        "n snoozed (2)",
+        "workspace:9",
+        ["workspace:1", "workspace:2"],
+        icon=SNOOZE_GROUP_ICON,
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "create_workspace_group") as create,
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+    ):
+        cycle._reconcile_sidebar_groups(
+            ctx, {"workspace:1", "workspace:2"}, cycle.ReviewFolds()
+        )
+
+    create.assert_not_called()
+    ungroup.assert_not_called()
+
+
+def _snooze_pr(**kw) -> PR:
+    return _stack_pr(7, "khivi/a", "main", **kw)
+
+
+def test_resolve_prefs_keeps_a_snooze_with_unchanged_activity(tmp_path):
+    pr = _snooze_pr()
+    pref = NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, ""))
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs([pr])
+    assert prefs[7].snoozed is True
+    save.assert_not_called()
+
+
+def test_resolve_prefs_wakes_a_snooze_on_a_new_comment(tmp_path):
+    pr = _snooze_pr()
+    pr.total_from_others = 3
+    pref = NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, ""))
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs([pr])
+    assert prefs[7].snoozed is False
+    assert prefs[7].wake_on == ""
+    save.assert_called_once()
+
+
+def test_resolve_prefs_wakes_a_snooze_on_approval(tmp_path):
+    pr = _snooze_pr()
+    pr.review_decision = "APPROVED"
+    pref = NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, ""))
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref"),
+    ):
+        prefs = cycle._resolve_prefs([pr])
+    assert prefs[7].snoozed is False
+
+
+def test_resolve_prefs_leaves_a_mute_alone(tmp_path):
+    # A mute is indefinite — review activity must not clear it.
+    pr = _snooze_pr()
+    pr.total_from_others = 9
+    pref = NudgePref(muted=True)
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs([pr])
+    assert prefs[7].muted is True
+    save.assert_not_called()
 
 
 # ── per-org ticket credentials: cache isolation + spawn env hygiene ──────────

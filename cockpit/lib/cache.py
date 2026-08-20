@@ -50,6 +50,17 @@ def muted_payload(pref: NudgePref | None) -> str:
     return "muted" if (pref is not None and pref.muted) else ""
 
 
+def snoozed_payload(pref: NudgePref | None) -> str:
+    """Serialize a NudgePref into the `pr-snoozed` flat-cell contract.
+
+    Returns "snoozed" when the PR is snoozed, else "". Deliberately its own
+    cell rather than a third value in `pr-muted`: mute and snooze are different
+    user states (see `nudges`), the statusline's `pr-muted` field means mute,
+    and a cell whose name lies is the drift this codebase keeps paying to avoid.
+    """
+    return "snoozed" if (pref is not None and pref.snoozed) else ""
+
+
 # ── JSON per-PR cache (cockpit's primary state) ────────────────────────────
 
 
@@ -83,9 +94,10 @@ def write_pr_cache(
     worktree-dependent pill decisions (rebase/merge/wip) into the cached
     `pills` array so both cmux and footer read the same source of truth.
 
-    `pref` is the daemon-resolved nudge mute state. Baked in as `muted` so
-    `refresh_pr_data` (the `warm` prewarm) can republish the same snapshot
-    into the `pr-muted` flat cell without re-reading `nudges`.
+    `pref` is the daemon-resolved nudge mute/snooze state. Baked in as `muted`
+    and `snoozed` so `refresh_pr_data` (the `warm` prewarm) can republish the
+    same snapshot into the `pr-muted` / `pr-snoozed` flat cells without
+    re-reading `nudges`.
 
     `ticket` is the resolved delivery block — `{"tickets": [{"id", "state",
     "title"}], "fetched_at": ts}` — for the tickets this PR delivers (from its
@@ -132,6 +144,7 @@ def write_pr_cache(
         "total": pr.total_from_others,
         "mergeable": pr.mergeable,
         "muted": muted_payload(pref),
+        "snoozed": snoozed_payload(pref),
         "pills": decide_pills(pr, wt, pref),
         "headRefOid": pr.head_oid,
         "reusedBranch": reused_branch,
@@ -392,8 +405,9 @@ def _write_pr_flat_cells(
     nudge: str = "",
     ticket_id: str = "",
     base: str = "",
+    snoozed: str = "",
 ) -> None:
-    """Write the ten branch-keyed PR flat cells that every PR writer shares.
+    """Write the eleven branch-keyed PR flat cells that every PR writer shares.
 
     `state` is already resolved (see `_resolve_state`). The `pr-checks` cell is
     deliberately NOT written here — its three writers disagree on purpose
@@ -426,6 +440,11 @@ def _write_pr_flat_cells(
     equals this cell, the same `PR.base` link `lib.stacks.find_stacks` follows
     — derived, never stored as a stack id. Always written so a retarget (or a
     merged parent) re-flattens the row on the next republish.
+
+    `snoozed` follows the `pr-snoozed` flat-cell contract: "" (awake) or
+    "snoozed". Always written so the daemon's auto-wake (a new comment or a
+    review decision — see `nudges.wake_signature`) clears the 💤 same-tick,
+    with no separate clearing path.
     """
     atomic_write(branch_cache("pr-state", branch), state)
     atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
@@ -437,6 +456,7 @@ def _write_pr_flat_cells(
     atomic_write(branch_cache("pr-nudge", branch), str(nudge or ""))
     atomic_write(branch_cache("pr-ticket", branch), str(ticket_id or ""))
     atomic_write(branch_cache("pr-base", branch), str(base or ""))
+    atomic_write(branch_cache("pr-snoozed", branch), str(snoozed or ""))
 
 
 def refresh_pr_data(branch: str) -> None:
@@ -469,6 +489,7 @@ def refresh_pr_data(branch: str) -> None:
             nudge="",
             ticket_id="",
             base="",
+            snoozed="",
         )
         return
     _write_pr_flat_cells(
@@ -487,6 +508,7 @@ def refresh_pr_data(branch: str) -> None:
         nudge=str(data.get("nudge") or ""),
         ticket_id=ticket_pill_id(data.get("ticket")),
         base=str(data.get("base") or ""),
+        snoozed=str(data.get("snoozed") or ""),
     )
 
 
@@ -600,6 +622,7 @@ def write_branch_pr_cache(
     nudge: str = "",
     ticket_id: str = "",
     base: str = "",
+    snoozed: str = "",
 ) -> None:
     """Daemon-tick entrypoint: write pre-resolved PR fields straight to the
     flat cache, no `gh` round-trip needed. Caller (cockpit.py::cycle_repo)
@@ -609,7 +632,8 @@ def write_branch_pr_cache(
     will repopulate `pr-checks-<branch>` from `gh pr checks` when stale.
 
     `muted` follows the `pr-muted` flat-cell contract: "" (not muted) or
-    "muted". Always written so an unmute clears the cell same-tick.
+    "muted". Always written so an unmute clears the cell same-tick. `snoozed`
+    is its sibling ("" or "snoozed") — see `snoozed_payload`.
 
     `comments` is the unaddressed review-thread count from the PR fetch;
     `total` is the total threads opened by others (`pr.total_from_others`).
@@ -637,6 +661,7 @@ def write_branch_pr_cache(
         nudge=nudge,
         ticket_id=ticket_id,
         base=base,
+        snoozed=snoozed,
     )
     if ci_glyph:
         atomic_write(branch_cache("pr-checks", branch), ci_glyph)
@@ -653,6 +678,7 @@ _BRANCH_PR_CELLS = (
     "pr-nudge",
     "pr-ticket",
     "pr-base",
+    "pr-snoozed",
     "pr-checks",
 )
 
@@ -726,6 +752,7 @@ def republish_pr_caches_from_disk() -> None:
             nudge=str(payload.get("nudge") or ""),
             ticket_id=ticket_pill_id(payload.get("ticket")),
             base=str(payload.get("base") or ""),
+            snoozed=str(payload.get("snoozed") or ""),
         )
         atomic_write(
             branch_cache("pr-checks", branch), _ci_glyph(str(payload.get("ci") or ""))

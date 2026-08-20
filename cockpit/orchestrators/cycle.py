@@ -28,6 +28,7 @@ from cockpit.lib.cache import (
     load_pr_payloads_by_branch,
     muted_payload,
     prune_superseded_pr_caches,
+    snoozed_payload,
     ticket_display,
     ticket_pill_id,
     write_base_ahead,
@@ -41,6 +42,7 @@ from cockpit.lib.cmux import (
     ORPHAN_ICON,
     ORPHAN_KEY,
     REVIEW_GROUP_ICON,
+    SNOOZE_GROUP_ICON,
     STACK_GROUP_ICON,
     CmuxUnavailable,
     WorkspaceGroup,
@@ -155,7 +157,7 @@ from cockpit.lib.linear import (
     update_ticket_state,
 )
 from cockpit.lib.log_format import verb
-from cockpit.lib.nudges import NudgePref
+from cockpit.lib.nudges import NudgePref, save_pref, wake_signature
 from cockpit.lib.nudges import load_pref as _load_nudge_pref
 from cockpit.lib.pills import ci_glyph
 from cockpit.lib.prompts import claude_command, shell_quote, split_prompt_prefix
@@ -1378,6 +1380,36 @@ def _repo_name_color(repo_entry: dict) -> Colorizer:
     return CMUX_COLOR_ANSI.get(repo_entry.get("sidebar_color") or "", bold)
 
 
+def _resolve_prefs(prs: list[PR]) -> dict[int, NudgePref]:
+    """Load every PR's nudge pref for this cycle, waking any expired snooze.
+
+    A snooze (TUI `z`) says "I've read this — come back when it's my turn
+    again", so unlike a mute it expires on an *event*, not a clock: the pref
+    records `wake_signature(total_from_others, review_decision)` at snooze time
+    and this clears it the moment either changes. Both inputs ride the PR fetch
+    the cycle already made, so waking costs no extra round-trip.
+
+    It happens here, at the one point mute/snooze state is read per cycle, so
+    every downstream consumer (`write_pr_cache`, `write_branch_pr_cache`, the
+    pills, the nudge gate, the sidebar fold) sees the woken pref in the same
+    tick — a woken PR un-sinks, regains its 🔔, and nudges again together.
+    """
+    prefs: dict[int, NudgePref] = {}
+    for pr in prs:
+        pref = _load_nudge_pref(pr.number)
+        if pref.snoozed and pref.wake_on != wake_signature(
+            pr.total_from_others, pr.review_decision
+        ):
+            pref.snoozed = False
+            pref.wake_on = ""
+            save_pref(pr.number, pref)
+            print(
+                f"  {verb('woke')} #{pr.number} {dim('(review activity)')}", flush=True
+            )
+        prefs[pr.number] = pref
+    return prefs
+
+
 def _prepare_cycle(
     repo_entry: dict,
     self_user: str,
@@ -1491,7 +1523,7 @@ def _prepare_cycle(
     # Resolve nudge prefs once per cycle — the single point of mute-state I/O.
     # Everything downstream (write_pr_cache, write_branch_pr_cache, apply_pills,
     # status_pills) reads from this dict. See AGENTS.md "PR cache writers".
-    prefs = {pr.number: _load_nudge_pref(pr.number) for pr in prs}
+    prefs = _resolve_prefs(prs)
     mine = sum(1 for pr in prs if pr.author == self_user)
     coworker_relevant = len(prs) - mine
     feature_wts = [w for w in wts if w.branch not in MAIN_BRANCHES]
@@ -1593,6 +1625,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             title=pr.title,
             ci_glyph=ci_glyph(pr.ci),
             muted=muted_payload(pref),
+            snoozed=snoozed_payload(pref),
             comments=pr.unaddressed,
             total=pr.total_from_others,
             author=other_author,
@@ -2227,14 +2260,27 @@ def _review_group_name(key: str, size: int) -> str:
     return f"{key} reviews ({size})"
 
 
+def _snoozed_group_name(key: str, size: int) -> str:
+    """Sidebar header for a snoozed fold — PRs read and handed back (TUI `z`),
+    waiting on someone else's comment or review. Bucketed and counted exactly
+    like the reviews pile, for the same reason: several coexist.
+    """
+    return f"{key} snoozed ({size})"
+
+
 @dataclass
 class ReviewFolds:
-    """Cross-repo accumulator for the coworker-review folds.
+    """Cross-repo accumulator for the two trailing sidebar folds.
 
-    The reviews pile is keyed by org (`_review_bucket_key`), so it can't be
+    Both piles are keyed by org (`_review_bucket_key`), so neither can be
     reconciled inside the per-repo pass the way stacks are — a repo's own
     reviews are only part of its org's pile. `_reconcile_sidebar_groups` fills
     this as it walks each repo; `cycle_all` drains it once, after every repo.
+
+    `reviews` is the coworker PRs I haven't read; `snoozed` is everything I have
+    read and handed back (`NudgePref.snoozed`), mine or not. They are separate
+    buckets rather than one, because they answer different questions — one is a
+    queue to work through, the other a pile to ignore until someone replies.
 
     `owned` is the union of every repo's live workspace refs — the same
     spare-hand-added-workspaces guard the per-repo pass applies, which needs to
@@ -2243,6 +2289,7 @@ class ReviewFolds:
     """
 
     buckets: dict[str, list[str]] = field(default_factory=dict)
+    snoozed: dict[str, list[str]] = field(default_factory=dict)
     owned: set[str] = field(default_factory=set)
 
 
@@ -2250,7 +2297,8 @@ def _reconcile_sidebar_groups(
     ctx: RepoCycle, keep_refs: set[str], folds: ReviewFolds | None = None
 ) -> None:
     """Fold this repo's workspaces into one cmux sidebar group per stacked-PR
-    chain, and collect its coworker PRs into `folds` for the reviews pile.
+    chain, and collect its coworker and snoozed PRs into `folds` for the two
+    trailing piles.
 
     Stacks are derived, not stored (`lib.stacks.find_stacks` off `PR.base`), so
     this reconciles against cmux's live groups every slow tick rather than
@@ -2258,19 +2306,22 @@ def _reconcile_sidebar_groups(
     a group whose members left the stack (root merged, worktree torn down) is
     dissolved back into loose rows.
 
-    Stacks win the overlap: a coworker PR that is part of a stack folds with its
-    chain, not into `reviews` — a workspace can live in exactly one group. So
-    the reviews contribution is computed here, where `stacked` is known, but
-    *folded* by `_reconcile_review_groups` at the end of the cycle, since that
-    pile is keyed by org and spans repos.
+    Precedence on overlap, since a workspace can live in exactly one group:
+    stacks, then snoozed, then reviews. A coworker PR inside a stack folds with
+    its chain; a coworker PR I've already read sinks with `snoozed` rather than
+    sitting in the to-read queue. Both trailing contributions are computed here,
+    where `stacked` is known, but *folded* by `_reconcile_review_groups` at the
+    end of the cycle, since those piles are keyed by org and span repos.
 
     Only groups overlapping *this* repo's workspaces are touched — a group the
     user made by hand around unrelated workspaces is never claimed or dissolved.
     The one exception is a stack-iconed group left holding nothing but its own
     anchor: it overlaps no repo, so nobody would ever reclaim it, and it would
     strand as a duplicate sidebar header every time a stack's workspaces are
-    closed and respawned. Review-iconed groups are left alone entirely — they
-    belong to the cross-repo pass, which sweeps its own strays. cmux-only and
+    closed and respawned. Review- and snooze-iconed groups are left alone
+    entirely — they belong to the cross-repo pass, which sweeps its own strays
+    (miss that filter and this pass dissolves a trailing fold every cycle, since
+    it matches no `desired` stack). cmux-only and
     best-effort throughout (every verb is `check=False`); a missing backend just
     means no groups.
     """
@@ -2301,15 +2352,34 @@ def _reconcile_sidebar_groups(
 
     if folds is not None:
         folds.owned |= owned
-        folds.buckets.setdefault(_review_bucket_key(ctx.repo_entry), []).extend(
-            ref
-            for ref, (pr, _wt) in sorted(
-                ctx.tracked.items(), key=lambda kv: kv[1][0].number
-            )
-            if ref in owned and not pr.mine and ref not in stacked
+
+        def _pile(pick: Callable[[PR], bool], taken: set[str]) -> list[str]:
+            return [
+                ref
+                for ref, (pr, _wt) in sorted(
+                    ctx.tracked.items(), key=lambda kv: kv[1][0].number
+                )
+                if ref in owned and ref not in taken and pick(pr)
+            ]
+
+        # Snoozed is resolved before reviews so a coworker PR I've already read
+        # sinks with the snoozed pile rather than staying in the to-read queue —
+        # a workspace can live in exactly one group.
+        snoozed = _pile(
+            lambda pr: bool((ctx.prefs.get(pr.number) or NudgePref()).snoozed),
+            stacked,
+        )
+        bucket = _review_bucket_key(ctx.repo_entry)
+        folds.snoozed.setdefault(bucket, []).extend(snoozed)
+        folds.buckets.setdefault(bucket, []).extend(
+            _pile(lambda pr: not pr.mine, stacked | set(snoozed))
         )
 
-    all_groups = [g for g in list_workspace_groups() if g.icon != REVIEW_GROUP_ICON]
+    all_groups = [
+        g
+        for g in list_workspace_groups()
+        if g.icon not in (REVIEW_GROUP_ICON, SNOOZE_GROUP_ICON)
+    ]
     mine = [g for g in all_groups if owned & set(g.members)]
     # A group headed by one of *this repo's* workspaces is swallowing that
     # member's row (see `create_workspace_group`) — a group cockpit built before
@@ -2360,67 +2430,85 @@ def _reconcile_sidebar_groups(
             print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
 
 
+# The two trailing piles, in sidebar order. Each `--to-index 9999` move lands
+# its target below everything moved before it, so processing reviews first
+# leaves snoozed bottom-most — the most passive pile sits lowest.
+_TRAILING_FOLDS: tuple[tuple[str, str, Callable[[str, int], str]], ...] = (
+    ("buckets", REVIEW_GROUP_ICON, _review_group_name),
+    ("snoozed", SNOOZE_GROUP_ICON, _snoozed_group_name),
+)
+
+
 def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
-    """Fold each org's coworker PRs into one trailing `<org> reviews (N)` group.
+    """Fold each org's coworker PRs into one trailing `<org> reviews (N)` group,
+    and its snoozed PRs into an `<org> snoozed (N)` group below it.
 
     The cross-repo half of `_reconcile_sidebar_groups`, run once at the end of
-    `cycle_all` because the pile is keyed by org: a repo alone can't tell
+    `cycle_all` because both piles are keyed by org: a repo alone can't tell
     whether its lone review has siblings in the org's other repos. Derived from
-    `PR.mine` every cycle, reconciled against cmux's live `workspace-group list`
-    — never stored.
+    `PR.mine` and `NudgePref.snoozed` every cycle, reconciled against cmux's live
+    `workspace-group list` — never stored.
 
-    Every review-iconed group is cockpit's (nothing else sets the icon), so this
-    pass owns the whole set: one that matches no bucket is dissolved, which also
-    reaps a stranded anchor-only header for free. Each surviving fold is
-    re-parked at the bottom of the sidebar — reviews are the passive pile, out
-    of the way of my own rows.
+    Every review- or snooze-iconed group is cockpit's (nothing else sets those
+    icons), so this pass owns the whole set: one that matches no bucket is
+    dissolved, which also reaps a stranded anchor-only header for free. Each
+    surviving fold is re-parked at the bottom of the sidebar — both are passive
+    piles, out of the way of my own rows.
+
+    The two families are matched separately (`_match_stack_group` keys on member
+    overlap, which is icon-blind), so a fold can never be claimed by the wrong
+    pile as a PR moves between them.
 
     **A single review folds too.** Unlike a stack (one PR is not a chain), a
     one-member reviews group is the point: it is the queue, and the queue reads
     the same at one item as at five. The dedicated anchor makes it possible —
-    cmux only drops a group whose *anchor* is its last workspace.
+    cmux only drops a group whose *anchor* is its last workspace. Same for a
+    lone snooze.
     """
     if dry:
         return
-    groups = [g for g in list_workspace_groups() if g.icon == REVIEW_GROUP_ICON]
-    matched: set[str] = set()
-    for key, refs in sorted(folds.buckets.items()):
-        if not refs:
-            continue
-        name = _review_group_name(key, len(refs))
-        # An anchor that is one of the pile's own workspaces is swallowing that
-        # member's row, so keep it out of the match: the group dissolves below
-        # and is rebuilt on a throwaway anchor, members preserved either way.
-        group = _match_stack_group(
-            [g for g in groups if g.anchor not in folds.owned], refs, matched
-        )
-        if group is None:
-            created = create_workspace_group(name, refs, icon=REVIEW_GROUP_ICON)
-            if created is not None:
-                move_workspace_group_to_end(created.ref)
-                print(
-                    f"  {verb('grouped')} {cyan(name)} {dim(' → '.join(refs))}",
-                    flush=True,
-                )
-            continue
-        matched.add(group.ref)
-        if group.name != name:
-            rename_workspace_group(group.ref, name)
-        for ref in refs:
-            if ref not in group.members:
-                add_to_workspace_group(group.ref, ref)
-        for ref in group.members:
-            # Only drop refs cockpit owns — a hand-added foreign workspace in
-            # the group is the user's business, not a stale review.
-            if ref in folds.owned and ref not in refs:
-                remove_from_workspace_group(ref)
-        move_workspace_group_to_end(group.ref)
-    for group in groups:
-        if group.ref not in matched:
-            ungroup_workspaces(group.ref)
-            if group.anchor and group.anchor not in folds.owned:
-                cmux_close_workspace_best_effort(group.anchor)
-            print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
+    live = list_workspace_groups()
+    for attr, icon, namer in _TRAILING_FOLDS:
+        groups = [g for g in live if g.icon == icon]
+        matched: set[str] = set()
+        for key, refs in sorted(getattr(folds, attr).items()):
+            if not refs:
+                continue
+            name = namer(key, len(refs))
+            # An anchor that is one of the pile's own workspaces is swallowing
+            # that member's row, so keep it out of the match: the group
+            # dissolves below and is rebuilt on a throwaway anchor, members
+            # preserved either way.
+            group = _match_stack_group(
+                [g for g in groups if g.anchor not in folds.owned], refs, matched
+            )
+            if group is None:
+                created = create_workspace_group(name, refs, icon=icon)
+                if created is not None:
+                    move_workspace_group_to_end(created.ref)
+                    print(
+                        f"  {verb('grouped')} {cyan(name)} {dim(' → '.join(refs))}",
+                        flush=True,
+                    )
+                continue
+            matched.add(group.ref)
+            if group.name != name:
+                rename_workspace_group(group.ref, name)
+            for ref in refs:
+                if ref not in group.members:
+                    add_to_workspace_group(group.ref, ref)
+            for ref in group.members:
+                # Only drop refs cockpit owns — a hand-added foreign workspace in
+                # the group is the user's business, not a stale review.
+                if ref in folds.owned and ref not in refs:
+                    remove_from_workspace_group(ref)
+            move_workspace_group_to_end(group.ref)
+        for group in groups:
+            if group.ref not in matched:
+                ungroup_workspaces(group.ref)
+                if group.anchor and group.anchor not in folds.owned:
+                    cmux_close_workspace_best_effort(group.anchor)
+                print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
 
 
 def _match_stack_group(

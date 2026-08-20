@@ -188,6 +188,10 @@ STACK_GROUP_ICON = "square.stack"
 # not mine to ship.
 REVIEW_GROUP_ICON = "eyeglasses"
 
+# SF Symbol on the snoozed fold's header — read and handed back, waiting on
+# someone else's comment or review (TUI `z`, `nudges.NudgePref.snoozed`).
+SNOOZE_GROUP_ICON = "moon.zzz"
+
 
 @dataclass(frozen=True)
 class WorkspaceGroup:
