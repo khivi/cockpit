@@ -4151,13 +4151,23 @@ def _stack_pr(
     )
 
 
-def _stack_ctx(tmp_path, chain, *, dry=False, extra_prs=(), coworkers=()):
+def _stack_ctx(
+    tmp_path,
+    chain,
+    *,
+    dry=False,
+    extra_prs=(),
+    coworkers=(),
+    repo_entry=None,
+    repo_dir="repo",
+):
     """RepoCycle with one tracked workspace per (ref, branch, base) in `chain`.
 
     Refs listed in `coworkers` get a `mine=False` PR — someone else's, i.e. a
-    review workspace.
+    review workspace. `repo_dir` scopes the worktrees under a distinct root so
+    two ctxs can stand in for two repos of the same org.
     """
-    repo = tmp_path / "repo"
+    repo = tmp_path / repo_dir
     wts, prs, tracked, cwds = [], [], {}, {}
     for i, (ref, branch, base) in enumerate(chain, start=1):
         wt = Worktree(path=repo / f"wt-{i}", branch=branch)
@@ -4169,6 +4179,7 @@ def _stack_ctx(tmp_path, chain, *, dry=False, extra_prs=(), coworkers=()):
     ctx = _color_ctx(tmp_path, repo_path=repo, wts=wts, cwds=cwds, dry=dry)
     ctx.prs = [*prs, *extra_prs]
     ctx.tracked = tracked
+    ctx.repo_entry = repo_entry or {"name": "n"}
     return ctx
 
 
@@ -4425,7 +4436,51 @@ def test_reconcile_sidebar_groups_dry_noops(tmp_path):
 # ── coworker-review fold ─────────────────────────────────────────────────────
 
 
-def test_reconcile_sidebar_groups_folds_coworker_prs_into_reviews(tmp_path):
+def _folds(*ctx_refs):
+    """Run the per-repo pass over each (ctx, keep_refs) pair with cmux stubbed
+    out, and return the accumulated `ReviewFolds` — the input the cross-repo
+    review pass consumes.
+    """
+    folds = cycle.ReviewFolds()
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group", return_value=None),
+    ):
+        for ctx, refs in ctx_refs:
+            cycle._reconcile_sidebar_groups(ctx, refs, folds)
+    return folds
+
+
+def test_reconcile_sidebar_groups_leaves_the_reviews_fold_to_the_org_pass(tmp_path):
+    # The per-repo pass only collects reviews; it must not create, rename, or
+    # dissolve the org-keyed fold — that group belongs to the cross-repo pass.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "them/b", "main")],
+        coworkers=("workspace:1", "workspace:2"),
+    )
+    existing = _group(
+        "wg:1",
+        "n reviews (2)",
+        "workspace:9",
+        ["workspace:1", "workspace:2"],
+        icon=REVIEW_GROUP_ICON,
+    )
+    folds = cycle.ReviewFolds()
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "create_workspace_group") as create,
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"}, folds)
+
+    create.assert_not_called()
+    ungroup.assert_not_called()
+    assert folds.buckets == {"n": ["workspace:1", "workspace:2"]}
+    assert folds.owned == {"workspace:1", "workspace:2"}
+
+
+def test_reconcile_review_groups_folds_coworker_prs(tmp_path):
     ctx = _stack_ctx(
         tmp_path,
         [
@@ -4434,26 +4489,94 @@ def test_reconcile_sidebar_groups_folds_coworker_prs_into_reviews(tmp_path):
             ("workspace:3", "them/c", "main"),
         ],
         coworkers=("workspace:2", "workspace:3"),
+        repo_entry={"name": "Cockpit"},
     )
-    refs = {"workspace:1", "workspace:2", "workspace:3"}
+    folds = _folds((ctx, {"workspace:1", "workspace:2", "workspace:3"}))
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(
             cycle,
             "create_workspace_group",
-            return_value=_group("wg:1", "reviews (2)", "workspace:2", []),
+            return_value=_group("wg:1", "Cockpit reviews (2)", "workspace:9", []),
         ) as create,
         patch.object(cycle, "move_workspace_group_to_end") as move,
     ):
-        cycle._reconcile_sidebar_groups(ctx, refs)
+        cycle._reconcile_review_groups(folds, dry=False)
 
     create.assert_called_once_with(
-        "reviews (2)", ["workspace:2", "workspace:3"], icon=REVIEW_GROUP_ICON
+        "Cockpit reviews (2)", ["workspace:2", "workspace:3"], icon=REVIEW_GROUP_ICON
     )
     move.assert_called_once_with("wg:1")
 
 
-def test_reconcile_sidebar_groups_parks_a_lone_review_without_grouping(tmp_path):
+def test_reconcile_review_groups_folds_an_org_across_its_repos(tmp_path):
+    # The point of the org bucket: one coworker PR per repo is two reviews for
+    # the org, so they fold together instead of each staying a loose row.
+    org = {"name": "mlops-os", "org": "Reality Defender"}
+    sibling = {"name": "mlops-os-infra", "org": "Reality Defender"}
+    a = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main")],
+        coworkers=("workspace:1",),
+        repo_entry=org,
+        repo_dir="repo-a",
+    )
+    b = _stack_ctx(
+        tmp_path,
+        [("workspace:2", "them/b", "main")],
+        coworkers=("workspace:2",),
+        repo_entry=sibling,
+        repo_dir="repo-b",
+    )
+    folds = _folds((a, {"workspace:1"}), (b, {"workspace:2"}))
+    assert folds.buckets == {"Reality Defender": ["workspace:1", "workspace:2"]}
+
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group", return_value=None) as create,
+        patch.object(cycle, "move_workspace_to_end") as move_ws,
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    create.assert_called_once_with(
+        "Reality Defender reviews (2)",
+        ["workspace:1", "workspace:2"],
+        icon=REVIEW_GROUP_ICON,
+    )
+    move_ws.assert_not_called()
+
+
+def test_reconcile_review_groups_keeps_orgs_in_separate_folds(tmp_path):
+    a = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "them/b", "main")],
+        coworkers=("workspace:1", "workspace:2"),
+        repo_entry={"name": "beta", "org": "Envesya"},
+        repo_dir="repo-a",
+    )
+    b = _stack_ctx(
+        tmp_path,
+        [("workspace:3", "them/c", "main"), ("workspace:4", "them/d", "main")],
+        coworkers=("workspace:3", "workspace:4"),
+        repo_entry={"name": "mlops-os", "org": "Reality Defender"},
+        repo_dir="repo-b",
+    )
+    folds = _folds(
+        (a, {"workspace:1", "workspace:2"}), (b, {"workspace:3", "workspace:4"})
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group", return_value=None) as create,
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    assert [c.args[0] for c in create.call_args_list] == [
+        "Envesya reviews (2)",
+        "Reality Defender reviews (2)",
+    ]
+
+
+def test_reconcile_review_groups_parks_a_lone_review_without_grouping(tmp_path):
     # cmux drops a one-member group, so a single review stays a loose row — but
     # still gets parked at the bottom.
     ctx = _stack_ctx(
@@ -4461,18 +4584,19 @@ def test_reconcile_sidebar_groups_parks_a_lone_review_without_grouping(tmp_path)
         [("workspace:1", "khivi/a", "main"), ("workspace:2", "them/b", "main")],
         coworkers=("workspace:2",),
     )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(cycle, "create_workspace_group") as create,
         patch.object(cycle, "move_workspace_to_end") as move_ws,
     ):
-        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+        cycle._reconcile_review_groups(folds, dry=False)
 
     create.assert_not_called()
     move_ws.assert_called_once_with("workspace:2")
 
 
-def test_reconcile_sidebar_groups_parks_a_lone_review_after_ungrouping(tmp_path):
+def test_reconcile_review_groups_parks_a_lone_review_after_ungrouping(tmp_path):
     # The fold shrank to one member: dissolve it, then park the survivor's own
     # row (parking a still-grouped workspace would move the group instead).
     ctx = _stack_ctx(
@@ -4480,8 +4604,13 @@ def test_reconcile_sidebar_groups_parks_a_lone_review_after_ungrouping(tmp_path)
         [("workspace:1", "khivi/a", "main"), ("workspace:2", "them/b", "main")],
         coworkers=("workspace:2",),
     )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
     existing = _group(
-        "wg:1", "reviews (2)", "workspace:2", ["workspace:2", "workspace:9"]
+        "wg:1",
+        "n reviews (2)",
+        "workspace:9",
+        ["workspace:2", "workspace:8"],
+        icon=REVIEW_GROUP_ICON,
     )
     calls: list[str] = []
     with (
@@ -4490,14 +4619,68 @@ def test_reconcile_sidebar_groups_parks_a_lone_review_after_ungrouping(tmp_path)
         patch.object(
             cycle, "ungroup_workspaces", side_effect=lambda _r: calls.append("ungroup")
         ),
+        patch.object(cycle, "cmux_close_workspace_best_effort"),
         patch.object(
             cycle, "move_workspace_to_end", side_effect=lambda _r: calls.append("move")
         ),
     ):
-        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+        cycle._reconcile_review_groups(folds, dry=False)
 
     create.assert_not_called()
     assert calls == ["ungroup", "move"]
+
+
+def test_reconcile_review_groups_spares_a_hand_added_member(tmp_path):
+    # A foreign workspace the user dropped into the fold isn't a stale review —
+    # only refs cockpit owns are dropped when they leave the pile.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "them/b", "main")],
+        coworkers=("workspace:1", "workspace:2"),
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+    existing = _group(
+        "wg:1",
+        "n reviews (2)",
+        "workspace:9",
+        ["workspace:1", "workspace:2", "workspace:77"],
+        icon=REVIEW_GROUP_ICON,
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "remove_from_workspace_group") as remove,
+        patch.object(cycle, "move_workspace_group_to_end") as move,
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    remove.assert_not_called()
+    move.assert_called_once_with("wg:1")
+
+
+def test_reconcile_review_groups_reaps_a_stranded_anchor_only_fold(tmp_path):
+    # Every review-iconed group is cockpit's, so one matching no bucket is
+    # dissolved and its throwaway header closed — no second fold beside it.
+    stranded = _group(
+        "wg:1", "n reviews (2)", "workspace:9", ["workspace:9"], icon=REVIEW_GROUP_ICON
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[stranded]),
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close,
+    ):
+        cycle._reconcile_review_groups(cycle.ReviewFolds(), dry=False)
+
+    ungroup.assert_called_once_with("wg:1")
+    close.assert_called_once_with("workspace:9")
+
+
+def test_reconcile_review_groups_dry_noops(tmp_path):
+    with patch.object(cycle, "list_workspace_groups") as lst:
+        cycle._reconcile_review_groups(
+            cycle.ReviewFolds(buckets={"n": ["workspace:1", "workspace:2"]}), dry=True
+        )
+
+    lst.assert_not_called()
 
 
 def test_reconcile_sidebar_groups_leaves_a_stacked_coworker_pr_in_its_stack(tmp_path):
@@ -4508,26 +4691,33 @@ def test_reconcile_sidebar_groups_leaves_a_stacked_coworker_pr_in_its_stack(tmp_
         [("workspace:1", "them/a", "main"), ("workspace:2", "them/b", "them/a")],
         coworkers=("workspace:1", "workspace:2"),
     )
+    folds = cycle.ReviewFolds()
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(cycle, "create_workspace_group", return_value=None) as create,
     ):
-        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"}, folds)
 
     tip_label = ctx.tracked["workspace:2"][1].label
     create.assert_called_once_with(
         f"{tip_label} (2)", ["workspace:2", "workspace:1"], icon=STACK_GROUP_ICON
     )
+    assert folds.buckets == {"n": []}  # a workspace lives in exactly one group
 
 
-def test_reconcile_sidebar_groups_reparks_an_existing_reviews_fold(tmp_path):
+def test_reconcile_review_groups_reparks_an_existing_fold(tmp_path):
     ctx = _stack_ctx(
         tmp_path,
         [("workspace:1", "them/a", "main"), ("workspace:2", "them/b", "main")],
         coworkers=("workspace:1", "workspace:2"),
     )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
     existing = _group(
-        "wg:1", "reviews (2)", "workspace:9", ["workspace:1", "workspace:2"]
+        "wg:1",
+        "n reviews (2)",
+        "workspace:9",
+        ["workspace:1", "workspace:2"],
+        icon=REVIEW_GROUP_ICON,
     )
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[existing]),
@@ -4535,7 +4725,7 @@ def test_reconcile_sidebar_groups_reparks_an_existing_reviews_fold(tmp_path):
         patch.object(cycle, "move_workspace_group_to_end") as move,
         patch.object(cycle, "ungroup_workspaces") as ungroup,
     ):
-        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+        cycle._reconcile_review_groups(folds, dry=False)
 
     create.assert_not_called()
     ungroup.assert_not_called()
