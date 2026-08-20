@@ -15,6 +15,7 @@ Subcommands:
   new    [args]         create a worktree + workspace
   close  [args]         queue a worktree + workspace teardown for the daemon
   nudge  [args]         manage nudge mutes
+  broadcast <message>   send a line of text to every idle workspace
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ _SUBCOMMANDS = (
     "new",
     "close",
     "nudge",
+    "broadcast",
 )
 
 
@@ -107,6 +109,11 @@ def main(argv: list[str] | None = None) -> int:
         from cockpit.lib.nudge_cli import main as nudge_main
 
         return nudge_main(rest)
+
+    if sub == "broadcast":
+        from cockpit.broadcast import main as broadcast_main
+
+        return broadcast_main(rest)
 
     if sub == "new":
         from cockpit.spawn import main as spawn_main

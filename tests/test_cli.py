@@ -135,3 +135,15 @@ def test_new_passes_rest(monkeypatch):
     monkeypatch.setattr("cockpit.spawn.main", fake)
     assert cli.main(["new", "x", "--force"]) == 0
     assert seen["argv"] == ["x", "--force"]
+
+
+def test_broadcast_passes_rest(monkeypatch):
+    seen = {}
+
+    def fake(argv):
+        seen["argv"] = argv
+        return 0
+
+    monkeypatch.setattr("cockpit.broadcast.main", fake)
+    assert cli.main(["broadcast", "/compact", "--dry"]) == 0
+    assert seen["argv"] == ["/compact", "--dry"]
