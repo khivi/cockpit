@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/khivi/cockpit/compare/v1.15.0...v1.16.0) (2026-08-20)
+
+
+### Features
+
+* **spawn:** fold --context-text into an optional-value --context ([#332](https://github.com/khivi/cockpit/issues/332)) ([7580ed4](https://github.com/khivi/cockpit/commit/7580ed4225009f3d6e161e7bf92cb41301ed2ced))
+
 ## [1.15.0](https://github.com/khivi/cockpit/compare/v1.14.0...v1.15.0) (2026-08-20)
 
 
