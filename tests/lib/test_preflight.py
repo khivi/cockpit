@@ -12,6 +12,7 @@ import subprocess
 
 import pytest
 
+from cockpit.lib import preflight as preflight_mod
 from cockpit.lib.config import CONFIG_EXAMPLE
 from cockpit.lib.preflight import (
     _warn_unresolvable_base,
@@ -1071,3 +1072,121 @@ def test_validate_config_checks_org_inherited_values(capsys):
     with pytest.raises(SystemExit):
         validate_config(_org_cfg(orgs={"acme": {"sidebar_color": "Chartreuse"}}))
     assert "sidebar_color 'Chartreuse'" in capsys.readouterr().err
+
+
+# ── _validate_workspace_backend (cmux verb + capability gate) ───────────────
+# Every case must WARN, never die: the git+gh half of the dashboard works
+# without any backend at all, so a partial one must still start.
+
+
+@pytest.fixture(autouse=True)
+def _clear_probe_cache():
+    from cockpit.lib.capabilities import probe
+
+    probe.cache_clear()
+    yield
+    probe.cache_clear()
+
+
+def _probing(monkeypatch, found) -> None:
+    from cockpit.lib import capabilities
+
+    monkeypatch.setattr(capabilities, "probe", lambda: found)
+
+
+def _found(verbs: set[str], caps: set[str]):
+    from cockpit.lib.capabilities import BackendProbe
+
+    return BackendProbe(frozenset(verbs), frozenset(caps))
+
+
+def _healthy():
+    from cockpit.lib.capabilities import REQUIRED_CAPABILITIES, REQUIRED_VERBS
+
+    return _found(
+        set(REQUIRED_VERBS) | {"capabilities"},
+        set(REQUIRED_CAPABILITIES),
+    )
+
+
+def test_workspace_backend_silent_when_cmux_is_current(monkeypatch, capsys):
+    monkeypatch.setattr(preflight_mod, "resolve_tool", lambda: "cmux")
+    _probing(monkeypatch, _healthy())
+    preflight_mod._validate_workspace_backend()
+    assert capsys.readouterr().err == ""
+
+
+def test_workspace_backend_skipped_on_limux(monkeypatch, capsys):
+    monkeypatch.setattr(preflight_mod, "resolve_tool", lambda: "limux")
+
+    def _boom():
+        raise AssertionError("probed a non-cmux backend")
+
+    from cockpit.lib import capabilities
+
+    monkeypatch.setattr(capabilities, "probe", _boom)
+    preflight_mod._validate_workspace_backend()
+    assert capsys.readouterr().err == ""
+
+
+def test_workspace_backend_silent_when_cmux_answers_nothing(monkeypatch, capsys):
+    # An empty verb list means the probe couldn't ask (cmux not answering) —
+    # that's not a version verdict, so it warns about nothing.
+    monkeypatch.setattr(preflight_mod, "resolve_tool", lambda: "cmux")
+    _probing(monkeypatch, _found(set(), set()))
+    preflight_mod._validate_workspace_backend()
+    assert capsys.readouterr().err == ""
+
+
+def test_workspace_backend_warns_on_a_missing_verb(monkeypatch, capsys):
+    monkeypatch.setattr(preflight_mod, "resolve_tool", lambda: "cmux")
+    healthy = _healthy()
+    _probing(
+        monkeypatch,
+        _found(set(healthy.verbs) - {"send-key"}, set(healthy.capabilities)),
+    )
+    preflight_mod._validate_workspace_backend()  # must not raise
+    err = capsys.readouterr().err
+    assert "`send-key`" in err
+    assert "nudges and broadcast" in err
+
+
+def test_workspace_backend_warns_when_cmux_predates_the_capabilities_verb(
+    monkeypatch, capsys
+):
+    from cockpit.lib.capabilities import REQUIRED_VERBS
+
+    monkeypatch.setattr(preflight_mod, "resolve_tool", lambda: "cmux")
+    _probing(monkeypatch, _found(set(REQUIRED_VERBS), set()))
+    preflight_mod._validate_workspace_backend()
+    err = capsys.readouterr().err
+    assert "predates `cmux capabilities`" in err
+    # …and it does NOT also list every capability as individually missing.
+    assert "terminal.replay.v1" not in err
+
+
+def test_workspace_backend_warns_on_a_missing_capability(monkeypatch, capsys):
+    monkeypatch.setattr(preflight_mod, "resolve_tool", lambda: "cmux")
+    healthy = _healthy()
+    _probing(
+        monkeypatch,
+        _found(set(healthy.verbs), set(healthy.capabilities) - {"terminal.replay.v1"}),
+    )
+    preflight_mod._validate_workspace_backend()
+    err = capsys.readouterr().err
+    assert "terminal.replay.v1" in err
+    assert "screen preview" in err
+
+
+def test_preflight_probes_the_backend_for_the_daemon_but_not_for_setup(
+    tmp_path, monkeypatch
+):
+    _all_required(tmp_path, monkeypatch)
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        preflight_mod, "_validate_workspace_backend", lambda: calls.append(True)
+    )
+    preflight({"tool": "cmux"}, for_setup=True)
+    assert calls == []
+    preflight({"tool": "cmux"})
+    assert calls == [True]
