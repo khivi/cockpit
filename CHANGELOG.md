@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.0](https://github.com/khivi/cockpit/compare/v1.8.0...v1.9.0) (2026-08-20)
+
+
+### Features
+
+* **tickets:** route a ticket to its repo by project/keys/board ([#304](https://github.com/khivi/cockpit/issues/304)) ([6ee4e98](https://github.com/khivi/cockpit/commit/6ee4e985c5eb9faf56a51919d85e27713f9c1e21))
+* **tui:** make the repo grouping read as a hierarchy ([#307](https://github.com/khivi/cockpit/issues/307)) ([c9ff131](https://github.com/khivi/cockpit/commit/c9ff131267fc13d3010f51377b44b2ed3662fcf2))
+
+
+### Documentation
+
+* PyPI trusted-publishing setup + recovery steps ([#271](https://github.com/khivi/cockpit/issues/271)) ([92244e1](https://github.com/khivi/cockpit/commit/92244e1aa4c937c2e4d8a81d783fbe2e77eb8f75))
+
 ## [1.8.0](https://github.com/khivi/cockpit/compare/v1.7.1...v1.8.0) (2026-08-13)
 
 
