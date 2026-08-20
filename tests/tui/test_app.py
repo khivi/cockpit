@@ -1282,6 +1282,8 @@ async def test_no_disclosure_row_when_nothing_parked():
         table = app.query_one(WorktreeTable)
         assert table.row_count == 2
         assert HIDDEN_ROW_KEY not in table._row_caps
+        table.move_cursor(row=0)  # the group header — where `h` is advertised
+        await pilot.pause()
         assert "Hide" in app.query_one(FooterBar).global_text
 
 
@@ -1982,6 +1984,32 @@ async def test_footer_hides_all_row_keys_on_group_header():
     fb._row_caps = frozenset({HEADER_CAP})
     assert all(fb._skip(a) for a in FooterBar.ROW_ACTIONS)
     assert not fb._skip("sync") and not fb._skip("quit")
+
+
+async def test_footer_hide_key_shows_only_on_repo_rows():
+    # `h` parks a whole repo, so its hint rides the rows that read as a repo —
+    # the group header, the `▸ N hidden` disclosure row, a revealed parked repo
+    # (all HEADER_CAP) — and hides on a worktree row, where "Hide" would read as
+    # "hide this row". Caps unknown (empty table) → full legend, so it shows.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.worktree_table import (
+        HEADER_CAP,
+        HIDDEN_CAP,
+        PARKED_CAP,
+    )
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    for caps in (
+        frozenset({HEADER_CAP}),
+        frozenset({HEADER_CAP, HIDDEN_CAP}),
+        frozenset({HEADER_CAP, PARKED_CAP}),
+    ):
+        fb._row_caps = caps
+        assert not fb._skip("hide_repo")
+    fb._row_caps = frozenset({"pr", "workspace"})
+    assert fb._skip("hide_repo")
+    fb._row_caps = None
+    assert not fb._skip("hide_repo")
 
 
 async def test_footer_mute_label_flips_to_unmute_when_muted():

@@ -84,9 +84,10 @@ class FooterBar(Horizontal):
     GLOBAL_ORDER = (
         # `h` acts on the cursor row's *repo* (or the hidden disclosure row), not
         # its workspace, so it stays global — a group header (where every
-        # ROW_ACTION is suppressed) is exactly where you reach for it. It renders
-        # first so it sits against the row-key group: it's the most row-adjacent
-        # of the global keys.
+        # ROW_ACTION is suppressed) is exactly where you reach for it, and it's
+        # the only place the hint is shown (see `_skip`). It renders first so it
+        # sits against the row-key group: it's the most row-adjacent of the
+        # global keys.
         "hide_repo",
         "new_workspace",
         "sync",
@@ -215,6 +216,20 @@ class FooterBar(Horizontal):
             action in self.ROW_ACTIONS
             and self._row_caps is not None
             and HEADER_CAP in self._row_caps
+        ):
+            return True
+        # `h` parks the cursor row's whole *repo*, so it's only advertised on a
+        # row that reads as a repo: a group header, the `▸ N hidden` disclosure
+        # row, or a revealed parked repo — all three carry HEADER_CAP, and all
+        # three are where `h`'s Hide/Reveal/Collapse/Unhide labels are
+        # unambiguous. On a worktree row "Hide" would read as "hide this row"
+        # while actually parking every sibling row with it. The binding itself
+        # stays live everywhere (`action_hide_repo` resolves the repo from any of
+        # its rows) — only the hint follows the row, exactly like `p`/`t`/`m`/`z`.
+        if (
+            action == "hide_repo"
+            and self._row_caps is not None
+            and HEADER_CAP not in self._row_caps
         ):
             return True
         if action == "open_ticket" and not self._show_tickets:
