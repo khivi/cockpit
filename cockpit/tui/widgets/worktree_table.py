@@ -19,7 +19,11 @@ action no-ops there. Within a repo, a *stacked* chain of PRs renders as one
 group: its tip heads the run and every PR it is stacked on lists under it,
 indented one level behind a `└` (`_stack_rows`, off the daemon-written
 `pr-base` cell) — the table's own rendering of the same chain the cmux sidebar
-folds into a group. The Author column (just before Title, since it's rarely
+folds into a group. Rows within a repo then sink into three bands (`_row_band`):
+my live queue, then coworkers' PRs I'm reviewing, then the ones I've snoozed —
+the table's rendering of the trailing folds the sidebar parks at the bottom, so
+a pile I've already said "not my turn" to can't bury the row that wants me. The
+Author column (just before Title, since it's rarely
 populated) shows the PR author's login prefixed with `@`, populated by the daemon
 only for other-authored PRs (coworker / review PRs) and blank for my own. The
 Dirty column (headed with the
@@ -259,6 +263,23 @@ def _display_label(wt: Worktree) -> str:
     return _ellipsize(_full_label(wt), _LABEL_MAX)
 
 
+def _row_band(wt: Worktree) -> int:
+    """Which trailing band a row sinks into: 0 my live queue, 1 a coworker's PR
+    I'm reviewing, 2 one I've snoozed.
+
+    Both discriminators are the same daemon-written flat cells the row renders
+    from (`pr-snoozed`; `pr-author`, which carries a login only for a coworker's
+    PR) — no network, nothing stored. Snooze outranks review so a coworker PR
+    I've already read sinks past the ones I haven't, matching the sidebar's
+    stacks → snoozed → reviews precedence. Mute is deliberately *not* a band: it
+    means "stop nudging me about a PR I'm working on", not "not my turn"."""
+    if read_text(branch_cache("pr-snoozed", wt.branch)):
+        return 2
+    if read_text(branch_cache("pr-author", wt.branch)):
+        return 1
+    return 0
+
+
 def _stack_rows(wts: list[Worktree]) -> list[tuple[Worktree, int]]:
     """One repo's worktrees in render order, each with its stacked-PR depth.
 
@@ -267,14 +288,27 @@ def _stack_rows(wts: list[Worktree]) -> list[tuple[Worktree, int]]:
     stored, the same derivation `lib.stacks.find_stacks` runs on the daemon
     side for the cmux sidebar fold. A chain sorts contiguously under its tip at
     one level of indent; every other worktree keeps its `git worktree list`
-    order at depth 0."""
-    return [
-        (wts[i], depth)
-        for i, depth in stack_order(
-            [wt.branch for wt in wts],
-            lambda branch: read_text(branch_cache("pr-base", branch)),
-        )
-    ]
+    order at depth 0.
+
+    Rows then sink into `_row_band` order — my live queue, then reviews, then
+    snoozed — mirroring the trailing folds the sidebar already parks at the
+    bottom (`cycle._reconcile_review_groups`). The sort is **stable**, so within
+    a band the stack/`git worktree list` order above is untouched, and it bands
+    a chain by its **tip** (the depth-0 row heading the group) so a chain with
+    one snoozed member sinks whole rather than splitting — contiguity under the
+    tip is what keeps the table and the sidebar reading as the same stack."""
+    rows = stack_order(
+        [wt.branch for wt in wts],
+        lambda branch: read_text(branch_cache("pr-base", branch)),
+    )
+    chains: list[list[tuple[int, int]]] = []
+    for i, depth in rows:
+        if depth == 0 or not chains:
+            chains.append([(i, depth)])
+        else:
+            chains[-1].append((i, depth))
+    chains.sort(key=lambda chain: _row_band(wts[chain[0][0]]))
+    return [(wts[i], depth) for chain in chains for i, depth in chain]
 
 
 def _header_cells(
