@@ -466,6 +466,61 @@ def _warn_unresolvable_base(cfg: dict) -> None:
         )
 
 
+def _validate_workspace_backend() -> None:
+    """Soft-warn when the resolved cmux lacks a verb or capability cockpit needs.
+
+    `resolve_tool` checks presence, not version — so a cmux too old for
+    `send-key` or `terminal.replay.v1` used to surface as a mid-cycle no-op from
+    a `check=False` call. Probe once at daemon start and name exactly what's
+    missing and which tier it degrades.
+
+    Warns, never dies (`_warn_unresolvable_base`'s precedent, not
+    `_validate_sidebar_colors`'s): the git+gh half of the dashboard works without
+    any backend at all, so a partial one must still start. Skipped entirely on
+    limux/`none` — `preflight` already warns about those.
+    """
+    from .capabilities import REQUIRED_CAPABILITIES, REQUIRED_VERBS, probe
+
+    if resolve_tool() != "cmux":
+        return
+
+    found = probe()
+    if not found.verbs:
+        return  # couldn't ask (cmux not answering) — not a version verdict
+
+    missing_verbs = found.missing_verbs()
+    if missing_verbs:
+        tiers = sorted({REQUIRED_VERBS[v] for v in missing_verbs})
+        print(
+            f"{yellow('cockpit:')} cmux is missing "
+            f"{', '.join(f'`{v}`' for v in missing_verbs)} — "
+            f"{', '.join(tiers)} disabled. Upgrade cmux.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    if not found.supports_capabilities:
+        print(
+            f"{yellow('cockpit:')} this cmux predates `cmux capabilities` — "
+            "cockpit can't negotiate features and assumes none are available. "
+            "Upgrade cmux.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+
+    missing_caps = found.missing_capabilities()
+    if missing_caps:
+        tiers = sorted({REQUIRED_CAPABILITIES[c] for c in missing_caps})
+        print(
+            f"{yellow('cockpit:')} cmux does not offer "
+            f"{', '.join(missing_caps)} — "
+            f"{', '.join(tiers)} disabled. Upgrade cmux.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def validate_config(cfg: dict) -> None:
     """Run every config-shape validator (no binary/PATH checks).
 
@@ -545,3 +600,8 @@ def preflight(cfg: dict, *, for_setup: bool = False) -> None:
                 file=sys.stderr,
                 flush=True,
             )
+
+    # Daemon-only: `cockpit setup` may be about to install/upgrade the backend,
+    # and the two probe subprocesses shouldn't ride every non-daemon entry.
+    if not for_setup:
+        _validate_workspace_backend()
