@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.0](https://github.com/khivi/cockpit/compare/v1.9.0...v1.10.0) (2026-08-20)
+
+
+### Features
+
+* **sidebar:** key the coworker-review fold by org and fold a lone review ([#310](https://github.com/khivi/cockpit/issues/310)) ([a72abdd](https://github.com/khivi/cockpit/commit/a72abddf8d924001dc70670d32d984f05eef0f60))
+* **tui:** snooze a PR until someone comments or approves ([#312](https://github.com/khivi/cockpit/issues/312)) ([65fc93a](https://github.com/khivi/cockpit/commit/65fc93a05987178f9a4140aaf62dc984da002c49))
+
 ## [1.9.0](https://github.com/khivi/cockpit/compare/v1.8.0...v1.9.0) (2026-08-20)
 
 
