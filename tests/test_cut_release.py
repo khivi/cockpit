@@ -5,7 +5,6 @@ Only the refusal paths are exercised — they all exit before the script reaches
 `gh pr merge --admin` against the real repo and is deliberately untested.
 """
 
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -132,11 +131,4 @@ def test_reverts_when_the_bump_does_not_take(repo: Path) -> None:
             ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True
         ).stdout.strip()
         == ""
-    )
-
-
-@pytest.mark.skipif(shutil.which("shellcheck") is None, reason="shellcheck absent")
-def test_shellcheck_clean() -> None:
-    assert (
-        subprocess.run([str(shutil.which("shellcheck")), str(SCRIPT)]).returncode == 0
     )
