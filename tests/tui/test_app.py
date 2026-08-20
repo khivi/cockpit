@@ -43,6 +43,10 @@ def _isolate(monkeypatch, tmp_path):
     # `_cache_repo_name` shells out to `gh repo view` for the PR-cache key; stub
     # it so no test hits the network (the nwo tests re-patch with their own).
     monkeypatch.setattr("cockpit.tui.app.repo_nwo", lambda p: ("acme", Path(p).name))
+    # The `cmux events` doorbell would otherwise spawn a real long-lived stream
+    # against the developer's running cmux. Doorbell tests call the handler
+    # directly; the watcher itself is covered in tests/lib/test_events.py.
+    monkeypatch.setattr("cockpit.tui.app.watch_workspace_events", lambda *_: None)
 
 
 def _make_app(**kw):
@@ -2102,3 +2106,48 @@ async def test_snooze_reads_the_wake_payload_under_the_nwo_key(monkeypatch, tmp_
     assert seen == ["beta"]  # nwo, not the "Envesya" label
     assert saved["beta__269"].snoozed
     assert saved["beta__269"].wake_on == "3|APPROVED"  # not the empty-payload "0|"
+
+
+async def test_workspace_event_kicks_the_fast_tick():
+    # The `cmux events` doorbell: a workspace created/closed out from under us
+    # republishes now instead of at the next 30s fast tick.
+    app, calls = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.8)
+        before = calls["fast"]
+        app._on_workspace_event()
+        await pilot.pause(0.5)
+        assert calls["fast"] == before + 1
+
+
+async def test_event_during_a_running_fast_tick_is_not_lost():
+    # The running tick may have read workspace state *before* the event, so the
+    # doorbell owes one more kick once it lands — otherwise a close that races a
+    # tick sits stale until the interval.
+    started, release = threading.Event(), threading.Event()
+    runs: list[int] = []
+
+    def fast() -> None:
+        runs.append(1)
+        started.set()
+        release.wait(5)
+
+    app = CockpitApp(
+        slow_tick=lambda on_repo_done=None, only_repo=None: None,
+        fast_tick=fast,
+        slow_secs=300,
+        fast_secs=30,
+    )
+    app._publish_inventory = lambda: None  # type: ignore[method-assign]
+    async with app.run_test() as pilot:
+        await pilot.pause(0.8)
+        assert started.wait(5), "first fast tick never started"
+        app._on_workspace_event()
+        assert app._events_pending  # coalesced, not dropped
+        release.set()
+        for _ in range(20):
+            await pilot.pause(0.1)
+            if len(runs) >= 2:
+                break
+        assert len(runs) >= 2
+        assert not app._events_pending
