@@ -949,9 +949,9 @@ def test_every_glyph_takes_the_same_slot_so_labels_align(cache_dir):
         ("pr-muted", "muted"),
         ("pr-snoozed", "snoozed"),
         ("pr-nudge", "ci"),
-        (None, None),
+        ("", ""),  # a quiet row — no cell seeded
     ):
-        wt = _wt(path=f"/tmp/{cell_name}", branch=f"khivi/{cell_name}")
+        wt = _wt(path=f"/tmp/{cell_name or 'quiet'}", branch=f"khivi/{cell_name}")
         if cell_name:
             cache_mod.branch_cache(cell_name, wt.branch).write_text(value)
         plain = worktree_cells(wt, "r", None, "none", show_tickets=False)[0].plain

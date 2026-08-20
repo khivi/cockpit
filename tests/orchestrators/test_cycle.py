@@ -4931,6 +4931,54 @@ def test_resolve_prefs_wakes_a_snooze_on_approval(tmp_path):
     assert prefs[7].snoozed is False
 
 
+def test_resolve_prefs_wakes_a_snooze_when_new_work_appears(tmp_path):
+    # CI went red after the snooze was set — that's my turn again, so the snooze
+    # ends even though nobody commented.
+    pr = _snooze_pr()
+    pr.ci = "failed:2"
+    assert pr.nudge_issue == "ci"
+    pref = NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, ""), wake_nudge="")
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs([pr])
+    assert prefs[7].snoozed is False
+    assert prefs[7].wake_nudge == ""
+    save.assert_called_once()
+
+
+def test_resolve_prefs_keeps_a_snooze_set_on_top_of_an_existing_issue(tmp_path):
+    # Snoozing a PR that is *already* failing means "I know" — waking on the very
+    # issue the snooze was set over would make `z` a no-op on exactly the rows
+    # most likely to be snoozed.
+    pr = _snooze_pr()
+    pr.ci = "failed:2"
+    pref = NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, ""), wake_nudge="ci")
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs([pr])
+    assert prefs[7].snoozed is True
+    save.assert_not_called()
+
+
+def test_resolve_prefs_keeps_a_snooze_when_the_issue_resolves(tmp_path):
+    # The asymmetry: an issue *going away* leaves nothing to come back to, so a
+    # green CI run must not wake me.
+    pr = _snooze_pr()  # ci="passed" → nudge_issue == ""
+    assert pr.nudge_issue == ""
+    pref = NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, ""), wake_nudge="ci")
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs([pr])
+    assert prefs[7].snoozed is True
+    save.assert_not_called()
+
+
 def test_resolve_prefs_leaves_a_mute_alone(tmp_path):
     # A mute is indefinite — review activity must not clear it.
     pr = _snooze_pr()

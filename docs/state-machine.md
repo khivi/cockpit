@@ -299,8 +299,10 @@ limit. Each tick re-evaluates and re-fires if the underlying issue persists.
 Truth table (native × `idle=` × `parked=` × quiet → result), where **quiet** is
 `NudgePref.muted or .snoozed` — the two user-set silences. They differ only in
 how they end: a mute is indefinite (cleared by `m` / `cockpit nudge unmute`), a
-snooze auto-clears the moment the PR's review activity changes
-(`cycle._resolve_prefs` vs. `nudges.wake_signature`). Both look identical here.
+snooze auto-clears the moment the PR's review activity changes or a *new*
+actionable issue appears (`cycle._resolve_prefs` vs. `nudges.wake_signature` +
+`NudgePref.wake_nudge`). Setting a snooze clears any mute, so the two never
+coexist for long. Both look identical here.
 
 | native | `idle=` | `parked=` | quiet | result |
 |---|---|---|---|---|

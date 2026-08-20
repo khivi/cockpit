@@ -9,10 +9,15 @@ all-or-nothing — it silences every nudge for the PR.
 (TUI `z`). It silences nudges like a mute, and additionally sinks the PR to the
 bottom of the sidebar (`cycle._reconcile_sidebar_groups`), but unlike a mute it
 is **event-expiring**: `wake_on` records the PR's review activity at snooze time
-and the daemon clears the snooze as soon as that changes. Kept distinct from
-`muted` because the two answer different questions — mute is "shut up
-indefinitely" (`cockpit nudge mute`), snooze is "come back when someone
-comments or approves".
+and `wake_nudge` the actionable issue it had (if any), and the daemon clears the
+snooze as soon as review activity changes *or* a new issue appears. Kept distinct
+from `muted` because the two answer different questions — mute is "shut up
+indefinitely" (`cockpit nudge mute`), snooze is "come back when someone comments,
+approves, or the PR needs me again".
+
+Snoozing **clears** a mute (the TUI's `z`): a mute wins over a snooze everywhere
+(glyph, sidebar fold, `quiet`), so leaving both set would silently discard the
+snooze and its wake. Snooze is strictly the narrower ask, so it takes over.
 
 Persisting both in one place means daemon restarts don't replay nudges the user
 already saw, and `parked=`-style runtime state survives across cmux restarts
@@ -43,6 +48,12 @@ class NudgePref:
     # Meaningless unless `snoozed`; the daemon compares it against the live PR
     # every cycle and wakes on any difference.
     wake_on: str = ""
+    # The PR's actionable issue (`PR.nudge_issue`, "" for none) when the snooze
+    # was set. Kept as its own field rather than folded into `wake_on` because
+    # its wake rule is asymmetric — a *new* issue wakes the snooze, an issue
+    # going away does not (nothing to come back to), so equality alone can't
+    # decide it. See `cycle._resolve_prefs`.
+    wake_nudge: str = ""
 
     def to_json(self) -> dict:
         return {
@@ -52,6 +63,7 @@ class NudgePref:
             "last_nudge_at": self.last_nudge_at,
             "snoozed": self.snoozed,
             "wake_on": self.wake_on,
+            "wake_nudge": self.wake_nudge,
         }
 
     @classmethod
@@ -59,7 +71,9 @@ class NudgePref:
         # Legacy keys (`disabled_categories`, `last_nudge_category`) are simply
         # ignored — an absent `muted` reads as not muted (any prior mute is
         # dropped). An absent `snoozed` likewise reads as not snoozed, so a
-        # pre-snooze pref file loads unchanged.
+        # pre-snooze pref file loads unchanged. An absent `wake_nudge` on an
+        # already-snoozed pref reads as "no issue at snooze time", so a PR that
+        # is currently failing wakes once on the next cycle — it does have work.
         return cls(
             muted=bool(data.get("muted")),
             until=data.get("until"),
@@ -67,6 +81,7 @@ class NudgePref:
             last_nudge_at=float(data.get("last_nudge_at") or 0.0),
             snoozed=bool(data.get("snoozed")),
             wake_on=str(data.get("wake_on") or ""),
+            wake_nudge=str(data.get("wake_nudge") or ""),
         )
 
     @property
