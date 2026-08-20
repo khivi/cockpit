@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/khivi/cockpit/compare/v1.14.0...v1.15.0) (2026-08-20)
+
+
+### Features
+
+* **setup:** ship /cockpit-broadcast as a bundled slash command ([#328](https://github.com/khivi/cockpit/issues/328)) ([a2ae576](https://github.com/khivi/cockpit/commit/a2ae57648bb6f2022bb8b23e9a21fa8723fb06d9))
+
 ## [1.14.0](https://github.com/khivi/cockpit/compare/v1.13.0...v1.14.0) (2026-08-20)
 
 
