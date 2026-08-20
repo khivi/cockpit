@@ -54,12 +54,18 @@ cell — `PR.nudge_issue`, the same value the slow tick's nudge decision uses, s
 the bell can't disagree with whether a nudge would fire. Mute wins over 🔔 (a
 muted PR fires no nudge); the bell clears automatically when CI goes green /
 threads resolve / the PR merges.
+
+The glyph sits in a **fixed-width slot** (`_STATUS_SLOT`) that every row pays for,
+glyphed or not — the labels of a belled row, a snoozed row and a quiet one then
+start at the same column, so the Workspace column reads as one list instead of a
+ragged one.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import events
 from textual.binding import Binding
@@ -211,16 +217,21 @@ ROW_INDENT = "   "
 # sits proud of its chain tip without stepping the whole column right.
 _STACK_INDENT = "  "
 
+# Display width of the status-glyph slot every row reserves: the widest glyph
+# (🔇/💤/🔔, 2 cells each) plus its trailing space. A row with no glyph pays the
+# same width in blanks, so every label in the column starts at one column.
+_STATUS_SLOT = 3
+
 # Display width the header's trailing `─` rule fills. Sized to cover a *typical*
-# widest row — `ROW_INDENT` (3) + either a 🔔/🔇 glyph (3 cells) or a
-# `_STACK_INDENT` + `└ ` spine (4) + `_LABEL_MAX` (22) + an ellipsis (1) — and
-# deliberately NOT the absolute worst case (a row that is stacked *and* belled,
-# which overhangs by 3). Covering that would pin the column three columns wider
-# on every render for a rare combination, and Workspace is competing with Title
-# for width; a rule that stops a little short still reads as a rule.
+# widest row — `ROW_INDENT` (3) + `_STATUS_SLOT` (3) + `_LABEL_MAX` (22) + an
+# ellipsis (1) — and deliberately NOT the absolute worst case, a stacked row,
+# which overhangs by exactly its `_STACK_INDENT` + `└ ` spine (4). Covering that
+# would pin the column four columns wider on every render for the rows that
+# aren't stacked, and Workspace is competing with Title for width; a rule that
+# stops a little short still reads as a rule.
 # `test_a_typical_widest_row_fits_the_header_rule` holds the arithmetic — adjust
 # one constant and it fails.
-_RULE_WIDTH = 30
+_RULE_WIDTH = 29
 _LABEL_MAX = 22
 
 # Ceiling on the Ticket cell. Trello renders card *titles* there, which run long
@@ -363,6 +374,22 @@ def _hidden_cells(names: list[str], ncols: int, *, expanded: bool) -> list[Text]
     ]
 
 
+def _status_glyph(*, muted: bool, snoozed: bool, nudge: bool) -> Text:
+    """The row's one status glyph, padded to `_STATUS_SLOT` cells — blanks when
+    the row carries none, so every label starts at the same column. Precedence
+    is the nudge gate's own: mute silences indefinitely, snooze until someone
+    comments/approves, so neither can coexist with the bell."""
+    if muted:
+        glyph, style = ICON_PR_MUTED, "yellow"
+    elif snoozed:
+        glyph, style = ICON_PR_SNOOZED, "bright_blue"
+    elif nudge:
+        glyph, style = ICON_PR_NUDGE, "yellow"
+    else:
+        return Text(" " * _STATUS_SLOT)
+    return Text.assemble((glyph, style), " " * (_STATUS_SLOT - cell_len(glyph)))
+
+
 def _workspace_cell(
     wt: Worktree,
     repo_color: str | None,
@@ -379,7 +406,10 @@ def _workspace_cell(
     threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute and snooze
     both silence the nudge, so neither can coexist with 🔔; mute wins over snooze
     on the (rare) row carrying both, matching the nudge gate's own precedence.
-    No glyph when none holds.
+
+    The slot is `_STATUS_SLOT` cells wide whichever glyph lands in it, and a row
+    with none pays it in blanks — otherwise a quiet row's label would sit three
+    columns left of its belled neighbour's and the column would read ragged.
 
     Every row hangs under its repo's header behind `ROW_INDENT` — header and row
     share the Workspace column, so the indent is what makes the grouping read as
@@ -400,12 +430,7 @@ def _workspace_cell(
         cell = Text.from_ansi(colorizer(label))
     else:
         cell = Text(label, style="bold")
-    if muted:
-        cell = Text.assemble((f"{ICON_PR_MUTED} ", "yellow"), cell)
-    elif snoozed:
-        cell = Text.assemble((f"{ICON_PR_SNOOZED} ", "bright_blue"), cell)
-    elif nudge:
-        cell = Text.assemble((f"{ICON_PR_NUDGE} ", "yellow"), cell)
+    cell = Text.assemble(_status_glyph(muted=muted, snoozed=snoozed, nudge=nudge), cell)
     if depth:
         cell = Text.assemble((f"{_STACK_INDENT}└ ", "dim"), cell)
     return Text.assemble(ROW_INDENT, cell)

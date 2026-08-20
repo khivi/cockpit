@@ -1384,10 +1384,18 @@ def _resolve_prefs(prs: list[PR]) -> dict[int, NudgePref]:
     """Load every PR's nudge pref for this cycle, waking any expired snooze.
 
     A snooze (TUI `z`) says "I've read this — come back when it's my turn
-    again", so unlike a mute it expires on an *event*, not a clock: the pref
-    records `wake_signature(total_from_others, review_decision)` at snooze time
-    and this clears it the moment either changes. Both inputs ride the PR fetch
-    the cycle already made, so waking costs no extra round-trip.
+    again", so unlike a mute it expires on an *event*, not a clock. Two events
+    end it, both riding the PR fetch the cycle already made (waking costs no
+    extra round-trip):
+
+    - **review activity** — the pref records
+      `wake_signature(total_from_others, review_decision)` at snooze time and any
+      difference wakes it (someone commented, approved, or requested changes);
+    - **new work** — `PR.nudge_issue` differs from the `wake_nudge` snapshot
+      *and is non-empty*. The asymmetry is the point: CI going red after I
+      snoozed is my turn again, whereas an issue I snoozed *on top of* (or one
+      that resolves itself) must not wake anything — else snoozing a red-CI PR
+      would wake on the very next tick, and a CI fix would wake me to nothing.
 
     It happens here, at the one point mute/snooze state is read per cycle, so
     every downstream consumer (`write_pr_cache`, `write_branch_pr_cache`, the
@@ -1397,15 +1405,18 @@ def _resolve_prefs(prs: list[PR]) -> dict[int, NudgePref]:
     prefs: dict[int, NudgePref] = {}
     for pr in prs:
         pref = _load_nudge_pref(pr.number)
-        if pref.snoozed and pref.wake_on != wake_signature(
-            pr.total_from_others, pr.review_decision
-        ):
+        reason = ""
+        if pref.snoozed:
+            if pref.wake_on != wake_signature(pr.total_from_others, pr.review_decision):
+                reason = "review activity"
+            elif pr.nudge_issue and pr.nudge_issue != pref.wake_nudge:
+                reason = pr.nudge_issue
+        if reason:
             pref.snoozed = False
             pref.wake_on = ""
+            pref.wake_nudge = ""
             save_pref(pr.number, pref)
-            print(
-                f"  {verb('woke')} #{pr.number} {dim('(review activity)')}", flush=True
-            )
+            print(f"  {verb('woke')} #{pr.number} {dim(f'({reason})')}", flush=True)
         prefs[pr.number] = pref
     return prefs
 

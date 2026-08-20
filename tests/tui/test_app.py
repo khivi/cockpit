@@ -800,6 +800,44 @@ async def test_mute_key_mutes_unmuted_pr(monkeypatch, tmp_path):
     assert calls["only_repo"][-1] == str(Path(tmp_path))
 
 
+async def test_snooze_key_clears_a_mute_and_snapshots_the_wake_state(
+    monkeypatch, tmp_path
+):
+    # `z` on a muted row supersedes the mute: mute wins everywhere it's read, so
+    # leaving it set would swallow both the 💤 and the snooze's wake. The wake
+    # snapshots (review activity + the PR's current issue) come off the cached
+    # payload — no `gh` from the TUI.
+    from cockpit.lib.nudges import NudgePref
+
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.read_text", lambda *a, **k: "123")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_pref", lambda pr: NudgePref(muted=True, until=1.0)
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload",
+        lambda branch, repo: {"total": 2, "review": "APPROVED", "nudge": "ci"},
+    )
+    saved: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.save_pref", lambda pr, pref: saved.append((pr, pref))
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("z")
+        await pilot.pause(0.6)
+    assert len(saved) == 1
+    pr, pref = saved[0]
+    assert pr == 123
+    assert pref.snoozed
+    assert not pref.muted and pref.until is None
+    assert pref.wake_on == "2|APPROVED"
+    assert pref.wake_nudge == "ci"  # already failing → this issue won't re-wake it
+
+
 async def test_sync_key_kicks_full_cycle_not_scoped(monkeypatch, tmp_path):
     # The global `s` sync key reconciles *every* repo — its kick passes
     # only_repo=None, unlike the per-row keys which scope to the cursor row.

@@ -1165,10 +1165,11 @@ class CockpitApp(App[None]):
     def _toggle_snooze(self, path_str: str) -> None:
         # Toggle the row PR's snooze: "I've read this, it's someone else's turn".
         # Silences the nudge like a mute AND sinks the row into the sidebar's
-        # trailing `snoozed` fold — but expires on an *event*, not a clock. The
-        # wake signature is read from the daemon's cached PR snapshot (no `gh`
-        # here), and the slow tick clears the snooze as soon as the live PR
-        # disagrees with it (`cycle._resolve_prefs`).
+        # trailing `snoozed` fold — but expires on an *event*, not a clock. Both
+        # wake snapshots (review activity + the PR's current actionable issue)
+        # are read from the daemon's cached PR payload (no `gh` here), and the
+        # slow tick clears the snooze as soon as the live PR disagrees with
+        # either (`cycle._resolve_prefs`).
         got = self._resolve_row_pref(path_str, "snooze")
         if got is None:
             return
@@ -1176,6 +1177,7 @@ class CockpitApp(App[None]):
         if pref.snoozed:
             pref.snoozed = False
             pref.wake_on = ""
+            pref.wake_nudge = ""
             self._notify(f"woke {wt.label or wt.short} (#{pr})")
         else:
             payload = find_pr_payload(wt.branch, repo.get("name") or "") or {}
@@ -1183,9 +1185,17 @@ class CockpitApp(App[None]):
             pref.wake_on = wake_signature(
                 int(payload.get("total") or 0), str(payload.get("review") or "")
             )
+            pref.wake_nudge = str(payload.get("nudge") or "")
+            # A snooze supersedes a mute: mute wins everywhere it's read (glyph,
+            # sidebar fold, `quiet`), so leaving it set would silently swallow
+            # both the 💤 and its wake. Snooze is the narrower ask, so it takes
+            # over — press `m` again for an indefinite mute.
+            pref.muted = False
+            pref.until = None
+            pref.reason = ""
             self._notify(
                 f"snoozed {wt.label or wt.short} (#{pr}) — wakes on a new "
-                f"comment or review"
+                f"comment, review, or CI/conflict issue"
             )
         save_pref(pr, pref)
         self.call_from_thread(
