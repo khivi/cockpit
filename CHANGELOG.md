@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/khivi/cockpit/compare/v1.13.0...v1.14.0) (2026-08-20)
+
+
+### Features
+
+* **tui:** wake the fast tick on cmux workspace events ([#325](https://github.com/khivi/cockpit/issues/325)) ([32205e7](https://github.com/khivi/cockpit/commit/32205e7b56eceba9c9cae0541ed2e2279623b8f0))
+
 ## [1.13.0](https://github.com/khivi/cockpit/compare/v1.12.0...v1.13.0) (2026-08-20)
 
 
