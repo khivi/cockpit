@@ -43,7 +43,12 @@ from textual import work
 from textual.app import App, ComposeResult
 
 from cockpit.lib import version
-from cockpit.lib.cache import branch_cache, find_pr_payload, read_text
+from cockpit.lib.cache import (
+    branch_cache,
+    cost_reporting_available,
+    find_pr_payload,
+    read_text,
+)
 from cockpit.lib.cmux import (
     BLUE,
     LOOP_ICON,
@@ -252,9 +257,16 @@ class CockpitApp(App[None]):
         # (linear OR github) — the open action routes through the row's provider
         # (`tickets.provider_for`), so it's no longer Linear-specific.
         show_tickets = any(repo_tickets(cfg, r) != "none" for r in repos)
+        # The `$` column is gated on the *data*, not on config or a plan check:
+        # the statusLine blob carries no subscription tier, and some plans report
+        # `total_cost_usd: 0` for every session. If nothing has ever reported a
+        # non-zero cost there is nothing to show, so the column never appears
+        # rather than sitting permanently blank.
+        show_cost = cost_reporting_available()
         yield HeaderBar(id="header")
         yield WorktreeTable(
             show_tickets=show_tickets,
+            show_cost=show_cost,
             id="table",
             cursor_foreground_priority="renderable",
         )

@@ -10,7 +10,10 @@ Two cache directories, both owned by this module:
    `FLAT_CACHE_DIR`). Flat one-string-per-file payloads consumed by
    `cockpit/starship.py`'s field printers under starship. Written by:
    - `lib.claude.stash_from_stdin` (session-scoped: context, rate-limit,
-     transcript-path)
+     transcript-path, cost)
+   - `write_worktree_cost_cache` (`cockpit.py` fast tick — folds those
+     session-scoped `cost-<sid>` cells into one `wt-cost-<cwd>` cell per
+     worktree, so the TUI reads a cell instead of source state)
    - `write_branch_pr_cache` (`cockpit.py` daemon tick, from the PR data
      the daemon fetched — single source of truth for PR-derived fields)
    - `refresh_pr_data` / `refresh_pr_checks` (the synchronous `warm`
@@ -27,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -340,6 +344,101 @@ def cwd_cache(stem: str, cwd: os.PathLike[str] | str) -> Path:
     until they've read the cache, so the key must be derivable from cwd alone.
     """
     return _ensure_flat_cache_dir() / f"{stem}-{_cwd_key(cwd)}"
+
+
+# ── Per-worktree session cost ───────────────────────────────────────────────
+# `lib.claude.stash_from_stdin` writes one `cost-<sid>` cell per Claude Code
+# session, keyed by session id. The TUI is keyed by worktree path, so the two
+# need bridging — and the bridge is Claude Code's own project directory, whose
+# name is a lossy-but-deterministic *forward* slug of the session's cwd:
+#
+#   /opt/dev/repo/wt     →  ~/.claude/projects/-opt-dev-repo-wt/<sid>.jsonl
+#   /opt/dev/repo/.bare  →  ~/.claude/projects/-opt-dev-repo--bare/
+#
+# Every non-alphanumeric character collapses to `-` (so `/` and `.` both do),
+# case is preserved, and no leading dash is stripped. That map is one-way — two
+# distinct paths can slug to the same directory — so it is only ever walked
+# forwards, worktree path → directory. Never try to recover a path from a slug.
+
+CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+
+
+def _claude_project_slug(cwd: os.PathLike[str] | str) -> str:
+    """Claude Code's `~/.claude/projects/` directory name for `cwd`."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(Path(cwd).resolve()))
+
+
+def worktree_cost(cwd: os.PathLike[str] | str) -> float:
+    """Total USD spent by every Claude Code session rooted at `cwd`.
+
+    Sums the `cost-<sid>` session cells for the sids Claude Code has recorded
+    under `cwd`'s project directory — i.e. what this worktree has cost so far,
+    not what its newest session cost. Reads only cells that already exist; no
+    transcript is parsed (Claude Code hands cockpit the pre-computed number in
+    the statusLine blob) and no session is created by asking.
+
+    Returns 0.0 when the project directory is absent (no session ever ran here)
+    or when no session reported a cost — the caller treats that as "nothing to
+    show" rather than as a real $0.
+    """
+    proj = CLAUDE_PROJECTS_DIR / _claude_project_slug(cwd)
+    try:
+        sids = [p.stem for p in proj.glob("*.jsonl")]
+    except OSError:
+        return 0.0
+    total = 0.0
+    for sid in sids:
+        try:
+            total += float(read_text(session_cache("cost", sid)) or 0)
+        except ValueError:
+            continue
+    return total
+
+
+def write_worktree_cost_cache(cwd: os.PathLike[str] | str) -> None:
+    """Snapshot `cwd`'s total session spend into the `wt-cost` flat cell.
+
+    Daemon-only writer (fast tick), so the TUI reads one cell per row instead
+    of globbing `~/.claude/projects` on every render — renderers never read
+    source state. The stem is `wt-cost`, deliberately not `cost`: the latter is
+    `lib.claude`'s session-keyed cell, and a shared stem would make `cost-*`
+    match both a session id and a path slug.
+
+    Writes "" rather than "0" for a costless worktree so the reader can tell
+    "nothing reported" from a genuine zero without parsing.
+    """
+    total = worktree_cost(cwd)
+    atomic_write(cwd_cache("wt-cost", cwd), f"{total:.4f}" if total > 0 else "")
+
+
+def read_worktree_cost(cwd: os.PathLike[str] | str) -> float:
+    """Read back `write_worktree_cost_cache`'s cell; 0.0 when unset/unparsable."""
+    try:
+        return float(read_text(cwd_cache("wt-cost", cwd)) or 0)
+    except ValueError:
+        return 0.0
+
+
+def cost_reporting_available() -> bool:
+    """True when Claude Code reports real per-session spend on this machine.
+
+    Some plans/builds write `total_cost_usd: 0` for every session, which would
+    leave a permanently blank `$` column. There is no subscription tier in the
+    statusLine blob to test, so the *data* is the gate: if no session has ever
+    reported a non-zero cost, the column never appears. Cheap enough to call at
+    compose time — one glob over the flat cache dir.
+    """
+    try:
+        cells = FLAT_CACHE_DIR.glob("cost-*")
+    except OSError:
+        return False
+    for cell in cells:
+        try:
+            if float(read_text(cell) or 0) > 0:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def _resolve_state(state: str, is_draft: bool, review: str) -> str:

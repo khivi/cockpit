@@ -1135,3 +1135,144 @@ def test_refresh_pr_data_clears_snoozed_on_no_pr(cache_dir):
     with patch.object(cache_mod, "find_pr_payload", return_value=None):
         cache_mod.refresh_pr_data("khivi/gone")
     assert (cache_dir / "pr-snoozed-khivi-gone").read_text() == ""
+
+
+# ── Per-worktree session cost ───────────────────────────────────────────────
+
+
+@pytest.fixture
+def projects_dir(tmp_path: Path, monkeypatch) -> Path:
+    """Redirect `~/.claude/projects` to a tmpdir for one test."""
+    pdir = tmp_path / "claude-projects"
+    pdir.mkdir()
+    monkeypatch.setattr(cache_mod, "CLAUDE_PROJECTS_DIR", pdir)
+    return pdir
+
+
+def _seed_sessions(projects_dir: Path, cache_dir: Path, cwd: Path, costs: dict) -> None:
+    """Give `cwd` a Claude Code project dir holding one transcript per sid, and
+    a matching `cost-<sid>` cell for each."""
+    proj = projects_dir / cache_mod._claude_project_slug(cwd)
+    proj.mkdir(parents=True, exist_ok=True)
+    for sid, usd in costs.items():
+        (proj / f"{sid}.jsonl").write_text("")
+        if usd is not None:
+            (cache_dir / f"cost-{sid}").write_text(str(usd))
+
+
+@pytest.mark.parametrize(
+    "path,slug",
+    [
+        # `/` and `.` both collapse to `-`, so a bare repo's dir doubles the dash.
+        ("/opt/dev/repo/wt", "-opt-dev-repo-wt"),
+        ("/opt/dev/repo/.bare", "-opt-dev-repo--bare"),
+        ("/opt/dev/.claude/plugins", "-opt-dev--claude-plugins"),
+        # Case is preserved — `Cockpit` and `cockpit` are separate project dirs.
+        ("/opt/dev/git/Cockpit", "-opt-dev-git-Cockpit"),
+        # Anything else non-alphanumeric collapses too, so an underscore or a
+        # space can't leave a character the real directory name doesn't have.
+        ("/opt/dev/git/my_repo v2", "-opt-dev-git-my-repo-v2"),
+    ],
+)
+def test_claude_project_slug_matches_claude_codes_layout(path, slug):
+    assert cache_mod._claude_project_slug(path) == slug
+
+
+def test_worktree_cost_sums_every_session_in_the_worktree(
+    projects_dir, cache_dir, tmp_path
+):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _seed_sessions(projects_dir, cache_dir, wt, {"aaa": 1.5, "bbb": 2.25, "ccc": 0.25})
+    # The worktree's total, not just its newest session's.
+    assert cache_mod.worktree_cost(wt) == pytest.approx(4.0)
+
+
+def test_worktree_cost_ignores_sessions_from_other_worktrees(
+    projects_dir, cache_dir, tmp_path
+):
+    mine, theirs = tmp_path / "mine", tmp_path / "theirs"
+    mine.mkdir()
+    theirs.mkdir()
+    _seed_sessions(projects_dir, cache_dir, mine, {"aaa": 1.0})
+    _seed_sessions(projects_dir, cache_dir, theirs, {"bbb": 99.0})
+    assert cache_mod.worktree_cost(mine) == pytest.approx(1.0)
+
+
+def test_worktree_cost_is_zero_with_no_project_dir(projects_dir, cache_dir, tmp_path):
+    """A worktree no session ever ran in — the common case for a fresh spawn."""
+    assert cache_mod.worktree_cost(tmp_path / "never-used") == 0.0
+
+
+def test_worktree_cost_skips_sessions_with_no_or_bad_cost_cell(
+    projects_dir, cache_dir, tmp_path
+):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _seed_sessions(projects_dir, cache_dir, wt, {"aaa": 2.0, "bbb": None})
+    (cache_dir / "cost-ccc").write_text("not-a-number")
+    (projects_dir / cache_mod._claude_project_slug(wt) / "ccc.jsonl").write_text("")
+    assert cache_mod.worktree_cost(wt) == pytest.approx(2.0)
+
+
+def test_write_worktree_cost_cache_round_trips(projects_dir, cache_dir, tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _seed_sessions(projects_dir, cache_dir, wt, {"aaa": 31.5146})
+    cache_mod.write_worktree_cost_cache(wt)
+    assert cache_mod.read_worktree_cost(wt) == pytest.approx(31.5146)
+
+
+def test_write_worktree_cost_cache_writes_blank_not_zero(
+    projects_dir, cache_dir, tmp_path
+):
+    """A costless worktree gets "" so the reader can't mistake "never reported"
+    for a real $0 — the renderer blanks the cell either way."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    cache_mod.write_worktree_cost_cache(wt)
+    assert cache_mod.cwd_cache("wt-cost", wt).read_text() == ""
+    assert cache_mod.read_worktree_cost(wt) == 0.0
+
+
+def test_worktree_cost_cell_does_not_collide_with_session_cost_cells(
+    projects_dir, cache_dir, tmp_path
+):
+    """`wt-cost-<path>` and `cost-<sid>` share a directory; the stems must not
+    let a `cost-*` glob match a worktree total (or vice versa)."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _seed_sessions(projects_dir, cache_dir, wt, {"aaa": 5.0})
+    cache_mod.write_worktree_cost_cache(wt)
+    assert [p.name for p in cache_dir.glob("cost-*")] == ["cost-aaa"]
+    assert len(list(cache_dir.glob("wt-cost-*"))) == 1
+
+
+def test_read_worktree_cost_survives_a_corrupt_cell(cache_dir, tmp_path):
+    cache_mod.atomic_write(cache_mod.cwd_cache("wt-cost", tmp_path), "garbage")
+    assert cache_mod.read_worktree_cost(tmp_path) == 0.0
+
+
+def test_cost_reporting_available_is_false_with_no_cells(cache_dir):
+    assert cache_mod.cost_reporting_available() is False
+
+
+def test_cost_reporting_available_is_false_when_every_session_reports_zero(cache_dir):
+    """The gate for a plan/build that writes `total_cost_usd: 0` — the `$`
+    column must not appear just because the cells exist."""
+    (cache_dir / "cost-aaa").write_text("0.0000")
+    (cache_dir / "cost-bbb").write_text("0.0000")
+    assert cache_mod.cost_reporting_available() is False
+
+
+def test_cost_reporting_available_is_true_on_one_real_number(cache_dir):
+    (cache_dir / "cost-aaa").write_text("0.0000")
+    (cache_dir / "cost-bbb").write_text("2.9009")
+    assert cache_mod.cost_reporting_available() is True
+
+
+def test_cost_reporting_available_ignores_worktree_totals(cache_dir, tmp_path):
+    """A `wt-cost` cell is cockpit's own derived value; it can't be the evidence
+    that Claude Code reports cost, or the gate would latch itself on."""
+    cache_mod.atomic_write(cache_mod.cwd_cache("wt-cost", tmp_path), "12.0")
+    assert cache_mod.cost_reporting_available() is False
