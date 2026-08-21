@@ -3783,6 +3783,9 @@ def test_cycle_all_marks_folds_partial_when_a_repo_raises():
         patches[2],
         patches[3],
         patch.object(cycle, "cycle_repo", _boom),
+        # The fold pass is cmux-gated; pin it so the assertion doesn't depend on
+        # whether the machine running the tests happens to have cmux installed.
+        patch.object(cycle, "_cache_only", lambda _cfg: False),
         patch.object(
             cycle, "_reconcile_review_groups", lambda folds, *, dry: seen.append(folds)
         ),
@@ -3802,6 +3805,9 @@ def test_cycle_all_leaves_folds_complete_when_every_repo_succeeds():
         patches[2],
         patches[3],
         patch.object(cycle, "cycle_repo", lambda *_a, **_k: None),
+        # The fold pass is cmux-gated; pin it so the assertion doesn't depend on
+        # whether the machine running the tests happens to have cmux installed.
+        patch.object(cycle, "_cache_only", lambda _cfg: False),
         patch.object(
             cycle, "_reconcile_review_groups", lambda folds, *, dry: seen.append(folds)
         ),
