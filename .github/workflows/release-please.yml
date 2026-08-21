@@ -50,6 +50,21 @@ name: release-please
 # GITHUB_TOKEN does not trigger workflows, so the release PR would sit forever
 # with none of `main`'s required checks (ci, pre-commit, lint-pr-title) ever
 # reporting, and could not be merged.
+#
+# The `concurrency` group is the fourth, and it exists because two runs cannot
+# share the release branch. Every run force-updates
+# `release-please--branches--main--components--cockpit` to a freshly built
+# commit, so two merges landing close together start two runs that race that
+# one ref: whichever loses dies on `Error updating ref`, *after* writing its
+# commit but *before* updating the PR's title and body. Merging #337 and #336
+# seconds apart did exactly that — the branch carried a correct 1.17.0
+# pyproject, manifest and CHANGELOG while the PR still advertised
+# `chore(main): release 1.16.1` listing only #334. That is the dangerous shape,
+# because we squash-merge: the stale title would have become the subject on
+# `main`, claiming a version the tree did not contain. Serializing costs a
+# minute of queueing and makes the last run to finish the one that wrote the PR.
+# `cancel-in-progress` stays false deliberately — cancelling would kill a run
+# mid-ref-update, which is the failure this is here to prevent.
 
 on:
   push:
@@ -57,6 +72,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
 
 jobs:
   release-please:
