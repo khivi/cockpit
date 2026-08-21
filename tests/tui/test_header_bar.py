@@ -128,7 +128,9 @@ async def test_tooltip_updates_when_reactive_changes_after_mount():
         await pilot.pause()
 
         assert bar.tooltip != initial_tooltip
-        assert "slow tick is waiting" in (bar.tooltip or "").lower()
+        # `Widget.tooltip` is typed as a renderable union, so coerce before
+        # matching — `_sync_tooltip` only ever assigns a str.
+        assert "slow tick is waiting" in str(bar.tooltip).lower()
 
 
 @pytest.mark.asyncio
@@ -141,4 +143,4 @@ async def test_tooltip_updates_for_fast_remaining_change():
         bar.fast_remaining = OFF
         await pilot.pause()
 
-        assert "fast tick is disabled" in (bar.tooltip or "").lower()
+        assert "fast tick is disabled" in str(bar.tooltip).lower()
