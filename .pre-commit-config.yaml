@@ -71,7 +71,26 @@ repos:
         name: pytest
         entry: pytest
         language: python
-        additional_dependencies: [pytest==9.1.1, pytest-asyncio==1.4.0, textual>=8.2.8]
+        additional_dependencies: [pytest==9.1.1, pytest-asyncio==1.4.0, pytest-xdist==3.8.0, textual>=8.2.8]
+        # Half the suite's wall clock is idle time waiting on the real `git` /
+        # `gh` / `cmux` subprocesses the leaf-module tests shell out to (115s
+        # wall for 60s of CPU), so it parallelises near-linearly: 115s -> 32s on
+        # a 4-core CI runner, -> 16s on an 18-core laptop. `auto` reads the core
+        # count, so it is right in both places.
+        #
+        # Deliberately NOT in `[tool.pytest.ini_options] addopts` — worker boot
+        # costs ~2s, which is pure tax on the `pytest path::test` runs you do
+        # while iterating. This hook is the full-suite entry point (CI runs it
+        # as `pre-commit run --all-files --hook-stage pre-push`), so the cost is
+        # only paid where there is a suite to amortise it over.
+        #
+        # Default `--dist load` (per-test round-robin), not `loadfile`: the one
+        # module-scoped fixture (`tests/e2e/test_wheel_packaging.py::built_wheel`)
+        # builds into a per-worker `tmp_path_factory` dir, so re-running it per
+        # worker is wasted work, never a collision. `loadfile` would serialise
+        # each file onto one worker and measured slower (47s vs 32s) — the
+        # biggest file becomes the floor.
+        args: ['-n', 'auto']
         types: [python]
         pass_filenames: false
         stages: [pre-push]
