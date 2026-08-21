@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/khivi/cockpit/compare/v1.18.0...v1.19.0) (2026-08-21)
+
+
+### Features
+
+* **tui:** explain the tick countdowns on hover ([#345](https://github.com/khivi/cockpit/issues/345)) ([3f8158e](https://github.com/khivi/cockpit/commit/3f8158e4d0bed2dc34983962347ef3cd414d06cb))
+
 ## [1.18.0](https://github.com/khivi/cockpit/compare/v1.17.1...v1.18.0) (2026-08-21)
 
 
