@@ -36,6 +36,7 @@ from pathlib import Path
 from cockpit.lib.cache import (
     republish_pr_caches_from_disk,
     write_git_state_cache,
+    write_worktree_cost_cache,
 )
 from cockpit.lib.cmux import (
     CmuxUnavailable,
@@ -144,6 +145,9 @@ def _fast_tick(state: dict) -> None:
       • PR flat cells repopulate within ~30s after an OS tmpdir wipe
         (cells live under `$TMPDIR/cockpit-cache/`; JSON survives under
         `$COCKPIT_HOME/cache/`)
+      • each worktree's total session spend (`wt-cost`) tracks the running
+        agents' cost within ~30s — it only moves while a session is live, so
+        the slow tick's cadence would lag visibly behind the work
 
     Lock-free: the TUI serializes this against the slow tick under its own lock
     (both write the same cache cells).
@@ -171,6 +175,7 @@ def _fast_tick(state: dict) -> None:
             continue
         for wt in wts:
             write_git_state_cache(wt.path, wt.repo_name)
+            write_worktree_cost_cache(wt.path)
         if cwds:
             reconcile_workspace_names(names, cwds, wts)
             _tint_repo_workspaces(repo_entry, repo_path, wts, cwds, pill_state)

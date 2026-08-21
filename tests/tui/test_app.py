@@ -2179,3 +2179,29 @@ async def test_event_during_a_running_fast_tick_is_not_lost():
                 break
         assert len(runs) >= 2
         assert not app._events_pending
+
+
+async def test_table_hides_cost_column_when_nothing_reports_cost(monkeypatch):
+    """The `$` column is gated on the data, not on config: a machine whose
+    Claude Code writes no spend must not grow a permanently blank column."""
+    from cockpit.tui.widgets.worktree_table import WorktreeTable
+
+    monkeypatch.setattr("cockpit.tui.app.cost_reporting_available", lambda: False)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        assert table._show_cost is False
+        assert "$" not in [str(c.label) for c in table.columns.values()]
+
+
+async def test_table_shows_cost_column_when_spend_is_reported(monkeypatch):
+    from cockpit.tui.widgets.worktree_table import WorktreeTable
+
+    monkeypatch.setattr("cockpit.tui.app.cost_reporting_available", lambda: True)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        assert table._show_cost is True
+        assert [str(c.label) for c in table.columns.values()][-1] == "$"

@@ -140,6 +140,7 @@ def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: (names, cwds))
     monkeypatch.setattr(
         cockpit,
@@ -175,6 +176,7 @@ def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", _boom)
     monkeypatch.setattr(
         cockpit,
@@ -214,6 +216,7 @@ def test_fast_tick_tints_spawned_workspace(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, cwds))
     monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda *a: None)
     monkeypatch.setattr(
@@ -250,6 +253,7 @@ def test_fast_tick_skips_color_without_sidebar_color(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(
         cockpit, "workspace_state", lambda: ({}, {"workspace:1": repo / "feat"})
     )
@@ -453,3 +457,32 @@ def test_setup_reset_tears_down_and_resets_use_cship(tmp_path, monkeypatch):
     assert cockpit.main(["--setup", "--reset"]) == 0
     assert calls == ["teardown"]
     assert cockpit.load_config().get("use_cship") is False
+
+
+def test_fast_tick_writes_a_cost_cell_per_worktree(tmp_path, monkeypatch):
+    """`wt-cost` rides the fast tick, not the slow one: it only moves while a
+    session is live, so the 300s cadence would lag visibly behind the work."""
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
+
+    importlib.reload(cockpit)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wts = [
+        Worktree(path=repo / "feat", branch="khivi/feat"),
+        Worktree(path=repo / "other", branch="khivi/other"),
+    ]
+    costed: list = []
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
+    )
+    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": wts)
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", costed.append)
+    monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+
+    cockpit._fast_tick({})
+
+    assert costed == [wt.path for wt in wts]

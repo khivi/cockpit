@@ -992,3 +992,95 @@ def test_row_capabilities_snoozed(cache_dir, monkeypatch):
         lambda branch, repo: None,
     )
     assert row_capabilities(wt, "r", "none") == frozenset({"pr", "snoozed"})
+
+
+# ── The `$` cost column ─────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def costed(cache_dir, tmp_path, monkeypatch):
+    """Give a worktree path a `wt-cost` cell, as the daemon's fast tick would."""
+
+    def _seed(usd, path=tmp_path / "wt"):
+        cache_mod.atomic_write(
+            cache_mod.cwd_cache("wt-cost", path), "" if usd is None else str(usd)
+        )
+        return _wt(path=str(path))
+
+    return _seed
+
+
+def _cost(wt, *, show_tickets=False):
+    """The row's `$` cell, located by label so a column reorder can't break it."""
+    cells = worktree_cells(
+        wt, "repo", None, "none", show_tickets=show_tickets, show_cost=True
+    )
+    return cells[column_labels(show_tickets=show_tickets, show_cost=True).index("$")]
+
+
+def test_cost_column_is_absent_by_default(cache_dir):
+    """No `$` unless the app opts in — a machine whose Claude Code reports
+    nothing must not grow a permanently blank column."""
+    assert "$" not in column_labels(show_tickets=False)
+    assert "$" not in column_labels(show_tickets=True)
+    assert len(_plain(_wt())) == len(column_labels(show_tickets=False))
+
+
+def test_cost_column_trails_every_other_column(cache_dir):
+    cols = column_labels(show_tickets=True, show_cost=True)
+    assert cols[-1] == "$"
+    assert cols[-2] == "Title"
+
+
+def test_cost_cell_renders_whole_dollars(costed):
+    assert _cost(costed(31.5146)).plain == "$32"
+    assert _cost(costed(135.05)).plain == "$135"
+
+
+def test_cost_cell_keeps_cents_under_a_dollar(costed):
+    """Under $1 the cents are the whole signal, and `$0` would read as free."""
+    assert _cost(costed(0.42)).plain == "$0.42"
+
+
+def test_cost_cell_is_blank_at_zero(costed):
+    """Blank, never `$0.00`: an empty cell also means "never reported", and the
+    row can't tell that apart from genuinely free work."""
+    assert _cost(costed(0)).plain == ""
+    assert _cost(costed(None)).plain == ""
+
+
+def test_cost_cell_is_blank_with_no_cell_at_all(cache_dir):
+    assert _cost(_wt(path="/tmp/never-ticked")).plain == ""
+
+
+def test_cost_cell_count_matches_columns(costed):
+    wt = costed(5.0)
+    for show_tickets in (False, True):
+        cells = worktree_cells(
+            wt, "repo", None, "none", show_tickets=show_tickets, show_cost=True
+        )
+        cols = column_labels(show_tickets=show_tickets, show_cost=True)
+        assert len(cells) == len(cols)
+
+
+def test_cost_column_has_a_header_tooltip(cache_dir):
+    assert _HEADER_TOOLTIPS["$"]
+
+
+def test_cost_tooltip_carries_the_exact_figure(costed):
+    """The cell rounds; the hover has to give the rounded cents back."""
+    wt = costed(31.5146)
+    tips = row_tooltips(wt, "repo", "none", show_tickets=False, show_cost=True)
+    assert len(tips) == len(column_labels(show_tickets=False, show_cost=True))
+    assert tips[-1] == "$31.51 across all sessions here"
+
+
+def test_cost_tooltip_is_none_on_a_blank_cell(costed):
+    """A blank cell falls back to the column meaning rather than asserting $0."""
+    tips = row_tooltips(costed(0), "repo", "none", show_tickets=False, show_cost=True)
+    assert tips[-1] is None
+
+
+def test_cost_tooltips_align_when_the_column_is_off(cache_dir):
+    tips = row_tooltips(_wt(), "repo", "none", show_tickets=False)
+    assert len(tips) == len(column_labels(show_tickets=False))

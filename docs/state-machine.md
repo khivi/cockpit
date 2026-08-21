@@ -344,14 +344,21 @@ flowchart LR
   SLOW --> DISK[("PR JSON<br/>on disk")]
   DISK -.republish.-> FAST
 
-  SLOW --> CELLS["daemon cells<br/>pr-state · git-state · base-dist"]
+  SLOW --> CELLS["daemon cells<br/>pr-state · git-state · base-dist · wt-cost"]
   FAST --> CELLS
 
   STDIN["Claude statusLine"] --> SESS["session cells<br/>context · model · cost · rate-limit"]
+  SESS -.cost-sid summed per worktree.-> FAST
 
   CELLS --> RENDER["starship printers<br/>READ-ONLY"]
   SESS --> RENDER
 ```
+
+The dotted `SESS → FAST` edge is the one place the daemon *reads* a
+session-scoped cell: `cost-<sid>` is keyed by Claude Code session while every
+TUI row is keyed by worktree path, so the fast tick folds the sessions rooted at
+each worktree into one `wt-cost` cell for the table's `$` column. It reads only
+— session cells stay the statusLine's to write.
 
 The cell-key detail (per-branch / per-cwd / per-sid suffixes) lives in the
 source; this view shows ownership. Everything the renderer reads passes through
@@ -378,10 +385,11 @@ Why two ticks:
 - **Fast tick** is network-free: it re-derives git-state cells for every
   worktree, reconciles each workspace's name to its branch-derived label
   (`reconcile_workspace_names`) and its sidebar colour to the repo's
-  `sidebar_color` (`_tint_repo_workspaces`), and republishes PR flat cells from
-  the persistent JSON, so a `git checkout`, a drifted workspace name, a
-  freshly spawned workspace's colour, or an OS tmpdir wipe recovers within ~30s
-  instead of ~300s. Its 30s interval is the *floor*, not the only trigger: the
+  `sidebar_color` (`_tint_repo_workspaces`), sums each worktree's session spend
+  into its `wt-cost` cell (`write_worktree_cost_cache`), and republishes PR flat
+  cells from the persistent JSON, so a `git checkout`, a drifted workspace name,
+  a freshly spawned workspace's colour, a running agent's cost, or an OS tmpdir
+  wipe recovers within ~30s instead of ~300s. Its 30s interval is the *floor*, not the only trigger: the
   `cmux events` doorbell (`lib/events.py`, cmux-only) kicks it the moment a
   workspace is created or closed, so a spawn or close lands immediately. The
   event carries **no state** — it only wakes the tick, which re-derives

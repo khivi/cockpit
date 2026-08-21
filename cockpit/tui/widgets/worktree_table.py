@@ -33,7 +33,11 @@ Status columns are added only when some configured repo is Linear-enabled
 (`show_tickets`); Ticket shows the delivered Linear ticket id(s) and Status shows
 one workflow-state *icon* per ticket (headed with the `📍` glyph rather than the
 word "Status", mapped from the state name via `_linear_status_icon`), both from
-the cached per-PR block.
+the cached per-PR block. The trailing `$` column is the total USD every Claude
+Code session rooted at that worktree has spent (`wt-cost`), present only when
+Claude Code reports real spend on this machine (`show_cost`) and blank on a row
+that has cost nothing — the one column about the cost of the work rather than
+about the PR.
 
 Columns are grouped by domain so the eye doesn't hop between GitHub and ticket
 data: the local dirty column sits right after `PR` #, then the rest of the GitHub
@@ -79,6 +83,7 @@ from cockpit.lib.cache import (
     cwd_cache,
     find_pr_payload,
     read_text,
+    read_worktree_cost,
     ticket_display,
 )
 from cockpit.lib.cmux import DEVDONE_ICON
@@ -247,18 +252,24 @@ def _ellipsize(text: str, limit: int) -> str:
     return text if len(text) <= limit + 1 else text[:limit] + "…"
 
 
-def column_labels(*, show_tickets: bool) -> tuple[str, ...]:
+def column_labels(*, show_tickets: bool, show_cost: bool = False) -> tuple[str, ...]:
     """Column headers in display order, grouped by domain. The local `✎` dirty
     column sits right after `PR` #, then the rest of the GitHub cluster — the `🔀`
     review-state, `CI`, and `💬` comments. The ticket cluster — `Ticket` id then
     its `📍` workflow-state — follows, present only when some configured repo has a
     ticket provider (Linear or GitHub, `show_tickets`). Then `Author` (blank for
     self-authored, the coworker login on a review PR — rarely populated, so parked
-    near the end), and finally the long `Title`."""
+    near the end), and finally the long `Title`.
+
+    `$` trails everything (`show_cost`). It's the only column not about the PR,
+    so it doesn't belong in any of the clusters above, and it reads as a column
+    of numbers whatever the Title beside it does."""
     cols = ["Workspace", "PR", _DIRTY_ICON, _APPROVAL_ICON, "CI", "💬"]
     if show_tickets:
         cols += ["Ticket", _STATUS_ICON]
     cols += ["Author", "Title"]
+    if show_cost:
+        cols += ["$"]
     return tuple(cols)
 
 
@@ -577,6 +588,23 @@ def row_capabilities(
     return frozenset(caps)
 
 
+def _cost_cell(wt: Worktree) -> Text:
+    """The `$` cell: total spend across every Claude Code session in this
+    worktree, off the daemon-written `wt-cost` cell.
+
+    Blank — never `$0.00` — for a worktree that has cost nothing, because the
+    cell is also empty when Claude Code simply never reported (no statusLine, a
+    session that predates the cache, a plan that writes zeros). A row can't tell
+    those apart, so it says nothing rather than claiming the work was free.
+    Under a dollar the cents matter and the row doesn't, so it renders dim."""
+    total = read_worktree_cost(wt.path)
+    if total <= 0:
+        return Text("")
+    if total < 1:
+        return Text(f"${total:.2f}", style="grey42")
+    return Text(f"${total:.0f}", style="grey62")
+
+
 def worktree_cells(
     wt: Worktree,
     repo_name: str,
@@ -584,13 +612,14 @@ def worktree_cells(
     tickets_provider: str,
     *,
     show_tickets: bool,
+    show_cost: bool = False,
     depth: int = 0,
 ) -> list[Text]:
     """Build one row's cells (Rich Text, so colours survive), in `column_labels`
     order: PR, Dirty, then the rest of the GitHub cluster (state / CI / comments),
     then the ticket cluster (Ticket / Status) when `show_tickets` (blank for a row
     whose repo has no ticket provider, `tickets_provider == "none"`), then Author
-    and Title.
+    and Title, and finally `$` when `show_cost`.
 
     `depth` indents the Workspace cell when the row is stacked on another PR
     (see `_stack_rows`)."""
@@ -633,6 +662,8 @@ def worktree_cells(
         Text(f"@{author}", style="cyan") if author else Text(""),
         Text(_ellipsize(title, 48), style="grey62"),
     ]
+    if show_cost:
+        cells += [_cost_cell(wt)]
     return cells
 
 
@@ -655,6 +686,7 @@ _HEADER_TOOLTIPS: dict[str, str] = {
     _STATUS_ICON: "Ticket workflow state",
     _DIRTY_ICON: "Uncommitted changes (staged / modified / untracked)",
     "Title": "PR title",
+    "$": "Total Claude Code spend in this worktree",
 }
 
 # Raw `pr-state` enum → the phrase shown when hovering a PR-state (🔀) cell.
@@ -735,6 +767,7 @@ def row_tooltips(
     tickets_provider: str,
     *,
     show_tickets: bool,
+    show_cost: bool = False,
 ) -> list[str | None]:
     """Per-cell hover hints for one worktree row, aligned to `column_labels`
     order. Two jobs: decode the cryptic value columns (workspace glyph, PR state,
@@ -778,6 +811,12 @@ def row_tooltips(
             else None,
         ]
     tips += [None, None]  # Author, Title
+    if show_cost:
+        # The cell rounds whole dollars away; the hint is where the exact
+        # figure lives. Blank cell → no hint, so hovering falls back to the
+        # column meaning rather than asserting "$0.00".
+        total = read_worktree_cost(wt.path)
+        tips += [f"${total:.2f} across all sessions here" if total > 0 else None]
     return tips
 
 
@@ -810,9 +849,12 @@ class WorktreeTable(DataTable):
         triangle that needs a double-click doesn't read as one) and by Enter,
         which every other row spends on Focus."""
 
-    def __init__(self, *, show_tickets: bool = False, **kwargs: object) -> None:
+    def __init__(
+        self, *, show_tickets: bool = False, show_cost: bool = False, **kwargs: object
+    ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._show_tickets = show_tickets
+        self._show_cost = show_cost
         # worktree path → row capability tokens, rebuilt each `update_inventory`
         # so `current_capabilities()` can gate the footer's row keys without a
         # re-read.
@@ -830,7 +872,9 @@ class WorktreeTable(DataTable):
     def on_mount(self) -> None:
         self.cursor_type = "row"
         self.zebra_stripes = True
-        self.add_columns(*column_labels(show_tickets=self._show_tickets))
+        self.add_columns(
+            *column_labels(show_tickets=self._show_tickets, show_cost=self._show_cost)
+        )
 
     def _current_row_key(self) -> str | None:
         """The raw row key under the cursor (a worktree path or a header
@@ -878,7 +922,9 @@ class WorktreeTable(DataTable):
         """Hover hint for a coordinate: the column meaning on the header row
         (`coord.row < 0`), else the decoded value cell (falling back to the
         column meaning for the self-evident text columns)."""
-        labels = column_labels(show_tickets=self._show_tickets)
+        labels = column_labels(
+            show_tickets=self._show_tickets, show_cost=self._show_cost
+        )
         col = coord.column
         if not 0 <= col < len(labels):
             return None
@@ -959,7 +1005,9 @@ class WorktreeTable(DataTable):
         self._row_caps = {}
         self._row_repo = {}
         self._cell_tooltips = {}
-        ncols = len(column_labels(show_tickets=self._show_tickets))
+        ncols = len(
+            column_labels(show_tickets=self._show_tickets, show_cost=self._show_cost)
+        )
         for repo_name, cache_key, repo_color, tickets_provider, wts in inventory:
             hkey = f"{HEADER_KEY_PREFIX}{repo_name}"
             self.add_row(
@@ -978,6 +1026,7 @@ class WorktreeTable(DataTable):
                         repo_color,
                         tickets_provider,
                         show_tickets=self._show_tickets,
+                        show_cost=self._show_cost,
                         depth=depth,
                     ),
                     key=str(wt.path),
@@ -994,6 +1043,7 @@ class WorktreeTable(DataTable):
                     cache_key,
                     tickets_provider,
                     show_tickets=self._show_tickets,
+                    show_cost=self._show_cost,
                 )
         shown = {repo_name for repo_name, *_ in inventory}
         collapsed = sorted(parked - shown)
