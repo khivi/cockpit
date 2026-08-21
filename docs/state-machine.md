@@ -251,7 +251,9 @@ Key gates (all from `cycle.py`):
     `not PR.mine` workspaces and its snoozed ones (`NudgePref.snoozed`) into the
     `ReviewFolds` accumulator that the repo-spanning `_reconcile_review_groups`
     drains at the end of `cycle_all` into two trailing folds per org —
-    `<org> reviews (N)` above `<org> snoozed (N)`),
+    `<org> reviews (N)` above `<org> snoozed (N)`, each created collapsed since
+    both piles are by definition not-my-turn; create-time only, so a fold the
+    user expands stays open),
     `_dedupe_workspaces` (scoped to workspaces whose cwd resolves under this
     repo's worktrees — a foreign repo's same-named workspace is never grouped or
     closed; sorts by the PID in cmux `workspace:<pid>` refs — limux refs are
