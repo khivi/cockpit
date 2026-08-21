@@ -2304,11 +2304,16 @@ class ReviewFolds:
     spare-hand-added-workspaces guard the per-repo pass applies, which needs to
     tell "a member that stopped being a review" (ours, drop it) from "a foreign
     workspace the user added by hand" (leave it).
+
+    `partial` says a repo dropped out of the cycle before contributing, so an
+    absent bucket means "not asked" rather than "empty" — see
+    `_reconcile_review_groups`, which refuses to dissolve on that.
     """
 
     buckets: dict[str, list[str]] = field(default_factory=dict)
     snoozed: dict[str, list[str]] = field(default_factory=dict)
     owned: set[str] = field(default_factory=set)
+    partial: bool = False
 
 
 def _reconcile_sidebar_groups(
@@ -2559,6 +2564,24 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
     would shut a fold the user had just expanded to read, and unlike the sink
     there is nothing to self-heal (an expand is a gesture, not drift). A stack
     is the live queue, so `_reconcile_sidebar_groups` keeps its default.
+
+    **`folds.partial` suspends the dissolve, and that guard is the difference
+    between a cosmetic miss and a destructive one.** Every other pass here is
+    additive or idempotent; dissolving is the one irreversible thing the cycle
+    does to the sidebar, because it closes the fold's anchor workspace. The
+    buckets are built from `ctx.tracked`, which is built from the `gh` fetch, so
+    a repo that never reached `_reconcile_sidebar_groups` (a transient
+    `list_relevant_prs` failure, an unreachable path, a raising cycle) leaves
+    its org's bucket **absent** — indistinguishable from "this org has no
+    reviews any more". Dissolving on that reads a network blip as a decision:
+    an hour of GitHub SSH refusals had the daemon tear down all four folds and
+    close their anchors on every bad cycle, then rebuild them from scratch on
+    every good one, reshuffling the sidebar each time and burning ~180 groups in
+    a session. So an incomplete cycle keeps every fold it can't vouch for and
+    lets the next healthy cycle reap. **Do not** make this conditional on the
+    bucket being empty rather than on the cycle being complete — an empty
+    bucket is exactly the ambiguous case. A stranded anchor-only header waits a
+    cycle; that is cosmetic, and cheap next to closing a live fold.
     """
     if dry:
         return
@@ -2598,6 +2621,8 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
                 if ref in folds.owned and ref not in refs:
                     remove_from_workspace_group(ref)
             move_workspace_group_to_end(group.ref)
+        if folds.partial:
+            continue  # an absent bucket is "not asked", not "empty" — see above
         for group in groups:
             if group.ref not in matched:
                 ungroup_workspaces(group.ref)
@@ -2663,6 +2688,12 @@ def cycle_repo(
         dry=dry,
     )
     if ctx is None:
+        # Skipped before it could contribute — a missing path, an unresolvable
+        # nwo, cmux down, or (the common one) a transient `list_relevant_prs`
+        # failure. Its org's fold buckets stay absent, which the cross-repo pass
+        # must not read as "no reviews left"; see `ReviewFolds.partial`.
+        if folds is not None:
+            folds.partial = True
         return
     _write_pr_caches(ctx)
 
@@ -2886,6 +2917,11 @@ def cycle_all(
                 folds=folds,
             )
         except (RuntimeError, subprocess.SubprocessError, OSError) as e:
+            # The repo may have raised before folding, so its buckets can't be
+            # trusted to mean "empty". Over-conservative when it raised *after*
+            # contributing — that costs one deferred reap, never a closed fold.
+            if folds is not None:
+                folds.partial = True
             ts = datetime.now().isoformat(timespec="seconds")
             print(
                 f"[{ts}] cycle error for {repo_entry.get('name')}: {e}\n"

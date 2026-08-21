@@ -1393,6 +1393,47 @@ def test_cycle_repo_phase_order(tmp_path):
     ]
 
 
+def test_cycle_repo_marks_folds_partial_when_the_repo_is_skipped():
+    # `_prepare_cycle` returns None on a transient `gh` failure (and on a missing
+    # path / unresolvable nwo / cmux down). The repo then never fills its bucket,
+    # so the cross-repo pass has to be told the absence is ignorance.
+    folds = cycle.ReviewFolds()
+    with patch.object(cycle, "_prepare_cycle", return_value=None):
+        cycle.cycle_repo(
+            repo_entry={"name": "n", "path": "/tmp"},
+            self_user="khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            cfg={},
+            folds=folds,
+        )
+
+    assert folds.partial is True
+
+
+def test_cycle_repo_skipped_without_folds_does_not_explode():
+    # A repo-scoped kick passes folds=None (no cross-repo fold pass to protect).
+    with patch.object(cycle, "_prepare_cycle", return_value=None):
+        _run_cycle_repo()
+
+
+def test_cycle_repo_leaves_folds_complete_on_a_healthy_repo(tmp_path):
+    folds = cycle.ReviewFolds()
+    with _enter_all(_cycle_patches(tmp_path, [])):
+        cycle.cycle_repo(
+            repo_entry={"name": "n", "path": "/tmp"},
+            self_user="khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            cfg={},
+            folds=folds,
+        )
+
+    assert folds.partial is False
+
+
 def test_cycle_repo_limux_runs_workspace_and_agnostic_tiers_skips_pills(tmp_path):
     """limux (headless but has a workspace backend): the workspace tier (spawn)
     and the backend-agnostic tier (Linear transition + worktree teardown) run;
@@ -3724,6 +3765,52 @@ def test_cycle_all_on_repo_done_fires_even_when_a_repo_errors():
     assert calls == ["x", "x"]
 
 
+def test_cycle_all_marks_folds_partial_when_a_repo_raises():
+    # The raising repo may have died before folding, so the cross-repo pass must
+    # not read its absent bucket as "this org has no reviews left" and close the
+    # fold's anchor.
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
+
+    def _boom(repo_entry, *_a, **_k):
+        if repo_entry["name"] == "a":
+            raise RuntimeError("repo a blew up")
+
+    seen: list[cycle.ReviewFolds] = []
+    patches = _patch_cycle_all_collaborators()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patch.object(cycle, "cycle_repo", _boom),
+        patch.object(
+            cycle, "_reconcile_review_groups", lambda folds, *, dry: seen.append(folds)
+        ),
+    ):
+        cycle.cycle_all(cfg, "khivi", dry=False, pr_cache={}, pill_state={})
+
+    assert [f.partial for f in seen] == [True]
+
+
+def test_cycle_all_leaves_folds_complete_when_every_repo_succeeds():
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
+    seen: list[cycle.ReviewFolds] = []
+    patches = _patch_cycle_all_collaborators()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patch.object(cycle, "cycle_repo", lambda *_a, **_k: None),
+        patch.object(
+            cycle, "_reconcile_review_groups", lambda folds, *, dry: seen.append(folds)
+        ),
+    ):
+        cycle.cycle_all(cfg, "khivi", dry=False, pr_cache={}, pill_state={})
+
+    assert [f.partial for f in seen] == [False]
+
+
 def test_cycle_all_callback_error_does_not_abort_remaining_repos(capsys):
     cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
     processed: list[str] = []
@@ -4687,6 +4774,77 @@ def test_reconcile_review_groups_reaps_a_stranded_anchor_only_fold(tmp_path):
 
     ungroup.assert_called_once_with("wg:1")
     close.assert_called_once_with("workspace:9")
+
+
+def test_reconcile_review_groups_keeps_a_fold_when_the_cycle_was_partial(tmp_path):
+    # The destructive case: a repo dropped out (transient `gh` failure), so its
+    # org's bucket is absent rather than empty. Dissolving on that closes the
+    # fold's anchor and reshuffles the sidebar for a network blip.
+    existing = _group(
+        "wg:1",
+        "n reviews (2)",
+        "workspace:9",
+        ["workspace:1", "workspace:2"],
+        icon=REVIEW_GROUP_ICON,
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close,
+    ):
+        cycle._reconcile_review_groups(cycle.ReviewFolds(partial=True), dry=False)
+
+    ungroup.assert_not_called()
+    close.assert_not_called()
+
+
+def test_reconcile_review_groups_still_dissolves_after_a_complete_cycle(tmp_path):
+    # The guard is on cycle completeness, not on emptiness — a fold that really
+    # has no reviews left still goes away, so the pile can't grow stale.
+    existing = _group(
+        "wg:1",
+        "n reviews (2)",
+        "workspace:9",
+        ["workspace:1", "workspace:2"],
+        icon=REVIEW_GROUP_ICON,
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close,
+    ):
+        cycle._reconcile_review_groups(cycle.ReviewFolds(), dry=False)
+
+    ungroup.assert_called_once_with("wg:1")
+    close.assert_called_once_with("workspace:9")
+
+
+def test_reconcile_review_groups_still_reparks_a_partial_cycles_live_folds(tmp_path):
+    # Suspending the dissolve must not suspend the re-park: a repo that *did*
+    # report still gets its pile pushed back to the bottom of the sidebar.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "them/b", "main")],
+        coworkers=("workspace:1", "workspace:2"),
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+    folds.partial = True
+    existing = _group(
+        "wg:1",
+        "n reviews (2)",
+        "workspace:9",
+        ["workspace:1", "workspace:2"],
+        icon=REVIEW_GROUP_ICON,
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "move_workspace_group_to_end") as move,
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    move.assert_called_once_with("wg:1")
+    ungroup.assert_not_called()
 
 
 def test_reconcile_review_groups_dry_noops(tmp_path):
