@@ -274,8 +274,15 @@ A falsy/failed identity fetch is never cached (retries next tick); a failed writ
 # One-time after cloning — wires pre-commit hooks for commit + push stages:
 ./setup.sh
 
-# Run the test suite (also runs on pre-push via pre-commit):
-pytest
+# Run the test suite serially — right for a single test or a small selection:
+pytest tests/test_spawn.py::test_route_by_ticket
+
+# Run the WHOLE suite — always pass -n auto. Half the wall clock is idle time
+# waiting on the real git/gh/cmux subprocesses, so it parallelises near-linearly
+# (115s -> 16s on an 18-core laptop, -> ~32s on a 4-core CI runner). The
+# pre-push hook and CI already pass it; `addopts` deliberately does not, since
+# worker boot costs ~2s and that is pure tax on the single-test line above:
+pytest -n auto
 
 # Type-check:
 mypy cockpit/
