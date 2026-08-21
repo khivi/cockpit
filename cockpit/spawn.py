@@ -153,7 +153,12 @@ from cockpit.lib.github_issues import (
     GITHUB_ISSUE_URL_RE,
     add_label,
 )
-from cockpit.lib.linear import LINEAR_RE_CI, linear_mcp_available
+from cockpit.lib.jira import JIRA_ISSUE_URL_RE
+from cockpit.lib.linear import (
+    LINEAR_ISSUE_URL_RE,
+    LINEAR_RE_CI,
+    linear_mcp_available,
+)
 from cockpit.lib.prompts import claude_command, split_prompt_prefix
 from cockpit.lib.registry import register_cwd
 from cockpit.lib.slack import SLACK_URL_RE, slack_seed
@@ -305,8 +310,13 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
       - `trello`  : Trello card URL (`trello.com/c/<shortLink>`). `value` is the
                     URL verbatim (the spawned Claude reads the card via the
                     Trello MCP; the branch is a codename, like `slack`).
-      - `linear`  : whole positional matches `[A-Z]{2,6}-\\d+` (case-insensitive).
-                    Normalised to uppercase in `value`.
+      - `linear`  : whole positional matches `[A-Z]{2,6}-\\d+` (case-insensitive),
+                    or a Linear / Jira issue URL — the key is pulled out of the
+                    path, so a URL needs no shape guard and covers keys the bare
+                    form can't (`R2D2-7`). Normalised to uppercase in `value`.
+                    Jira shares this mode: the keys have the same shape and the
+                    active provider picks the prompt (see the `mode == "linear"`
+                    branch in `main`).
       - `branch`  : anything else; local/remote/new resolved by create_worktree.
     """
     m = re.match(r"https?://github\.com/([^/]+/[^/]+)/pull/(\d+)", value)
@@ -327,6 +337,9 @@ def detect_source(value: str) -> tuple[str, str, str | None]:
         return "slack", value, None
     if TRELLO_CARD_URL_RE.match(value):
         return "trello", value, None
+    m = LINEAR_ISSUE_URL_RE.match(value) or JIRA_ISSUE_URL_RE.match(value)
+    if m:
+        return "linear", m.group(1).upper(), None
     m = GITHUB_ISSUE_SHORTHAND_RE.fullmatch(value)
     if m:
         return "gh-issue", m.group(1), None
@@ -934,12 +947,13 @@ def main(argv: list[str] | None = None) -> int:
                 # is claude.ai-managed (that probe is unreliable; the prompt's own
                 # retry-then-STOP logic handles a truly-absent MCP, mirroring
                 # Slack). ponytail: a project key with digits or >6 letters won't
-                # match LINEAR_RE_CI, so it neither seeds a prompt nor routes to a
-                # repo — it falls to plain branch mode (worktree still created,
-                # just unseeded and cwd-routed). Widening the regex here alone
-                # would be a no-op (this is the *classifier*), and widening it for
-                # real reclassifies plain branches like `feature2-1` as tickets —
-                # so both stay as-is until someone actually hits it.
+                # match LINEAR_RE_CI, so a *bare* one neither seeds a prompt nor
+                # routes to a repo — it falls to plain branch mode (worktree still
+                # created, just unseeded and cwd-routed). Widening the bare-form
+                # regex reclassifies plain branches like `feature2-1` as tickets,
+                # so it stays as-is; the issue-URL route sidesteps it entirely
+                # (positional key, no shape guard) and seeds the prompt, though
+                # `find_repos_by_ticket_key` still gates routing on the same regex.
                 seeded_prompt = _jira_prompt(branch, value)
         else:
             branch = value

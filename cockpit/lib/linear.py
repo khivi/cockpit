@@ -43,6 +43,16 @@ import urllib.request
 LINEAR_RE = re.compile(r"[A-Z]{2,6}-[0-9]+")
 LINEAR_RE_CI = re.compile(r"[A-Za-z]{2,6}-[0-9]+")
 
+# The "Copy link" URL for an issue — what you actually have in the clipboard
+# when you reach for `cockpit new` / the TUI's `n`, and the shape a bare-id
+# match can't classify (it falls through to `branch`, where git rejects the URL
+# as a branch name). The identifier is positional here (the segment after
+# `/issue/`), so unlike `LINEAR_RE_CI` this needs no 2–6 letter guard against
+# unrelated ids — there is no ambiguity with a branch name to defend against.
+LINEAR_ISSUE_URL_RE = re.compile(
+    r"https?://linear\.app/[^/]+/issue/([A-Za-z0-9]+-[0-9]+)", re.IGNORECASE
+)
+
 # The Linear-specific fields the `tickets` config block accepts, as
 # `(name, kind)` where kind ∈ {"str", "str_list", "bool"} (resolved to a
 # validator in `tickets.py`). The provider owns its own config surface; this is

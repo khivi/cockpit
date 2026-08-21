@@ -30,8 +30,9 @@ stop.
 
 Reference (see `cockpit new --help` for the full list):
 
-- `<branch|PR|url>` — auto-detected: GitHub PR URL/`#N`, GitHub Actions run
-  URL, Slack thread permalink, Linear ID, or branch name.
+- `<branch|PR|url>` — auto-detected: GitHub PR URL/`#N`, GitHub issue URL,
+  GitHub Actions run URL, Slack thread permalink, Trello card URL, a Linear or
+  Jira ticket ID *or* issue URL, or a branch name.
 - `--branch <name>` / `--pr <num>` — explicit source (mutex with the
   positional and each other).
 - `--repo <name>` — target a configured repo by name.

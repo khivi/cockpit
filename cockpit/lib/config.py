@@ -355,9 +355,12 @@ def find_repos_by_ticket_key(identifier: str) -> list[dict]:
     ponytail: the shape gate is `LINEAR_RE_CI` (2-6 letters + digits), shared
     with `spawn.detect_source` — which is what classifies the positional as a
     ticket in the first place, so widening it *here* alone would be a no-op. A
-    Jira project key with digits or >6 letters therefore doesn't route (it falls
-    to plain branch mode). Widen both together if that ever bites, accepting that
-    a plain branch named `feature2-1` then reads as a ticket.
+    Jira project key with digits or >6 letters therefore doesn't route *from its
+    bare form* (it falls to plain branch mode) — but it does from an issue URL,
+    where the key is positional and `detect_source` reads it out of the path
+    without a shape guard, so this gate is the only thing left rejecting it.
+    Widen both together if that ever bites, accepting that a plain branch named
+    `feature2-1` then reads as a ticket.
     """
     from .linear import LINEAR_RE_CI
 
