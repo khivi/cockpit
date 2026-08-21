@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.2](https://github.com/khivi/cockpit/compare/v1.20.1...v1.20.2) (2026-08-21)
+
+
+### Bug Fixes
+
+* drop the Linear MCP pre-flight and heal a wiped pidfile dir ([#351](https://github.com/khivi/cockpit/issues/351)) ([201acdb](https://github.com/khivi/cockpit/commit/201acdb71af842586ede09768f0e7aa3b9f53b12))
+
 ## [1.20.1](https://github.com/khivi/cockpit/compare/v1.20.0...v1.20.1) (2026-08-21)
 
 
