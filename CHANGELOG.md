@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.17.0](https://github.com/khivi/cockpit/compare/v1.16.0...v1.17.0) (2026-08-21)
+
+
+### Features
+
+* **sidebar:** sink a snoozed stacked-PR chain to the bottom ([#337](https://github.com/khivi/cockpit/issues/337)) ([660f64c](https://github.com/khivi/cockpit/commit/660f64c0f32e37f2bf57ca670e85f8dd53c33218))
+
+
+### Bug Fixes
+
+* **tui:** show the h/Hide hint only on repo rows ([#334](https://github.com/khivi/cockpit/issues/334)) ([f7a49d9](https://github.com/khivi/cockpit/commit/f7a49d9f8a734b1731e9352a5aded75b218882a9))
+
 ## [1.16.0](https://github.com/khivi/cockpit/compare/v1.15.0...v1.16.0) (2026-08-20)
 
 
