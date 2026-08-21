@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/khivi/cockpit/compare/v1.19.0...v1.20.0) (2026-08-21)
+
+
+### Features
+
+* **sidebar:** create the reviews and snoozed folds collapsed ([#347](https://github.com/khivi/cockpit/issues/347)) ([06d048d](https://github.com/khivi/cockpit/commit/06d048d6bf9d53c68975f9b2095405bd0b4ffa09))
+
 ## [1.19.0](https://github.com/khivi/cockpit/compare/v1.18.0...v1.19.0) (2026-08-21)
 
 
