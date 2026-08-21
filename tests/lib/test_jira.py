@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 from cockpit.lib.jira import (
     CONFIG_FIELDS,
+    JIRA_ISSUE_URL_RE,
     fetch_issue_meta,
     fetch_issue_statuses,
     fetch_issue_summaries,
@@ -30,6 +31,30 @@ from cockpit.lib.jira import (
 # ────────────────────────────────────────────────────────────────────────────
 # config schema
 # ────────────────────────────────────────────────────────────────────────────
+
+
+def test_jira_issue_url_re_captures_key_from_both_link_shapes():
+    for url in (
+        "https://acme.atlassian.net/browse/PROJ-123",
+        "https://acme.atlassian.net/jira/software/c/projects/PROJ/issues/PROJ-123",
+        "https://acme.atlassian.net/jira/core/projects/PROJ/issues/PROJ-123",
+    ):
+        m = JIRA_ISSUE_URL_RE.match(url)
+        assert m and m.group(1) == "PROJ-123", url
+
+
+def test_jira_issue_url_re_is_host_agnostic_for_self_hosted():
+    # Server/Data Center installs live on arbitrary hosts and paths — the
+    # `/browse/<KEY-N>` shape is the identifying part, not the domain.
+    m = JIRA_ISSUE_URL_RE.match("https://jira.internal.example/browse/OPS-7")
+    assert m and m.group(1) == "OPS-7"
+
+
+def test_jira_issue_url_re_ignores_keyless_paths():
+    assert not JIRA_ISSUE_URL_RE.match("https://acme.atlassian.net/browse/")
+    assert not JIRA_ISSUE_URL_RE.match(
+        "https://acme.atlassian.net/jira/software/projects/PROJ/boards/1"
+    )
 
 
 def test_config_fields_declare_keys_for_routing():

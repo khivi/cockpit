@@ -14,6 +14,7 @@ import subprocess
 from unittest.mock import patch
 
 from cockpit.lib.linear import (
+    LINEAR_ISSUE_URL_RE,
     LINEAR_RE,
     LINEAR_RE_CI,
     extract_ticket,
@@ -44,6 +45,16 @@ def test_linear_re_ci_matches_either_case():
 def test_linear_re_ci_rejects_out_of_bound_prefix():
     assert not LINEAR_RE_CI.fullmatch("TOOLONG-1")  # 7-char prefix
     assert not LINEAR_RE_CI.fullmatch("A-1")  # 1-char prefix
+
+
+def test_linear_issue_url_re_captures_the_id():
+    m = LINEAR_ISSUE_URL_RE.match("https://linear.app/acme/issue/TOOLS-1300/some-slug")
+    assert m and m.group(1) == "TOOLS-1300"
+
+
+def test_linear_issue_url_re_ignores_non_issue_paths():
+    assert not LINEAR_ISSUE_URL_RE.match("https://linear.app/acme/team/PE/all")
+    assert not LINEAR_ISSUE_URL_RE.match("https://linear.app/acme/issue/")
 
 
 def test_extract_ticket_returns_first_match():

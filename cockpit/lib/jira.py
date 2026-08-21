@@ -58,6 +58,19 @@ CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
 # issue number by `-` (`PROJ-123`, `R2D2-7`).
 _KEY = r"[A-Za-z][A-Za-z0-9]*-[0-9]+"
 
+# The issue URL you actually have in the clipboard when you reach for
+# `cockpit new` / the TUI's `n` — the Jira analog of `linear.LINEAR_ISSUE_URL_RE`,
+# and classified into the same `linear` mode (see `spawn.detect_source`: a Jira
+# key and a Linear id share a shape, and the active provider picks the prompt).
+# Both Jira Cloud link shapes: the `/browse/PROJ-123` permalink and the
+# `/jira/software/[c/]projects/PROJ/issues/PROJ-123` board deep link. The key is
+# positional here, so `_KEY`'s full generality applies with no ambiguity — this
+# is the one route by which a key that `LINEAR_RE_CI` can't match (digits in the
+# prefix, or >6 letters) still classifies as a ticket rather than a branch.
+JIRA_ISSUE_URL_RE = re.compile(
+    rf"https?://[^/]+/(?:browse/|jira/(?:[^/]+/)*issues/)({_KEY})", re.IGNORECASE
+)
+
 # A PR *delivers* a Jira issue only via the explicit `Jira: [PROJ-123](url)`
 # footer (mirrors Linear's strict, line-anchored delivery footer) — NOT a bare
 # branch-slug mention, which would catch predecessor / follow-up issues the PR

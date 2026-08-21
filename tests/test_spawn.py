@@ -85,6 +85,60 @@ def test_linear_id_lowercase_normalised_to_upper():
     assert value == "PE-1234"
 
 
+def test_linear_issue_url_returns_linear_mode_with_bare_id():
+    """The clipboard shape. Without this it fell through to `branch` and git
+    rejected the whole URL as a branch name.
+    """
+    mode, value, nwo = detect_source(
+        "https://linear.app/acme/issue/TOOLS-1300/add-widget-support"
+    )
+    assert mode == "linear"
+    assert value == "TOOLS-1300"  # the id, not the URL — the branch derives from it
+    assert nwo is None
+
+
+def test_linear_issue_url_without_slug_or_with_query_still_linear():
+    for url in (
+        "https://linear.app/acme/issue/PE-1234",
+        "https://linear.app/acme/issue/pe-1234/foo?tab=activity",
+    ):
+        mode, value, _nwo = detect_source(url)
+        assert mode == "linear"
+        assert value == "PE-1234"
+
+
+def test_linear_non_issue_url_is_branch():
+    # A team/project URL carries no issue id — must not classify as linear.
+    mode, _value, _nwo = detect_source("https://linear.app/acme/team/PE/all")
+    assert mode == "branch"
+
+
+def test_jira_browse_url_returns_linear_mode_with_key():
+    """Jira shares `linear` mode — same key shape, provider picks the prompt."""
+    mode, value, nwo = detect_source("https://acme.atlassian.net/browse/PROJ-123")
+    assert mode == "linear"
+    assert value == "PROJ-123"
+    assert nwo is None
+
+
+def test_jira_board_deep_link_returns_linear_mode():
+    mode, value, _nwo = detect_source(
+        "https://acme.atlassian.net/jira/software/c/projects/PROJ/issues/PROJ-123"
+    )
+    assert mode == "linear"
+    assert value == "PROJ-123"
+
+
+def test_jira_url_key_beyond_bare_id_shape_still_classifies():
+    """A key the bare-id guard rejects (digits in the prefix) is unambiguous in a
+    URL, so the URL route classifies it where a bare `R2D2-7` would not.
+    """
+    assert detect_source("R2D2-7")[0] == "branch"
+    mode, value, _nwo = detect_source("https://acme.atlassian.net/browse/R2D2-7")
+    assert mode == "linear"
+    assert value == "R2D2-7"
+
+
 def test_linear_id_inside_path_stays_branch():
     """`khivi/PE-1234-foo` is a branch name, not a Linear id (no fullmatch)."""
     mode, value, _ = detect_source("khivi/PE-1234-foo")
