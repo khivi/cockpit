@@ -885,6 +885,22 @@ def test_a_stack_sinks_whole_and_bands_by_its_tip(cache_dir):
     ]
 
 
+def test_a_snooze_below_the_tip_does_not_sink_the_chain(cache_dir):
+    # The other half of banding-by-tip: one snoozed dependency must not bury the
+    # active stack sitting on top of it, so a snooze on a non-tip member moves
+    # nothing. (The sidebar applies the same tip rule by moving the group.)
+    root = _wt(path="/tmp/root", branch="khivi/root")
+    tip = _wt(path="/tmp/tip", branch="khivi/tip")
+    mine = _wt(path="/tmp/mine", branch="khivi/mine")
+    cache_mod.branch_cache("pr-base", tip.branch).write_text(root.branch)
+    _snooze(root)  # a member below the tip, so the chain keeps its band
+    assert [(wt.path, depth) for wt, depth in _stack_rows([root, tip, mine])] == [
+        (tip.path, 0),
+        (root.path, 1),
+        (mine.path, 0),
+    ]
+
+
 def test_a_muted_row_stays_in_my_queue(cache_dir):
     # Mute is "stop nudging me about a PR I'm working on", not "not my turn" —
     # only a snooze sinks.
