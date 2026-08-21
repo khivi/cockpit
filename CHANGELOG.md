@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.1](https://github.com/khivi/cockpit/compare/v1.20.0...v1.20.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **cycle:** keep review folds when a cycle can't reach GitHub ([#349](https://github.com/khivi/cockpit/issues/349)) ([7eb6656](https://github.com/khivi/cockpit/commit/7eb665657c895b3b1e0c744da8b1c9874028552e))
+
 ## [1.20.0](https://github.com/khivi/cockpit/compare/v1.19.0...v1.20.0) (2026-08-21)
 
 
