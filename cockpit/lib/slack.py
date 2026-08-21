@@ -18,13 +18,14 @@ This module is therefore pure config/classification:
     codename branch so the same thread always maps to the same branch
     regardless of volatile query params or which link shape was copied.
 
-There is deliberately no `claude mcp list` probe here (unlike Linear's
-`linear_mcp_available`): that check has proven unreliable — `claude mcp list`
-doesn't dependably report claude.ai-managed connectors, so it returns
-None/False even when the connector is live, and a false-negative would silently
-disable the feature. Spawn instead always seeds the fetch prompt under
-`use_slack` and lets the prompt's own retry-then-STOP logic handle a genuinely
-absent connector in-session.
+There is deliberately no `claude mcp list` probe here: that check has proven
+unreliable — `claude mcp list` doesn't dependably report claude.ai-managed
+connectors, so it returns None/False even when the connector is live, and a
+false-negative would silently disable the feature. Spawn instead always seeds
+the fetch prompt under `use_slack` and lets the prompt's own retry-then-STOP
+logic handle a genuinely absent connector in-session. Linear used to be the one
+exception (a `linear_mcp_available` pre-flight); it hit exactly that
+false-negative and was removed, so every provider now follows this rule.
 """
 
 from __future__ import annotations

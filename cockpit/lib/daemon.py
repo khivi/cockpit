@@ -46,14 +46,33 @@ def reassert_pidfile() -> None:
     try:
         raw = PID_FILE.read_text().strip()
     except OSError:
-        PID_FILE.write_text(str(me))  # missing → reclaim
+        _reclaim(me)  # missing → reclaim
         return
     if raw == str(me):
         return  # already ours — no-op
     try:
         os.kill(int(raw), 0)
     except (ValueError, ProcessLookupError, OSError):
-        PID_FILE.write_text(str(me))  # dead/corrupt → reclaim
+        _reclaim(me)  # dead/corrupt → reclaim
+
+
+def _reclaim(me: int) -> None:
+    """Write our pid, re-creating the state dir if it went with the pidfile.
+
+    `claim_pidfile` gets this from `ensure_state_dirs()`, but that runs once at
+    startup — and the whole point of the re-assert is to survive the pidfile
+    disappearing mid-run. A wipe that takes the *directory* (a `$COCKPIT_HOME`
+    under a swept tmpdir, exactly the case the fast tick's docstring names) made
+    the read raise `FileNotFoundError`, which is an `OSError` so the caller
+    caught it — and then the recovery write raised the same error uncaught,
+    taking the fast tick down instead of healing it. Only the two drift paths
+    pay the mkdir; the common already-ours case still returns without a syscall.
+
+    Deliberately NOT `ensure_state_dirs()`: that also seeds a `config.json`,
+    which is startup's job, not a pidfile reclaim's.
+    """
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text(str(me))
 
 
 def release_pidfile() -> None:

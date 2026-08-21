@@ -60,11 +60,13 @@ Positional detection:
   and the user states the task in the live session.
 
   Linear mode creates a fresh branch `<branch_prefix><id-lower>` (e.g.
-  `khivi/pe-1234`). With `tickets: linear` and the Linear MCP detected
-  via `claude mcp list`, cockpit seeds a plan-only prompt that instructs
-  Claude to fetch the ticket via the Linear MCP and rename the branch +
-  workspace to include the ticket title slug. Otherwise the workspace
-  starts with the generic plan prompt.
+  `khivi/pe-1234`). Under `tickets: linear` cockpit seeds a plan-only
+  prompt that instructs Claude to fetch the ticket via the Linear MCP and
+  rename the branch + workspace to include the ticket title slug — always,
+  with no `claude mcp list` pre-flight (that probe reported a live
+  claude.ai-managed connector absent; the prompt's own retry-then-STOP
+  step handles one that is genuinely missing). Under any other provider
+  the workspace starts with the generic plan prompt.
 
   With `tickets: linear` and no `--repo`, cockpit also routes the spawn
   to the repo whose per-repo `linear_keys` list contains the Linear key
@@ -157,7 +159,6 @@ from cockpit.lib.jira import JIRA_ISSUE_URL_RE
 from cockpit.lib.linear import (
     LINEAR_ISSUE_URL_RE,
     LINEAR_RE_CI,
-    linear_mcp_available,
 )
 from cockpit.lib.prompts import claude_command, split_prompt_prefix
 from cockpit.lib.registry import register_cwd
@@ -931,15 +932,15 @@ def main(argv: list[str] | None = None) -> int:
                         or args.repo
                     )
             if cfg_tickets() == "linear":
-                mcp = linear_mcp_available()
-                if mcp is False:
-                    print(
-                        f"cockpit: Linear MCP not detected via 'claude mcp list'; "
-                        f"falling back to plain branch mode for {value}",
-                        file=sys.stderr,
-                    )
-                else:
-                    seeded_prompt = _linear_prompt(branch, value)
+                # No `claude mcp list` pre-flight — same rule as the Jira, Trello
+                # and Slack branches below/above, which Linear was the last
+                # holdout from. The probe connects to each server to health-check
+                # it, and a claude.ai-managed connector handshakes asynchronously,
+                # so it reported Linear absent while it was live and this branch
+                # silently downgraded the spawn to a plain branch. `linear.txt`
+                # carries the same retry-then-STOP step as `jira.txt`, which is
+                # what handles a genuinely absent connector.
+                seeded_prompt = _linear_prompt(branch, value)
             elif cfg_tickets() == "jira":
                 # Jira keys share Linear's `[A-Z]{2,6}-N` shape, so detect_source
                 # classifies them as `linear` mode; the active provider picks the

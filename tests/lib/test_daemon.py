@@ -29,6 +29,25 @@ def test_reassert_writes_when_missing(daemon_mod):
     assert daemon_mod.PID_FILE.read_text() == str(os.getpid())
 
 
+def test_reassert_recreates_a_wiped_state_dir(daemon_mod, tmp_path):
+    """The pidfile's whole *directory* going is the case the re-assert exists
+    for — a `$COCKPIT_HOME` under a swept tmpdir — and it used to raise.
+
+    `read_text` on a missing dir raises `FileNotFoundError`, an `OSError`, so
+    the reclaim branch caught it and then the recovery `write_text` raised the
+    same error uncaught, taking the fast tick down instead of healing it. The
+    other tests here all `mkdir(parents=True)` first, and `tmp_path` itself
+    always exists, so nothing covered the wiped-directory case.
+    """
+    gone = tmp_path / "wiped" / "cockpit.pid"
+    daemon_mod.PID_FILE = gone
+    assert not gone.parent.exists()
+
+    daemon_mod.reassert_pidfile()  # must not raise
+
+    assert gone.read_text() == str(os.getpid())
+
+
 def test_reassert_noop_when_already_ours(daemon_mod):
     daemon_mod.PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     daemon_mod.PID_FILE.write_text(str(os.getpid()))

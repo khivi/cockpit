@@ -1084,9 +1084,7 @@ def test_positional_linear_prompt_instructs_mcp_fetch(
     spawn_main, cockpit_repo, monkeypatch
 ):
     _set_config_key(cockpit_repo, "tickets", "linear")
-    import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
     spawn_main(["PE-1234", "--repo", "testrepo"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "PE-1234" in cmd
@@ -1128,9 +1126,7 @@ def test_positional_linear_prompt_instructs_branch_rename(
     without cockpit ever calling the Linear API. The prompt reads the current
     branch via git so it's robust against `-2`/`-3` collision bumping."""
     _set_config_key(cockpit_repo, "tickets", "linear")
-    import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
     spawn_main(["PE-1234", "--repo", "testrepo"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "git branch --show-current" in cmd
@@ -1144,9 +1140,7 @@ def test_positional_linear_prompt_instructs_workspace_rename(
     by renaming it to the same `<slug>` derived from the Linear title.
     `CMUX_WORKSPACE_ID` is the default target; `cmux identify` is the fallback."""
     _set_config_key(cockpit_repo, "tickets", "linear")
-    import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
     spawn_main(["PE-1234", "--repo", "testrepo"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert 'cmux workspace-action --action rename --title "<slug>"' in cmd
@@ -1164,18 +1158,9 @@ def test_positional_linear_prompt_instructs_workspace_rename(
 # only the MCP fetch + branch/workspace rename are skipped.
 
 
-def test_linear_default_off_skips_mcp_instructing_prompt(spawn_main, monkeypatch):
+def test_linear_default_off_skips_mcp_instructing_prompt(spawn_main):
     """Default (use_linear absent) → no 'Linear MCP', no 'STOP', no rename
     instructions — only the generic plan-only prompt."""
-    import cockpit.spawn as spawn
-
-    called: list[bool] = []
-
-    def _available():
-        called.append(True)
-        return True
-
-    monkeypatch.setattr(spawn, "linear_mcp_available", _available)
     code, out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
     assert code == 0
     assert "on khivi/pe-1234" in out
@@ -1185,45 +1170,56 @@ def test_linear_default_off_skips_mcp_instructing_prompt(spawn_main, monkeypatch
     assert 'git branch -m "$CUR" "$CUR-<slug>"' not in cmd
     assert "cmux workspace-action" not in cmd
     assert "PLAN ONLY" in cmd  # generic plan prompt still present
-    # MCP probe must NOT run when the flag is off — it's a wasted subprocess.
-    assert called == []
 
 
-def test_linear_on_but_mcp_missing_falls_back_with_warning(
-    spawn_main, cockpit_repo, monkeypatch
-):
-    """use_linear: true + `claude mcp list` reports no Linear entry → warn
-    on stderr and seed the generic plan prompt, not the rename prompt."""
+def test_linear_seeds_smart_prompt_with_no_mcp_pre_flight(spawn_main, cockpit_repo):
+    """`tickets: linear` always seeds the MCP fetch prompt — there is no
+    `claude mcp list` pre-flight, so nothing can downgrade it to plain branch
+    mode.
+
+    Regression: the probe health-checks each server by *connecting* to it, and a
+    claude.ai-managed connector handshakes asynchronously, so it reported the
+    Linear entry missing while the connector was live. The spawn then printed
+    "Linear MCP not detected" and seeded the generic plan prompt — silently
+    dropping the ticket fetch on exactly the setup the feature targets. Jira,
+    Trello, Slack and GitHub never had the probe; Linear was the last holdout.
+    `prompts/linear.txt`'s retry-then-STOP step is what handles a genuinely
+    absent connector, in-session.
+    """
     _set_config_key(cockpit_repo, "tickets", "linear")
-    import cockpit.spawn as spawn
-
-    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: False)
     code, _out, err = spawn_main(["PE-1234", "--repo", "testrepo"])
     assert code == 0
-    assert "Linear MCP not detected" in err
-    assert "PE-1234" in err
-    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
-    assert "Linear MCP" not in cmd
-    assert "STOP" not in cmd
-    assert "PLAN ONLY" in cmd  # generic plan prompt
-
-
-def test_linear_on_with_inconclusive_probe_seeds_smart_prompt(
-    spawn_main, cockpit_repo, monkeypatch
-):
-    """use_linear: true + probe returns None (claude missing / timeout) →
-    proceed with the smart flow; Claude itself STOPs on the first turn if
-    the MCP is truly missing."""
-    _set_config_key(cockpit_repo, "tickets", "linear")
-    import cockpit.spawn as spawn
-
-    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
-    code, _out, err = spawn_main(["PE-1234", "--repo", "testrepo"])
-    assert code == 0
-    assert "not detected" not in err  # no fallback warning
+    assert "not detected" not in err  # the removed fallback warning
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "Linear MCP" in cmd
     assert "STOP" in cmd
+
+
+def test_spawn_never_shells_out_to_claude_mcp_list(spawn_main, cockpit_repo):
+    """The probe is gone at the source, not just unused: a Linear spawn must
+    make no `claude mcp list` subprocess call at all. Guards against it being
+    reintroduced as a "cheap" pre-flight — it costs up to 15s per spawn and
+    answers wrongly."""
+    _set_config_key(cockpit_repo, "tickets", "linear")
+    import cockpit.lib.linear as linear_mod
+
+    assert not hasattr(linear_mod, "linear_mcp_available")
+
+    calls: list[list[str]] = []
+    real_run = subprocess.run
+
+    def _spy(cmd, *a, **kw):
+        if isinstance(cmd, list | tuple):
+            calls.append(list(cmd))
+        return real_run(cmd, *a, **kw)
+
+    with patch("subprocess.run", _spy):
+        assert spawn_main(["PE-1234", "--repo", "testrepo"])[0] == 0
+    assert not [c for c in calls if c[:1] == ["claude"]], calls
+    # A no-`claude` assertion passes trivially if the spy sees nothing at all,
+    # so pin that it observed the spawn's real `git` calls. Without this the
+    # test rots silently the day the fixture stubs `subprocess.run` out.
+    assert calls, "spy observed no subprocess calls — the assertion above is vacuous"
 
 
 # ── slack dispatch ─────────────────────────────────────────────────────────
@@ -1362,9 +1358,7 @@ def test_trailing_addendum_is_appended_to_seeded_prompt(
     """Trailing `-- <text>` is appended to the auto-seeded Linear/skill/plan
     prompt rather than replacing it — preserves the plan-only safety guard."""
     _set_config_key(cockpit_repo, "tickets", "linear")
-    import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: True)
     spawn_main(["PE-1", "--repo", "testrepo", "--", "EXTRA", "INSTRUCTIONS"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "EXTRA INSTRUCTIONS" in cmd
@@ -1612,9 +1606,7 @@ def test_linear_key_routes_to_matching_repo_without_repo_flag(
 ):
     _set_config_key(cockpit_repo, "tickets", "linear")
     _add_linear_keys(cockpit_repo, ["PE"])
-    import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
     code, out, _err = spawn_main(["PE-1234"])
     assert code == 0
     assert "on khivi/pe-1234" in out
@@ -1623,9 +1615,7 @@ def test_linear_key_routes_to_matching_repo_without_repo_flag(
 def test_linear_key_routing_case_insensitive(spawn_main, cockpit_repo, monkeypatch):
     _set_config_key(cockpit_repo, "tickets", "linear")
     _add_linear_keys(cockpit_repo, ["pe"])
-    import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
     code, out, _err = spawn_main(["PE-1234"])
     assert code == 0
     assert "on khivi/pe-1234" in out
@@ -1636,9 +1626,7 @@ def test_linear_key_routing_explicit_repo_wins(spawn_main, cockpit_repo, monkeyp
     if the lookup would otherwise route elsewhere or find nothing."""
     _set_config_key(cockpit_repo, "tickets", "linear")
     # No linear_keys configured anywhere; --repo still drives the spawn.
-    import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
     code, out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
     assert code == 0
     assert "on khivi/pe-1234" in out
@@ -1682,7 +1670,6 @@ def test_linear_key_routing_multi_match_warns_and_falls_back(
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "discover_repo", lambda: None)
-    monkeypatch.setattr(spawn, "linear_mcp_available", lambda: None)
     code, _out, err = spawn_main(["PE-1234"])
     assert code != 0
     assert "matches multiple repos" in err

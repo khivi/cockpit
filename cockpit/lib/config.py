@@ -721,10 +721,11 @@ def use_slack() -> bool:
     without the Slack MCP configured.
 
     When True, spawn seeds the Slack-MCP fetch + branch/workspace rename prompt.
-    Unlike `use_linear`, there is deliberately no `claude mcp list` pre-flight —
-    that probe is unreliable for claude.ai-managed connectors, so the fetch
-    prompt's own retry-then-STOP logic handles a genuinely absent connector
-    in-session (see `cockpit.lib.slack`).
+    There is deliberately no `claude mcp list` pre-flight — that probe is
+    unreliable for claude.ai-managed connectors, so the fetch prompt's own
+    retry-then-STOP logic handles a genuinely absent connector in-session (see
+    `cockpit.lib.slack`). Every provider follows this rule; Linear was the last
+    exception and its pre-flight has been removed.
     """
     return bool(load_config().get("use_slack", False))
 

@@ -53,6 +53,30 @@ def _isolate_hidden_repos(tmp_path):
     hidden_mod.HIDDEN_PATH = prev
 
 
+@pytest.fixture(autouse=True)
+def _isolate_pidfile(tmp_path):
+    """`daemon.PID_FILE` is resolved off the real `COCKPIT_HOME` at import, so
+    without this any test reaching `_fast_tick` (which calls `reassert_pidfile`)
+    writes the developer's own `~/.config/cockpit/cockpit.pid` — planting a
+    stale pid that later makes `cockpit close` report a daemon that isn't there.
+
+    It also made five `test_fast_tick_*` tests depend on a *different* test
+    having created `~/.config/cockpit/` first: serially something always had, so
+    they passed; under `-n auto` they land on workers that never ran it and fail
+    on the missing directory. A test that only passes because of another test's
+    side effect is the bug, not the parallelism.
+
+    Same shape as `_isolate_hidden_repos` above, including not requesting
+    `monkeypatch` — see its docstring for why that ordering matters.
+    """
+    import cockpit.lib.daemon as daemon_mod
+
+    prev = daemon_mod.PID_FILE
+    daemon_mod.PID_FILE = tmp_path / "cockpit.pid"
+    yield
+    daemon_mod.PID_FILE = prev
+
+
 def _git(cwd: Path, *args: str) -> str:
     env = {
         **os.environ,
