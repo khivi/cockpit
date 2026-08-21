@@ -4511,7 +4511,10 @@ def test_reconcile_review_groups_folds_coworker_prs(tmp_path):
         cycle._reconcile_review_groups(folds, dry=False)
 
     create.assert_called_once_with(
-        "Cockpit reviews (2)", ["workspace:2", "workspace:3"], icon=REVIEW_GROUP_ICON
+        "Cockpit reviews (2)",
+        ["workspace:2", "workspace:3"],
+        icon=REVIEW_GROUP_ICON,
+        collapsed=True,
     )
     move.assert_called_once_with("wg:1")
 
@@ -4548,6 +4551,7 @@ def test_reconcile_review_groups_folds_an_org_across_its_repos(tmp_path):
         "Reality Defender reviews (2)",
         ["workspace:1", "workspace:2"],
         icon=REVIEW_GROUP_ICON,
+        collapsed=True,
     )
 
 
@@ -4603,7 +4607,7 @@ def test_reconcile_review_groups_folds_a_lone_review(tmp_path):
         cycle._reconcile_review_groups(folds, dry=False)
 
     create.assert_called_once_with(
-        "n reviews (1)", ["workspace:2"], icon=REVIEW_GROUP_ICON
+        "n reviews (1)", ["workspace:2"], icon=REVIEW_GROUP_ICON, collapsed=True
     )
     move.assert_called_once_with("wg:1")
 
@@ -4992,7 +4996,7 @@ def test_reconcile_review_groups_folds_a_lone_snooze(tmp_path):
         cycle._reconcile_review_groups(folds, dry=False)
 
     create.assert_called_once_with(
-        "Cockpit snoozed (1)", ["workspace:2"], icon=SNOOZE_GROUP_ICON
+        "Cockpit snoozed (1)", ["workspace:2"], icon=SNOOZE_GROUP_ICON, collapsed=True
     )
     move.assert_called_once_with("wg:1")
 

@@ -1184,6 +1184,47 @@ def test_create_workspace_group_accepts_a_single_member():
     assert group.ref == "workspace_group:1"
 
 
+def test_create_workspace_group_leaves_the_group_expanded_by_default():
+    # A stack is the live queue — folding it shut would hide my own PR rows.
+    fake = _FakeCmux()
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake):
+        create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
+
+    assert ("workspace-group", "collapse") not in fake.verbs()
+
+
+def test_create_workspace_group_collapses_when_asked():
+    # cmux creates every group expanded (`is_collapsed: false`), so a trailing
+    # pile would pop open on the tick that built it. Collapse lands after the
+    # icon, on the created group's own ref.
+    fake = _FakeCmux()
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake):
+        group = create_workspace_group(
+            "acme reviews (1)", ["workspace:1"], collapsed=True
+        )
+
+    assert group is not None
+    assert fake.verbs() == [
+        ("workspace-group", "create"),
+        ("workspace-group", "set-icon"),
+        ("workspace-group", "collapse"),
+    ]
+    collapse = next(a for a in fake.calls if a[:2] == ("workspace-group", "collapse"))
+    assert collapse[2] == group.ref
+
+
+def test_create_workspace_group_does_not_collapse_a_group_it_failed_to_create():
+    with patch("cockpit.lib.cmux.cmux", return_value="not json") as cmux_mock:
+        assert (
+            create_workspace_group("acme reviews (1)", ["workspace:1"], collapsed=True)
+            is None
+        )
+
+    assert [c for c in cmux_mock.call_args_list if "collapse" in c.args] == []
+
+
 def test_create_workspace_group_refuses_an_empty_member_list():
     with patch("cockpit.lib.cmux.cmux") as cmux_mock:
         assert create_workspace_group("acme reviews (0)", []) is None

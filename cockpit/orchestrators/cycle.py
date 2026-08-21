@@ -2551,6 +2551,14 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
     the same at one item as at five. The dedicated anchor makes it possible —
     cmux only drops a group whose *anchor* is its last workspace. Same for a
     lone snooze.
+
+    **Both piles are born collapsed** (`create_workspace_group(collapsed=True)`),
+    the same statement the `--to-index 9999` sink makes in the other dimension:
+    not my turn. cmux creates every group expanded, so without it a fold pops
+    open on the tick that builds it. Create-time only — a per-cycle re-assert
+    would shut a fold the user had just expanded to read, and unlike the sink
+    there is nothing to self-heal (an expand is a gesture, not drift). A stack
+    is the live queue, so `_reconcile_sidebar_groups` keeps its default.
     """
     if dry:
         return
@@ -2570,7 +2578,7 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
                 [g for g in groups if g.anchor not in folds.owned], refs, matched
             )
             if group is None:
-                created = create_workspace_group(name, refs, icon=icon)
+                created = create_workspace_group(name, refs, icon=icon, collapsed=True)
                 if created is not None:
                     move_workspace_group_to_end(created.ref)
                     print(

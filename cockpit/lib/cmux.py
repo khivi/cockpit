@@ -238,7 +238,11 @@ def list_workspace_groups() -> list[WorkspaceGroup]:
 
 
 def create_workspace_group(
-    name: str, refs: list[str], *, icon: str = STACK_GROUP_ICON
+    name: str,
+    refs: list[str],
+    *,
+    icon: str = STACK_GROUP_ICON,
+    collapsed: bool = False,
 ) -> WorkspaceGroup | None:
     """Fold `refs` into one sidebar group named `name`, headed by its own row.
 
@@ -261,6 +265,12 @@ def create_workspace_group(
     guard used to be `< 2`, from before the anchor was split out of the
     members.) Callers that need a real minimum enforce their own: a one-PR
     chain isn't a stack, so `_reconcile_sidebar_groups` still skips it.
+
+    `collapsed` folds the new group shut. cmux always creates a group *expanded*
+    (`is_collapsed: false`), so a pile that is by definition not-my-turn pops
+    open on the very tick that builds it — see `_reconcile_review_groups`, the
+    one caller that asks for this. It is create-time only, never re-asserted: a
+    per-cycle collapse would slam shut a fold the user had just expanded to read.
 
     Returns the created group, or None if anything failed.
     """
@@ -287,6 +297,8 @@ def create_workspace_group(
     if group is None:
         return None
     _set_group_icon(group.ref, icon)
+    if collapsed:
+        cmux("workspace-group", "collapse", group.ref, check=False)
     return group
 
 
