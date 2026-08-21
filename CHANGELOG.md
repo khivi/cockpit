@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.18.0](https://github.com/khivi/cockpit/compare/v1.17.1...v1.18.0) (2026-08-21)
+
+
+### Features
+
+* **tui:** show per-worktree Claude Code spend ([#344](https://github.com/khivi/cockpit/issues/344)) ([07ca7b8](https://github.com/khivi/cockpit/commit/07ca7b8d01905a271b0c0ce7bf55cfc7fededd3d))
+
+
+### Bug Fixes
+
+* **spawn:** classify Linear and Jira issue URLs as ticket sources ([#341](https://github.com/khivi/cockpit/issues/341)) ([1de2a1d](https://github.com/khivi/cockpit/commit/1de2a1dc5c66b6174391052a7dfa0f726350157c))
+
+
+### Documentation
+
+* **todo:** queue the two cockpit-app port candidates ([#342](https://github.com/khivi/cockpit/issues/342)) ([15292bb](https://github.com/khivi/cockpit/commit/15292bb596423c815a062027d5035c50d3a363c3))
+
 ## [1.17.1](https://github.com/khivi/cockpit/compare/v1.17.0...v1.17.1) (2026-08-21)
 
 
