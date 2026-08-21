@@ -305,9 +305,15 @@ def _stack_rows(wts: list[Worktree]) -> list[tuple[Worktree, int]]:
     snoozed — mirroring the trailing folds the sidebar already parks at the
     bottom (`cycle._reconcile_review_groups`). The sort is **stable**, so within
     a band the stack/`git worktree list` order above is untouched, and it bands
-    a chain by its **tip** (the depth-0 row heading the group) so a chain with
-    one snoozed member sinks whole rather than splitting — contiguity under the
-    tip is what keeps the table and the sidebar reading as the same stack."""
+    a chain by its **tip** (the depth-0 row heading the group), never by its
+    deepest member: a snoozed *tip* sinks its whole chain rather than splitting
+    it, while a snooze on a member *below* the tip moves nothing — one snoozed
+    dependency must not bury the active stack sitting on top of it. Contiguity
+    under the tip is what keeps the table and the sidebar reading as the same
+    stack. The sidebar sinks the same chain by the same tip rule, just by a
+    different mechanism: its snoozed *pile* excludes every ref already folded
+    into a stack group, so the whole group is moved to the bottom instead
+    (`cycle._reconcile_sidebar_groups`)."""
     rows = stack_order(
         [wt.branch for wt in wts],
         lambda branch: read_text(branch_cache("pr-base", branch)),

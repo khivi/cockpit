@@ -60,6 +60,7 @@ from cockpit.lib.cmux import (
     find_cockpit_workspaces,
     list_workspace_groups,
     move_workspace_group_to_end,
+    move_workspace_group_to_start,
     nudge_if_idle,
     remove_from_workspace_group,
     rename_workspace_group,
@@ -2330,6 +2331,16 @@ def _reconcile_sidebar_groups(
     where `stacked` is known, but *folded* by `_reconcile_review_groups` at the
     end of the cycle, since those piles are keyed by org and span repos.
 
+    A snoozed stack therefore never joins the `snoozed` pile — it stays its own
+    group — so the group's *position* is the only thing left to say "not my
+    turn": each chain is sunk to the bottom when its **tip** is snoozed, the
+    same tip rule the TUI bands rows by. The sink re-asserts every cycle (so it
+    self-heals); the lift back fires only on the `pill_state` transition out of
+    a sink cockpit made, so a live stack is never moved. This runs before
+    `_reconcile_review_groups`, whose own `--to-index 9999` moves therefore land
+    the reviews and snoozed piles *below* a sunk stack — a read chain still
+    outranks a loose pile.
+
     Only groups overlapping *this* repo's workspaces are touched — a group the
     user made by hand around unrelated workspaces is never claimed or dissolved.
     The one exception is a stack-iconed group left holding nothing but its own
@@ -2353,19 +2364,27 @@ def _reconcile_sidebar_groups(
         if ref in owned and pr.branch
     }
 
-    desired: list[tuple[str, list[str]]] = []
+    desired: list[tuple[str, list[str], bool]] = []
     stacked: set[str] = set()
     for chain in find_stacks(ctx.prs):
-        members = [tracked[pr.branch] for pr in chain if pr.branch in tracked]
-        if len(members) < 2:
+        present = [pr for pr in chain if pr.branch in tracked]
+        if len(present) < 2:
             continue  # a stack with fewer than two local workspaces isn't a fold
         # `find_stacks` walks root-first, so the last member is the tip: it
         # names the group and leads the fold (`create_workspace_group` lands
         # the first ref at the top), the same order the TUI renders.
-        ordered = [members[-1], *members[:-1]]
+        ordered = [tracked[pr.branch] for pr in (present[-1], *present[:-1])]
         refs = [ref for ref, _ in ordered]
         stacked.update(refs)
-        desired.append((_stack_group_name(ordered[0][1], len(refs)), refs))
+        # Position follows the *tip*, the same discriminator the TUI bands a
+        # chain by (`worktree_table._row_band`): a snoozed tip sinks its whole
+        # chain, a live one keeps it up top. A snoozed stack stays one group —
+        # it never joins the `snoozed` pile (see `_pile(…, stacked)` below) —
+        # so the fold is the only thing left to say "not my turn", and without
+        # this a chain I'd read sat in the live area looking active while the
+        # TUI had already sunk it.
+        tip_snoozed = bool((ctx.prefs.get(present[-1].number) or NudgePref()).snoozed)
+        desired.append((_stack_group_name(ordered[0][1], len(refs)), refs, tip_snoozed))
 
     if folds is not None:
         folds.owned |= owned
@@ -2381,7 +2400,11 @@ def _reconcile_sidebar_groups(
 
         # Snoozed is resolved before reviews so a coworker PR I've already read
         # sinks with the snoozed pile rather than staying in the to-read queue —
-        # a workspace can live in exactly one group.
+        # a workspace can live in exactly one group. Passing `stacked` is what
+        # keeps a snoozed *stack member* with its chain: a stack already folds,
+        # and pulling one member out to the snoozed pile would split the fold
+        # that makes the chain readable. The TUI's `_row_band` is the looser
+        # half of the same rule — it sinks a chain whose *tip* is snoozed.
         snoozed = _pile(
             lambda pr: bool((ctx.prefs.get(pr.number) or NudgePref()).snoozed),
             stacked,
@@ -2414,18 +2437,61 @@ def _reconcile_sidebar_groups(
         for g in all_groups
         if g not in mine and g.icon == STACK_GROUP_ICON and set(g.members) <= {g.anchor}
     ]
+
+    def _park(group_ref: str, sink: bool) -> None:
+        """Sink a snoozed chain to the bottom; lift it back when it wakes.
+
+        Deliberately **asymmetric**, and both halves are load-bearing:
+
+        - the **sink** is unconditional every cycle, exactly like the trailing
+          folds' own `--to-index 9999`, so it self-heals: anything that shuffles
+          the sidebar between ticks (cmux reordering on activity, a `broadcast`
+          waking the sessions, a hand drag) is undone on the next slow tick.
+        - the **lift** fires only on the `pill_state` transition out of a sink
+          this daemon made (`stack-park:<group ref>`, deduped like
+          `color:<ref>`; an unknown key reads as live). Re-asserting *it* every
+          cycle would pin every live stack group to the top of the sidebar and
+          fight the user's own ordering — cockpit owns where a chain goes when
+          it snoozes, not where it sits the rest of the time.
+
+        Keyed by the **cmux group ref**, never by the chain's tip PR: the tip is
+        `present[-1]`, the deepest member that currently has a workspace, so it
+        *changes* when the tip merges and its worktree is torn down while the
+        group itself lives on (it matches by member overlap). A tip-keyed marker
+        would be orphaned at exactly that moment — the surviving chain, now
+        live, would look unsunk and stay pinned at the bottom for good, the very
+        failure the lift exists to prevent. The group ref instead dies with the
+        group, so the dissolve below drops the key and a rebuilt group starts
+        clean rather than inheriting a stale `"end"` and lifting a live chain.
+
+        ponytail: `pill_state` is process-local, so a sink outlives the lift's
+        memory of it — restart the daemon while a stack is sunk and the later
+        wake won't lift it (`workspace-group list` reports no index, so there is
+        nothing to read the position back from). Re-snoozing and waking fixes
+        it. Upgrade path if that bites: persist the marker beside the pref.
+        """
+        key = f"stack-park:{group_ref}"
+        if sink:
+            move_workspace_group_to_end(group_ref)
+            ctx.pill_state[key] = "end"
+        elif ctx.pill_state.get(key) == "end":
+            move_workspace_group_to_start(group_ref)
+            ctx.pill_state[key] = "start"
+
     matched: set[str] = set()
-    for name, refs in desired:
+    for name, refs, sink in desired:
         group = _match_stack_group(groups, refs, matched)
         if group is None:
             created = create_workspace_group(name, refs, icon=STACK_GROUP_ICON)
             if created is not None:
+                _park(created.ref, sink)
                 print(
                     f"  {verb('grouped')} {cyan(name)} {dim(' → '.join(refs))}",
                     flush=True,
                 )
             continue
         matched.add(group.ref)
+        _park(group.ref, sink)
         if group.name != name:
             rename_workspace_group(group.ref, name)
         for ref in refs:
@@ -2439,6 +2505,10 @@ def _reconcile_sidebar_groups(
     for group in mine + strays:
         if group.ref not in matched:
             ungroup_workspaces(group.ref)
+            # The park marker dies with the group, so a chain that reforms is
+            # built on a fresh ref and can't inherit a stale `"end"` — which
+            # would lift a live group to the top on its very first cycle.
+            ctx.pill_state.pop(f"stack-park:{group.ref}", None)
             # The header is cockpit's own throwaway anchor (never a group
             # member — see `create_workspace_group`), so dissolving the group
             # would otherwise leave it behind as a stray sidebar row.
