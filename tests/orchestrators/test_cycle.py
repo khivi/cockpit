@@ -4808,7 +4808,8 @@ def _park_stack(tmp_path, snoozed, pill_state=None):
     group = _group(
         "wg:stack", "b (2)", "workspace:9", ["workspace:2", "workspace:1"], icon=""
     )
-    sunk, lifted = [], []
+    sunk: list[str] = []
+    lifted: list[str] = []
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[group]),
         patch.object(cycle, "move_workspace_group_to_end", side_effect=sunk.append),
