@@ -1,5 +1,5 @@
 #!/bin/bash
-# cmux idle + loop pills — owns two related cmux pills for the same workspace:
+# cmux idle pill — owns one cmux pill for this workspace:
 #
 #   idle=idle    — agent parked at the prompt (Stop with no live loop).
 #                  Value is the literal string `idle`: cmux requires a non-empty
@@ -8,9 +8,6 @@
 #                  `nudge_if_idle` reads it to decide whether the workspace is
 #                  safe to ping with an actionable PR signal — the value is
 #                  ignored, only the `idle=` key prefix matters.
-#   loop=🔄      — agent is mid-/loop (dynamic ScheduleWakeup or cron). Visual
-#                  only; suppresses idle gating so broadcasters skip the
-#                  workspace while a wakeup is queued.
 #
 # Orthogonal to PR state: a workspace can rest with CI failing. cmux's own
 # `claude_code=Needs input` fires for any idle prompt; y/n permission prompts
@@ -18,26 +15,25 @@
 # confirmation by emitting the pill here.
 #
 # /loop suppression: dynamic /loop iterations end with a ScheduleWakeup call,
-# and the session is *not* truly at rest during the wait window — broadcasters
-# that read this pill (e.g. `cmux send`) would happily target a session waiting
-# for its own next wakeup. So on Stop we scan the transcript's last assistant
-# turn; if it called ScheduleWakeup or CronCreate, we leave `idle=` cleared and
-# set `loop=` on. Otherwise we clear `loop=` (the loop terminated — the model
-# stopped arming wakeups) and set `idle=`. This gives accurate "currently
-# looping" state for dynamic /loop, which a pure PreToolUse-only hook cannot
-# (it has no event for "model decided not to schedule another wakeup").
+# and the session is *not* truly at rest during the wait window — a nudge would
+# happily target a session waiting for its own next wakeup. So on Stop we scan
+# the transcript's last assistant turn; if it called ScheduleWakeup or
+# CronCreate, we leave `idle=` cleared. Otherwise we set `idle=`. Withholding
+# the pill is the ONLY suppression mechanism here, and it is what a pure
+# PreToolUse hook could never do (there is no event for "the model decided not
+# to schedule another wakeup").
 #
-# Cron-mode /loop arms a cron once at setup and fires on a fixed schedule —
-# the Stop-time transcript scan would not see ScheduleWakeup on every iteration
-# for that mode, so it relies on the PreToolUse(CronCreate|CronDelete) wiring
-# to drive the `loop=` pill explicitly.
+# There used to be a companion `loop=🔄` pill, driven by three more hooks
+# (PreToolUse on ScheduleWakeup|CronCreate|CronUpdate / CronDelete, plus
+# SessionEnd). It was removed because nothing ever read it — `nudge_if_idle`
+# gates on native `Running`, `idle=` and `parked=` only. Cron-mode /loop is
+# consequently unsuppressed, but it always was: its fixed-schedule iterations
+# don't arm a ScheduleWakeup for the Stop-time scan to see, and the pill they
+# did set changed no decision. See `_COCKPIT_HOOKS` in cockpit/lib/config.py.
 #
 # Hook wiring (Claude Code event → arg):
-#   Stop                                                       → stop
-#   UserPromptSubmit                                           → prompt
-#   PreToolUse(ScheduleWakeup|CronCreate|CronUpdate)           → loop-set
-#   PreToolUse(CronDelete)                                     → loop-clear
-#   SessionEnd                                                 → loop-clear
+#   Stop               → stop
+#   UserPromptSubmit   → prompt
 
 set -eu
 
@@ -81,20 +77,6 @@ if mkdir "$LOCKDIR" 2>/dev/null; then
   fi
   rmdir "$LOCKDIR" 2>/dev/null
 fi
-
-cmux() {
-  # Fire-and-forget: the cmux daemon occasionally stalls under contention
-  # (cockpit watcher + every claude session's hook all hitting the socket).
-  # Claude Code's hook timeout then kills the script and surfaces a
-  # "non-blocking status code" error on every prompt. Detach via subshell +
-  # background + stdio redirection so the hook returns in <1ms regardless of
-  # daemon health. Pill update is best-effort by design — stderr is captured
-  # into $LOG (prefixed with timestamp + workspace id) so silent CLI changes
-  # don't go unnoticed for weeks; stdout is discarded.
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  ( { command cmux "$@" --workspace "$CMUX_WORKSPACE_ID" </dev/null >/dev/null; } 2>&1 \
-    | sed "s|^|${ts} [${CMUX_WORKSPACE_ID}] |" >>"$LOG" & )
-}
 
 # How hard to retry the `idle=` write before giving up. Overridable so tests
 # don't sleep. Five tries × 1s self-heals a transient daemon stall (the
@@ -184,22 +166,17 @@ case "${1:-}" in
   stop)
     hook_input="$(cat)"
     if [ -n "$hook_input" ] && loop_active_in_transcript "$hook_input"; then
-      # /loop iteration just scheduled another wakeup — keep `idle=` cleared
-      # (we are *not* at rest) and reflect the live loop in `loop=`.
+      # /loop iteration just scheduled another wakeup — keep `idle=` cleared,
+      # we are *not* at rest.
       cmux_clear_verify idle
-      cmux set-status loop "🔄" --color "#a78bfa"
       exit 0
     fi
-    # No wakeup armed by the last turn — any prior dynamic /loop has ended.
-    # Clear `loop=` so the visual matches reality, then mark idle. The idle
-    # write is verified+retried because its silent loss is the bug this hook
-    # exists to prevent (a parked workspace that never gets nudged).
-    cmux clear-status loop
+    # No wakeup armed by the last turn — any prior dynamic /loop has ended, so
+    # mark idle. The write is verified+retried because its silent loss is the
+    # bug this hook exists to prevent (a parked workspace never gets nudged).
     cmux_set_verify idle idle "#6b7280"
     ;;
   prompt) cmux_clear_verify idle ;;
-  loop-set) cmux set-status loop "🔄" --color "#a78bfa" ;;
-  loop-clear) cmux clear-status loop ;;
 esac
 
 exit 0

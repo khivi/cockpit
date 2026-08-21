@@ -84,8 +84,8 @@ def main(argv: list[str] | None = None) -> int:
         return starship_main(["cockpit-starship", *rest])
 
     # idle-pill is a Claude Code hook shim — exec the packaged shell script with
-    # the phase arg (stop/prompt/loop-set/loop-clear). Kept off the render path
-    # and never fatal: a Claude hook must not break a session.
+    # the phase arg (stop/prompt). Kept off the render path and never fatal: a
+    # Claude hook must not break a session.
     if sub == "idle-pill":
         import os
         from pathlib import Path

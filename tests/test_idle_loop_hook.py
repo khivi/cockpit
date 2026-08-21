@@ -108,16 +108,15 @@ def _transcript_with(tmp_path: Path, tool_names: list[str]) -> Path:
     return t
 
 
-def test_loop_set_emits_loop_pill(fake_cmux):
-    subprocess.run([str(HOOK), "loop-set"], check=True)
-    calls = _poll_lines(fake_cmux, expected=1)
-    assert any("set-status loop" in c and "🔄" in c for c in calls), calls
-
-
-def test_loop_clear_clears_loop_pill(fake_cmux):
-    subprocess.run([str(HOOK), "loop-clear"], check=True)
-    calls = _poll_lines(fake_cmux, expected=1)
-    assert any("clear-status loop" in c for c in calls), calls
+def test_hook_never_touches_a_loop_pill(fake_cmux, tmp_path):
+    # The `loop=` pill and its three hooks were removed — nothing read them.
+    # Both phases must stay clear of the key so it can't creep back in.
+    transcript = _transcript_with(tmp_path, ["Edit"])
+    payload = json.dumps({"transcript_path": str(transcript)})
+    subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
+    subprocess.run([str(HOOK), "prompt"], check=True)
+    calls = _poll_lines(fake_cmux, expected=4)
+    assert not any("loop" in c for c in calls), calls
 
 
 def test_prompt_clears_idle_pill(fake_cmux):
@@ -210,57 +209,50 @@ def test_stop_idle_write_warns_when_never_confirmed(tmp_path, monkeypatch):
     assert err.exists() and "idle= not confirmed" in err.read_text()
 
 
-def test_stop_with_schedulewakeup_sets_loop_and_clears_idle(fake_cmux, tmp_path):
+def test_stop_with_schedulewakeup_clears_idle(fake_cmux, tmp_path):
     transcript = _transcript_with(tmp_path, ["ScheduleWakeup"])
     payload = json.dumps({"transcript_path": str(transcript)})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    # Three async lines on this path: the verified idle clear emits both
-    # `clear-status idle` and its `list-status` readback, then `set-status loop`
-    # lands separately. Poll for all three so the loop pill isn't raced out.
-    calls = _poll_lines(fake_cmux, expected=3)
+    # Two async lines: the verified idle clear emits `clear-status idle` and
+    # its `list-status` readback.
+    calls = _poll_lines(fake_cmux, expected=2)
     assert any("clear-status idle" in c for c in calls), calls
-    assert any("set-status loop" in c and "🔄" in c for c in calls), calls
+    # Withholding the pill is the whole /loop suppression mechanism — a session
+    # waiting on its own next wakeup is not at rest and must not read as idle.
     assert not any("set-status idle" in c for c in calls), calls
 
 
-def test_stop_with_croncreate_sets_loop_and_clears_idle(fake_cmux, tmp_path):
+def test_stop_with_croncreate_clears_idle(fake_cmux, tmp_path):
     transcript = _transcript_with(tmp_path, ["Edit", "CronCreate"])
     payload = json.dumps({"transcript_path": str(transcript)})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    # clear-status idle + its list-status readback + set-status loop = 3 lines.
-    calls = _poll_lines(fake_cmux, expected=3)
-    assert any("set-status loop" in c for c in calls), calls
+    calls = _poll_lines(fake_cmux, expected=2)
+    assert any("clear-status idle" in c for c in calls), calls
     assert not any("set-status idle" in c for c in calls), calls
 
 
-def test_stop_without_loop_tools_clears_loop_and_sets_idle(fake_cmux, tmp_path):
+def test_stop_without_loop_tools_sets_idle(fake_cmux, tmp_path):
     transcript = _transcript_with(tmp_path, ["Edit", "Read"])
     payload = json.dumps({"transcript_path": str(transcript)})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    # clear-status loop + the verified idle set (set-status idle + its
-    # list-status readback) = 3 lines.
-    calls = _poll_lines(fake_cmux, expected=3)
-    assert any("clear-status loop" in c for c in calls), calls
+    # The verified idle set: `set-status idle` + its `list-status` readback.
+    calls = _poll_lines(fake_cmux, expected=2)
     # Value must be the literal `idle`: cmux >=0.64.10 rejects empty values,
     # so any change away from a non-empty marker silently breaks nudge_if_idle.
     assert any("set-status idle idle" in c for c in calls), calls
-    assert not any("set-status loop" in c for c in calls), calls
 
 
 def test_stop_with_missing_transcript_falls_through_to_idle(fake_cmux, tmp_path):
     payload = json.dumps({"transcript_path": str(tmp_path / "nope.jsonl")})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    # clear-status loop + the verified idle set (set-status idle + its
-    # list-status readback) = 3 lines.
-    calls = _poll_lines(fake_cmux, expected=3)
+    calls = _poll_lines(fake_cmux, expected=2)
     assert any("set-status idle idle" in c for c in calls), calls
-    assert any("clear-status loop" in c for c in calls), calls
 
 
 def test_no_workspace_id_is_noop(tmp_path, monkeypatch):
     log = make_shim_on_path(tmp_path, monkeypatch, "cmux")
     monkeypatch.delenv("CMUX_WORKSPACE_ID", raising=False)
-    subprocess.run([str(HOOK), "loop-set"], check=True)
+    subprocess.run([str(HOOK), "prompt"], check=True)
     assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
@@ -271,7 +263,7 @@ def test_dead_workspace_is_noop(tmp_path, monkeypatch):
     log = _plant_cmux_shim(tmp_path, monkeypatch, ["workspace:1", "workspace:42"])
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    subprocess.run([str(HOOK), "loop-set"], check=True)
+    subprocess.run([str(HOOK), "prompt"], check=True)
     assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
@@ -281,16 +273,16 @@ def test_substring_workspace_id_does_not_match(tmp_path, monkeypatch):
     log = _plant_cmux_shim(tmp_path, monkeypatch, ["workspace:99"])
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:9")
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    subprocess.run([str(HOOK), "loop-set"], check=True)
+    subprocess.run([str(HOOK), "prompt"], check=True)
     assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
 def test_live_workspace_passes_through(fake_cmux):
-    # Sanity: fake_cmux registers workspace:99 as live, so loop-set must reach
-    # the set-status call. (Companion to test_dead_workspace_is_noop.)
-    subprocess.run([str(HOOK), "loop-set"], check=True)
+    # Sanity: fake_cmux registers workspace:99 as live, so the phase must reach
+    # the cmux call. (Companion to test_dead_workspace_is_noop.)
+    subprocess.run([str(HOOK), "prompt"], check=True)
     calls = _poll_lines(fake_cmux, expected=1)
-    assert any("set-status loop" in c for c in calls), calls
+    assert any("clear-status idle" in c for c in calls), calls
 
 
 def test_prune_truncates_oversized_log(fake_cmux, tmp_path):
@@ -302,7 +294,7 @@ def test_prune_truncates_oversized_log(fake_cmux, tmp_path):
     err.write_bytes(original)
     assert len(original) > 65_536
 
-    subprocess.run([str(HOOK), "loop-clear"], check=True)
+    subprocess.run([str(HOOK), "prompt"], check=True)
     _poll_lines(fake_cmux, expected=1)  # let the hook finish its rotate
 
     kept = err.read_bytes()
@@ -317,7 +309,7 @@ def test_prune_leaves_undersized_log_alone(fake_cmux, tmp_path):
     body = b"x" * 10_000  # well under 64 KB threshold
     err.write_bytes(body)
 
-    subprocess.run([str(HOOK), "loop-clear"], check=True)
+    subprocess.run([str(HOOK), "prompt"], check=True)
     _poll_lines(fake_cmux, expected=1)
 
     assert err.read_bytes() == body
@@ -333,7 +325,7 @@ def test_prune_skipped_when_lock_held(fake_cmux, tmp_path):
     lockdir = tmp_path / "cmux-idle-pill.err.lock.d"
     lockdir.mkdir()
 
-    subprocess.run([str(HOOK), "loop-clear"], check=True)
+    subprocess.run([str(HOOK), "prompt"], check=True)
     _poll_lines(fake_cmux, expected=1)
 
     # Lock was held → rotate skipped → file untouched.
