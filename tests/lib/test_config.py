@@ -1505,21 +1505,76 @@ def test_install_claude_hooks_writes_expected_events(tmp_path):
     settings = tmp_path / "settings.json"
     config_mod.install_claude_hooks(settings)
     data = json.loads(settings.read_text())
-    assert set(_events(data)) == {
-        "Stop",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "SessionEnd",
-    }
+    # Exactly the two hooks that drive the `idle=` pill. The retired ones — the
+    # Stop-time `cockpit statusline` duplicate write and the three `loop=` hooks
+    # nothing read — must not come back without a reader to justify them.
+    assert set(_events(data)) == {"Stop", "UserPromptSubmit"}
     # No self-update SessionStart hook — it was retired with the update subsystem.
     assert "SessionStart" not in _events(data)
-    assert "cockpit statusline || true" in _cmds(data, "Stop")
-    assert "cockpit idle-pill stop || true" in _cmds(data, "Stop")
-    assert "cockpit idle-pill prompt || true" in _cmds(data, "UserPromptSubmit")
-    assert {
-        "cockpit idle-pill loop-set || true",
-        "cockpit idle-pill loop-clear || true",
-    } <= set(_cmds(data, "PreToolUse"))
+    assert _cmds(data, "Stop") == ["cockpit idle-pill stop || true"]
+    assert _cmds(data, "UserPromptSubmit") == ["cockpit idle-pill prompt || true"]
+
+
+def test_install_claude_hooks_sweeps_retired_cockpit_hooks(tmp_path):
+    # An older install's hooks live under events cockpit no longer owns. The
+    # sweep runs over every event in the file, not just the template's, or they
+    # strand there forever pointing at behaviour that no longer exists.
+    settings = tmp_path / "settings.json"
+    user_group = {"matcher": "", "hooks": [{"type": "command", "command": "mine.sh"}]}
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "cockpit statusline || true",
+                                },
+                                {
+                                    "type": "command",
+                                    "command": "cockpit idle-pill stop || true",
+                                },
+                            ],
+                        }
+                    ],
+                    "PreToolUse": [
+                        {
+                            "matcher": "CronDelete",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "cockpit idle-pill loop-clear || true",
+                                }
+                            ],
+                        },
+                        user_group,
+                    ],
+                    "SessionEnd": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "cockpit idle-pill loop-clear || true",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        )
+    )
+    config_mod.install_claude_hooks(settings)
+    data = json.loads(settings.read_text())
+    # Cockpit-only event goes away entirely rather than leaving an empty list.
+    assert "SessionEnd" not in data["hooks"]
+    # An event cockpit shared with the user keeps the user's group, alone.
+    assert data["hooks"]["PreToolUse"] == [user_group]
+    # And the Stop group is rewritten without the statusline duplicate.
+    assert _cmds(data, "Stop") == ["cockpit idle-pill stop || true"]
 
 
 def test_install_claude_hooks_is_idempotent(tmp_path):

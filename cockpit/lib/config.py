@@ -1040,18 +1040,29 @@ def _write_statusline(settings_path: Path, statusline_command: str) -> None:
     print(f"wrote claude statusLine -> {statusline_command}")
 
 
-# Claude Code hooks cockpit owns. Commands resolve off PATH (the installed
-# `cockpit` console script) — there is no plugin root to interpolate. This is
-# what the plugin's hooks.json used to provide, minus the retired SessionStart
-# self-update hook. `cockpit statusline` stashes the statusLine stdin caches on
-# Stop; `cockpit idle-pill <phase>` drives the cmux idle pill the nudge gate
-# reads.
+# Claude Code hooks cockpit owns — exactly the two that drive the `idle=` pill
+# `nudge_if_idle` reads. Commands resolve off PATH (the installed `cockpit`
+# console script); there is no plugin root to interpolate.
+#
+# Deliberately NOT here, and do not re-add without a reader to point at:
+#   - `Stop -> cockpit statusline`. That command is `statusline.py::main`:
+#     stash-then-render-via-cship. A Stop payload carries no `model` /
+#     `context_window` / `cost` / `rate_limits`, so of the six session cells
+#     `lib.claude.stash_from_stdin` can write it reached only `transcript-path`
+#     — which the statusLine command itself already writes on every render —
+#     while paying a full cship + starship + starship.py×8 render whose stdout
+#     Claude Code discards. A duplicate write behind a ~10-subprocess no-op.
+#   - the three `loop=` hooks (`PreToolUse(ScheduleWakeup|CronCreate|CronUpdate)`
+#     -> loop-set, `PreToolUse(CronDelete)` / `SessionEnd` -> loop-clear).
+#     Nothing read that pill: `nudge_if_idle` gates on native `Running`, the
+#     `idle=` pill and `parked=`, never on `loop=`. /loop suppression comes from
+#     the Stop handler *withholding* `idle=` when the last turn armed a wakeup
+#     (`cockpit/hooks/cmux-idle-pill.sh`), which is unaffected by their removal.
 _COCKPIT_HOOKS: dict[str, list[dict]] = {
     "Stop": [
         {
             "matcher": "",
             "hooks": [
-                {"type": "command", "command": "cockpit statusline || true"},
                 {"type": "command", "command": "cockpit idle-pill stop || true"},
             ],
         }
@@ -1064,35 +1075,14 @@ _COCKPIT_HOOKS: dict[str, list[dict]] = {
             ],
         }
     ],
-    "PreToolUse": [
-        {
-            "matcher": "ScheduleWakeup|CronCreate|CronUpdate",
-            "hooks": [
-                {"type": "command", "command": "cockpit idle-pill loop-set || true"}
-            ],
-        },
-        {
-            "matcher": "CronDelete",
-            "hooks": [
-                {"type": "command", "command": "cockpit idle-pill loop-clear || true"}
-            ],
-        },
-    ],
-    "SessionEnd": [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": "cockpit idle-pill loop-clear || true"}
-            ],
-        }
-    ],
 }
 
 
-# Every command `_COCKPIT_HOOKS` writes starts with one of these two tokens
-# (e.g. "cockpit statusline || true", "cockpit idle-pill stop || true") — never
-# a bare substring match, so an unrelated hook that merely mentions "cockpit
-# statusline" (e.g. in an echo) doesn't get swept up as cockpit-owned.
+# Ownership test for the install/uninstall sweep — never a bare substring match,
+# so an unrelated hook that merely mentions "cockpit statusline" (e.g. in an
+# echo) isn't swept up as cockpit-owned. `statusline` stays in the alternation
+# even though no hook installs it any more: that is how an older install's
+# `Stop -> cockpit statusline` gets cleaned out.
 _COCKPIT_HOOK_CMD_RE = re.compile(r"^cockpit (statusline|idle-pill)(\s|$)")
 
 
@@ -1131,6 +1121,11 @@ def install_claude_hooks(settings_path: Path | None = None) -> None:
     Backs up an existing settings.json before rewriting, and no-ops (no backup)
     when the merged result is byte-identical to what's already there. Called
     from `cockpit setup`; replaces what the plugin's hooks.json used to install.
+
+    The drop sweeps *every* event in the file, not just the ones cockpit still
+    installs: a retired hook lives under an event absent from `_COCKPIT_HOOKS`
+    (`PreToolUse`, `SessionEnd`), so iterating the template alone would strand
+    it in the user's settings forever after an upgrade.
     """
     settings_path = settings_path or (Path.home() / ".claude" / "settings.json")
     original = settings_path.read_text() if settings_path.exists() else None
@@ -1139,10 +1134,16 @@ def install_claude_hooks(settings_path: Path | None = None) -> None:
     except json.JSONDecodeError:
         data = {}
     hooks: dict = data.get("hooks") or {}
-    for event, groups in _COCKPIT_HOOKS.items():
+    for event in [*hooks, *(e for e in _COCKPIT_HOOKS if e not in hooks)]:
         kept = [g for g in hooks.get(event, []) if not _is_cockpit_hook_group(g)]
         # Deep-copy the owned groups so the module-level template stays pristine.
-        hooks[event] = kept + json.loads(json.dumps(groups))
+        owned = json.loads(json.dumps(_COCKPIT_HOOKS.get(event, [])))
+        if kept or owned:
+            hooks[event] = kept + owned
+        else:
+            # Retired event whose only groups were cockpit's — drop the key
+            # rather than leave an empty list behind.
+            hooks.pop(event, None)
     data["hooks"] = hooks
     new_text = json.dumps(data, indent=2) + "\n"
     if original == new_text:
