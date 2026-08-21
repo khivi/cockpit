@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/khivi/cockpit/compare/v1.17.0...v1.17.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **hooks:** install only the two hooks with a reader ([#339](https://github.com/khivi/cockpit/issues/339)) ([77e4ddd](https://github.com/khivi/cockpit/commit/77e4ddd92fadee1b5eb09bab4f516b48fc5acf92))
+
 ## [1.17.0](https://github.com/khivi/cockpit/compare/v1.16.0...v1.17.0) (2026-08-21)
 
 
