@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/khivi/cockpit/compare/v2.0.0...v2.1.0) (2026-08-24)
+
+
+### Features
+
+* **tui:** sink parked repos in the new-workspace picker, un-park on spawn ([#358](https://github.com/khivi/cockpit/issues/358)) ([18cddfb](https://github.com/khivi/cockpit/commit/18cddfbd5893a86644b80721854c6389eea24ae3))
+
 ## [2.0.0](https://github.com/khivi/cockpit/compare/v1.21.0...v2.0.0) (2026-08-24)
 
 
