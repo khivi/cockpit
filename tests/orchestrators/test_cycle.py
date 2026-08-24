@@ -2623,19 +2623,30 @@ def test_apply_repo_colors_dry_noops(tmp_path):
     swc.assert_not_called()
 
 
-def test_repo_name_color_falls_back_to_bold_when_unset():
-    from cockpit.lib.colors import bold
+# Both resolve the expected colorizer through `cycle`, NOT through a fresh
+# `from cockpit.lib.colors import ...`. `colors.py` reads the theme at import
+# time, so `tests/lib/test_colors.py` reloads the module once per test (plus once
+# more in its autouse teardown) — and every reload rebuilds `bold` and
+# `CMUX_COLOR_ANSI` as new objects. `cycle` imported them *by value*, so its
+# copies go stale the moment that happens, while a fresh import here fetches the
+# current ones: the `is` comparison then fails purely on collection order, which
+# under `-n auto` reads as a random flake. The autouse teardown restores the
+# module's *values* but cannot restore identity — reloading again just mints
+# another object. `cycle.bold` is by definition the exact object
+# `_repo_name_color` closes over, which is also the right granularity: what's
+# under test is that function's dispatch (fallback vs configured hue), not
+# colors.py's own contents, which `tests/lib/test_colors.py` owns.
 
-    assert cycle._repo_name_color({"name": "n"}) is bold
-    assert cycle._repo_name_color({"name": "n", "sidebar_color": None}) is bold
+
+def test_repo_name_color_falls_back_to_bold_when_unset():
+    assert cycle._repo_name_color({"name": "n"}) is cycle.bold
+    assert cycle._repo_name_color({"name": "n", "sidebar_color": None}) is cycle.bold
 
 
 def test_repo_name_color_uses_configured_sidebar_color():
-    from cockpit.lib.colors import CMUX_COLOR_ANSI
-
     assert (
         cycle._repo_name_color({"name": "n", "sidebar_color": "Teal"})
-        is CMUX_COLOR_ANSI["Teal"]
+        is cycle.CMUX_COLOR_ANSI["Teal"]
     )
 
 
