@@ -146,6 +146,7 @@ from cockpit.lib.git import (
     collision_free,
     create_new_branch_worktree,
     create_worktree,
+    main_worktree_path,
     slugify,
     worktree_for_branch,
 )
@@ -154,6 +155,7 @@ from cockpit.lib.github_issues import (
     GITHUB_ISSUE_URL_RE,
     add_label,
 )
+from cockpit.lib.hidden import is_hidden, load_hidden, toggle_hidden
 from cockpit.lib.jira import JIRA_ISSUE_URL_RE
 from cockpit.lib.linear import (
     LINEAR_ISSUE_URL_RE,
@@ -503,6 +505,31 @@ def _repo_entry_or_none(repo_name: str | None) -> dict | None:
     if repo_name:
         return find_repo_by_name(repo_name)
     return discover_repo()
+
+
+def _unhide_spawn_target(wt: Path | None) -> None:
+    """Spawning into a parked repo un-parks it.
+
+    Parking is dormancy, not just invisibility: `cycle_all` skips a parked repo
+    entirely, so the worktree this run just created would get no workspace
+    reconcile, no pills and no nudge — the `kick_running` below would reconcile
+    nothing. Asking for a workspace there is the plainest possible statement
+    that the repo isn't dormant any more, so the park ends here.
+
+    Keyed off the spawn target's own **main worktree**, which is the same
+    resolved path `hidden.py` stores, so one call covers every mode (branch, PR,
+    `--cwd`, `--skill`) without re-deriving which config entry was routed to. The
+    `load_hidden()` test comes first so the ordinary nothing-parked run pays a
+    JSON read rather than a `git worktree list`. A `--cwd` outside any git repo
+    resolves to None and is skipped, as is one in an unregistered repo (it can't
+    be in the parked set).
+    """
+    if wt is None or not load_hidden():
+        return
+    repo_root = main_worktree_path(wt)
+    if repo_root is not None and is_hidden(repo_root):
+        toggle_hidden(repo_root)
+        print(f"note: un-hid parked repo {repo_root}")
 
 
 def select_repo(repo_name: str | None) -> dict:
@@ -1199,6 +1226,7 @@ def main(argv: list[str] | None = None) -> int:
         ):
             print(f"note: labeled issue #{gh_issue_value} '{start_label}'")
 
+    _unhide_spawn_target(wt)
     kick_running(quiet=True)
     return 0
 

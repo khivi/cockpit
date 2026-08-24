@@ -1095,6 +1095,63 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
     assert launched["cwd"] == str(repo_b)  # chosen repo, not the cursor row's
 
 
+async def test_new_box_sinks_parked_repos_and_unhides_on_spawn(monkeypatch, tmp_path):
+    # A parked repo stays offered in the modal's picker, but sorts below the live
+    # ones and is labelled `(hidden)`. Picking it is a deliberate un-park: the
+    # repo has to be live for the kicked cycle to reconcile the new worktree at
+    # all, since `cycle_all` skips parked repos.
+    from textual.widgets import Input, Select
+
+    from cockpit.lib.hidden import is_hidden, toggle_hidden
+    from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
+
+    repo_a, repo_b = tmp_path / "a", tmp_path / "b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    wt = Worktree(path=repo_a / "wt-a", branch="khivi/feat-a")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {
+            "repos": [
+                {"name": "b", "path": str(repo_b)},  # parked, but listed first
+                {"name": "a", "path": str(repo_a)},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees", lambda p, prefix="", repo_name="": [wt]
+    )
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
+    launched: dict = {}
+    monkeypatch.setattr(
+        "subprocess.Popen",
+        lambda cmd, **kw: launched.update(cmd=cmd, cwd=kw.get("cwd")) or object(),
+    )
+    toggle_hidden(repo_b)
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("a", "a", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, NewWorkspaceScreen)
+        screen = app.screen
+        # Config order puts b first; parked sinks it below a, dimmed + labelled.
+        assert [p for _n, p in screen._repos] == [str(repo_a), str(repo_b)]
+        assert screen._option_label("b", str(repo_b)).endswith(
+            NewWorkspaceScreen.HIDDEN_SUFFIX
+        )
+        screen.query_one(Select).value = str(repo_b)
+        screen.query_one("#nw-input", Input).value = "fix-login"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert launched["cwd"] == str(repo_b)
+    assert not is_hidden(repo_b)  # spawning there un-parks it
+
+
 async def test_h_parks_repo(monkeypatch, tmp_path):
     # `h` parks the cursor row's whole repo (persisted via lib/hidden) — it drops
     # out of the inventory entirely, even once revealed (a parked repo is dormant:

@@ -11,6 +11,7 @@ tested in test_app.py.
 from __future__ import annotations
 
 import pytest
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Select, Static
 
@@ -129,6 +130,43 @@ async def test_no_worktree_repo_option_label_flags_open():
         NewWorkspaceScreen.BUSY_SUFFIX
     )
     assert screen._option_label("repo-b", "/tmp/b") == "repo-b"
+
+
+async def test_hidden_repo_option_is_labelled_and_dimmed():
+    # A parked repo stays pickable (spawning into one un-parks it) but reads as
+    # dormant: `(hidden)` suffix + a dim prompt, like the table's parked rows.
+    screen = NewWorkspaceScreen(_TWO, hidden_paths={"/tmp/a"})
+    assert screen._option_label("repo-a", "/tmp/a").endswith(
+        NewWorkspaceScreen.HIDDEN_SUFFIX
+    )
+    prompt = screen._option_prompt("repo-a", "/tmp/a")
+    assert isinstance(prompt, Text) and prompt.style == "dim"
+    # A live repo is untouched — plain string, no suffix.
+    assert screen._option_prompt("repo-b", "/tmp/b") == "repo-b"
+
+
+async def test_hidden_repos_sort_below_live_ones():
+    repos = [("a", "/tmp/a"), ("hid", "/tmp/h"), ("b", "/tmp/b"), ("hid2", "/tmp/h2")]
+    screen = NewWorkspaceScreen(repos, hidden_paths={"/tmp/h", "/tmp/h2"})
+    # Parked repos sink to the end; config order survives within each group.
+    assert [p for _n, p in screen._repos] == ["/tmp/a", "/tmp/b", "/tmp/h", "/tmp/h2"]
+
+
+async def test_hidden_repo_stays_selectable():
+    app = _Host()
+    result: list = []
+    async with app.run_test() as pilot:
+        await app.push_screen(
+            NewWorkspaceScreen(_TWO, default_path="/tmp/a", hidden_paths={"/tmp/b"}),
+            result.append,
+        )
+        await pilot.pause()
+        app.screen.query_one(Select).value = "/tmp/b"
+        app.screen.query_one(Input).value = "fix-login"
+        await pilot.press("enter")
+        await pilot.pause()
+    # Hidden is de-emphasis, not a block — the app un-parks on spawn.
+    assert result == [("fix-login", "/tmp/b")]
 
 
 async def test_no_worktree_repo_prefills_name_with_repo_name():
