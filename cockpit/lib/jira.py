@@ -49,9 +49,13 @@ CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("keys", "str_list"),
     ("site_url", "str"),
     ("email", "str"),
+    ("dev_done", "str"),
+    ("merge_done", "str"),
+    ("token_env", "str"),
+    # Superseded spellings, still accepted so existing configs keep working.
+    # `config._tickets_field` resolves each to its canonical name above.
     ("dev_done_status", "str"),
     ("merge_done_status", "str"),
-    ("token_env", "str"),
 )
 
 # A Jira issue key: a project key (a letter then alphanumerics) joined to an

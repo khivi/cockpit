@@ -971,13 +971,16 @@ def test_preflight_rejects_a_credential_field_for_the_wrong_provider(
                 "repos": [
                     {
                         "name": "r",
-                        "tickets": {"provider": "linear", "token_env": "NOPE"},
+                        # `key_env` is Trello's half of its key+token pair;
+                        # Linear has a single credential, so it declares only
+                        # `token_env` and this stays a hard-fail.
+                        "tickets": {"provider": "linear", "key_env": "NOPE"},
                     }
                 ],
             }
         )
     assert exc.value.code == 2
-    assert "token_env" in capsys.readouterr().err
+    assert "key_env" in capsys.readouterr().err
 
 
 # ── shipped config.example.json must be accepted ─────────────────────────────

@@ -76,7 +76,7 @@ itself doesn't set, so `svc-web` above keeps Cyan while its siblings take Magent
 Block-valued keys (`tickets`, `skills`) merge **one level deep**, per field, with
 the repo's value winning — the same granularity a repo already has over the
 global block. So a repo can set just `tickets.project` and keep the org's
-`provider` / `keys` / `api_key_env`, which is the point: `project` is the routing
+`provider` / `keys` / `token_env`, which is the point: `project` is the routing
 discriminator meant to differ *within* an org. Everything else (scalars, lists)
 is taken whole from whichever side sets it, repo first.
 
@@ -104,33 +104,42 @@ export `CONFIG_FIELDS`); preflight rejects a field belonging to another provider
 |---|---|---|---|
 | `provider` | all | `none` | `none` \| `linear` \| `github` \| `jira` \| `trello`. |
 | `close_on_merge` | all | `false` | Daemon transitions the delivered ticket to its terminal state on PR merge (opt-in — makes the daemon a tracker *writer*). |
+| `dev_done` | all | per provider | The tracker value that lights the `devdone=` pill — whatever your provider calls that thing: a Linear workflow **state**, a GitHub issue **label**, a Jira **status**, a Trello **list**. Matched by name, case-insensitively. Defaults `Dev Done` (linear, jira) and `ready for review` (github); **no default** on trello, since boards name their lists arbitrarily and an unset value leaves the pill off rather than guessing. |
+| `merge_done` | linear, jira, trello | per provider | Where a delivered ticket moves when its PR merges, if `close_on_merge`. Same per-provider noun as `dev_done`. Defaults `Done` (linear, jira); **no default** on trello. GitHub has no equivalent — it closes the issue rather than moving it. |
 | `keys` | linear, jira | `[]` | Identifier prefixes (Linear team `["PE"]`, Jira project `["PROJ"]`) — routes a `PE-1234` / `PROJ-123` spawn to this repo, and gates the Linear reads/writes. |
 | `project` | linear | unset | Linear project this repo's work lives in. Tiebreaker when several repos share a team and so share `keys`: `PE-1234` then matches them all, and cockpit resolves the ticket's project (one fetch, made **only** on that ambiguity) to pick one. Matched by name, case-insensitively. (Jira has no equivalent — a Jira *project key* is `keys`, i.e. the team analogue.) |
-| `dev_done_state` | linear | `Dev Done` | Linear state that lights the `devdone=` pill. |
-| `merge_done_state` | linear | `Done` | Linear state a delivered ticket moves to on merge (if `close_on_merge`). |
-| `dev_done_label` | github | `ready for review` | Issue label that lights the `devdone=` pill. |
 | `start_label` | github | unset | Label applied when spawning a worktree on a GitHub issue (the one spawn-time write). |
 | `site_url` | jira | `""` | Jira Cloud base URL. Empty → provider makes no REST call. |
 | `email` | jira | `""` | Jira account email (paired with `$JIRA_API_TOKEN` for Basic auth). |
-| `dev_done_status` | jira | `Dev Done` | Jira status that lights the `devdone=` pill. |
-| `merge_done_status` | jira | `Done` | Jira status a delivered issue transitions to on merge. |
 | `board` | trello | unset | Trello board this repo's cards live on — routes a `cockpit new https://trello.com/c/<id>` spawn. A card short link carries no board, so this is the *whole* route (not a tiebreaker): unset on every repo → zero fetches and no routing; declared on several → one fetch resolves the card's board. Matched by name, case-insensitively. |
-| `dev_done_list` | trello | `""` (off) | Trello list (column) that lights the `devdone=` pill. No default — boards name lists arbitrarily. |
-| `merge_done_list` | trello | `""` (off) | Trello list a delivered card moves to on merge. No default. |
-| `api_key_env` | linear | `LINEAR_API_KEY` | **Name** of the env var holding the Linear API key. |
-| `token_env` | jira, trello | `JIRA_API_TOKEN` / `TRELLO_API_TOKEN` | **Name** of the env var holding the Jira API token / Trello API token (the provider decides which). |
-| `key_env` | trello | `TRELLO_API_KEY` | **Name** of the env var holding the Trello API key. |
+| `token_env` | linear, jira, trello | `LINEAR_API_KEY` / `JIRA_API_TOKEN` / `TRELLO_API_TOKEN` | **Name** of the env var holding this provider's credential (the provider decides the default). |
+| `key_env` | trello | `TRELLO_API_KEY` | **Name** of the env var holding the Trello API key. Trello authenticates with a key *and* a token, so it is the one provider with two credential fields. |
+
+**Superseded spellings, still accepted.** `dev_done` and `merge_done` replaced one
+name per provider, and `token_env` replaced Linear's `api_key_env`. The old names
+still resolve, so an existing config needs no edit:
+
+| Canonical | Was |
+|---|---|
+| `dev_done` | `dev_done_state` (linear) · `dev_done_label` (github) · `dev_done_status` (jira) · `dev_done_list` (trello) |
+| `merge_done` | `merge_done_state` (linear) · `merge_done_status` (jira) · `merge_done_list` (trello) |
+| `token_env` | `api_key_env` (linear) |
+
+They stay **provider-scoped** — a Linear block can't use `dev_done_list` just
+because both now mean `dev_done`. Within one block the canonical name wins; across
+levels a repo's old name still beats a global new one, since repo always beats
+global.
 
 Secrets are **env-only**, never config: `LINEAR_API_KEY`, `JIRA_API_TOKEN`,
 `TRELLO_API_KEY`, `TRELLO_API_TOKEN`. The `*_env` fields above store an env var
 *name*, never a value — which is how two orgs on separate Linear workspaces (or
-Trello accounts) each get their own credential: set `api_key_env` once in the
+Trello accounts) each get their own credential: set `token_env` once in the
 `orgs` block and every member repo inherits it through the same per-field chain.
 
 ```json
 "orgs": {
   "acme": {"tickets": {"provider": "linear", "keys": ["ACME"],
-                       "api_key_env": "LINEAR_API_KEY_ACME"}}
+                       "token_env": "LINEAR_API_KEY_ACME"}}
 }
 ```
 

@@ -601,7 +601,7 @@ def _secret_fingerprint(*parts: str) -> str:
     identity-scoping context like a Jira site), used to key identity caches.
 
     Fingerprinting the resolved value — not the env var *name* — is what keeps
-    per-org credentials isolated: two repos whose `tickets.api_key_env` points at
+    per-org credentials isolated: two repos whose `tickets.token_env` points at
     different env vars land in different `pill_state` slots, so org B never reads
     org A's viewer id (which would silently skip every one of its tickets, since
     the viewer gate could never match). Rotating a credential invalidates its
@@ -677,7 +677,7 @@ def _transition_merged_linear(ctx: RepoCycle) -> None:
     Gates, all of which must hold:
       * `linear_done_on_merge` enabled for this repo (per-repo over global);
       * the repo is Linear-configured (`linear_keys`) and its API key env var
-        (`tickets.api_key_env`, default `LINEAR_API_KEY`) set;
+        (`tickets.token_env`, default `LINEAR_API_KEY`) set;
       * not a dry run.
 
     Per delivered ticket (read from the cached PR snapshot's `linear` block —

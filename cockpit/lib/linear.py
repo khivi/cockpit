@@ -34,7 +34,7 @@ in-session. But the daemon *does* make direct GraphQL calls:
     skip-if-already-done) lives there, this module just performs the call.
 
 Every call takes an explicit `api_key` (the caller resolves it per repo via
-`config.linear_api_key` — the env var named by `tickets.api_key_env`, default
+`config.linear_api_key` — the env var named by `tickets.token_env`, default
 `LINEAR_API_KEY`, which is also the back-compat fallback here) and degrades to
 None/False — never raises — on a missing key, timeout, or API error.
 """
@@ -79,6 +79,11 @@ LINEAR_ISSUE_URL_RE = re.compile(
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("keys", "str_list"),
     ("project", "str"),
+    ("dev_done", "str"),
+    ("merge_done", "str"),
+    ("token_env", "str"),
+    # Superseded spellings, still accepted so existing configs keep working.
+    # `config._tickets_field` resolves each to its canonical name above.
     ("dev_done_state", "str"),
     ("merge_done_state", "str"),
     ("api_key_env", "str"),

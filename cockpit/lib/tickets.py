@@ -248,7 +248,7 @@ def _linear_fetch_states(
 ) -> dict[str, str | None]:
     """`{id: workflow-state name}` via the batched Linear query (one per team).
     The API key is resolved per-repo (`config.linear_api_key` → the env var named
-    by `tickets.api_key_env`), so two orgs can use different Linear workspaces.
+    by `tickets.token_env`), so two orgs can use different Linear workspaces.
     repo_nwo/repo_dir are unused, kept for a uniform `fetch_states` signature.
     """
     return fetch_ticket_states(ids, api_key=linear_api_key(cfg, repo_entry) or None)

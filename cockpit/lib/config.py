@@ -431,7 +431,7 @@ def prompt_prefix() -> str:
 VALID_TICKETS = ("none", "linear", "github", "jira", "trello")
 
 # The single label that lights the `devdone=` pill for a GitHub issue when
-# `tickets.dev_done_label` is unset — GitHub has no named workflow states, so a
+# `tickets.dev_done` is unset — GitHub has no named workflow states, so a
 # label stands in for Linear's dev-done state. "ready for review" is the common
 # "development complete, awaiting review" label. (NB: a label like "accepted"
 # usually means *work started*, not done — that's `tickets.start_label`.)
@@ -473,21 +473,32 @@ def _tickets_block(src: dict | None) -> dict:
 
 
 def _tickets_field(
-    cfg: dict | None, repo_entry: dict | None, field: str
+    cfg: dict | None, repo_entry: dict | None, field: str, *aliases: str
 ) -> object | None:
     """One `tickets` field, resolved **per-field** repo-block → global-block →
     None. Per-field (not whole-block) so a global default for one setting — e.g.
     `close_on_merge` — still applies to a repo whose own `tickets` block omits
     that field but sets others.
+
+    `aliases` are superseded spellings of the same field, tried in order *after*
+    `field` **within each level** — so the canonical name wins over a legacy one
+    in the same block, while a repo's legacy name still beats a global canonical
+    one. That ordering is what keeps the rename back-compatible: the four
+    provider-specific spellings of dev-done (`dev_done_state` / `dev_done_label`
+    / `dev_done_status` / `dev_done_list`) all resolve to `dev_done`, and an
+    existing config keeps working untouched.
     """
+    names = (field, *aliases)
     rb = _tickets_block(repo_entry)
-    if field in rb:
-        repo_val: object = rb[field]
-        return repo_val
+    for name in names:
+        if name in rb:
+            repo_val: object = rb[name]
+            return repo_val
     gb = _tickets_block(cfg if cfg is not None else load_config())
-    if field in gb:
-        global_val: object = gb[field]
-        return global_val
+    for name in names:
+        if name in gb:
+            global_val: object = gb[name]
+            return global_val
     return None
 
 
@@ -536,7 +547,7 @@ def github_dev_done_label(
     delivered issue's label names — the GitHub analog of Linear's
     ``dev_done_state``.
     """
-    val = _tickets_field(cfg, repo_entry, "dev_done_label")
+    val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_label")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return GITHUB_DEV_DONE_DEFAULT
@@ -738,7 +749,7 @@ def linear_dev_done_state(
     `state.name`. Set via the `tickets` block's ``dev_done_state`` (a string),
     falling back to the legacy flat `linear_dev_done_state` key, then "Dev Done".
     """
-    val = _tickets_field(cfg, repo_entry, "dev_done_state")
+    val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_state")
     if isinstance(val, str) and val.strip():
         return val.strip()
     cfg = cfg if cfg is not None else load_config()
@@ -755,7 +766,7 @@ def linear_merge_done_state(
     transitions to on merge. Set via the `tickets` block's ``merge_done_state``,
     falling back to the legacy flat `linear_merge_done_state` key, then "Done".
     """
-    val = _tickets_field(cfg, repo_entry, "merge_done_state")
+    val = _tickets_field(cfg, repo_entry, "merge_done", "merge_done_state")
     if isinstance(val, str) and val.strip():
         return val.strip()
     cfg = cfg if cfg is not None else load_config()
@@ -771,7 +782,7 @@ def linear_api_key_env(cfg: dict | None = None, repo_entry: dict | None = None) 
     credential (`api_key_env` resolves repo → org → global → default like every
     other `tickets` field, so an org block covers all its repos for free).
     """
-    val = _tickets_field(cfg, repo_entry, "api_key_env")
+    val = _tickets_field(cfg, repo_entry, "token_env", "api_key_env")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return LINEAR_API_KEY_ENV
@@ -834,7 +845,7 @@ def jira_dev_done_status(
     — the Jira analog of `linear_dev_done_state`. Set via the `tickets` block's
     ``dev_done_status`` (a string).
     """
-    val = _tickets_field(cfg, repo_entry, "dev_done_status")
+    val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_status")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return JIRA_DEV_DONE_DEFAULT
@@ -849,7 +860,7 @@ def jira_merge_done_status(
     the opt-in `ticket_close_on_merge` writer moves to on merge. Set via the
     `tickets` block's ``merge_done_status`` (a string).
     """
-    val = _tickets_field(cfg, repo_entry, "merge_done_status")
+    val = _tickets_field(cfg, repo_entry, "merge_done", "merge_done_status")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return "Done"
@@ -865,7 +876,7 @@ def trello_dev_done_list(
     arbitrarily, so an unset value (empty string) means the pill never lights
     (feature off), never a guessed list name.
     """
-    val = _tickets_field(cfg, repo_entry, "dev_done_list")
+    val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_list")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return ""
@@ -879,7 +890,7 @@ def trello_merge_done_list(
     ``merge_done_list``. **No default** — an unset value (empty string) leaves
     the opt-in merge-move off, never guessing a list name.
     """
-    val = _tickets_field(cfg, repo_entry, "merge_done_list")
+    val = _tickets_field(cfg, repo_entry, "merge_done", "merge_done_list")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return ""

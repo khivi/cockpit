@@ -54,10 +54,14 @@ TRELLO_API_TOKEN_ENV = "TRELLO_API_TOKEN"
 # since a card short link carries no container at all.
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("board", "str"),
-    ("dev_done_list", "str"),
-    ("merge_done_list", "str"),
+    ("dev_done", "str"),
+    ("merge_done", "str"),
     ("key_env", "str"),
     ("token_env", "str"),
+    # Superseded spellings, still accepted so existing configs keep working.
+    # `config._tickets_field` resolves each to its canonical name above.
+    ("dev_done_list", "str"),
+    ("merge_done_list", "str"),
 )
 
 # A Trello card short link — the `[A-Za-z0-9]+` id in `trello.com/c/<shortLink>`.
