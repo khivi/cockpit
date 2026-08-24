@@ -22,20 +22,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import (
-    github_dev_done_label,
+    github_dev_done,
     jira_api_token,
-    jira_dev_done_status,
+    jira_dev_done,
     jira_email,
     jira_site_url,
     linear_api_key,
-    linear_api_key_env,
-    linear_dev_done_state,
+    linear_dev_done,
     linear_project,
+    linear_token_env,
     repo_tickets,
     trello_api_key,
     trello_api_token,
     trello_board,
-    trello_dev_done_list,
+    trello_dev_done,
     trello_key_env,
     trello_token_env,
 )
@@ -176,12 +176,12 @@ def _github_fetch_states(
     repo_entry: dict | None = None,
 ) -> dict[str, str | None]:
     """`{ref: state}` for GitHub issues. The value is the configured dev-done
-    label (`github_dev_done_label`) when the issue carries it, else the issue's
+    label (`github_dev_done`) when the issue carries it, else the issue's
     open/closed state — so the same casefold comparison in `_track_dev_done`
     lights the pill for a dev-done issue exactly as it does for a Linear ticket
     in its dev-done state. Unreadable issues map to None.
     """
-    label = github_dev_done_label(cfg, repo_entry)
+    label = github_dev_done(cfg, repo_entry)
     label_cf = label.casefold()
     issues = fetch_issues(ids, repo_nwo=repo_nwo, repo_dir=repo_dir)
     out: dict[str, str | None] = {}
@@ -408,7 +408,7 @@ def _linear_narrow_repos(ref: str, candidates: list[dict], cfg: dict) -> list[di
     fails, or the resolved project matches none of them — so the caller's existing
     "ambiguous, fall back" path still runs instead of this narrowing to zero.
 
-    Candidates are grouped by their **resolved credential** (`linear_api_key_env`,
+    Candidates are grouped by their **resolved credential** (`linear_token_env`,
     which walks repo → org → global → default), and each group is asked with its
     own key. A team key is *workspace*-scoped, so two orgs on separate Linear
     workspaces can each own an `ENG` team and both match `ENG-1234` — querying one
@@ -427,7 +427,7 @@ def _linear_narrow_repos(ref: str, candidates: list[dict], cfg: dict) -> list[di
     by_env: dict[str, list[dict]] = {}
     for repo in candidates:
         if linear_project(cfg, repo):
-            by_env.setdefault(linear_api_key_env(cfg, repo), []).append(repo)
+            by_env.setdefault(linear_token_env(cfg, repo), []).append(repo)
     for group in by_env.values():
         key = linear_api_key(cfg, group[0]) or None
         if not key:
@@ -487,7 +487,7 @@ def _trello_narrow_repos(ref: str, candidates: list[dict], cfg: dict) -> list[di
 
 LINEAR = TicketProvider(
     name="linear",
-    dev_done_value=linear_dev_done_state,
+    dev_done_value=linear_dev_done,
     parse_footers=lambda body, _nwo: parse_linear_footers(body),
     fetch_states=_linear_fetch_states,
     fetch_titles=_linear_fetch_titles,
@@ -497,7 +497,7 @@ LINEAR = TicketProvider(
 
 JIRA = TicketProvider(
     name="jira",
-    dev_done_value=jira_dev_done_status,
+    dev_done_value=jira_dev_done,
     parse_footers=lambda body, _nwo: parse_jira_footers(body),
     fetch_states=_jira_fetch_states,
     fetch_titles=_jira_fetch_titles,
@@ -507,7 +507,7 @@ JIRA = TicketProvider(
 
 GITHUB = TicketProvider(
     name="github",
-    dev_done_value=github_dev_done_label,
+    dev_done_value=github_dev_done,
     parse_footers=parse_github_issue_refs,
     fetch_states=_github_fetch_states,
     fetch_titles=_github_fetch_titles,
@@ -517,7 +517,7 @@ GITHUB = TicketProvider(
 
 TRELLO = TicketProvider(
     name="trello",
-    dev_done_value=trello_dev_done_list,
+    dev_done_value=trello_dev_done,
     parse_footers=lambda body, _nwo: parse_trello_footers(body),
     fetch_states=_trello_fetch_states,
     fetch_titles=_trello_fetch_titles,

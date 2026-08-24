@@ -536,16 +536,14 @@ def repo_tickets(cfg: dict | None = None, repo_entry: dict | None = None) -> str
     return "none"
 
 
-def github_dev_done_label(
-    cfg: dict | None = None, repo_entry: dict | None = None
-) -> str:
+def github_dev_done(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """The single issue label that lights the `devdone=` pill under
     ``tickets: github`` — an issue carrying it counts as dev-done.
 
     Default ``"ready for review"``. Override with the `tickets` block's
-    ``dev_done_label`` (a string). Matched case-insensitively against each
+    ``dev_done`` (a string). Matched case-insensitively against each
     delivered issue's label names — the GitHub analog of Linear's
-    ``dev_done_state``.
+    ``dev_done``.
     """
     val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_label")
     if isinstance(val, str) and val.strip():
@@ -741,12 +739,10 @@ def use_slack() -> bool:
     return bool(load_config().get("use_slack", False))
 
 
-def linear_dev_done_state(
-    cfg: dict | None = None, repo_entry: dict | None = None
-) -> str:
+def linear_dev_done(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the Linear workflow state that the `devdone=` pill keys off
     (default: "Dev Done"). Matched case-insensitively against the ticket's live
-    `state.name`. Set via the `tickets` block's ``dev_done_state`` (a string),
+    `state.name`. Set via the `tickets` block's ``dev_done`` (a string),
     falling back to the legacy flat `linear_dev_done_state` key, then "Dev Done".
     """
     val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_state")
@@ -756,14 +752,12 @@ def linear_dev_done_state(
     return str(cfg.get("linear_dev_done_state") or "Dev Done").strip() or "Dev Done"
 
 
-def linear_merge_done_state(
-    cfg: dict | None = None, repo_entry: dict | None = None
-) -> str:
+def linear_merge_done(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the Linear workflow state a delivered ticket is moved to when its
-    PR merges (default: "Done"). Distinct from `linear_dev_done_state` ("Dev
+    PR merges (default: "Done"). Distinct from `linear_dev_done` ("Dev
     Done") — that's where the passive `devdone=` pill lights up while the PR is
     *open*; this is the terminal state the `ticket_close_on_merge` writer
-    transitions to on merge. Set via the `tickets` block's ``merge_done_state``,
+    transitions to on merge. Set via the `tickets` block's ``merge_done``,
     falling back to the legacy flat `linear_merge_done_state` key, then "Done".
     """
     val = _tickets_field(cfg, repo_entry, "merge_done", "merge_done_state")
@@ -773,7 +767,7 @@ def linear_merge_done_state(
     return str(cfg.get("linear_merge_done_state") or "Done").strip() or "Done"
 
 
-def linear_api_key_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
+def linear_token_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the env var holding this repo's Linear API key (`tickets
     .api_key_env`, default ``LINEAR_API_KEY``).
 
@@ -790,9 +784,9 @@ def linear_api_key_env(cfg: dict | None = None, repo_entry: dict | None = None) 
 
 def linear_api_key(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """The Linear API key for this repo — `os.environ` read of the env var named
-    by `linear_api_key_env`. Empty when unset (the Linear feature is then off).
+    by `linear_token_env`. Empty when unset (the Linear feature is then off).
     Never logged, never written to config or the cache."""
-    return os.environ.get(linear_api_key_env(cfg, repo_entry)) or ""
+    return os.environ.get(linear_token_env(cfg, repo_entry)) or ""
 
 
 def jira_site_url(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
@@ -823,7 +817,7 @@ def jira_email(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
 def jira_token_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the env var holding this repo's Jira API token (`tickets
     .token_env`, default ``JIRA_API_TOKEN``) — the Jira half of the same env-name
-    indirection as `linear_api_key_env`, so two orgs on separate Jira sites each
+    indirection as `linear_token_env`, so two orgs on separate Jira sites each
     carry their own token."""
     val = _tickets_field(cfg, repo_entry, "token_env")
     if isinstance(val, str) and val.strip():
@@ -837,13 +831,11 @@ def jira_api_token(cfg: dict | None = None, repo_entry: dict | None = None) -> s
     return os.environ.get(jira_token_env(cfg, repo_entry)) or ""
 
 
-def jira_dev_done_status(
-    cfg: dict | None = None, repo_entry: dict | None = None
-) -> str:
+def jira_dev_done(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the Jira status that the `devdone=` pill keys off (default
     "Dev Done"). Matched case-insensitively against the issue's live status name
-    — the Jira analog of `linear_dev_done_state`. Set via the `tickets` block's
-    ``dev_done_status`` (a string).
+    — the Jira analog of `linear_dev_done`. Set via the `tickets` block's
+    ``dev_done`` (a string).
     """
     val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_status")
     if isinstance(val, str) and val.strip():
@@ -851,14 +843,12 @@ def jira_dev_done_status(
     return JIRA_DEV_DONE_DEFAULT
 
 
-def jira_merge_done_status(
-    cfg: dict | None = None, repo_entry: dict | None = None
-) -> str:
+def jira_merge_done(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the Jira status a delivered issue is transitioned to when its PR
-    merges (default "Done"). Distinct from `jira_dev_done_status` ("Dev Done") —
+    merges (default "Done"). Distinct from `jira_dev_done` ("Dev Done") —
     that's the passive pill while the PR is *open*; this is the terminal status
     the opt-in `ticket_close_on_merge` writer moves to on merge. Set via the
-    `tickets` block's ``merge_done_status`` (a string).
+    `tickets` block's ``merge_done`` (a string).
     """
     val = _tickets_field(cfg, repo_entry, "merge_done", "merge_done_status")
     if isinstance(val, str) and val.strip():
@@ -866,13 +856,11 @@ def jira_merge_done_status(
     return "Done"
 
 
-def trello_dev_done_list(
-    cfg: dict | None = None, repo_entry: dict | None = None
-) -> str:
+def trello_dev_done(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the Trello list (board column) that lights the `devdone=` pill —
-    the Trello analog of `jira_dev_done_status`, matched case-insensitively
+    the Trello analog of `jira_dev_done`, matched case-insensitively
     against the card's current list name. Set via the `tickets` block's
-    ``dev_done_list``. **No default** — Trello boards name their lists
+    ``dev_done``. **No default** — Trello boards name their lists
     arbitrarily, so an unset value (empty string) means the pill never lights
     (feature off), never a guessed list name.
     """
@@ -882,12 +870,10 @@ def trello_dev_done_list(
     return ""
 
 
-def trello_merge_done_list(
-    cfg: dict | None = None, repo_entry: dict | None = None
-) -> str:
+def trello_merge_done(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the Trello list a delivered card is moved to when its PR merges —
-    the Trello analog of `jira_merge_done_status`. Set via the `tickets` block's
-    ``merge_done_list``. **No default** — an unset value (empty string) leaves
+    the Trello analog of `jira_merge_done`. Set via the `tickets` block's
+    ``merge_done``. **No default** — an unset value (empty string) leaves
     the opt-in merge-move off, never guessing a list name.
     """
     val = _tickets_field(cfg, repo_entry, "merge_done", "merge_done_list")
@@ -952,7 +938,7 @@ def trello_api_token(cfg: dict | None = None, repo_entry: dict | None = None) ->
 # The env-*name* readers, one per credential. Used to enumerate every name a
 # config could resolve to (`credential_env_names`).
 _CREDENTIAL_ENV_READERS = (
-    linear_api_key_env,
+    linear_token_env,
     jira_token_env,
     trello_key_env,
     trello_token_env,

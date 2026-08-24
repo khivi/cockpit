@@ -37,7 +37,7 @@ JIRA_API_TOKEN_ENV = "JIRA_API_TOKEN"
 # config surface; this *specification* drives preflight validation (common fields
 # like `provider`/`close_on_merge` are added by `tickets.py`). Keep in sync with
 # the Jira readers in `config.py` (`jira_site_url`, `jira_email`,
-# `jira_dev_done_status`, `jira_merge_done_status`).
+# `jira_dev_done`, `jira_merge_done`).
 # `token_env` names the env var the token is read from (default
 # `JIRA_API_TOKEN`) — never the token itself. Trello declares a `token_env` too;
 # `tickets.py` composes per *active* provider, so the shared name is fine.

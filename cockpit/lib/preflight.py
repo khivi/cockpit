@@ -317,9 +317,9 @@ def _unset_linear_key_envs(cfg: dict, repos: list[dict | None]) -> list[str]:
     Names only — a resolved key value never reaches a warning message. `None` in
     `repos` resolves at global level (a repo-less config).
     """
-    from .config import linear_api_key_env
+    from .config import linear_token_env
 
-    names = {linear_api_key_env(cfg, r) for r in repos}
+    names = {linear_token_env(cfg, r) for r in repos}
     return sorted(n for n in names if not os.environ.get(n))
 
 

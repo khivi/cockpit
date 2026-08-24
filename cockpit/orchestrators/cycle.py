@@ -92,10 +92,10 @@ from cockpit.lib.config import (
     ensure_state_dirs,
     jira_api_token,
     jira_email,
-    jira_merge_done_status,
+    jira_merge_done,
     jira_site_url,
     linear_api_key,
-    linear_merge_done_state,
+    linear_merge_done,
     linear_team_keys,
     orphan_nudge_grace_seconds,
     review_command,
@@ -103,7 +103,7 @@ from cockpit.lib.config import (
     ticket_close_on_merge,
     trello_api_key,
     trello_api_token,
-    trello_merge_done_list,
+    trello_merge_done,
 )
 from cockpit.lib.constants import MAIN_BRANCHES
 from cockpit.lib.gh import (
@@ -396,7 +396,7 @@ def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
     `ctx.linear_blocks` by `_resolve_linear_block`; no network here).
 
     The pill is raised — green — only when the PR delivers at least one ticket
-    AND *every* delivered ticket is in the `linear_dev_done_state` workflow state
+    AND *every* delivered ticket is in the `linear_dev_done` workflow state
     (default "Dev Done"); the whole PR's scope is dev-complete. For a single
     ticket, shows the id (`PE-123`, `#45` — meaningful) — except Trello, whose id
     is an opaque short link, so it shows the human title (id fallback, truncated
@@ -666,7 +666,7 @@ def _transition_merged_tickets(ctx: RepoCycle) -> None:
 
 def _transition_merged_linear(ctx: RepoCycle) -> None:
     """Opt-in: move a merged PR's delivered Linear tickets to the configured
-    terminal state (`linear_merge_done_state`, default "Done").
+    terminal state (`linear_merge_done`, default "Done").
 
     This is the *one* place cockpit *writes* to Linear — every other Linear
     touch is read-only. It runs on the same `_is_post_merge_stale` signal
@@ -705,7 +705,7 @@ def _transition_merged_linear(ctx: RepoCycle) -> None:
     if not api_key:
         return
 
-    target = linear_merge_done_state(ctx.cfg, ctx.repo_entry)
+    target = linear_merge_done(ctx.cfg, ctx.repo_entry)
     target_cf = target.casefold()
     # Viewer id resolved lazily on the first real candidate ticket (cached across
     # ticks), so a repo with nothing eligible makes zero Linear calls per tick.
@@ -861,7 +861,7 @@ def _cached_jira_viewer(
 
 def _transition_merged_jira(ctx: RepoCycle) -> None:
     """Opt-in: transition a merged PR's delivered Jira issues to the terminal
-    status (`jira_merge_done_status`, default "Done") — the Jira analog of
+    status (`jira_merge_done`, default "Done") — the Jira analog of
     `_transition_merged_linear`, the terminal action being a Jira workflow
     transition.
 
@@ -887,7 +887,7 @@ def _transition_merged_jira(ctx: RepoCycle) -> None:
     if not site or not email or not token:
         return
 
-    target = jira_merge_done_status(ctx.cfg, ctx.repo_entry)
+    target = jira_merge_done(ctx.cfg, ctx.repo_entry)
     target_cf = target.casefold()
     # Viewer id resolved lazily on the first real candidate (cached across ticks),
     # so a repo with nothing eligible makes zero Jira calls per tick.
@@ -957,7 +957,7 @@ def _cached_trello_viewer(ctx: RepoCycle, key: str, token: str) -> str | None:
 
 def _transition_merged_trello(ctx: RepoCycle) -> None:
     """Opt-in: move a merged PR's delivered Trello cards to the terminal list
-    (`trello_merge_done_list`) — the Trello analog of `_transition_merged_jira`,
+    (`trello_merge_done`) — the Trello analog of `_transition_merged_jira`,
     the terminal action being a card move to another board column.
 
     Gates, all of which must hold: `close_on_merge` enabled (per-repo over
@@ -977,7 +977,7 @@ def _transition_merged_trello(ctx: RepoCycle) -> None:
     """
     if not ticket_close_on_merge(ctx.cfg, ctx.repo_entry):
         return
-    target = trello_merge_done_list(ctx.cfg, ctx.repo_entry)
+    target = trello_merge_done(ctx.cfg, ctx.repo_entry)
     if not target:
         return
     api_key = trello_api_key(ctx.cfg, ctx.repo_entry)

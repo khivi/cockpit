@@ -32,7 +32,7 @@ import subprocess
 # `(name, kind)` (kind resolved to a validator in `tickets.py`). The provider
 # owns its own config surface; this *specification* drives preflight validation
 # (common fields like `provider`/`close_on_merge` are added by `tickets.py`).
-# Keep in sync with the GitHub readers in `config.py` (`github_dev_done_label`,
+# Keep in sync with the GitHub readers in `config.py` (`github_dev_done`,
 # `github_start_label`).
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("dev_done", "str"),

@@ -65,8 +65,8 @@ LINEAR_ISSUE_URL_RE = re.compile(
 # validator in `tickets.py`). The provider owns its own config surface; this is
 # the *specification* that drives preflight validation (common fields like
 # `provider`/`close_on_merge` are added by `tickets.py`). Keep in sync with the
-# Linear readers in `config.py` (`linear_team_keys`, `linear_dev_done_state`,
-# `linear_merge_done_state`).
+# Linear readers in `config.py` (`linear_team_keys`, `linear_dev_done`,
+# `linear_merge_done`).
 # `api_key_env` names the env var the key is read from (default
 # `LINEAR_API_KEY`) — never the key itself. That indirection is what lets two
 # orgs on separate Linear workspaces each carry their own credential.
