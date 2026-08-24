@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -911,11 +912,73 @@ def select_workspace(ref: str, *, check: bool = False) -> str:
     return cmux("select-workspace", "--workspace", ref, check=check)
 
 
+# Workspace UUIDs cockpit itself just closed, each with a monotonic deadline.
+# `workspace.closed` says nothing about *who* closed a workspace, and cockpit
+# closes them for four reasons that are explicitly NOT teardown: `h`/park
+# ("parking is not teardown"), a trailing-fold anchor dissolve, the dead-cwd
+# sweep, and teardown's own trailing close. Without this ledger the TUI's
+# close-event handler would read cockpit's own park as a user gesture and tear
+# down every worktree in the parked repo.
+_SELF_CLOSE_TTL_SECONDS = 120.0
+_self_closed: dict[str, float] = {}
+_self_closed_lock = threading.Lock()
+
+
+def _note_self_close(short_or_ref: str) -> None:
+    """Record the UUID behind `short_or_ref` so the close event can be filtered.
+
+    Resolved *before* the close, while the workspace is still listable. Keyed by
+    UUID rather than cwd because a `use_worktree: false` repo can host several
+    workspaces rooted at one checkout, and cockpit closing one of them must not
+    swallow the user's close of its neighbour. cmux-only — limux has no event
+    stream, so there is nothing to filter and nothing to pay for.
+    """
+    if not tool.is_cmux():
+        return
+    try:
+        data = json.loads(cmux("rpc", "workspace.list", "{}", check=True))
+    except (RuntimeError, FileNotFoundError, json.JSONDecodeError):
+        # Unresolvable: the close still happens, it just isn't filtered. The
+        # handler's own blockers gate is the backstop.
+        return
+    deadline = time.monotonic() + _SELF_CLOSE_TTL_SECONDS
+    with _self_closed_lock:
+        for ws in data.get("workspaces", []):
+            keys = (
+                ws.get("ref"),
+                ws.get("id"),
+                ws.get("custom_title"),
+                ws.get("title"),
+            )
+            if short_or_ref in keys and ws.get("id"):
+                _self_closed[str(ws["id"])] = deadline
+
+
+def was_self_closed(workspace_id: str) -> bool:
+    """True when cockpit itself closed `workspace_id`. Consumes the record.
+
+    Consuming matters: a workspace id is unique per workspace, so one recorded
+    close answers for exactly one event — leaving it would let a *later* user
+    close of a re-created workspace inherit the same id's suppression.
+    """
+    now = time.monotonic()
+    with _self_closed_lock:
+        for wsid, deadline in list(_self_closed.items()):
+            if deadline <= now:
+                del _self_closed[wsid]
+        return _self_closed.pop(workspace_id, None) is not None
+
+
 def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:
     """Close the workspace identified by name or ref.
 
     Returns True if the workspace no longer appears in `cmux list-workspaces`.
+
+    Every cockpit-initiated close funnels through here, which is why the
+    self-close ledger is recorded here too rather than at each of the five call
+    sites — a new close path gets the filtering for free.
     """
+    _note_self_close(short_or_ref)
     cmux("close-workspace", "--workspace", short_or_ref, check=False)
     after = cmux("list-workspaces", check=False)
     return short_or_ref not in after

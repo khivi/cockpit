@@ -21,6 +21,10 @@ from cockpit.lib.capabilities import probe
 
 _CAPS_OK = '{"capabilities":["events.v1","workspace.groups.v1"]}'
 _EVENT = '{"type":"event","name":"workspace.created","seq":1}'
+_CLOSED = (
+    '{"type":"event","name":"workspace.closed","seq":2,'
+    '"payload":{"workspace_id":"WS-1","cwd":"/tmp/repo/feat"}}'
+)
 _ACK = '{"type":"ack","protocol":"cmux-events"}'
 
 # The shared probe reads verbs off `cmux --help` before it will trust
@@ -134,6 +138,80 @@ def test_a_stream_that_dies_instantly_gives_up(tmp_path, monkeypatch):
     assert len(log.read_text().splitlines()) == events_mod._MAX_FAST_EXITS
 
 
-@pytest.mark.parametrize("line", ["", "not json", _ACK])
+@pytest.mark.parametrize("line", ["", "not json", _ACK, "[1,2]", '"str"'])
 def test_non_event_lines_never_ring(line):
-    assert events_mod._is_event(line) is False
+    assert events_mod._parse_event(line) is None
+
+
+# --- the sidebar-X gesture -------------------------------------------------
+#
+# `workspace.closed` is the one frame whose payload is read, so its extraction
+# is pinned here: the caller tears a worktree down off it, and a wrong cwd would
+# tear down the wrong one.
+
+
+def test_closed_workspace_extracts_id_and_cwd():
+    frame = events_mod._parse_event(_CLOSED)
+    assert events_mod._closed_workspace(frame) == ("WS-1", Path("/tmp/repo/feat"))
+
+
+def test_created_frames_are_not_a_close():
+    assert events_mod._closed_workspace(events_mod._parse_event(_EVENT)) is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"workspace_id":"WS-1"}',  # no cwd: nothing to resolve to a worktree
+        '{"cwd":"/tmp/repo/feat"}',  # no id: the self-close filter can't run
+        '{"workspace_id":"","cwd":""}',
+        "null",
+        '"not-an-object"',
+    ],
+)
+def test_a_close_frame_missing_either_field_is_skipped(payload):
+    line = f'{{"type":"event","name":"workspace.closed","payload":{payload}}}'
+    assert events_mod._closed_workspace(events_mod._parse_event(line)) is None
+
+
+def test_on_closed_fires_alongside_the_doorbell(tmp_path, monkeypatch):
+    body = f"    printf '%s\\n' '{_EVENT}' '{_CLOSED}'"
+    _fake_cmux(tmp_path, monkeypatch, caps=_CAPS_OK, events_body=body)
+    monkeypatch.setattr(events_mod, "_BACKOFF_STEP_SECONDS", 0.0)
+    hits, stop, on_change = _collect(stop_after=2)
+    closed: list[tuple[str, Path]] = []
+
+    events_mod.watch_workspace_events(
+        on_change, stop, lambda wsid, cwd: closed.append((wsid, cwd))
+    )
+
+    # Both frames ring the doorbell; only the close one reaches `on_closed`.
+    assert len(hits) == 2
+    assert closed == [("WS-1", Path("/tmp/repo/feat"))]
+
+
+def test_omitting_on_closed_is_exactly_the_old_doorbell(tmp_path, monkeypatch):
+    body = f"    printf '%s\\n' '{_CLOSED}'"
+    _fake_cmux(tmp_path, monkeypatch, caps=_CAPS_OK, events_body=body)
+    monkeypatch.setattr(events_mod, "_BACKOFF_STEP_SECONDS", 0.0)
+    hits, stop, on_change = _collect(stop_after=1)
+
+    events_mod.watch_workspace_events(on_change, stop)  # no third arg
+
+    assert len(hits) == 1
+
+
+def test_a_raising_close_handler_never_kills_the_stream(tmp_path, monkeypatch):
+    """The doorbell already fired, so the tick lands either way — a broken
+    handler must not cost the whole event stream."""
+    body = f"    printf '%s\\n' '{_CLOSED}' '{_CLOSED}'"
+    _fake_cmux(tmp_path, monkeypatch, caps=_CAPS_OK, events_body=body)
+    monkeypatch.setattr(events_mod, "_BACKOFF_STEP_SECONDS", 0.0)
+    hits, stop, on_change = _collect(stop_after=2)
+
+    def boom(wsid: str, cwd: Path) -> None:
+        raise RuntimeError("handler exploded")
+
+    events_mod.watch_workspace_events(on_change, stop, boom)
+
+    assert len(hits) == 2  # second frame still read after the first one raised
