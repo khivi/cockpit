@@ -11,10 +11,14 @@ uv run cockpit watch  # run the daemon/TUI from a dev checkout
 ## Checks
 
 ```bash
-pytest                # also runs on pre-push
+pytest -n auto        # whole suite; also runs on pre-push
+pytest tests/test_spawn.py::test_route_by_ticket   # one test — skip -n, worker boot is pure tax
 mypy cockpit/
 pre-commit run ruff ruff-format --files <changed paths>
 ```
+
+Most of the suite's wall clock is idle time waiting on real `git`/`gh`/`cmux`
+subprocesses, so `-n auto` parallelises it near-linearly (115s → 16s on 18 cores).
 
 **Don't** lint/format with `uvx ruff` or a global `ruff` — it pulls a newer version than the pinned hook and rewrites unrelated lines into churn. The pinned pre-commit hook is the formatter CI enforces; scope it to your changed paths.
 

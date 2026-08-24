@@ -26,6 +26,7 @@
       "path": "/absolute/path/to/another/repo",
       "branch_prefix": "yourusername/",
       "default_base": "main",
+      "base_remote": "origin",
       "sidebar_color": "Green",
       "tickets": {
         "provider": "github",

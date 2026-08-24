@@ -11,30 +11,29 @@ Please do not open a public issue for security matters.
 
 ## Supported Versions
 
-Cockpit self-updates (`cockpit update`, or `u` in the TUI). Only the latest
-released version is supported.
+Only the latest release is supported. Cockpit ships as a Homebrew formula and
+has no self-update path, so run `brew upgrade cockpit` (or
+`pipx upgrade cmux-cockpit`) and re-check before reporting — the issue may
+already be fixed.
 
 | Version | Supported |
 |---|---|
 | Latest | Yes |
 
-If you're on an older version, update before reporting — the issue may
-already be fixed.
-
 ## Security Model
 
-Cockpit auto-spawns Bash-capable Claude agents into git worktrees. The main
-risk is untrusted content reaching one of those agents: with `review_prs:
-true`, cockpit auto-spawns a review worktree + agent on open PRs from
-coworkers, and a PR's title, description, and diff are attacker-controlled
-content if the PR comes from outside your team.
+Cockpit auto-spawns Bash-capable Claude agents into git worktrees, so the risk
+that matters is untrusted content reaching one of them. A PR's title,
+description, and diff are attacker-controlled if the PR comes from outside your
+team — and `review_prs: true` points an agent at exactly that.
 
-`review_external` (per-repo) defaults to `false` and gates whether
-auto-review reaches PRs from non-collaborators. Leave it off unless you
-trust exposing external PR content to an auto-spawned agent — see the
-README's ["Auto-review security
-posture"](README.md#auto-review-security-posture) section for the full
-gating rules.
+Two per-repo gates guard that, both defaulting to `false`
+([`docs/config.md`](docs/config.md#per-repo-fields-repos)):
+
+- `review_prs` — auto-review is off entirely until you turn it on.
+- `review_external` — with auto-review on, this decides whether it also
+  reaches PRs from non-collaborators. Leave it off unless you accept
+  exposing fork-PR content to an auto-spawned agent.
 
 Auto-review is dry-run: it never auto-posts comments or submits an
 approve/request-changes verdict. A human authorizes any of that.

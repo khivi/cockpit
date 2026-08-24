@@ -30,6 +30,7 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `path` | string | — | Absolute path to the repo root (main worktree, or the bare dir). |
 | `branch_prefix` | string | `""` | Stripped from branch labels (e.g. `khivi/`). Empty for off-GitHub / in-place repos. |
 | `default_base` | string | `"main"` | Base branch PRs target; drives base-distance + the `origin/{base}` startup warning. |
+| `base_remote` | string | `"origin"` | Remote half of that base. Set to `upstream` on a fork, so base-distance measures against the repo you PR into rather than your own copy. Also a top-level default. |
 | `sidebar_color` | string | unset | cmux sidebar tint + TUI row tint (one of `colors.CMUX_COLOR_ANSI`). Validated at preflight. |
 | `review_prs` | bool | `false` | Auto-spawn a review worktree for each coworker's open PR (collaborators only; see `review_external`). |
 | `skills` | object | `{}` | Slash-command overrides (below). No-op for `review` unless `review_prs`. |
@@ -155,9 +156,10 @@ Slash commands seeded as a spawned workspace's first turn. Fields resolve
 |---|---|---|---|
 | `repos` | array | `[]` | Watched repos (above). |
 | `orgs` | object | `{}` | Named bundles of per-repo defaults, inherited by repos naming them in `org` (above). |
+| `base_remote` | string | `"origin"` | Default remote for base-distance (per-repo key overrides). |
 | `slow_poll_interval_seconds` | number | `300` | Full reconcile cadence (gh fetch, PR JSON, pills). |
 | `fast_poll_interval_seconds` | number | `30` | Network-free republish cadence (git-state + PR flat cells from disk). |
-| `autoclose_age_days` | number | `14` | Age past which an abandoned worktree is autoclosed. |
+| `autoclose_age_days` | number | `14` | How far back to look for merged branches when deciding what to autoclose. Nothing is closed for being *old* — only a merged PR triggers autoclose — so this is the window past which a long-merged branch stops being noticed. |
 | `orphan_nudge_grace_hours` | number | `4` | Default orphan-nudge grace (per-repo key overrides). |
 | `linear_state_ttl_seconds` | number | `3 × slow` (900) | Backstop staleness for the cached Linear delivery block. |
 | `linear_identity_ttl_seconds` | number | `12 × slow` (3600) | Cache lifetime for Linear viewer id + team state maps. |
