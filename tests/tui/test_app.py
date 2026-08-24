@@ -2255,7 +2255,7 @@ async def test_sidebar_x_closes_the_worktree(monkeypatch):
     closed: list[tuple[str, dict]] = []
     monkeypatch.setattr("cockpit.tui.app.was_self_closed", lambda _wsid: False)
     app, _ = _make_app()
-    app._close_worktree = lambda p, **kw: closed.append((p, kw))  # type: ignore[method-assign]
+    app._close_worktree = lambda p, **kw: closed.append((p, kw))
     async with app.run_test() as pilot:
         await pilot.pause()
         app._on_workspace_closed("UUID-9", "/tmp/repo/feat")
@@ -2270,7 +2270,7 @@ async def test_sidebar_x_never_forces(monkeypatch):
     closed: list[tuple[str, dict]] = []
     monkeypatch.setattr("cockpit.tui.app.was_self_closed", lambda _wsid: False)
     app, _ = _make_app()
-    app._close_worktree = lambda p, **kw: closed.append((p, kw))  # type: ignore[method-assign]
+    app._close_worktree = lambda p, **kw: closed.append((p, kw))
     async with app.run_test() as pilot:
         await pilot.pause()
         app._on_workspace_closed("UUID-9", "/tmp/repo/feat")
@@ -2287,7 +2287,7 @@ async def test_cockpit_own_close_never_tears_anything_down(monkeypatch):
     closed: list[str] = []
     monkeypatch.setattr("cockpit.tui.app.was_self_closed", lambda _wsid: True)
     app, _ = _make_app()
-    app._close_worktree = lambda p, **kw: closed.append(p)  # type: ignore[method-assign]
+    app._close_worktree = lambda p, **kw: closed.append(p)
     async with app.run_test() as pilot:
         await pilot.pause()
         app._on_workspace_closed("UUID-9", "/tmp/repo/feat")
@@ -2302,7 +2302,7 @@ async def test_an_unregistered_workspace_close_is_silent(monkeypatch):
     no-op, not an error toast on every close."""
     notes: list[tuple] = []
     app, _ = _make_app()
-    app._notify = lambda msg, severity="information": notes.append((msg, severity))  # type: ignore[method-assign]
+    app._notify = lambda msg, severity="information": notes.append((msg, severity))
     async with app.run_test() as pilot:
         await pilot.pause()
         # `quiet=True` is the sidebar-X contract; `_resolve_worktree` finds
@@ -2318,7 +2318,7 @@ async def test_the_c_key_still_reports_an_unresolvable_path():
     whose worktree vanished has to say so."""
     notes: list[tuple] = []
     app, _ = _make_app()
-    app._notify = lambda msg, severity="information": notes.append((msg, severity))  # type: ignore[method-assign]
+    app._notify = lambda msg, severity="information": notes.append((msg, severity))
     async with app.run_test() as pilot:
         await pilot.pause()
         app._close_worktree("/nowhere/at/all")

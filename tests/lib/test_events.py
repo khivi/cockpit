@@ -150,13 +150,19 @@ def test_non_event_lines_never_ring(line):
 # tear down the wrong one.
 
 
+def _closed(line: str):
+    """`_closed_workspace` of a line that must parse as an event frame."""
+    frame = events_mod._parse_event(line)
+    assert frame is not None, f"not an event frame: {line}"
+    return events_mod._closed_workspace(frame)
+
+
 def test_closed_workspace_extracts_id_and_cwd():
-    frame = events_mod._parse_event(_CLOSED)
-    assert events_mod._closed_workspace(frame) == ("WS-1", Path("/tmp/repo/feat"))
+    assert _closed(_CLOSED) == ("WS-1", Path("/tmp/repo/feat"))
 
 
 def test_created_frames_are_not_a_close():
-    assert events_mod._closed_workspace(events_mod._parse_event(_EVENT)) is None
+    assert _closed(_EVENT) is None
 
 
 @pytest.mark.parametrize(
@@ -171,7 +177,7 @@ def test_created_frames_are_not_a_close():
 )
 def test_a_close_frame_missing_either_field_is_skipped(payload):
     line = f'{{"type":"event","name":"workspace.closed","payload":{payload}}}'
-    assert events_mod._closed_workspace(events_mod._parse_event(line)) is None
+    assert _closed(line) is None
 
 
 def test_on_closed_fires_alongside_the_doorbell(tmp_path, monkeypatch):
