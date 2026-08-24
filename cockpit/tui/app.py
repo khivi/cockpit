@@ -568,7 +568,7 @@ class CockpitApp(App[None]):
 
     def _gather_inventory(self, workspace_paths: set[Path] | None = None) -> Inventory:
         """Enumerate worktrees per configured repo. Runs on a worker thread —
-        `worktrees()` shells out to git (dirty/unpushed counts).
+        `worktrees()` shells out to git (dirty/unlanded counts).
 
         A `use_worktree: false` repo works in-place on its checkout, so its one
         row is only meaningful while a workspace is open on it — without one the
@@ -1147,7 +1147,7 @@ class CockpitApp(App[None]):
         self, path_str: str, *, force: bool = False, quiet: bool = False
     ) -> None:
         # `c`: refuse on any blocker. `C` (force): override the *soft* open-PR
-        # blocker only — hard blockers (uncommitted/unpushed, via
+        # blocker only — hard blockers (uncommitted/unlanded, via
         # `worktree_state_blockers`) still refuse, so force never discards local
         # work. Teardown is enqueued + drained by the daemon (sole writer).
         #
@@ -1168,20 +1168,22 @@ class CockpitApp(App[None]):
         repo_name = self._cache_repo_name(repo)
         repo_dir = Path(os.path.expanduser(repo["path"]))
         prefix = repo.get("branch_prefix", "")
+        # Ownership picks the commit guard: ours holds until the work lands,
+        # someone else's closes once their branch is pushed (review over).
         is_mine = wt.branch.startswith(prefix) if (prefix and wt.branch) else True
 
         # Resolve the PR state ONCE (cache first, one live `gh` fallback) so an
         # out-of-band squash/rebase merge the slow tick never cached as MERGED
-        # doesn't false-flag the branch as unpushed — a HARD block `C` can't
+        # doesn't false-flag the branch as unlanded — a HARD block `C` can't
         # override. Both the hard gate and the open-PR soft gate read this.
         state, pr_number = resolve_pr_state(wt.path, wt.branch, repo_name)
         pr_is_merged = state == "MERGED"
 
-        # Hard blockers (dirty/unpushed) refuse even under force. A primary
-        # checkout (`use_worktree: false`) relaxes the unpushed guard only while
+        # Hard blockers (dirty/unlanded) refuse even under force. A primary
+        # checkout (`use_worktree: false`) relaxes the unlanded guard only while
         # it stays on its default branch (a workspace-only close — nothing
         # removed). Parked on a feature branch it's a branch teardown (checkout
-        # default + `git branch -D`), so unpushed must stand; pass
+        # default + `git branch -D`), so the guard must stand; pass
         # `is_primary=False` there. `default is None` (off-GitHub) can't delete,
         # so it stays workspace-only. `teardown` skips `git worktree remove`
         # either way.

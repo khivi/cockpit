@@ -287,12 +287,12 @@ def fetch_pr_state_for_branch(branch: str, repo_dir: Path) -> dict | None:
     path (`teardown.probe_blockers`) uses it to recognize an out-of-band squash-
     or rebase-merge the slow tick never cached as MERGED: `gh pr list --state
     all` reports `state == "MERGED"` regardless of merge strategy, where
-    `git cherry` (`_count_unpushed`) cannot — a squash collapses N commits into
-    one upstream commit whose patch-id matches none of the originals, so the
-    branch false-reads as "unpushed" and hard-blocks a close that `--force`
-    can't override. One `gh` call, on a deliberate keypress only — never on a
-    tick. None on gh failure / unparsable output / no PR, so the caller
-    degrades to the git-based unpushed count.
+    `count_unlanded` cannot — a squash collapses N commits into
+    originals, so the branch false-reads as unlanded and hard-blocks a close
+    one upstream commit whose sha is new and whose patch-id matches none of the
+    that `--force` can't override. One `gh` call, on a deliberate keypress only
+    — never on a tick. None on gh failure / unparsable output / no PR, so the
+    caller degrades to the git-based unlanded count.
     """
     res = subprocess.run(
         [

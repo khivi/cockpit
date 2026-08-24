@@ -132,7 +132,7 @@ def test_force_overrides_open_pr(repo_cfg, captured, monkeypatch):
 
 
 def test_merged_pr_sets_delete_branch(repo_cfg, captured, monkeypatch):
-    # MERGED → unpushed gate skipped (asserted via the passed pr_merged flag),
+    # MERGED → unlanded gate skipped (asserted via the passed pr_merged flag),
     # and delete_branch opts in.
     seen = {}
 

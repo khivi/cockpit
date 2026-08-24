@@ -8,7 +8,7 @@ Per cycle, for every repo registered in $COCKPIT_HOME/config.json:
   5. close workspaces whose branch's PR is no longer open
   6. mark orphan worktrees (mine, no PR) with an orphan pill
   7. write a PR cache snapshot under $COCKPIT_HOME/cache
-  8. autoclean merged worktrees + workspaces (clean + no unpushed only)
+  8. autoclean merged worktrees + workspaces (clean + no unlanded only)
 
 Modes:
   --watch         long-running daemon (Textual TUI); SIGUSR1 kicks a cycle

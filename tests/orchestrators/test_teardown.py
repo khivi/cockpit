@@ -16,7 +16,7 @@ from cockpit.orchestrators.teardown import (
 )
 
 
-def _patch_all(*, dirty=0, unpushed=0, pr_state=None, live=None):
+def _patch_all(*, dirty=0, unlanded=0, pr_state=None, live=None):
     """Patch the four leaves probe_blockers leans on.
 
     `pr_state` seeds the cached payload (`find_pr_payload`); `live` seeds the
@@ -30,7 +30,7 @@ def _patch_all(*, dirty=0, unpushed=0, pr_state=None, live=None):
     )
     return (
         patch.object(teardown_mod, "count_dirty", return_value=dirty),
-        patch.object(teardown_mod, "_count_unpushed", return_value=unpushed),
+        patch.object(teardown_mod, "count_unlanded", return_value=unlanded),
         patch.object(teardown_mod, "find_pr_payload", return_value=payload),
         patch.object(teardown_mod, "fetch_pr_state_for_branch", return_value=live),
     )
@@ -39,28 +39,28 @@ def _patch_all(*, dirty=0, unpushed=0, pr_state=None, live=None):
 def test_probe_blockers_clean_returns_empty(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
-    p1, p2, p3, p4 = _patch_all(dirty=0, unpushed=0, pr_state=None)
+    p1, p2, p3, p4 = _patch_all(dirty=0, unlanded=0, pr_state=None)
     with p1, p2, p3, p4:
         assert probe_blockers(wt, "khivi/x", "repo") == []
 
 
-def test_probe_blockers_dirty_unpushed_open_pr(tmp_path):
+def test_probe_blockers_dirty_unlanded_open_pr(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
-    p1, p2, p3, p4 = _patch_all(dirty=3, unpushed=2, pr_state="OPEN")
+    p1, p2, p3, p4 = _patch_all(dirty=3, unlanded=2, pr_state="OPEN")
     with p1, p2, p3, p4:
         blockers = probe_blockers(wt, "khivi/x", "repo")
     assert any("3 uncommitted" in b for b in blockers)
-    assert any("2 unpushed" in b for b in blockers)
+    assert any("2 unlanded" in b for b in blockers)
     assert any("PR #99 is OPEN" in b for b in blockers)
 
 
-def test_probe_blockers_unpushed_verification_failed(tmp_path):
+def test_probe_blockers_unlanded_verification_failed(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
-    p1, p2, p3, p4 = _patch_all(dirty=0, unpushed=-1, pr_state=None)
+    p1, p2, p3, p4 = _patch_all(dirty=0, unlanded=-1, pr_state=None)
     with p1, p2, p3, p4:
-        assert "could not verify push state" in probe_blockers(wt, None, None)
+        assert "could not verify commit state" in probe_blockers(wt, None, None)
 
 
 def test_probe_blockers_skips_missing_path():
@@ -75,7 +75,7 @@ def test_worktree_state_blockers_clean_returns_empty(tmp_path):
     wt.mkdir()
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=0),
+        patch.object(teardown_mod, "count_unlanded", return_value=0),
     ):
         assert worktree_state_blockers(wt) == []
 
@@ -85,21 +85,21 @@ def test_worktree_state_blockers_flags_dirty(tmp_path):
     wt.mkdir()
     with (
         patch.object(teardown_mod, "count_dirty", return_value=3),
-        patch.object(teardown_mod, "_count_unpushed", return_value=0),
+        patch.object(teardown_mod, "count_unlanded", return_value=0),
     ):
         blockers = worktree_state_blockers(wt)
     assert any("3 uncommitted" in b for b in blockers)
 
 
-def test_worktree_state_blockers_flags_unpushed(tmp_path):
+def test_worktree_state_blockers_flags_unlanded(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=2),
+        patch.object(teardown_mod, "count_unlanded", return_value=2),
     ):
         blockers = worktree_state_blockers(wt)
-    assert any("2 unpushed commit" in b for b in blockers)
+    assert any("2 unlanded commit" in b for b in blockers)
 
 
 def test_worktree_state_blockers_flags_unverifiable_push_state(tmp_path):
@@ -107,29 +107,29 @@ def test_worktree_state_blockers_flags_unverifiable_push_state(tmp_path):
     wt.mkdir()
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=-1),
+        patch.object(teardown_mod, "count_unlanded", return_value=-1),
     ):
         blockers = worktree_state_blockers(wt)
     assert any("could not verify" in b for b in blockers)
 
 
-def test_worktree_state_blockers_primary_skips_unpushed_keeps_dirty(tmp_path):
-    # A primary checkout (a `use_worktree: false` `master`) closes workspace-only, so unpushed
+def test_worktree_state_blockers_primary_skips_unlanded_keeps_dirty(tmp_path):
+    # A primary checkout (a `use_worktree: false` `master`) closes workspace-only, so unlanded
     # commits are safe (the checkout stays) — skip that guard. Dirty still holds.
     wt = tmp_path / "wt"
     wt.mkdir()
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=5),
+        patch.object(teardown_mod, "count_unlanded", return_value=5),
     ):
         assert worktree_state_blockers(wt, is_primary=True) == []
     with (
         patch.object(teardown_mod, "count_dirty", return_value=2),
-        patch.object(teardown_mod, "_count_unpushed", return_value=5),
+        patch.object(teardown_mod, "count_unlanded", return_value=5),
     ):
         blockers = worktree_state_blockers(wt, is_primary=True)
     assert any("2 uncommitted" in b for b in blockers)
-    assert not any("unpushed" in b for b in blockers)
+    assert not any("unlanded" in b for b in blockers)
 
 
 def test_worktree_state_blockers_skips_missing_path():
@@ -180,7 +180,7 @@ def test_teardown_forced_bypasses_blockers(tmp_path):
         repo_name="repo",
         forced=True,
     )
-    p1, p2, p3, p4 = _patch_all(dirty=99, unpushed=99, pr_state="OPEN")
+    p1, p2, p3, p4 = _patch_all(dirty=99, unlanded=99, pr_state="OPEN")
     with (
         p1,
         p2,
@@ -231,7 +231,7 @@ def test_teardown_primary_checkout_closes_workspace_only(tmp_path):
     )
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=4),
+        patch.object(teardown_mod, "count_unlanded", return_value=4),
         patch.object(teardown_mod, "find_pr_payload", return_value=None),
         patch.object(teardown_mod, "fetch_pr_state_for_branch", return_value=None),
         # On its default branch → workspace-only close. Pin the default so the
@@ -247,7 +247,7 @@ def test_teardown_primary_checkout_closes_workspace_only(tmp_path):
         ok, blockers = teardown(req)
     assert ok and blockers == []
     close_mock.assert_called_once()  # workspace closed
-    rm_mock.assert_not_called()  # checkout left in place (unpushed didn't block)
+    rm_mock.assert_not_called()  # checkout left in place (unlanded didn't block)
 
 
 def test_teardown_remove_failure_returns_error(tmp_path):
@@ -342,7 +342,7 @@ def test_teardown_dry_run(tmp_path):
     cache_mock.assert_not_called()
 
 
-# ── ownership-aware unpushed baseline ────────────────────────────────────────
+# ── ownership-aware unlanded baseline ────────────────────────────────────────
 
 
 def test_state_blockers_others_pushed_pr_not_blocked(tmp_path):
@@ -352,7 +352,7 @@ def test_state_blockers_others_pushed_pr_not_blocked(tmp_path):
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
         patch.object(teardown_mod, "commits_only_local", return_value=0) as col,
-        patch.object(teardown_mod, "_count_unpushed") as default_baseline,
+        patch.object(teardown_mod, "count_unlanded") as default_baseline,
     ):
         blockers = worktree_state_blockers(wt, branch="alice/feat", is_mine=False)
     assert blockers == []
@@ -369,20 +369,26 @@ def test_state_blockers_others_local_commits_still_block(tmp_path):
         patch.object(teardown_mod, "commits_only_local", return_value=2),
     ):
         blockers = worktree_state_blockers(wt, branch="alice/feat", is_mine=False)
-    assert blockers == ["2 unpushed commit(s)"]
+    assert blockers == ["2 unlanded commit(s)"]
 
 
-def test_state_blockers_mine_uses_default_baseline(tmp_path):
-    """Our own pushed-but-unmerged branch still blocks (default-branch baseline)."""
+def test_state_blockers_mine_uses_unlanded_count(tmp_path):
+    """Our own pushed-but-unmerged branch still blocks.
+
+    The branch MUST reach `count_unlanded` — it is what spares
+    `origin/<branch>` from the reachability negatives, and without it every
+    branch stacked on a non-default base counts its base's commits forever.
+    """
     wt = tmp_path / "wt"
     wt.mkdir()
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=3),
+        patch.object(teardown_mod, "count_unlanded", return_value=3) as unlanded,
         patch.object(teardown_mod, "commits_only_local") as remote_baseline,
     ):
         blockers = worktree_state_blockers(wt, branch="khivi/feat", is_mine=True)
-    assert blockers == ["3 unpushed commit(s)"]
+    assert blockers == ["3 unlanded commit(s)"]
+    unlanded.assert_called_once_with(wt, "khivi/feat")
     remote_baseline.assert_not_called()
 
 
@@ -398,16 +404,16 @@ def test_state_blockers_others_dirty_still_hard(tmp_path):
     assert blockers == ["1 uncommitted file(s)"]
 
 
-# ── merge-aware unpushed skip (squash-merge / non-default base) ──────────────
+# ── merge-aware unlanded skip (squash-merge / non-default base) ──────────────
 
 
-def test_state_blockers_merged_skips_unpushed(tmp_path):
-    """A MERGED PR's over-counted unpushed commits don't block (squash-merge)."""
+def test_state_blockers_merged_skips_unlanded(tmp_path):
+    """A MERGED PR's over-counted unlanded commits don't block (squash-merge)."""
     wt = tmp_path / "wt"
     wt.mkdir()
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=5) as baseline,
+        patch.object(teardown_mod, "count_unlanded", return_value=5) as baseline,
         patch.object(teardown_mod, "commits_only_local") as remote_baseline,
     ):
         blockers = worktree_state_blockers(
@@ -424,7 +430,7 @@ def test_state_blockers_merged_dirty_still_hard(tmp_path):
     wt.mkdir()
     with (
         patch.object(teardown_mod, "count_dirty", return_value=2),
-        patch.object(teardown_mod, "_count_unpushed", return_value=5),
+        patch.object(teardown_mod, "count_unlanded", return_value=5),
     ):
         blockers = worktree_state_blockers(
             wt, branch="khivi/feat", is_mine=True, pr_merged=True
@@ -432,11 +438,11 @@ def test_state_blockers_merged_dirty_still_hard(tmp_path):
     assert blockers == ["2 uncommitted file(s)"]
 
 
-def test_probe_blockers_merged_pr_clean_despite_unpushed(tmp_path):
-    """probe_blockers derives pr_merged from the cache: MERGED + unpushed = clean."""
+def test_probe_blockers_merged_pr_clean_despite_unlanded(tmp_path):
+    """probe_blockers derives pr_merged from the cache: MERGED + unlanded = clean."""
     wt = tmp_path / "wt"
     wt.mkdir()
-    p1, p2, p3, p4 = _patch_all(dirty=0, unpushed=4, pr_state="MERGED")
+    p1, p2, p3, p4 = _patch_all(dirty=0, unlanded=4, pr_state="MERGED")
     with p1, p2, p3, p4:
         assert probe_blockers(wt, "khivi/x", "repo") == []
 
@@ -445,7 +451,7 @@ def test_probe_blockers_merged_pr_dirty_still_blocks(tmp_path):
     """A MERGED PR with uncommitted edits is still refused by the re-check."""
     wt = tmp_path / "wt"
     wt.mkdir()
-    p1, p2, p3, p4 = _patch_all(dirty=1, unpushed=4, pr_state="MERGED")
+    p1, p2, p3, p4 = _patch_all(dirty=1, unlanded=4, pr_state="MERGED")
     with p1, p2, p3, p4:
         blockers = probe_blockers(wt, "khivi/x", "repo")
     assert blockers == ["1 uncommitted file(s)"]
@@ -454,17 +460,17 @@ def test_probe_blockers_merged_pr_dirty_still_blocks(tmp_path):
 # ── live merge-awareness: squash / rebase / deleted-branch out-of-band merge ──
 
 
-def test_probe_blockers_squash_merged_no_cache_clears_false_unpushed(tmp_path):
+def test_probe_blockers_squash_merged_no_cache_clears_false_unlanded(tmp_path):
     """The bug fix: a squash-merge the slow tick never cached as MERGED.
 
-    No cached payload, `_count_unpushed` over-counts the (collapsed) commits, but
-    the live `gh` lookup reports MERGED → the unpushed gate is skipped, so the
+    No cached payload, `_count_unlanded` over-counts the (collapsed) commits, but
+    the live `gh` lookup reports MERGED → the unlanded gate is skipped, so the
     close is no longer false-blocked.
     """
     wt = tmp_path / "wt"
     wt.mkdir()
     p1, p2, p3, p4 = _patch_all(
-        dirty=0, unpushed=3, pr_state=None, live={"state": "MERGED", "number": 7}
+        dirty=0, unlanded=3, pr_state=None, live={"state": "MERGED", "number": 7}
     )
     with p1, p2, p3, p4:
         assert probe_blockers(wt, "khivi/x", "repo") == []
@@ -475,32 +481,32 @@ def test_probe_blockers_rebase_merged_same_path(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
     p1, p2, p3, p4 = _patch_all(
-        dirty=0, unpushed=2, pr_state=None, live={"state": "MERGED", "number": 8}
+        dirty=0, unlanded=2, pr_state=None, live={"state": "MERGED", "number": 8}
     )
     with p1, p2, p3, p4:
         assert probe_blockers(wt, "khivi/x", "repo") == []
 
 
-def test_probe_blockers_genuinely_unpushed_no_pr_still_blocks(tmp_path):
-    """No PR anywhere (live None) + real local commits → hard unpushed block."""
+def test_probe_blockers_genuinely_unlanded_no_pr_still_blocks(tmp_path):
+    """No PR anywhere (live None) + real local commits → hard unlanded block."""
     wt = tmp_path / "wt"
     wt.mkdir()
-    p1, p2, p3, p4 = _patch_all(dirty=0, unpushed=2, pr_state=None, live=None)
+    p1, p2, p3, p4 = _patch_all(dirty=0, unlanded=2, pr_state=None, live=None)
     with p1, p2, p3, p4:
         blockers = probe_blockers(wt, "khivi/x", "repo")
-    assert blockers == ["2 unpushed commit(s)"]
+    assert blockers == ["2 unlanded commit(s)"]
 
 
-def test_probe_blockers_genuinely_unpushed_open_pr_blocks_both(tmp_path):
-    """Live OPEN (cache empty) + unpushed → unpushed (hard) AND PR-open (soft)."""
+def test_probe_blockers_genuinely_unlanded_open_pr_blocks_both(tmp_path):
+    """Live OPEN (cache empty) + unlanded → unlanded (hard) AND PR-open (soft)."""
     wt = tmp_path / "wt"
     wt.mkdir()
     p1, p2, p3, p4 = _patch_all(
-        dirty=0, unpushed=2, pr_state=None, live={"state": "OPEN", "number": 12}
+        dirty=0, unlanded=2, pr_state=None, live={"state": "OPEN", "number": 12}
     )
     with p1, p2, p3, p4:
         blockers = probe_blockers(wt, "khivi/x", "repo")
-    assert any("2 unpushed" in b for b in blockers)
+    assert any("2 unlanded" in b for b in blockers)
     assert any("PR #12 is OPEN" in b for b in blockers)
 
 
@@ -508,7 +514,7 @@ def test_probe_blockers_deleted_branch_no_pr_clean(tmp_path):
     """Deleted remote branch, no PR, nothing local-only → clean (no blockers)."""
     wt = tmp_path / "wt"
     wt.mkdir()
-    p1, p2, p3, p4 = _patch_all(dirty=0, unpushed=0, pr_state=None, live=None)
+    p1, p2, p3, p4 = _patch_all(dirty=0, unlanded=0, pr_state=None, live=None)
     with p1, p2, p3, p4:
         assert probe_blockers(wt, "khivi/x", "repo") == []
 
@@ -519,7 +525,7 @@ def test_probe_blockers_cached_merged_skips_live_lookup(tmp_path):
     wt.mkdir()
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=4),
+        patch.object(teardown_mod, "count_unlanded", return_value=4),
         patch.object(
             teardown_mod,
             "find_pr_payload",
@@ -691,13 +697,13 @@ def _primary_req(tmp_path, *, branch, forced=False, delete_branch=False):
     )
 
 
-def test_teardown_primary_on_feature_branch_enforces_unpushed(tmp_path):
+def test_teardown_primary_on_feature_branch_enforces_unlanded(tmp_path):
     """A primary checkout on a *non-default* branch is a branch teardown, so the
-    unpushed relaxation does NOT apply — unpushed commits still refuse."""
+    unlanded relaxation does NOT apply — unlanded commits still refuse."""
     req = _primary_req(tmp_path, branch="khivi/x")
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=2),
+        patch.object(teardown_mod, "count_unlanded", return_value=2),
         patch.object(teardown_mod, "find_pr_payload", return_value=None),
         patch.object(teardown_mod, "fetch_pr_state_for_branch", return_value=None),
         patch.object(teardown_mod, "origin_head_branch", return_value="main"),
@@ -705,17 +711,17 @@ def test_teardown_primary_on_feature_branch_enforces_unpushed(tmp_path):
     ):
         ok, blockers = teardown(req)
     assert not ok
-    assert any("unpushed" in b for b in blockers)
+    assert any("unlanded" in b for b in blockers)
     close_mock.assert_not_called()  # refused before any mutation
 
 
-def test_teardown_primary_on_default_branch_relaxes_unpushed(tmp_path):
-    """On its default branch it stays workspace-only — unpushed is relaxed and
+def test_teardown_primary_on_default_branch_relaxes_unlanded(tmp_path):
+    """On its default branch it stays workspace-only — unlanded is relaxed and
     neither the checkout nor the branch delete runs."""
     req = _primary_req(tmp_path, branch="main")
     with (
         patch.object(teardown_mod, "count_dirty", return_value=0),
-        patch.object(teardown_mod, "_count_unpushed", return_value=5),
+        patch.object(teardown_mod, "count_unlanded", return_value=5),
         patch.object(teardown_mod, "find_pr_payload", return_value=None),
         patch.object(teardown_mod, "fetch_pr_state_for_branch", return_value=None),
         patch.object(teardown_mod, "origin_head_branch", return_value="main"),

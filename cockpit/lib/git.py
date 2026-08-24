@@ -46,7 +46,7 @@ class Worktree:
     rebasing: bool = False
     merging: bool = False
     dirty_count: int = 0
-    unpushed: int = 0
+    unlanded: int = 0
     is_primary: bool = False
     branch_prefix: str = ""
     repo_name: str = ""
@@ -134,23 +134,65 @@ def count_dirty(wt_path: Path) -> int:
     return sum(1 for line in res.stdout.splitlines() if line.strip())
 
 
-def _count_unpushed(wt_path: Path) -> int:
-    """Commits on HEAD whose patch content is not yet on origin's default branch.
+def commits_only_local(wt_path: Path, branch: str) -> int:
+    """Commits on HEAD whose patch is not present on the branch's own remote.
 
-    Uses `git cherry` so individually cherry-picked commits (same content,
-    different SHA upstream) are recognized as already-landed. Each output line
-    is `+ <sha>` for an unmerged commit, `- <sha>` for one whose patch is
-    already upstream — we count only `+` lines.
+    The guard for a branch that is not ours — a coworker's PR checked out for
+    review. Their commits live on `origin/<branch>`, so nothing is lost by
+    removing the worktree once the review is done; only work *we* committed on
+    top of it (a review fixup never pushed) exists solely here, and that is
+    exactly what this counts. Contrast `count_unlanded`, which deliberately
+    spares `origin/<branch>` because our own pushed-but-unmerged work should
+    still hold its worktree.
 
-    GitHub squash-merges are NOT recognized by `git cherry`: N commits are
-    collapsed into a single upstream commit with a combined patch-id that
-    matches none of the originals. Autoclose handles that case separately via
-    `is_ancestor(wt, headRefOid)` from `fetch_merged_branches`; this function
-    intentionally over-counts there so the `cockpit watch` table and its close
-    actions still surface "this branch hasn't been pushed" honestly.
+    Falls back to `count_unlanded` when `origin/<branch>` cannot be resolved,
+    so a never-pushed branch still counts as having local work. Returns -1
+    if git fails outright.
+    """
+    ref = f"origin/{branch}"
+    if _git(wt_path, "rev-parse", "--verify", "--quiet", ref).returncode != 0:
+        return count_unlanded(wt_path, branch)
+    res = _git(wt_path, "cherry", ref, "HEAD")
+    if res.returncode != 0:
+        return -1
+    return sum(1 for line in res.stdout.splitlines() if line.startswith("+ "))
 
-    Returns 0 if the default branch (whatever `origin/HEAD` points at) cannot
-    be resolved. Returns -1 if git fails outright so callers can distinguish
+
+def count_unlanded(wt_path: Path, branch: str | None) -> int:
+    """Commits that are this branch's own work and have landed nowhere.
+
+    Two independent halves, intersected — neither alone is correct:
+
+      * **patch-id** (`git cherry origin/<default> HEAD`, whose output marks
+        `+ <sha>` for an unmerged commit and `- <sha>` for one already
+        upstream): every commit ahead of the default branch, minus those whose *patch* is
+        already upstream under a different sha (a cherry-pick). Alone it counts
+        the commits of whatever branch this one is stacked on, since those are
+        equally "not in main" — which made any branch based on something other
+        than the default branch permanently unclosable.
+      * **reachability** (`git rev-list HEAD --not <every remote ref except
+        this branch's own>`): commits that exist on no other remote branch.
+        Alone it misses cherry-picks entirely (sha-based), so work someone
+        landed on the default branch by cherry-pick would read as unlanded.
+
+    A commit counts only if BOTH halves flag it. `origin/<branch>` is the one
+    ref left out of the reachability negatives, so pushing this branch does NOT
+    clear the count: the guard is "has this work landed", not "has it been
+    pushed", and a pushed-but-unmerged branch still holds its worktree. Commits
+    on the branch it is stacked on are reachable from *their* remote ref and
+    drop out; so do commits already merged into the default branch.
+
+    `origin/HEAD` is excluded alongside `origin/<branch>` because it is a
+    symref: on a default-branch worktree it would otherwise re-add the very ref
+    that was deliberately spared.
+
+    GitHub squash-merges are recognized by neither half (N commits collapse to
+    one upstream commit with a new sha and a combined patch-id). Callers
+    establish that case separately — `teardown` via the MERGED PR state,
+    autoclose via `is_ancestor(wt, headRefOid)`.
+
+    Returns 0 if origin's default branch cannot be resolved, or if nothing is
+    ahead of it. Returns -1 if git fails outright, so callers can tell
     "verified clean" from "could not check".
     """
     default = origin_head_branch(wt_path)
@@ -159,30 +201,25 @@ def _count_unpushed(wt_path: Path) -> int:
     res = _git(wt_path, "cherry", f"origin/{default}", "HEAD")
     if res.returncode != 0:
         return -1
-    return sum(1 for line in res.stdout.splitlines() if line.startswith("+ "))
-
-
-def commits_only_local(wt_path: Path, branch: str) -> int:
-    """Commits on HEAD whose patch is not present on the branch's own remote.
-
-    Where `_count_unpushed` baselines against origin's *default* branch, this
-    baselines against `origin/<branch>` — so a pushed-but-unmerged branch reads
-    as fully pushed. Used to decide whether tearing down someone else's PR
-    worktree would lose anything: if every commit is already on
-    `origin/<branch>`, nothing exists only locally and removal is safe (teardown
-    is local-only and never touches the remote branch).
-
-    Falls back to `_count_unpushed` when `origin/<branch>` cannot be resolved,
-    so a never-pushed branch still counts as having unpushed work. Returns -1
-    if git fails outright.
-    """
-    ref = f"origin/{branch}"
-    if _git(wt_path, "rev-parse", "--verify", "--quiet", ref).returncode != 0:
-        return _count_unpushed(wt_path)
-    res = _git(wt_path, "cherry", ref, "HEAD")
+    unmerged = {
+        line[2:].strip() for line in res.stdout.splitlines() if line.startswith("+ ")
+    }
+    if not unmerged or not branch:
+        # Nothing ahead of the default branch, or a detached HEAD with no ref of
+        # its own to spare — the patch-id half already answers it.
+        return len(unmerged)
+    res = _git(
+        wt_path,
+        "rev-list",
+        "HEAD",
+        "--not",
+        f"--exclude=origin/{branch}",
+        "--exclude=origin/HEAD",
+        "--remotes",
+    )
     if res.returncode != 0:
         return -1
-    return sum(1 for line in res.stdout.splitlines() if line.startswith("+ "))
+    return len(unmerged & set(res.stdout.split()))
 
 
 def _gitdir(wt_path: Path) -> Path | None:
@@ -214,7 +251,7 @@ def worktrees_basic(
 ) -> list[Worktree]:
     """List worktrees by structure only — path/branch/rebasing/merging/is_primary.
 
-    `dirty_count` and `unpushed` are left at 0; this skips the per-worktree
+    `dirty_count` and `unlanded` are left at 0; this skips the per-worktree
     `git status` + `git cherry` forks that `worktrees()` runs. Use it when the
     caller only needs identity (path/branch), e.g. the orphan-workspace reap.
 
@@ -272,9 +309,9 @@ def worktrees_basic(
 def worktrees(
     repo_dir: Path, branch_prefix: str = "", repo_name: str = ""
 ) -> list[Worktree]:
-    """Full worktree listing with dirty/unpushed counts filled in.
+    """Full worktree listing with dirty/unlanded counts filled in.
 
-    Layers the per-worktree `count_dirty` + `_count_unpushed` stats (run in
+    Layers the per-worktree `count_dirty` + `count_unlanded` stats (run in
     parallel) onto `worktrees_basic`. Callers that don't need the counts
     should use `worktrees_basic` to skip those forks. `branch_prefix` and
     `repo_name` are passed through to `worktrees_basic` (label strip +
@@ -283,11 +320,11 @@ def worktrees(
     wts = worktrees_basic(repo_dir, branch_prefix, repo_name)
 
     def _stats(w: Worktree) -> tuple[int, int]:
-        return count_dirty(w.path), _count_unpushed(w.path)
+        return count_dirty(w.path), count_unlanded(w.path, w.branch)
 
     with ThreadPoolExecutor(max_workers=max(1, len(wts))) as ex:
         for wt, (d, u) in zip(wts, ex.map(_stats, wts), strict=False):
-            wt.dirty_count, wt.unpushed = d, u
+            wt.dirty_count, wt.unlanded = d, u
     return wts
 
 
@@ -685,7 +722,7 @@ def delete_local_branch(repo: Path, branch: str) -> tuple[bool, str]:
     from the main checkout (HEAD = the default branch), and a squash- or rebase-
     merged feature branch has different SHAs than the default branch, so `-d`
     would refuse for the common merge case (this is the same patch-id blind spot
-    `_count_unpushed` documents). Callers establish the merge via the
+    `count_unlanded` documents). Callers establish the merge via the
     authoritative `gh pr list --state merged` signal and gate on there being no
     post-merge local commits before reaching here, so `-D` is the right tool.
     """

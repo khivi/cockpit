@@ -196,21 +196,32 @@ Key gates (all from `cycle.py`):
 - **Autoclose hard blocker** (never overridden): uncommitted files.
 - **Autoclose smart-skip**: even when merged & clean, skip if draft, CI not green,
   or unaddressed review threads remain.
-- **Unpushed / open-PR are NOT autoclose blockers** — `_maybe_autoclose` only fires
-  on a merged PR and tears down with `forced=True`; unpushed commits merely preserve
-  the local branch ref. The unpushed / open-PR gate lives in `probe_blockers` (the
-  TUI `c` close path), where `C` force overrides the open-PR soft block but never
-  uncommitted/unpushed work.
+- **Unlanded commits / open-PR are NOT autoclose blockers** — `_maybe_autoclose`
+  only fires on a merged PR and tears down with `forced=True`; unlanded commits
+  merely preserve the local branch ref. The unlanded / open-PR gate lives in
+  `probe_blockers` (the TUI `c` close path), where `C` force overrides the open-PR
+  soft block but never uncommitted/unlanded work.
+- **The hard commit gate is ownership-split** (`worktree_state_blockers`) —
+  **our** branch uses `git.count_unlanded`: commits flagged by BOTH a patch-id
+  check against `origin/<default>` (`git cherry`, so a cherry-picked commit reads
+  as landed) AND reachability from no remote ref other than `origin/<branch>`
+  (so the commits of whatever branch this one is *stacked on* drop out — a
+  `origin/<default>` baseline alone counted them, making every non-default-based
+  branch permanently unclosable). Pushing does **not** clear it: a pushed-but-
+  unmerged branch keeps its worktree. **Someone else's** branch (`is_mine=False`,
+  a PR checked out for review) uses `git.commits_only_local` instead — their work
+  is safe on `origin/<branch>` and the review is done, so only a local review
+  fixup of ours blocks.
 - **Primary-checkout close branches on the checkout's branch** — a manual `c`/`C`
   on a primary checkout (a `use_worktree: false` repo, `worktree_path == repo_path` /
   `wt.is_primary`) **always** skips `git worktree remove` (git refuses it on a
   primary checkout, and the user works there in place), then splits:
-  - **On its default branch** → *workspace-only close*: the unpushed guard relaxes
+  - **On its default branch** → *workspace-only close*: the commit guard relaxes
     (`worktree_state_blockers(is_primary=True)` — the checkout and its branch stay,
-    so unpushed commits are safe), leaving only the dirty guard.
+    so unlanded commits are safe), leaving only the dirty guard.
   - **On a non-default (feature) branch** → *branch teardown*: after the workspace
     close, HEAD moves back to the default branch (`checkout_branch`) and the feature
-    ref is deleted (`delete_local_branch`). The unpushed guard is **not** relaxed
+    ref is deleted (`delete_local_branch`). The commit guard is **not** relaxed
     here (the branch is going away), so callers pass `is_primary = wt.is_primary and
     on_default` to the blockers (`on_default` via `origin_head_branch`; unknown
     default keeps it workspace-only) and set `delete_branch = pr_is_merged or
@@ -219,13 +230,14 @@ Key gates (all from `cycle.py`):
   This is a *manual* path only; the autoclose tree above never reaches a
   `use_worktree: false` repo.
 - **Manual close is squash/rebase-merge aware** — the merged/open state both the
-  hard unpushed gate and the soft open-PR gate read comes from
+  hard commit gate and the soft open-PR gate read comes from
   `teardown.resolve_pr_state`: the cached PR payload first, then ONE live
   `gh pr list --head <branch> --state all` (`gh.fetch_pr_state_for_branch`) when
   the cache doesn't already say MERGED. This catches an out-of-band squash/rebase
-  merge the slow tick never discovered — `git cherry` (`_count_unpushed`) can't
-  recognize a squash (N commits → one upstream patch-id), so without the live
-  lookup the branch false-reads as unpushed, a HARD block `C` cannot override.
+  merge the slow tick never discovered — `git.count_unlanded` can't recognize a
+  squash (N commits → one upstream commit, new sha and a combined patch-id), so
+  without the live lookup the branch false-reads as unlanded, a HARD block `C`
+  cannot override.
   The live call runs only on a deliberate `c`/`C` keypress (and the daemon's
   re-check in `teardown`), never per tick — mirroring how `_maybe_autoclose` uses
   `is_ancestor(wt, headRefOid)` rather than the commit count.

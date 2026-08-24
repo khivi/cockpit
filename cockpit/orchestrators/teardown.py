@@ -4,7 +4,7 @@ One callable is the single teardown sequence, driven by the daemon for both
 enqueued `cockpit close` requests (`cycle._drain_close_requests`) and
 autoclose-on-merge (`cycle._maybe_autoclose`). Order, every time:
 
-  1. Re-check blockers (dirty / unpushed / open PR) unless `forced`.
+  1. Re-check blockers (dirty / unlanded / open PR) unless `forced`.
   2. Close the cmux workspace.
   3. Remove the worktree if `worktree_path` exists on disk.
   4. Delete the local branch ref if `delete_branch` is set (and the branch is
@@ -26,10 +26,10 @@ from cockpit.lib.cmux import cmux_close_workspace_best_effort
 from cockpit.lib.colors import dim
 from cockpit.lib.gh import fetch_pr_state_for_branch
 from cockpit.lib.git import (
-    _count_unpushed,
     checkout_branch,
     commits_only_local,
     count_dirty,
+    count_unlanded,
     delete_local_branch,
     ff_default_branch_worktrees,
     log_ff_advances,
@@ -57,35 +57,47 @@ def worktree_state_blockers(
     pr_merged: bool = False,
     is_primary: bool = False,
 ) -> list[str]:
-    """Dirty + unpushed checks.
+    """Dirty + unlanded-commit checks.
 
     `dirty` is always a hard blocker — `--force` never overrides it, and
     `pr_merged` does not relax it either (uncommitted edits exist only locally
-    regardless of whether the PR merged). The `unpushed` baseline depends on
-    ownership: for our own branches (the default, `is_mine=True`) we keep the
-    conservative default-branch baseline (`_count_unpushed`), so a branch whose
-    commits haven't merged still blocks. For someone else's branch (a PR checked
-    out for review, `is_mine=False`) we baseline against the branch's own remote
-    (`commits_only_local`): a teammate's pushed-but-unmerged PR is therefore not
-    flagged, leaving only the soft open-PR blocker that `--force` can override.
-    Commits that exist only locally still block, regardless of ownership.
+    regardless of whether the PR merged).
 
-    `pr_merged=True` (the PR is MERGED) skips the unpushed check entirely:
-    `_count_unpushed` over-counts both squash-merges (N commits collapse to one
-    upstream patch-id matching none of the originals) and non-default-base
-    merges (it baselines on `origin/<default>`, but the PR landed on e.g.
-    `origin/stage`). A merged PR's work is safe on the remote, so only the dirty
-    check needs to stand. Callers establish the merge via `resolve_pr_state`
-    (cache first, then one live `gh` lookup — see `probe_blockers`), mirroring
-    how autoclose uses `is_ancestor(wt, headRefOid)` instead of the commit count.
+    The commit guard splits on ownership, because the two cases are asking
+    different questions:
+
+      * **our own branch** (`is_mine=True`, the default) → `git.count_unlanded`:
+        commits that are this branch's own work and have landed nowhere.
+        Pushing does NOT clear it — a pushed-but-unmerged branch keeps its
+        worktree, which is the point. What it excludes is work this branch
+        isn't answerable for: the commits of whatever branch it is stacked on,
+        and anything already landed on the default branch (including by
+        cherry-pick, matched by patch-id). Baselining on `origin/<default>`
+        alone counted the base branch's commits as local work, which made every
+        branch stacked on a non-default base permanently unclosable.
+      * **someone else's branch** (`is_mine=False`, a PR checked out for
+        review) → `git.commits_only_local`: their commits are safe on
+        `origin/<branch>` and holding a worktree open for a review that's done
+        helps nobody, so a pushed coworker branch reads as zero and closes
+        freely, leaving only the soft open-PR blocker `--force` can override.
+        Only a review fixup *we* committed locally still blocks.
+
+    `pr_merged=True` (the PR is MERGED) skips the commit check entirely:
+    squash-merges are recognized by neither half of `count_unlanded` (N commits
+    collapse to one upstream commit with a new sha and a combined patch-id
+    matching none of the originals). A merged PR's work is safe on the remote,
+    so only the dirty check needs to stand. Callers establish the merge via
+    `resolve_pr_state` (cache first, then one live `gh` lookup — see
+    `probe_blockers`), mirroring how autoclose uses `is_ancestor(wt,
+    headRefOid)` instead of the commit count.
 
     `is_primary=True` means a **workspace-only close** — a primary checkout
     (`use_worktree: false`) staying on its default branch: nothing is removed
     (`teardown` refuses `git worktree remove` on a primary checkout, and the
-    branch survives), so the checkout and any unpushed commits stay put and only
+    branch survives), so the checkout and any unlanded commits stay put and only
     the dirty guard stands. Callers pass `is_primary` as
     `wt.is_primary and on_default` — a primary checkout parked on a *non-default*
-    branch is torn down (that branch is deleted), so its unpushed commits are NOT
+    branch is torn down (that branch is deleted), so its unlanded commits are NOT
     safe and the guard must still stand; those callers pass `is_primary=False`.
     """
     blockers: list[str] = []
@@ -98,17 +110,17 @@ def worktree_state_blockers(
         return blockers
     if is_primary:
         # A primary checkout's close is workspace-only — the worktree stays, so
-        # unpushed commits are never at risk. Only the dirty guard (above)
+        # unlanded commits are never at risk. Only the dirty guard (above)
         # stands, honouring "close, but make sure it's all committed".
         return blockers
     if not is_mine and branch:
-        unpushed = commits_only_local(worktree_path, branch)
+        unlanded = commits_only_local(worktree_path, branch)
     else:
-        unpushed = _count_unpushed(worktree_path)
-    if unpushed > 0:
-        blockers.append(f"{unpushed} unpushed commit(s)")
-    elif unpushed == -1:
-        blockers.append("could not verify push state")
+        unlanded = count_unlanded(worktree_path, branch)
+    if unlanded > 0:
+        blockers.append(f"{unlanded} unlanded commit(s)")
+    elif unlanded == -1:
+        blockers.append("could not verify commit state")
     return blockers
 
 
@@ -125,11 +137,11 @@ def resolve_pr_state(
 
     The live fallback is what makes manual close squash/rebase-merge aware: a PR
     merged out-of-band (e.g. via `gh`, never discovered by the slow tick) has no
-    cached MERGED payload, so the unpushed gate would otherwise fall through to
-    `_count_unpushed` — which a squash defeats — producing a false-positive HARD
+    cached MERGED payload, so the commit gate would otherwise fall through to
+    `count_unlanded` — which a squash defeats — producing a false-positive HARD
     block that `--force` cannot override. Live `gh pr list --state all` reports
     `state == "MERGED"` regardless of merge strategy. `("", None)` when no PR is
-    known from either source (the caller then trusts the git-based unpushed
+    known from either source (the caller then trusts the git-based unlanded
     count). The lookup is skipped when the worktree is gone — there is nothing
     left to close, and `gh` needs a working tree as its cwd.
     """
@@ -165,8 +177,9 @@ def probe_blockers(
 ) -> list[str]:
     """Read-only check: reasons to refuse close. Empty list = safe to close.
 
-    Combines `worktree_state_blockers` (dirty is hard; unpushed is hard only for
-    our own branches, and is skipped once the PR is MERGED — see that function)
+    Combines `worktree_state_blockers` (dirty is hard; unlanded commits are hard
+    too — on someone else's branch only the ones we added locally — and are
+    skipped once the PR is MERGED, see that function)
     and the open-PR check (soft — `--force` overrides). The MERGED/OPEN state is
     resolved via `resolve_pr_state` (cache first, one live `gh` fallback), so an
     out-of-band squash/rebase merge is recognized here too — not only the
@@ -198,12 +211,12 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
     place). Two sub-cases:
 
       * On its **default branch** — a *workspace-only* close: close the session,
-        leave the checkout. Only the dirty guard applies (unpushed is relaxed —
+        leave the checkout. Only the dirty guard applies (the commit guard is relaxed —
         nothing is removed, the branch survives).
       * On a **non-default (feature) branch** — the branch is torn down: after
         the workspace close, HEAD is moved back to the default branch
         (`checkout_branch`) and the feature ref is deleted (`git branch -D`).
-        The unpushed guard is NOT relaxed here (the branch is going away, so its
+        The commit guard is NOT relaxed here (the branch is going away, so its
         commits are not safe) — callers pass `is_primary=False` to the blockers.
     """
     label = req.name or req.ref
@@ -216,8 +229,8 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
     )
     # Resolve the default branch once (reused by the blocker relaxation and the
     # branch-delete guard). A primary checkout counts as a workspace-only close —
-    # unpushed relaxed — only while it stays on that default branch; parked on a
-    # feature branch it's a branch teardown, so the unpushed guard must stand.
+    # commit guard relaxed — only while it stays on that default branch; parked on
+    # a feature branch it's a branch teardown, so that guard must stand.
     default = origin_head_branch(req.repo_path) if req.repo_path is not None else None
     workspace_only = is_primary and (default is None or req.branch == default)
     if not req.forced:
