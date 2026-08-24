@@ -43,7 +43,9 @@ which cockpit      # → …/linuxbrew/bin/cockpit  (or /opt/homebrew/bin on mac
 cockpit --version
 ```
 
-`cockpit setup` is idempotent and backs up `settings.json` before writing. **It also re-seeds `~/.config/starship.toml` and `~/.config/cship.toml` from the bundled defaults (when `use_cship` is set) — and, unlike `settings.json`, it does *not* back up a plain file it overwrites (only a symlink target is backed up).** If you've hand-edited either, copy it aside first. Make theme changes via cockpit's `theme` config, not by editing `starship.toml`, so they survive a re-setup.
+`cockpit setup` is idempotent, and backs up `settings.json` before writing.
+
+**It does not extend that courtesy to your statusline config.** When `use_cship` is set, setup re-seeds `~/.config/starship.toml` and `~/.config/cship.toml` from the bundled defaults, overwriting a plain file without a backup (only a symlink target is backed up). Copy either aside first if you've hand-edited it — and make theme changes through cockpit's `theme` config rather than `starship.toml`, so they survive the next re-seed.
 
 ## What's preserved
 

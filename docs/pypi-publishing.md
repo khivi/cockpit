@@ -45,25 +45,4 @@ Covered by the tag flow in `AGENTS.md` → *Release versioning*: bump
 `pyproject.toml` `version`, commit, tag `v<version>`, push the tag. That fires
 both `publish.yml` (PyPI) and `release.yml` (Homebrew tap bump) independently.
 
-## Recovery — how the initial block was cleared
-
-`cmux-cockpit 1.8.0` is now live on PyPI. Earlier this was blocked: the owning
-PyPI account was locked out on an unverified email, so the pending publisher
-(step 2) couldn't be registered, and every `publish.yml` run failed with
-`invalid-publisher` (valid OIDC token, no matching publisher). That failure
-happens *before* upload, so no version was ever consumed and the runs re-ran
-cleanly once unblocked.
-
-The sequence that cleared it, kept here as the playbook if a re-block ever
-happens:
-
-1. Regain PyPI account access (email-verification / password-reset to the
-   registered address) — or register a fresh account and adjust the `Owner`
-   claim here + in `publish.yml`.
-2. Register the pending publisher (setup step 2).
-3. Re-run the failed publish: `gh run rerun <run-id>` (or push a fresh tag).
-
-Nothing in this repo changed for the OIDC path — the fix was entirely on PyPI's
-side.
-
 [PyPI Trusted Publishing]: https://docs.pypi.org/trusted-publishers/

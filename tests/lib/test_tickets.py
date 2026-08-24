@@ -214,9 +214,45 @@ def test_token_env_is_valid_under_both_jira_and_trello():
 
 
 def test_token_env_is_still_rejected_for_providers_that_dont_declare_it():
-    for provider in ("linear", "github", "none"):
+    # Linear declares `token_env` since the credential rename; GitHub has no
+    # credential field at all, so it and `none` still reject one.
+    for provider in ("github", "none"):
         errs = tickets.tickets_field_errors({"token_env": "X"}, provider)
         assert len(errs) == 1 and "token_env" in errs[0]
+
+
+def test_every_credential_provider_accepts_token_env():
+    for provider in ("linear", "jira", "trello"):
+        assert tickets.tickets_field_errors({"token_env": "X"}, provider) == []
+
+
+def test_canonical_workflow_fields_are_accepted_by_every_provider():
+    # `dev_done` / `merge_done` replaced four provider-specific spellings, so
+    # each must validate wherever its predecessor did.
+    for provider in ("linear", "jira", "trello"):
+        assert tickets.tickets_field_errors({"dev_done": "X"}, provider) == []
+        assert tickets.tickets_field_errors({"merge_done": "X"}, provider) == []
+    # GitHub closes its issue on merge rather than moving it, so it has a
+    # dev-done value but no merge-done one.
+    assert tickets.tickets_field_errors({"dev_done": "X"}, "github") == []
+    assert tickets.tickets_field_errors({"merge_done": "X"}, "github") != []
+
+
+def test_superseded_workflow_spellings_still_validate():
+    assert tickets.tickets_field_errors({"dev_done_state": "X"}, "linear") == []
+    assert tickets.tickets_field_errors({"merge_done_state": "X"}, "linear") == []
+    assert tickets.tickets_field_errors({"dev_done_label": "X"}, "github") == []
+    assert tickets.tickets_field_errors({"dev_done_status": "X"}, "jira") == []
+    assert tickets.tickets_field_errors({"merge_done_status": "X"}, "jira") == []
+    assert tickets.tickets_field_errors({"dev_done_list": "X"}, "trello") == []
+    assert tickets.tickets_field_errors({"merge_done_list": "X"}, "trello") == []
+
+
+def test_a_superseded_spelling_is_still_rejected_for_another_provider():
+    # The aliases stay provider-scoped: a Linear config can't smuggle in
+    # Trello's list spelling just because both now resolve to `dev_done`.
+    assert tickets.tickets_field_errors({"dev_done_list": "X"}, "linear") != []
+    assert tickets.tickets_field_errors({"dev_done_state": "X"}, "trello") != []
 
 
 def test_credential_env_fields_are_per_provider():

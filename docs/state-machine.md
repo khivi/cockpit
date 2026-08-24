@@ -1,9 +1,40 @@
 # Cockpit state machine
 
 Cockpit combines **three independent state vocabularies** (plus an auxiliary
-Linear read) into per-workspace decisions. No single source file shows the
-combination layer — this document does. Diagrams are
+ticket-provider read) into per-workspace decisions. No single source file shows
+the combination layer — this document does. Diagrams are
 [Mermaid](https://mermaid.js.org/) and render on GitHub.
+
+## The short version
+
+Every cycle, cockpit asks one question per worktree: **does anything need to
+happen here?**
+
+Three sources answer it, all re-derived from scratch each time — nothing about
+them is stored, so nothing can drift:
+
+- **GitHub** — is there a PR, is it open, is CI green, are threads unresolved?
+- **cmux** — is a session open on this worktree, and is it idle or mid-turn?
+- **git** — does the worktree exist, is it dirty, how far behind its base?
+
+Cross those and exactly one path applies: spawn a workspace, nudge the agent,
+write a pill, tear the worktree down, or do nothing. Most cycles it is nothing.
+
+Two ticks split the work. The **slow tick** (300s) makes every decision and pays
+for the `gh` fetch. The **fast tick** (30s) is network-free — it republishes what
+the slow tick already decided, so a `git checkout` or a tmpdir wipe recovers in
+30s rather than 300s.
+
+One rule governs the whole picture: **only the daemon writes cache cells;
+renderers only read them.** A renderer that consults `git` or `gh` directly can
+disagree with the field beside it in the same render, and that is the bug class
+this design exists to eliminate.
+
+**The four diagrams:** [orientation map](#1-orientation-map-l0) — sources to
+decisions to actions · [reconcile tree](#2-reconcile-decision-tree-slow-tick) —
+which path a PR × worktree pair takes ·
+[nudge gate](#3-nudge-idle-gate-nudge_if_idle-cmuxpy) — the five guards before a
+`send` · [cell data-flow](#4-cell-data-flow--ownership) — who writes what.
 
 ## The state sources
 

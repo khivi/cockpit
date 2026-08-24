@@ -17,8 +17,8 @@
         "keys": ["TEAM"],
         "project": "My Project",
         "close_on_merge": false,
-        "merge_done_state": "Done",
-        "api_key_env": "LINEAR_API_KEY"
+        "merge_done": "Done",
+        "token_env": "LINEAR_API_KEY"
       }
     },
     {
@@ -26,10 +26,11 @@
       "path": "/absolute/path/to/another/repo",
       "branch_prefix": "yourusername/",
       "default_base": "main",
+      "base_remote": "origin",
       "sidebar_color": "Green",
       "tickets": {
         "provider": "github",
-        "dev_done_label": "ready for review",
+        "dev_done": "ready for review",
         "start_label": "in progress",
         "close_on_merge": false
       }
@@ -44,8 +45,8 @@
         "keys": ["PROJ"],
         "site_url": "https://yourteam.atlassian.net",
         "email": "you@example.com",
-        "dev_done_status": "Dev Done",
-        "merge_done_status": "Done",
+        "dev_done": "Dev Done",
+        "merge_done": "Done",
         "close_on_merge": false,
         "token_env": "JIRA_API_TOKEN"
       }
@@ -58,8 +59,8 @@
       "tickets": {
         "provider": "trello",
         "board": "Engineering",
-        "dev_done_list": "Review",
-        "merge_done_list": "Done",
+        "dev_done": "Review",
+        "merge_done": "Done",
         "close_on_merge": false,
         "key_env": "TRELLO_API_KEY",
         "token_env": "TRELLO_API_TOKEN"
@@ -98,7 +99,7 @@
       "tickets": {
         "provider": "linear",
         "keys": ["LABS"],
-        "api_key_env": "LINEAR_API_KEY_ACME_LABS"
+        "token_env": "LINEAR_API_KEY_ACME_LABS"
       }
     }
   },

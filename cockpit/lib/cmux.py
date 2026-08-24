@@ -71,7 +71,7 @@ STALE_KEY = "stale"
 STALE_ICON = "↻"
 
 # Linear "dev done" marker: set when a tracked PR's linked Linear ticket sits in
-# the configured dev-done workflow state (see config.linear_dev_done_state). It
+# the configured dev-done workflow state (see config.linear_dev_done). It
 # is a passive sidebar visual managed directly in the slow tick (not via
 # apply_pills) and so is deliberately absent from ACTIONABLE_KEYS — it is never a
 # `send`. Gated on the repo being Linear-configured AND the branch carrying a

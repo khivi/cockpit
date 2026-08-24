@@ -1019,7 +1019,7 @@ def test_statusline_hidden_non_list_is_empty(tmp_path, monkeypatch):
 
 def test_github_dev_done_label_defaults(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.github_dev_done_label() == "ready for review"
+    assert cockpit_config.github_dev_done() == "ready for review"
 
 
 def test_github_dev_done_label_object_override(tmp_path, monkeypatch):
@@ -1028,7 +1028,7 @@ def test_github_dev_done_label_object_override(tmp_path, monkeypatch):
         monkeypatch,
         {"repos": [], "tickets": {"provider": "github", "dev_done_label": "qa ok"}},
     )
-    assert cockpit_config.github_dev_done_label() == "qa ok"
+    assert cockpit_config.github_dev_done() == "qa ok"
 
 
 def test_ticket_close_on_merge_global_default_applies(tmp_path, monkeypatch):
@@ -1061,8 +1061,8 @@ def test_jira_readers_defaults(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     assert cockpit_config.jira_site_url() == ""
     assert cockpit_config.jira_email() == ""
-    assert cockpit_config.jira_dev_done_status() == "Dev Done"
-    assert cockpit_config.jira_merge_done_status() == "Done"
+    assert cockpit_config.jira_dev_done() == "Dev Done"
+    assert cockpit_config.jira_merge_done() == "Done"
 
 
 def test_jira_site_url_strips_trailing_slash(tmp_path, monkeypatch):
@@ -1091,15 +1091,15 @@ def test_jira_status_overrides_from_object(tmp_path, monkeypatch):
         }
     }
     assert cockpit_config.jira_email(repo_entry=re) == "me@acme.com"
-    assert cockpit_config.jira_dev_done_status(repo_entry=re) == "In Review"
-    assert cockpit_config.jira_merge_done_status(repo_entry=re) == "Closed"
+    assert cockpit_config.jira_dev_done(repo_entry=re) == "In Review"
+    assert cockpit_config.jira_merge_done(repo_entry=re) == "Closed"
 
 
 def test_trello_readers_default_to_empty_string(tmp_path, monkeypatch):
     # No default list name to guess — an unset value means the feature is off.
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.trello_dev_done_list() == ""
-    assert cockpit_config.trello_merge_done_list() == ""
+    assert cockpit_config.trello_dev_done() == ""
+    assert cockpit_config.trello_merge_done() == ""
 
 
 def test_trello_readers_repo_override_wins(tmp_path, monkeypatch):
@@ -1122,8 +1122,8 @@ def test_trello_readers_repo_override_wins(tmp_path, monkeypatch):
             "merge_done_list": "Shipped",
         }
     }
-    assert cockpit_config.trello_dev_done_list(repo_entry=re) == "Ready for Review"
-    assert cockpit_config.trello_merge_done_list(repo_entry=re) == "Shipped"
+    assert cockpit_config.trello_dev_done(repo_entry=re) == "Ready for Review"
+    assert cockpit_config.trello_merge_done(repo_entry=re) == "Shipped"
 
 
 def test_trello_readers_fall_back_to_global(tmp_path, monkeypatch):
@@ -1139,8 +1139,8 @@ def test_trello_readers_fall_back_to_global(tmp_path, monkeypatch):
             },
         },
     )
-    assert cockpit_config.trello_dev_done_list(repo_entry={}) == "Global Ready"
-    assert cockpit_config.trello_merge_done_list(repo_entry={}) == "Global Done"
+    assert cockpit_config.trello_dev_done(repo_entry={}) == "Global Ready"
+    assert cockpit_config.trello_merge_done(repo_entry={}) == "Global Done"
 
 
 def test_trello_board_defaults_to_none(tmp_path, monkeypatch):
@@ -1190,13 +1190,13 @@ def test_ticket_close_on_merge_legacy_linear_flat_key(tmp_path, monkeypatch):
 def test_linear_dev_done_from_object(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     re = {"tickets": {"provider": "linear", "dev_done_state": "In Review"}}
-    assert cockpit_config.linear_dev_done_state(repo_entry=re) == "In Review"
+    assert cockpit_config.linear_dev_done(repo_entry=re) == "In Review"
 
 
 def test_linear_merge_done_from_object(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     re = {"tickets": {"provider": "linear", "merge_done_state": "Shipped"}}
-    assert cockpit_config.linear_merge_done_state(repo_entry=re) == "Shipped"
+    assert cockpit_config.linear_merge_done(repo_entry=re) == "Shipped"
 
 
 def test_linear_team_keys_from_object(tmp_path, monkeypatch):
@@ -1232,58 +1232,52 @@ def test_use_slack_returns_false_when_explicitly_false(tmp_path, monkeypatch):
     assert cockpit_config.use_slack() is False
 
 
-# ── linear_dev_done_state reader ─────────────────────────────────────────────
+# ── linear_dev_done reader ─────────────────────────────────────────────
 
 
 def test_linear_dev_done_state_defaults(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.linear_dev_done_state() == "Dev Done"
+    assert cockpit_config.linear_dev_done() == "Dev Done"
 
 
 def test_linear_dev_done_state_override(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "linear_dev_done_state": "In Review"}
     )
-    assert cockpit_config.linear_dev_done_state() == "In Review"
+    assert cockpit_config.linear_dev_done() == "In Review"
 
 
 def test_linear_dev_done_state_uses_passed_cfg_without_disk_read():
     # Passing cfg avoids load_config(); blank/whitespace falls back to default.
     from cockpit.lib import config as cockpit_config
 
-    assert cockpit_config.linear_dev_done_state({"linear_dev_done_state": "QA"}) == "QA"
-    assert (
-        cockpit_config.linear_dev_done_state({"linear_dev_done_state": "  "})
-        == "Dev Done"
-    )
+    assert cockpit_config.linear_dev_done({"linear_dev_done_state": "QA"}) == "QA"
+    assert cockpit_config.linear_dev_done({"linear_dev_done_state": "  "}) == "Dev Done"
 
 
-# ── linear_merge_done_state reader ───────────────────────────────────────────
+# ── linear_merge_done reader ───────────────────────────────────────────
 
 
 def test_linear_merge_done_state_defaults(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.linear_merge_done_state() == "Done"
+    assert cockpit_config.linear_merge_done() == "Done"
 
 
 def test_linear_merge_done_state_override(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path, monkeypatch, {"repos": [], "linear_merge_done_state": "Shipped"}
     )
-    assert cockpit_config.linear_merge_done_state() == "Shipped"
+    assert cockpit_config.linear_merge_done() == "Shipped"
 
 
 def test_linear_merge_done_state_uses_passed_cfg_and_blank_falls_back():
     from cockpit.lib import config as cockpit_config
 
     assert (
-        cockpit_config.linear_merge_done_state({"linear_merge_done_state": "Closed"})
+        cockpit_config.linear_merge_done({"linear_merge_done_state": "Closed"})
         == "Closed"
     )
-    assert (
-        cockpit_config.linear_merge_done_state({"linear_merge_done_state": "  "})
-        == "Done"
-    )
+    assert cockpit_config.linear_merge_done({"linear_merge_done_state": "  "}) == "Done"
 
 
 # ── linear_done_on_merge reader (per-repo over global) ───────────────────────
@@ -1936,7 +1930,7 @@ def test_apply_org_defaults_keeps_org_routing_fields_when_a_repo_adds_project():
     config_mod.apply_org_defaults(cfg)
     a, b = cfg["repos"]
     assert config_mod.linear_team_keys(cfg, b) == ["ENG"]
-    assert config_mod.linear_api_key_env(cfg, b) == "LINEAR_API_KEY_ACME"
+    assert config_mod.linear_token_env(cfg, b) == "LINEAR_API_KEY_ACME"
     assert config_mod.linear_project(cfg, b) == "Payments API"
     # ...and the sibling that set nothing is unaffected in either direction.
     assert config_mod.linear_team_keys(cfg, a) == ["ENG"]
@@ -2047,7 +2041,7 @@ def test_repos_grouped_by_org_leaves_an_org_less_config_untouched():
 
 def test_credential_env_name_readers_default_to_todays_env_vars():
     # Absent config must be byte-identical to the pre-indirection behaviour.
-    assert config_mod.linear_api_key_env({}, None) == "LINEAR_API_KEY"
+    assert config_mod.linear_token_env({}, None) == "LINEAR_API_KEY"
     assert config_mod.jira_token_env({}, None) == "JIRA_API_TOKEN"
     assert config_mod.trello_key_env({}, None) == "TRELLO_API_KEY"
     assert config_mod.trello_token_env({}, None) == "TRELLO_API_TOKEN"
@@ -2056,10 +2050,10 @@ def test_credential_env_name_readers_default_to_todays_env_vars():
 def test_credential_env_names_resolve_per_field_repo_over_global():
     cfg = {"tickets": {"provider": "linear", "api_key_env": "LINEAR_GLOBAL"}}
     repo = {"tickets": {"api_key_env": "LINEAR_REPO"}}
-    assert config_mod.linear_api_key_env(cfg, repo) == "LINEAR_REPO"
+    assert config_mod.linear_token_env(cfg, repo) == "LINEAR_REPO"
     # A repo block that omits the field still inherits the global one — the
     # per-field chain, not whole-block replacement.
-    assert config_mod.linear_api_key_env(cfg, {"tickets": {"keys": ["PE"]}}) == (
+    assert config_mod.linear_token_env(cfg, {"tickets": {"keys": ["PE"]}}) == (
         "LINEAR_GLOBAL"
     )
 
@@ -2080,9 +2074,9 @@ def test_credential_env_name_inherited_from_the_org_block():
     }
     config_mod.apply_org_defaults(cfg)
     a, b, c = cfg["repos"]
-    assert config_mod.linear_api_key_env(cfg, a) == "LIN_ACME"
-    assert config_mod.linear_api_key_env(cfg, b) == "LIN_GLOBEX"
-    assert config_mod.linear_api_key_env(cfg, c) == "LINEAR_API_KEY"
+    assert config_mod.linear_token_env(cfg, a) == "LIN_ACME"
+    assert config_mod.linear_token_env(cfg, b) == "LIN_GLOBEX"
+    assert config_mod.linear_token_env(cfg, c) == "LINEAR_API_KEY"
 
 
 def test_org_credential_names_cover_jira_and_trello_too():
