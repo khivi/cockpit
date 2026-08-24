@@ -21,6 +21,48 @@ _GIT_ENV_LEAKS = (
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_git_env():
+    """Run every test against git's *defaults*, not the developer's machine.
+
+    Two independent leaks, both of which have produced a green local run and a
+    red CI one (or worse):
+
+      * **`GIT_DIR` / `GIT_INDEX_FILE` / … ** are exported by git while it runs
+        a hook, so the pre-commit- and pre-push-stage suites inherit them. A
+        test that builds its own repo under `tmp_path` then shells out to `git
+        add` stages into the *outer* repo's index instead — observed as a
+        staged wholesale deletion of every tracked file in this repo. Stripping
+        them was previously `cockpit_repo`'s job, which only protected tests
+        that happened to use that fixture.
+      * **`GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM` → `/dev/null`** neutralizes
+        `~/.gitconfig` and the system config. A developer has `user.email` set;
+        a CI runner does not, so a test that commits without supplying its own
+        identity passes locally and fails in CI with a bare exit 128. The same
+        goes for anything else personal (`commit.gpgsign`, `pull.ff`,
+        `init.defaultBranch`, aliases). Tests that need to commit set their own
+        identity — `tests/conftest._git` and `tests/lib/test_git._committer_env`
+        both do.
+
+    Deliberately does NOT request `monkeypatch`, for the ordering reason spelled
+    out in `_isolate_hidden_repos` — a suite-wide autouse fixture that does
+    forces monkeypatch's setup ahead of every module-level autouse fixture and
+    flips their relative teardown order.
+    """
+    managed = (*_GIT_ENV_LEAKS, "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
+    prev = {k: os.environ.get(k) for k in managed}
+    for var in _GIT_ENV_LEAKS:
+        os.environ.pop(var, None)
+    os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+    os.environ["GIT_CONFIG_SYSTEM"] = os.devnull
+    yield
+    for key, value in prev.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+@pytest.fixture(autouse=True)
 def _reset_config_cache():
     """`load_config()` caches the parsed config for the process lifetime. Reset
     it around every test so each starts like a fresh process and one test's
