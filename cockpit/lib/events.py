@@ -8,6 +8,15 @@ does on the timer. Nothing here is ever read as state, so AGENTS.md's "Inventory
 is derived every cycle, never stored" still holds; the win is purely latency —
 a spawned or closed workspace lands in ~0s instead of at the next fast tick.
 
+The one exception is `on_closed`, which carries a `workspace.closed` frame's
+`workspace_id` + `cwd` to the caller. Clicking the X in cmux's sidebar is a
+*gesture*, not state — it exists nowhere else (derived inventory cannot tell
+"the user just closed this" from "this worktree has no workspace yet", which is
+the normal pre-spawn state), so the event is the only place it can be read.
+It stays a gesture: the payload is never cached, never written to a cell, and
+never consulted by a tick — it only routes to the same gated close path the `c`
+key uses. See AGENTS.md's doorbell invariant.
+
 Two rules:
 
 - **Only `workspace.created` / `workspace.closed`.** Every tick writes pills,
@@ -34,6 +43,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 from .capabilities import has_capability
 from .config import CACHE_DIR
@@ -67,9 +77,16 @@ def events_supported() -> bool:
 
 
 def watch_workspace_events(
-    on_change: Callable[[], None], stop: threading.Event
+    on_change: Callable[[], None],
+    stop: threading.Event,
+    on_closed: Callable[[str, Path], None] | None = None,
 ) -> None:
     """Block until `stop` is set, calling `on_change()` per workspace event.
+
+    `on_closed(workspace_id, cwd)` additionally fires for `workspace.closed`
+    frames that carry both fields — the sidebar-X gesture. It is optional and
+    strictly additive: `on_change` fires for that frame either way, so a caller
+    that passes nothing gets exactly the pre-existing doorbell.
 
     No-ops immediately on limux/none/no-capability. Restarts the stream with
     backoff if it exits (cmux quit, machine slept), and gives up for good after
@@ -81,7 +98,7 @@ def watch_workspace_events(
     while not stop.is_set():
         started = time.monotonic()
         try:
-            _stream_once(on_change, stop)
+            _stream_once(on_change, stop, on_closed)
         except Exception as e:  # a dead doorbell must never take the TUI down
             print(f"cmux-events: {e}")
         if stop.is_set():
@@ -96,7 +113,11 @@ def watch_workspace_events(
         stop.wait(min(_BACKOFF_MAX_SECONDS, _BACKOFF_STEP_SECONDS * fast_exits))
 
 
-def _stream_once(on_change: Callable[[], None], stop: threading.Event) -> None:
+def _stream_once(
+    on_change: Callable[[], None],
+    stop: threading.Event,
+    on_closed: Callable[[str, Path], None] | None = None,
+) -> None:
     """Run one `cmux events` subprocess to completion, firing per event line."""
     CURSOR_FILE.parent.mkdir(parents=True, exist_ok=True)
     args = [
@@ -133,8 +154,19 @@ def _stream_once(on_change: Callable[[], None], stop: threading.Event) -> None:
         for line in proc.stdout:
             if stop.is_set():
                 return
-            if _is_event(line):
-                on_change()
+            frame = _parse_event(line)
+            if frame is None:
+                continue
+            on_change()
+            if on_closed is not None:
+                closed = _closed_workspace(frame)
+                if closed is not None:
+                    # A raising callback must not kill the stream — the doorbell
+                    # above already fired, so the tick still lands.
+                    try:
+                        on_closed(*closed)
+                    except Exception as e:
+                        print(f"cmux-events: close handler: {e}")
     finally:
         _kill(proc)
 
@@ -148,10 +180,30 @@ def _kill(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-def _is_event(line: str) -> bool:
-    """True for an event frame. `--name` already filters server-side; this only
-    drops the non-event frames (ack/heartbeat) a future cmux might still send."""
+def _parse_event(line: str) -> dict | None:
+    """The decoded event frame, or None. `--name` already filters server-side;
+    this only drops the non-event frames (ack/heartbeat) a future cmux might
+    still send, and anything unparsable."""
     try:
-        return bool(json.loads(line).get("type") == "event")
+        frame = json.loads(line)
     except Exception:
-        return False
+        return None
+    return frame if isinstance(frame, dict) and frame.get("type") == "event" else None
+
+
+def _closed_workspace(frame: dict) -> tuple[str, Path] | None:
+    """`(workspace_id, cwd)` for a `workspace.closed` frame carrying both.
+
+    None for `workspace.created`, and for a close frame missing either field —
+    a workspace with no cwd can't be resolved to a worktree anyway, so there is
+    nothing for the caller to act on.
+    """
+    if frame.get("name") != "workspace.closed":
+        return None
+    payload = frame.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    wsid, cwd = payload.get("workspace_id"), payload.get("cwd")
+    if not wsid or not cwd:
+        return None
+    return str(wsid), Path(str(cwd))

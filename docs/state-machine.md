@@ -373,6 +373,8 @@ flowchart LR
   GIT["git worktrees"] --> SLOW
   GIT --> FAST["Fast tick · 30s"]
   EV["cmux events<br/>workspace.created/closed"] -.kick, no state.-> FAST
+  EV -.X gesture: cwd only.-> XCLOSE["_on_workspace_closed<br/>→ _close_worktree (same gate as c)"]
+  XCLOSE -.enqueue TeardownRequest.-> SLOW
 
   SLOW --> DISK[("PR JSON<br/>on disk")]
   DISK -.republish.-> FAST
@@ -386,6 +388,20 @@ flowchart LR
   CELLS --> RENDER["starship printers<br/>READ-ONLY"]
   SESS --> RENDER
 ```
+
+The dotted `EV → XCLOSE` edge is the one place an event *payload* is read, and
+it carries a gesture rather than state: clicking the ✕ on a cmux sidebar row is
+the only close a user can make from outside the TUI, and derived inventory
+cannot express it (a closed workspace and a not-yet-spawned one are the same
+observable state). The payload contributes a `cwd` and nothing else — every fact
+the teardown decision uses is still re-derived by `_close_worktree`, which is
+the identical gate the `c` key runs, so a dirty tree / unpushed commits / an
+open PR refuse loudly and the worktree survives (the next slow tick respawns its
+workspace, the visible signal that nothing was torn down). cockpit's own closes
+— `h`/park, a trailing-fold anchor dissolve, `close_gone_cwd_workspaces`, and
+teardown's trailing close — are filtered first by the `cmux.was_self_closed`
+ledger; without it, park (workspace-only by definition) would tear down every
+worktree in the parked repo. See AGENTS.md's doorbell invariant.
 
 The dotted `SESS → FAST` edge is the one place the daemon *reads* a
 session-scoped cell: `cost-<sid>` is keyed by Claude Code session while every

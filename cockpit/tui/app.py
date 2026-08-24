@@ -60,6 +60,7 @@ from cockpit.lib.cmux import (
     select_workspace,
     spawn_orphan_workspace,
     spawn_pr_workspace,
+    was_self_closed,
     workspace_cwds,
     workspace_is_idle,
     workspace_names,
@@ -409,6 +410,9 @@ class CockpitApp(App[None]):
         watch_workspace_events(
             lambda: self.call_from_thread(self._on_workspace_event),
             self._events_stop,
+            lambda wsid, cwd: self.call_from_thread(
+                self._on_workspace_closed, wsid, str(cwd)
+            ),
         )
 
     def _on_workspace_event(self) -> None:
@@ -417,6 +421,31 @@ class CockpitApp(App[None]):
             self._events_pending = True  # re-kick when the running tick lands
             return
         self._kick_fast()
+
+    def _on_workspace_closed(self, workspace_id: str, cwd: str) -> None:
+        """The X in cmux's sidebar (UI thread) — treat it as the `c` key.
+
+        Closing a workspace is the one close gesture a user can make from
+        outside the TUI, and it means what `c` means: I'm done with this
+        worktree. It routes to the same `_close_worktree` gate, so a dirty tree,
+        unpushed commits, or an open PR still refuse (loudly) and the worktree
+        survives — the daemon respawns its workspace next slow tick, which is
+        the visible signal that nothing was torn down.
+
+        Two filters run first, both cheap and both on the UI thread:
+
+        - `was_self_closed` drops the closes cockpit made itself. The event says
+          nothing about who closed a workspace, and `h`/park, a trailing-fold
+          anchor dissolve, the dead-cwd sweep, and teardown's own trailing close
+          all reach here otherwise — park in particular is documented as
+          workspace-only, so reading it as this gesture would tear down every
+          worktree in the parked repo.
+        - `quiet=True` makes an unregistered cwd (a hand-made session, a fold
+          anchor rooted at `$HOME`) a silent no-op rather than an error toast.
+        """
+        if was_self_closed(workspace_id):
+            return
+        self._close_worktree(cwd, quiet=True)
 
     @work(thread=True, group="slow", exit_on_error=False)
     def _run_slow(self, only_repo: str | None = None) -> None:
@@ -1114,14 +1143,22 @@ class CockpitApp(App[None]):
         self._notify(f"opening ticket {ticket_id}")
 
     @work(thread=True, group="close", exit_on_error=False)
-    def _close_worktree(self, path_str: str, *, force: bool = False) -> None:
+    def _close_worktree(
+        self, path_str: str, *, force: bool = False, quiet: bool = False
+    ) -> None:
         # `c`: refuse on any blocker. `C` (force): override the *soft* open-PR
         # blocker only — hard blockers (uncommitted/unpushed, via
         # `worktree_state_blockers`) still refuse, so force never discards local
         # work. Teardown is enqueued + drained by the daemon (sole writer).
+        #
+        # `quiet` suppresses only the no-such-worktree toast, for the sidebar-X
+        # path (`_on_workspace_closed`), where the closed workspace is routinely
+        # not one of ours. Every refusal still toasts — the X gives no other
+        # feedback, so a silent one would read as a successful close.
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
-            self._notify(f"close: no worktree at {path_str}", severity="error")
+            if not quiet:
+                self._notify(f"close: no worktree at {path_str}", severity="error")
             return
         repo, wt = resolved
         # nwo name, not the config label — `resolve_pr_state`/teardown key the PR

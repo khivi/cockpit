@@ -7,11 +7,13 @@ mapping from `decide_pills` output).
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+import cockpit.lib.cmux as cmux_mod
 from cockpit.lib.cmux import (
     ACTIONABLE_KEYS,
     COCKPIT_KEY,
@@ -40,6 +42,7 @@ from cockpit.lib.cmux import (
     spawn_workspace,
     status_pills,
     ungroup_workspaces,
+    was_self_closed,
     workspace_cwds,
     workspace_names,
     workspace_state,
@@ -629,6 +632,143 @@ def test_close_workspace_best_effort_passes_workspace_flag():
         "--workspace" in close_call
     ), f"close-workspace must use --workspace flag, got {close_call}"
     assert "workspace:abc-123-def" in close_call
+
+
+# ── self-close ledger ───────────────────────────────────────────────────────
+#
+# The TUI treats a `workspace.closed` event as the user clicking cmux's X, which
+# means teardown. cockpit closes workspaces itself for four reasons that are NOT
+# teardown (`h`/park, fold-anchor dissolve, the dead-cwd sweep, teardown's own
+# trailing close), and the event says nothing about who closed it — so its own
+# closes are recorded here and filtered out there. Park is the dangerous one:
+# it is documented as workspace-only, and misreading it tears down every
+# worktree in the parked repo.
+
+_WS_LIST = json.dumps(
+    {
+        "workspaces": [
+            {"ref": "workspace:1", "id": "UUID-1", "custom_title": "feat-a"},
+            {"ref": "workspace:2", "id": "UUID-2", "custom_title": "feat-b"},
+        ]
+    }
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear_self_close_ledger():
+    """Process-global, so one case's recorded close must not answer the next."""
+    cmux_mod._self_closed.clear()
+    yield
+    cmux_mod._self_closed.clear()
+
+
+def _close_with_stub_list(target: str):
+    """Run a close against a cmux whose `rpc workspace.list` returns `_WS_LIST`."""
+
+    def fake_cmux(*args, **_kwargs):
+        if args[:2] == ("rpc", "workspace.list"):
+            return _WS_LIST
+        return ""
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.cmux.tool.is_cmux", return_value=True),
+    ):
+        cmux_close_workspace_best_effort(target)
+
+
+@pytest.mark.parametrize("target", ["workspace:2", "UUID-2", "feat-b"])
+def test_our_own_close_is_recorded_by_uuid_however_it_was_addressed(target):
+    """`cmux_close_workspace_best_effort` takes a ref, a uuid, or a name, but
+    the event only ever reports a uuid — so all three must resolve to one."""
+    _close_with_stub_list(target)
+
+    assert was_self_closed("UUID-2") is True
+    assert was_self_closed("UUID-1") is False
+
+
+def test_a_user_close_is_not_filtered():
+    _close_with_stub_list("workspace:1")
+
+    # workspace:2 was never closed by us — the X on it is the user's gesture.
+    assert was_self_closed("UUID-2") is False
+
+
+def test_the_record_is_consumed_by_the_first_matching_event():
+    """One recorded close answers for exactly one event. Leaving it would let a
+    later user-close of a re-created workspace inherit the suppression."""
+    _close_with_stub_list("workspace:1")
+
+    assert was_self_closed("UUID-1") is True
+    assert was_self_closed("UUID-1") is False
+
+
+def test_the_record_expires():
+    _close_with_stub_list("workspace:1")
+
+    with patch(
+        "cockpit.lib.cmux.time.monotonic",
+        return_value=time.monotonic() + cmux_mod._SELF_CLOSE_TTL_SECONDS + 1,
+    ):
+        assert was_self_closed("UUID-1") is False
+    assert cmux_mod._self_closed == {}  # swept, not merely skipped
+
+
+def test_the_ledger_is_recorded_before_the_close_lands():
+    """Resolved while the workspace is still listable — cmux drops it from
+    `workspace.list` the moment it closes, so recording after would find
+    nothing and every self-close would leak through as a user gesture."""
+    order: list[str] = []
+
+    def fake_cmux(*args, **_kwargs):
+        order.append(args[0] if args[0] != "rpc" else "rpc")
+        return _WS_LIST if args[:2] == ("rpc", "workspace.list") else ""
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.cmux.tool.is_cmux", return_value=True),
+    ):
+        cmux_close_workspace_best_effort("workspace:1")
+
+    assert order.index("rpc") < order.index("close-workspace")
+
+
+def test_an_unresolvable_list_still_closes():
+    """A cmux hiccup must never block the close itself — the handler's own
+    blockers gate is the backstop for the unfiltered event."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[:2] == ("rpc", "workspace.list"):
+            raise RuntimeError("rpc down")
+        return ""
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.cmux.tool.is_cmux", return_value=True),
+    ):
+        cmux_close_workspace_best_effort("workspace:1")
+
+    assert any(c[0] == "close-workspace" for c in calls)
+    assert cmux_mod._self_closed == {}
+
+
+def test_limux_never_pays_for_the_lookup():
+    """limux has no event stream, so there is nothing to filter."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return ""
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.cmux.tool.is_cmux", return_value=False),
+    ):
+        cmux_close_workspace_best_effort("workspace:1")
+
+    assert not any(c[:2] == ("rpc", "workspace.list") for c in calls)
 
 
 # ── muted pill ──────────────────────────────────────────────────────────────
