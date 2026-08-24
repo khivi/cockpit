@@ -105,6 +105,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from cockpit.lib.cmux import (
@@ -126,10 +127,8 @@ from cockpit.lib.config import (
     github_start_label,
     load_config,
     plan_command,
+    repo_tickets,
     trello_board,
-)
-from cockpit.lib.config import (
-    tickets as cfg_tickets,
 )
 from cockpit.lib.config import (
     use_slack as cfg_use_slack,
@@ -410,6 +409,11 @@ def _jira_prompt(branch: str, identifier: str) -> str:
     return _scenario_prompt("jira", branch=branch, identifier=identifier)
 
 
+def _issue_ref(number: str, nwo: str | None) -> str:
+    """`owner/repo#N` when the source carried a repo, else the bare `#N`."""
+    return f"{nwo}#{number}" if nwo else f"#{number}"
+
+
 def _github_issue_prompt(branch: str, number: str, nwo: str | None) -> str:
     """First-turn prompt for a GitHub-issue source (`tickets: github`).
 
@@ -420,7 +424,7 @@ def _github_issue_prompt(branch: str, number: str, nwo: str | None) -> str:
     `issue-<N>-<title-slug>` and the workspace to the same slug. cockpit re-reads
     `git worktree list` each cycle, so the rename surfaces in `cockpit watch`.
     """
-    issue_ref = f"{nwo}#{number}" if nwo else f"#{number}"
+    issue_ref = _issue_ref(number, nwo)
     view_cmd = (
         f"gh issue view {number} --repo {nwo}" if nwo else f"gh issue view {number}"
     )
@@ -471,6 +475,25 @@ def _trello_prompt(branch: str, url: str) -> str:
     ``cockpit/prompts/trello.txt``.
     """
     return _scenario_prompt("trello", branch=branch, url=url)
+
+
+# (detect_source mode, resolved `repo_tickets` provider) → first-turn prompt.
+# Two dimensions, not one, because neither alone decides: `linear` mode covers
+# both Linear and Jira (their identifiers share the `[A-Z]{2,6}-N` shape, so
+# `detect_source` can't tell them apart and the provider must), while a Trello
+# card URL is unambiguous as a *source* yet still only gets its MCP fetch prompt
+# when the target repo actually tracks work in Trello. A missing pair is not an
+# error — it's the plan-only fallback, which seeds the bare ticket ref instead.
+# Add a provider by adding its pair here, never by branching on a provider name
+# at the call site.
+_TICKET_PROMPTS: dict[tuple[str, str], Callable[[str, str, str | None], str]] = {
+    ("trello", "trello"): lambda branch, value, nwo: _trello_prompt(branch, value),
+    ("gh-issue", "github"): lambda branch, value, nwo: _github_issue_prompt(
+        branch, value, nwo
+    ),
+    ("linear", "linear"): lambda branch, value, nwo: _linear_prompt(branch, value),
+    ("linear", "jira"): lambda branch, value, nwo: _jira_prompt(branch, value),
+}
 
 
 def _repo_entry_or_none(repo_name: str | None) -> dict | None:
@@ -593,9 +616,22 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
 
 
 def _plan_only_prompt(
-    branch: str, pr_info: dict | None = None, command: str = ""
+    branch: str,
+    pr_info: dict | None = None,
+    command: str = "",
+    source: str | None = None,
 ) -> str:
     """Plan-only first-turn prompt. PR context block is included when `pr_info` is set.
+
+    `source` is the ticket/thread handle the spawn was started from (a Trello or
+    Slack URL, a `PE-1234` identifier, an `owner/repo#5` issue ref). It is set on
+    exactly the spawns that reach the fallback — i.e. a ticket source whose
+    provider is *not* the one configured for the target repo, so no fetch+rename
+    prompt was seeded. Without it the session is told only its branch name, and
+    a codename branch (`solar-viper`) says nothing at all about the card it came
+    from. **Do not** drop it: the whole reason the fallback fires is that cockpit
+    can't fetch the ticket for you, which makes handing over the link the only
+    thing it still can do.
 
     When `command` (`skills.plan`) is set, it leads as the first turn, followed
     by the same PR/source context and the shared `plan_tail` no-code/wait-for-
@@ -611,6 +647,8 @@ def _plan_only_prompt(
             f"\n**Task**: {title}"
             f"\n\n**Context**: {pr_info.get('url', '')}"
         )
+    if source:
+        source_block += f"\n\n**Source**: {source}"
     if command:
         context = f"branch: {branch}" + source_block
         return _scenario_prompt("command_seed", command=command, context=context)
@@ -826,6 +864,10 @@ def main(argv: list[str] | None = None) -> int:
 
     prompt: str | None = None
     seeded_prompt: str | None = None  # holds the linear MCP-instructing prompt
+    # (detect_source mode, its value, nwo hint) for a ticket source, resolved into
+    # a provider-specific prompt only after every repo-routing hop below.
+    ticket_source: tuple[str, str, str | None] | None = None
+    ticket_ref: str | None = None  # human handle, for the plan-only fallback
     actions_run_info: dict | None = None
     actions_job_id: str | None = None
     actions_head_branch: str | None = None  # original headBranch from Actions run
@@ -876,13 +918,13 @@ def main(argv: list[str] | None = None) -> int:
             # Claude reads the card via the Trello MCP and renames the branch to
             # append a topic slug (see `_trello_prompt`). No `claude mcp list`
             # pre-flight (unreliable for managed connectors); the prompt's own
-            # retry-then-STOP logic handles a genuinely absent connector. Seed the
-            # fetch+rename prompt only when Trello is the active provider;
-            # otherwise the card still seeds plan-only (via is_trello) with the
-            # URL as context.
+            # retry-then-STOP logic handles a genuinely absent connector. The
+            # fetch+rename prompt is seeded below, once routing has settled which
+            # repo (and therefore which provider) this lands in.
             branch = codename(trello_seed(value))
             from_name = True
             is_trello = True
+            ticket_source = (mode, value, None)
             if not args.repo:
                 # A card short link carries no board, project or key prefix, so
                 # there is no free first-stage match to gate the fetch on —
@@ -894,8 +936,6 @@ def main(argv: list[str] | None = None) -> int:
                     r for r in spawn_cfg.get("repos", []) if trello_board(spawn_cfg, r)
                 ]
                 args.repo = _route_by_ticket(value, cands, spawn_cfg) or args.repo
-            if cfg_tickets() == "trello":
-                seeded_prompt = _trello_prompt(branch, value)
         elif mode == "gh-issue":
             # `value` is the issue number; the worktree lands on `issue-<N>` and
             # the spawned Claude reads the issue via `gh issue view`, then renames
@@ -907,11 +947,9 @@ def main(argv: list[str] | None = None) -> int:
             is_gh_issue = True
             gh_issue_value = value
             # No `claude mcp list` pre-flight — the transport is the `gh` CLI, not
-            # an MCP. Seed the fetch+rename prompt only when GitHub is the active
-            # provider; otherwise the issue still seeds plan-only (via is_gh_issue)
-            # with the number as context.
-            if cfg_tickets() == "github":
-                seeded_prompt = _github_issue_prompt(branch, value, nwo_hint)
+            # an MCP. Seeded below: the URL form's `nwo_hint` routes to a repo a
+            # few lines down, and that repo is what decides the provider.
+            ticket_source = (mode, value, nwo_hint)
         elif mode == "linear":
             branch = value.lower()
             from_name = True
@@ -922,40 +960,34 @@ def main(argv: list[str] | None = None) -> int:
                 # the same prefix-baked-into-the-identifier shape (which is also
                 # why `detect_source` classifies both as `linear` mode). Gated on
                 # a ticket provider being configured at all, so `tickets: none`
-                # keeps routing off entirely.
+                # keeps routing off entirely — but asked of the **candidates**,
+                # not of the global block: a provider declared per repo (or on a
+                # shared `orgs` block) is invisible to a bare `provider_for(cfg)`,
+                # which switched routing off for exactly the configs that most
+                # need it. Trello's sibling gate is already per-repo
+                # (`trello_board`), and this is the same question.
                 spawn_cfg = load_config()
-                if provider_for(spawn_cfg) is not None:
-                    args.repo = (
-                        _route_by_ticket(
-                            value, find_repos_by_ticket_key(value), spawn_cfg
-                        )
-                        or args.repo
-                    )
-            if cfg_tickets() == "linear":
-                # No `claude mcp list` pre-flight — same rule as the Jira, Trello
-                # and Slack branches below/above, which Linear was the last
-                # holdout from. The probe connects to each server to health-check
-                # it, and a claude.ai-managed connector handshakes asynchronously,
-                # so it reported Linear absent while it was live and this branch
-                # silently downgraded the spawn to a plain branch. `linear.txt`
-                # carries the same retry-then-STOP step as `jira.txt`, which is
-                # what handles a genuinely absent connector.
-                seeded_prompt = _linear_prompt(branch, value)
-            elif cfg_tickets() == "jira":
-                # Jira keys share Linear's `[A-Z]{2,6}-N` shape, so detect_source
-                # classifies them as `linear` mode; the active provider picks the
-                # prompt. No `claude mcp list` pre-flight — the Atlassian connector
-                # is claude.ai-managed (that probe is unreliable; the prompt's own
-                # retry-then-STOP logic handles a truly-absent MCP, mirroring
-                # Slack). ponytail: a project key with digits or >6 letters won't
-                # match LINEAR_RE_CI, so a *bare* one neither seeds a prompt nor
-                # routes to a repo — it falls to plain branch mode (worktree still
-                # created, just unseeded and cwd-routed). Widening the bare-form
-                # regex reclassifies plain branches like `feature2-1` as tickets,
-                # so it stays as-is; the issue-URL route sidesteps it entirely
-                # (positional key, no shape guard) and seeds the prompt, though
-                # `find_repos_by_ticket_key` still gates routing on the same regex.
-                seeded_prompt = _jira_prompt(branch, value)
+                cands = find_repos_by_ticket_key(value)
+                if any(provider_for(spawn_cfg, r) is not None for r in cands):
+                    args.repo = _route_by_ticket(value, cands, spawn_cfg) or args.repo
+            # Seeded below — the resolved provider picks Linear's prompt or
+            # Jira's, since both share the `[A-Z]{2,6}-N` identifier shape and so
+            # land in this one mode. No `claude mcp list` pre-flight for either:
+            # the probe connects to each server to health-check it, and a
+            # claude.ai-managed connector handshakes asynchronously, so it
+            # reported Linear absent while it was live and this branch silently
+            # downgraded the spawn to a plain branch. `linear.txt` and `jira.txt`
+            # both carry the retry-then-STOP step that handles a truly-absent MCP.
+            #
+            # ponytail: a Jira project key with digits or >6 letters won't match
+            # LINEAR_RE_CI, so a *bare* one neither seeds a prompt nor routes to a
+            # repo — it falls to plain branch mode (worktree still created, just
+            # unseeded and cwd-routed). Widening the bare-form regex reclassifies
+            # plain branches like `feature2-1` as tickets, so it stays as-is; the
+            # issue-URL route sidesteps it entirely (positional key, no shape
+            # guard) and seeds the prompt, though `find_repos_by_ticket_key` still
+            # gates routing on the same regex.
+            ticket_source = (mode, value, None)
         else:
             branch = value
         if nwo_hint and not args.repo:
@@ -968,6 +1000,32 @@ def main(argv: list[str] | None = None) -> int:
                     f"falling back to cwd-based discovery",
                     file=sys.stderr,
                 )
+
+    if ticket_source is not None:
+        mode, value, nwo_hint = ticket_source
+        # The provider is resolved **per repo** (`repo_tickets`, which walks repo
+        # → org → global), never from the global `tickets` block alone, and only
+        # here — after every routing hop above has settled `args.repo`. Both
+        # halves are load-bearing and each one alone was a bug:
+        #   * A global-only read (`tickets()`) sees "none" for the common shape
+        #     where the provider is declared on an `org` block, or on the repo
+        #     itself. Every ticket spawn into such a repo silently lost its
+        #     fetch+rename prompt and came up on a bare codename branch knowing
+        #     nothing about the card.
+        #   * Reading it any earlier resolves the *cwd's* repo, not the target:
+        #     a `gh-issue` URL routes via `nwo_hint` a few lines above this, and
+        #     Trello/Linear route via `_route_by_ticket` inside their branches.
+        # `_repo_entry_or_none` is the non-raising resolver — an unroutable repo
+        # just falls through to the plan-only fallback below rather than aborting
+        # a spawn that is otherwise fine.
+        provider = repo_tickets(load_config(), _repo_entry_or_none(args.repo))
+        builder = _TICKET_PROMPTS.get((mode, provider))
+        if builder is not None:
+            seeded_prompt = builder(branch, value, nwo_hint)
+        else:
+            # No fetch prompt (provider mismatch, or `tickets: none`) — hand the
+            # session the link instead of nothing. See `_plan_only_prompt`.
+            ticket_ref = _issue_ref(value, nwo_hint) if mode == "gh-issue" else value
 
     # --name with --repo (no --cwd) → new prefixed branch (from_name path).
     # --name with --cwd → workspace-at-path, no branch (handled in cwd dispatch).
@@ -1066,7 +1124,10 @@ def main(argv: list[str] | None = None) -> int:
             # any configured `prompt_prefix` (e.g. a session-setup skill) still
             # rides via `claude_command()`, and the user states the task live.
             prompt = _plan_only_prompt(
-                branch, pr_info, command=plan_command(repo_entry=repo_cfg)
+                branch,
+                pr_info,
+                command=plan_command(repo_entry=repo_cfg),
+                source=ticket_ref,
             )
 
     if args.claude_addendum:
