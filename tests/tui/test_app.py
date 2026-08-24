@@ -2246,6 +2246,87 @@ async def test_event_during_a_running_fast_tick_is_not_lost():
         assert not app._events_pending
 
 
+# ── the sidebar X → close ───────────────────────────────────────────────────
+
+
+async def test_sidebar_x_closes_the_worktree(monkeypatch):
+    """Clicking cmux's X is the one close gesture available outside the TUI, so
+    it routes to exactly the `c` path — same resolution, same blockers gate."""
+    closed: list[tuple[str, dict]] = []
+    monkeypatch.setattr("cockpit.tui.app.was_self_closed", lambda _wsid: False)
+    app, _ = _make_app()
+    app._close_worktree = lambda p, **kw: closed.append((p, kw))  # type: ignore[method-assign]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._on_workspace_closed("UUID-9", "/tmp/repo/feat")
+        await pilot.pause()
+
+    assert closed == [("/tmp/repo/feat", {"quiet": True})]
+
+
+async def test_sidebar_x_never_forces(monkeypatch):
+    """`C`'s open-PR override is a deliberate second keystroke. The X is one
+    click with no modifier, so it must land on the refusing gate, not force."""
+    closed: list[tuple[str, dict]] = []
+    monkeypatch.setattr("cockpit.tui.app.was_self_closed", lambda _wsid: False)
+    app, _ = _make_app()
+    app._close_worktree = lambda p, **kw: closed.append((p, kw))  # type: ignore[method-assign]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._on_workspace_closed("UUID-9", "/tmp/repo/feat")
+        await pilot.pause()
+
+    assert closed[0][1].get("force", False) is False
+
+
+async def test_cockpit_own_close_never_tears_anything_down(monkeypatch):
+    """The load-bearing filter. `h`/park closes workspaces and is documented as
+    workspace-only — without this, parking a repo tears down every worktree in
+    it. Same for a fold-anchor dissolve, the dead-cwd sweep, and teardown's own
+    trailing close."""
+    closed: list[str] = []
+    monkeypatch.setattr("cockpit.tui.app.was_self_closed", lambda _wsid: True)
+    app, _ = _make_app()
+    app._close_worktree = lambda p, **kw: closed.append(p)  # type: ignore[method-assign]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._on_workspace_closed("UUID-9", "/tmp/repo/feat")
+        await pilot.pause()
+
+    assert closed == []
+
+
+async def test_an_unregistered_workspace_close_is_silent(monkeypatch):
+    """A hand-made session or a trailing-fold anchor rooted at $HOME resolves to
+    no worktree. That is the common case for this handler, so it must be a
+    no-op, not an error toast on every close."""
+    notes: list[tuple] = []
+    app, _ = _make_app()
+    app._notify = lambda msg, severity="information": notes.append((msg, severity))  # type: ignore[method-assign]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # `quiet=True` is the sidebar-X contract; `_resolve_worktree` finds
+        # nothing because the injected config has no repos.
+        app._close_worktree("/nowhere/at/all", quiet=True)
+        await pilot.pause(0.5)
+
+    assert notes == []
+
+
+async def test_the_c_key_still_reports_an_unresolvable_path():
+    """`quiet` must not leak into the keypress path — pressing `c` on a row
+    whose worktree vanished has to say so."""
+    notes: list[tuple] = []
+    app, _ = _make_app()
+    app._notify = lambda msg, severity="information": notes.append((msg, severity))  # type: ignore[method-assign]
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._close_worktree("/nowhere/at/all")
+        await pilot.pause(0.5)
+
+    assert notes and notes[0][1] == "error"
+
+
 async def test_table_hides_cost_column_when_nothing_reports_cost(monkeypatch):
     """The `$` column is gated on the data, not on config: a machine whose
     Claude Code writes no spend must not grow a permanently blank column."""
