@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/khivi/cockpit/compare/v1.21.0...v2.0.0) (2026-08-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **spawn:** gate the ticket prompt on the repo provider, drop superseded ticket keys ([#356](https://github.com/khivi/cockpit/issues/356))
+
+### Bug Fixes
+
+* **spawn:** gate the ticket prompt on the repo provider, drop superseded ticket keys ([#356](https://github.com/khivi/cockpit/issues/356)) ([67611fe](https://github.com/khivi/cockpit/commit/67611fe52884c2cc962ed9d43f968f9532453c14))
+
 ## [1.21.0](https://github.com/khivi/cockpit/compare/v1.20.2...v1.21.0) (2026-08-24)
 
 
