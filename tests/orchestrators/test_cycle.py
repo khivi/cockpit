@@ -2057,7 +2057,7 @@ def test_jira_transition_skips_when_myself_none(tmp_path, monkeypatch):
 _TRELLO_CFG = {
     "tickets": {
         "provider": "trello",
-        "merge_done_list": "Done",
+        "merge_done": "Done",
         "close_on_merge": True,
     }
 }
@@ -3263,7 +3263,7 @@ def test_track_dev_done_no_tickets_clears(tmp_path):
 
 def test_track_dev_done_single_ticket_shows_id_when_no_title(tmp_path):
     # Old on-disk cache carried no `title` — fall back to the id.
-    ctx = _devdone_ctx(tmp_path, cfg={"tickets": {"dev_done_state": "Dev Done"}})
+    ctx = _devdone_ctx(tmp_path, cfg={"tickets": {"dev_done": "Dev Done"}})
     block = {"tickets": [{"id": "PE-1234", "state": "Dev Done"}]}
     with patch.object(cycle, "apply_devdone_pill") as pill:
         cycle._track_dev_done(ctx, "workspace:1", block)
@@ -3272,7 +3272,7 @@ def test_track_dev_done_single_ticket_shows_id_when_no_title(tmp_path):
 
 def test_track_dev_done_single_ticket_linear_shows_id_despite_title(tmp_path):
     # A Linear id (PE-1234) is meaningful — show it even when a title is cached.
-    ctx = _devdone_ctx(tmp_path, cfg={"tickets": {"dev_done_state": "Dev Done"}})
+    ctx = _devdone_ctx(tmp_path, cfg={"tickets": {"dev_done": "Dev Done"}})
     block = {"tickets": [{"id": "PE-1234", "state": "Dev Done", "title": "Fix it"}]}
     with patch.object(cycle, "apply_devdone_pill") as pill:
         cycle._track_dev_done(ctx, "workspace:1", block)
@@ -3281,7 +3281,7 @@ def test_track_dev_done_single_ticket_linear_shows_id_despite_title(tmp_path):
 
 def _trello_devdone_ctx(tmp_path):
     ctx = _devdone_ctx(tmp_path, linear_keys=None)
-    ctx.repo_entry = {"tickets": {"provider": "trello", "dev_done_list": "Done"}}
+    ctx.repo_entry = {"tickets": {"provider": "trello", "dev_done": "Done"}}
     return ctx
 
 
@@ -3340,7 +3340,7 @@ def test_track_dev_done_partial_clears(tmp_path):
 
 
 def test_track_dev_done_custom_state_name(tmp_path):
-    ctx = _devdone_ctx(tmp_path, cfg={"tickets": {"dev_done_state": "In Review"}})
+    ctx = _devdone_ctx(tmp_path, cfg={"tickets": {"dev_done": "In Review"}})
     block = {"tickets": [{"id": "PE-1", "state": "In Review"}]}
     with patch.object(cycle, "apply_devdone_pill") as pill:
         cycle._track_dev_done(ctx, "workspace:1", block)
@@ -5415,7 +5415,7 @@ def test_transition_uses_the_repos_own_linear_key(tmp_path, monkeypatch):
             "tickets": {
                 "provider": "linear",
                 "keys": ["PE"],
-                "api_key_env": "LIN_ACME",
+                "token_env": "LIN_ACME",
             },
         },
     )
@@ -5437,7 +5437,7 @@ def test_transition_noop_when_the_orgs_named_key_is_unset(tmp_path, monkeypatch)
             "tickets": {
                 "provider": "linear",
                 "keys": ["PE"],
-                "api_key_env": "LIN_ACME",
+                "token_env": "LIN_ACME",
             },
         },
     )
@@ -5475,7 +5475,7 @@ def test_bg_spawn_pr_strips_ticket_credentials_from_the_child_env(
             {
                 "name": "n",
                 "path": str(tmp_path),
-                "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+                "tickets": {"provider": "linear", "token_env": "LIN_ACME"},
             },
             {
                 "name": "j",

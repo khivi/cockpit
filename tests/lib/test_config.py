@@ -1008,7 +1008,7 @@ def test_github_dev_done_label_object_override(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
-        {"repos": [], "tickets": {"provider": "github", "dev_done_label": "qa ok"}},
+        {"repos": [], "tickets": {"provider": "github", "dev_done": "qa ok"}},
     )
     assert cockpit_config.github_dev_done() == "qa ok"
 
@@ -1068,8 +1068,8 @@ def test_jira_status_overrides_from_object(tmp_path, monkeypatch):
         "tickets": {
             "provider": "jira",
             "email": "me@acme.com",
-            "dev_done_status": "In Review",
-            "merge_done_status": "Closed",
+            "dev_done": "In Review",
+            "merge_done": "Closed",
         }
     }
     assert cockpit_config.jira_email(repo_entry=re) == "me@acme.com"
@@ -1092,16 +1092,16 @@ def test_trello_readers_repo_override_wins(tmp_path, monkeypatch):
             "repos": [],
             "tickets": {
                 "provider": "trello",
-                "dev_done_list": "Global Ready",
-                "merge_done_list": "Global Done",
+                "dev_done": "Global Ready",
+                "merge_done": "Global Done",
             },
         },
     )
     re = {
         "tickets": {
             "provider": "trello",
-            "dev_done_list": "Ready for Review",
-            "merge_done_list": "Shipped",
+            "dev_done": "Ready for Review",
+            "merge_done": "Shipped",
         }
     }
     assert cockpit_config.trello_dev_done(repo_entry=re) == "Ready for Review"
@@ -1116,8 +1116,8 @@ def test_trello_readers_fall_back_to_global(tmp_path, monkeypatch):
             "repos": [],
             "tickets": {
                 "provider": "trello",
-                "dev_done_list": "Global Ready",
-                "merge_done_list": "Global Done",
+                "dev_done": "Global Ready",
+                "merge_done": "Global Done",
             },
         },
     )
@@ -1163,13 +1163,13 @@ def test_ticket_close_on_merge_from_object(tmp_path, monkeypatch):
 
 def test_linear_dev_done_from_object(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    re = {"tickets": {"provider": "linear", "dev_done_state": "In Review"}}
+    re = {"tickets": {"provider": "linear", "dev_done": "In Review"}}
     assert cockpit_config.linear_dev_done(repo_entry=re) == "In Review"
 
 
 def test_linear_merge_done_from_object(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    re = {"tickets": {"provider": "linear", "merge_done_state": "Shipped"}}
+    re = {"tickets": {"provider": "linear", "merge_done": "Shipped"}}
     assert cockpit_config.linear_merge_done(repo_entry=re) == "Shipped"
 
 
@@ -1211,7 +1211,7 @@ def test_linear_dev_done_state_defaults(tmp_path, monkeypatch):
 
 def test_linear_dev_done_state_override(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "tickets": {"dev_done_state": "In Review"}}
+        tmp_path, monkeypatch, {"repos": [], "tickets": {"dev_done": "In Review"}}
     )
     assert cockpit_config.linear_dev_done() == "In Review"
 
@@ -1221,9 +1221,7 @@ def test_linear_dev_done_state_uses_passed_cfg_without_disk_read():
     from cockpit.lib import config as cockpit_config
 
     assert cockpit_config.linear_dev_done({"tickets": {"dev_done": "QA"}}) == "QA"
-    assert (
-        cockpit_config.linear_dev_done({"tickets": {"dev_done": "  "}}) == "Dev Done"
-    )
+    assert cockpit_config.linear_dev_done({"tickets": {"dev_done": "  "}}) == "Dev Done"
 
 
 # ── linear_merge_done reader ───────────────────────────────────────────
@@ -1236,7 +1234,7 @@ def test_linear_merge_done_state_defaults(tmp_path, monkeypatch):
 
 def test_linear_merge_done_state_override(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "tickets": {"merge_done_state": "Shipped"}}
+        tmp_path, monkeypatch, {"repos": [], "tickets": {"merge_done": "Shipped"}}
     )
     assert cockpit_config.linear_merge_done() == "Shipped"
 
@@ -1248,9 +1246,7 @@ def test_linear_merge_done_state_uses_passed_cfg_and_blank_falls_back():
         cockpit_config.linear_merge_done({"tickets": {"merge_done": "Closed"}})
         == "Closed"
     )
-    assert (
-        cockpit_config.linear_merge_done({"tickets": {"merge_done": "  "}}) == "Done"
-    )
+    assert cockpit_config.linear_merge_done({"tickets": {"merge_done": "  "}}) == "Done"
 
 
 # ── ticket_close_on_merge resolution order (per-repo over global) ───────────
@@ -1933,7 +1929,7 @@ def test_apply_org_defaults_keeps_org_routing_fields_when_a_repo_adds_project():
                 "tickets": {
                     "provider": "linear",
                     "keys": ["ENG"],
-                    "api_key_env": "LINEAR_API_KEY_ACME",
+                    "token_env": "LINEAR_API_KEY_ACME",
                 }
             }
         },
@@ -2059,8 +2055,8 @@ def test_credential_env_name_readers_default_to_todays_env_vars():
 
 
 def test_credential_env_names_resolve_per_field_repo_over_global():
-    cfg = {"tickets": {"provider": "linear", "api_key_env": "LINEAR_GLOBAL"}}
-    repo = {"tickets": {"api_key_env": "LINEAR_REPO"}}
+    cfg = {"tickets": {"provider": "linear", "token_env": "LINEAR_GLOBAL"}}
+    repo = {"tickets": {"token_env": "LINEAR_REPO"}}
     assert config_mod.linear_token_env(cfg, repo) == "LINEAR_REPO"
     # A repo block that omits the field still inherits the global one — the
     # per-field chain, not whole-block replacement.
@@ -2079,8 +2075,8 @@ def test_credential_env_name_inherited_from_the_org_block():
             {"name": "c", "path": "/c"},
         ],
         "orgs": {
-            "acme": {"tickets": {"provider": "linear", "api_key_env": "LIN_ACME"}},
-            "globex": {"tickets": {"provider": "linear", "api_key_env": "LIN_GLOBEX"}},
+            "acme": {"tickets": {"provider": "linear", "token_env": "LIN_ACME"}},
+            "globex": {"tickets": {"provider": "linear", "token_env": "LIN_GLOBEX"}},
         },
     }
     config_mod.apply_org_defaults(cfg)
@@ -2117,10 +2113,10 @@ def test_org_credential_names_cover_jira_and_trello_too():
 def test_credential_value_resolvers_read_the_named_env_var(monkeypatch):
     monkeypatch.setenv("LIN_ACME", "lin_secret")
     monkeypatch.delenv("LINEAR_API_KEY", raising=False)
-    repo = {"tickets": {"provider": "linear", "api_key_env": "LIN_ACME"}}
+    repo = {"tickets": {"provider": "linear", "token_env": "LIN_ACME"}}
     assert config_mod.linear_api_key({}, repo) == "lin_secret"
     # Unset named var → empty (feature off), never a fall-through to the default.
-    other = {"tickets": {"provider": "linear", "api_key_env": "LIN_MISSING"}}
+    other = {"tickets": {"provider": "linear", "token_env": "LIN_MISSING"}}
     monkeypatch.setenv("LINEAR_API_KEY", "default_secret")
     assert config_mod.linear_api_key({}, other) == ""
 
@@ -2145,7 +2141,7 @@ def test_credential_value_resolvers_cover_jira_and_trello(monkeypatch):
 
 def test_credential_env_names_unions_repos_orgs_globals_and_defaults():
     cfg = {
-        "tickets": {"provider": "linear", "api_key_env": "LIN_GLOBAL"},
+        "tickets": {"provider": "linear", "token_env": "LIN_GLOBAL"},
         "repos": [{"name": "r", "path": "/r", "tickets": {"token_env": "JIRA_REPO"}}],
         "orgs": {"acme": {"tickets": {"key_env": "TRELLO_ORG"}}},
     }

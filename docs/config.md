@@ -43,7 +43,7 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 
 The flat `linear_keys` / `linear_dev_done_state` / `linear_merge_done_state` /
 `linear_done_on_merge` keys are **gone**, superseded by the `tickets` block's
-`keys` / `dev_done_state` / `merge_done_state` / `close_on_merge`. A leftover
+`keys` / `dev_done` / `merge_done` / `close_on_merge`. A leftover
 hard-fails at start with the field to move it to, rather than being ignored —
 each one silently disables a feature when it stops being read.
 
@@ -118,20 +118,17 @@ export `CONFIG_FIELDS`); preflight rejects a field belonging to another provider
 | `token_env` | linear, jira, trello | `LINEAR_API_KEY` / `JIRA_API_TOKEN` / `TRELLO_API_TOKEN` | **Name** of the env var holding this provider's credential (the provider decides the default). |
 | `key_env` | trello | `TRELLO_API_KEY` | **Name** of the env var holding the Trello API key. Trello authenticates with a key *and* a token, so it is the one provider with two credential fields. |
 
-**Superseded spellings, still accepted.** `dev_done` and `merge_done` replaced one
+**Superseded spellings — rename them.** `dev_done` and `merge_done` replaced one
 name per provider, and `token_env` replaced Linear's `api_key_env`. The old names
-still resolve, so an existing config needs no edit:
+are **not** read: a leftover hard-fails at start naming its replacement, rather
+than being silently ignored (an ignored `dev_done_list` is a dev-done pill that
+goes dark with nothing said).
 
-| Canonical | Was |
+| Rename this | To |
 |---|---|
-| `dev_done` | `dev_done_state` (linear) · `dev_done_label` (github) · `dev_done_status` (jira) · `dev_done_list` (trello) |
-| `merge_done` | `merge_done_state` (linear) · `merge_done_status` (jira) · `merge_done_list` (trello) |
-| `token_env` | `api_key_env` (linear) |
-
-They stay **provider-scoped** — a Linear block can't use `dev_done_list` just
-because both now mean `dev_done`. Within one block the canonical name wins; across
-levels a repo's old name still beats a global new one, since repo always beats
-global.
+| `dev_done_state` (linear) · `dev_done_label` (github) · `dev_done_status` (jira) · `dev_done_list` (trello) | `dev_done` |
+| `merge_done_state` (linear) · `merge_done_status` (jira) · `merge_done_list` (trello) | `merge_done` |
+| `api_key_env` (linear) | `token_env` |
 
 Secrets are **env-only**, never config: `LINEAR_API_KEY`, `JIRA_API_TOKEN`,
 `TRELLO_API_KEY`, `TRELLO_API_TOKEN`. The `*_env` fields above store an env var

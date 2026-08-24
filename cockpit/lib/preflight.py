@@ -187,9 +187,25 @@ _LEGACY_SKILL_KEYS = {
 # Flat keys the `tickets` object replaced — see `_check_legacy`.
 _LEGACY_TICKET_KEYS = {
     "linear_keys": "tickets.keys",
-    "linear_dev_done_state": "tickets.dev_done_state",
+    "linear_dev_done_state": "tickets.dev_done",
     "linear_done_on_merge": "tickets.close_on_merge",
-    "linear_merge_done_state": "tickets.merge_done_state",
+    "linear_merge_done_state": "tickets.merge_done",
+}
+
+# Superseded *inside* the `tickets` block: the per-provider spellings that
+# `dev_done` / `merge_done` / `token_env` unified. Same treatment as the flat
+# keys above and for the same reason — a silently-ignored `dev_done_list` is a
+# devdone pill that goes dark with nothing said. Checked separately because
+# these live one level down, inside the block rather than beside it.
+_LEGACY_TICKET_FIELDS = {
+    "dev_done_state": "dev_done",
+    "dev_done_label": "dev_done",
+    "dev_done_status": "dev_done",
+    "dev_done_list": "dev_done",
+    "merge_done_state": "merge_done",
+    "merge_done_status": "merge_done",
+    "merge_done_list": "merge_done",
+    "api_key_env": "token_env",
 }
 
 
@@ -248,20 +264,32 @@ def _validate_base_remote(cfg: dict) -> None:
 
 
 def _check_legacy(src: dict, where: str) -> None:
-    """Hard-fail on a flat `linear_*` key the `tickets` block replaced.
+    """Hard-fail on a superseded ticket key — flat beside the block, or inside it.
 
     Same treatment as `use_linear` → `tickets` and the `_LEGACY_SKILL_KEYS` pair
     above, and for the same reason: these were honored as fallbacks for a while,
     and every one of them silently *disables* something the moment it stops being
     read — `linear_keys` stops routing a `PE-1234` spawn and stops the devdone
-    pill, `linear_done_on_merge` quietly stops writing to the tracker. A config
-    error read once beats a feature that goes quiet forever. Checked per repo as
-    well as globally even for the two that were only ever read globally: a
-    per-repo one was never read either, so it earns the same message.
+    pill, `linear_done_on_merge` quietly stops writing to the tracker, a
+    `dev_done_list` left behind takes the Trello pill dark. A config error read
+    once beats a feature that goes quiet forever.
+
+    Both families are checked per repo as well as globally, including the ones
+    only ever read globally: a per-repo one was never read either, so it earns
+    the same message. The in-block family is checked here rather than in
+    `tickets_field_errors` so the message can name the replacement — that
+    function only knows a field is unknown for the active provider, which would
+    report a rename as a typo.
     """
     for old, new in _LEGACY_TICKET_KEYS.items():
         if old in src:
             _die(f"{where}: `{old}` is now `{new}` — move it into a `tickets` object.")
+    block = src.get("tickets")
+    if not isinstance(block, dict):
+        return
+    for old, new in _LEGACY_TICKET_FIELDS.items():
+        if old in block:
+            _die(f"{where}: `tickets.{old}` is now `tickets.{new}` — rename it.")
 
 
 def _validate_tickets(cfg: dict) -> None:
@@ -298,14 +326,11 @@ def _validate_tickets(cfg: dict) -> None:
         for err in tickets_field_errors(block, str(provider)):
             _die(f"{where}: {err}")
 
-    if "tickets" in cfg:
-        _check_block(cfg["tickets"], "tickets")
-    for repo in cfg.get("repos", []):
-        if "tickets" not in repo:
-            continue
-        name = repo.get("name") or repo.get("path", "?")
-        _check_block(repo["tickets"], f"repo {name!r}")
-
+    # Migration checks run FIRST, before the per-provider schema check. A
+    # superseded spelling is also an unknown field for its provider, so
+    # `_check_block` would otherwise win the race and report a *rename* as a
+    # typo — "unknown field 'dev_done_label'" instead of "`dev_done_label` is now
+    # `dev_done`". Both messages are true; only one tells the user what to do.
     if "use_linear" in cfg:
         _die(
             "use_linear was replaced by the `tickets` config "
@@ -316,6 +341,14 @@ def _validate_tickets(cfg: dict) -> None:
     for repo in cfg.get("repos", []):
         name = repo.get("name") or repo.get("path", "?")
         _check_legacy(repo, f"repo {name!r}")
+
+    if "tickets" in cfg:
+        _check_block(cfg["tickets"], "tickets")
+    for repo in cfg.get("repos", []):
+        if "tickets" not in repo:
+            continue
+        name = repo.get("name") or repo.get("path", "?")
+        _check_block(repo["tickets"], f"repo {name!r}")
 
 
 def _validate_orphan_nudge_grace(cfg: dict) -> None:

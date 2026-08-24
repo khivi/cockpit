@@ -82,11 +82,6 @@ CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("dev_done", "str"),
     ("merge_done", "str"),
     ("token_env", "str"),
-    # Superseded spellings, still accepted so existing configs keep working.
-    # `config._tickets_field` resolves each to its canonical name above.
-    ("dev_done_state", "str"),
-    ("merge_done_state", "str"),
-    ("api_key_env", "str"),
 )
 
 # A PR *delivers* a ticket only via the explicit `Linear: [PE-1234](url)` footer
