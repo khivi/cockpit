@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.21.0](https://github.com/khivi/cockpit/compare/v1.20.2...v1.21.0) (2026-08-24)
+
+
+### Features
+
+* **config:** unify ticket field names across providers, and correct the docs ([#353](https://github.com/khivi/cockpit/issues/353)) ([e93bdb1](https://github.com/khivi/cockpit/commit/e93bdb1c61b73b211eaa474e396115600cbd7e45))
+
+
+### Bug Fixes
+
+* **statusline:** raise starship command_timeout so pills stop vanishing ([#355](https://github.com/khivi/cockpit/issues/355)) ([7315c3c](https://github.com/khivi/cockpit/commit/7315c3c66fee331d61ca0eb6d37f4cb4607b3f28))
+
 ## [1.20.2](https://github.com/khivi/cockpit/compare/v1.20.1...v1.20.2) (2026-08-21)
 
 
