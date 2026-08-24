@@ -12,6 +12,12 @@ When more than one repo is configured the screen shows a `Select` so a bare
 branch name can be routed to any repo (defaulting to the cursor row's repo);
 with a single repo there's nothing to pick and only a static hint is shown.
 
+A parked repo (`hidden_paths`, the `h` key's set) stays pickable — spawning into
+one is a deliberate un-park, which the app performs on submit — but sorts to the
+end of the list and renders dim with a `(hidden)` suffix, matching the table's
+own parked name rows. The picker is the one place a dormant repo is still worth
+offering, so it is de-emphasised rather than dropped.
+
 A `use_worktree: false` repo (`no_worktree_paths`) behaves differently: `n`
 there creates one *named workspace on the checkout*, not a worktree. Two things
 follow — the name Input prefills with the repo name (the one addressable session
@@ -27,6 +33,7 @@ the daemon stays the sole cache writer.
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -62,6 +69,8 @@ class NewWorkspaceScreen(ModalScreen["tuple[str, str | None] | None"]):
 
     #: Suffix on a `use_worktree: false` repo that already has its one workspace.
     BUSY_SUFFIX = "  (open — use f)"
+    #: Suffix on a repo the user parked with `h`.
+    HIDDEN_SUFFIX = "  (hidden)"
 
     def __init__(
         self,
@@ -70,9 +79,13 @@ class NewWorkspaceScreen(ModalScreen["tuple[str, str | None] | None"]):
         *,
         no_worktree_paths: set[str] | None = None,
         busy_paths: set[str] | None = None,
+        hidden_paths: set[str] | None = None,
     ) -> None:
         super().__init__()
-        self._repos = list(repos or [])
+        self._hidden = set(hidden_paths or ())
+        # Parked repos sink below the live ones. `sorted` is stable, so config
+        # order survives inside each group.
+        self._repos = sorted(repos or [], key=lambda repo: repo[1] in self._hidden)
         self._default_path = default_path
         # Only worth a picker when there's more than one repo to choose from.
         self._has_select = len(self._repos) > 1
@@ -91,7 +104,15 @@ class NewWorkspaceScreen(ModalScreen["tuple[str, str | None] | None"]):
         return ""
 
     def _option_label(self, name: str, path: str) -> str:
+        if path in self._hidden:
+            name += self.HIDDEN_SUFFIX
         return f"{name}{self.BUSY_SUFFIX}" if path in self._busy else name
+
+    def _option_prompt(self, name: str, path: str) -> str | Text:
+        """The Select's rendered option: a parked repo is dimmed, like the
+        table's own `(hidden)` name rows."""
+        label = self._option_label(name, path)
+        return Text(label, style="dim") if path in self._hidden else label
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -111,7 +132,7 @@ class NewWorkspaceScreen(ModalScreen["tuple[str, str | None] | None"]):
                 )
                 yield Select(
                     [
-                        (self._option_label(name, path), path)
+                        (self._option_prompt(name, path), path)
                         for name, path in self._repos
                     ],
                     value=value,

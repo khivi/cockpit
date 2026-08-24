@@ -545,6 +545,41 @@ def test_bare_registers_no_worktree_repo_and_spawns_no_worktree(
     assert entry["use_worktree"] is False
 
 
+# ── spawning into a parked repo un-parks it ─────────────────────────────────
+
+
+def test_spawn_into_parked_repo_unhides_it(spawn_main, tmp_path):
+    # `cycle_all` skips a parked repo, so a worktree spawned into one would never
+    # be reconciled. Asking for a workspace there ends the park.
+    from cockpit.lib.hidden import is_hidden, toggle_hidden
+
+    proj = tmp_path / "proj"
+    _init_git_repo(proj)
+    toggle_hidden(proj)
+    assert is_hidden(proj)
+
+    code, out, _err = spawn_main(["--cwd", str(proj)])
+    assert code == 0
+    assert not is_hidden(proj)
+    assert "un-hid parked repo" in out
+
+
+def test_spawn_leaves_other_repos_parked(spawn_main, tmp_path):
+    # Only the spawn target is un-parked — an unrelated parked repo stays dormant,
+    # and a target that was never parked writes nothing at all.
+    from cockpit.lib.hidden import load_hidden, toggle_hidden
+
+    parked, other = tmp_path / "parked", tmp_path / "other"
+    _init_git_repo(parked)
+    _init_git_repo(other)
+    toggle_hidden(parked)
+
+    code, out, _err = spawn_main(["--cwd", str(other)])
+    assert code == 0
+    assert load_hidden() == {str(parked.resolve())}
+    assert "un-hid" not in out
+
+
 def test_bare_outside_git_repo_errors(spawn_main, tmp_path, monkeypatch):
     plain = tmp_path / "not-a-repo"
     plain.mkdir()

@@ -81,7 +81,7 @@ from cockpit.lib.daemon_signal import enqueue
 from cockpit.lib.events import watch_workspace_events
 from cockpit.lib.gh import PR, repo_nwo
 from cockpit.lib.git import Worktree, origin_head_branch, worktrees
-from cockpit.lib.hidden import load_hidden, toggle_hidden
+from cockpit.lib.hidden import is_hidden, load_hidden, toggle_hidden
 from cockpit.lib.nudges import (
     NudgePref,
     load_pref,
@@ -852,7 +852,9 @@ class CockpitApp(App[None]):
         # configured) so a bare branch name can be routed to any repo; it
         # defaults to the cursor row's repo, which sets spawn.py's cwd. A
         # `use_worktree: false` repo instead gets one named checkout workspace —
-        # the modal prefills its name and blocks a second once one exists.
+        # the modal prefills its name and blocks a second once one exists. A
+        # parked repo stays offered but sinks to the bottom, dimmed; spawning
+        # into one un-parks it (`_spawn_new`).
         cfg_repos = load_config().get("repos", []) or []
         repos = [
             (
@@ -862,6 +864,8 @@ class CockpitApp(App[None]):
             for repo in cfg_repos
         ]
         live = self._live_workspace_paths()
+        parked = load_hidden()
+        hidden_paths = {p for _name, p in repos if str(Path(p).resolve()) in parked}
         no_worktree_paths: set[str] = set()
         busy_paths: set[str] = set()
         for repo in cfg_repos:
@@ -887,6 +891,7 @@ class CockpitApp(App[None]):
                 default_path,
                 no_worktree_paths=no_worktree_paths,
                 busy_paths=busy_paths,
+                hidden_paths=hidden_paths,
             ),
             self._spawn_new,
         )
@@ -917,6 +922,18 @@ class CockpitApp(App[None]):
             return
         name = source.strip()
         repo = self._repo_config_by_path(cwd)
+        # Spawning into a parked repo un-parks it: the repo has to be live for
+        # the slow tick `_launch_spawn` kicks to reconcile the new worktree at
+        # all (`cycle_all` skips parked repos), and asking for a workspace there
+        # is the plainest possible statement that it isn't dormant any more.
+        # `notify` directly, not `_notify` — this is the UI thread.
+        if cwd and is_hidden(cwd):
+            toggle_hidden(cwd)
+            label = (repo or {}).get("name") or Path(cwd).name
+            self.notify(f"{label} un-hidden — creating a workspace there")
+            # Local re-render so the repo leaves the `▸ N hidden` fold now
+            # rather than whenever the kicked cycle finishes (same as `h`).
+            self._prime_table()
         if repo is not None and not repo.get("use_worktree", True) and cwd:
             spawn_source = f"--cwd {shlex.quote(cwd)} --name {shlex.quote(name)}"
         else:
