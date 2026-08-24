@@ -461,7 +461,7 @@ def test_autoclose_sets_delete_branch_when_head_at_merge_head(tmp_path):
 def test_autoclose_keeps_branch_when_post_merge_commits_exist(tmp_path):
     """HEAD advanced past the merge head with new local commits — the worktree
     still reaps (merge head is an ancestor) but the branch ref is preserved so
-    the unpushed work stays recoverable."""
+    the unlanded work stays recoverable."""
     wt_path = tmp_path / "repo-feat"
     wt_path.mkdir()
     wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
@@ -490,7 +490,7 @@ def test_autoclose_main_sibling_never_deletes_branch(tmp_path):
     wt_path = tmp_path / "ex-feat"
     wt_path.mkdir()
     wt = Worktree(
-        path=wt_path, branch="main", dirty_count=0, unpushed=0, is_primary=False
+        path=wt_path, branch="main", dirty_count=0, unlanded=0, is_primary=False
     )
 
     with (
@@ -639,14 +639,14 @@ def test_autoclose_dry_run_does_not_clear_devdone_pill(tmp_path):
 
 
 def test_autoclose_orphan_main_sibling_clean(tmp_path):
-    """Non-primary worktree on main with dirty=0/unpushed=0 is torn down."""
+    """Non-primary worktree on main with dirty=0/unlanded=0 is torn down."""
     wt_path = tmp_path / "ex-feat"
     wt_path.mkdir()
     wt = Worktree(
         path=wt_path,
         branch="main",
         dirty_count=0,
-        unpushed=0,
+        unlanded=0,
         is_primary=False,
     )
 
@@ -679,7 +679,7 @@ def test_autoclose_orphan_main_sibling_dirty_skipped(tmp_path):
         path=wt_path,
         branch="main",
         dirty_count=2,
-        unpushed=0,
+        unlanded=0,
         is_primary=False,
     )
 
@@ -709,7 +709,7 @@ def test_autoclose_orphan_main_sibling_clean_no_wip_pill(tmp_path):
     wt_path = tmp_path / "ex-feat"
     wt_path.mkdir()
     wt = Worktree(
-        path=wt_path, branch="main", dirty_count=0, unpushed=0, is_primary=False
+        path=wt_path, branch="main", dirty_count=0, unlanded=0, is_primary=False
     )
 
     with (
@@ -738,7 +738,7 @@ def test_autoclose_dirty_main_sibling_dry_run_no_wip_pill(tmp_path):
     wt_path = tmp_path / "ex-feat"
     wt_path.mkdir()
     wt = Worktree(
-        path=wt_path, branch="main", dirty_count=2, unpushed=0, is_primary=False
+        path=wt_path, branch="main", dirty_count=2, unlanded=0, is_primary=False
     )
 
     with (
@@ -760,7 +760,7 @@ def test_autoclose_dirty_main_sibling_dry_run_no_wip_pill(tmp_path):
     wip_mock.assert_not_called()
 
 
-def test_autoclose_orphan_main_sibling_unpushed_skipped(tmp_path):
+def test_autoclose_orphan_main_sibling_unlanded_skipped(tmp_path):
     """Local commits not on origin/main — can't safely sweep."""
     wt_path = tmp_path / "ex-feat"
     wt_path.mkdir()
@@ -768,7 +768,7 @@ def test_autoclose_orphan_main_sibling_unpushed_skipped(tmp_path):
         path=wt_path,
         branch="main",
         dirty_count=0,
-        unpushed=3,
+        unlanded=3,
         is_primary=False,
     )
 
@@ -791,15 +791,15 @@ def test_autoclose_orphan_main_sibling_unpushed_skipped(tmp_path):
     remove_mock.assert_not_called()
 
 
-def test_autoclose_orphan_main_sibling_unpushed_unknown_skipped(tmp_path):
-    """`unpushed == -1` means git failed; treat as unknown and don't sweep."""
+def test_autoclose_orphan_main_sibling_unlanded_unknown_skipped(tmp_path):
+    """`unlanded == -1` means git failed; treat as unknown and don't sweep."""
     wt_path = tmp_path / "ex-feat"
     wt_path.mkdir()
     wt = Worktree(
         path=wt_path,
         branch="main",
         dirty_count=0,
-        unpushed=-1,
+        unlanded=-1,
         is_primary=False,
     )
 
@@ -824,14 +824,14 @@ def test_autoclose_orphan_main_sibling_unpushed_unknown_skipped(tmp_path):
 
 def test_autoclose_primary_on_main_never_swept(tmp_path):
     """The trunk worktree (is_primary=True) is always skipped, even with
-    dirty=0/unpushed=0 — we must not nuke the user's main checkout."""
+    dirty=0/unlanded=0 — we must not nuke the user's main checkout."""
     wt_path = tmp_path / "repo"
     wt_path.mkdir()
     wt = Worktree(
         path=wt_path,
         branch="main",
         dirty_count=0,
-        unpushed=0,
+        unlanded=0,
         is_primary=True,
     )
 
@@ -878,7 +878,7 @@ def reap_isolated(tmp_path, monkeypatch):
 
 
 def _wt_stub(path: Path, branch: str):
-    return Worktree(path=path, branch=branch, dirty_count=0, unpushed=0)
+    return Worktree(path=path, branch=branch, dirty_count=0, unlanded=0)
 
 
 def test_reap_skips_tracked_workspace(reap_isolated, tmp_path):

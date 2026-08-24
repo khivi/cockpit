@@ -532,8 +532,8 @@ def _is_orphan_main_sibling(wt: Worktree) -> bool:
     """
     if wt.dirty_count > 0:
         return False
-    # unpushed == -1 means git failed; treat as "unknown, don't sweep".
-    return wt.unpushed == 0
+    # unlanded == -1 means git failed; treat as "unknown, don't sweep".
+    return wt.unlanded == 0
 
 
 def _teardown_worktree(
@@ -2776,7 +2776,7 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
         repo_name = entry.get("name") or repo_path.name
         registered_roots[repo_path.resolve()] = (repo_name, repo_path)
         try:
-            # Identity only (path/branch) — skip the dirty/unpushed stat forks.
+            # Identity only (path/branch) — skip the dirty/unlanded stat forks.
             for wt in worktrees_basic(
                 repo_path, entry.get("branch_prefix", ""), entry.get("name", "")
             ):

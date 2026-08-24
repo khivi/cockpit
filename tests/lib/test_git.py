@@ -492,12 +492,12 @@ def test_bare_repo_main_worktree_is_not_primary(cockpit_repo, tmp_path):
 
     This pins the regression vector behind two downstream teardown behaviours
     that both key off `is_primary`: the `git worktree remove` gate
-    (`teardown.py`, `not is_primary`) and the unpushed-commit-guard relaxation
+    (`teardown.py`, `not is_primary`) and the unlanded-commit-guard relaxation
     (`probe_blockers(is_primary=…)`). If someone ever collapses the naming guard
     `is_primary or branch in MAIN_BRANCHES` down to just `is_primary` (reasoning
     "the primary IS the main branch"), a bare repo's `main` worktree would flip
     to `is_primary=True`, teardown would skip its removal (stale worktree) and
-    the pre-check would wave through a close with unpushed commits that teardown
+    the pre-check would wave through a close with unlanded commits that teardown
     then deletes. A bare repo has NO primary checkout — nothing sits at the bare
     dir, and the bare dir has no working tree — so every worktree is removable.
     """
@@ -659,7 +659,7 @@ def test_worktrees_bare_repo_sibling_on_main_is_not_primary(
     monkeypatch.setattr(gitlib, "run", lambda *_a, **_kw: porcelain)
     # Stub the per-worktree stat callouts so they don't shell out.
     monkeypatch.setattr(gitlib, "count_dirty", lambda *_a, **_kw: 0)
-    monkeypatch.setattr(gitlib, "_count_unpushed", lambda *_a, **_kw: 0)
+    monkeypatch.setattr(gitlib, "count_unlanded", lambda *_a, **_kw: 0)
 
     wts = gitlib.worktrees(bare)
 
@@ -684,9 +684,9 @@ def test_remove_worktree_force_no_lock_file_is_quiet(cockpit_repo, capsys) -> No
     assert "preempting" not in captured.err
 
 
-def test_worktrees_basic_skips_dirty_unpushed_stats(cockpit_repo) -> None:
+def test_worktrees_basic_skips_dirty_unlanded_stats(cockpit_repo) -> None:
     """`worktrees_basic` reports identity but never runs the per-worktree
-    `count_dirty` / `_count_unpushed` forks — even a dirty worktree reads
+    `count_dirty` / `count_unlanded` forks — even a dirty worktree reads
     dirty_count==0, where `worktrees()` would report the real count."""
     repo = cockpit_repo.repo
     wt = repo.parent / "wt-dirty"
@@ -965,3 +965,150 @@ def test_worktree_age_seconds_never_negative(tmp_path):
 def test_worktree_age_seconds_missing_path_fails_open(tmp_path):
     """An un-stat-able path returns inf so the orphan nudge isn't silently muted."""
     assert worktree_age_seconds(tmp_path / "nope") == float("inf")
+
+
+# ── count_unlanded: the commit guard behind `c`/`C` close ─────────────────────
+
+
+def _run(repo, *args):
+    """`git -C repo …` with a committer identity (CI runners have none)."""
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=_committer_env(),
+    ).stdout.strip()
+
+
+def _commit(repo, name, body="x\n"):
+    (repo / name).write_text(body)
+    _run(repo, "add", ".")
+    _run(repo, "commit", "-qm", f"add {name}")
+
+
+def _stack_repo(repo, base="khivi/fnox", top="khivi/stacked", base_n=3, top_n=2):
+    """Build `base` (pushed, NOT merged to main) with `top` stacked on it.
+
+    This is the shape that made every branch based on something other than the
+    default branch unclosable: the base's commits are equally "not in main", so
+    a `origin/<default>` baseline counted them as the top branch's own work.
+    Leaves `top` checked out, fully pushed, with `origin/HEAD` → main.
+    """
+    _run(repo, "remote", "set-head", "origin", "main")
+    for branch, n, start in ((base, base_n, "main"), (top, top_n, base)):
+        _run(repo, "checkout", "-q", "-b", branch, start)
+        for i in range(n):
+            _commit(repo, f"{branch.replace('/', '-')}-{i}.txt", f"{i}\n")
+        _run(repo, "push", "-q", "origin", branch)
+
+
+def test_count_unlanded_ignores_the_base_branchs_commits(cockpit_repo) -> None:
+    """The regression: a branch stacked on a non-default base counts only its
+    own commits, not the base's — otherwise it could never be closed."""
+    repo = cockpit_repo.repo
+    _stack_repo(repo, base_n=3, top_n=2)
+
+    assert gitlib.count_unlanded(repo, "khivi/stacked") == 2
+
+
+def test_count_unlanded_still_blocks_when_pushed_but_unmerged(cockpit_repo) -> None:
+    """Pushing does not clear the guard — the worktree is held until the work
+    lands, which is the whole point of the check."""
+    repo = cockpit_repo.repo
+    _stack_repo(repo, base_n=3, top_n=2)
+    ahead = _run(repo, "rev-list", "--count", "origin/khivi/stacked..HEAD")
+    assert ahead == "0", "precondition: nothing left to push"
+
+    assert gitlib.count_unlanded(repo, "khivi/stacked") == 2
+
+
+def test_count_unlanded_clears_once_the_work_lands_on_main(cockpit_repo) -> None:
+    repo = cockpit_repo.repo
+    _stack_repo(repo, base_n=3, top_n=2)
+    _run(repo, "push", "-q", "origin", "khivi/stacked:main")
+    _run(repo, "fetch", "-q", "origin")
+
+    assert gitlib.count_unlanded(repo, "khivi/stacked") == 0
+
+
+def test_count_unlanded_recognizes_a_cherry_picked_commit(cockpit_repo) -> None:
+    """Patch-id half: work cherry-picked onto the default branch under a new sha
+    is landed, even though sha-reachability alone cannot see it."""
+    repo = cockpit_repo.repo
+    _stack_repo(repo, base_n=3, top_n=2)
+    first_of_mine = _run(repo, "rev-parse", "HEAD~1")
+    _run(repo, "checkout", "-q", "main")
+    _run(repo, "cherry-pick", first_of_mine)
+    _run(repo, "push", "-q", "origin", "main")
+    _run(repo, "fetch", "-q", "origin")
+    _run(repo, "checkout", "-q", "khivi/stacked")
+
+    assert gitlib.count_unlanded(repo, "khivi/stacked") == 1
+
+
+def test_count_unlanded_counts_never_pushed_commits(cockpit_repo) -> None:
+    repo = cockpit_repo.repo
+    _stack_repo(repo, base_n=3, top_n=2)
+    _commit(repo, "local-only.txt")
+
+    assert gitlib.count_unlanded(repo, "khivi/stacked") == 3
+
+
+def test_count_unlanded_on_the_default_branch_ignores_other_branches(
+    cockpit_repo,
+) -> None:
+    """A worktree sitting on `main` must not count main's own history just
+    because feature branches do not contain it — `origin/HEAD` is excluded from
+    the negatives alongside `origin/<branch>`, so only local-only commits count.
+    """
+    repo = cockpit_repo.repo
+    _stack_repo(repo, base_n=3, top_n=2)
+    _run(repo, "checkout", "-q", "main")
+
+    assert gitlib.count_unlanded(repo, "main") == 0
+
+
+def test_count_unlanded_detached_head_falls_back_to_patch_id_half(
+    cockpit_repo,
+) -> None:
+    """No branch ref of its own to spare → the patch-id half answers alone."""
+    repo = cockpit_repo.repo
+    _stack_repo(repo, base_n=3, top_n=2)
+
+    assert gitlib.count_unlanded(repo, None) == 5  # 3 base + 2 mine
+
+
+def test_count_unlanded_no_origin_head_returns_zero(cockpit_repo) -> None:
+    """Off-GitHub / no `origin/HEAD` → 0, matching the pre-existing contract.
+
+    Uses `cockpit_repo` rather than a hand-rolled `git init` under `tmp_path`:
+    the fixture strips the `GIT_*` env vars, without which a run under a git
+    hook (the pre-push suite) leaks `GIT_INDEX_FILE`/`GIT_DIR` into these
+    subprocesses and stages changes against the *outer* repo.
+    """
+    repo = cockpit_repo.repo  # fixture never runs `git remote set-head`
+    assert gitlib.origin_head_branch(repo) is None, "precondition: no origin/HEAD"
+
+    assert gitlib.count_unlanded(repo, "main") == 0
+
+
+def test_commits_only_local_lets_a_reviewed_coworker_branch_close(
+    cockpit_repo,
+) -> None:
+    """Someone else's pushed PR branch is theirs, safe on its own remote — the
+    review is over, so nothing holds the worktree (contrast `count_unlanded`,
+    which deliberately keeps ours)."""
+    repo = cockpit_repo.repo
+    _stack_repo(repo, base="alice/base", top="alice/feat", base_n=2, top_n=3)
+
+    assert gitlib.commits_only_local(repo, "alice/feat") == 0
+    assert gitlib.count_unlanded(repo, "alice/feat") == 3
+
+
+def test_commits_only_local_still_blocks_our_local_review_fixup(cockpit_repo) -> None:
+    repo = cockpit_repo.repo
+    _stack_repo(repo, base="alice/base", top="alice/feat", base_n=2, top_n=3)
+    _commit(repo, "fixup.txt", "review note\n")
+
+    assert gitlib.commits_only_local(repo, "alice/feat") == 1

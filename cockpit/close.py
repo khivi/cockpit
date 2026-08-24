@@ -10,12 +10,12 @@ session parked *inside* a worktree can close it without reaching for the TUI:
 
 Gating mirrors the TUI exactly:
 
-  - Hard blockers (`worktree_state_blockers`: dirty / unpushed) refuse even
+  - Hard blockers (`worktree_state_blockers`: dirty / unlanded) refuse even
     under `--force` — close never discards local work.
   - The open-PR blocker is *soft*: `--force` overrides it (and lets you close a
     teammate's pushed-but-unmerged PR worktree). An out-of-band squash/rebase
     merge is recognized via `resolve_pr_state` (cache first, one live `gh`
-    fallback), so a merged PR isn't false-flagged as unpushed.
+    fallback), so a merged PR isn't false-flagged as unlanded.
 
 Like the TUI's `c`/`C` close keys, this **requires a running daemon**: the
 request is enqueued durably and the daemon is SIGUSR1-kicked. If no daemon is
@@ -137,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         "--force",
         action="store_true",
         help="Override the soft open-PR refusal (and close a teammate's pushed "
-        "PR worktree). Never overrides uncommitted/unpushed work.",
+        "PR worktree). Never overrides uncommitted/unlanded work.",
     )
     p.add_argument(
         "--dry-run",
@@ -165,18 +165,20 @@ def main(argv: list[str] | None = None) -> int:
         repo_name = repo_dir.name
     prefix = repo.get("branch_prefix", "")
     branch = wt.branch or current_branch(wt.path)
+    # Ownership picks the commit guard: ours holds until the work lands,
+    # someone else's closes once their branch is pushed (review over).
     is_mine = branch.startswith(prefix) if (prefix and branch) else True
     label = wt.label or wt.short
 
     # Resolve PR state once (cache first, one live `gh` fallback) so an
-    # out-of-band squash/rebase merge isn't false-flagged as unpushed.
+    # out-of-band squash/rebase merge isn't false-flagged as unlanded.
     state, pr_number = resolve_pr_state(wt.path, branch, repo_name)
     pr_is_merged = state == "MERGED"
 
-    # A primary checkout (`use_worktree: false`) relaxes the unpushed guard only
+    # A primary checkout (`use_worktree: false`) relaxes the unlanded guard only
     # while it stays on its default branch — a workspace-only close where nothing
     # is removed. Parked on a feature branch it's a branch teardown (checkout
-    # default + `git branch -D`), so the unpushed guard must stand; pass
+    # default + `git branch -D`), so the unlanded guard must stand; pass
     # `is_primary=False` there. `default is None` (off-GitHub) can't delete, so it
     # stays workspace-only.
     default_branch = origin_head_branch(repo_dir)
