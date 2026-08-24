@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1](https://github.com/khivi/cockpit/compare/v2.2.0...v2.2.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **close:** stop counting the base branch's commits as local work ([#362](https://github.com/khivi/cockpit/issues/362)) ([7b85b63](https://github.com/khivi/cockpit/commit/7b85b639d31ca2a6c4b0195a6066ebe6efa3ffde))
+
 ## [2.2.0](https://github.com/khivi/cockpit/compare/v2.1.0...v2.2.0) (2026-08-24)
 
 
