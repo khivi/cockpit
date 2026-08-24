@@ -41,8 +41,11 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `tickets` | object\|string | `{}` | Ticket-provider block (below). Bare string `"github"` == `{"provider": "github"}`. |
 | `org` | string | unset | Name of an entry in the top-level `orgs` object whose defaults this repo inherits (below). Must be defined there — a dangling reference hard-fails at start. |
 
-Legacy flat keys still honored as fallbacks (superseded by the `tickets` block):
-`linear_keys`, `linear_dev_done_state`, `linear_merge_done_state`, `linear_done_on_merge`.
+The flat `linear_keys` / `linear_dev_done_state` / `linear_merge_done_state` /
+`linear_done_on_merge` keys are **gone**, superseded by the `tickets` block's
+`keys` / `dev_done_state` / `merge_done_state` / `close_on_merge`. A leftover
+hard-fails at start with the field to move it to, rather than being ignored —
+each one silently disables a feature when it stops being read.
 
 ## `orgs` block
 

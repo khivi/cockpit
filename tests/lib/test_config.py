@@ -749,27 +749,9 @@ def test_repo_tickets_falls_back_to_global(tmp_path, monkeypatch):
     assert cockpit_config.repo_tickets(repo_entry={}) == "github"
 
 
-def test_repo_tickets_linear_keys_back_compat(tmp_path, monkeypatch):
-    # A repo with linear_keys but no `tickets` anywhere keeps Linear (back-compat).
-    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.repo_tickets(repo_entry={"linear_keys": ["PE"]}) == "linear"
-
-
 def test_repo_tickets_defaults_none(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     assert cockpit_config.repo_tickets(repo_entry={}) == "none"
-
-
-def test_repo_tickets_explicit_provider_wins_over_legacy_linear_keys(
-    tmp_path, monkeypatch
-):
-    """A repo with BOTH the legacy flat `linear_keys` AND an explicit
-    `tickets.provider` must resolve to the explicit provider — `repo_tickets`
-    only falls back to the `linear_keys` back-compat guess when no provider is
-    set anywhere (see its docstring's resolution order)."""
-    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    re = {"linear_keys": ["PE"], "tickets": {"provider": "github"}}
-    assert cockpit_config.repo_tickets(repo_entry=re) == "github"
 
 
 # ── find_repo_by_nwo (owner/name → registered repo, via origin remote) ──────
@@ -1179,14 +1161,6 @@ def test_ticket_close_on_merge_from_object(tmp_path, monkeypatch):
     )
 
 
-def test_ticket_close_on_merge_legacy_linear_flat_key(tmp_path, monkeypatch):
-    # Existing Linear configs keep working without migrating to the object form.
-    cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "linear_done_on_merge": True}
-    )
-    assert cockpit_config.ticket_close_on_merge() is True
-
-
 def test_linear_dev_done_from_object(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     re = {"tickets": {"provider": "linear", "dev_done_state": "In Review"}}
@@ -1203,11 +1177,6 @@ def test_linear_team_keys_from_object(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     re = {"tickets": {"provider": "linear", "keys": ["PE", "ENG"]}}
     assert cockpit_config.linear_team_keys(repo_entry=re) == ["PE", "ENG"]
-
-
-def test_linear_team_keys_legacy_flat_fallback(tmp_path, monkeypatch):
-    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.linear_team_keys(repo_entry={"linear_keys": ["PE"]}) == ["PE"]
 
 
 # ── use_slack reader ─────────────────────────────────────────────────────────
@@ -1242,7 +1211,7 @@ def test_linear_dev_done_state_defaults(tmp_path, monkeypatch):
 
 def test_linear_dev_done_state_override(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "linear_dev_done_state": "In Review"}
+        tmp_path, monkeypatch, {"repos": [], "tickets": {"dev_done_state": "In Review"}}
     )
     assert cockpit_config.linear_dev_done() == "In Review"
 
@@ -1251,8 +1220,10 @@ def test_linear_dev_done_state_uses_passed_cfg_without_disk_read():
     # Passing cfg avoids load_config(); blank/whitespace falls back to default.
     from cockpit.lib import config as cockpit_config
 
-    assert cockpit_config.linear_dev_done({"linear_dev_done_state": "QA"}) == "QA"
-    assert cockpit_config.linear_dev_done({"linear_dev_done_state": "  "}) == "Dev Done"
+    assert cockpit_config.linear_dev_done({"tickets": {"dev_done": "QA"}}) == "QA"
+    assert (
+        cockpit_config.linear_dev_done({"tickets": {"dev_done": "  "}}) == "Dev Done"
+    )
 
 
 # ── linear_merge_done reader ───────────────────────────────────────────
@@ -1265,7 +1236,7 @@ def test_linear_merge_done_state_defaults(tmp_path, monkeypatch):
 
 def test_linear_merge_done_state_override(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "linear_merge_done_state": "Shipped"}
+        tmp_path, monkeypatch, {"repos": [], "tickets": {"merge_done_state": "Shipped"}}
     )
     assert cockpit_config.linear_merge_done() == "Shipped"
 
@@ -1274,46 +1245,52 @@ def test_linear_merge_done_state_uses_passed_cfg_and_blank_falls_back():
     from cockpit.lib import config as cockpit_config
 
     assert (
-        cockpit_config.linear_merge_done({"linear_merge_done_state": "Closed"})
+        cockpit_config.linear_merge_done({"tickets": {"merge_done": "Closed"}})
         == "Closed"
     )
-    assert cockpit_config.linear_merge_done({"linear_merge_done_state": "  "}) == "Done"
+    assert (
+        cockpit_config.linear_merge_done({"tickets": {"merge_done": "  "}}) == "Done"
+    )
 
 
-# ── linear_done_on_merge reader (per-repo over global) ───────────────────────
+# ── ticket_close_on_merge resolution order (per-repo over global) ───────────
+#
+# The default and the object form are covered above; these pin the per-field
+# repo → global walk, which is what `close_on_merge` being a *shared* opt-in
+# across all four providers depends on.
 
 
-def test_linear_done_on_merge_defaults_false():
+def test_ticket_close_on_merge_global_true():
     from cockpit.lib import config as cockpit_config
 
-    assert cockpit_config.ticket_close_on_merge({"repos": []}) is False
+    assert (
+        cockpit_config.ticket_close_on_merge({"tickets": {"close_on_merge": True}})
+        is True
+    )
 
 
-def test_linear_done_on_merge_global_true():
+def test_ticket_close_on_merge_repo_overrides_global():
     from cockpit.lib import config as cockpit_config
 
-    assert cockpit_config.ticket_close_on_merge({"linear_done_on_merge": True}) is True
-
-
-def test_linear_done_on_merge_repo_overrides_global():
-    from cockpit.lib import config as cockpit_config
-
-    cfg = {"linear_done_on_merge": True}
+    cfg = {"tickets": {"close_on_merge": True}}
     # Per-repo False wins over a True global.
     assert (
-        cockpit_config.ticket_close_on_merge(cfg, {"linear_done_on_merge": False})
+        cockpit_config.ticket_close_on_merge(
+            cfg, {"tickets": {"close_on_merge": False}}
+        )
         is False
     )
     # And per-repo True wins over a False/absent global.
     assert (
-        cockpit_config.ticket_close_on_merge({}, {"linear_done_on_merge": True}) is True
+        cockpit_config.ticket_close_on_merge({}, {"tickets": {"close_on_merge": True}})
+        is True
     )
 
 
-def test_linear_done_on_merge_repo_without_key_falls_back_to_global():
+def test_ticket_close_on_merge_repo_without_key_falls_back_to_global():
     from cockpit.lib import config as cockpit_config
 
-    cfg = {"linear_done_on_merge": True}
+    cfg = {"tickets": {"close_on_merge": True}}
     assert cockpit_config.ticket_close_on_merge(cfg, {"name": "r"}) is True
 
 
@@ -1388,8 +1365,16 @@ def test_find_repos_by_ticket_key_single_match(tmp_path, monkeypatch):
         tmp_path,
         monkeypatch,
         _repos_cfg(
-            {"name": "alpha", "path": "/a", "linear_keys": ["PE"]},
-            {"name": "beta", "path": "/b", "linear_keys": ["ENG"]},
+            {
+                "name": "alpha",
+                "path": "/a",
+                "tickets": {"provider": "linear", "keys": ["PE"]},
+            },
+            {
+                "name": "beta",
+                "path": "/b",
+                "tickets": {"provider": "linear", "keys": ["ENG"]},
+            },
         ),
     )
     matches = cockpit_config.find_repos_by_ticket_key("PE-1234")
@@ -1400,7 +1385,13 @@ def test_find_repos_by_ticket_key_case_insensitive(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
-        _repos_cfg({"name": "alpha", "path": "/a", "linear_keys": ["pe"]}),
+        _repos_cfg(
+            {
+                "name": "alpha",
+                "path": "/a",
+                "tickets": {"provider": "linear", "keys": ["pe"]},
+            }
+        ),
     )
     assert [r["name"] for r in cockpit_config.find_repos_by_ticket_key("PE-1")] == [
         "alpha"
@@ -1415,8 +1406,16 @@ def test_find_repos_by_ticket_key_multiple_matches(tmp_path, monkeypatch):
         tmp_path,
         monkeypatch,
         _repos_cfg(
-            {"name": "alpha", "path": "/a", "linear_keys": ["PE"]},
-            {"name": "beta", "path": "/b", "linear_keys": ["PE", "ENG"]},
+            {
+                "name": "alpha",
+                "path": "/a",
+                "tickets": {"provider": "linear", "keys": ["PE"]},
+            },
+            {
+                "name": "beta",
+                "path": "/b",
+                "tickets": {"provider": "linear", "keys": ["PE", "ENG"]},
+            },
         ),
     )
     names = [r["name"] for r in cockpit_config.find_repos_by_ticket_key("PE-1234")]
@@ -1427,7 +1426,13 @@ def test_find_repos_by_ticket_key_no_match(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
-        _repos_cfg({"name": "alpha", "path": "/a", "linear_keys": ["ENG"]}),
+        _repos_cfg(
+            {
+                "name": "alpha",
+                "path": "/a",
+                "tickets": {"provider": "linear", "keys": ["ENG"]},
+            }
+        ),
     )
     assert cockpit_config.find_repos_by_ticket_key("PE-1234") == []
 
@@ -1472,7 +1477,13 @@ def test_find_repos_by_ticket_key_rejects_non_ticket_identifier(tmp_path, monkey
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
-        _repos_cfg({"name": "alpha", "path": "/a", "linear_keys": ["PE"]}),
+        _repos_cfg(
+            {
+                "name": "alpha",
+                "path": "/a",
+                "tickets": {"provider": "linear", "keys": ["PE"]},
+            }
+        ),
     )
     assert cockpit_config.find_repos_by_ticket_key("not-a-key") == []
     assert cockpit_config.find_repos_by_ticket_key("PE-") == []

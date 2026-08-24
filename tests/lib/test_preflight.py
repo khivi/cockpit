@@ -568,6 +568,50 @@ def test_preflight_exits_on_leftover_use_linear(tmp_path, monkeypatch, capsys):
     assert "use_linear" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("legacy", "new"),
+    [
+        ("linear_keys", "tickets.keys"),
+        ("linear_dev_done_state", "tickets.dev_done_state"),
+        ("linear_done_on_merge", "tickets.close_on_merge"),
+        ("linear_merge_done_state", "tickets.merge_done_state"),
+    ],
+)
+def test_preflight_exits_on_leftover_flat_linear_key(
+    tmp_path, monkeypatch, capsys, legacy, new
+):
+    """Each removed flat key hard-fails naming its replacement. Ignoring one
+    instead would silently disable whatever it used to enable."""
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", legacy: True})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert legacy in err
+    assert new in err
+
+
+@pytest.mark.parametrize(
+    ("legacy", "new"),
+    [
+        ("linear_keys", "tickets.keys"),
+        ("linear_done_on_merge", "tickets.close_on_merge"),
+    ],
+)
+def test_preflight_exits_on_leftover_flat_linear_key_per_repo(
+    tmp_path, monkeypatch, capsys, legacy, new
+):
+    """Checked per repo too, and the message names which repo."""
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "repos": [{"name": "r", legacy: True}]})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert legacy in err
+    assert new in err
+    assert "'r'" in err
+
+
 def test_preflight_passes_on_valid_tickets_string(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     preflight({"tool": "cmux", "tickets": "github"})
@@ -723,15 +767,26 @@ def test_preflight_exits_on_non_string_dev_done_state(tmp_path, monkeypatch, cap
     _all_required(tmp_path, monkeypatch)
     monkeypatch.setenv("LINEAR_API_KEY", "k")
     with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "repos": [], "linear_dev_done_state": 5})
+        preflight(
+            {
+                "tool": "cmux",
+                "repos": [],
+                "tickets": {"provider": "linear", "dev_done_state": 5},
+            }
+        )
     assert exc.value.code == 2
-    assert "linear_dev_done_state" in capsys.readouterr().err
+    assert "dev_done_state" in capsys.readouterr().err
 
 
 def test_preflight_warns_when_linear_repo_but_no_api_key(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     monkeypatch.delenv("LINEAR_API_KEY", raising=False)
-    preflight({"tool": "cmux", "repos": [{"name": "r", "linear_keys": ["PE"]}]})
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [{"name": "r", "tickets": {"provider": "linear", "keys": ["PE"]}}],
+        }
+    )
     err = capsys.readouterr().err
     assert "LINEAR_API_KEY" in err
     assert "dev-done pill" in err
@@ -742,7 +797,12 @@ def test_preflight_silent_when_linear_repo_and_api_key_set(
 ):
     _all_required(tmp_path, monkeypatch)
     monkeypatch.setenv("LINEAR_API_KEY", "lin_xxx")
-    preflight({"tool": "cmux", "repos": [{"name": "r", "linear_keys": ["PE"]}]})
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [{"name": "r", "tickets": {"provider": "linear", "keys": ["PE"]}}],
+        }
+    )
     assert capsys.readouterr().err == ""
 
 
@@ -755,37 +815,57 @@ def test_preflight_silent_when_no_linear_repo_even_without_key(
     assert capsys.readouterr().err == ""
 
 
-# ── linear_done_on_merge (the opt-in Linear write) ──────────────────────────
+# ── tickets.close_on_merge (the opt-in tracker write) ───────────────────────
 
 
-def test_preflight_exits_on_non_bool_global_done_on_merge(
+def test_preflight_exits_on_non_bool_global_close_on_merge(
     tmp_path, monkeypatch, capsys
 ):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "linear_done_on_merge": "yes"})
+        preflight(
+            {
+                "tool": "cmux",
+                "tickets": {"provider": "linear", "close_on_merge": "yes"},
+            }
+        )
     assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert "linear_done_on_merge" in err
+    assert "close_on_merge" in err
     assert "'yes'" in err
 
 
-def test_preflight_exits_on_non_bool_repo_done_on_merge(tmp_path, monkeypatch, capsys):
+def test_preflight_exits_on_non_bool_repo_close_on_merge(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "repos": [{"name": "r", "linear_done_on_merge": 1}]})
+        preflight(
+            {
+                "tool": "cmux",
+                "repos": [
+                    {
+                        "name": "r",
+                        "tickets": {"provider": "linear", "close_on_merge": 1},
+                    }
+                ],
+            }
+        )
     assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert "linear_done_on_merge" in err
+    assert "close_on_merge" in err
     assert "'r'" in err
 
 
 def test_preflight_exits_on_non_string_merge_done_state(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "linear_merge_done_state": 5})
+        preflight(
+            {
+                "tool": "cmux",
+                "tickets": {"provider": "linear", "merge_done_state": 5},
+            }
+        )
     assert exc.value.code == 2
-    assert "linear_merge_done_state" in capsys.readouterr().err
+    assert "merge_done_state" in capsys.readouterr().err
 
 
 def test_preflight_warns_when_done_on_merge_enabled_but_no_api_key(
@@ -793,9 +873,15 @@ def test_preflight_warns_when_done_on_merge_enabled_but_no_api_key(
 ):
     _all_required(tmp_path, monkeypatch)
     monkeypatch.delenv("LINEAR_API_KEY", raising=False)
-    preflight({"tool": "cmux", "linear_done_on_merge": True, "repos": []})
+    preflight(
+        {
+            "tool": "cmux",
+            "tickets": {"provider": "linear", "close_on_merge": True},
+            "repos": [],
+        }
+    )
     err = capsys.readouterr().err
-    assert "linear_done_on_merge is enabled" in err
+    assert "tickets.close_on_merge is enabled" in err
     assert "LINEAR_API_KEY" in err
 
 
@@ -804,8 +890,18 @@ def test_preflight_warns_when_repo_done_on_merge_enabled_but_no_api_key(
 ):
     _all_required(tmp_path, monkeypatch)
     monkeypatch.delenv("LINEAR_API_KEY", raising=False)
-    preflight({"tool": "cmux", "repos": [{"name": "r", "linear_done_on_merge": True}]})
-    assert "linear_done_on_merge is enabled" in capsys.readouterr().err
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [
+                {
+                    "name": "r",
+                    "tickets": {"provider": "linear", "close_on_merge": True},
+                }
+            ],
+        }
+    )
+    assert "tickets.close_on_merge is enabled" in capsys.readouterr().err
 
 
 def test_preflight_silent_when_done_on_merge_enabled_and_api_key_set(
@@ -813,7 +909,13 @@ def test_preflight_silent_when_done_on_merge_enabled_and_api_key_set(
 ):
     _all_required(tmp_path, monkeypatch)
     monkeypatch.setenv("LINEAR_API_KEY", "lin_xxx")
-    preflight({"tool": "cmux", "linear_done_on_merge": True, "repos": []})
+    preflight(
+        {
+            "tool": "cmux",
+            "tickets": {"provider": "linear", "close_on_merge": True},
+            "repos": [],
+        }
+    )
     assert capsys.readouterr().err == ""
 
 
@@ -823,7 +925,13 @@ def test_preflight_silent_when_done_on_merge_disabled_without_key(
     # Default-off: a missing key is irrelevant, so no warning.
     _all_required(tmp_path, monkeypatch)
     monkeypatch.delenv("LINEAR_API_KEY", raising=False)
-    preflight({"tool": "cmux", "linear_done_on_merge": False, "repos": []})
+    preflight(
+        {
+            "tool": "cmux",
+            "tickets": {"provider": "linear", "close_on_merge": False},
+            "repos": [],
+        }
+    )
     assert capsys.readouterr().err == ""
 
 
@@ -844,8 +952,11 @@ def test_preflight_warns_naming_the_repos_resolved_key_env(
             "repos": [
                 {
                     "name": "r",
-                    "linear_keys": ["PE"],
-                    "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+                    "tickets": {
+                        "provider": "linear",
+                        "keys": ["PE"],
+                        "api_key_env": "LIN_ACME",
+                    },
                 }
             ],
         }
@@ -865,12 +976,15 @@ def test_preflight_warning_never_contains_a_resolved_secret(
     preflight(
         {
             "tool": "cmux",
-            "linear_done_on_merge": True,
+            "tickets": {"provider": "linear", "close_on_merge": True},
             "repos": [
                 {
                     "name": "r",
-                    "linear_keys": ["PE"],
-                    "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+                    "tickets": {
+                        "provider": "linear",
+                        "keys": ["PE"],
+                        "api_key_env": "LIN_ACME",
+                    },
                 }
             ],
         }
@@ -890,18 +1004,27 @@ def test_preflight_warns_once_per_distinct_env_var(tmp_path, monkeypatch, capsys
             "repos": [
                 {
                     "name": "a1",
-                    "linear_keys": ["A"],
-                    "tickets": {"provider": "linear", "api_key_env": "LIN_A"},
+                    "tickets": {
+                        "provider": "linear",
+                        "keys": ["A"],
+                        "api_key_env": "LIN_A",
+                    },
                 },
                 {
                     "name": "a2",
-                    "linear_keys": ["A"],
-                    "tickets": {"provider": "linear", "api_key_env": "LIN_A"},
+                    "tickets": {
+                        "provider": "linear",
+                        "keys": ["A"],
+                        "api_key_env": "LIN_A",
+                    },
                 },
                 {
                     "name": "b1",
-                    "linear_keys": ["B"],
-                    "tickets": {"provider": "linear", "api_key_env": "LIN_B"},
+                    "tickets": {
+                        "provider": "linear",
+                        "keys": ["B"],
+                        "api_key_env": "LIN_B",
+                    },
                 },
             ],
         }

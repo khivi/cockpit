@@ -29,10 +29,10 @@ def test_provider_for_none():
     assert tickets.provider_for({"tickets": "none"}, {}) is None
 
 
-def test_provider_for_linear_keys_back_compat():
-    # No `tickets` anywhere, but repo has linear_keys → linear provider.
-    p = tickets.provider_for({}, {"linear_keys": ["PE"]})
-    assert p is not None and p.name == "linear"
+def test_provider_for_needs_an_explicit_provider():
+    # `tickets.keys` alone doesn't name a provider — Jira declares the same
+    # field, so the block has to say which one it is.
+    assert tickets.provider_for({}, {"tickets": {"keys": ["PE"]}}) is None
 
 
 def test_linear_parse_footers_ignores_nwo():

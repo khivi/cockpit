@@ -675,8 +675,8 @@ def _transition_merged_linear(ctx: RepoCycle) -> None:
     merged PR means the work shipped regardless of leftover local state.
 
     Gates, all of which must hold:
-      * `linear_done_on_merge` enabled for this repo (per-repo over global);
-      * the repo is Linear-configured (`linear_keys`) and its API key env var
+      * `tickets.close_on_merge` enabled for this repo (per-repo over global);
+      * the repo is Linear-configured (`tickets.keys`) and its API key env var
         (`tickets.token_env`, default `LINEAR_API_KEY`) set;
       * not a dry run.
 
@@ -1363,7 +1363,7 @@ class RepoCycle:
     base_distance: dict[str, int] = field(default_factory=dict)
     pr_payloads: dict[str, dict] = field(default_factory=dict)
     review_candidates: list[OpenPRHead] = field(default_factory=list)
-    # The repo's config.json entry — carries `linear_keys` for the devdone gate.
+    # The repo's config.json entry — carries `tickets.keys` for the devdone gate.
     # Defaulted so existing RepoCycle(...) call sites and test stubs need no change.
     repo_entry: dict = field(default_factory=dict)
     # branch → resolved Linear-delivery block (or None) for this cycle, stashed by

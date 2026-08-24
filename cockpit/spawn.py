@@ -68,9 +68,9 @@ Positional detection:
   step handles one that is genuinely missing). Under any other provider
   the workspace starts with the generic plan prompt.
 
-  With `tickets: linear` and no `--repo`, cockpit also routes the spawn
-  to the repo whose per-repo `linear_keys` list contains the Linear key
-  prefix (e.g. `PE-1234` → the repo declaring `"linear_keys": ["PE"]`).
+  Under a linear provider and no `--repo`, cockpit also routes the spawn
+  to the repo whose `tickets.keys` list contains the Linear key prefix
+  (e.g. `PE-1234` → the repo declaring `tickets: {keys: ["PE"]}`).
   A unique match wins; zero matches falls back to cwd discovery; multiple
   matches print a note and also fall back. `--repo <name>` always wins.
 

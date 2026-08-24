@@ -29,7 +29,7 @@ in-session. But the daemon *does* make direct GraphQL calls:
     `fetch_team_states` (the merge-transition eligibility checks);
   * the one *write* — `update_ticket_state`, the `issueUpdate` mutation that
     moves a ticket's workflow state. It is reached only by the opt-in
-    `linear_done_on_merge` path in the slow tick (see
+    `tickets.close_on_merge` path in the slow tick (see
     `cycle._transition_merged_tickets`); the *policy* (which ticket, when,
     skip-if-already-done) lives there, this module just performs the call.
 

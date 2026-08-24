@@ -1586,19 +1586,14 @@ def test_attach_delivers_addendum_and_context(spawn_main, monkeypatch):
 
 # ── linear team-key routing ───────────────────────────────────────────────
 #
-# When `use_linear: true` and no `--repo`, a positional Linear key is
-# routed to the repo whose `linear_keys` list contains the prefix. Single
-# match wins; multi-match warns + falls back; no match falls back; the
-# explicit `--repo` flag always wins.
+# Under a linear provider and no `--repo`, a positional Linear key is routed to
+# the repo whose `tickets.keys` list contains the prefix. Single match wins;
+# multi-match warns + falls back; no match falls back; the explicit `--repo`
+# flag always wins.
 
 
 def _add_linear_keys(cockpit_repo, keys: list[str], repo_name: str = "testrepo"):
-    cfg_path = cockpit_repo.cockpit_home / "config.json"
-    data = json.loads(cfg_path.read_text())
-    for r in data["repos"]:
-        if r["name"] == repo_name:
-            r["linear_keys"] = keys
-    cfg_path.write_text(json.dumps(data))
+    _set_repo_tickets(cockpit_repo, {"provider": "linear", "keys": keys}, repo_name)
 
 
 def test_linear_key_routes_to_matching_repo_without_repo_flag(
@@ -1632,14 +1627,13 @@ def test_linear_key_routing_explicit_repo_wins(spawn_main, cockpit_repo, monkeyp
     assert "on khivi/pe-1234" in out
 
 
-def test_linear_key_routing_disabled_when_provider_is_none(
+def test_linear_key_routing_disabled_without_a_provider(
     spawn_main, cockpit_repo, monkeypatch
 ):
-    """`tickets: none` keeps team-key routing off even with keys declared: the
-    spawn falls back to cwd discovery, which fails under tests (no managed repo
-    at the test process cwd)."""
-    _add_linear_keys(cockpit_repo, ["PE"])  # would match if routing ran
-    _set_repo_tickets(cockpit_repo, {"provider": "none"})
+    """`tickets.keys` alone names no provider (Jira declares the same field), so
+    routing stays off and the spawn falls back to cwd discovery — which fails
+    under tests (no managed repo at the test process cwd)."""
+    _set_repo_tickets(cockpit_repo, {"keys": ["PE"]})  # would match if routing ran
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "discover_repo", lambda: None)
@@ -1648,15 +1642,13 @@ def test_linear_key_routing_disabled_when_provider_is_none(
     assert "cannot determine repo" in err
 
 
-def test_legacy_linear_keys_alone_route_without_a_tickets_block(
+def test_linear_key_routing_reads_the_candidates_not_the_global_block(
     spawn_main, cockpit_repo, monkeypatch
 ):
-    """A repo carrying only the legacy flat `linear_keys` resolves to `linear`
-    (`repo_tickets`' documented back-compat), so it routes — the gate asks the
-    *candidates* about their provider, not the global block, which used to be
-    "none" here and switched routing off for the very repo declaring the key.
-    """
-    _add_linear_keys(cockpit_repo, ["PE"])
+    """The routing gate asks the matched *candidates* about their provider. With
+    the provider declared per repo and nothing global, a global-only read saw
+    "none" and switched routing off for the very repo declaring the key."""
+    _add_linear_keys(cockpit_repo, ["PE"])  # per-repo provider, no global block
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "discover_repo", lambda: None)
@@ -1673,14 +1665,14 @@ def test_linear_key_routing_multi_match_warns_and_falls_back(
     _set_config_key(cockpit_repo, "tickets", "linear")
     cfg_path = cockpit_repo.cockpit_home / "config.json"
     data = json.loads(cfg_path.read_text())
-    data["repos"][0]["linear_keys"] = ["PE"]
+    data["repos"][0]["tickets"] = {"provider": "linear", "keys": ["PE"]}
     data["repos"].append(
         {
             "name": "second",
             "path": str(tmp_path / "second"),
             "branch_prefix": "khivi/",
             "default_base": "main",
-            "linear_keys": ["PE"],
+            "tickets": {"provider": "linear", "keys": ["PE"]},
         }
     )
     cfg_path.write_text(json.dumps(data))

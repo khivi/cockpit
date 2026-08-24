@@ -1939,15 +1939,23 @@ async def test_footer_hides_ticket_when_not_configured():
 async def test_footer_shows_ticket_when_configured(monkeypatch):
     from cockpit.tui.widgets.footer_bar import FooterBar
 
-    # A legacy `linear_keys` repo resolves to the linear provider; the ticket key
-    # is enabled for any provider (linear or github) — the compose-time global
-    # gate (`show_tickets`) opens, so `t` is no longer globally skipped. (Whether
-    # it renders for a *given* row is the separate per-row capability gate,
-    # covered by test_footer_gates_row_keys_on_capabilities — asserted here with
-    # caps unset to isolate the global gate from the background tick.)
+    # The ticket key is enabled for any provider (linear or github) — the
+    # compose-time global gate (`show_tickets`) opens, so `t` is no longer
+    # globally skipped. (Whether it renders for a *given* row is the separate
+    # per-row capability gate, covered by
+    # test_footer_gates_row_keys_on_capabilities — asserted here with caps unset
+    # to isolate the global gate from the background tick.)
     monkeypatch.setattr(
         "cockpit.tui.app.load_config",
-        lambda: {"repos": [{"name": "r", "path": "/tmp", "linear_keys": ["PE"]}]},
+        lambda: {
+            "repos": [
+                {
+                    "name": "r",
+                    "path": "/tmp",
+                    "tickets": {"provider": "linear", "keys": ["PE"]},
+                }
+            ]
+        },
     )
     app, _ = _make_app()
     async with app.run_test() as pilot:
