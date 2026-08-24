@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/khivi/cockpit/compare/v2.1.0...v2.2.0) (2026-08-24)
+
+
+### Features
+
+* **tui:** close the worktree when the cmux sidebar X is clicked ([#360](https://github.com/khivi/cockpit/issues/360)) ([13f06f6](https://github.com/khivi/cockpit/commit/13f06f6c3b316a1fa6401b5b40716f642c6356d1))
+
 ## [2.1.0](https://github.com/khivi/cockpit/compare/v2.0.0...v2.1.0) (2026-08-24)
 
 
