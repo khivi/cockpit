@@ -1587,7 +1587,7 @@ def _transition_ctx(
     wt_path.mkdir(exist_ok=True)
     wt = Worktree(path=wt_path, branch=branch, dirty_count=0, is_primary=False)
     return cycle.RepoCycle(
-        cfg=cfg if cfg is not None else {"linear_done_on_merge": True},
+        cfg=cfg if cfg is not None else {"tickets": {"close_on_merge": True}},
         repo_path=tmp_path,
         owner="o",
         name="n",
@@ -1602,7 +1602,9 @@ def _transition_ctx(
         pill_state={},
         dry=dry,
         headless=False,
-        repo_entry=repo_entry if repo_entry is not None else {"linear_keys": ["PE"]},
+        repo_entry=repo_entry
+        if repo_entry is not None
+        else {"tickets": {"provider": "linear", "keys": ["PE"]}},
     )
 
 
@@ -1652,7 +1654,7 @@ def test_transition_happy_path_moves_ticket(tmp_path, monkeypatch):
 
 def test_transition_noop_when_flag_off(tmp_path, monkeypatch):
     monkeypatch.setenv("LINEAR_API_KEY", "k")
-    ctx = _transition_ctx(tmp_path, cfg={"linear_done_on_merge": False})
+    ctx = _transition_ctx(tmp_path, cfg={"tickets": {"close_on_merge": False}})
     with (
         _enter_all(_transition_patches()),
         patch.object(cycle, "update_ticket_state") as upd,
@@ -1666,8 +1668,14 @@ def test_transition_repo_override_enables(tmp_path, monkeypatch):
     # Global off, per-repo on → fires.
     ctx = _transition_ctx(
         tmp_path,
-        cfg={"linear_done_on_merge": False},
-        repo_entry={"linear_keys": ["PE"], "linear_done_on_merge": True},
+        cfg={"tickets": {"close_on_merge": False}},
+        repo_entry={
+            "tickets": {
+                "provider": "linear",
+                "keys": ["PE"],
+                "close_on_merge": True,
+            }
+        },
     )
     with (
         _enter_all(_transition_patches()),
@@ -2049,7 +2057,7 @@ def test_jira_transition_skips_when_myself_none(tmp_path, monkeypatch):
 _TRELLO_CFG = {
     "tickets": {
         "provider": "trello",
-        "merge_done_list": "Done",
+        "merge_done": "Done",
         "close_on_merge": True,
     }
 }
@@ -2615,19 +2623,30 @@ def test_apply_repo_colors_dry_noops(tmp_path):
     swc.assert_not_called()
 
 
-def test_repo_name_color_falls_back_to_bold_when_unset():
-    from cockpit.lib.colors import bold
+# Both resolve the expected colorizer through `cycle`, NOT through a fresh
+# `from cockpit.lib.colors import ...`. `colors.py` reads the theme at import
+# time, so `tests/lib/test_colors.py` reloads the module once per test (plus once
+# more in its autouse teardown) — and every reload rebuilds `bold` and
+# `CMUX_COLOR_ANSI` as new objects. `cycle` imported them *by value*, so its
+# copies go stale the moment that happens, while a fresh import here fetches the
+# current ones: the `is` comparison then fails purely on collection order, which
+# under `-n auto` reads as a random flake. The autouse teardown restores the
+# module's *values* but cannot restore identity — reloading again just mints
+# another object. `cycle.bold` is by definition the exact object
+# `_repo_name_color` closes over, which is also the right granularity: what's
+# under test is that function's dispatch (fallback vs configured hue), not
+# colors.py's own contents, which `tests/lib/test_colors.py` owns.
 
-    assert cycle._repo_name_color({"name": "n"}) is bold
-    assert cycle._repo_name_color({"name": "n", "sidebar_color": None}) is bold
+
+def test_repo_name_color_falls_back_to_bold_when_unset():
+    assert cycle._repo_name_color({"name": "n"}) is cycle.bold
+    assert cycle._repo_name_color({"name": "n", "sidebar_color": None}) is cycle.bold
 
 
 def test_repo_name_color_uses_configured_sidebar_color():
-    from cockpit.lib.colors import CMUX_COLOR_ANSI
-
     assert (
         cycle._repo_name_color({"name": "n", "sidebar_color": "Teal"})
-        is CMUX_COLOR_ANSI["Teal"]
+        is cycle.CMUX_COLOR_ANSI["Teal"]
     )
 
 
@@ -3009,7 +3028,11 @@ def _devdone_pr(body: str = "", *, branch: str = "khivi/pe-1") -> PR:
 def _devdone_ctx(tmp_path, *, linear_keys=("PE",), dry=False, cfg=None):
     ctx = _stub_repo_cycle(tmp_path)
     ctx.dry = dry
-    ctx.repo_entry = {"linear_keys": list(linear_keys)} if linear_keys else {}
+    ctx.repo_entry = (
+        {"tickets": {"provider": "linear", "keys": list(linear_keys)}}
+        if linear_keys
+        else {}
+    )
     ctx.cfg = cfg if cfg is not None else {}
     return ctx
 
@@ -3240,7 +3263,7 @@ def test_track_dev_done_no_tickets_clears(tmp_path):
 
 def test_track_dev_done_single_ticket_shows_id_when_no_title(tmp_path):
     # Old on-disk cache carried no `title` — fall back to the id.
-    ctx = _devdone_ctx(tmp_path, cfg={"linear_dev_done_state": "Dev Done"})
+    ctx = _devdone_ctx(tmp_path, cfg={"tickets": {"dev_done": "Dev Done"}})
     block = {"tickets": [{"id": "PE-1234", "state": "Dev Done"}]}
     with patch.object(cycle, "apply_devdone_pill") as pill:
         cycle._track_dev_done(ctx, "workspace:1", block)
@@ -3249,7 +3272,7 @@ def test_track_dev_done_single_ticket_shows_id_when_no_title(tmp_path):
 
 def test_track_dev_done_single_ticket_linear_shows_id_despite_title(tmp_path):
     # A Linear id (PE-1234) is meaningful — show it even when a title is cached.
-    ctx = _devdone_ctx(tmp_path, cfg={"linear_dev_done_state": "Dev Done"})
+    ctx = _devdone_ctx(tmp_path, cfg={"tickets": {"dev_done": "Dev Done"}})
     block = {"tickets": [{"id": "PE-1234", "state": "Dev Done", "title": "Fix it"}]}
     with patch.object(cycle, "apply_devdone_pill") as pill:
         cycle._track_dev_done(ctx, "workspace:1", block)
@@ -3258,7 +3281,7 @@ def test_track_dev_done_single_ticket_linear_shows_id_despite_title(tmp_path):
 
 def _trello_devdone_ctx(tmp_path):
     ctx = _devdone_ctx(tmp_path, linear_keys=None)
-    ctx.repo_entry = {"tickets": {"provider": "trello", "dev_done_list": "Done"}}
+    ctx.repo_entry = {"tickets": {"provider": "trello", "dev_done": "Done"}}
     return ctx
 
 
@@ -3317,7 +3340,7 @@ def test_track_dev_done_partial_clears(tmp_path):
 
 
 def test_track_dev_done_custom_state_name(tmp_path):
-    ctx = _devdone_ctx(tmp_path, cfg={"linear_dev_done_state": "In Review"})
+    ctx = _devdone_ctx(tmp_path, cfg={"tickets": {"dev_done": "In Review"}})
     block = {"tickets": [{"id": "PE-1", "state": "In Review"}]}
     with patch.object(cycle, "apply_devdone_pill") as pill:
         cycle._track_dev_done(ctx, "workspace:1", block)
@@ -5389,8 +5412,11 @@ def test_transition_uses_the_repos_own_linear_key(tmp_path, monkeypatch):
     ctx = _transition_ctx(
         tmp_path,
         repo_entry={
-            "linear_keys": ["PE"],
-            "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+            "tickets": {
+                "provider": "linear",
+                "keys": ["PE"],
+                "token_env": "LIN_ACME",
+            },
         },
     )
     with (
@@ -5408,8 +5434,11 @@ def test_transition_noop_when_the_orgs_named_key_is_unset(tmp_path, monkeypatch)
     ctx = _transition_ctx(
         tmp_path,
         repo_entry={
-            "linear_keys": ["PE"],
-            "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+            "tickets": {
+                "provider": "linear",
+                "keys": ["PE"],
+                "token_env": "LIN_ACME",
+            },
         },
     )
     with (
@@ -5446,7 +5475,7 @@ def test_bg_spawn_pr_strips_ticket_credentials_from_the_child_env(
             {
                 "name": "n",
                 "path": str(tmp_path),
-                "tickets": {"provider": "linear", "api_key_env": "LIN_ACME"},
+                "tickets": {"provider": "linear", "token_env": "LIN_ACME"},
             },
             {
                 "name": "j",

@@ -184,6 +184,29 @@ _LEGACY_SKILL_KEYS = {
     "prompt_prefix": "skills.session",
     "review_command": "skills.review",
 }
+# Flat keys the `tickets` object replaced — see `_check_legacy`.
+_LEGACY_TICKET_KEYS = {
+    "linear_keys": "tickets.keys",
+    "linear_dev_done_state": "tickets.dev_done",
+    "linear_done_on_merge": "tickets.close_on_merge",
+    "linear_merge_done_state": "tickets.merge_done",
+}
+
+# Superseded *inside* the `tickets` block: the per-provider spellings that
+# `dev_done` / `merge_done` / `token_env` unified. Same treatment as the flat
+# keys above and for the same reason — a silently-ignored `dev_done_list` is a
+# devdone pill that goes dark with nothing said. Checked separately because
+# these live one level down, inside the block rather than beside it.
+_LEGACY_TICKET_FIELDS = {
+    "dev_done_state": "dev_done",
+    "dev_done_label": "dev_done",
+    "dev_done_status": "dev_done",
+    "dev_done_list": "dev_done",
+    "merge_done_state": "merge_done",
+    "merge_done_status": "merge_done",
+    "merge_done_list": "merge_done",
+    "api_key_env": "token_env",
+}
 
 
 def _validate_skills(cfg: dict) -> None:
@@ -240,6 +263,35 @@ def _validate_base_remote(cfg: dict) -> None:
     _validate_field(cfg, "base_remote", _check)
 
 
+def _check_legacy(src: dict, where: str) -> None:
+    """Hard-fail on a superseded ticket key — flat beside the block, or inside it.
+
+    Same treatment as `use_linear` → `tickets` and the `_LEGACY_SKILL_KEYS` pair
+    above, and for the same reason: these were honored as fallbacks for a while,
+    and every one of them silently *disables* something the moment it stops being
+    read — `linear_keys` stops routing a `PE-1234` spawn and stops the devdone
+    pill, `linear_done_on_merge` quietly stops writing to the tracker, a
+    `dev_done_list` left behind takes the Trello pill dark. A config error read
+    once beats a feature that goes quiet forever.
+
+    Both families are checked per repo as well as globally, including the ones
+    only ever read globally: a per-repo one was never read either, so it earns
+    the same message. The in-block family is checked here rather than in
+    `tickets_field_errors` so the message can name the replacement — that
+    function only knows a field is unknown for the active provider, which would
+    report a rename as a typo.
+    """
+    for old, new in _LEGACY_TICKET_KEYS.items():
+        if old in src:
+            _die(f"{where}: `{old}` is now `{new}` — move it into a `tickets` object.")
+    block = src.get("tickets")
+    if not isinstance(block, dict):
+        return
+    for old, new in _LEGACY_TICKET_FIELDS.items():
+        if old in block:
+            _die(f"{where}: `tickets.{old}` is now `tickets.{new}` — rename it.")
+
+
 def _validate_tickets(cfg: dict) -> None:
     """Validate the `tickets` config (top-level *and* per-repo).
 
@@ -274,6 +326,22 @@ def _validate_tickets(cfg: dict) -> None:
         for err in tickets_field_errors(block, str(provider)):
             _die(f"{where}: {err}")
 
+    # Migration checks run FIRST, before the per-provider schema check. A
+    # superseded spelling is also an unknown field for its provider, so
+    # `_check_block` would otherwise win the race and report a *rename* as a
+    # typo — "unknown field 'dev_done_label'" instead of "`dev_done_label` is now
+    # `dev_done`". Both messages are true; only one tells the user what to do.
+    if "use_linear" in cfg:
+        _die(
+            "use_linear was replaced by the `tickets` config "
+            "(set `tickets: linear`, or `tickets: {provider: linear, ...}`)."
+        )
+
+    _check_legacy(cfg, "config")
+    for repo in cfg.get("repos", []):
+        name = repo.get("name") or repo.get("path", "?")
+        _check_legacy(repo, f"repo {name!r}")
+
     if "tickets" in cfg:
         _check_block(cfg["tickets"], "tickets")
     for repo in cfg.get("repos", []):
@@ -281,12 +349,6 @@ def _validate_tickets(cfg: dict) -> None:
             continue
         name = repo.get("name") or repo.get("path", "?")
         _check_block(repo["tickets"], f"repo {name!r}")
-
-    if "use_linear" in cfg:
-        _die(
-            "use_linear was replaced by the `tickets` config "
-            "(set `tickets: linear`, or `tickets: {provider: linear, ...}`)."
-        )
 
 
 def _validate_orphan_nudge_grace(cfg: dict) -> None:
@@ -324,12 +386,9 @@ def _unset_linear_key_envs(cfg: dict, repos: list[dict | None]) -> list[str]:
 
 
 def _validate_linear_dev_done(cfg: dict) -> None:
-    """Validate the dev-done pill config and warn on a missing API key.
+    """Warn on a missing Linear API key for a repo that needs one.
 
-    `linear_dev_done_state`, when present, must be a string (a non-string would
-    silently never match a Linear state name) — rejected like `sidebar_color`.
-
-    Then, for every repo that is Linear-configured (`tickets.keys`) whose resolved
+    For every repo that is Linear-configured (`tickets.keys`) whose resolved
     API-key env var is unset, the daemon can't query Linear, so the `devdone=`
     pill silently stays off. That's a soft degrade, not a config error — warn
     once per distinct env var name at start so it isn't a mystery cycles later.
@@ -338,11 +397,11 @@ def _validate_linear_dev_done(cfg: dict) -> None:
 
     `tickets.keys` is Jira's routing field too, so the resolved *provider* gates
     the list — else every Jira repo would be warned about an unset LINEAR_API_KEY.
-    """
-    state = cfg.get("linear_dev_done_state")
-    if state is not None and not isinstance(state, str):
-        _die(f"linear_dev_done_state must be a string, got {state!r}.")
 
+    (The `tickets` block's own field *types* are checked by `_validate_tickets`
+    via each provider's `CONFIG_FIELDS`; there is nothing left to type-check here
+    now that the flat `linear_dev_done_state` key is gone.)
+    """
     from .config import linear_team_keys
     from .tickets import LINEAR, provider_for
 
@@ -361,47 +420,37 @@ def _validate_linear_dev_done(cfg: dict) -> None:
         )
 
 
-def _validate_linear_done_on_merge(cfg: dict) -> None:
-    """Validate the merge-transition config and warn on a missing API key.
+def _validate_ticket_close_on_merge(cfg: dict) -> None:
+    """Warn when the Linear merge transition is on but its API key env var isn't.
 
-    `linear_done_on_merge` (top-level *and* per-repo) must be a bool — a stray
-    truthy string would silently enable a Linear *write*, so it's rejected like
-    `review_prs`. `linear_merge_done_state`, when present, must be a string.
+    Soft degrade, not a config error — the daemon simply can't perform the write
+    — so it mirrors `_validate_linear_dev_done`: one warning per distinct
+    variable name, naming the variable and never its value. `close_on_merge` is
+    the *shared* opt-in across all four providers, so the resolved provider gates
+    the list; without that, a Trello or Jira repo enabling the merge write would
+    be warned about an unset LINEAR_API_KEY it has no use for.
 
-    Then, if the feature is enabled anywhere (global or any repo) but the
-    resolved Linear API-key env var is unset, the daemon can't perform the
-    transition — warn once per distinct variable name (soft degrade, not an
-    error), matching `_validate_linear_dev_done`.
+    Type-checking lives in `_validate_tickets` now (`close_on_merge` and
+    `merge_done_state` are fields of the `tickets` block, checked against
+    Linear's `CONFIG_FIELDS`), so this function only warns.
     """
-    top = cfg.get("linear_done_on_merge")
-    if top is not None and not isinstance(top, bool):
-        _die(f"linear_done_on_merge must be true or false, got {top!r}.")
+    from .config import ticket_close_on_merge
+    from .tickets import LINEAR, provider_for
 
-    state = cfg.get("linear_merge_done_state")
-    if state is not None and not isinstance(state, str):
-        _die(f"linear_merge_done_state must be a string, got {state!r}.")
-
-    enabled = bool(top)
-    # The repos the feature is on for — every repo when the global flag is set,
-    # else just those opting in. Their resolved key env var is what to check.
-    on_repos: list[dict | None] = []
-    for repo in cfg.get("repos", []):
-        val = repo.get("linear_done_on_merge")
-        if val is not None and not isinstance(val, bool):
-            name = repo.get("name") or repo.get("path", "?")
-            _die(
-                f"repo {name!r}: linear_done_on_merge must be true or false, "
-                f"got {val!r}."
-            )
-        if bool(top) or val:
-            on_repos.append(repo)
-        enabled = enabled or bool(val)
-
-    if not enabled:
+    repos = cfg.get("repos", [])
+    on_repos: list[dict | None] = [
+        r
+        for r in repos
+        if ticket_close_on_merge(cfg, r) and provider_for(cfg, r) is LINEAR
+    ]
+    # A repo-less config can still enable it globally; resolve at global level.
+    if not repos and ticket_close_on_merge(cfg) and provider_for(cfg) is LINEAR:
+        on_repos = [None]
+    if not on_repos:
         return
-    for env_name in _unset_linear_key_envs(cfg, on_repos or [None]):
+    for env_name in _unset_linear_key_envs(cfg, on_repos):
         print(
-            f"{yellow('cockpit:')} linear_done_on_merge is enabled but "
+            f"{yellow('cockpit:')} tickets.close_on_merge is enabled but "
             f"{env_name} is unset — linked tickets won't transition "
             f"on merge. Export {env_name} to enable it.",
             file=sys.stderr,
@@ -552,7 +601,7 @@ def validate_config(cfg: dict) -> None:
     _validate_tickets(cfg)
     _validate_orphan_nudge_grace(cfg)
     _validate_linear_dev_done(cfg)
-    _validate_linear_done_on_merge(cfg)
+    _validate_ticket_close_on_merge(cfg)
 
 
 def preflight(cfg: dict, *, for_setup: bool = False) -> None:

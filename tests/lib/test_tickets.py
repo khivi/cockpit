@@ -29,10 +29,10 @@ def test_provider_for_none():
     assert tickets.provider_for({"tickets": "none"}, {}) is None
 
 
-def test_provider_for_linear_keys_back_compat():
-    # No `tickets` anywhere, but repo has linear_keys → linear provider.
-    p = tickets.provider_for({}, {"linear_keys": ["PE"]})
-    assert p is not None and p.name == "linear"
+def test_provider_for_needs_an_explicit_provider():
+    # `tickets.keys` alone doesn't name a provider — Jira declares the same
+    # field, so the block has to say which one it is.
+    assert tickets.provider_for({}, {"tickets": {"keys": ["PE"]}}) is None
 
 
 def test_linear_parse_footers_ignores_nwo():
@@ -72,7 +72,7 @@ def test_github_fetch_states_maps_label_to_dev_done():
 def test_github_fetch_states_custom_label_from_object():
     issues = {"#1": {"labels": ["qa ok"], "state": "open"}}
     cfg: dict = {}
-    repo = {"tickets": {"provider": "github", "dev_done_label": "qa ok"}}
+    repo = {"tickets": {"provider": "github", "dev_done": "qa ok"}}
     with patch.object(tickets, "fetch_issues", return_value=issues):
         out = tickets.GITHUB.fetch_states(
             ["#1"], repo_nwo="o/r", repo_dir="/", cfg=cfg, repo_entry=repo
@@ -150,7 +150,7 @@ def test_jira_dev_done_value_default():
 
 
 def test_jira_dev_done_value_custom():
-    repo = {"tickets": {"provider": "jira", "dev_done_status": "In Review"}}
+    repo = {"tickets": {"provider": "jira", "dev_done": "In Review"}}
     assert tickets.JIRA.dev_done_value({}, repo) == "In Review"
 
 
@@ -238,38 +238,37 @@ def test_canonical_workflow_fields_are_accepted_by_every_provider():
     assert tickets.tickets_field_errors({"merge_done": "X"}, "github") != []
 
 
-def test_superseded_workflow_spellings_still_validate():
-    assert tickets.tickets_field_errors({"dev_done_state": "X"}, "linear") == []
-    assert tickets.tickets_field_errors({"merge_done_state": "X"}, "linear") == []
-    assert tickets.tickets_field_errors({"dev_done_label": "X"}, "github") == []
-    assert tickets.tickets_field_errors({"dev_done_status": "X"}, "jira") == []
-    assert tickets.tickets_field_errors({"merge_done_status": "X"}, "jira") == []
-    assert tickets.tickets_field_errors({"dev_done_list": "X"}, "trello") == []
-    assert tickets.tickets_field_errors({"merge_done_list": "X"}, "trello") == []
-
-
-def test_a_superseded_spelling_is_still_rejected_for_another_provider():
-    # The aliases stay provider-scoped: a Linear config can't smuggle in
-    # Trello's list spelling just because both now resolve to `dev_done`.
-    assert tickets.tickets_field_errors({"dev_done_list": "X"}, "linear") != []
-    assert tickets.tickets_field_errors({"dev_done_state": "X"}, "trello") != []
+def test_superseded_workflow_spellings_are_no_longer_in_the_schema():
+    # They are rejected here as unknown-for-the-provider; `preflight._check_legacy`
+    # is what turns that into a message naming the replacement, since this
+    # function can't tell a rename from a typo.
+    for field, provider in [
+        ("dev_done_state", "linear"),
+        ("merge_done_state", "linear"),
+        ("dev_done_label", "github"),
+        ("dev_done_status", "jira"),
+        ("merge_done_status", "jira"),
+        ("dev_done_list", "trello"),
+        ("merge_done_list", "trello"),
+        ("api_key_env", "linear"),
+    ]:
+        assert tickets.tickets_field_errors({field: "X"}, provider) != [], field
 
 
 def test_credential_env_fields_are_per_provider():
-    assert tickets.tickets_field_errors({"api_key_env": "LIN"}, "linear") == []
-    assert tickets.tickets_field_errors({"api_key_env": "LIN"}, "trello") != []
+    assert tickets.tickets_field_errors({"token_env": "LIN"}, "linear") == []
     assert tickets.tickets_field_errors({"key_env": "K"}, "trello") == []
     assert tickets.tickets_field_errors({"key_env": "K"}, "jira") != []
 
 
 def test_credential_env_fields_must_be_strings():
-    errs = tickets.tickets_field_errors({"api_key_env": 7}, "linear")
+    errs = tickets.tickets_field_errors({"token_env": 7}, "linear")
     assert len(errs) == 1 and "must be a string" in errs[0]
 
 
 def test_linear_fetch_states_threads_the_resolved_key(monkeypatch):
     monkeypatch.setenv("LIN_ACME", "lin_secret")
-    repo = {"tickets": {"provider": "linear", "api_key_env": "LIN_ACME"}}
+    repo = {"tickets": {"provider": "linear", "token_env": "LIN_ACME"}}
     with patch.object(tickets, "fetch_ticket_states", return_value={}) as f:
         tickets.LINEAR.fetch_states(
             ["PE-1"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=repo
@@ -279,7 +278,7 @@ def test_linear_fetch_states_threads_the_resolved_key(monkeypatch):
 
 def test_linear_fetch_titles_threads_the_resolved_key(monkeypatch):
     monkeypatch.setenv("LIN_ACME", "lin_secret")
-    repo = {"tickets": {"provider": "linear", "api_key_env": "LIN_ACME"}}
+    repo = {"tickets": {"provider": "linear", "token_env": "LIN_ACME"}}
     with patch.object(tickets, "fetch_ticket_titles", return_value={}) as f:
         tickets.LINEAR.fetch_titles(
             ["PE-1"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=repo
@@ -289,7 +288,7 @@ def test_linear_fetch_titles_threads_the_resolved_key(monkeypatch):
 
 def test_linear_fetch_states_passes_none_when_the_named_var_is_unset(monkeypatch):
     monkeypatch.delenv("LIN_MISSING", raising=False)
-    repo = {"tickets": {"provider": "linear", "api_key_env": "LIN_MISSING"}}
+    repo = {"tickets": {"provider": "linear", "token_env": "LIN_MISSING"}}
     with patch.object(tickets, "fetch_ticket_states", return_value={}) as f:
         tickets.LINEAR.fetch_states(
             ["PE-1"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=repo
@@ -396,7 +395,7 @@ def test_narrow_repos_keeps_every_repo_sharing_one_project(linear_key):
 
 
 def _org_repo(name: str, project: str, env: str) -> dict:
-    return {"name": name, "tickets": {"project": project, "api_key_env": env}}
+    return {"name": name, "tickets": {"project": project, "token_env": env}}
 
 
 def test_narrow_repos_one_fetch_when_candidates_share_a_credential(monkeypatch):

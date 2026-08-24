@@ -37,8 +37,6 @@ import subprocess
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("dev_done", "str"),
     ("start_label", "str"),
-    # Superseded spelling, still accepted (see `config._tickets_field`).
-    ("dev_done_label", "str"),
 )
 
 # GitHub's documented issue-closing keywords (close/closes/closed, fix/fixes/

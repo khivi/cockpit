@@ -1586,19 +1586,14 @@ def test_attach_delivers_addendum_and_context(spawn_main, monkeypatch):
 
 # ── linear team-key routing ───────────────────────────────────────────────
 #
-# When `use_linear: true` and no `--repo`, a positional Linear key is
-# routed to the repo whose `linear_keys` list contains the prefix. Single
-# match wins; multi-match warns + falls back; no match falls back; the
-# explicit `--repo` flag always wins.
+# Under a linear provider and no `--repo`, a positional Linear key is routed to
+# the repo whose `tickets.keys` list contains the prefix. Single match wins;
+# multi-match warns + falls back; no match falls back; the explicit `--repo`
+# flag always wins.
 
 
 def _add_linear_keys(cockpit_repo, keys: list[str], repo_name: str = "testrepo"):
-    cfg_path = cockpit_repo.cockpit_home / "config.json"
-    data = json.loads(cfg_path.read_text())
-    for r in data["repos"]:
-        if r["name"] == repo_name:
-            r["linear_keys"] = keys
-    cfg_path.write_text(json.dumps(data))
+    _set_repo_tickets(cockpit_repo, {"provider": "linear", "keys": keys}, repo_name)
 
 
 def test_linear_key_routes_to_matching_repo_without_repo_flag(
@@ -1632,19 +1627,34 @@ def test_linear_key_routing_explicit_repo_wins(spawn_main, cockpit_repo, monkeyp
     assert "on khivi/pe-1234" in out
 
 
-def test_linear_key_routing_disabled_when_use_linear_false(
+def test_linear_key_routing_disabled_without_a_provider(
     spawn_main, cockpit_repo, monkeypatch
 ):
-    """With `use_linear: false`, team-key routing is a no-op: the spawn
-    falls back to cwd discovery, which fails under tests (no managed
-    repo at the test process cwd)."""
-    _add_linear_keys(cockpit_repo, ["PE"])  # would match if routing ran
+    """`tickets.keys` alone names no provider (Jira declares the same field), so
+    routing stays off and the spawn falls back to cwd discovery — which fails
+    under tests (no managed repo at the test process cwd)."""
+    _set_repo_tickets(cockpit_repo, {"keys": ["PE"]})  # would match if routing ran
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "discover_repo", lambda: None)
     code, _out, err = spawn_main(["PE-1234"])
     assert code != 0
     assert "cannot determine repo" in err
+
+
+def test_linear_key_routing_reads_the_candidates_not_the_global_block(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """The routing gate asks the matched *candidates* about their provider. With
+    the provider declared per repo and nothing global, a global-only read saw
+    "none" and switched routing off for the very repo declaring the key."""
+    _add_linear_keys(cockpit_repo, ["PE"])  # per-repo provider, no global block
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "discover_repo", lambda: None)
+    code, out, _err = spawn_main(["PE-1234"])
+    assert code == 0
+    assert "on khivi/pe-1234" in out
 
 
 def test_linear_key_routing_multi_match_warns_and_falls_back(
@@ -1655,14 +1665,14 @@ def test_linear_key_routing_multi_match_warns_and_falls_back(
     _set_config_key(cockpit_repo, "tickets", "linear")
     cfg_path = cockpit_repo.cockpit_home / "config.json"
     data = json.loads(cfg_path.read_text())
-    data["repos"][0]["linear_keys"] = ["PE"]
+    data["repos"][0]["tickets"] = {"provider": "linear", "keys": ["PE"]}
     data["repos"].append(
         {
             "name": "second",
             "path": str(tmp_path / "second"),
             "branch_prefix": "khivi/",
             "default_base": "main",
-            "linear_keys": ["PE"],
+            "tickets": {"provider": "linear", "keys": ["PE"]},
         }
     )
     cfg_path.write_text(json.dumps(data))
@@ -1854,6 +1864,176 @@ def test_trello_card_routing_inconclusive_fetch_warns_and_falls_back(
     assert code != 0
     assert "matches multiple repos" in err
     assert "testrepo" in err and "second" in err
+
+
+# ── per-repo / per-org provider gate ───────────────────────────────────────
+#
+# The fetch+rename prompt is gated on the provider resolved for the repo the
+# spawn lands in (`repo_tickets`: repo → org → global), not on the global
+# `tickets` block alone. Reading it globally made every ticket spawn into a repo
+# whose provider lives on its own entry — or on a shared `orgs` block, the
+# many-repos-one-team shape — come up on a bare branch with no ticket context.
+# Every provider is gated through the same table, so each gets a case here.
+
+
+def _set_org_tickets(
+    cockpit_repo, block: dict, org: str = "acme", repo_name: str = "testrepo"
+) -> None:
+    """Declare `tickets` on an `orgs` block and point a repo at it — the
+    provider is then reachable only through the org rung `load_config` merges in.
+    """
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data.setdefault("orgs", {})[org] = {"tickets": block}
+    for r in data["repos"]:
+        if r["name"] == repo_name:
+            r["org"] = org
+    cfg_path.write_text(json.dumps(data))
+
+
+def test_trello_prompt_seeded_when_provider_is_org_level(spawn_main, cockpit_repo):
+    """The reported bug, end to end: Trello on an `orgs` block, nothing global."""
+    _set_org_tickets(cockpit_repo, {"provider": "trello"})
+    code, _out, _err = spawn_main([_TRELLO_URL, "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Trello MCP" in cmd
+    assert _TRELLO_URL in cmd
+
+
+def test_trello_prompt_seeded_when_provider_is_repo_level(spawn_main, cockpit_repo):
+    _set_repo_tickets(cockpit_repo, {"provider": "trello"})
+    code, _out, _err = spawn_main([_TRELLO_URL, "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Trello MCP" in cmd
+
+
+def test_linear_prompt_seeded_when_provider_is_org_level(spawn_main, cockpit_repo):
+    _set_org_tickets(cockpit_repo, {"provider": "linear"})
+    code, _out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Linear MCP" in cmd
+    assert "PE-1234" in cmd
+
+
+def test_jira_prompt_seeded_when_provider_is_org_level(spawn_main, cockpit_repo):
+    """Same mode as Linear (shared identifier shape) — the resolved provider is
+    the only thing that picks Jira's prompt over Linear's."""
+    _set_org_tickets(cockpit_repo, {"provider": "jira"})
+    code, _out, _err = spawn_main(["PROJ-1234", "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Jira" in cmd
+    assert "Linear MCP" not in cmd
+
+
+def test_gh_issue_prompt_seeded_when_provider_is_org_level(spawn_main, cockpit_repo):
+    _set_org_tickets(cockpit_repo, {"provider": "github"})
+    code, _out, _err = spawn_main(["i#42", "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "gh issue view 42" in cmd
+
+
+def test_repo_provider_overrides_a_conflicting_global_one(spawn_main, cockpit_repo):
+    """A global `tickets: linear` must not seed Linear's prompt for a repo that
+    tracks work in Trello — the repo rung wins, as it does everywhere else."""
+    _set_config_key(cockpit_repo, "tickets", "linear")
+    _set_repo_tickets(cockpit_repo, {"provider": "trello"})
+    code, _out, _err = spawn_main([_TRELLO_URL, "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Trello MCP" in cmd
+
+
+def test_provider_resolves_after_ticket_key_routing_not_from_cwd(
+    spawn_main, cockpit_repo
+):
+    """The gate runs *after* routing. `PROJ-1` routes to `second` on its
+    `tickets.keys`, so `second`'s provider (jira) picks the prompt — even though
+    `testrepo`, the repo named first, is on linear. Resolving the provider before
+    routing settles reads whichever repo the caller happened to be standing in.
+
+    Both entries point at the fixture repo so the worktree really gets created;
+    only the config entry the spawn selects is under test.
+    """
+    _set_repo_tickets(cockpit_repo, {"provider": "linear", "keys": ["PE"]})
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data["repos"].append(
+        {
+            "name": "second",
+            "path": str(cockpit_repo.repo),
+            "branch_prefix": "khivi/",
+            "default_base": "main",
+            "tickets": {"provider": "jira", "keys": ["PROJ"]},
+        }
+    )
+    cfg_path.write_text(json.dumps(data))
+
+    code, _out, _err = spawn_main(["PROJ-1"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Jira" in cmd
+    assert "Linear MCP" not in cmd
+
+
+# ── plan-only fallback carries the source ──────────────────────────────────
+#
+# When no provider matches, the fetch prompt is skipped — but the ticket ref is
+# the one thing cockpit can still hand over, and dropping it left a codename
+# branch (`solar-viper`) with nothing to say where it came from.
+
+
+def test_trello_card_without_provider_seeds_url_in_plan_only(spawn_main, cockpit_repo):
+    code, _out, _err = spawn_main([_TRELLO_URL, "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Trello MCP" not in cmd
+    assert "PLAN ONLY" in cmd
+    assert _TRELLO_URL in cmd
+
+
+def test_linear_key_without_provider_seeds_ref_in_plan_only(spawn_main, cockpit_repo):
+    code, _out, _err = spawn_main(["PE-1234", "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "Linear MCP" not in cmd
+    assert "PE-1234" in cmd
+
+
+def test_gh_issue_without_provider_seeds_ref_in_plan_only(spawn_main, cockpit_repo):
+    """The URL form's ref keeps its repo (`o/r#42`), so the session can look the
+    issue up without guessing which repo it belongs to."""
+    code, _out, _err = spawn_main(
+        ["https://github.com/o/r/issues/42", "--repo", "testrepo"]
+    )
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "gh issue view" not in cmd
+    assert "o/r#42" in cmd
+
+
+def test_plan_only_source_rides_a_custom_plan_command(spawn_main, cockpit_repo):
+    """`skills.plan` replaces the built-in prose, so the ticket ref has to ride
+    the command seed's context block too — not just `plan_only.txt`."""
+    _set_config_key(cockpit_repo, "skills", {"plan": "/my-plan"})
+    code, _out, _err = spawn_main([_TRELLO_URL, "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "/my-plan" in cmd
+    assert _TRELLO_URL in cmd
+
+
+def test_plain_branch_spawn_has_no_source_block(spawn_main, cockpit_repo):
+    """A non-ticket source seeds nothing new — the fallback only speaks up when
+    there is a ticket it could not fetch."""
+    code, _out, _err = spawn_main(["my-feature", "--repo", "testrepo", "--", "do it"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "**Source**" not in cmd
 
 
 # ── --skill semantics ──────────────────────────────────────────────────────

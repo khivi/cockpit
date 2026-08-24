@@ -346,8 +346,8 @@ def find_repos_by_ticket_key(identifier: str) -> list[dict]:
 
     Provider-neutral in substance: a Linear *team* key (`PE-1234`) and a Jira
     *project* key (`PROJ-123`) are the same thing — the outer container baked
-    into the identifier — so both route through `tickets.keys` (or the legacy
-    flat `linear_keys`) via `linear_team_keys`. Empty list when the identifier
+    into the identifier — so both route through `tickets.keys`
+    via `linear_team_keys`. Empty list when the identifier
     doesn't parse or no repo declares the prefix. Callers handle the empty /
     single / multi cases explicitly — this function does not pick a winner on a
     multi match.
@@ -473,32 +473,31 @@ def _tickets_block(src: dict | None) -> dict:
 
 
 def _tickets_field(
-    cfg: dict | None, repo_entry: dict | None, field: str, *aliases: str
+    cfg: dict | None, repo_entry: dict | None, field: str
 ) -> object | None:
     """One `tickets` field, resolved **per-field** repo-block → global-block →
     None. Per-field (not whole-block) so a global default for one setting — e.g.
     `close_on_merge` — still applies to a repo whose own `tickets` block omits
     that field but sets others.
 
-    `aliases` are superseded spellings of the same field, tried in order *after*
-    `field` **within each level** — so the canonical name wins over a legacy one
-    in the same block, while a repo's legacy name still beats a global canonical
-    one. That ordering is what keeps the rename back-compatible: the four
-    provider-specific spellings of dev-done (`dev_done_state` / `dev_done_label`
-    / `dev_done_status` / `dev_done_list`) all resolve to `dev_done`, and an
-    existing config keeps working untouched.
+    There is deliberately **no** alias/fallback parameter. The superseded
+    per-provider spellings (`dev_done_state` / `_label` / `_status` / `_list`,
+    `merge_done_state` / `_status` / `_list`, Linear's `api_key_env`) are not
+    read here — they hard-fail in `preflight._check_legacy`, which names the
+    canonical field to move to. Accepting both spellings silently would mean a
+    config that reads as configured while a typo'd canonical name falls through
+    to the legacy one, and it would make the *effective* schema permanently
+    twice the documented one. **Do not** re-add an alias arg; add a migration
+    entry to `_LEGACY_TICKET_KEYS` instead.
     """
-    names = (field, *aliases)
     rb = _tickets_block(repo_entry)
-    for name in names:
-        if name in rb:
-            repo_val: object = rb[name]
-            return repo_val
+    if field in rb:
+        repo_val: object = rb[field]
+        return repo_val
     gb = _tickets_block(cfg if cfg is not None else load_config())
-    for name in names:
-        if name in gb:
-            global_val: object = gb[name]
-            return global_val
+    if field in gb:
+        global_val: object = gb[field]
+        return global_val
     return None
 
 
@@ -518,21 +517,15 @@ def tickets(cfg: dict | None = None) -> str:
 def repo_tickets(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Resolve the ticket provider for one repo: ``"none" | "linear" | "github"``.
 
-    Resolution order, first match wins:
-      1. the `tickets` block's ``provider`` (per-field repo → global),
-      2. ``"linear"`` when the repo declares the legacy flat ``linear_keys`` but
-         no provider is set anywhere — back-compat so existing Linear repos keep
-         their pill without a `tickets` block,
-      3. ``"none"``.
+    The `tickets` block's ``provider`` (per-field repo → global), else ``"none"``.
 
-    The slow tick (devdone pill, done-on-merge) and the TUI ticket columns all
-    gate on this per-repo value rather than the global one.
+    The slow tick (devdone pill, done-on-merge), the spawn fetch/rename prompt
+    and the TUI ticket columns all gate on this per-repo value rather than the
+    global one.
     """
     provider = _tickets_field(cfg, repo_entry, "provider")
     if provider in VALID_TICKETS:
         return str(provider)
-    if repo_entry is not None and repo_entry.get("linear_keys"):
-        return "linear"
     return "none"
 
 
@@ -545,7 +538,7 @@ def github_dev_done(cfg: dict | None = None, repo_entry: dict | None = None) -> 
     delivered issue's label names — the GitHub analog of Linear's
     ``dev_done``.
     """
-    val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_label")
+    val = _tickets_field(cfg, repo_entry, "dev_done")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return GITHUB_DEV_DONE_DEFAULT
@@ -557,15 +550,12 @@ def linear_team_keys(
     """The repo's Linear team-key prefixes (e.g. ``["PE"]``) — used to route a
     `PE-1234` spawn to this repo and to gate the Linear slow-tick reads/writes.
 
-    Read from the `tickets` block's ``keys`` (per-field repo → global), falling
-    back to the legacy flat `linear_keys` field so existing configs keep working.
-    Empty when neither is set (the repo isn't Linear-configured).
+    Read from the `tickets` block's ``keys`` (per-field repo → global). Empty
+    when unset (the repo isn't Linear-configured).
     """
     keys = _tickets_field(cfg, repo_entry, "keys")
     if isinstance(keys, list):
         return [str(k) for k in keys]
-    if repo_entry is not None and isinstance(repo_entry.get("linear_keys"), list):
-        return [str(k) for k in repo_entry["linear_keys"]]
     return []
 
 
@@ -608,18 +598,8 @@ def ticket_close_on_merge(
     for Linear. Reads the `tickets` block's ``close_on_merge`` **per-field** (a
     repo without its own value inherits a global ``tickets.close_on_merge``).
     Opt-in because it makes the daemon a tracker *writer*.
-
-    Back-compat: falls back to the legacy flat `linear_done_on_merge` key
-    (per-repo over global) when no `tickets.close_on_merge` is set anywhere, so
-    existing Linear configs keep working without migrating to the object form.
     """
-    val = _tickets_field(cfg, repo_entry, "close_on_merge")
-    if val is not None:
-        return bool(val)
-    if repo_entry is not None and "linear_done_on_merge" in repo_entry:
-        return bool(repo_entry["linear_done_on_merge"])
-    cfg = cfg if cfg is not None else load_config()
-    return bool(cfg.get("linear_done_on_merge", False))
+    return bool(_tickets_field(cfg, repo_entry, "close_on_merge"))
 
 
 def review_command(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
@@ -742,14 +722,12 @@ def use_slack() -> bool:
 def linear_dev_done(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the Linear workflow state that the `devdone=` pill keys off
     (default: "Dev Done"). Matched case-insensitively against the ticket's live
-    `state.name`. Set via the `tickets` block's ``dev_done`` (a string),
-    falling back to the legacy flat `linear_dev_done_state` key, then "Dev Done".
+    `state.name`. Set via the `tickets` block's ``dev_done`` (a string).
     """
-    val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_state")
+    val = _tickets_field(cfg, repo_entry, "dev_done")
     if isinstance(val, str) and val.strip():
         return val.strip()
-    cfg = cfg if cfg is not None else load_config()
-    return str(cfg.get("linear_dev_done_state") or "Dev Done").strip() or "Dev Done"
+    return "Dev Done"
 
 
 def linear_merge_done(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
@@ -757,14 +735,12 @@ def linear_merge_done(cfg: dict | None = None, repo_entry: dict | None = None) -
     PR merges (default: "Done"). Distinct from `linear_dev_done` ("Dev
     Done") — that's where the passive `devdone=` pill lights up while the PR is
     *open*; this is the terminal state the `ticket_close_on_merge` writer
-    transitions to on merge. Set via the `tickets` block's ``merge_done``,
-    falling back to the legacy flat `linear_merge_done_state` key, then "Done".
+    transitions to on merge. Set via the `tickets` block's ``merge_done``.
     """
-    val = _tickets_field(cfg, repo_entry, "merge_done", "merge_done_state")
+    val = _tickets_field(cfg, repo_entry, "merge_done")
     if isinstance(val, str) and val.strip():
         return val.strip()
-    cfg = cfg if cfg is not None else load_config()
-    return str(cfg.get("linear_merge_done_state") or "Done").strip() or "Done"
+    return "Done"
 
 
 def linear_token_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
@@ -776,7 +752,7 @@ def linear_token_env(cfg: dict | None = None, repo_entry: dict | None = None) ->
     credential (`api_key_env` resolves repo → org → global → default like every
     other `tickets` field, so an org block covers all its repos for free).
     """
-    val = _tickets_field(cfg, repo_entry, "token_env", "api_key_env")
+    val = _tickets_field(cfg, repo_entry, "token_env")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return LINEAR_API_KEY_ENV
@@ -837,7 +813,7 @@ def jira_dev_done(cfg: dict | None = None, repo_entry: dict | None = None) -> st
     — the Jira analog of `linear_dev_done`. Set via the `tickets` block's
     ``dev_done`` (a string).
     """
-    val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_status")
+    val = _tickets_field(cfg, repo_entry, "dev_done")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return JIRA_DEV_DONE_DEFAULT
@@ -850,7 +826,7 @@ def jira_merge_done(cfg: dict | None = None, repo_entry: dict | None = None) -> 
     the opt-in `ticket_close_on_merge` writer moves to on merge. Set via the
     `tickets` block's ``merge_done`` (a string).
     """
-    val = _tickets_field(cfg, repo_entry, "merge_done", "merge_done_status")
+    val = _tickets_field(cfg, repo_entry, "merge_done")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return "Done"
@@ -864,7 +840,7 @@ def trello_dev_done(cfg: dict | None = None, repo_entry: dict | None = None) -> 
     arbitrarily, so an unset value (empty string) means the pill never lights
     (feature off), never a guessed list name.
     """
-    val = _tickets_field(cfg, repo_entry, "dev_done", "dev_done_list")
+    val = _tickets_field(cfg, repo_entry, "dev_done")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return ""
@@ -876,7 +852,7 @@ def trello_merge_done(cfg: dict | None = None, repo_entry: dict | None = None) -
     ``merge_done``. **No default** — an unset value (empty string) leaves
     the opt-in merge-move off, never guessing a list name.
     """
-    val = _tickets_field(cfg, repo_entry, "merge_done", "merge_done_list")
+    val = _tickets_field(cfg, repo_entry, "merge_done")
     if isinstance(val, str) and val.strip():
         return val.strip()
     return ""
@@ -993,7 +969,7 @@ def orphan_nudge_grace_seconds(
     commit age, so it answers "how long since I made this worktree" — the thing a
     user means by "I just started it."
 
-    Resolved per-repo over global, matching `linear_done_on_merge`: an
+    Resolved per-repo over global, matching `tickets.close_on_merge`: an
     `orphan_nudge_grace_hours` on the repo entry wins, otherwise the top-level
     key, otherwise 4. `0` disables the grace entirely (immediate nudging — the
     pre-grace behaviour). Negative / out-of-range values are clamped to 0.

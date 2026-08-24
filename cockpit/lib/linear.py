@@ -29,7 +29,7 @@ in-session. But the daemon *does* make direct GraphQL calls:
     `fetch_team_states` (the merge-transition eligibility checks);
   * the one *write* — `update_ticket_state`, the `issueUpdate` mutation that
     moves a ticket's workflow state. It is reached only by the opt-in
-    `linear_done_on_merge` path in the slow tick (see
+    `tickets.close_on_merge` path in the slow tick (see
     `cycle._transition_merged_tickets`); the *policy* (which ticket, when,
     skip-if-already-done) lives there, this module just performs the call.
 
@@ -82,11 +82,6 @@ CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("dev_done", "str"),
     ("merge_done", "str"),
     ("token_env", "str"),
-    # Superseded spellings, still accepted so existing configs keep working.
-    # `config._tickets_field` resolves each to its canonical name above.
-    ("dev_done_state", "str"),
-    ("merge_done_state", "str"),
-    ("api_key_env", "str"),
 )
 
 # A PR *delivers* a ticket only via the explicit `Linear: [PE-1234](url)` footer
