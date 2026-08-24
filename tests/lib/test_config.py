@@ -11,6 +11,7 @@ update — long after the test would have flagged it if we had one.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -130,6 +131,23 @@ def test_starship_toml_pr_identity_on_line_two():
         "${custom.pr_title}",
     ):
         assert token in line_two, f"line 2 missing {token}: {line_two!r}"
+
+
+def test_starship_toml_raises_command_timeout_above_starship_default():
+    """Every `[custom.*]` module spawns a fresh Python interpreter, and the
+    format lists sixteen of them. starship's own 500ms default is not enough
+    headroom under concurrency: a module that overruns is dropped SILENTLY
+    (starship exits 0 and renders that pill empty), so the footer degrades to
+    missing pills with no error. Measured: 1-7 of every 12 concurrent renders
+    lost a pill at 500ms, 0 of 36 at 1000ms+. Dropping this line back to the
+    default re-introduces that, and re-flakes tests/e2e/test_cship_starship.py,
+    which copies this file verbatim."""
+    body = _strip_comments((DEFAULTS / "starship.toml").read_text())
+    match = re.search(r"^command_timeout\s*=\s*(\d+)", body, re.MULTILINE)
+    assert match, "starship.toml must set command_timeout (starship defaults to 500ms)"
+    assert (
+        int(match.group(1)) >= 1000
+    ), f"command_timeout={match.group(1)}ms is too tight; 500ms silently drops pills"
 
 
 def test_starship_toml_uses_placeholder_for_dispatcher_path():

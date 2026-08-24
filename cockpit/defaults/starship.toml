@@ -50,6 +50,26 @@ ${custom.pr_title}"""
 
 add_newline = false
 
+# Per-`[custom.*]` command budget, in ms. MUST stay well above starship's own
+# 500ms default: every module below spawns a fresh Python interpreter, and this
+# format lists sixteen of them, which starship runs concurrently. A module that
+# overruns is dropped SILENTLY — starship still exits 0 and just renders that
+# pill empty (it logs "timed out" to its session log and nothing else), so the
+# footer degrades into missing pills with no error anywhere.
+#
+# Measured on an 18-core laptop: a single field renders in ~90ms idle, so 500ms
+# looks like 5x headroom — but it is not the idle case that matters. Under 12
+# concurrent full renders, 1-7 of every 12 lost a pill at the 500ms default (95
+# "timed out" entries in one session log); at 1000ms and 2000ms, 0 of 36. That
+# is also what made tests/e2e/test_cship_starship.py flaky: it copies this file
+# verbatim, so under `pytest -n auto` the golden-render assertions failed on
+# vanished pills while passing in isolation and serially.
+#
+# 2000 is one doubling past the lowest value measured clean, for colder
+# interpreter starts and slower CI runners. It is a ceiling, not a cost — a
+# healthy render never approaches it.
+command_timeout = 2000
+
 # Theme palette. The literal `__COCKPIT_THEME__` token is replaced with the
 # `theme` value from ~/.config/cockpit/config.json ("dark" | "light") at install
 # time by `install_starship_default_config()` in cockpit/lib/config.py. Only the
