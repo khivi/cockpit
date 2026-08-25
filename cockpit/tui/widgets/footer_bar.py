@@ -74,7 +74,7 @@ class FooterBar(Horizontal):
         "mute_row": "pr",
         "snooze_row": "pr",
         "open_ticket": "ticket",
-        # `d` needs a PR to diff, same cached `pr-num` cell as `p`/`r`.
+        # `d` needs a PR to diff, same cached `pr-num` cell as `p`.
         "open_diff": "pr",
         # `a` sends text to an *existing* session — it can't spawn one (that's
         # `f`), so advertise it only when one is live. On a repo header it
@@ -138,7 +138,7 @@ class FooterBar(Horizontal):
     # backend to spawn into).
     BACKEND_ACTIONS = {
         "focus_row": frozenset({"cmux", "limux"}),
-        # `a` rides the same cmux-only send verb as `N`.
+        # `a` delivers through cmux's `send`, which limux has no equivalent for.
         "ask_row": frozenset({"cmux"}),
         # `d` pipes into `cmux diff`; limux/none have no such viewer, so the
         # hint hides there and `p` is the answer instead.

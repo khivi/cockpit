@@ -945,9 +945,8 @@ class CockpitApp(App[None]):
             self._ask_misses.pop(key, None)
             self._notify(f"sent to all {sent} session(s) in {name}")
         else:
-            # Keep the draft AND which refs missed, so the retry reaches only
-            # those. Without the second half, pressing `a` again re-delivers to
-            # every session including the ones that already accepted.
+            # Record the misses alongside the draft; the retry filter above
+            # reads them.
             self._ask_drafts[key] = text
             self._ask_misses[key] = frozenset(skips)
             # Name the reasons rather than a bare count: "2 mid-turn, 1 parked"
@@ -1611,8 +1610,8 @@ class CockpitApp(App[None]):
         # Routed through `nudge_if_idle` rather than a raw `cmux send` so the whole
         # idle-gate story applies — a mid-turn or permission-pending session
         # refuses it instead of having the text typed into a y/n prompt. No
-        # pref_key: a deliberate keypress overrides mute/snooze, exactly like
-        # `N`. `nudge_if_idle` collapses the text to one line (see
+        # pref_key: a deliberate keypress overrides mute/snooze.
+        # `nudge_if_idle` collapses the text to one line (see
         # `cmux.one_line`). Writes no cache cell.
         if not is_cmux():
             self._notify("ask requires cmux", severity="warning")
@@ -1650,8 +1649,7 @@ class CockpitApp(App[None]):
         # highlighting, dual line numbers and collapsed unmodified regions.
         # Cockpit deliberately does not reimplement any of that: a diff wants
         # search and folding, a scrolling `Static` has neither, and the
-        # truncation cap that shape needed was the tell. An in-overlay reader
-        # was built and removed rather than kept alongside this.
+        # truncation cap that shape needed was the tell.
         #
         # Plain `gh pr diff`, NOT `--color always` — the viewer does its own
         # highlighting and ANSI would only get in its way.

@@ -2617,12 +2617,13 @@ async def test_table_shows_cost_column_when_spend_is_reported(monkeypatch):
         assert [str(c.label) for c in table.columns.values()][-1] == "$"
 
 
-# ── `a` ask + `r` read PR ────────────────────────────────────────────────────
+# ── `a` ask ──────────────────────────────────────────────────────────────────
 
 
 async def test_ask_key_sends_typed_text_through_the_idle_gate(monkeypatch, tmp_path):
     """`a` routes the typed line through `nudge_if_idle` — the same gated send
-    as `N` — so a busy or permission-pending session refuses it."""
+    the automatic nudge uses — so a busy or permission-pending session
+    refuses it."""
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     calls: list[tuple[str, str]] = []
@@ -2685,7 +2686,7 @@ async def test_ask_key_reports_skip_when_not_idle(monkeypatch, tmp_path):
 
 
 async def test_ask_key_noop_on_limux(monkeypatch, tmp_path):
-    # `a` rides the cmux-only send verb, exactly like `N`.
+    # `a` delivers through cmux's `send`; limux has no equivalent.
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
     calls: list = []
@@ -2955,7 +2956,7 @@ async def test_footer_hides_diff_when_the_viewer_is_unavailable():
     assert not fb2._skip("open_diff")
 
 
-# ── review follow-ups: retry narrowing + draft lifecycle ─────────────────────
+# ── retry narrowing + draft lifecycle ────────────────────────────────────────
 
 
 async def test_repo_retry_reaches_only_the_sessions_that_missed(monkeypatch, tmp_path):
