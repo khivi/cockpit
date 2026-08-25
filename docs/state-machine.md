@@ -337,23 +337,36 @@ type into the confirmation. Do not "simplify" the gate to trust it.
 
 ```mermaid
 flowchart TD
-  IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pref_key)"] --> G1{"PR-attached &<br/>PR quiet?<br/>(muted OR snoozed)"}
-  G1 -->|yes| F1["return False<br/>(user mute/snooze,<br/>survives restart)"]
+  IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pref_key, skips)"] --> G1{"PR-attached &<br/>PR quiet?<br/>(muted OR snoozed)"}
+  G1 -->|yes| F1["return False · skips: muted or snoozed<br/>(user mute/snooze,<br/>survives restart)"]
   G1 -->|"no / orphan nudge"| G2{"native ==<br/>Running?"}
 
-  G2 -->|yes| F2["return False<br/>(mid-turn; also catches a<br/>stale idle= on a live session)"]
+  G2 -->|yes| F2["return False · skips: mid-turn<br/>(also catches a stale<br/>idle= on a live session)"]
   G2 -->|no| G3{"idle= pill present<br/>OR native == Idle?"}
 
-  G3 -->|no| F3["return False<br/>(Needs input / None = not at rest)"]
+  G3 -->|no| F3["return False · skips: not at rest (native)<br/>(Needs input / None = not at rest)"]
   G3 -->|yes| G4{"parked= pill<br/>present?"}
 
-  G4 -->|yes| F4["return False<br/>(user's done-waiting marker)"]
+  G4 -->|yes| F4["return False · skips: parked<br/>(user's done-waiting marker)"]
   G4 -->|no| HEAL{"native == Idle<br/>& no idle= pill?"}
 
   HEAL -->|yes| SELFHEAL["re-assert idle= pill<br/>(self-heal dropped Stop-hook write)"]
   HEAL -->|no| FIRE
-  SELFHEAL --> FIRE["one_line(msg)<br/>→ send + send-key enter<br/>→ record_nudge(pref_key)<br/>→ return True"]
+  SELFHEAL --> FIRE["one_line(msg)<br/>→ dry? return False (records nothing)<br/>→ send + send-key enter<br/>→ record_nudge(pref_key) → return True<br/>(send raises → skips: send failed)"]
 ```
+
+**The three middle guards live in `cmux._idle_skip_reason`**, not inline: a
+caller that wants to *report* the verdict (`cockpit broadcast`'s per-workspace
+summary) must not re-derive it from a second `list-status` — that would be both a
+wasted round-trip and a second copy of a rule that must never drift from this
+one. Its guard order is the diagram's: `Running` outranks the at-rest check,
+which outranks `parked=`, so a mid-turn parked workspace reports `mid-turn`.
+
+**`skips` is an optional out-dict** — on a gate skip it gets `{ref: reason}`,
+using the strings above (they are user-facing). The `dry` path is the one
+`return False` that records *nothing*, and that asymmetry is load-bearing:
+absence from `skips` is what lets a caller read a False as "this one would have
+received it". Passing no dict leaves behaviour byte-identical.
 
 There is **no time-based throttle**; the slow-tick cadence is the implicit rate
 limit. Each tick re-evaluates and re-fires if the underlying issue persists.
