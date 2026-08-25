@@ -169,4 +169,12 @@ def test_has_capability_gates_on_the_negotiated_list():
         ),
     ):
         assert has_capability("events.v1")
-        assert not has_capability("terminal.replay.v1")
+        assert not has_capability("workspace.groups.v1")
+
+
+def test_required_capabilities_only_name_tiers_cockpit_actually_has():
+    """Both were required for features cockpit never built — see capabilities.py."""
+    assert "terminal.replay.v1" not in REQUIRED_CAPABILITIES
+    assert "notification.feed.v1" not in REQUIRED_CAPABILITIES
+    assert "workspace.groups.v1" in REQUIRED_CAPABILITIES
+    assert "workspace-group" not in REQUIRED_VERBS

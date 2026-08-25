@@ -519,7 +519,7 @@ def _validate_workspace_backend() -> None:
     """Soft-warn when the resolved cmux lacks a verb or capability cockpit needs.
 
     `resolve_tool` checks presence, not version — so a cmux too old for
-    `send-key` or `terminal.replay.v1` used to surface as a mid-cycle no-op from
+    `send-key` or `workspace.groups.v1` used to surface as a mid-cycle no-op from
     a `check=False` call. Probe once at daemon start and name exactly what's
     missing and which tier it degrades.
 
