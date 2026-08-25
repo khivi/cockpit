@@ -20,10 +20,11 @@ them is stored, so nothing can drift:
 Cross those and exactly one path applies: spawn a workspace, nudge the agent,
 write a pill, tear the worktree down, or do nothing. Most cycles it is nothing.
 
-Two ticks split the work. The **slow tick** (300s) makes every decision and pays
-for the `gh` fetch. The **fast tick** (30s) is network-free — it republishes what
-the slow tick already decided, so a `git checkout` or a tmpdir wipe recovers in
-30s rather than 300s.
+Two ticks split the work. The **slow tick** (`slow_poll_interval_seconds`,
+default 300) makes every decision and pays for the `gh` fetch. The **fast tick**
+(`fast_poll_interval_seconds`, default 30) is network-free — it republishes what
+the slow tick already decided, so a `git checkout` or a tmpdir wipe recovers on
+the next fast tick rather than waiting out a slow one.
 
 One rule governs the whole picture: **only the daemon writes cache cells;
 renderers only read them.** A renderer that consults `git` or `gh` directly can
@@ -418,9 +419,9 @@ pills are a separate daemon→cmux output (see diagram 1), not a render cell.
 
 ```mermaid
 flowchart LR
-  GH["gh API"] --> SLOW["Slow tick · 300s"]
+  GH["gh API"] --> SLOW["Slow tick<br/>slow_poll_interval_seconds (300)"]
   GIT["git worktrees"] --> SLOW
-  GIT --> FAST["Fast tick · 30s"]
+  GIT --> FAST["Fast tick<br/>fast_poll_interval_seconds (30)"]
   EV["cmux events<br/>workspace.created/closed"] -.kick, no state.-> FAST
   EV -.X gesture: cwd only.-> XCLOSE["_on_workspace_closed<br/>→ _close_worktree (same gate as c)"]
   XCLOSE -.enqueue TeardownRequest.-> SLOW
@@ -460,8 +461,8 @@ cycle to republish them was pure lag, and it read as a dropped keypress (`z`
 leaving the row unfolded, unbanded, and the footer still saying "Snooze"). So both
 toggles re-stamp the snapshot's two fields and their cells (`cache.restamp_pref`)
 before kicking, writing exactly what the cycle would have written. Both halves
-are needed: cells alone are reverted within 30s by the fast tick's republish,
-which reads the snapshot. Everything else the keypress implies (pills, the
+are needed: cells alone are reverted by the next fast tick's republish, which
+reads the snapshot. Everything else the keypress implies (pills, the
 trailing `snoozed` fold, the nudge going quiet) *is* derived and stays the
 cycle's job. This does not generalize to a derived cell.
 
@@ -500,7 +501,8 @@ Why two ticks:
   into its `wt-cost` cell (`write_worktree_cost_cache`), and republishes PR flat
   cells from the persistent JSON, so a `git checkout`, a drifted workspace name,
   a freshly spawned workspace's colour, a running agent's cost, or an OS tmpdir
-  wipe recovers within ~30s instead of ~300s. Its 30s interval is the *floor*, not the only trigger: the
+  wipe recovers on the next fast tick rather than waiting out a slow one. That
+  interval is the *floor*, not the only trigger: the
   `cmux events` doorbell (`lib/events.py`, cmux-only) kicks it the moment a
   workspace is created or closed, so a spawn or close lands immediately. The
   event carries **no state** — it only wakes the tick, which re-derives

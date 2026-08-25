@@ -3050,3 +3050,106 @@ async def test_footer_hides_ask_repo_on_the_hidden_disclosure_row():
     fb._row_caps = frozenset({HEADER_CAP})  # a real repo group header
     assert not fb._skip("ask_row")
     assert fb._label("ask_row", "Ask") == "Ask repo"
+
+
+async def test_footer_always_advertises_the_command_palette():
+    # `ctrl+p` is Textual's binding, not one of cockpit's, so nothing in
+    # BINDINGS would ever render it — without the static segment the palette
+    # (and so "Show config", "Edit config", and the feature guide) is invisible.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "^P" in app.query_one(FooterBar).global_text
+        assert "More" in app.query_one(FooterBar).global_text
+
+
+async def test_palette_hint_survives_a_row_with_no_capabilities():
+    # Every other global hint can be gated off (`h` hides on a worktree row).
+    # The palette targets the app, not the row, so no row state may suppress it
+    # — least of all the empty table a first-time user actually sees.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        footer = app.query_one(FooterBar)
+        footer.row_caps = frozenset()
+        await pilot.pause()
+        assert "^P" in footer.global_text
+
+
+async def test_feature_guide_action_opens_the_docs_url(monkeypatch):
+    from cockpit.tui import app as app_mod
+
+    opened: list[str] = []
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(type(app), "open_url", lambda self, u: opened.append(u))
+        app.action_open_feature_guide()
+        await pilot.pause()
+    assert opened == [app_mod.FEATURE_GUIDE_URL]
+    assert opened[0].startswith("https://")
+
+
+async def test_welcome_hint_fires_once_then_never_again(monkeypatch):
+    # The autouse `_isolate_welcome_marker` fixture pre-marks the file (so the
+    # other ~115 TUI tests don't grow a toast in on_mount) — unlink it to get
+    # the genuine first-run path this test is about.
+    import cockpit.lib.firstrun as firstrun_mod
+
+    firstrun_mod.WELCOME_MARKER.unlink(missing_ok=True)
+    seen: list[str] = []
+
+    def _capture(self, message, *a, **kw):
+        seen.append(str(message))
+
+    monkeypatch.setattr(CockpitApp, "notify", _capture, raising=False)
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+    assert any("Feature guide" in m for m in seen), seen
+    assert not firstrun_mod.welcome_pending()
+
+    seen.clear()
+    app2, _ = _make_app()
+    async with app2.run_test() as pilot:
+        await pilot.pause()
+    assert not any("Feature guide" in m for m in seen), seen
+
+
+async def test_welcome_hint_never_breaks_startup_when_the_marker_is_unwritable(
+    monkeypatch, tmp_path
+):
+    # `_maybe_welcome` runs inside on_mount — a raising marker write would abort
+    # startup, i.e. a docs hint taking the whole dashboard down.
+    import cockpit.lib.firstrun as firstrun_mod
+
+    blocked = tmp_path / "blocker"
+    blocked.write_text("")
+    monkeypatch.setattr(firstrun_mod, "WELCOME_MARKER", blocked / "welcomed")
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.is_running
+
+
+async def test_palette_hint_is_not_clipped_at_a_narrow_terminal():
+    # `^P More` renders last in the global group, so it would be first to
+    # overflow — except the group is `width: auto` and the row group is `1fr`,
+    # so every squeeze lands on the row keys instead. Pinned at 80 columns (the
+    # classic floor); measured to survive to 55, below which the table itself is
+    # unusable.
+    from textual.widgets import Static
+
+    app, _ = _make_app()
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        glob = app.query_one("#footer-global", Static)
+        region = app.screen.find_widget(glob).region
+        assert region.width > 0 and region.x >= 0
+        assert "^P" in app.export_screenshot()

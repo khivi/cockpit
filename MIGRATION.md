@@ -1,6 +1,6 @@
 # Migrating from the plugin to Homebrew
 
-Cockpit used to ship as a Claude Code plugin + uv-tool that self-updated in place. It's now a Homebrew formula updated with `brew upgrade`. Its Claude Code footprint is whatever `cockpit setup` writes: the statusLine + idle/stop hooks in `~/.claude/settings.json`, and `/cockpit-new` + `/cockpit-close` in `~/.claude/commands/` (hyphenated — colon-namespacing like `/cockpit:new` is plugin-only). `/cockpit:review` is replaced by the built-in `/review`.
+Cockpit used to ship as a Claude Code plugin + uv-tool that self-updated in place. It's now a Homebrew formula updated with `brew upgrade`. Its Claude Code footprint is whatever `cockpit setup` writes: the statusLine + idle/stop hooks in `~/.claude/settings.json`, and `/cockpit-new` + `/cockpit-close` + `/cockpit-broadcast` in `~/.claude/commands/` (hyphenated — colon-namespacing like `/cockpit:new` is plugin-only). `/cockpit:review` is replaced by the built-in `/review`.
 
 Do this once. **Remove the old plugin *before* installing the new one** — otherwise the plugin's hooks and the new `settings.json` hooks both fire (doubled statusline / idle-pill).
 
@@ -33,7 +33,7 @@ uv tool uninstall cockpit
 brew tap khivi/cockpit
 brew trust khivi/cockpit   # recent Homebrew refuses to load a formula from an untrusted third-party tap
 brew install cockpit
-cockpit setup              # statusLine + hooks + /cockpit-new/-close (interactive for the statusline)
+cockpit setup              # statusLine + hooks + /cockpit-new/-close/-broadcast (interactive for the statusline)
 ```
 
 Restart your Claude Code sessions so the new hooks load, then `cockpit watch`. Confirm you're on the Homebrew build and not a leftover uv shim:

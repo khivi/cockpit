@@ -92,3 +92,14 @@ async def test_plain_json_body_is_unstyled():
         text = _body_content(app.screen)
         assert text.plain == '{"repos": ["a", "b"]}'
         assert text.spans == []
+
+
+async def test_palette_offers_the_feature_guide():
+    # The guide is palette-only (no key), so the palette entry is its ONLY
+    # in-app route — a missing hit means the feature is unreachable.
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        provider = ConfigCommands(app.screen)
+        hits = [h async for h in provider.search("feature guide")]
+        assert any("Feature guide" in str(h.text) for h in hits)

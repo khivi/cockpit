@@ -10,6 +10,15 @@ It orchestrates *context*, not agents. Cockpit doesn't plan work, split it up, o
 
 It works in both directions. Point `cockpit new` at any one of the four — a branch name, `#42`, `PE-1234`, a Slack permalink — and it materialises the rest: worktree cut, terminal opened in it, PR picked up when it appears, ticket linked. The row then keeps itself true, re-derived every cycle from git + GitHub + your terminal backend — nothing is stored, so nothing drifts — until the PR merges and it tears the row down.
 
+In short — the full tour is [`FEATURES.md`](FEATURES.md):
+
+- [**One row per change**](FEATURES.md#the-dashboard), every repo, sorted by whose turn it is.
+- [**One argument starts anything**](FEATURES.md#starting-work-one-argument-any-source) — branch, PR, issue, ticket, Slack link, failed CI run.
+- [**It nudges you back**](FEATURES.md#the-nudge) when your PR goes red — only into a session genuinely parked at its prompt.
+- [**Tickets stay in sync**](FEATURES.md#tickets) across Linear, Jira, GitHub Issues, and Trello, and move on merge.
+- [**Reviews are waiting for you**](FEATURES.md#reviewing-your-teams-prs) on each coworker PR — dry-run, never posted on your behalf.
+- [**Closing refuses to lose work**](FEATURES.md#closing-up), and merged PRs clean themselves up.
+
 ## Requirements
 
 - `git ≥ 2.30`, [`gh`](https://cli.github.com/) (authenticated), Claude Code
@@ -47,23 +56,20 @@ cockpit new <branch | PR | url>   # or press `n` in the TUI; full flags: cockpit
 cockpit watch                     # needs a TTY; run under tmux/cmux to persist
 ```
 
-The argument is auto-detected: a branch name, `#N` for a PR, `i#N` for an issue, a ticket key like `PE-1234`, or a URL — GitHub PR / issue / Actions run, Linear, Jira, Trello card, or a Slack permalink. Anything unrecognised becomes a new branch.
+The argument is auto-detected: a branch name, `#N` for a PR, `i#N` for an issue, a ticket key like `PE-1234`, or a URL — GitHub PR / issue / Actions run, Linear, Jira, Trello card, or a Slack permalink. Anything unrecognised becomes a new branch. ([What each source seeds →](FEATURES.md#starting-work-one-argument-any-source))
 
 Drive the table by keystroke — footer hints adapt to the highlighted row's state, its workspace, and your backend:
 
 | Key | Action |
 |---|---|
-| `f` | Focus the row's workspace (spawns one first if it has none) |
-| `p` | Open the PR in a browser |
-| `t` | Open the linked ticket (Linear/GitHub/Jira/Trello) |
-| `c` / `C` | Close the worktree + workspace. Refuses uncommitted work, unpushed commits, and an open PR — `C` overrides the open-PR refusal only, never the two that would lose work |
-| `m` | Mute / unmute the row's nudge — indefinite |
-| `z` | Snooze / wake — silences the row until the PR's reviews change or new work lands |
-| `d` | Open the PR diff in cmux's diff viewer (needs the cmux browser; cockpit warns at startup if it's off) |
-| `a` | Send a line to the row's Claude session — on a repo header it goes to every session in that repo. Refuses a mid-turn session and keeps your text so you can retry |
-| `n` | New workspace (branch / PR / URL / ticket / Slack thread) |
-| `h` | Park the row's repo — stops polling and closes its idle cmux workspaces. On the `▸ N hidden` row it expands the parked repos (click works too); on one of those it un-parks |
-| `s` / `o` / `q` | Sync · show logs · quit |
+| `f` | Focus the row's workspace — spawns one if it has none |
+| `p` · `t` | Open the PR · the linked ticket |
+| `d` · `a` | Open the PR diff · send a line to the row's session (on a repo header, to every session in it) |
+| `c` · `C` | Close the worktree + workspace — [never discards work](FEATURES.md#closing-up) |
+| `m` · `z` | Mute indefinitely · [snooze until the PR changes](FEATURES.md#the-nudge) |
+| `n` · `h` | Start something new · park the row's repo, or reveal / un-park a parked one |
+| `s` · `o` · `q` | Sync · logs · quit |
+| `^P` | More — config, theme, and the [feature guide](FEATURES.md) |
 
 ## Configuration
 
@@ -73,13 +79,13 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 {"repos": [{"name": "myrepo", "path": "/abs/path", "branch_prefix": "you/", "default_base": "main"}]}
 ```
 
-Everything else has a sane default. Full field reference: [`docs/config.md`](docs/config.md) (and [`cockpit/config.example.json`](cockpit/config.example.json)). Three worth knowing:
+Everything else has a sane default. Three worth turning on:
 
-- **Tickets** — link each PR to Linear / Jira / GitHub Issues / Trello via a body footer, and transition the ticket on merge (per-repo `tickets`).
-- **Auto-review** — `review_prs: true` spawns a review agent per coworker PR (collaborators only; `review_external` opts in fork PRs — untrusted content reaching a Bash-capable agent, so enable deliberately).
-- **Skills** — `skills.{session,review,plan,actions}` seed a slash command as the first turn of each spawn (session runs in *every* spawn; review/plan/actions per scenario). Unset fields fall back to cockpit's built-in prose. Point them at your own commands, e.g. `"skills": {"review": "/pr-review"}`.
+- **[Tickets](FEATURES.md#tickets)** — `tickets` links each PR to Linear / Jira / GitHub Issues / Trello, and transitions it on merge.
+- **[Auto-review](FEATURES.md#reviewing-your-teams-prs)** — `review_prs: true` spawns a review agent per coworker PR. Collaborators only; `review_external` opts in fork PRs — untrusted content reaching a Bash-capable agent, so enable deliberately.
+- **Skills** — `skills.{session,review,plan,actions}` seed your own slash command as a spawn's first turn, e.g. `"skills": {"review": "/pr-review"}`. Unset fields fall back to cockpit's built-in prose.
 
-Only the statusline is prompted for at `cockpit setup` (it installs binaries); every other setting is a plain `config.json` edit, validated at startup.
+Full field reference: [`docs/config.md`](docs/config.md) (and [`cockpit/config.example.json`](cockpit/config.example.json)). Only the statusline is prompted for at `cockpit setup` (it installs binaries); every other setting is a plain `config.json` edit, validated at startup.
 
 ## Statusline (optional)
 
