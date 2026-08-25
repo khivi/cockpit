@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.6.1](https://github.com/khivi/cockpit/compare/v2.6.0...v2.6.1) (2026-08-25)
+
+
+### Documentation
+
+* fix stale comment references and pin them with a test ([#387](https://github.com/khivi/cockpit/issues/387)) ([a240abb](https://github.com/khivi/cockpit/commit/a240abbd9052409d235a82239efd2639364e5407))
+* record the nudge-gate skip reasons in the state-machine diagram ([#385](https://github.com/khivi/cockpit/issues/385)) ([14c5633](https://github.com/khivi/cockpit/commit/14c5633efb5978aca35cc08d90207c6e6948bd69))
+
 ## [2.6.0](https://github.com/khivi/cockpit/compare/v2.5.0...v2.6.0) (2026-08-25)
 
 
