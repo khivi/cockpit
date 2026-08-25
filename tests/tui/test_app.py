@@ -2609,3 +2609,99 @@ async def test_read_key_sizes_glamour_below_the_overlay_box(monkeypatch, tmp_pat
     box = ConfigScreen.content_width(130)
     assert widths and set(widths) == {box - _GLAMOUR_MARGIN}
     assert all(w + _GLAMOUR_MARGIN <= box for w in widths)
+
+
+# ── pr_reader_delta (opt-in diff prettifier) ─────────────────────────────────
+
+
+def _seed_delta_row(monkeypatch, tmp_path, *, flag: bool, on_path: bool):
+    """One row with a PR, `pr_reader_delta` = `flag`, delta present = `on_path`."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
+    )
+    monkeypatch.setattr("cockpit.tui.app.pr_reader_delta", lambda: flag)
+    monkeypatch.setattr(
+        "cockpit.tui.app.shutil.which", lambda b: "/usr/bin/delta" if on_path else None
+    )
+    return wt
+
+
+def _fake_gh_and_delta(seen: list, *, delta_rc: int = 0, delta_out: str = "DELTA DIFF"):
+    def _run(args, **kwargs):
+        seen.append(args)
+        if args[0] == "delta":
+            return subprocess.CompletedProcess(args, delta_rc, delta_out, "")
+        out = "PLAIN DIFF" if "diff" in args else "THE BODY"
+        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+
+    return _run
+
+
+async def _press_r(monkeypatch, wt) -> str:
+    app, _ = _make_app()
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause(0.6)
+        return app.screen._body
+
+
+async def test_read_pr_uses_delta_when_flag_on_and_installed(monkeypatch, tmp_path):
+    wt = _seed_delta_row(monkeypatch, tmp_path, flag=True, on_path=True)
+    seen: list = []
+    monkeypatch.setattr("subprocess.run", _fake_gh_and_delta(seen))
+    body = await _press_r(monkeypatch, wt)
+    assert "DELTA DIFF" in body and "PLAIN DIFF" not in body
+    assert any(a[0] == "delta" for a in seen)
+
+
+async def test_read_pr_skips_delta_when_flag_off_even_if_installed(
+    monkeypatch, tmp_path
+):
+    """Installed-but-unwanted is the case presence-detection alone gets wrong:
+    most delta users installed it for plain git, not for this overlay."""
+    wt = _seed_delta_row(monkeypatch, tmp_path, flag=False, on_path=True)
+    seen: list = []
+    monkeypatch.setattr("subprocess.run", _fake_gh_and_delta(seen))
+    body = await _press_r(monkeypatch, wt)
+    assert "PLAIN DIFF" in body
+    assert not any(a[0] == "delta" for a in seen)
+
+
+async def test_read_pr_falls_back_when_flag_on_but_delta_absent(monkeypatch, tmp_path):
+    """A missing prettifier must never cost you the PR — preflight warns, `r`
+    still renders."""
+    wt = _seed_delta_row(monkeypatch, tmp_path, flag=True, on_path=False)
+    seen: list = []
+    monkeypatch.setattr("subprocess.run", _fake_gh_and_delta(seen))
+    body = await _press_r(monkeypatch, wt)
+    assert "PLAIN DIFF" in body
+    assert not any(a[0] == "delta" for a in seen)
+
+
+async def test_read_pr_falls_back_when_delta_fails_or_is_empty(monkeypatch, tmp_path):
+    for rc, out in ((1, ""), (0, ""), (0, "   \n")):
+        wt = _seed_delta_row(monkeypatch, tmp_path, flag=True, on_path=True)
+        seen: list = []
+        monkeypatch.setattr(
+            "subprocess.run", _fake_gh_and_delta(seen, delta_rc=rc, delta_out=out)
+        )
+        body = await _press_r(monkeypatch, wt)
+        assert "PLAIN DIFF" in body, (rc, out)
+
+
+async def test_read_pr_survives_delta_raising(monkeypatch, tmp_path):
+    wt = _seed_delta_row(monkeypatch, tmp_path, flag=True, on_path=True)
+
+    def _run(args, **kwargs):
+        if args[0] == "delta":
+            raise OSError("delta exploded")
+        out = "PLAIN DIFF" if "diff" in args else "THE BODY"
+        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr("subprocess.run", _run)
+    body = await _press_r(monkeypatch, wt)
+    assert "PLAIN DIFF" in body  # not a traceback, not an empty overlay

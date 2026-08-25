@@ -175,6 +175,7 @@ Slash commands seeded as a spawned workspace's first turn. Fields resolve
 | `skills` | object | `{}` | Slash-command overrides (above). |
 | `use_cship` | bool | `false` | Install/point the statusLine at cship; seed `cship.toml`/`starship.toml` (via `cockpit setup` only). |
 | `use_slack` | bool | `false` | Enable the Slack-MCP fetch+rename prompt for Slack-thread spawn sources. |
+| `pr_reader_delta` | bool | `false` | Render the TUI `r` (Read PR) diff through [`delta`](https://github.com/dandavison/delta) instead of `gh`'s plain colouring — syntax highlighting, line numbers, file headers, using your own delta config. Off by default because delta targets a *truncating* pager: it does not wrap content (`--width` sets decoration width only), so long lines wrap raggedly in the overlay and a prose-heavy diff can read worse. `delta` is **not** a cockpit dependency — with the flag on and the binary absent, preflight soft-warns once and `r` falls back to plain colouring. Install with `brew install git-delta`. |
 | `tool` | string | `auto` | Workspace backend: `auto` \| `cmux` \| `limux` \| `none`. |
 | `theme` | string | `dark` | `dark` \| `light` — tunes cmux pills + the cship/starship footer palette. |
 | `tui_theme` | string | `textual-dark` | Textual theme for the `cockpit watch` TUI chrome only. Persisted from the TUI theme picker. |

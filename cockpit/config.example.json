@@ -117,6 +117,7 @@
   },
   "use_cship": false,
   "use_slack": false,
+  "pr_reader_delta": false,
   "tool": "auto",
   "theme": "dark",
   "tui_theme": "textual-dark",

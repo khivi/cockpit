@@ -32,7 +32,9 @@ import io
 import json
 import os
 import queue
+import shutil
 import signal
+import subprocess
 import threading
 import time
 from collections import deque
@@ -70,6 +72,7 @@ from cockpit.lib.config import (
     CONFIG_PATH,
     ensure_state_dirs,
     load_config,
+    pr_reader_delta,
     repo_tickets,
     repos_grouped_by_org,
     reset_config_cache,
@@ -118,6 +121,36 @@ _READ_MAX_LINES = 2000
 # branch and repo names) and markdown tables (glamour renders them at natural
 # width) — both merely wrap, so they stay readable.
 _GLAMOUR_MARGIN = 2
+
+
+def _pipe_through_delta(diff: str, width: int, *, cwd: Path) -> str:
+    """`diff` re-rendered by `delta`, or "" if it can't be (caller keeps plain).
+
+    Opt-in via `pr_reader_delta`. Runs with the user's own delta config, so the
+    overlay matches the diffs they already read in a terminal — the point of
+    honouring an installed tool rather than reimplementing one.
+
+    `--paging never` because there is no terminal to page into, and `--width`
+    sizes delta's *decorations* (its `--help` is explicit that this is not
+    content wrapping — a long source line still passes through whole, which is
+    exactly why the feature is opt-in rather than on-by-default).
+
+    Never raises: a delta that is missing, misconfigured, slow or angry returns
+    "" and the caller shows the plain coloured diff it already fetched.
+    """
+    try:
+        proc = subprocess.run(
+            ["delta", "--paging", "never", "--width", str(width)],
+            input=diff,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout if proc.returncode == 0 and proc.stdout.strip() else ""
+
 
 # The `n` (New) action shells out via the same module dispatch the daemon's
 # `_bg_spawn_pr` uses: `python -m cockpit.cli new …`. NOT `python spawn.py …` by
@@ -1449,8 +1482,6 @@ class CockpitApp(App[None]):
         # shape as `t`'s Linear branch (which reads `gh.pr_body` on the
         # keystroke). The PR *number* comes off the cached payload, so the
         # fetch is skipped entirely on a row with no PR.
-        import subprocess
-
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
             self._notify(f"read: no worktree at {path_str}", severity="error")
@@ -1509,6 +1540,17 @@ class CockpitApp(App[None]):
         # body through `Text.from_ansi`, so the diff arrives already coloured.
         view = _gh(["pr", "view", num, "--comments"])
         diff = _gh(["pr", "diff", num, "--color", "always"])
+        # Opt-in prettifier (`pr_reader_delta`, default off): syntax
+        # highlighting + line numbers + GitHub-ish file headers. Two guards, and
+        # both matter — the flag is the user's taste (delta targets a
+        # *truncating* pager, so long lines wrap raggedly in this box), and the
+        # `which` is because the binary is not a cockpit dependency. Missing or
+        # failing, we keep the plain diff we already have: reading a PR must
+        # never fail because a prettifier is absent (preflight soft-warns once).
+        if pr_reader_delta() and shutil.which("delta"):
+            pretty = _pipe_through_delta(diff, width, cwd=wt.path)
+            if pretty:
+                diff = pretty
         lines = f"{view}\n\n{'─' * 60}\n\n{diff}".splitlines()
         if len(lines) > _READ_MAX_LINES:
             # Never a silent cap — say what was dropped and where to get it.

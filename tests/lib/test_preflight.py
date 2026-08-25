@@ -1402,3 +1402,63 @@ def test_preflight_probes_the_backend_for_the_daemon_but_not_for_setup(
     assert calls == []
     preflight({"tool": "cmux"})
     assert calls == [True]
+
+
+# ── pr_reader_delta ──────────────────────────────────────────────────────────
+
+
+def _no_delta_on_path(tmp_path, monkeypatch) -> None:
+    """Required bins present, `delta` definitively absent.
+
+    PATH is *pinned* to the shim dir, not prepended to: `make_bin_on_path`
+    keeps the real PATH, so a developer machine with delta installed (a likely
+    one — the flag exists for delta users) would silently find the real binary
+    and the absent-delta assertions would pass locally and fail in CI, or vice
+    versa.
+    """
+    bin_dir = make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cmux", "cockpit")
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+
+def test_preflight_exits_on_non_bool_pr_reader_delta(tmp_path, monkeypatch, capsys):
+    _all_required(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        preflight({"tool": "cmux", "pr_reader_delta": "yes"})
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "pr_reader_delta" in err and "'yes'" in err
+
+
+def test_preflight_warns_but_does_not_die_when_delta_missing(
+    tmp_path, monkeypatch, capsys
+):
+    """Warn, never die — the `_validate_workspace_backend` rule, and with far
+    less at stake: `r` falls back to plain colouring and still shows the PR."""
+    _no_delta_on_path(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "pr_reader_delta": True})  # must NOT raise
+    err = capsys.readouterr().err
+    assert "delta" in err
+    assert "brew install git-delta" in err
+
+
+def test_preflight_silent_when_delta_present(tmp_path, monkeypatch, capsys):
+    make_bin_on_path(tmp_path, monkeypatch, "gh", "git", "cmux", "cockpit", "delta")
+    preflight({"tool": "cmux", "pr_reader_delta": True})
+    assert capsys.readouterr().err == ""
+
+
+def test_preflight_silent_when_flag_off_and_delta_missing(
+    tmp_path, monkeypatch, capsys
+):
+    # Nothing to say: the feature is off, so an absent optional binary is normal.
+    _no_delta_on_path(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "pr_reader_delta": False})
+    assert capsys.readouterr().err == ""
+
+
+def test_delta_warning_is_skipped_for_setup(tmp_path, monkeypatch, capsys):
+    # `cockpit setup` may be about to install things; the daemon-only warnings
+    # don't run there (same gate as _validate_workspace_backend).
+    _no_delta_on_path(tmp_path, monkeypatch)
+    preflight({"tool": "cmux", "pr_reader_delta": True}, for_setup=True)
+    assert "delta" not in capsys.readouterr().err
