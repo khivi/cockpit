@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.2](https://github.com/khivi/cockpit/compare/v2.6.1...v2.6.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* **preflight:** warn on an unset credential for every ticket provider ([#388](https://github.com/khivi/cockpit/issues/388)) ([103e63c](https://github.com/khivi/cockpit/commit/103e63c5192f76e7afc60d867ac8430b087bcd4d))
+
 ## [2.6.1](https://github.com/khivi/cockpit/compare/v2.6.0...v2.6.1) (2026-08-25)
 
 
