@@ -2,13 +2,13 @@
 
 [![CI](https://github.com/khivi/cockpit/actions/workflows/ci.yml/badge.svg)](https://github.com/khivi/cockpit/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A terminal UI for running several Claude Code agents at once. Each task gets its own git worktree, a `cmux`/`limux` terminal running `claude`, and a GitHub PR — cockpit shows them all in one live table (CI, reviews, comments, dirty state) you drive by keystroke.
+A change lives in four places at once — a git worktree, a GitHub PR, a ticket, and usually a Slack thread — and nothing joins them but you. Cockpit is that join: a terminal UI with one row per change, showing all four live (CI, reviews, comments, dirty state, ticket status) and driven by keystroke.
 
 ![cockpit watch — every worktree, workspace, and PR in one table](docs/cockpit-tui.png)
 
-One worktree per task scales the *work*. It doesn't scale the *tracking* — run a few in parallel and you have N terminals, N PRs, and N tickets with nothing tying them together.
+It orchestrates *context*, not agents. Cockpit doesn't plan work, split it up, or decide anything — you do that. What it takes off you is the clerical half of working on several things at once: which worktree that PR was cut from, which one is dirty, which review is waiting on you, which ticket nobody moved. The terminal in each worktree is running `claude`, but that's one more thing the row carries, not the thing being managed.
 
-Cockpit re-derives the whole fleet every cycle from git + cmux + GitHub. Nothing is stored, so nothing drifts. And it closes the loop the other way: `cockpit new` spawns the worktree, the session, and the PR-tracking row from a branch, PR, ticket, or Slack thread — then tears them down when the PR merges.
+It works in both directions. Point `cockpit new` at any one of the four — a branch name, `#42`, `PE-1234`, a Slack permalink — and it materialises the rest: worktree cut, terminal opened in it, PR picked up when it appears, ticket linked. The row then keeps itself true, re-derived every cycle from git + GitHub + your terminal backend — nothing is stored, so nothing drifts — until the PR merges and it tears the row down.
 
 ## Requirements
 
