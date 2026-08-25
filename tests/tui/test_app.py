@@ -1440,8 +1440,8 @@ def _snoozed_repo(monkeypatch, tmp_path):
     cdir = tmp_path / "cockpit-cache"
     cdir.mkdir(exist_ok=True)
     monkeypatch.setattr(cache_mod, "FLAT_CACHE_DIR", cdir)
-    dozing = Worktree(path=Path("/tmp/dozing"), branch="khivi/dozing")
-    mine = Worktree(path=Path("/tmp/mine"), branch="khivi/mine")
+    dozing = Worktree(path=tmp_path / "dozing", branch="khivi/dozing")
+    mine = Worktree(path=tmp_path / "mine", branch="khivi/mine")
     cache_mod.branch_cache("pr-snoozed", dozing.branch).write_text("snoozed")
     return [("alpha", "alpha", None, "none", [dozing, mine])], dozing, mine
 
@@ -1560,13 +1560,13 @@ async def test_a_snooze_lands_the_cursor_on_the_fold_that_swallowed_it(
         table = app.query_one(WorktreeTable)
         table.move_cursor(row=1)  # my live row
         app._follow_snoozed_row(
-            {"name": "alpha", "path": "/tmp/alpha"}, dozing, snoozed=True
+            {"name": "alpha", "path": str(tmp_path / "alpha")}, dozing
         )
         await pilot.pause()
         assert table._current_row_key() == snoozed_row_key("alpha")
-        # Waking one instead leaves the cursor on the row itself — it's rendered.
+        # A row that's still rendered keeps the cursor — it's the thing acted on.
         app._follow_snoozed_row(
-            {"name": "alpha", "path": "/tmp/alpha"}, mine, snoozed=False
+            {"name": "alpha", "path": str(tmp_path / "alpha")}, mine
         )
         await pilot.pause()
         assert table._current_row_key() == str(mine.path)
@@ -1585,10 +1585,46 @@ async def test_a_snooze_into_an_open_fold_keeps_the_cursor_on_the_row(
         app._render_table(inv)
         await pilot.pause()
         app._follow_snoozed_row(
-            {"name": "alpha", "path": "/tmp/alpha"}, dozing, snoozed=True
+            {"name": "alpha", "path": str(tmp_path / "alpha")}, dozing
         )
         await pilot.pause()
         assert app.query_one(WorktreeTable)._current_row_key() == str(dozing.path)
+
+
+async def test_a_snooze_that_folds_nothing_leaves_the_cursor_alone(
+    monkeypatch, tmp_path
+):
+    # "I snoozed it and the fold is shut" does NOT imply the row folded away:
+    # `_split_snoozed` folds at *chain* granularity, so a snooze on a stack
+    # member below the tip moves nothing. Predicting the target from the pref
+    # would yank the cursor onto a fold whose count didn't change — the same
+    # dropped-keypress feel the follow exists to prevent, inverted.
+    import cockpit.lib.cache as cache_mod
+
+    cdir = tmp_path / "cockpit-cache"
+    cdir.mkdir(exist_ok=True)
+    monkeypatch.setattr(cache_mod, "FLAT_CACHE_DIR", cdir)
+    tip = Worktree(path=tmp_path / "tip", branch="khivi/tip")
+    member = Worktree(path=tmp_path / "member", branch="khivi/member")
+    dozing = Worktree(path=tmp_path / "dozing", branch="khivi/dozing")
+    cache_mod.branch_cache("pr-base", tip.branch).write_text(member.branch)
+    # An unrelated snoozed row, so the repo does have a (collapsed) fold row.
+    cache_mod.branch_cache("pr-snoozed", dozing.branch).write_text("snoozed")
+    # ...and the snooze the user just pressed, on a member *below* the tip.
+    cache_mod.branch_cache("pr-snoozed", member.branch).write_text("snoozed")
+    inv = [("alpha", "alpha", None, "none", [tip, member, dozing])]
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table(inv)
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        app._follow_snoozed_row(
+            {"name": "alpha", "path": str(tmp_path / "alpha")}, member
+        )
+        await pilot.pause()
+        assert table._current_row_key() == str(member.path)
 
 
 async def test_gather_inventory_hides_workspaceless_no_worktree_row(

@@ -1377,13 +1377,12 @@ class CockpitApp(App[None]):
             )
         save_pref(key, pref)
         self._repaint_pref(repo, wt, pr, pref)
-        # Follow the row. `_repaint_pref` has just re-rendered, and a snooze folds
-        # the row away — `update_inventory` restores the cursor by *index*, so it
-        # would come to rest on whichever unrelated worktree slid up into that
-        # slot, reading as a dropped keypress. Land on the fold that swallowed it
-        # (its count is then the feedback), or on the row itself when it's still
-        # rendered: woken, or snoozed into a fold already open.
-        self.call_from_thread(self._follow_snoozed_row, repo, wt, snoozed=pref.snoozed)
+        # Follow the row. `_repaint_pref` has just re-rendered, and a snooze can
+        # fold the row away — `update_inventory` restores the cursor by *index*,
+        # so it would come to rest on whichever unrelated worktree slid up into
+        # that slot, reading as a dropped keypress. Land on the row while it's
+        # still rendered, else on the fold that swallowed it.
+        self.call_from_thread(self._follow_snoozed_row, repo, wt)
         # Full-cycle kick, deliberately unlike every other row action's
         # repo-scoped one. `z` is the only keypress that changes *sidebar fold*
         # membership, and `cycle_all` builds `folds` only when `only_repo is
@@ -1398,17 +1397,24 @@ class CockpitApp(App[None]):
         # pass's sweep, taking every other org's fold down with it.
         self.call_from_thread(self._kick_slow)
 
-    def _follow_snoozed_row(self, repo: dict, wt: Worktree, *, snoozed: bool) -> None:
+    def _follow_snoozed_row(self, repo: dict, wt: Worktree) -> None:
         """Put the cursor where the row the user just pressed `z` on now lives —
-        the repo's collapsed fold when it swallowed it, else the row itself. UI
-        thread only (called via `call_from_thread` after the repaint's render).
-        A miss is a no-op: the cursor simply stays where `update_inventory` left
-        it, which is the pre-existing behaviour."""
-        name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
-        folded = snoozed and name not in self._show_snoozed
-        target = snoozed_row_key(name) if folded else str(wt.path)
+        the row itself when it is still rendered, else the fold that swallowed
+        it. UI thread only (called via `call_from_thread` after the repaint's
+        render).
+
+        It asks the table rather than predicting from the pref, because "I
+        snoozed it and the fold is shut" does **not** imply the row folded away:
+        `_split_snoozed` folds at *chain* granularity, so a snooze on a stack
+        member below the tip folds nothing. Predicting would then yank the cursor
+        onto a fold whose count didn't change — the same dropped-keypress feel
+        this exists to prevent, inverted. A miss on both leaves the cursor where
+        `update_inventory` put it, the pre-existing behaviour."""
         table = self.query_one(WorktreeTable)
-        if table.move_cursor_to_key(target):
+        name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
+        if table.move_cursor_to_key(str(wt.path)) or table.move_cursor_to_key(
+            snoozed_row_key(name)
+        ):
             self._refresh_footer_caps()
 
     @work(thread=True, group="nudge", exit_on_error=False)

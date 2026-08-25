@@ -446,54 +446,79 @@ def _header_cells(
     return [head, *(Text("") for _ in range(ncols - 1))]
 
 
-def _hidden_cells(names: list[str], ncols: int, *, expanded: bool) -> list[Text]:
+def _disclosure_row(head: Text, tail: Text, labels: tuple[str, ...]) -> list[Text]:
+    """A disclosure row: `head` in the Workspace column, `tail` in the wide
+    `Title` column, blanks everywhere else.
+
+    Indexed off `labels` (the live `column_labels`) rather than written as
+    "everything up to the last column, then the tail": `Title` is **not** last —
+    `show_cost` appends `$` after it — so a `ncols - 1` tail lands in the numeric
+    column, leaves Title blank, and (DataTable auto-sizes to content) widens `$`
+    for every row in the table."""
+    cells = [Text("") for _ in labels]
+    cells[0] = head
+    cells[labels.index("Title")] = tail
+    return cells
+
+
+def _hidden_cells(
+    names: list[str], columns: tuple[str, ...], *, expanded: bool
+) -> list[Text]:
     """The disclosure line for the parked repos: a count behind a `▸`/`▾` triangle
     in the Workspace column (so it can't stretch that column) and, while
-    collapsed, the repo names in the wide trailing Title column. Both dim — it's
-    a reminder, not a row. Expanded, the names render as their own rows below, so
+    collapsed, the repo names in the wide Title column. Both dim — it's a
+    reminder, not a row. Expanded, the names render as their own rows below, so
     the tail just says how to put them back."""
-    return [
+    return _disclosure_row(
         Text(f"{'▾' if expanded else '▸'} {len(names)} hidden", style="dim"),
-        *(Text("") for _ in range(ncols - 2)),
         Text(
             "h to collapse" if expanded else " · ".join(names) + "   (h to show)",
             style="dim",
         ),
-    ]
+        columns,
+    )
 
 
-def _snoozed_cells(labels: list[str], ncols: int, *, expanded: bool) -> list[Text]:
+def _snoozed_cells(
+    labels: list[str], columns: tuple[str, ...], *, expanded: bool
+) -> list[Text]:
     """One repo's snoozed disclosure row: a count behind a `▸`/`▾` triangle in the
     Workspace column and, while collapsed, the folded workspace names in the wide
-    trailing Title column. Both dim — the whole band is "not my turn", so it must
-    not compete with the live rows above it.
+    Title column. Both dim — the whole band is "not my turn", so it must not
+    compete with the live rows above it.
 
     Indented like a worktree row (`ROW_INDENT`), because that is what it stands
     in for: it hangs under the repo's header, not beside it."""
-    return [
+    return _disclosure_row(
         Text(
             f"{ROW_INDENT}{'▾' if expanded else '▸'} {len(labels)} snoozed",
             style="dim",
         ),
-        *(Text("") for _ in range(ncols - 2)),
         Text(
             "z to collapse" if expanded else " · ".join(labels) + "   (z to show)",
             style="dim",
         ),
-    ]
+        columns,
+    )
 
 
-def _status_glyph(*, muted: bool, nudge: bool) -> Text:
+def _status_glyph(*, muted: bool, snoozed: bool, nudge: bool) -> Text:
     """The row's one status glyph, padded to `_STATUS_SLOT` cells — blanks when
-    the row carries none, so every label starts at the same column. Mute wins:
-    a muted PR fires no nudge, so the two can't coexist.
+    the row carries none, so every label starts at the same column.
 
-    Snooze has no glyph of its own. A snoozed row renders only inside its repo's
-    `▾ N snoozed` fold, which says it once for the whole group instead of once
-    per row — and that leaves the slot free for the 🔇 of a row that is muted
-    *and* snoozed, which is the only thing left worth saying there."""
+    Snooze paints **nothing** but still takes precedence over the bell, which is
+    the whole subtlety here. It has no glyph of its own because a snoozed row
+    renders only inside its repo's `▾ N snoozed` fold, which says it once for the
+    group — but `pr-nudge` is `PR.nudge_issue` and is never blanked for a snoozed
+    PR, so a snooze that later goes CI-red would otherwise light a 🔔 that
+    `should_nudge` will never ring (it gates on `quiet = muted or snoozed`).
+    Dropping the glyph must not drop the suppression. That leaves the slot free
+    for the 🔇 of a row that is muted *and* snoozed, the one thing left worth
+    saying inside the fold — mute wins there, matching `row_tooltips`' order."""
     if muted:
         glyph, style = ICON_PR_MUTED, "yellow"
+    elif snoozed:
+        return Text(" " * _STATUS_SLOT)
     elif nudge:
         glyph, style = ICON_PR_NUDGE, "yellow"
     else:
@@ -507,15 +532,16 @@ def _workspace_cell(
     *,
     muted: bool,
     nudge: bool,
+    snoozed: bool = False,
     depth: int = 0,
 ) -> Text:
     """The workspace name, tinted with the repo's cmux colour when set and
     prefixed with one status glyph: 🔇 when the PR's nudges are muted, else 🔔
     when the PR has an actionable, unsilenced nudge condition (failing CI /
     unresolved threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute
-    silences the nudge, so the two can't coexist. A snooze silences it too but
-    carries no glyph — it is expressed by the row sitting inside the repo's
-    `▾ N snoozed` fold (`_status_glyph`).
+    silences the nudge, so the two can't coexist. A snooze silences it too, so it
+    suppresses the bell as well — but paints no glyph of its own, since the row
+    sitting inside the repo's `▾ N snoozed` fold already says it (`_status_glyph`).
 
     The slot is `_STATUS_SLOT` cells wide whichever glyph lands in it, and a row
     with none pays it in blanks — otherwise a quiet row's label would sit three
@@ -540,7 +566,7 @@ def _workspace_cell(
         cell = Text.from_ansi(colorizer(label))
     else:
         cell = Text(label, style="bold")
-    cell = Text.assemble(_status_glyph(muted=muted, nudge=nudge), cell)
+    cell = Text.assemble(_status_glyph(muted=muted, snoozed=snoozed, nudge=nudge), cell)
     if depth:
         cell = Text.assemble((f"{_STACK_INDENT}└ ", "dim"), cell)
     return Text.assemble(ROW_INDENT, cell)
@@ -737,6 +763,7 @@ def worktree_cells(
             repo_color,
             muted=bool(cell("pr-muted")),
             nudge=bool(cell("pr-nudge")),
+            snoozed=bool(cell("pr-snoozed")),
             depth=depth,
         ),
         Text(f"#{num}") if num else Text(""),
@@ -1179,9 +1206,10 @@ class WorktreeTable(DataTable):
         self._row_caps = {}
         self._row_repo = {}
         self._cell_tooltips = {}
-        ncols = len(
-            column_labels(show_tickets=self._show_tickets, show_cost=self._show_cost)
+        columns = column_labels(
+            show_tickets=self._show_tickets, show_cost=self._show_cost
         )
+        ncols = len(columns)
         for repo_name, cache_key, repo_color, tickets_provider, wts in inventory:
             hkey = f"{HEADER_KEY_PREFIX}{repo_name}"
             self.add_row(
@@ -1212,7 +1240,7 @@ class WorktreeTable(DataTable):
                 self.add_row(
                     *_snoozed_cells(
                         [_full_label(wt) for wt, _ in snoozed],
-                        ncols,
+                        columns,
                         expanded=open_here,
                     ),
                     key=skey,
@@ -1231,7 +1259,8 @@ class WorktreeTable(DataTable):
         hidden_start = self.row_count
         if collapsed:
             self.add_row(
-                *_hidden_cells(collapsed, ncols, expanded=expanded), key=HIDDEN_ROW_KEY
+                *_hidden_cells(collapsed, columns, expanded=expanded),
+                key=HIDDEN_ROW_KEY,
             )
             caps = {HEADER_CAP, HIDDEN_CAP} | ({EXPANDED_CAP} if expanded else set())
             self._row_caps[HIDDEN_ROW_KEY] = frozenset(caps)

@@ -43,7 +43,9 @@ from cockpit.tui.widgets.worktree_table import (
     WorktreeTable,
     _comments_cell,
     _header_cells,
+    _hidden_cells,
     _linear_status_icon,
+    _snoozed_cells,
     _split_snoozed,
     _stack_rows,
     column_labels,
@@ -1033,6 +1035,21 @@ async def test_the_cursor_rests_on_a_fold_row(cache_dir):
         assert table.current_repo_name() == "R"
 
 
+@pytest.mark.parametrize("show_cost", [False, True])
+def test_a_disclosure_tail_lands_in_title_not_the_cost_column(cache_dir, show_cost):
+    # `Title` is not the last column — `show_cost` appends `$` after it — so a
+    # `ncols - 1` tail would blank Title and (DataTable auto-sizes to content)
+    # widen the numeric column for every row in the table.
+    cols = column_labels(show_tickets=False, show_cost=show_cost)
+    for cells in (
+        _snoozed_cells(["alpha", "beta"], cols, expanded=False),
+        _hidden_cells(["gamma"], cols, expanded=False),
+    ):
+        by_col = dict(zip(cols, (c.plain for c in cells), strict=False))
+        assert "z to show" in by_col["Title"] or "h to show" in by_col["Title"]
+        assert by_col.get("$", "") == ""
+
+
 @pytest.mark.asyncio
 async def test_move_cursor_to_key_reports_a_miss(cache_dir):
     mine = _wt(path="/tmp/mine", branch="khivi/mine")
@@ -1079,6 +1096,20 @@ def test_a_snoozed_row_carries_no_glyph(cache_dir):
     cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
     assert cell.plain == _ws("dozing")
+
+
+def test_a_snoozed_row_shows_no_bell(cache_dir):
+    """Dropping the 💤 glyph must not drop snooze's *suppression* of the bell.
+    `pr-nudge` is never blanked for a snoozed PR, so a snooze that later goes
+    CI-red would otherwise advertise a 🔔 `should_nudge` will never ring."""
+    wt = _wt(branch="khivi/resting", branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
+    cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
+    assert cell.plain == _ws("resting")
+    # ...and the hover text agrees with the (absent) glyph.
+    tips = row_tooltips(wt, "r", "none", show_tickets=False)
+    assert tips[0] == "Snoozed until a new comment or review"
 
 
 def test_a_snoozed_row_still_shows_its_mute(cache_dir):
