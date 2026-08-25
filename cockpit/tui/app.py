@@ -84,6 +84,7 @@ from cockpit.lib.config import (
 from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.daemon_signal import enqueue
 from cockpit.lib.events import watch_workspace_events
+from cockpit.lib.firstrun import mark_welcomed, welcome_pending
 from cockpit.lib.gh import PR, repo_nwo
 from cockpit.lib.git import Worktree, origin_head_branch, worktrees
 from cockpit.lib.hidden import is_hidden, load_hidden, toggle_hidden
@@ -114,6 +115,10 @@ from cockpit.tui.widgets.worktree_table import (
 
 _LOG_TAIL_LINES = 200
 
+# The feature tour, opened by the command palette's "Feature guide" entry. Points
+# at the rendered blob on `main` rather than a local path: cockpit is installed
+# from a brew Cellar / site-packages, where FEATURES.md may not ship at all.
+FEATURE_GUIDE_URL = "https://github.com/khivi/cockpit/blob/main/FEATURES.md"
 
 # The `n` (New) action shells out via the same module dispatch the daemon's
 # `_bg_spawn_pr` uses: `python -m cockpit.cli new …`. NOT `python spawn.py …` by
@@ -344,6 +349,8 @@ class CockpitApp(App[None]):
         # worktrees show on startup, without waiting for the first (networked)
         # slow tick to finish.
         self._prime_table()
+
+        self._maybe_welcome()
 
         # Slow first; the fast loop starts only once the slow tick has populated
         # the PR caches (so the first fast republish isn't a no-op).
@@ -759,6 +766,44 @@ class CockpitApp(App[None]):
             return
         reset_config_cache()
         self.notify("config saved — restart cockpit to apply fully", timeout=6.0)
+
+    def action_open_feature_guide(self) -> None:
+        """Open FEATURES.md in a browser (palette-only, deliberately not a key).
+
+        The footer already is the in-app key reference and it is gated per row,
+        so a help *key* would duplicate it for keys while the rest of the guide
+        describes config-gated features you can't turn on from here anyway. A
+        rarely-pressed meta action belongs beside the other two palette entries,
+        not in the global key group. Rendered GitHub also beats a markdown
+        overlay for a document with tables and a screenshot — same reason `p`
+        and `t` hand a URL to the browser rather than rendering it here."""
+        self.open_url(FEATURE_GUIDE_URL)
+        self.notify("opening the feature guide", timeout=4.0)
+
+    def _maybe_welcome(self) -> None:
+        """Point a first-time user at the guide, exactly once ever.
+
+        The footer's `^P More` hint is the permanent, always-visible route; this
+        toast exists because a hint you've never had reason to press is not the
+        same as being told there is a tour behind it. It fires once and then
+        relies on the footer, which is why it can afford to be a toast rather
+        than anything modal.
+
+        The marker (`lib/firstrun.py`) is per-install rather than per-version:
+        this is a "here is where the docs live" pointer, not a changelog, and an
+        in-TUI release-notes surface is deliberately out of scope (brew owns
+        updates)."""
+        if not welcome_pending():
+            return
+        mark_welcomed()
+        # on_mount runs on the main thread, so `notify` directly — `_notify`
+        # wraps `call_from_thread`, which raises when already on that thread.
+        self.notify(
+            "Press ^P (bottom right) → 'Feature guide' for a tour of what "
+            "cockpit does.",
+            title="Welcome to cockpit",
+            timeout=12.0,
+        )
 
     def action_show_output(self) -> None:
         # Captured tick output (bounded log tail) in a dismissable overlay

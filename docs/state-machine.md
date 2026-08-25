@@ -20,10 +20,11 @@ them is stored, so nothing can drift:
 Cross those and exactly one path applies: spawn a workspace, nudge the agent,
 write a pill, tear the worktree down, or do nothing. Most cycles it is nothing.
 
-Two ticks split the work. The **slow tick** (300s) makes every decision and pays
-for the `gh` fetch. The **fast tick** (30s) is network-free — it republishes what
-the slow tick already decided, so a `git checkout` or a tmpdir wipe recovers in
-30s rather than 300s.
+Two ticks split the work. The **slow tick** (`slow_poll_interval_seconds`,
+default 300) makes every decision and pays for the `gh` fetch. The **fast tick**
+(`fast_poll_interval_seconds`, default 30) is network-free — it republishes what
+the slow tick already decided, so a `git checkout` or a tmpdir wipe recovers on
+the next fast tick rather than waiting out a slow one.
 
 One rule governs the whole picture: **only the daemon writes cache cells;
 renderers only read them.** A renderer that consults `git` or `gh` directly can
@@ -336,23 +337,36 @@ type into the confirmation. Do not "simplify" the gate to trust it.
 
 ```mermaid
 flowchart TD
-  IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pref_key)"] --> G1{"PR-attached &<br/>PR quiet?<br/>(muted OR snoozed)"}
-  G1 -->|yes| F1["return False<br/>(user mute/snooze,<br/>survives restart)"]
+  IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pref_key, skips)"] --> G1{"PR-attached &<br/>PR quiet?<br/>(muted OR snoozed)"}
+  G1 -->|yes| F1["return False · skips: muted or snoozed<br/>(user mute/snooze,<br/>survives restart)"]
   G1 -->|"no / orphan nudge"| G2{"native ==<br/>Running?"}
 
-  G2 -->|yes| F2["return False<br/>(mid-turn; also catches a<br/>stale idle= on a live session)"]
+  G2 -->|yes| F2["return False · skips: mid-turn<br/>(also catches a stale<br/>idle= on a live session)"]
   G2 -->|no| G3{"idle= pill present<br/>OR native == Idle?"}
 
-  G3 -->|no| F3["return False<br/>(Needs input / None = not at rest)"]
+  G3 -->|no| F3["return False · skips: not at rest (native)<br/>(Needs input / None = not at rest)"]
   G3 -->|yes| G4{"parked= pill<br/>present?"}
 
-  G4 -->|yes| F4["return False<br/>(user's done-waiting marker)"]
+  G4 -->|yes| F4["return False · skips: parked<br/>(user's done-waiting marker)"]
   G4 -->|no| HEAL{"native == Idle<br/>& no idle= pill?"}
 
   HEAL -->|yes| SELFHEAL["re-assert idle= pill<br/>(self-heal dropped Stop-hook write)"]
   HEAL -->|no| FIRE
-  SELFHEAL --> FIRE["one_line(msg)<br/>→ send + send-key enter<br/>→ record_nudge(pref_key)<br/>→ return True"]
+  SELFHEAL --> FIRE["one_line(msg)<br/>→ dry? return False (records nothing)<br/>→ send + send-key enter<br/>→ record_nudge(pref_key) → return True<br/>(send raises → skips: send failed)"]
 ```
+
+**The three middle guards live in `cmux._idle_skip_reason`**, not inline: a
+caller that wants to *report* the verdict (`cockpit broadcast`'s per-workspace
+summary) must not re-derive it from a second `list-status` — that would be both a
+wasted round-trip and a second copy of a rule that must never drift from this
+one. Its guard order is the diagram's: `Running` outranks the at-rest check,
+which outranks `parked=`, so a mid-turn parked workspace reports `mid-turn`.
+
+**`skips` is an optional out-dict** — on a gate skip it gets `{ref: reason}`,
+using the strings above (they are user-facing). The `dry` path is the one
+`return False` that records *nothing*, and that asymmetry is load-bearing:
+absence from `skips` is what lets a caller read a False as "this one would have
+received it". Passing no dict leaves behaviour byte-identical.
 
 There is **no time-based throttle**; the slow-tick cadence is the implicit rate
 limit. Each tick re-evaluates and re-fires if the underlying issue persists.
@@ -418,9 +432,9 @@ pills are a separate daemon→cmux output (see diagram 1), not a render cell.
 
 ```mermaid
 flowchart LR
-  GH["gh API"] --> SLOW["Slow tick · 300s"]
+  GH["gh API"] --> SLOW["Slow tick<br/>slow_poll_interval_seconds (300)"]
   GIT["git worktrees"] --> SLOW
-  GIT --> FAST["Fast tick · 30s"]
+  GIT --> FAST["Fast tick<br/>fast_poll_interval_seconds (30)"]
   EV["cmux events<br/>workspace.created/closed"] -.kick, no state.-> FAST
   EV -.X gesture: cwd only.-> XCLOSE["_on_workspace_closed<br/>→ _close_worktree (same gate as c)"]
   XCLOSE -.enqueue TeardownRequest.-> SLOW
@@ -460,8 +474,8 @@ cycle to republish them was pure lag, and it read as a dropped keypress (`z`
 leaving the row unfolded, unbanded, and the footer still saying "Snooze"). So both
 toggles re-stamp the snapshot's two fields and their cells (`cache.restamp_pref`)
 before kicking, writing exactly what the cycle would have written. Both halves
-are needed: cells alone are reverted within 30s by the fast tick's republish,
-which reads the snapshot. Everything else the keypress implies (pills, the
+are needed: cells alone are reverted by the next fast tick's republish, which
+reads the snapshot. Everything else the keypress implies (pills, the
 trailing `snoozed` fold, the nudge going quiet) *is* derived and stays the
 cycle's job. This does not generalize to a derived cell.
 
@@ -500,7 +514,8 @@ Why two ticks:
   into its `wt-cost` cell (`write_worktree_cost_cache`), and republishes PR flat
   cells from the persistent JSON, so a `git checkout`, a drifted workspace name,
   a freshly spawned workspace's colour, a running agent's cost, or an OS tmpdir
-  wipe recovers within ~30s instead of ~300s. Its 30s interval is the *floor*, not the only trigger: the
+  wipe recovers on the next fast tick rather than waiting out a slow one. That
+  interval is the *floor*, not the only trigger: the
   `cmux events` doorbell (`lib/events.py`, cmux-only) kicks it the moment a
   workspace is created or closed, so a spawn or close lands immediately. The
   event carries **no state** — it only wakes the tick, which re-derives

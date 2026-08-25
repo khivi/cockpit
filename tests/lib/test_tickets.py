@@ -624,3 +624,30 @@ def test_trello_narrow_skips_a_group_missing_half_its_credential_pair(monkeypatc
         got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
     assert [r["name"] for r in got] == ["beta-svc"]
     fetch.assert_called_once_with("aB3dZ9", key="beta-k", token="beta-t")
+
+
+def test_every_provider_declares_credential_envs_the_stripper_knows_about():
+    """`credential_envs` (what preflight warns about) and
+    `config.credential_env_names` (what `_bg_spawn_pr` strips from a spawned
+    session's environment) must name the same variables. A provider gaining a
+    credential in one and not the other either warns about a name nothing holds,
+    or — the dangerous direction — leaks a key into an agent session running over
+    an untrusted PR diff."""
+    from cockpit.lib.config import credential_env_names
+
+    known = credential_env_names({})
+    for name, provider in tickets._PROVIDERS.items():
+        for env in provider.credential_envs({}, None):
+            assert env in known, f"{name} credential {env} is not stripped on spawn"
+
+
+def test_github_declares_no_credential_env():
+    # `gh` owns that auth; a warning here would name a variable nobody sets.
+    assert tickets.GITHUB.credential_envs({}, None) == []
+
+
+def test_trello_declares_both_halves_of_its_credential_pair():
+    assert tickets.TRELLO.credential_envs({}, None) == [
+        "TRELLO_API_KEY",
+        "TRELLO_API_TOKEN",
+    ]

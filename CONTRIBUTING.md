@@ -27,7 +27,7 @@ a worktree; `dev.sh` refuses it, because it bakes the worktree's ephemeral
 
 ```bash
 pytest -n auto        # whole suite; also runs on pre-push
-pytest tests/test_spawn.py::test_route_by_ticket   # one test — skip -n, worker boot is pure tax
+pytest tests/test_spawn.py::test_jira_key_routes_to_matching_repo_without_repo_flag   # one test — skip -n, worker boot is pure tax
 mypy cockpit/
 pre-commit run ruff ruff-format --files <changed paths>
 ```

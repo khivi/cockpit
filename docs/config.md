@@ -172,6 +172,19 @@ Credentials are **daemon-only**: `cockpit new` processes the daemon spawns get a
 environment with every configured credential var stripped. A spawned agent reads
 its tracker through the Linear/Jira/Trello MCP connector, not the REST key.
 
+A repo whose provider is configured but whose credential variable is **unset**
+gets a warning at daemon start, naming the variable that repo resolves to (the
+org's, if it declares one) and never its value. It stays a warning — running
+without the tracker is allowed — but the degrade it announces is otherwise
+silent: the `devdone=` pill stays off and every delivered ticket renders as a
+bare id, which for Trello's opaque short links looks like a display bug rather
+than a missing token. Trello is warned about **both** `key_env` and `token_env`,
+since holding one without the other fails exactly like holding neither; GitHub
+has no such variable (it authenticates through `gh`), so it is never warned.
+Note the daemon's environment is the one that counts — a token exported only in
+your interactive shell (or by `direnv` in one directory) won't reach a `cockpit
+watch` started elsewhere.
+
 ## `skills` block
 
 Slash commands seeded as a spawned workspace's first turn. Fields resolve

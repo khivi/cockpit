@@ -463,7 +463,7 @@ def test_probe_blockers_merged_pr_dirty_still_blocks(tmp_path):
 def test_probe_blockers_squash_merged_no_cache_clears_false_unlanded(tmp_path):
     """The bug fix: a squash-merge the slow tick never cached as MERGED.
 
-    No cached payload, `_count_unlanded` over-counts the (collapsed) commits, but
+    No cached payload, `count_unlanded` over-counts the (collapsed) commits, but
     the live `gh` lookup reports MERGED → the unlanded gate is skipped, so the
     close is no longer false-blocked.
     """

@@ -494,6 +494,7 @@ def test_preflight_exits_on_invalid_object_provider(tmp_path, monkeypatch, capsy
 
 def test_preflight_passes_on_valid_jira_object(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("JIRA_API_TOKEN", "t")  # silence the soft-warn
     preflight(
         {
             "tool": "cmux",
@@ -520,6 +521,9 @@ def test_preflight_exits_on_unknown_jira_field(tmp_path, monkeypatch, capsys):
 
 def test_preflight_passes_on_valid_trello_object(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
+    # Trello authenticates with a key *and* a token — both silence the soft-warn.
+    monkeypatch.setenv("TRELLO_API_KEY", "k")
+    monkeypatch.setenv("TRELLO_API_TOKEN", "t")
     preflight(
         {
             "tool": "cmux",
@@ -901,6 +905,72 @@ def test_preflight_warns_when_linear_repo_but_no_api_key(tmp_path, monkeypatch, 
     err = capsys.readouterr().err
     assert "LINEAR_API_KEY" in err
     assert "dev-done pill" in err
+
+
+def test_preflight_warns_on_both_halves_of_an_unset_trello_credential_pair(
+    tmp_path, monkeypatch, capsys
+):
+    """Trello authenticates with a key AND a token, so an unset pair earns two
+    warnings — the failure this catches is a daemon holding one and not the
+    other, which resolves every card to a null state and renders the Ticket cell
+    as a bare short link."""
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("TRELLO_API_KEY", "k")
+    monkeypatch.delenv("TRELLO_API_TOKEN", raising=False)
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [{"name": "r", "tickets": {"provider": "trello"}}],
+        }
+    )
+    err = capsys.readouterr().err
+    assert "TRELLO_API_TOKEN" in err
+    assert "TRELLO_API_KEY" not in err
+
+
+def test_preflight_warns_naming_the_orgs_own_trello_credential(
+    tmp_path, monkeypatch, capsys
+):
+    """The warning names the variable the repo actually reads. An org-level
+    `token_env` is merged in by `apply_org_defaults` at load, so the member repo
+    resolves the org's name and the default must not be mentioned."""
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("ACME_TRELLO_KEY", "k")
+    monkeypatch.delenv("ACME_TRELLO_TOKEN", raising=False)
+    monkeypatch.setenv("TRELLO_API_TOKEN", "unrelated")
+    preflight(
+        {
+            "tool": "cmux",
+            "orgs": {
+                "acme": {
+                    "tickets": {
+                        "provider": "trello",
+                        "key_env": "ACME_TRELLO_KEY",
+                        "token_env": "ACME_TRELLO_TOKEN",
+                    }
+                }
+            },
+            "repos": [{"name": "r", "org": "acme"}],
+        }
+    )
+    err = capsys.readouterr().err
+    assert "ACME_TRELLO_TOKEN" in err
+    assert "TRELLO_API_TOKEN" not in err
+
+
+def test_preflight_silent_for_a_github_ticket_repo_with_no_credential_env(
+    tmp_path, monkeypatch, capsys
+):
+    """GitHub authenticates through `gh`, so it declares no credential env and
+    has nothing to warn about."""
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [{"name": "r", "tickets": {"provider": "github"}}],
+        }
+    )
+    assert capsys.readouterr().err == ""
 
 
 def test_preflight_silent_when_linear_repo_and_api_key_set(

@@ -1552,7 +1552,7 @@ def install_starship_default_config() -> None:
     as install_cship_default_config: reconcile cycles never touch it.
 
     Substitutes the literal `__COCKPIT_CSHIP__` token in the bundled toml
-    with the resolved absolute path to `cockpit/cship.py` before writing —
+    with the resolved absolute path to `cockpit/lib/cship.py` before writing —
     starship spawns commands without changing cwd, so paths in the seeded
     file must be absolute. Re-running `cockpit setup` after the plugin
     moves on disk re-substitutes with the new location.

@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.6.2](https://github.com/khivi/cockpit/compare/v2.6.1...v2.6.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* **preflight:** warn on an unset credential for every ticket provider ([#388](https://github.com/khivi/cockpit/issues/388)) ([103e63c](https://github.com/khivi/cockpit/commit/103e63c5192f76e7afc60d867ac8430b087bcd4d))
+
+## [2.6.1](https://github.com/khivi/cockpit/compare/v2.6.0...v2.6.1) (2026-08-25)
+
+
+### Documentation
+
+* fix stale comment references and pin them with a test ([#387](https://github.com/khivi/cockpit/issues/387)) ([a240abb](https://github.com/khivi/cockpit/commit/a240abbd9052409d235a82239efd2639364e5407))
+* record the nudge-gate skip reasons in the state-machine diagram ([#385](https://github.com/khivi/cockpit/issues/385)) ([14c5633](https://github.com/khivi/cockpit/commit/14c5633efb5978aca35cc08d90207c6e6948bd69))
+
+## [2.6.0](https://github.com/khivi/cockpit/compare/v2.5.0...v2.6.0) (2026-08-25)
+
+
+### Features
+
+* **tui:** add FEATURES.md and make it reachable from the dashboard ([#382](https://github.com/khivi/cockpit/issues/382)) ([3364b11](https://github.com/khivi/cockpit/commit/3364b11191c4780be766296ccd245bf2617d8d00))
+
+## [2.5.0](https://github.com/khivi/cockpit/compare/v2.4.0...v2.5.0) (2026-08-25)
+
+
+### Features
+
+* **tui:** ask a session or a whole repo with `a`, read PR diffs with `d` ([#378](https://github.com/khivi/cockpit/issues/378)) ([8988860](https://github.com/khivi/cockpit/commit/8988860bd170a7a3257a33f585eb8c019f56b914))
+
+
+### Bug Fixes
+
+* collapse send text to one line (`cmux.one_line`). `cmux send` ([8988860](https://github.com/khivi/cockpit/commit/8988860bd170a7a3257a33f585eb8c019f56b914))
+
 ## [2.4.0](https://github.com/khivi/cockpit/compare/v2.3.5...v2.4.0) (2026-08-25)
 
 

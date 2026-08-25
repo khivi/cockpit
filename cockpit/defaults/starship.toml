@@ -99,7 +99,7 @@ text_muted   = "238"  # ≈ original #475569, readable on light bg
 [character]
 disabled = true
 
-# All [custom.*] commands invoke the bundled `cockpit/cship.py` dispatcher.
+# All [custom.*] commands invoke the bundled `cockpit/lib/cship.py` dispatcher.
 # The literal `__COCKPIT_STARSHIP__` token is replaced with the resolved absolute
 # path at install time by `install_starship_default_config()` in
 # cockpit/lib/config.py — starship spawns commands without changing cwd, so
