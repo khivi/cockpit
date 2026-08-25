@@ -1320,19 +1320,19 @@ class CockpitApp(App[None]):
                 f"comment, review, or CI/conflict issue"
             )
         save_pref(key, pref)
-        # ponytail: repo-scoped kick, so the sidebar's `<org> snoozed (N)` fold
-        # lags by up to one slow interval. `cycle_all` builds `folds` only when
-        # `only_repo is None`, so `_reconcile_review_groups` doesn't run here —
-        # everything else (`pr-snoozed`, 💤, the row band, the nudge going quiet)
-        # lands on this kick; only the cmux fold waits for the next full cycle.
-        # Upgrade path if that bites: kick full-cycle (`_kick_slow(None)`) and
-        # pay one `gh` round-trip per repo on the keypress. Do *not* build folds
-        # under `only_repo` — a bucket holding no ref from the scoped repo would
-        # match nothing and be dissolved by the pass's unguarded sweep, taking
-        # every other org's fold down with it.
-        self.call_from_thread(
-            self._kick_slow, str(Path(os.path.expanduser(repo["path"])))
-        )
+        # Full-cycle kick, deliberately unlike every other row action's
+        # repo-scoped one. `z` is the only keypress that changes *sidebar fold*
+        # membership, and `cycle_all` builds `folds` only when `only_repo is
+        # None` — so under a scoped kick `_reconcile_review_groups` never runs
+        # and the `<org> snoozed (N)` fold lags by up to a full slow interval
+        # while everything else (`pr-snoozed`, 💤, the row band, the nudge going
+        # quiet) has already landed. The cost is one `gh` round-trip per repo on
+        # a background worker — the same work the periodic tick does anyway, so
+        # this moves the schedule rather than adding steady-state load. Do *not*
+        # "fix" it instead by building folds under `only_repo`: a bucket holding
+        # no ref from the scoped repo matches nothing and is dissolved by the
+        # pass's sweep, taking every other org's fold down with it.
+        self.call_from_thread(self._kick_slow)
 
     @work(thread=True, group="nudge", exit_on_error=False)
     def _send_nudge(self, path_str: str) -> None:

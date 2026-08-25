@@ -2201,6 +2201,66 @@ async def test_snooze_reads_the_wake_payload_under_the_nwo_key(monkeypatch, tmp_
     assert saved["beta__269"].wake_on == "3|APPROVED"  # not the empty-payload "0|"
 
 
+async def test_snooze_kicks_full_cycle_so_the_sidebar_fold_lands(monkeypatch, tmp_path):
+    # `z` is the one row key that changes sidebar *fold* membership, and
+    # `cycle_all` builds `folds` only when `only_repo is None`. A repo-scoped
+    # kick therefore skipped `_reconcile_review_groups` entirely and the
+    # `<org> snoozed (N)` fold waited for the next periodic full cycle.
+    from cockpit.lib.nudges import NudgePref
+
+    app, _ = _make_app()
+    repo_path = tmp_path / "beta"
+    repo_path.mkdir()
+    repo = {"name": "beta", "path": str(repo_path)}
+    wt = Worktree(path=repo_path / "fnox", branch="khivi/fnox")
+    kicks: list[tuple] = []
+
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: {})
+    monkeypatch.setattr("cockpit.tui.app.save_pref", lambda key, pref: None)
+    monkeypatch.setattr(
+        app,
+        "_resolve_row_pref",
+        lambda p, verb: (repo, wt, 269, "beta__269", NudgePref()),
+    )
+    monkeypatch.setattr(app, "_notify", lambda *a, **k: None)
+    monkeypatch.setattr(
+        app, "call_from_thread", lambda fn, *a, **k: kicks.append((fn, a))
+    )
+
+    CockpitApp._toggle_snooze.__wrapped__(app, str(wt.path))  # type: ignore[attr-defined]
+
+    assert kicks == [(app._kick_slow, ())]  # no `only_repo` — full cycle
+
+
+async def test_mute_still_kicks_repo_scoped(monkeypatch, tmp_path):
+    # The counterpart to the snooze test above: `m` changes no fold membership
+    # (a mute is deliberately not a sidebar band), so it stays scoped and must
+    # not start paying a `gh` round-trip per repo.
+    from cockpit.lib.nudges import NudgePref
+
+    app, _ = _make_app()
+    repo_path = tmp_path / "beta"
+    repo_path.mkdir()
+    repo = {"name": "beta", "path": str(repo_path)}
+    wt = Worktree(path=repo_path / "fnox", branch="khivi/fnox")
+    kicks: list[tuple] = []
+
+    monkeypatch.setattr("cockpit.tui.app.save_pref", lambda key, pref: None)
+    monkeypatch.setattr(
+        app,
+        "_resolve_row_pref",
+        lambda p, verb: (repo, wt, 269, "beta__269", NudgePref()),
+    )
+    monkeypatch.setattr(app, "_notify", lambda *a, **k: None)
+    monkeypatch.setattr(
+        app, "call_from_thread", lambda fn, *a, **k: kicks.append((fn, a))
+    )
+
+    CockpitApp._toggle_mute.__wrapped__(app, str(wt.path))  # type: ignore[attr-defined]
+
+    assert kicks == [(app._kick_slow, (str(repo_path),))]
+
+
 async def test_workspace_event_kicks_the_fast_tick():
     # The `cmux events` doorbell: a workspace created/closed out from under us
     # republishes now instead of at the next 30s fast tick.
