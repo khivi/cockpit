@@ -59,6 +59,7 @@ from cockpit.lib.cmux import (
     cmux,
     cmux_close_workspace_best_effort,
     nudge_if_idle,
+    read_rest_signals,
     select_workspace,
     spawn_orphan_workspace,
     spawn_pr_workspace,
@@ -298,6 +299,12 @@ class CockpitApp(App[None]):
         # *set* persists (`lib/hidden.py`), this peek deliberately doesn't, so a
         # restart comes back tidy.
         self._show_hidden = False
+        # Undelivered `a` text, keyed by worktree path. A refusal (session
+        # mid-turn) must not cost you what you typed, so the draft is stashed
+        # and `a` restores it. Keyed per row so a draft for one worktree can't
+        # surface on another; session-only and unbounded only by row count, so
+        # it needs no eviction. Cleared on a successful send.
+        self._ask_drafts: dict[str, str] = {}
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -841,14 +848,55 @@ class CockpitApp(App[None]):
         is yours rather than the canned nudge prose. The modal is pushed here on
         the main thread (`push_screen` requires it) and the resolve+send runs on
         a worker, so the git/cmux round-trips never block the UI."""
-        path = self.query_one(WorktreeTable).current_path()
-        if path:
-            self.push_screen(AskScreen(), lambda text: self._on_ask(path, text))
+        table = self.query_one(WorktreeTable)
+        path = table.current_path()
+        if not path:
+            return
+        # Restore a draft a previous send couldn't deliver. Keyed by row, not
+        # global: a draft typed for one worktree must not surface when you press
+        # `a` on a different one.
+        screen = AskScreen(initial=self._ask_drafts.get(path, ""))
+        self.push_screen(screen, lambda text: self._on_ask(path, text))
+        # Reading cmux costs a subprocess, so the modal is pushed first and the
+        # state hint lands a moment later — `a` stays instant.
+        self._ask_state_hint(path, screen)
 
     def _on_ask(self, path_str: str, text: str | None) -> None:
-        # Escape / blank input dismisses with None — nothing to send.
+        # Escape / blank input dismisses with None — nothing to send. The draft
+        # is deliberately NOT cleared here: escaping out to go look at something
+        # should not throw the text away either.
         if text:
             self._send_ask(path_str, text)
+
+    @work(thread=True, group="askhint", exit_on_error=False)
+    def _ask_state_hint(self, path_str: str, screen: AskScreen) -> None:
+        # Advisory pre-warning only. `nudge_if_idle` re-checks at send time and
+        # stays the authority — a turn can end while you type, and that message
+        # must still go through, so this never blocks the submit.
+        if not is_cmux():
+            return
+        resolved = self._resolve_worktree(path_str)
+        if resolved is None:
+            return
+        wt = resolved[1]
+        ref = self._workspace_ref(wt)
+        if ref is None:
+            return
+        who = wt.label or wt.short
+        sig = read_rest_signals(ref)
+        if sig.native == "Running":
+            msg, warn = f"{who} is mid-turn — this will be refused", True
+        elif sig.parked:
+            msg, warn = f"{who} is parked — this will be refused", True
+        elif sig.idle_pill or sig.native == "Idle":
+            msg, warn = f"{who} is idle — ready", False
+        else:
+            # `Needs input` is ambiguous (idle-aged vs pending permission), so
+            # it is reported as the refusal it will cause, not as a diagnosis.
+            msg, warn = f"{who} is not at rest — this will be refused", True
+        # The user may have escaped out while cmux was being read.
+        if screen.is_attached:
+            self.call_from_thread(screen.set_state_hint, msg, warn=warn)
 
     def action_hide_repo(self) -> None:
         """`h` — the one hide/unhide key, read off the cursor row:
@@ -1466,11 +1514,16 @@ class CockpitApp(App[None]):
             )
             return
         if nudge_if_idle(ref, text, tag="ask"):
+            self._ask_drafts.pop(path_str, None)
             self._notify(f"sent to {wt.label or wt.short}")
         else:
+            # Keep the text. The refusal is transient (a turn ends, a permission
+            # is answered), so throwing away what the user typed would make them
+            # retype it verbatim — `a` restores this draft.
+            self._ask_drafts[path_str] = text
             self._notify(
                 f"ask skipped {wt.label or wt.short}: not idle "
-                "(busy, awaiting permission, or parked)",
+                "(busy, awaiting permission, or parked) — press a to retry",
                 severity="warning",
             )
 

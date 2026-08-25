@@ -50,9 +50,13 @@ class AskScreen(ModalScreen["str | None"]):
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, target: str = "") -> None:
+    def __init__(self, target: str = "", initial: str = "") -> None:
         super().__init__()
         self._target = target
+        # A draft the previous send couldn't deliver (the session was mid-turn).
+        # Restored so a refusal never costs you what you typed — see
+        # `app._send_ask`.
+        self._initial = initial
 
     def compose(self) -> ComposeResult:
         title = f"Ask {self._target}" if self._target else "Ask"
@@ -63,11 +67,34 @@ class AskScreen(ModalScreen["str | None"]):
                 "a newline would submit early.",
                 classes="ask-hint",
             )
-            yield Input(placeholder="rebase onto main and force-push", id="ask-input")
+            yield Input(
+                value=self._initial,
+                placeholder="rebase onto main and force-push",
+                id="ask-input",
+            )
+            # Filled in asynchronously by `app._ask_state_hint` once cmux has
+            # been read: blank until then, so the modal opens instantly rather
+            # than waiting on a subprocess.
+            yield Static("", id="ask-state", classes="ask-hint")
             yield Static("enter to send · esc to cancel", classes="ask-hint")
 
+    def set_state_hint(self, message: str, *, warn: bool = False) -> None:
+        """Show the row session's live at-rest state above the footer hint.
+
+        Advisory only — `nudge_if_idle` re-checks at send time and remains the
+        authority. It must NOT block submitting: a turn that ends while you are
+        still typing would have accepted the message, so a stale "mid-turn"
+        warning must never be upgraded into a refusal here.
+        """
+        node = self.query_one("#ask-state", Static)
+        node.update(f"[b]{message}[/b]" if warn else message)
+
     def on_mount(self) -> None:
-        self.query_one(Input).focus()
+        inp = self.query_one(Input)
+        inp.focus()
+        # Restored draft: cursor to the end so you can keep typing, not overtype.
+        if self._initial:
+            inp.action_end()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         # Enter in the box: hand back the text; blank → None (nothing sent).

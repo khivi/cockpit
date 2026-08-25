@@ -20,6 +20,7 @@ from cockpit.lib.cmux import (
     DEVDONE_KEY,
     GREEN,
     MUTED_KEY,
+    PARKED_KEY,
     WORKSPACE_COLORS,
     YELLOW,
     CmuxUnavailable,
@@ -34,6 +35,7 @@ from cockpit.lib.cmux import (
     move_workspace_group_to_start,
     nudge_if_idle,
     one_line,
+    read_rest_signals,
     reconcile_workspace_names,
     remove_from_workspace_group,
     rename_workspace_group,
@@ -1499,3 +1501,56 @@ def test_nudge_dry_run_reports_the_normalized_text(capsys):
 
     out = capsys.readouterr().out
     assert "one two" in out
+
+
+# ── read_rest_signals (shared read; the DECISION stays in nudge_if_idle) ─────
+
+
+def test_read_rest_signals_reports_raw_signals_not_a_verdict():
+    """It returns signals, deliberately not "safe to send" — a verdict here
+    would let a caller re-derive the gate and drift from the documented one."""
+    with patch("cockpit.lib.cmux.cmux", return_value=_idle_status_lines()):
+        sig = read_rest_signals("workspace:1")
+    assert (sig.native, sig.idle_pill, sig.parked) == (sig.native, True, False)
+    assert not hasattr(sig, "safe")
+
+
+def test_read_rest_signals_never_sends():
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return _idle_status_lines()
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        read_rest_signals("workspace:1")
+
+    assert [a[0] for a in calls] == ["list-status"]
+    assert not [a for a in calls if a[0] in ("send", "send-key", "set-status")]
+
+
+def test_read_rest_signals_detects_running_and_parked():
+    with patch("cockpit.lib.cmux.cmux", return_value=_native_line("Running")):
+        assert read_rest_signals("workspace:1").native == "Running"
+    with patch("cockpit.lib.cmux.cmux", return_value=f"{PARKED_KEY}=1"):
+        assert read_rest_signals("workspace:1").parked is True
+
+
+def test_nudge_gate_order_unchanged_by_the_shared_read():
+    """Regression guard on the refactor: the four documented outcomes must be
+    byte-for-byte the same decisions as before `read_rest_signals` existed."""
+    cases = [
+        (_native_line("Running") + "\nidle=1", False),  # running beats idle pill
+        (_idle_status_lines(), True),  # idle pill fires
+        (_native_line("Idle"), True),  # native Idle fires (+ self-heal)
+        (_native_line("Needs input"), False),  # ambiguous → never
+        (f"idle=1\n{PARKED_KEY}=1", False),  # parked beats idle pill
+    ]
+    for lines, expected in cases:
+        with patch(
+            "cockpit.lib.cmux.cmux",
+            # `_l=lines` binds per iteration — a bare closure over the loop
+            # variable would read the last case for every case (ruff B023).
+            side_effect=lambda *a, _l=lines, **k: (_l if a[0] == "list-status" else ""),
+        ):
+            assert nudge_if_idle("workspace:1", "m") is expected, lines

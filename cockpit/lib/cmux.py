@@ -606,6 +606,33 @@ def reconcile_workspace_names(
     return renamed
 
 
+@dataclass(frozen=True)
+class RestSignals:
+    """The three at-rest signals `nudge_if_idle` reads, in one `list-status`.
+
+    Extracted so a *display* caller (the TUI's `a` modal, which warns before
+    you type into a session that will refuse the message) reads the signals
+    through the same primitives as the gate, instead of growing a second copy
+    of the parse. **The decision stays in `nudge_if_idle` and only there** —
+    this is deliberately raw signals, not a verdict, so no caller can quietly
+    re-derive "safe to send" and drift from the documented gate.
+    """
+
+    native: str | None
+    idle_pill: bool
+    parked: bool
+
+
+def read_rest_signals(ref: str) -> RestSignals:
+    """One `list-status` read of `ref`'s at-rest signals. Never sends."""
+    lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
+    return RestSignals(
+        native=_native_claude_state(lines),
+        idle_pill=_has_pill(lines, "idle"),
+        parked=_has_pill(lines, PARKED_KEY),
+    )
+
+
 def one_line(text: str) -> str:
     r"""Collapse `text` to a single line so `cmux send` delivers it as one prompt.
 
@@ -673,14 +700,16 @@ def nudge_if_idle(
 
         if not nudges.should_nudge(pref_key):
             return False
-    status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
-    native = _native_claude_state(status_lines)
+    # Signals read via `read_rest_signals`; the guard ORDER below is unchanged
+    # and stays the single authority on "safe to send" (see that helper).
+    sig = read_rest_signals(ref)
+    native = sig.native
     if native == "Running":
         return False
-    has_idle_pill = _has_pill(status_lines, "idle")
+    has_idle_pill = sig.idle_pill
     if not (has_idle_pill or native == "Idle"):
         return False
-    if _has_pill(status_lines, PARKED_KEY):
+    if sig.parked:
         return False
     if native == "Idle" and not has_idle_pill and not dry:
         _set_status(ref, "idle", "idle", GREY)

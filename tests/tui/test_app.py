@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.widgets import Input
+from textual.widgets import Input, Static
 
+from cockpit.lib.cmux import RestSignals
 from cockpit.lib.config import apply_org_defaults
 from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
@@ -2705,3 +2706,141 @@ async def test_read_pr_survives_delta_raising(monkeypatch, tmp_path):
     monkeypatch.setattr("subprocess.run", _run)
     body = await _press_r(monkeypatch, wt)
     assert "PLAIN DIFF" in body  # not a traceback, not an empty overlay
+
+
+# ── `a` draft preservation + pre-warn hint ───────────────────────────────────
+
+
+async def test_ask_refusal_preserves_the_draft_and_a_restores_it(monkeypatch, tmp_path):
+    """A refusal must not cost you what you typed. The send is transient
+    (a turn ends, a permission is answered), so retyping is pure waste."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "cockpit.tui.app.read_rest_signals",
+        lambda ref: RestSignals(native="Running", idle_pill=False, parked=False),
+    )
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: None)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "rebase onto main"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+        assert app._ask_drafts[str(wt.path)] == "rebase onto main"
+        # Pressing `a` again restores it rather than opening an empty box.
+        await pilot.press("a")
+        await pilot.pause()
+        assert app.screen.query_one(Input).value == "rebase onto main"
+
+
+async def test_ask_success_clears_the_draft(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "cockpit.tui.app.read_rest_signals",
+        lambda ref: RestSignals(native="Idle", idle_pill=True, parked=False),
+    )
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: None)
+    app._ask_drafts[str(wt.path)] = "stale draft"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "go"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert str(wt.path) not in app._ask_drafts
+
+
+async def test_ask_draft_is_keyed_per_row(monkeypatch, tmp_path):
+    """A draft typed for one worktree must not surface on another."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr(
+        "cockpit.tui.app.read_rest_signals",
+        lambda ref: RestSignals(native="Idle", idle_pill=True, parked=False),
+    )
+    app, _ = _make_app()
+    app._ask_drafts["/some/other/worktree"] = "not mine"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        assert app.screen.query_one(Input).value == ""
+
+
+async def test_ask_hint_warns_when_session_is_mid_turn(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr(
+        "cockpit.tui.app.read_rest_signals",
+        lambda ref: RestSignals(native="Running", idle_pill=False, parked=False),
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause(0.6)
+        hint = str(app.screen.query_one("#ask-state", Static).render())
+    assert "mid-turn" in hint and "refused" in hint
+
+
+async def test_ask_hint_says_ready_when_idle(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr(
+        "cockpit.tui.app.read_rest_signals",
+        lambda ref: RestSignals(native="Idle", idle_pill=True, parked=False),
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause(0.6)
+        hint = str(app.screen.query_one("#ask-state", Static).render())
+    assert "idle" in hint and "refused" not in hint
+
+
+async def test_ask_hint_never_blocks_the_submit(monkeypatch, tmp_path):
+    """The hint is advisory. A turn that ends while you type would accept the
+    message, so a stale mid-turn warning must never become a refusal here —
+    `nudge_if_idle` re-checks at send time and stays the authority."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr(
+        "cockpit.tui.app.read_rest_signals",  # hint says "mid-turn"
+        lambda ref: RestSignals(native="Running", idle_pill=False, parked=False),
+    )
+    sent: list = []
+    monkeypatch.setattr(  # …but by send time the turn has ended
+        "cockpit.tui.app.nudge_if_idle",
+        lambda ref, msg, **k: (sent.append(msg), True)[1],
+    )
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: None)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause(0.6)
+        app.screen.query_one(Input).value = "ship it"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert sent == ["ship it"]  # delivered despite the warning
