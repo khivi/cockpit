@@ -159,8 +159,8 @@ def _validate_field(
     """Shared top-level-then-per-repo traversal for a scalar config field.
 
     Runs `check(value, where)` on `cfg[key]` if present, then on `repo[key]`
-    for every repo that sets it — the pattern `_validate_review_command` /
-    `_validate_base_remote` / `_validate_orphan_nudge_grace` all repeat.
+    for every repo that sets it — the pattern `_validate_base_remote` /
+    `_validate_orphan_nudge_grace` both repeat.
     `check` owns the predicate and the `_die` message; `where` is the
     location prefix ("key" at top level, "repo {name!r}[: key]" per repo).
     `per_repo_key_suffix=False` matches `_validate_orphan_nudge_grace`'s

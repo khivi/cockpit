@@ -15,7 +15,7 @@ Two surfaces:
   * `gh`-backed reads/writes — `fetch_issue`/`fetch_issues` (state + labels +
     assignees, driving the `devdone=` pill) and the one *write*,
     `close_issue` (`gh issue close`, reached only by the opt-in
-    `github_done_on_merge` path in the slow tick).
+    `tickets.close_on_merge` path in the slow tick).
 
 Unlike Linear (a personal `LINEAR_API_KEY` + raw GraphQL), the transport here
 is the already-authenticated `gh` CLI, so there's no API-key env var and no

@@ -393,7 +393,7 @@ def _fetch_ticket_titles(ctx: RepoCycle, ids: list[str]) -> dict[str, str | None
 def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
     """Toggle the `devdone=` pill from the resolved Linear-delivery `block`
     (`{"tickets": [{"id", "state"}], ...}` or None — stashed in
-    `ctx.linear_blocks` by `_resolve_linear_block`; no network here).
+    `ctx.linear_blocks` by `_prefetch_linear_blocks`; no network here).
 
     The pill is raised — green — only when the PR delivers at least one ticket
     AND *every* delivered ticket is in the `linear_dev_done` workflow state
@@ -776,7 +776,7 @@ def _transition_merged_github(ctx: RepoCycle) -> None:
     """Opt-in: close a merged PR's delivered GitHub issues — the analog of
     `_transition_merged_linear`, but the terminal action is `gh issue close`.
 
-    Gates: `github_done_on_merge` (per-repo over global) and not dry (the
+    Gates: `tickets.close_on_merge` (per-repo over global) and not dry (the
     dispatcher already checked `dry`). GitHub auto-closes same-repo issues
     referenced by a closing keyword on merge, so this mainly catches cross-repo
     refs and issues that were linked but not auto-closed.

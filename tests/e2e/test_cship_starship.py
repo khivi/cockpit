@@ -87,7 +87,7 @@ def _run_footer(env: dict, stdin: bytes = b"{}") -> subprocess.CompletedProcess:
 
 def test_footer_smoke_renders(footer_env):
     """Renderer is daemon-write-only — seed the cwd-keyed git-branch cell
-    the daemon's fast tick would have written, so `branch_pill` has
+    the daemon's fast tick would have written, so `branch_identity` has
     something to render."""
     env, cache, _cfg = footer_env
     (cache / f"git-branch-{_cwd_slug()}").write_text("main")
@@ -227,7 +227,7 @@ def test_footer_golden_full_render(footer_env):
     env, cache, _cfg = footer_env
 
     # Renderer is daemon-write-only — seed both the cwd-keyed git-branch
-    # cell (so `branch_pill` resolves) and the branch-keyed PR cells (so
+    # cell (so `branch_identity` resolves) and the branch-keyed PR cells (so
     # line 2 PR pills render). No live git fallback exists.
     branch = _current_branch()
     branch_key = branch.replace("/", "-")
@@ -253,9 +253,10 @@ def test_footer_golden_full_render(footer_env):
     line1, line2 = lines
 
     # Line 1: session state. context + rate must appear; clock must not.
-    # branch_pill also renders because the subprocess inherits this repo's
-    # cwd, but we don't pin its exact text (dirty/staged/untracked counts
-    # depend on the worktree state when the test runs).
+    # branch_identity and worktree_status also render because the subprocess
+    # inherits this repo's cwd, but we don't pin their exact text (the
+    # staged/unstaged/untracked counts worktree_status reports depend on the
+    # worktree state when the test runs).
     assert "🧠 7%/1M" in line1, f"context pill missing: {line1!r}"
     assert "⌛ 4%/5h" in line1, f"ratelimit pill missing: {line1!r}"
     assert not re.search(r"\d{2}:\d{2}", line1), f"clock pill should be gone: {line1!r}"
