@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.5.0](https://github.com/khivi/cockpit/compare/v2.4.0...v2.5.0) (2026-08-25)
+
+
+### Features
+
+* **tui:** ask a session or a whole repo with `a`, read PR diffs with `d` ([#378](https://github.com/khivi/cockpit/issues/378)) ([8988860](https://github.com/khivi/cockpit/commit/8988860bd170a7a3257a33f585eb8c019f56b914))
+
+
+### Bug Fixes
+
+* collapse send text to one line (`cmux.one_line`). `cmux send` ([8988860](https://github.com/khivi/cockpit/commit/8988860bd170a7a3257a33f585eb8c019f56b914))
+
 ## [2.4.0](https://github.com/khivi/cockpit/compare/v2.3.5...v2.4.0) (2026-08-25)
 
 
