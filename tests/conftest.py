@@ -96,6 +96,23 @@ def _isolate_hidden_repos(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_welcome_marker(tmp_path):
+    """`firstrun.WELCOME_MARKER` is resolved off the real `COCKPIT_HOME` at
+    import. Without this the welcome-hint tests would pass or fail depending on
+    whether the developer's own install had already shown the hint — and a test
+    run would suppress it on their real install.
+
+    Same shape as `_isolate_hidden_repos` above, including not requesting
+    `monkeypatch` — see its docstring for why that ordering matters."""
+    import cockpit.lib.firstrun as firstrun_mod
+
+    prev = firstrun_mod.WELCOME_MARKER
+    firstrun_mod.WELCOME_MARKER = tmp_path / "welcomed"
+    yield
+    firstrun_mod.WELCOME_MARKER = prev
+
+
+@pytest.fixture(autouse=True)
 def _isolate_pidfile(tmp_path):
     """`daemon.PID_FILE` is resolved off the real `COCKPIT_HOME` at import, so
     without this any test reaching `_fast_tick` (which calls `reassert_pidfile`)

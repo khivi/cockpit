@@ -206,6 +206,22 @@ class FooterBar(Horizontal):
         # Clickable key (bold) + one-word label, via a Textual markup action link.
         return f"[@click=app.{action}][b]{key}[/b][/] {self._label(action, desc)}"
 
+    def _palette_seg(self) -> str:
+        """`^P More` — the command palette, always advertised, never gated.
+
+        Not derived from BINDINGS: `ctrl+p` is Textual's own binding, not one of
+        cockpit's, so nothing in `self._hints` would ever produce it. Without
+        this segment the palette is invisible — which is why "Show config",
+        "Edit config" and the feature guide were unreachable to anyone who
+        didn't already know the Textual convention.
+
+        Labelled "More" rather than "Palette": it has to read as *there is
+        something else here* to someone who is looking for a thing they can't
+        find, which is the only moment it matters. It renders last (appended
+        after `GLOBAL_ORDER`) because it targets the app, not the table, and it
+        is the one hint with no row or backend state to follow."""
+        return "[@click=app.command_palette][b]^P[/b][/] More"
+
     def _close_seg(self, close_key: str, force_key: str | None) -> str:
         # `c/C Close`: close and force-close share one footer slot. Each letter
         # stays independently clickable (`c` → close, `C` → force). `force_close_row`
@@ -342,6 +358,7 @@ class FooterBar(Horizontal):
                 right.append((order, len(right), seg))
         right.sort()
         right_segs = [seg for _, _, seg in right]
+        right_segs.append(self._palette_seg())
         self.row_text = "   ".join(left)
         self.global_text = "   ".join(right_segs)
         self.query_one("#footer-row", Static).update(self.row_text)
