@@ -6,11 +6,14 @@ from `cmux capabilities`.
 independent axes, because cmux exposes them separately:
 
   - **CLI verbs** — `send` / `send-key` / `list-status` / `list-workspaces` /
-    `new-workspace`, the five cockpit shells out to on every cycle. There is no
-    JSON verb list, so they're read out of the `Commands:` section of
-    `cmux --help`.
+    `new-workspace`. There is no JSON verb list, so they're read out of the
+    `Commands:` section of `cmux --help`. cockpit shells out to 15 verbs in
+    total; these five are the ones gated here, because the rest are either
+    best-effort (`_CMUX_ONLY_VERBS` — a missed pill or tint is cosmetic),
+    gated on the capability axis instead (`events`), or self-gating
+    (`capabilities`). See `docs/cmux-surface-audit.md` for the full map.
   - **Capability ids** — `cmux capabilities` returns a negotiated JSON list
-    (`terminal.replay.v1`, `events.v1`, …). `capabilities` is itself a recent
+    (`events.v1`, `workspace.groups.v1`, …). `capabilities` is itself a recent
     verb, so its *absence from the verb list* is the "cmux is too old" signal —
     not "this cmux has no capabilities".
 
@@ -40,12 +43,21 @@ REQUIRED_VERBS: dict[str, str] = {
 }
 
 # Capability ids cockpit (and the features built on top of it) negotiate for.
+# Every entry must name a tier cockpit actually HAS — a required id for an
+# unbuilt feature tells the user to upgrade cmux for nothing. `terminal.replay.v1`
+# ("screen preview") and `notification.feed.v1` ("the notification feed") were
+# both exactly that and are deliberately absent: the preview was dropped
+# plan-only, and cockpit calls no notification verb.
 REQUIRED_CAPABILITIES: dict[str, str] = {
     "workspace.read_state.v1": "workspace state reads",
     "terminal.input.ordered.v1": "ordered nudge delivery",
-    "terminal.replay.v1": "screen preview",
     "events.v1": "the cmux event stream",
-    "notification.feed.v1": "the notification feed",
+    # The only gate `workspace-group` can have: it is absent from `cmux --help`,
+    # so `parse_verbs` cannot see it and `REQUIRED_VERBS` would report it
+    # permanently missing. The umbrella id is deliberate — its absence means no
+    # folds at all, where the narrower `group_actions`/`group_create` pair would
+    # add warning noise without a distinct failure mode.
+    "workspace.groups.v1": "sidebar folds (stacks, reviews, snoozed)",
 }
 
 
@@ -92,8 +104,11 @@ def parse_verbs(help_text: str) -> frozenset[str]:
     (`Environment:`). A line may list alternatives (`next-window |
     previous-window`) and always trails into `[flags]` / `<args>` / `(prose)`.
 
-    ponytail: parses help text because cmux ships no machine-readable verb
-    list; swap the body for `cmux verbs --json` if one ever lands. A parse miss
+    ponytail: parses help text because cmux ships no machine-readable list of
+    *verbs*. It does ship one of RPC *methods* — `cmux capabilities` returns a
+    303-entry `methods` array that `parse_capabilities` currently discards — so
+    the swap is available for anything reachable via `cmux rpc`, but not for the
+    CLI surface this gate covers. See `docs/cmux-surface-audit.md`. A parse miss
     degrades to a warning, never a die.
     """
     verbs: set[str] = set()

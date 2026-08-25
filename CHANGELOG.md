@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.5](https://github.com/khivi/cockpit/compare/v2.3.4...v2.3.5) (2026-08-25)
+
+
+### Bug Fixes
+
+* **capabilities:** require only capability ids that gate a real feature ([#377](https://github.com/khivi/cockpit/issues/377)) ([fda1428](https://github.com/khivi/cockpit/commit/fda142842ec07869666695def3a7a3751f896934))
+
 ## [2.3.4](https://github.com/khivi/cockpit/compare/v2.3.3...v2.3.4) (2026-08-25)
 
 
