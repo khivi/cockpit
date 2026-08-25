@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -47,6 +48,19 @@ def _isolate(monkeypatch, tmp_path):
     # against the developer's running cmux. Doorbell tests call the handler
     # directly; the watcher itself is covered in tests/lib/test_events.py.
     monkeypatch.setattr("cockpit.tui.app.watch_workspace_events", lambda *_: None)
+    # Worktree paths land under this test's own tmp dir (see `_wt`), not a
+    # shared `/tmp`. Nothing is created on disk — a `Worktree.path` is a row key
+    # and a `.resolve()` target — but a literal `/tmp/a` is shared mutable state
+    # across the xdist workers the suite runs under.
+    monkeypatch.setattr(sys.modules[__name__], "_WT_ROOT", tmp_path)
+
+
+_WT_ROOT = Path("/tmp")
+
+
+def _wt(name, branch, **kw):
+    """A Worktree rooted under the running test's tmp dir. Pass a bare name."""
+    return Worktree(path=_WT_ROOT / name, branch=branch, **kw)
 
 
 def _make_app(**kw):
@@ -366,15 +380,15 @@ async def test_render_table_adds_header_plus_one_row_per_worktree():
     async with app.run_test() as pilot:
         await pilot.pause()
         wts = [
-            Worktree(path=Path("/tmp/a"), branch="khivi/feat-a"),
-            Worktree(path=Path("/tmp/b"), branch="khivi/feat-b"),
+            _wt("a", "khivi/feat-a"),
+            _wt("b", "khivi/feat-b"),
         ]
         app._render_table([("repo", "repo", None, False, wts)])
         await pilot.pause()
         table = app.query_one(WorktreeTable)
         assert table.row_count == 3  # one repo header + two worktrees
         # Cursor auto-skips off the header onto the first worktree row.
-        assert table.current_path() == "/tmp/a"
+        assert table.current_path() == str(wts[0].path)
 
 
 async def test_render_table_empty_inventory_has_no_rows():
@@ -391,15 +405,15 @@ async def test_current_path_returns_cursor_row_key():
     async with app.run_test() as pilot:
         await pilot.pause()
         wts = [
-            Worktree(path=Path("/tmp/a"), branch="khivi/feat-a"),
-            Worktree(path=Path("/tmp/b"), branch="khivi/feat-b"),
+            _wt("a", "khivi/feat-a"),
+            _wt("b", "khivi/feat-b"),
         ]
         app._render_table([("repo", "repo", None, False, wts)])
         await pilot.pause()
         table = app.query_one(WorktreeTable)
-        # Row 0 is the repo header; the worktrees follow, so /tmp/b is row 2.
+        # Row 0 is the repo header; the worktrees follow, so `b` is row 2.
         table.move_cursor(row=2)
-        assert table.current_path() == "/tmp/b"
+        assert table.current_path() == str(wts[1].path)
 
 
 async def test_current_path_none_when_empty():
@@ -1341,7 +1355,7 @@ async def test_parked_repos_collapse_into_one_disclosure_row():
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        wt = Worktree(path=Path("/tmp/a"), branch="khivi/feat")
+        wt = _wt("a", "khivi/feat")
         app._render_table(
             [("alpha", "alpha", None, "none", [wt])], None, {"beta", "gamma"}
         )
@@ -1365,7 +1379,7 @@ async def test_no_disclosure_row_when_nothing_parked():
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        wt = Worktree(path=Path("/tmp/a"), branch="khivi/feat")
+        wt = _wt("a", "khivi/feat")
         app._render_table([("alpha", "alpha", None, "none", [wt])])
         await pilot.pause()
         table = app.query_one(WorktreeTable)
@@ -1836,7 +1850,7 @@ async def test_single_click_on_hidden_row_expands():
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        wt = Worktree(path=Path("/tmp/a"), branch="khivi/feat")
+        wt = _wt("a", "khivi/feat")
         app._render_table([("alpha", "alpha", None, "none", [wt])], None, {"beta"})
         await pilot.pause()
         table = app.query_one(WorktreeTable)
@@ -1853,7 +1867,7 @@ async def test_enter_on_hidden_row_expands():
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        wt = Worktree(path=Path("/tmp/a"), branch="khivi/feat")
+        wt = _wt("a", "khivi/feat")
         app._render_table([("alpha", "alpha", None, "none", [wt])], None, {"beta"})
         await pilot.pause()
         table = app.query_one(WorktreeTable)
@@ -1869,9 +1883,9 @@ async def test_arrow_keys_move_row_cursor():
     async with app.run_test() as pilot:
         await pilot.pause()
         wts = [
-            Worktree(path=Path("/tmp/a"), branch="khivi/feat-a"),
-            Worktree(path=Path("/tmp/b"), branch="khivi/feat-b"),
-            Worktree(path=Path("/tmp/c"), branch="khivi/feat-c"),
+            _wt("a", "khivi/feat-a"),
+            _wt("b", "khivi/feat-b"),
+            _wt("c", "khivi/feat-c"),
         ]
         app._render_table([("repo", "repo", None, False, wts)])
         await pilot.pause()
