@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0](https://github.com/khivi/cockpit/compare/v2.3.5...v2.4.0) (2026-08-25)
+
+
+### Features
+
+* **tui:** collapse each repo's snoozed rows behind a z-toggled fold ([#380](https://github.com/khivi/cockpit/issues/380)) ([26440c5](https://github.com/khivi/cockpit/commit/26440c593e6a30d653e1c244e107913139ddf414))
+
 ## [2.3.5](https://github.com/khivi/cockpit/compare/v2.3.4...v2.3.5) (2026-08-25)
 
 
