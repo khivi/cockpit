@@ -58,6 +58,8 @@ class FooterBar(Horizontal):
             "mute_row",
             "snooze_row",
             "nudge_row",
+            "read_pr",
+            "ask_row",
         }
     )
 
@@ -77,6 +79,12 @@ class FooterBar(Horizontal):
         # gated: it focuses an existing workspace or spawns one first, so it's
         # meaningful on any backed row.
         "nudge_row": "workspace",
+        # `r` reads the row's PR — nothing to read without one. Gated on the
+        # same cached `pr-num` cell as `p`, so it costs no network to decide.
+        "read_pr": "pr",
+        # `a` sends text to an *existing* session, exactly like `N` — it can't
+        # spawn one (that's `f`), so advertise it only when one is live.
+        "ask_row": "workspace",
     }
 
     # Explicit render order for the global (right) group — independent of BINDINGS
@@ -109,6 +117,8 @@ class FooterBar(Horizontal):
         "mute_row": "Mute",
         "snooze_row": "Snooze",
         "nudge_row": "Nudge",
+        "read_pr": "Read",
+        "ask_row": "Ask",
         "new_workspace": "New",
         "hide_repo": "Hide",
         "quit": "Quit",
@@ -126,6 +136,10 @@ class FooterBar(Horizontal):
     BACKEND_ACTIONS = {
         "focus_row": frozenset({"cmux", "limux"}),
         "nudge_row": frozenset({"cmux"}),
+        # `a` rides the same cmux-only send verb as `N`. `r` is deliberately
+        # absent: it shells out to `gh`, not to a workspace backend, so reading
+        # a PR works on limux and on `none`.
+        "ask_row": frozenset({"cmux"}),
     }
 
     def __init__(

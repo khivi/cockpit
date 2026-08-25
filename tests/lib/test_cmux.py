@@ -33,6 +33,7 @@ from cockpit.lib.cmux import (
     move_workspace_group_to_end,
     move_workspace_group_to_start,
     nudge_if_idle,
+    one_line,
     reconcile_workspace_names,
     remove_from_workspace_group,
     rename_workspace_group,
@@ -1415,3 +1416,86 @@ def test_group_verbs_noop_on_limux():
         ungroup_workspaces("workspace_group:1")
 
     run_mock.assert_not_called()
+
+
+# ── send-text normalization (every newline is an Enter) ──────────────────────
+
+
+def test_one_line_collapses_real_newlines():
+    assert one_line("first\nsecond") == "first second"
+    assert one_line("a\r\nb") == "a b"
+
+
+def test_one_line_collapses_literal_backslash_escapes():
+    r"""The two-character `\n` is what `cmux send` documents as Enter, so it is
+    just as dangerous as a real newline — and far likelier, since it survives
+    a shell single-quote (`cockpit broadcast 'fix the \n handling'`)."""
+    assert one_line(r"fix the \n handling") == "fix the handling"
+    assert one_line(r"a\rb") == "a b"
+    assert one_line(r"a\tb") == "a b"
+
+
+def test_one_line_leaves_a_plain_message_untouched():
+    assert one_line("fix CI") == "fix CI"
+    assert one_line("/compact") == "/compact"
+
+
+def test_one_line_folds_runs_of_whitespace_and_strips():
+    assert one_line("  a   b  ") == "a b"
+    assert one_line("") == ""
+
+
+def test_nudge_if_idle_sends_multiline_text_as_one_line():
+    """A multi-line message must reach `cmux send` as ONE argv with no newline:
+    cmux synthesizes keypresses (not a bracketed paste), so each newline would
+    arrive as Enter and submit a truncated fragment as its own prompt."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "rebase onto main\nthen force-push")
+
+    assert result is True
+    sent = [args for args in calls if args[0] == "send"]
+    assert len(sent) == 1
+    assert sent[0][3] == "rebase onto main then force-push"
+    assert "\n" not in sent[0][3]
+
+
+def test_nudge_if_idle_neutralizes_literal_backslash_n():
+    r"""Regression: `cockpit broadcast 'fix the \n handling'` used to submit
+    `fix the ` to every idle session and `handling` as a second prompt."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        nudge_if_idle("workspace:1", r"fix the \n handling")
+
+    sent = [args for args in calls if args[0] == "send"]
+    assert sent[0][3] == "fix the handling"
+
+
+def test_nudge_dry_run_reports_the_normalized_text(capsys):
+    """`--dry` must show what would actually be delivered, not the raw input —
+    so the normalize happens before the print."""
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        nudge_if_idle("workspace:1", "one\ntwo", tag="t", dry=True)
+
+    out = capsys.readouterr().out
+    assert "one two" in out

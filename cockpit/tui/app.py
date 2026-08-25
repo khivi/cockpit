@@ -94,6 +94,7 @@ from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
 from cockpit.orchestrators.teardown import resolve_pr_state, worktree_state_blockers
+from cockpit.tui.widgets.ask_screen import AskScreen
 from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
@@ -101,6 +102,12 @@ from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
 from cockpit.tui.widgets.worktree_table import HIDDEN_CAP, Inventory, WorktreeTable
 
 _LOG_TAIL_LINES = 200
+
+# `r` (Read PR) renders body + comments + diff into one `ConfigScreen`, whose
+# body is a single `Static`. A large diff would stall the render, so the blob is
+# capped — with the drop reported in the body (never a silent truncation) and
+# `p` as the escape hatch to the full PR.
+_READ_MAX_LINES = 2000
 
 # The `n` (New) action shells out via the same module dispatch the daemon's
 # `_bg_spawn_pr` uses: `python -m cockpit.cli new …`. NOT `python spawn.py …` by
@@ -189,6 +196,8 @@ class CockpitApp(App[None]):
         ("f", "focus_row", "Focus"),
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
+        ("r", "read_pr", "Read PR"),
+        ("a", "ask_row", "Ask"),
         ("o", "show_output", "Output"),
         ("c", "close_row", "Close"),
         ("C", "force_close_row", "Force close"),
@@ -775,6 +784,25 @@ class CockpitApp(App[None]):
 
     def action_nudge_row(self) -> None:
         self._row_act(self._send_nudge)
+
+    def action_read_pr(self) -> None:
+        self._row_act(self._read_pr)
+
+    def action_ask_row(self) -> None:
+        """`a` — type a line and send it to this row's Claude session.
+
+        The text half of `N`: same gated send (`nudge_if_idle`), but the message
+        is yours rather than the canned nudge prose. The modal is pushed here on
+        the main thread (`push_screen` requires it) and the resolve+send runs on
+        a worker, so the git/cmux round-trips never block the UI."""
+        path = self.query_one(WorktreeTable).current_path()
+        if path:
+            self.push_screen(AskScreen(), lambda text: self._on_ask(path, text))
+
+    def _on_ask(self, path_str: str, text: str | None) -> None:
+        # Escape / blank input dismisses with None — nothing to send.
+        if text:
+            self._send_ask(path_str, text)
 
     def action_hide_repo(self) -> None:
         """`h` — the one hide/unhide key, read off the cursor row:
@@ -1366,6 +1394,112 @@ class CockpitApp(App[None]):
                 "(busy, awaiting permission, or parked)",
                 severity="warning",
             )
+
+    @work(thread=True, group="nudge", exit_on_error=False)
+    def _send_ask(self, path_str: str, text: str) -> None:
+        # The text half of `N`: same gated send, user-supplied message. Routed
+        # through `nudge_if_idle` rather than a raw `cmux send` so the whole
+        # idle-gate story applies — a mid-turn or permission-pending session
+        # refuses it instead of having the text typed into a y/n prompt. No
+        # pref_key: a deliberate keypress overrides mute/snooze, exactly like
+        # `N`. `nudge_if_idle` collapses the text to one line (see
+        # `cmux.one_line`). Writes no cache cell.
+        if not is_cmux():
+            self._notify("ask requires cmux", severity="warning")
+            return
+        resolved = self._resolve_worktree(path_str)
+        if resolved is None:
+            self._notify(f"ask: no worktree at {path_str}", severity="error")
+            return
+        _repo, wt = resolved
+        ref = self._workspace_ref(wt)
+        if ref is None:
+            self._notify(
+                f"ask: no workspace for {wt.label or wt.short} — press f first",
+                severity="warning",
+            )
+            return
+        if nudge_if_idle(ref, text, tag="ask"):
+            self._notify(f"sent to {wt.label or wt.short}")
+        else:
+            self._notify(
+                f"ask skipped {wt.label or wt.short}: not idle "
+                "(busy, awaiting permission, or parked)",
+                severity="warning",
+            )
+
+    @work(thread=True, group="read", exit_on_error=False)
+    def _read_pr(self, path_str: str) -> None:
+        # `r`: read the row's PR — body, review comments, diff — without leaving
+        # the dashboard. A keypress-time `gh` read that caches NOTHING: the
+        # daemon stays the sole cache writer, and this is the same sanctioned
+        # shape as `t`'s Linear branch (which reads `gh.pr_body` on the
+        # keystroke). The PR *number* comes off the cached payload, so the
+        # fetch is skipped entirely on a row with no PR.
+        import subprocess
+
+        resolved = self._resolve_worktree(path_str)
+        if resolved is None:
+            self._notify(f"read: no worktree at {path_str}", severity="error")
+            return
+        repo, wt = resolved
+        payload = (
+            find_pr_payload(wt.branch, self._cache_repo_name(repo))
+            if wt.branch
+            else None
+        )
+        number = (payload or {}).get("number")
+        if not number:
+            self._notify("no PR for this row", severity="warning")
+            return
+        num = str(number)
+        self._notify(f"reading PR #{num}…")
+
+        def _gh(args: list[str]) -> str:
+            # Run in the worktree so `gh` resolves the repo from its remote; a
+            # failure is rendered inline rather than aborting the overlay, so a
+            # fetchable body still shows when only the diff fails.
+            try:
+                proc = subprocess.run(
+                    ["gh", *args],
+                    cwd=wt.path,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            except (OSError, subprocess.SubprocessError) as e:
+                return f"(gh {' '.join(args)} failed: {e})"
+            if proc.returncode != 0:
+                return f"(gh {' '.join(args)} failed: {proc.stderr.strip()})"
+            return proc.stdout
+
+        # Three calls, not two: `gh pr view --comments` renders the comments
+        # *instead of* the body, so asking for both needs both invocations —
+        # with `--comments` alone, a PR with no discussion showed an empty
+        # section where its description should be. The comments block is
+        # appended only when non-empty, so an undiscussed PR reads as body +
+        # diff rather than body + a bare rule + nothing.
+        # `--color always` survives into the overlay: ConfigScreen renders its
+        # body through `Text.from_ansi`, so the diff arrives already coloured.
+        rule = "─" * 60
+        blocks = [_gh(["pr", "view", num])]
+        comments = _gh(["pr", "view", num, "--comments"]).strip()
+        if comments:
+            blocks.append(comments)
+        blocks.append(_gh(["pr", "diff", num, "--color", "always"]))
+        lines = f"\n\n{rule}\n\n".join(blocks).splitlines()
+        if len(lines) > _READ_MAX_LINES:
+            # Never a silent cap — say what was dropped and where to get it.
+            dropped = len(lines) - _READ_MAX_LINES
+            lines = lines[:_READ_MAX_LINES] + [
+                "",
+                f"… truncated {dropped} more lines — press p to open the full "
+                "PR in a browser",
+            ]
+        self.call_from_thread(
+            self.push_screen,
+            ConfigScreen(f"PR #{num} — {wt.label or wt.short}", "\n".join(lines)),
+        )
 
     @work(thread=True, group="new", exit_on_error=False)
     def _launch_spawn(self, source: str, cwd: str | None) -> None:

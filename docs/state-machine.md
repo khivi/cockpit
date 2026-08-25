@@ -351,11 +351,29 @@ flowchart TD
 
   HEAL -->|yes| SELFHEAL["re-assert idle= pill<br/>(self-heal dropped Stop-hook write)"]
   HEAL -->|no| FIRE
-  SELFHEAL --> FIRE["send msg + send-key enter<br/>→ record_nudge(pref_key)<br/>→ return True"]
+  SELFHEAL --> FIRE["one_line(msg)<br/>→ send + send-key enter<br/>→ record_nudge(pref_key)<br/>→ return True"]
 ```
 
 There is **no time-based throttle**; the slow-tick cadence is the implicit rate
 limit. Each tick re-evaluates and re-fires if the underlying issue persists.
+
+**The message is collapsed to one line before the send** (`cmux.one_line`), and
+this is delivery correctness, not cosmetics. `cmux send` synthesizes keypresses
+rather than doing a bracketed paste: both a real newline and the literal
+two-character `\n` arrive as **Enter** (cmux's own help says so; probed against
+0.64.22). An un-normalized multi-line message therefore submits its first
+fragment as a truncated prompt and the remainder as a second one — which is what
+`cockpit broadcast 'fix the \n handling'` used to do to every idle session. No
+escape survives (`\\` arrives as two literal backslashes and the Enter still
+fires), so collapsing is the only faithful delivery. It sits inside
+`nudge_if_idle` — the single send funnel every caller already goes through — and
+runs *before* the `dry` print, so `--dry` reports what would actually land.
+
+Four callers reach this gate, all through the same door: the slow tick's PR
+nudge (`cycle.py`, the only one passing `pref_key`), `cockpit broadcast`, and
+the TUI's `N` (canned prose) and `a` (user-typed text). The last three pass no
+`pref_key`, so a deliberate keypress overrides mute/snooze while still honouring
+every guard above.
 
 `pref_key` is `nudges.pref_key(<repo nwo name>, <PR number>)`, not a bare PR
 number: numbers are only unique within a repo, so a bare one made every repo

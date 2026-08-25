@@ -606,6 +606,31 @@ def reconcile_workspace_names(
     return renamed
 
 
+def one_line(text: str) -> str:
+    r"""Collapse `text` to a single line so `cmux send` delivers it as one prompt.
+
+    `cmux send` synthesizes keypresses; it does NOT do a bracketed paste. Its
+    own help says "Escape sequences: \n and \r send Enter, \t sends Tab", and
+    probing cmux 0.64.22 confirms both spellings of a newline — the literal
+    two-character `\n` AND a real 0x0A byte in the argv — arrive as **Enter**.
+
+    In a Claude Code composer Enter means submit, so an un-normalized
+    multi-line message does not deliver one prompt with newlines in it: it
+    submits the first fragment as its own truncated prompt and the remainder as
+    a second. `cockpit broadcast 'fix the \n handling'` hit exactly that.
+
+    There is no escape that survives — `\\` arrives as two literal backslashes
+    and the Enter still fires — so collapsing is the only faithful delivery.
+    Applied inside `nudge_if_idle` rather than at each call site, for the same
+    single-funnel reason `_note_self_close` lives inside
+    `cmux_close_workspace_best_effort`: a new send path is covered for free.
+    """
+    for esc in ("\\n", "\\r", "\\t"):
+        text = text.replace(esc, " ")
+    # Bare `.split()` also folds real newlines, tabs and runs of spaces.
+    return " ".join(text.split())
+
+
 def nudge_if_idle(
     ref: str,
     message: str,
@@ -659,6 +684,10 @@ def nudge_if_idle(
         return False
     if native == "Idle" and not has_idle_pill and not dry:
         _set_status(ref, "idle", "idle", GREY)
+    # Every newline in `message` would arrive as Enter and split it into
+    # several truncated prompts — see `one_line`. Normalized before the dry
+    # print so `--dry` reports the text that would actually be delivered.
+    message = one_line(message)
     if dry:
         print(f"  [dry] nudge {tag} → {ref}: {message[:70]}", flush=True)
         return False

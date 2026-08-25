@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from textual.widgets import Input
 
 from cockpit.lib.config import apply_org_defaults
 from cockpit.lib.git import Worktree
@@ -2351,3 +2352,264 @@ async def test_table_shows_cost_column_when_spend_is_reported(monkeypatch):
         table = app.query_one(WorktreeTable)
         assert table._show_cost is True
         assert [str(c.label) for c in table.columns.values()][-1] == "$"
+
+
+# ── `a` ask + `r` read PR ────────────────────────────────────────────────────
+
+
+async def test_ask_key_sends_typed_text_through_the_idle_gate(monkeypatch, tmp_path):
+    """`a` routes the typed line through `nudge_if_idle` — the same gated send
+    as `N` — so a busy or permission-pending session refuses it."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    calls: list[tuple[str, str]] = []
+
+    def _fake_nudge(ref, msg, **k):
+        calls.append((ref, msg))
+        return True
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake_nudge)
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "rebase onto main"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert calls == [("ws1", "rebase onto main")]
+    assert any("sent to" in t for t in toasts)
+
+
+async def test_ask_key_cancelled_sends_nothing(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    calls: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.nudge_if_idle", lambda *a, **k: calls.append(a) or True
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        await pilot.press("escape")  # dismissed with None
+        await pilot.pause(0.6)
+    assert calls == []
+
+
+async def test_ask_key_reports_skip_when_not_idle(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda *a, **k: False)
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "hello"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert any("skipped" in t for t in toasts)
+
+
+async def test_ask_key_noop_on_limux(monkeypatch, tmp_path):
+    # `a` rides the cmux-only send verb, exactly like `N`.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
+    calls: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.nudge_if_idle", lambda *a, **k: calls.append(a) or True
+    )
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "hello"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert calls == []
+    assert any("requires cmux" in t for t in toasts)
+
+
+async def test_read_key_warns_and_shells_out_to_nothing_without_a_pr(
+    monkeypatch, tmp_path
+):
+    """No cached PR → no `gh` call at all. The number comes off the cached
+    payload, so a PR-less row costs nothing."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)  # find_pr_payload → None
+    ran: list = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: ran.append(a))
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause(0.6)
+    assert ran == []
+    assert any("no PR" in t for t in toasts)
+
+
+async def test_read_key_opens_overlay_with_view_and_diff(monkeypatch, tmp_path):
+    """`r` fetches body+comments and the diff and renders both into the generic
+    ConfigScreen overlay — a keypress-time read that caches nothing."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
+    )
+    seen: list[list[str]] = []
+
+    def _fake_run(args, **kwargs):
+        seen.append(args)
+        if "diff" in args:
+            out = "THE DIFF"
+        elif "--comments" in args:
+            out = "A REVIEW COMMENT"
+        else:
+            out = "PR BODY"
+        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause(0.6)
+        assert isinstance(app.screen, ConfigScreen)
+        body = app.screen._body
+    assert "PR BODY" in body and "A REVIEW COMMENT" in body and "THE DIFF" in body
+    # Three calls: `--comments` renders the comments *instead of* the body, so
+    # both invocations are needed to show both.
+    assert ["gh", "pr", "view", "7"] in seen
+    assert ["gh", "pr", "view", "7", "--comments"] in seen
+    assert ["gh", "pr", "diff", "7", "--color", "always"] in seen
+
+
+async def test_read_key_renders_a_failing_gh_inline(monkeypatch, tmp_path):
+    """A failed fetch must not abort the overlay — a readable body still shows
+    when only the diff fails."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
+    )
+
+    def _fake_run(args, **kwargs):
+        if "diff" in args:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="boom")
+        return subprocess.CompletedProcess(args, 0, stdout="BODY", stderr="")
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause(0.6)
+        body = app.screen._body
+        assert isinstance(app.screen, ConfigScreen)
+    assert "BODY" in body
+    assert "boom" in body  # failure surfaced, not swallowed
+
+
+async def test_read_key_truncation_is_never_silent(monkeypatch, tmp_path):
+    from cockpit.tui.app import _READ_MAX_LINES
+
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
+    )
+    huge = "\n".join(f"line {i}" for i in range(_READ_MAX_LINES + 500))
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda args, **k: subprocess.CompletedProcess(args, 0, stdout=huge, stderr=""),
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause(0.6)
+        body = app.screen._body
+    assert "truncated" in body  # the drop is reported, not silent
+    assert "press p" in body  # …with the escape hatch to the full PR
+
+
+async def test_footer_gates_read_on_pr_and_ask_on_workspace():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset()
+    assert fb._skip("read_pr")  # nothing to read
+    assert fb._skip("ask_row")  # no session to reach
+    fb._row_caps = frozenset({"pr"})
+    assert not fb._skip("read_pr")
+    assert fb._skip("ask_row")
+    fb._row_caps = frozenset({"workspace"})
+    assert not fb._skip("ask_row")
+
+
+async def test_footer_read_survives_a_missing_backend_but_ask_does_not():
+    """`r` shells out to `gh`, not to a workspace backend, so it stays useful on
+    limux and on tool=none; `a` is a cmux-only send verb."""
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    for backend in ("limux", "none"):
+        fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend=backend)
+        fb._row_caps = frozenset({"pr", "workspace"})
+        assert not fb._skip("read_pr"), backend
+        assert fb._skip("ask_row"), backend
+
+
+async def test_read_key_omits_the_comments_block_when_there_are_none(
+    monkeypatch, tmp_path
+):
+    """`gh pr view --comments` renders comments *instead of* the body and is
+    empty on an undiscussed PR — that must not leave a bare rule with nothing
+    under it."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
+    )
+
+    def _fake_run(args, **kwargs):
+        if "diff" in args:
+            out = "THE DIFF"
+        elif "--comments" in args:
+            out = "\n"  # no discussion on this PR
+        else:
+            out = "PR BODY"
+        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause(0.6)
+        body = app.screen._body
+    assert "PR BODY" in body and "THE DIFF" in body
+    assert body.count("─" * 60) == 1  # one rule (body|diff), not two
