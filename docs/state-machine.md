@@ -129,7 +129,12 @@ flowchart TD
   IP -->|"false"| SKIP["skip: no auto-spawn<br/>(row still renders)"]
   IP -->|"true"| WT{"worktree<br/>exists?"}
 
-  WT -->|yes| REUSE{"merged/closed PR but<br/>HEAD past head_oid?<br/>(branch reused)"}
+  WT -->|yes| WS{"workspace<br/>attached?"}
+  WS -->|no| AGE{"worktree age ≥<br/>adopt grace (120s)?"}
+  AGE -->|"no (cockpit new<br/>still finishing)"| WAIT["skip attach this cycle<br/>(avoid duplicate workspace)"]
+  AGE -->|yes| ATT["spawn workspace onto worktree<br/>(PR-matched or orphan)"]
+
+  WS -->|yes| REUSE{"merged/closed PR but<br/>HEAD past head_oid?<br/>(branch reused)"}
   REUSE -->|yes| SUP["suppress: clear pills +<br/>blank PR cells (show no PR)"]
   REUSE -->|no| TRACK["Track: refresh pills + caches"]
   TRACK --> ACT{"actionable issue?<br/>ci / comments / conflicts<br/>AND state == OPEN<br/>AND mine"}
@@ -259,6 +264,17 @@ Key gates (all from `cycle.py`):
   `_SPAWN_INFLIGHT_TTL_SECONDS` (600s) is skipped, so a manual slow-tick kick
   (the `s` key, or a `cockpit close`/`new` SIGUSR1) can't double-launch
   mid-creation.
+- **Adoption grace** (`_too_young_to_adopt`, `_SPAWN_ADOPT_GRACE_SECONDS` = 120s,
+  not configurable): the in-flight guard above is a daemon-process-local dict, so
+  it cannot see a *user-typed* `cockpit new` at all. That command creates the
+  worktree and its workspace as two steps of a separate process, so a poll
+  landing between them sees a worktree no workspace covers and attaches a second
+  one — two Claude sessions on one worktree, same seeded task. Both attach paths
+  (`spawn_pr_workspace` on a matched PR, `spawn_orphan_workspace`) therefore skip
+  a worktree whose filesystem age (`git.worktree_age_seconds`, the same
+  birthtime read as the orphan-nudge grace) is under the window. Only the
+  *attach* is deferred; pills, cells and tracking are untouched. An unstattable
+  path reads `inf` and spawns — it fails open.
 - **Orphan auto-spawn is `<self_user>/`-prefix gated**: review worktrees are
   never orphan-spawned. It is deduped by **path** (skip if the worktree's path
   is already a workspace cwd) and additionally **name-clash gated**: skip + log

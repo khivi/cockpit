@@ -2323,6 +2323,15 @@ def _spawn_ctx(
     )
 
 
+def _aged(seconds: float = 3600.0):
+    """Report every worktree as `seconds` old, past `_SPAWN_ADOPT_GRACE_SECONDS`.
+
+    A `tmp_path` worktree is created milliseconds before the assertion, so the
+    adoption grace would otherwise suppress every spawn these tests exercise.
+    """
+    return patch.object(cycle, "worktree_age_seconds", return_value=seconds)
+
+
 def test_spawn_missing_bg_spawns_my_pr_without_worktree(tmp_path):
     """My open PR with no worktree → background create (not a WARN)."""
     ctx = _spawn_ctx(tmp_path, prs=[_pr_n(7, "khivi/feat")], wts=[])
@@ -2396,10 +2405,100 @@ def test_spawn_missing_orphan_spawns_when_clash_cwd_missing(tmp_path):
         patch.object(cycle, "_bg_spawn_pr"),
         patch.object(cycle, "spawn_pr_workspace"),
         patch.object(cycle, "spawn_orphan_workspace") as orphan,
+        _aged(),
     ):
         cycle._spawn_missing_workspaces(ctx, {"name": "n"})
     orphan.assert_called_once()
     assert orphan.call_args.args[0] is ctx.wts[0]
+
+
+def test_spawn_missing_orphan_skips_worktree_still_settling(tmp_path, capsys):
+    """The `cockpit new` race: that command creates the worktree, then creates
+    its workspace as a separate step, so a poll landing between the two sees a
+    worktree no workspace covers and adopts it as an orphan — a SECOND workspace
+    on one worktree, each running its own Claude on the same task. A worktree
+    younger than the grace is left alone."""
+    orphan_wt = tmp_path / "schemagen"
+    orphan_wt.mkdir()
+    ctx = _spawn_ctx(
+        tmp_path,
+        wts=[Worktree(path=orphan_wt, branch="khivi/schemagen")],
+    )
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace"),
+        patch.object(cycle, "spawn_orphan_workspace") as orphan,
+        _aged(2.0),  # the observed gap between worktree and workspace
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    orphan.assert_not_called()
+    assert "orphan-spawn schemagen — worktree is 2s old" in capsys.readouterr().out
+
+
+def test_spawn_missing_orphan_spawns_once_grace_elapsed(tmp_path):
+    """The grace defers adoption, it never disables it: the same orphan past
+    `_SPAWN_ADOPT_GRACE_SECONDS` is spawned as before."""
+    orphan_wt = tmp_path / "schemagen"
+    orphan_wt.mkdir()
+    ctx = _spawn_ctx(
+        tmp_path,
+        wts=[Worktree(path=orphan_wt, branch="khivi/schemagen")],
+    )
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace"),
+        patch.object(cycle, "spawn_orphan_workspace") as orphan,
+        _aged(cycle._SPAWN_ADOPT_GRACE_SECONDS),
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    orphan.assert_called_once()
+
+
+def test_spawn_missing_pr_match_skips_worktree_still_settling(tmp_path):
+    """`cockpit new --pr` races the same way — the worktree matches an open PR
+    before its workspace exists, so the matched-PR path would spawn the duplicate
+    instead of the orphan path. Same gate, both call sites."""
+    pr_wt = tmp_path / "feat"
+    pr_wt.mkdir()
+    ctx = _spawn_ctx(
+        tmp_path,
+        prs=[_pr_n(7, "khivi/feat")],
+        wts=[Worktree(path=pr_wt, branch="khivi/feat")],
+    )
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace") as sp,
+        patch.object(cycle, "spawn_orphan_workspace"),
+        _aged(2.0),
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    sp.assert_not_called()
+
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace") as sp,
+        patch.object(cycle, "spawn_orphan_workspace"),
+        _aged(),
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    sp.assert_called_once()
+
+
+def test_spawn_missing_unstattable_worktree_fails_open(tmp_path):
+    """`worktree_age_seconds` returns `inf` when the path can't be stat'd. That
+    must read as "old enough" and spawn — a filesystem hiccup withholding a
+    workspace forever is worse than the duplicate this gate prevents."""
+    ctx = _spawn_ctx(
+        tmp_path,
+        wts=[Worktree(path=tmp_path / "never-created", branch="khivi/gone")],
+    )
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace"),
+        patch.object(cycle, "spawn_orphan_workspace") as orphan,
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    orphan.assert_called_once()
 
 
 def test_spawn_missing_review_candidates_filtered(tmp_path):
