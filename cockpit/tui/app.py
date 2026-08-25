@@ -48,6 +48,7 @@ from cockpit.lib.cache import (
     cost_reporting_available,
     find_pr_payload,
     read_text,
+    restamp_pref,
 )
 from cockpit.lib.cmux import (
     BLUE,
@@ -1258,12 +1259,23 @@ class CockpitApp(App[None]):
         key = pref_key(self._cache_repo_name(repo), pr)
         return repo, wt, pr, key, load_pref(key)
 
+    def _repaint_pref(self, repo: dict, wt: Worktree, pr: int, pref: NudgePref) -> None:
+        # Land a `m`/`z` keypress on the row it was pressed on, instead of at the
+        # end of the kicked cycle. The pref file is the authority for mute and
+        # snooze — the daemon derives neither — so re-stamping the PR snapshot
+        # and its `pr-muted`/`pr-snoozed` cells from it is the same value the
+        # cycle would write, minus the `gh` round-trip; the kick still follows
+        # for everything that *is* derived (pills, sidebar folds, the nudge).
+        # Worker-thread only: `_publish_inventory` marshals its own render.
+        restamp_pref(self._cache_repo_name(repo), pr, wt.branch, pref)
+        self._publish_inventory()
+
     @work(thread=True, group="mute", exit_on_error=False)
     def _toggle_mute(self, path_str: str) -> None:
         # Toggle the row PR's nudge-mute (full mute, no expiry — same as
-        # `cockpit nudge mute`). Writes a NudgePref, NOT a cache cell, so the
-        # daemon stays sole writer; the kicked slow tick republishes the
-        # `pr-muted` cell + pills, so the 🔇 glyph catches up within the cycle.
+        # `cockpit nudge mute`). Writes a NudgePref; the 🔇 glyph and the
+        # footer's Mute/Unmute label follow immediately via `_repaint_pref`,
+        # while the kicked slow tick republishes the pills.
         got = self._resolve_row_pref(path_str, "mute")
         if got is None:
             return
@@ -1272,6 +1284,7 @@ class CockpitApp(App[None]):
         pref.until = None
         pref.reason = "muted from TUI" if pref.muted else ""
         save_pref(key, pref)
+        self._repaint_pref(repo, wt, pr, pref)
         self._notify(
             f"{'muted' if pref.muted else 'unmuted'} {wt.label or wt.short} (#{pr})"
         )
@@ -1320,6 +1333,7 @@ class CockpitApp(App[None]):
                 f"comment, review, or CI/conflict issue"
             )
         save_pref(key, pref)
+        self._repaint_pref(repo, wt, pr, pref)
         # Full-cycle kick, deliberately unlike every other row action's
         # repo-scoped one. `z` is the only keypress that changes *sidebar fold*
         # membership, and `cycle_all` builds `folds` only when `only_repo is

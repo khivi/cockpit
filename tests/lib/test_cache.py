@@ -1137,6 +1137,42 @@ def test_refresh_pr_data_clears_snoozed_on_no_pr(cache_dir):
     assert (cache_dir / "pr-snoozed-khivi-gone").read_text() == ""
 
 
+# ── restamp_pref: the TUI's `m`/`z` keypress lands without a `gh` round-trip ──
+
+
+def test_restamp_pref_writes_the_cells_and_survives_a_republish(json_cache):
+    """Both halves matter: the flat cells so the row repaints on the keypress,
+    and the snapshot so the next fast tick's republish doesn't revert them."""
+    import json
+
+    flat = cache_mod.FLAT_CACHE_DIR
+    _snapshot(json_cache, "cockpit", 7, "khivi/nap")
+    cache_mod.restamp_pref("cockpit", 7, "khivi/nap", NudgePref(snoozed=True))
+
+    assert (flat / "pr-snoozed-khivi-nap").read_text() == "snoozed"
+    payload = json.loads((json_cache / "cockpit__pr-7.json").read_text())
+    assert payload["snoozed"] == "snoozed"
+
+    cache_mod.republish_pr_caches_from_disk()
+    assert (flat / "pr-snoozed-khivi-nap").read_text() == "snoozed"
+
+
+def test_restamp_pref_clears_both_fields_on_wake(json_cache):
+    # A snooze supersedes a mute, so waking must clear the pair — leaving 🔇
+    # behind would silence the row the wake just un-silenced.
+    flat = cache_mod.FLAT_CACHE_DIR
+    _snapshot(json_cache, "cockpit", 7, "khivi/nap", muted="muted", snoozed="snoozed")
+    cache_mod.restamp_pref("cockpit", 7, "khivi/nap", NudgePref())
+    assert (flat / "pr-snoozed-khivi-nap").read_text() == ""
+    assert (flat / "pr-muted-khivi-nap").read_text() == ""
+
+
+def test_restamp_pref_without_a_snapshot_is_a_noop(json_cache):
+    # Nothing to stamp; the kicked cycle builds the snapshot.
+    cache_mod.restamp_pref("cockpit", 7, "khivi/nap", NudgePref(snoozed=True))
+    assert not (cache_mod.FLAT_CACHE_DIR / "pr-snoozed-khivi-nap").exists()
+
+
 # ── Per-worktree session cost ───────────────────────────────────────────────
 
 
