@@ -1,10 +1,10 @@
 r"""Modal text box for sending a line to a row's Claude session.
 
-The app's `a` action pushes this screen; on submit it dismisses with the typed
-text, which the app hands to `cmux.nudge_if_idle` — the same gated send path
-`N`/nudge and `cockpit broadcast` use, so a mid-turn or permission-pending
-session refuses the message rather than having it typed into a y/n prompt.
-Empty input / escape dismisses with `None` (nothing sent).
+The app's `a` action pushes this screen; it dismisses with an `(outcome, text)`
+pair (see the class docstring) whose `send` case the app hands to
+`cmux.nudge_if_idle` — the same gated path `cockpit broadcast` uses, so a
+mid-turn or permission-pending session refuses the message rather than having
+it typed into a y/n prompt.
 
 **Single-line by construction — this is an `Input`, never a `TextArea`.**
 `cmux send` synthesizes keypresses rather than doing a bracketed paste, so
@@ -30,8 +30,24 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
 
-class AskScreen(ModalScreen["str | None"]):
-    """A dismissable one-line prompt returning the text to send, or `None`."""
+class AskScreen(ModalScreen["tuple[str, str]"]):
+    """A one-line prompt. Dismisses with `(outcome, text)`.
+
+    Three outcomes, deliberately distinct — collapsing any two of them loses a
+    real user intention:
+
+    - `("send", text)`   Enter with text. Deliver it.
+    - `("clear", "")`    Enter on an emptied box. The user deleted a draft they
+                         no longer want; the app drops it rather than restoring
+                         it on the next `a`.
+    - `("cancel", text)` Escape. Stepping away to check something must not cost
+                         what you typed, so the *current* text is handed back to
+                         be stashed — not just a previously-refused draft.
+
+    An earlier version dismissed with `None` for both escape and a blank submit,
+    which made those two indistinguishable: a deliberately-cleared draft came
+    back on the next `a`, and escaping discarded anything typed in this modal.
+    """
 
     DEFAULT_CSS = """
     AskScreen { align: center middle; }
@@ -97,8 +113,10 @@ class AskScreen(ModalScreen["str | None"]):
             inp.action_end()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Enter in the box: hand back the text; blank → None (nothing sent).
-        self.dismiss(event.value.strip() or None)
+        text = event.value.strip()
+        self.dismiss(("send", text) if text else ("clear", ""))
 
     def action_cancel(self) -> None:
-        self.dismiss(None)
+        # Hand the typed text back so the app can stash it — escape is "hold
+        # this thought", not "throw it away".
+        self.dismiss(("cancel", self.query_one(Input).value.strip()))

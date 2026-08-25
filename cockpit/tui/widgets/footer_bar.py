@@ -187,7 +187,7 @@ class FooterBar(Horizontal):
         # `h` is one key with three meanings, read off the cursor row — the hint
         # says which one is live (see `app.action_hide_repo`).
         # `a` on a header addresses the repo, not a session — say so.
-        if action == "ask_row" and HEADER_CAP in caps:
+        if action == "ask_row" and HEADER_CAP in caps and HIDDEN_CAP not in caps:
             return "Ask repo"
         if action == "hide_repo":
             if HIDDEN_CAP in caps:
@@ -237,10 +237,17 @@ class FooterBar(Horizontal):
         # A repo group-header row carries no workspace, so hide every
         # row-targeted key — only the global keys stay.
         on_header = self._row_caps is not None and HEADER_CAP in self._row_caps
+        # HEADER_CAP covers three row kinds; only two of them name a repo. The
+        # `▸ N hidden` disclosure row sets caps but no `_row_repo`, so
+        # `current_repo_name()` is None there and a repo-scoped action cannot
+        # resolve a target — worse, in a single-repo config
+        # `_repo_config_by_name`'s sole-repo fallback would silently pick a repo
+        # this row does not name. So it is not a repo row for these purposes.
+        on_repo_row = on_header and HIDDEN_CAP not in (self._row_caps or frozenset())
         if (
             action in self.ROW_ACTIONS
+            and not (on_repo_row and action in self.HEADER_ROW_ACTIONS)
             and on_header
-            and action not in self.HEADER_ROW_ACTIONS
         ):
             return True
         # `h` parks the cursor row's whole *repo*, so it's only advertised on a
@@ -285,7 +292,7 @@ class FooterBar(Horizontal):
             # A HEADER_ROW_ACTION drops its per-row requirement on a header: `a`
             # needs a live `workspace` on a worktree row, but a header carries no
             # workspace cap while the repo behind it may have several sessions.
-            if on_header and action in self.HEADER_ROW_ACTIONS:
+            if on_repo_row and action in self.HEADER_ROW_ACTIONS:
                 req = None
             if req is not None and req not in self._row_caps:
                 return True

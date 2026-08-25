@@ -264,6 +264,10 @@ class CockpitApp(App[None]):
         # surface on another; session-only and unbounded only by row count, so
         # it needs no eviction. Cleared on a successful send.
         self._ask_drafts: dict[str, str] = {}
+        # Repo-scoped sends only: which refs a partial fan-out failed to reach,
+        # so `a` again retries just those instead of re-delivering to sessions
+        # that already accepted. Cleared with the draft.
+        self._ask_misses: dict[str, frozenset[str]] = {}
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -837,16 +841,31 @@ class CockpitApp(App[None]):
         # state hint lands a moment later — `a` stays instant.
         self._ask_state_hint(path, screen)
 
-    def _on_ask(self, path_str: str, text: str | None) -> None:
-        # Escape / blank input dismisses with None — nothing to send. The draft
-        # is deliberately NOT cleared here: escaping out to go look at something
-        # should not throw the text away either.
-        if text:
-            self._send_ask(path_str, text)
+    def _on_ask(self, path_str: str, result: tuple[str, str] | None) -> None:
+        self._route_ask(result, lambda text: self._send_ask(path_str, text), path_str)
 
-    def _on_ask_repo(self, repo: dict, key: str, text: str | None) -> None:
-        if text:
-            self._send_ask_repo(repo, key, text)
+    def _route_ask(self, result, send, key: str) -> None:
+        """Apply an `AskScreen` outcome: send, drop the draft, or stash it.
+
+        Escape stashes whatever was typed (stepping away to check something
+        shouldn't cost it); an emptied box submitted with Enter *drops* the
+        draft, which is the only way to retract one. Those two used to be the
+        same `None` and so could not be told apart."""
+        if not result:
+            return
+        outcome, text = result
+        if outcome == "send" and text:
+            send(text)
+        elif outcome == "clear":
+            self._ask_drafts.pop(key, None)
+            self._ask_misses.pop(key, None)
+        elif outcome == "cancel" and text:
+            self._ask_drafts[key] = text
+
+    def _on_ask_repo(
+        self, repo: dict, key: str, result: tuple[str, str] | None
+    ) -> None:
+        self._route_ask(result, lambda text: self._send_ask_repo(repo, key, text), key)
 
     @work(thread=True, group="nudge", exit_on_error=False)
     def _send_ask_repo(self, repo: dict, key: str, text: str) -> None:
@@ -870,13 +889,28 @@ class CockpitApp(App[None]):
         except (CmuxUnavailable, RuntimeError, OSError) as e:
             self._notify(f"ask: could not enumerate workspaces: {e}", severity="error")
             return
-        refs = [
+        live = [
             ref
             for ref, cwd in cwds.items()
             if cwd.resolve() in paths and ref != self._self_ws
         ]
+        # A retry must reach ONLY the sessions that missed. Re-sending to one
+        # that already accepted would hand it the same instruction twice —
+        # "rebase onto main and force-push" executed a second time is not a
+        # harmless repeat. The misses are recorded per repo on a partial send;
+        # intersected with what's live now, since a session can vanish between
+        # attempts.
+        pending = self._ask_misses.get(key)
+        refs = [r for r in live if r in pending] if pending is not None else live
         if not refs:
-            self._notify("no open sessions in this repo", severity="warning")
+            self._ask_drafts.pop(key, None)
+            self._ask_misses.pop(key, None)
+            self._notify(
+                "no sessions left to reach in this repo"
+                if pending is not None
+                else "no open sessions in this repo",
+                severity="warning",
+            )
             return
         skips: dict[str, str] = {}
         sent = sum(
@@ -885,10 +919,14 @@ class CockpitApp(App[None]):
         name = repo.get("name") or repo_path.name
         if sent == len(refs):
             self._ask_drafts.pop(key, None)
+            self._ask_misses.pop(key, None)
             self._notify(f"sent to all {sent} session(s) in {name}")
         else:
-            # Keep the draft: a retry should reach the ones that missed.
+            # Keep the draft AND which refs missed, so the retry reaches only
+            # those. Without the second half, pressing `a` again re-delivers to
+            # every session including the ones that already accepted.
             self._ask_drafts[key] = text
+            self._ask_misses[key] = frozenset(skips)
             # Name the reasons rather than a bare count: "2 mid-turn, 1 parked"
             # tells you whether to retry now or later. `nudge_if_idle` reports
             # them, so they are the gate's own words.
@@ -1583,9 +1621,14 @@ class CockpitApp(App[None]):
                 cwd=wt.path,
                 capture_output=True,
                 text=True,
+                # A diff can carry a non-UTF-8 byte; decoding strictly would
+                # raise UnicodeDecodeError (a ValueError, not caught below) and
+                # the `exit_on_error=False` worker would swallow it, leaving the
+                # "opening diff…" toast and nothing else. Replace and render.
+                errors="replace",
                 timeout=60,
             )
-        except (OSError, subprocess.SubprocessError) as e:
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
             self._notify(f"diff: gh failed: {e}", severity="error")
             return
         if patch.returncode != 0:
@@ -1609,7 +1652,7 @@ class CockpitApp(App[None]):
                 text=True,
                 timeout=30,
             )
-        except (OSError, subprocess.SubprocessError) as e:
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
             self._notify(f"diff: cmux failed: {e}", severity="error")
             return
         if proc.returncode != 0:

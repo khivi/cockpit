@@ -40,10 +40,10 @@ async def test_submit_dismisses_with_trimmed_text():
         app.screen.query_one(Input).value = "  rebase onto main  "
         await pilot.press("enter")
         await pilot.pause()
-    assert result == ["rebase onto main"]
+    assert result == [("send", "rebase onto main")]
 
 
-async def test_blank_submit_dismisses_with_none():
+async def test_blank_submit_retracts_the_draft():
     app = _Host()
     result: list = []
     async with app.run_test() as pilot:
@@ -51,10 +51,12 @@ async def test_blank_submit_dismisses_with_none():
         await pilot.pause()
         await pilot.press("enter")  # empty input
         await pilot.pause()
-    assert result == [None]
+    # "clear", not "cancel": an emptied box submitted on purpose retracts the
+    # draft, which is the only way to drop one.
+    assert result == [("clear", "")]
 
 
-async def test_whitespace_only_submit_dismisses_with_none():
+async def test_whitespace_only_submit_retracts_the_draft():
     app = _Host()
     result: list = []
     async with app.run_test() as pilot:
@@ -63,10 +65,10 @@ async def test_whitespace_only_submit_dismisses_with_none():
         app.screen.query_one(Input).value = "   "
         await pilot.press("enter")
         await pilot.pause()
-    assert result == [None]  # nothing to send
+    assert result == [("clear", "")]  # whitespace-only is still a retraction
 
 
-async def test_escape_dismisses_with_none():
+async def test_escape_reports_cancel():
     app = _Host()
     result: list = []
     async with app.run_test() as pilot:
@@ -74,7 +76,7 @@ async def test_escape_dismisses_with_none():
         await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
-    assert result == [None]
+    assert result == [("cancel", "")]
 
 
 async def test_target_appears_in_title():
@@ -98,3 +100,17 @@ async def test_composer_is_single_line_never_a_textarea():
         await pilot.pause()
         assert not app.screen.query(TextArea)
         assert len(app.screen.query(Input)) == 1
+
+
+async def test_escape_hands_back_what_was_typed():
+    """Escape is "hold this thought" — stepping away to check something must
+    not cost the text, so the app gets it back to stash."""
+    app = _Host()
+    result: list = []
+    async with app.run_test() as pilot:
+        await app.push_screen(AskScreen(), result.append)
+        await pilot.pause()
+        app.screen.query_one(Input).value = "half a thought"
+        await pilot.press("escape")
+        await pilot.pause()
+    assert result == [("cancel", "half a thought")]

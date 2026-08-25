@@ -2738,3 +2738,99 @@ async def test_footer_hides_diff_when_the_viewer_is_unavailable():
     )
     fb2._row_caps = frozenset({"pr"})
     assert not fb2._skip("open_diff")
+
+
+# ── review follow-ups: retry narrowing + draft lifecycle ─────────────────────
+
+
+async def test_repo_retry_reaches_only_the_sessions_that_missed(monkeypatch, tmp_path):
+    """The bug this guards: re-sending to a session that already accepted hands
+    it the same instruction twice — "rebase and force-push" run again is not a
+    harmless repeat."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
+    )
+    seen: list[str] = []
+    busy = {"ws2"}
+
+    def _fake(ref, msg, *, skips=None, **k):
+        seen.append(ref)
+        if ref in busy:
+            if skips is not None:
+                skips[ref] = "mid-turn"
+            return False
+        return True
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake)
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: None)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        for _attempt in range(2):  # first send, then the retry
+            app.query_one(WorktreeTable).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("a")
+            await pilot.pause()
+            app.screen.query_one(Input).value = "rebase onto main"
+            await pilot.press("enter")
+            await pilot.pause(0.6)
+            busy.clear()  # ws2 frees up before the retry
+
+    assert seen == ["ws1", "ws2", "ws2"]  # ws1 delivered ONCE, not twice
+    assert f"repo:{tmp_path.resolve()}" not in app._ask_drafts  # retry completed
+
+
+async def test_blank_submit_drops_the_stashed_draft(monkeypatch, tmp_path):
+    """The only way to retract a draft. Escape can't do it — that stashes."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    app, _ = _make_app()
+    app._ask_drafts[str(wt.path)] = "on second thoughts, no"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = ""
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert str(wt.path) not in app._ask_drafts
+
+
+async def test_escape_stashes_what_you_typed(monkeypatch, tmp_path):
+    """Matches the documented intent: stepping away to check something must not
+    cost the text."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "half a thought"
+        await pilot.press("escape")
+        await pilot.pause(0.6)
+    assert app._ask_drafts[str(wt.path)] == "half a thought"
+
+
+async def test_footer_hides_ask_repo_on_the_hidden_disclosure_row():
+    """HEADER_CAP covers three row kinds; the `▸ N hidden` row names no repo, so
+    a repo-scoped action can't resolve a target there — and in a single-repo
+    config the sole-repo fallback would silently pick one it doesn't name."""
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.worktree_table import HEADER_CAP, HIDDEN_CAP
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset({HEADER_CAP, HIDDEN_CAP})
+    assert fb._skip("ask_row")
+    fb._row_caps = frozenset({HEADER_CAP})  # a real repo group header
+    assert not fb._skip("ask_row")
+    assert fb._label("ask_row", "Ask") == "Ask repo"
