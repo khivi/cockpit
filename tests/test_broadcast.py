@@ -37,15 +37,19 @@ def test_mixed_idle_busy_reports_skipped_and_still_sends(monkeypatch, capsys):
         lambda: _cwds("workspace:idle", "workspace:busy"),
     )
 
-    def fake_nudge(ref, message, *, dry=False, tag=""):
-        return ref == "workspace:idle"
+    def fake_nudge(ref, message, *, dry=False, tag="", skips=None):
+        if ref == "workspace:idle":
+            return True
+        skips["workspace:busy"] = "mid-turn"
+        return False
 
     monkeypatch.setattr(broadcast, "nudge_if_idle", fake_nudge)
 
     assert broadcast.main(["/compact"]) == 0
     out = capsys.readouterr().out
     assert "sent to 1/2" in out
-    assert "workspace:busy" in out
+    assert "skipped 1" in out
+    assert "mid-turn (1): workspace:busy" in out
     assert "re-run to retry" in out
 
 
@@ -55,7 +59,7 @@ def test_dry_run_sends_nothing(monkeypatch, capsys):
     )
     calls = []
 
-    def fake_nudge(ref, message, *, dry=False, tag=""):
+    def fake_nudge(ref, message, *, dry=False, tag="", skips=None):
         calls.append((ref, message, dry, tag))
         return False  # nudge_if_idle always returns False under dry=True
 
@@ -69,6 +73,58 @@ def test_dry_run_sends_nothing(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "dry-run" in out
     assert "sent to" not in out
+
+
+def test_dry_run_counts_eligible_from_the_skip_set_not_the_return(monkeypatch, capsys):
+    """`nudge_if_idle` returns False for everything under `dry` — it sent
+    nothing. Counting eligibility off that return reported 0 would-receive on a
+    fully idle fleet, so the count comes from the complement of `skips`."""
+    monkeypatch.setattr(
+        broadcast,
+        "workspace_cwds",
+        lambda: _cwds("workspace:a", "workspace:b", "workspace:c"),
+    )
+
+    def fake_nudge(ref, message, *, dry=False, tag="", skips=None):
+        if ref == "workspace:c":
+            skips[ref] = "parked"
+        return False  # dry: nothing is ever actually sent
+
+    monkeypatch.setattr(broadcast, "nudge_if_idle", fake_nudge)
+
+    assert broadcast.main(["/compact", "--dry"]) == 0
+    out = capsys.readouterr().out
+    assert "2/3 workspace(s) would receive it" in out
+    assert "skipped 1" in out
+    assert "parked (1): workspace:c" in out
+    assert "re-run to retry" not in out  # nothing was attempted, nothing to retry
+
+
+def test_skips_grouped_by_reason_largest_first(monkeypatch, capsys):
+    refs = [f"workspace:{i}" for i in range(5)]
+    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds(*refs))
+    reasons = {
+        "workspace:0": "mid-turn",
+        "workspace:1": "not at rest (Needs input)",
+        "workspace:2": "not at rest (Needs input)",
+        "workspace:3": "not at rest (Needs input)",
+        "workspace:4": "parked",
+    }
+
+    def fake_nudge(ref, message, *, dry=False, tag="", skips=None):
+        skips[ref] = reasons[ref]
+        return False
+
+    monkeypatch.setattr(broadcast, "nudge_if_idle", fake_nudge)
+
+    assert broadcast.main(["/compact"]) == 0
+    lines = [ln.strip() for ln in capsys.readouterr().out.splitlines()]
+    assert "sent to 0/5 workspace(s)" in lines[0]
+    assert lines[2].startswith("not at rest (Needs input) (3):")  # biggest first
+    assert {lines[3], lines[4]} == {
+        "mid-turn (1): workspace:0",
+        "parked (1): workspace:4",
+    }
 
 
 def test_cmux_unavailable_returns_nonzero_and_no_success(monkeypatch, capsys):
@@ -97,7 +153,7 @@ def test_message_passed_through_verbatim(monkeypatch):
     monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
     seen = []
 
-    def fake_nudge(ref, message, *, dry=False, tag=""):
+    def fake_nudge(ref, message, *, dry=False, tag="", skips=None):
         seen.append(message)
         return True
 
@@ -119,4 +175,6 @@ def test_nudge_called_with_broadcast_tag(monkeypatch):
     monkeypatch.setattr(broadcast, "nudge_if_idle", fake_nudge)
 
     broadcast.main(["/compact"])
-    assert recorded == [call("workspace:a", "/compact", dry=False, tag="broadcast")]
+    assert recorded == [
+        call("workspace:a", "/compact", dry=False, tag="broadcast", skips={})
+    ]

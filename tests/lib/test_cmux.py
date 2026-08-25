@@ -978,6 +978,59 @@ def test_nudge_if_idle_skips_when_parked():
     assert result is False
 
 
+@pytest.mark.parametrize(
+    "status, reason",
+    [
+        (_native_line("Running"), "mid-turn"),
+        ("idle=1\n" + _native_line("Running"), "mid-turn"),
+        (_native_line("Needs input"), "not at rest (Needs input)"),
+        ("", "not at rest (no Claude session)"),
+        (_idle_status_lines(parked=True), "parked"),
+    ],
+)
+def test_nudge_if_idle_records_the_skip_reason(status, reason):
+    skips: dict[str, str] = {}
+
+    def fake_cmux(*args, **_kwargs):
+        return status if args[0] == "list-status" else ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        assert nudge_if_idle("workspace:1", "hi", tag="t", skips=skips) is False
+
+    assert skips == {"workspace:1": reason}
+
+
+def test_nudge_if_idle_leaves_skips_empty_when_eligible_under_dry():
+    """Under `dry` an eligible workspace returns False but is not a skip."""
+    skips: dict[str, str] = {}
+
+    def fake_cmux(*args, **_kwargs):
+        return _idle_status_lines() if args[0] == "list-status" else ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        assert (
+            nudge_if_idle("workspace:1", "hi", tag="t", dry=True, skips=skips) is False
+        )
+
+    assert skips == {}
+
+
+def test_nudge_if_idle_records_send_failure_as_a_skip():
+    skips: dict[str, str] = {}
+
+    def fake_cmux(*args, check=True, **_kwargs):
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        if args[0] == "send" and check:
+            raise RuntimeError("cmux send failed: socket gone")
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        assert nudge_if_idle("workspace:1", "hi", tag="t", skips=skips) is False
+
+    assert skips == {"workspace:1": "send failed"}
+
+
 def test_nudge_if_idle_does_not_record_nudge_on_send_failure():
     """Failed send must not record the nudge — so the next tick retries."""
     recorded: list[tuple] = []
