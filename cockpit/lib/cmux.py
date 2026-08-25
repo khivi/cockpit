@@ -606,31 +606,26 @@ def reconcile_workspace_names(
     return renamed
 
 
-@dataclass(frozen=True)
-class RestSignals:
-    """The three at-rest signals `nudge_if_idle` reads, in one `list-status`.
+def _idle_skip_reason(status_lines: list[str]) -> str | None:
+    """Why `status_lines` is unsafe to `send` into — `None` when it is safe.
 
-    Extracted so a *display* caller (the TUI's `a` modal, which warns before
-    you type into a session that will refuse the message) reads the signals
-    through the same primitives as the gate, instead of growing a second copy
-    of the parse. **The decision stays in `nudge_if_idle` and only there** —
-    this is deliberately raw signals, not a verdict, so no caller can quietly
-    re-derive "safe to send" and drift from the documented gate.
+    The gate itself, factored out so a caller can *report* the verdict without
+    re-deriving it from a second `list-status` (which would be both a wasted
+    round-trip and a second copy of the rule that must never drift from this
+    one). Guard order matches `nudge_if_idle`'s: `Running` outranks the at-rest
+    check, which outranks `parked=`, so a mid-turn parked workspace reports
+    "mid-turn". The strings are user-facing in `cockpit broadcast`'s summary.
     """
-
-    native: str | None
-    idle_pill: bool
-    parked: bool
-
-
-def read_rest_signals(ref: str) -> RestSignals:
-    """One `list-status` read of `ref`'s at-rest signals. Never sends."""
-    lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
-    return RestSignals(
-        native=_native_claude_state(lines),
-        idle_pill=_has_pill(lines, "idle"),
-        parked=_has_pill(lines, PARKED_KEY),
-    )
+    native = _native_claude_state(status_lines)
+    if native == "Running":
+        return "mid-turn"
+    if not (_has_pill(status_lines, "idle") or native == "Idle"):
+        # `Needs input` is the ambiguous one — a pending y/n permission looks
+        # exactly like a session parked at the composer, so both land here.
+        return f"not at rest ({native or 'no Claude session'})"
+    if _has_pill(status_lines, PARKED_KEY):
+        return "parked"
+    return None
 
 
 def one_line(text: str) -> str:
@@ -658,6 +653,21 @@ def one_line(text: str) -> str:
     return " ".join(text.split())
 
 
+def rest_skip_reason(ref: str) -> str | None:
+    """Why a `send` into `ref` would be refused right now — None when it'd land.
+
+    One `list-status`, then the gate's own `_idle_skip_reason`. The point is
+    that a display caller (the TUI's `a` modal, warning you before you type
+    into a session that will refuse the message) gets the verdict from the
+    *same* function `nudge_if_idle` gates on, so the warning and the decision
+    can never disagree. Advisory only: the gate re-checks at send time and
+    stays the authority, because a turn can end while you type.
+    """
+    return _idle_skip_reason(
+        cmux("list-status", "--workspace", ref, check=False).splitlines()
+    )
+
+
 def nudge_if_idle(
     ref: str,
     message: str,
@@ -665,6 +675,7 @@ def nudge_if_idle(
     dry: bool = False,
     tag: str = "",
     pref_key: str | None = None,
+    skips: dict[str, str] | None = None,
 ) -> bool:
     """Send `message` + enter to workspace `ref` if it's idle and not parked.
 
@@ -694,23 +705,28 @@ def nudge_if_idle(
     There is no time-based throttle. The slow tick's cadence
     (`slow_poll_interval_seconds`, default 300s) is the implicit rate limit
     — each tick re-evaluates and re-fires if the underlying issue persists.
+
+    `skips` is an optional out-dict: on a gate skip it gets `{ref: reason}`,
+    so a fan-out caller can report *why* each workspace was passed over. The
+    return value stays "the nudge actually fired" — under `dry` an eligible
+    workspace returns False (it sent nothing), and its absence from `skips` is
+    what marks it as would-have-received.
     """
     if pref_key is not None:
         from . import nudges
 
         if not nudges.should_nudge(pref_key):
+            if skips is not None:
+                skips[ref] = "muted or snoozed"
             return False
-    # Signals read via `read_rest_signals`; the guard ORDER below is unchanged
-    # and stays the single authority on "safe to send" (see that helper).
-    sig = read_rest_signals(ref)
-    native = sig.native
-    if native == "Running":
+    status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
+    native = _native_claude_state(status_lines)
+    reason = _idle_skip_reason(status_lines)
+    if reason is not None:
+        if skips is not None:
+            skips[ref] = reason
         return False
-    has_idle_pill = sig.idle_pill
-    if not (has_idle_pill or native == "Idle"):
-        return False
-    if sig.parked:
-        return False
+    has_idle_pill = _has_pill(status_lines, "idle")
     if native == "Idle" and not has_idle_pill and not dry:
         _set_status(ref, "idle", "idle", GREY)
     # Every newline in `message` would arrive as Enter and split it into
@@ -725,6 +741,8 @@ def nudge_if_idle(
         cmux("send-key", "--workspace", ref, "enter", check=True)
     except (RuntimeError, FileNotFoundError) as e:
         print(f"  warn: {tool.resolve_tool()} send failed for {ref}: {e}", flush=True)
+        if skips is not None:
+            skips[ref] = "send failed"
         return False
     if pref_key is not None:
         from . import nudges

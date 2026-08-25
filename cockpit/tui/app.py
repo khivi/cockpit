@@ -36,7 +36,7 @@ import signal
 import subprocess
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -49,6 +49,7 @@ from cockpit.lib.cache import (
     cost_reporting_available,
     find_pr_payload,
     read_text,
+    restamp_pref,
 )
 from cockpit.lib.capabilities import diff_viewer_available
 from cockpit.lib.cmux import (
@@ -59,7 +60,7 @@ from cockpit.lib.cmux import (
     cmux,
     cmux_close_workspace_best_effort,
     nudge_if_idle,
-    read_rest_signals,
+    rest_skip_reason,
     select_workspace,
     spawn_orphan_workspace,
     spawn_pr_workspace,
@@ -877,7 +878,10 @@ class CockpitApp(App[None]):
         if not refs:
             self._notify("no open sessions in this repo", severity="warning")
             return
-        sent = sum(1 for ref in refs if nudge_if_idle(ref, text, tag="ask-repo"))
+        skips: dict[str, str] = {}
+        sent = sum(
+            1 for ref in refs if nudge_if_idle(ref, text, tag="ask-repo", skips=skips)
+        )
         name = repo.get("name") or repo_path.name
         if sent == len(refs):
             self._ask_drafts.pop(key, None)
@@ -885,9 +889,17 @@ class CockpitApp(App[None]):
         else:
             # Keep the draft: a retry should reach the ones that missed.
             self._ask_drafts[key] = text
+            # Name the reasons rather than a bare count: "2 mid-turn, 1 parked"
+            # tells you whether to retry now or later. `nudge_if_idle` reports
+            # them, so they are the gate's own words.
+            why = ", ".join(
+                f"{n}× {r}"
+                for r, n in sorted(
+                    Counter(skips.values()).items(), key=lambda kv: -kv[1]
+                )
+            )
             self._notify(
-                f"{name}: sent to {sent} of {len(refs)} — "
-                f"{len(refs) - sent} busy · press a to retry",
+                f"{name}: sent to {sent} of {len(refs)} — {why} · press a to retry",
                 severity="warning",
             )
 
@@ -906,17 +918,16 @@ class CockpitApp(App[None]):
         if ref is None:
             return
         who = wt.label or wt.short
-        sig = read_rest_signals(ref)
-        if sig.native == "Running":
-            msg, warn = f"{who} is mid-turn — this will be refused", True
-        elif sig.parked:
-            msg, warn = f"{who} is parked — this will be refused", True
-        elif sig.idle_pill or sig.native == "Idle":
+        # The gate's OWN verdict, not a re-derivation of it: `rest_skip_reason`
+        # runs the same `_idle_skip_reason` that `nudge_if_idle` gates on, so
+        # the warning and the decision cannot disagree. (An earlier version read
+        # raw signals here and mapped them itself — which promptly got the guard
+        # order wrong, checking `parked` before the at-rest test.)
+        reason = rest_skip_reason(ref)
+        if reason is None:
             msg, warn = f"{who} is idle — ready", False
         else:
-            # `Needs input` is ambiguous (idle-aged vs pending permission), so
-            # it is reported as the refusal it will cause, not as a diagnosis.
-            msg, warn = f"{who} is not at rest — this will be refused", True
+            msg, warn = f"{who} is {reason} — this will be refused", True
         # The user may have escaped out while cmux was being read.
         if screen.is_attached:
             self.call_from_thread(screen.set_state_hint, msg, warn=warn)
@@ -1403,12 +1414,23 @@ class CockpitApp(App[None]):
         key = pref_key(self._cache_repo_name(repo), pr)
         return repo, wt, pr, key, load_pref(key)
 
+    def _repaint_pref(self, repo: dict, wt: Worktree, pr: int, pref: NudgePref) -> None:
+        # Land a `m`/`z` keypress on the row it was pressed on, instead of at the
+        # end of the kicked cycle. The pref file is the authority for mute and
+        # snooze — the daemon derives neither — so re-stamping the PR snapshot
+        # and its `pr-muted`/`pr-snoozed` cells from it is the same value the
+        # cycle would write, minus the `gh` round-trip; the kick still follows
+        # for everything that *is* derived (pills, sidebar folds, the nudge).
+        # Worker-thread only: `_publish_inventory` marshals its own render.
+        restamp_pref(self._cache_repo_name(repo), pr, wt.branch, pref)
+        self._publish_inventory()
+
     @work(thread=True, group="mute", exit_on_error=False)
     def _toggle_mute(self, path_str: str) -> None:
         # Toggle the row PR's nudge-mute (full mute, no expiry — same as
-        # `cockpit nudge mute`). Writes a NudgePref, NOT a cache cell, so the
-        # daemon stays sole writer; the kicked slow tick republishes the
-        # `pr-muted` cell + pills, so the 🔇 glyph catches up within the cycle.
+        # `cockpit nudge mute`). Writes a NudgePref; the 🔇 glyph and the
+        # footer's Mute/Unmute label follow immediately via `_repaint_pref`,
+        # while the kicked slow tick republishes the pills.
         got = self._resolve_row_pref(path_str, "mute")
         if got is None:
             return
@@ -1417,6 +1439,7 @@ class CockpitApp(App[None]):
         pref.until = None
         pref.reason = "muted from TUI" if pref.muted else ""
         save_pref(key, pref)
+        self._repaint_pref(repo, wt, pr, pref)
         self._notify(
             f"{'muted' if pref.muted else 'unmuted'} {wt.label or wt.short} (#{pr})"
         )
@@ -1465,19 +1488,20 @@ class CockpitApp(App[None]):
                 f"comment, review, or CI/conflict issue"
             )
         save_pref(key, pref)
-        # ponytail: repo-scoped kick, so the sidebar's `<org> snoozed (N)` fold
-        # lags by up to one slow interval. `cycle_all` builds `folds` only when
-        # `only_repo is None`, so `_reconcile_review_groups` doesn't run here —
-        # everything else (`pr-snoozed`, 💤, the row band, the nudge going quiet)
-        # lands on this kick; only the cmux fold waits for the next full cycle.
-        # Upgrade path if that bites: kick full-cycle (`_kick_slow(None)`) and
-        # pay one `gh` round-trip per repo on the keypress. Do *not* build folds
-        # under `only_repo` — a bucket holding no ref from the scoped repo would
-        # match nothing and be dissolved by the pass's unguarded sweep, taking
-        # every other org's fold down with it.
-        self.call_from_thread(
-            self._kick_slow, str(Path(os.path.expanduser(repo["path"])))
-        )
+        self._repaint_pref(repo, wt, pr, pref)
+        # Full-cycle kick, deliberately unlike every other row action's
+        # repo-scoped one. `z` is the only keypress that changes *sidebar fold*
+        # membership, and `cycle_all` builds `folds` only when `only_repo is
+        # None` — so under a scoped kick `_reconcile_review_groups` never runs
+        # and the `<org> snoozed (N)` fold lags by up to a full slow interval
+        # while everything else (`pr-snoozed`, 💤, the row band, the nudge going
+        # quiet) has already landed. The cost is one `gh` round-trip per repo on
+        # a background worker — the same work the periodic tick does anyway, so
+        # this moves the schedule rather than adding steady-state load. Do *not*
+        # "fix" it instead by building folds under `only_repo`: a bucket holding
+        # no ref from the scoped repo matches nothing and is dissolved by the
+        # pass's sweep, taking every other org's fold down with it.
+        self.call_from_thread(self._kick_slow)
 
     @work(thread=True, group="nudge", exit_on_error=False)
     def _send_ask(self, path_str: str, text: str) -> None:

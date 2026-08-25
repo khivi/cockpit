@@ -35,11 +35,11 @@ from cockpit.lib.cmux import (
     move_workspace_group_to_start,
     nudge_if_idle,
     one_line,
-    read_rest_signals,
     reconcile_workspace_names,
     remove_from_workspace_group,
     rename_workspace_group,
     rename_workspace_if_needed,
+    rest_skip_reason,
     select_workspace,
     set_workspace_color,
     spawn_workspace,
@@ -981,6 +981,59 @@ def test_nudge_if_idle_skips_when_parked():
     assert result is False
 
 
+@pytest.mark.parametrize(
+    "status, reason",
+    [
+        (_native_line("Running"), "mid-turn"),
+        ("idle=1\n" + _native_line("Running"), "mid-turn"),
+        (_native_line("Needs input"), "not at rest (Needs input)"),
+        ("", "not at rest (no Claude session)"),
+        (_idle_status_lines(parked=True), "parked"),
+    ],
+)
+def test_nudge_if_idle_records_the_skip_reason(status, reason):
+    skips: dict[str, str] = {}
+
+    def fake_cmux(*args, **_kwargs):
+        return status if args[0] == "list-status" else ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        assert nudge_if_idle("workspace:1", "hi", tag="t", skips=skips) is False
+
+    assert skips == {"workspace:1": reason}
+
+
+def test_nudge_if_idle_leaves_skips_empty_when_eligible_under_dry():
+    """Under `dry` an eligible workspace returns False but is not a skip."""
+    skips: dict[str, str] = {}
+
+    def fake_cmux(*args, **_kwargs):
+        return _idle_status_lines() if args[0] == "list-status" else ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        assert (
+            nudge_if_idle("workspace:1", "hi", tag="t", dry=True, skips=skips) is False
+        )
+
+    assert skips == {}
+
+
+def test_nudge_if_idle_records_send_failure_as_a_skip():
+    skips: dict[str, str] = {}
+
+    def fake_cmux(*args, check=True, **_kwargs):
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        if args[0] == "send" and check:
+            raise RuntimeError("cmux send failed: socket gone")
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        assert nudge_if_idle("workspace:1", "hi", tag="t", skips=skips) is False
+
+    assert skips == {"workspace:1": "send failed"}
+
+
 def test_nudge_if_idle_does_not_record_nudge_on_send_failure():
     """Failed send must not record the nudge — so the next tick retries."""
     recorded: list[tuple] = []
@@ -1503,19 +1556,15 @@ def test_nudge_dry_run_reports_the_normalized_text(capsys):
     assert "one two" in out
 
 
-# ── read_rest_signals (shared read; the DECISION stays in nudge_if_idle) ─────
+# ── rest_skip_reason (the gate's own verdict, for display callers) ───────────
 
 
-def test_read_rest_signals_reports_raw_signals_not_a_verdict():
-    """It returns signals, deliberately not "safe to send" — a verdict here
-    would let a caller re-derive the gate and drift from the documented one."""
+def test_rest_skip_reason_is_none_when_a_send_would_land():
     with patch("cockpit.lib.cmux.cmux", return_value=_idle_status_lines()):
-        sig = read_rest_signals("workspace:1")
-    assert (sig.native, sig.idle_pill, sig.parked) == (sig.native, True, False)
-    assert not hasattr(sig, "safe")
+        assert rest_skip_reason("workspace:1") is None
 
 
-def test_read_rest_signals_never_sends():
+def test_rest_skip_reason_never_sends():
     calls: list[tuple] = []
 
     def fake_cmux(*args, **_kwargs):
@@ -1523,22 +1572,34 @@ def test_read_rest_signals_never_sends():
         return _idle_status_lines()
 
     with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
-        read_rest_signals("workspace:1")
+        rest_skip_reason("workspace:1")
 
     assert [a[0] for a in calls] == ["list-status"]
-    assert not [a for a in calls if a[0] in ("send", "send-key", "set-status")]
 
 
-def test_read_rest_signals_detects_running_and_parked():
-    with patch("cockpit.lib.cmux.cmux", return_value=_native_line("Running")):
-        assert read_rest_signals("workspace:1").native == "Running"
-    with patch("cockpit.lib.cmux.cmux", return_value=f"{PARKED_KEY}=1"):
-        assert read_rest_signals("workspace:1").parked is True
+def test_rest_skip_reason_agrees_with_the_gate_on_every_case():
+    """The whole point: a display caller must not be able to disagree with the
+    decision. Same inputs through both paths, same verdict."""
+    cases = (
+        _native_line("Running") + "\nidle=1",
+        _idle_status_lines(),
+        _native_line("Idle"),
+        _native_line("Needs input"),
+        f"idle=1\n{PARKED_KEY}=1",
+    )
+    for lines in cases:
+        with patch(
+            "cockpit.lib.cmux.cmux",
+            side_effect=lambda *a, _l=lines, **k: (_l if a[0] == "list-status" else ""),
+        ):
+            would_land = rest_skip_reason("workspace:1") is None
+            fired = nudge_if_idle("workspace:1", "m")
+        assert would_land is fired, lines
 
 
 def test_nudge_gate_order_unchanged_by_the_shared_read():
     """Regression guard on the refactor: the four documented outcomes must be
-    byte-for-byte the same decisions as before `read_rest_signals` existed."""
+    byte-for-byte the same decisions as before the gate was factored out."""
     cases = [
         (_native_line("Running") + "\nidle=1", False),  # running beats idle pill
         (_idle_status_lines(), True),  # idle pill fires

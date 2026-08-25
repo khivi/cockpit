@@ -1,5 +1,40 @@
 # Changelog
 
+## [2.3.4](https://github.com/khivi/cockpit/compare/v2.3.3...v2.3.4) (2026-08-25)
+
+
+### Documentation
+
+* correct the count of installed slash commands ([#375](https://github.com/khivi/cockpit/issues/375)) ([5f80c9e](https://github.com/khivi/cockpit/commit/5f80c9e4f51a7a0b6eacc7c6ac70d08fe1f9aee9))
+
+## [2.3.3](https://github.com/khivi/cockpit/compare/v2.3.2...v2.3.3) (2026-08-25)
+
+
+### Documentation
+
+* reframe cockpit as the human's join, not an agent orchestrator ([#373](https://github.com/khivi/cockpit/issues/373)) ([8676018](https://github.com/khivi/cockpit/commit/8676018e55f171ace05f9272c400d21e4b6e3563))
+
+## [2.3.2](https://github.com/khivi/cockpit/compare/v2.3.1...v2.3.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* **tui:** repaint mute/snooze on the keypress instead of at cycle end ([#371](https://github.com/khivi/cockpit/issues/371)) ([690aa29](https://github.com/khivi/cockpit/commit/690aa29b2a3601c535868a855d0c5b6ac34ebc38))
+
+## [2.3.1](https://github.com/khivi/cockpit/compare/v2.3.0...v2.3.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* **tui:** kick full-cycle on snooze so the sidebar fold lands on the keypress ([#369](https://github.com/khivi/cockpit/issues/369)) ([1918285](https://github.com/khivi/cockpit/commit/19182857c331cac448f61a51eac154857d67d865))
+
+## [2.3.0](https://github.com/khivi/cockpit/compare/v2.2.2...v2.3.0) (2026-08-25)
+
+
+### Features
+
+* **broadcast:** report why each workspace was skipped ([#366](https://github.com/khivi/cockpit/issues/366)) ([99d2caa](https://github.com/khivi/cockpit/commit/99d2caaaf1266f6eb4cc748e3e7d9538fa85fff5))
+
 ## [2.2.2](https://github.com/khivi/cockpit/compare/v2.2.1...v2.2.2) (2026-08-25)
 
 

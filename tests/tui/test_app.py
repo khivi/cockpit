@@ -852,6 +852,38 @@ async def test_snooze_key_clears_a_mute_and_snapshots_the_wake_state(
     assert pref.wake_nudge == "ci"  # already failing → this issue won't re-wake it
 
 
+@pytest.mark.parametrize("key,snoozed", [("m", False), ("z", True)])
+async def test_mute_and_snooze_restamp_their_cells_on_the_keypress(
+    monkeypatch, tmp_path, key, snoozed
+):
+    # The keypress IS the source for mute/snooze, so the row must repaint now
+    # rather than at the end of the kicked cycle — a `z` that leaves the row
+    # un-💤'd and the footer still reading "Snooze" reads as a dropped key.
+    from cockpit.lib.nudges import NudgePref
+
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.read_text", lambda *a, **k: "123")
+    monkeypatch.setattr("cockpit.tui.app.load_pref", lambda pr: NudgePref())
+    monkeypatch.setattr("cockpit.tui.app.save_pref", lambda pr, pref: None)
+    stamped: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.restamp_pref",
+        lambda repo, num, branch, pref: stamped.append((repo, num, branch, pref)),
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press(key)
+        await pilot.pause(0.6)
+    assert len(stamped) == 1
+    repo_name, num, branch, pref = stamped[0]
+    # The nwo-derived cache key and the PR number the snapshot is filed under.
+    assert (repo_name, num, branch) == (tmp_path.name, 123, wt.branch)
+    assert pref.snoozed is snoozed and pref.muted is not snoozed
+
+
 async def test_sync_key_kicks_full_cycle_not_scoped(monkeypatch, tmp_path):
     # The global `s` sync key reconciles *every* repo — its kick passes
     # only_repo=None, unlike the per-row keys which scope to the cursor row.
@@ -2138,6 +2170,66 @@ async def test_snooze_reads_the_wake_payload_under_the_nwo_key(monkeypatch, tmp_
     assert saved["beta__269"].wake_on == "3|APPROVED"  # not the empty-payload "0|"
 
 
+async def test_snooze_kicks_full_cycle_so_the_sidebar_fold_lands(monkeypatch, tmp_path):
+    # `z` is the one row key that changes sidebar *fold* membership, and
+    # `cycle_all` builds `folds` only when `only_repo is None`. A repo-scoped
+    # kick therefore skipped `_reconcile_review_groups` entirely and the
+    # `<org> snoozed (N)` fold waited for the next periodic full cycle.
+    from cockpit.lib.nudges import NudgePref
+
+    app, _ = _make_app()
+    repo_path = tmp_path / "beta"
+    repo_path.mkdir()
+    repo = {"name": "beta", "path": str(repo_path)}
+    wt = Worktree(path=repo_path / "fnox", branch="khivi/fnox")
+    kicks: list[tuple] = []
+
+    monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: {})
+    monkeypatch.setattr("cockpit.tui.app.save_pref", lambda key, pref: None)
+    monkeypatch.setattr(
+        app,
+        "_resolve_row_pref",
+        lambda p, verb: (repo, wt, 269, "beta__269", NudgePref()),
+    )
+    monkeypatch.setattr(app, "_notify", lambda *a, **k: None)
+    monkeypatch.setattr(
+        app, "call_from_thread", lambda fn, *a, **k: kicks.append((fn, a))
+    )
+
+    CockpitApp._toggle_snooze.__wrapped__(app, str(wt.path))  # type: ignore[attr-defined]
+
+    assert kicks == [(app._kick_slow, ())]  # no `only_repo` — full cycle
+
+
+async def test_mute_still_kicks_repo_scoped(monkeypatch, tmp_path):
+    # The counterpart to the snooze test above: `m` changes no fold membership
+    # (a mute is deliberately not a sidebar band), so it stays scoped and must
+    # not start paying a `gh` round-trip per repo.
+    from cockpit.lib.nudges import NudgePref
+
+    app, _ = _make_app()
+    repo_path = tmp_path / "beta"
+    repo_path.mkdir()
+    repo = {"name": "beta", "path": str(repo_path)}
+    wt = Worktree(path=repo_path / "fnox", branch="khivi/fnox")
+    kicks: list[tuple] = []
+
+    monkeypatch.setattr("cockpit.tui.app.save_pref", lambda key, pref: None)
+    monkeypatch.setattr(
+        app,
+        "_resolve_row_pref",
+        lambda p, verb: (repo, wt, 269, "beta__269", NudgePref()),
+    )
+    monkeypatch.setattr(app, "_notify", lambda *a, **k: None)
+    monkeypatch.setattr(
+        app, "call_from_thread", lambda fn, *a, **k: kicks.append((fn, a))
+    )
+
+    CockpitApp._toggle_mute.__wrapped__(app, str(wt.path))  # type: ignore[attr-defined]
+
+    assert kicks == [(app._kick_slow, (str(repo_path),))]
+
+
 async def test_workspace_event_kicks_the_fast_tick():
     # The `cmux events` doorbell: a workspace created/closed out from under us
     # republishes now instead of at the next 30s fast tick.
@@ -2586,12 +2678,21 @@ async def test_ask_on_header_reports_partial_delivery_and_keeps_the_draft(
     monkeypatch.setattr(
         "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
     )
-    monkeypatch.setattr(  # ws1 accepts, ws2 is mid-turn
-        "cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: ref == "ws1"
-    )
+
+    def _fake(ref, msg, *, skips=None, **k):
+        # Mirrors the real contract: a refusal records WHY in `skips`.
+        if ref == "ws1":
+            return True
+        if skips is not None:
+            skips[ref] = "mid-turn"
+        return False
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake)
     toasts: list[str] = []
     app = await _press_a_on_header(monkeypatch, wt, "please rebase", toasts)
-    assert any("sent to 1 of 2" in t and "1 busy" in t for t in toasts)
+    # The toast names the gate's own reason, not a bare count — "1× mid-turn"
+    # tells you whether to retry now or later.
+    assert any("sent to 1 of 2" in t and "1× mid-turn" in t for t in toasts)
     key = f"repo:{tmp_path.resolve()}"
     assert app._ask_drafts[key] == "please rebase"  # retry reaches the misses
 

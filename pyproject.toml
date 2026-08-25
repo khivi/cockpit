@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cmux-cockpit"
-version = "2.2.2"
+version = "2.3.4"
 requires-python = ">=3.12"
-description = "cmux workspaces backed by git worktrees, aligned to GitHub PRs and Linear/Jira/Trello/GitHub-issue tickets."
+description = "One terminal UI joining each change's git worktree, workspace, GitHub PR, and Linear/Jira/Trello/GitHub-issue ticket."
 dependencies = [
     "textual>=8.2.8",
 ]
