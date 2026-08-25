@@ -11,9 +11,12 @@ update — long after the test would have flagged it if we had one.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 DEFAULTS = Path(__file__).resolve().parent.parent.parent / "cockpit" / "defaults"
 
@@ -2181,3 +2184,58 @@ def test_credential_env_names_tolerates_a_malformed_config():
     # raise (preflight is what rejects it).
     names = config_mod.credential_env_names({"repos": ["junk"], "orgs": "junk"})
     assert "LINEAR_API_KEY" in names
+
+
+def test_atomic_write_uses_a_pid_scoped_temp(tmp_path, monkeypatch):
+    """A fixed `<name>.tmp` is shared scratch. Several cockpit processes write
+    these files concurrently (daemon, `cockpit close`, a detached `cockpit
+    new`), so two of them would write one path and `os.replace` it in turn —
+    the loser's whole content landing under the winner's name. `os.replace`
+    prevents a *torn* file, not a wrong one."""
+    dest = tmp_path / "config.json"
+    seen: list[str] = []
+    real_replace = config_mod.os.replace
+
+    def _spy(src, dst):
+        seen.append(Path(src).name)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(config_mod.os, "replace", _spy)
+    config_mod._atomic_write_text(dest, "one\n")
+
+    assert dest.read_text() == "one\n"
+    assert seen == [f"config.json.tmp.{os.getpid()}"]
+
+
+def test_atomic_write_temps_do_not_collide_across_processes(tmp_path, monkeypatch):
+    """The property that matters: two writers never share a scratch path."""
+    dest = tmp_path / "config.json"
+    temps: set[str] = set()
+
+    for pid in (111, 222):
+        monkeypatch.setattr(config_mod.os, "getpid", lambda pid=pid: pid)
+        real_replace = config_mod.os.replace
+        monkeypatch.setattr(
+            config_mod.os,
+            "replace",
+            lambda s, d, _r=real_replace: (temps.add(Path(s).name), _r(s, d))[1],
+        )
+        config_mod._atomic_write_text(dest, f"{pid}\n")
+
+    assert len(temps) == 2
+
+
+def test_atomic_write_leaves_no_temp_behind_when_the_write_fails(tmp_path, monkeypatch):
+    """On a synced directory litter is uploaded and propagated to every other
+    machine, so a failed write must not strand its scratch file."""
+    dest = tmp_path / "config.json"
+
+    def _boom(src, dst):
+        raise OSError("sync client says no")
+
+    monkeypatch.setattr(config_mod.os, "replace", _boom)
+    with pytest.raises(OSError):
+        config_mod._atomic_write_text(dest, "x\n")
+
+    assert list(tmp_path.iterdir()) == []
+

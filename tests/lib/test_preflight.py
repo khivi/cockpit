@@ -22,6 +22,30 @@ from cockpit.lib.preflight import (
 from tests.fixtures import make_bin_on_path
 
 
+@pytest.fixture(autouse=True)
+def _clean_cockpit_home(tmp_path):
+    """Point `preflight.COCKPIT_HOME` at an empty tmp dir for every test here.
+
+    `_warn_sync_conflicts` inspects that directory, so without this the whole
+    module reads the *developer's* real `~/.config/cockpit`, and every
+    "preflight is silent" assertion depends on what happens to be sitting in
+    it. That is machine state deciding a test result: green here, red for
+    anyone whose home holds a Dropbox conflicted copy — exactly the users this
+    warning exists for. Tests that need specific contents `setattr` over this.
+
+    Not requesting `monkeypatch` for the ordering reason in
+    `tests/conftest._isolate_hidden_repos`.
+    """
+    import cockpit.lib.preflight as mod
+
+    prev = mod.COCKPIT_HOME
+    home = tmp_path / "clean-cockpit-home"
+    home.mkdir(parents=True, exist_ok=True)
+    mod.COCKPIT_HOME = home
+    yield
+    mod.COCKPIT_HOME = prev
+
+
 def _all_required(tmp_path, monkeypatch) -> None:
     # `cockpit` too — preflight soft-warns when its own console script is absent,
     # so a healthy (silent) preflight needs it on PATH alongside gh/git/cmux.
@@ -1460,3 +1484,68 @@ def test_diff_viewer_warning_never_dies(monkeypatch, capsys):
     )
     preflight_mod._validate_workspace_backend()  # must not raise SystemExit
     assert capsys.readouterr().err
+
+
+def _conflict_home(tmp_path, monkeypatch, *names: str):
+    home = tmp_path / "cockpit-home"
+    (home / "cache").mkdir(parents=True)
+    for n in names:
+        (home / n).write_text("{}")
+    monkeypatch.setattr(preflight_mod, "COCKPIT_HOME", home)
+    return home
+
+
+def test_warns_on_a_dropbox_conflicted_copy(tmp_path, monkeypatch, capsys):
+    """A conflicted copy means a write on one machine was silently overwritten
+    by another and now lives in a file nothing reads. `os.replace` is atomic on
+    one machine and says nothing about two, so this can only be surfaced, never
+    prevented."""
+    _conflict_home(tmp_path, monkeypatch, "config (conflicted copy 2026-08-25).json")
+    preflight_mod._warn_sync_conflicts()
+    err = capsys.readouterr().err
+
+    assert "sync-conflict file(s)" in err
+    assert "conflicted copy" in err
+
+
+def test_warns_on_a_syncthing_conflict_nested_in_cache(tmp_path, monkeypatch, capsys):
+    home = _conflict_home(tmp_path, monkeypatch)
+    (
+        home / "cache" / "repo__pr-1.sync-conflict-20260825-120000-ABCDEFG.json"
+    ).write_text("{}")
+    preflight_mod._warn_sync_conflicts()
+
+    assert "sync-conflict file(s)" in capsys.readouterr().err
+
+
+def test_does_not_warn_on_ordinary_filenames(tmp_path, monkeypatch, capsys):
+    """iCloud's `<name> 2.json`, Drive's `<name> (1).json` and OneDrive's
+    `<name>-<machine>.json` are indistinguishable from ordinary names. A false
+    alarm here trains the user to ignore a warning that means real data loss,
+    so only the two unambiguous spellings match."""
+    _conflict_home(
+        tmp_path,
+        monkeypatch,
+        "config.json",
+        "config 2.json",
+        "config (1).json",
+        "config-laptop.json",
+    )
+    preflight_mod._warn_sync_conflicts()
+
+    assert capsys.readouterr().err == ""
+
+
+def test_conflict_warning_never_dies(tmp_path, monkeypatch):
+    """A conflicted copy records a *past* lost write. Refusing to start over one
+    helps nobody."""
+    _conflict_home(tmp_path, monkeypatch, "config (conflicted copy).json")
+    preflight_mod._warn_sync_conflicts()  # must not raise SystemExit
+
+
+def test_conflict_scan_survives_a_missing_cockpit_home(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(preflight_mod, "COCKPIT_HOME", tmp_path / "nope")
+    preflight_mod._warn_sync_conflicts()
+
+    assert capsys.readouterr().err == ""
+
