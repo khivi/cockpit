@@ -15,6 +15,7 @@ reads the per-cwd `git-status` cell (`"<staged> <unstaged> <untracked>"`).
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -38,18 +39,34 @@ from cockpit.tui.widgets.worktree_table import (
     HEADER_KEY_PREFIX,
     ICON_PR_MUTED,
     ICON_PR_NUDGE,
-    ICON_PR_SNOOZED,
     ROW_INDENT,
+    SNOOZED_CAP,
     WorktreeTable,
     _comments_cell,
     _header_cells,
+    _hidden_cells,
     _linear_status_icon,
+    _snoozed_cells,
+    _split_snoozed,
     _stack_rows,
     column_labels,
     row_capabilities,
     row_tooltips,
+    snoozed_row_key,
     worktree_cells,
 )
+
+# Root every test's worktree paths under its own `tmp_path` (set by the autouse
+# fixture below) rather than a shared `/tmp`. Nothing here is created on disk —
+# a `Worktree.path` is only a row key and a `.resolve()` target — but a literal
+# `/tmp/mine` is shared mutable state across the xdist workers the suite runs
+# under, so it is one `open()` away from a real collision.
+_WT_ROOT = Path("/tmp")
+
+
+@pytest.fixture(autouse=True)
+def _wt_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_WT_ROOT", tmp_path)
 
 
 @pytest.fixture
@@ -60,8 +77,10 @@ def cache_dir(tmp_path, monkeypatch):
     return cdir
 
 
-def _wt(path="/tmp/feat", branch="khivi/feat-x", **kw):
-    return Worktree(path=Path(path), branch=branch, **kw)
+def _wt(path="feat", branch="khivi/feat-x", **kw):
+    """A Worktree whose `path` is `_WT_ROOT / path` — pass a bare name, not an
+    absolute path, so it lands under the running test's own tmp dir."""
+    return Worktree(path=_WT_ROOT / path, branch=branch, **kw)
 
 
 def _plain(wt, repo="repo", color=None, provider="none", show_tickets=False):
@@ -485,7 +504,7 @@ def test_empty_nudge_cell_has_no_glyph(cache_dir):
 
 
 def test_dirty_column_renders_counts(cache_dir):
-    wt = _wt(path="/tmp/dirtywt", branch="khivi/dirty")
+    wt = _wt(path="dirtywt", branch="khivi/dirty")
     cache_mod.cwd_cache("git-status", wt.path).write_text("1 2 3")
     dirty = worktree_cells(wt, "r", None, "none", show_tickets=False)[_col(_DIRTY_ICON)]
     # ●1 ✎2 ✚3 with the footer's glyphs
@@ -495,14 +514,14 @@ def test_dirty_column_renders_counts(cache_dir):
 
 
 def test_dirty_column_omits_zero_segments(cache_dir):
-    wt = _wt(path="/tmp/partialdirty", branch="khivi/partial")
+    wt = _wt(path="partialdirty", branch="khivi/partial")
     cache_mod.cwd_cache("git-status", wt.path).write_text("0 0 4")
     dirty = worktree_cells(wt, "r", None, "none", show_tickets=False)[_col(_DIRTY_ICON)]
     assert dirty.plain == "✚4"  # only untracked shown
 
 
 def test_dirty_column_blank_when_clean(cache_dir):
-    wt = _wt(path="/tmp/cleanwt", branch="khivi/clean")
+    wt = _wt(path="cleanwt", branch="khivi/clean")
     cache_mod.cwd_cache("git-status", wt.path).write_text("0 0 0")
     dirty = worktree_cells(wt, "r", None, "none", show_tickets=False)[_col(_DIRTY_ICON)]
     assert dirty.plain == ""
@@ -510,7 +529,7 @@ def test_dirty_column_blank_when_clean(cache_dir):
 
 def test_dirty_column_blank_when_cell_missing(cache_dir):
     # Cold start: daemon hasn't written the git-status cell yet.
-    wt = _wt(path="/tmp/coldwt", branch="khivi/cold")
+    wt = _wt(path="coldwt", branch="khivi/cold")
     dirty = worktree_cells(wt, "r", None, "none", show_tickets=False)[_col(_DIRTY_ICON)]
     assert dirty.plain == ""
 
@@ -596,7 +615,7 @@ def test_a_typical_widest_row_fits_the_header_rule(cache_dir):
     belled = _wt(branch="khivi/" + "w" * 40, branch_prefix="khivi/")
     cache_mod.branch_cache("pr-nudge", belled.branch).write_text("ci")
     belled_cell = worktree_cells(belled, "r", None, "none", show_tickets=False)[0]
-    quiet = _wt(path="/tmp/q", branch="khivi/" + "q" * 40, branch_prefix="khivi/")
+    quiet = _wt(path="q", branch="khivi/" + "q" * 40, branch_prefix="khivi/")
     quiet_cell = worktree_cells(quiet, "r", None, "none", show_tickets=False)[0]
     assert cell_len(belled_cell.plain) == cell_len(quiet_cell.plain) == _RULE_WIDTH
 
@@ -651,7 +670,7 @@ def test_header_tooltips_cover_every_column():
 
 
 def test_row_tooltips_aligned_and_decode(cache_dir, monkeypatch):
-    wt = _wt(path="/tmp/tips", branch="khivi/tips")
+    wt = _wt(path="tips", branch="khivi/tips")
     cache_mod.branch_cache("pr-state", wt.branch).write_text("CHANGES_REQUESTED")
     cache_mod.branch_cache("pr-checks", wt.branch).write_text("✗")
     cache_mod.branch_cache("pr-comments", wt.branch).write_text("2")
@@ -685,7 +704,7 @@ def test_row_tooltips_aligned_and_decode(cache_dir, monkeypatch):
 def test_row_tooltips_trello_status_uses_title_not_short_link(cache_dir, monkeypatch):
     # The 📍 hover must match the Ticket cell: Trello's opaque short link is
     # garbage to a human, so show the card title (id fallback), not the id.
-    wt = _wt(path="/tmp/trtip", branch="khivi/trtip")
+    wt = _wt(path="trtip", branch="khivi/trtip")
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
         lambda branch, repo: {
@@ -710,7 +729,7 @@ def test_row_tooltips_blank_when_no_data(cache_dir, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_hover_sets_header_and_value_tooltips(cache_dir, monkeypatch):
-    wt = _wt(path="/tmp/hovertips", branch="khivi/hover")
+    wt = _wt(path="hovertips", branch="khivi/hover")
     cache_mod.branch_cache("pr-state", wt.branch).write_text("APPROVED")
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload", lambda branch, repo: {}
@@ -745,7 +764,7 @@ async def test_cursor_skips_past_consecutive_header_rows(cache_dir):
     # Regression: with rows [header(A), header(B), wt] the cursor auto-skip
     # only advanced one row off a header, landing on header(B) instead of the
     # worktree row below it — a header row hides every row-targeted footer key.
-    wt = _wt(path="/tmp/consecutive-headers-wt", branch="khivi/feat-x")
+    wt = _wt(path="consecutive-headers-wt", branch="khivi/feat-x")
     app = _Host()
     async with app.run_test() as pilot:
         table = app.query_one(WorktreeTable)
@@ -777,7 +796,7 @@ async def test_update_inventory_keys_cache_by_nwo_not_label(cache_dir, monkeypat
         )
 
     monkeypatch.setattr("cockpit.tui.widgets.worktree_table.find_pr_payload", fake_find)
-    wt = _wt(path="/tmp/envesya-wt", branch="khivi/feat-y")
+    wt = _wt(path="envesya-wt", branch="khivi/feat-y")
 
     class _TicketHost(App[None]):
         def compose(self) -> ComposeResult:
@@ -798,8 +817,8 @@ async def test_update_inventory_keys_cache_by_nwo_not_label(cache_dir, monkeypat
 
 
 def test_stacked_row_is_indented_under_the_chain_tip(cache_dir):
-    root = _wt(path="/tmp/root", branch="khivi/a")
-    child = _wt(path="/tmp/child", branch="khivi/b")
+    root = _wt(path="root", branch="khivi/a")
+    child = _wt(path="child", branch="khivi/b")
     cache_mod.branch_cache("pr-base", child.branch).write_text(root.branch)
     rows = _stack_rows([root, child])
     assert [(wt.path, depth) for wt, depth in rows] == [(child.path, 0), (root.path, 1)]
@@ -811,9 +830,9 @@ def test_stacked_row_is_indented_under_the_chain_tip(cache_dir):
 def test_a_deep_stack_indents_every_member_the_same_single_step(cache_dir):
     # Three PRs deep must not step right three times — one level, flat under
     # the tip, matching the cmux sidebar's single fold.
-    a = _wt(path="/tmp/a", branch="khivi/a")
-    b = _wt(path="/tmp/b", branch="khivi/b")
-    c = _wt(path="/tmp/c", branch="khivi/c")
+    a = _wt(path="a", branch="khivi/a")
+    b = _wt(path="b", branch="khivi/b")
+    c = _wt(path="c", branch="khivi/c")
     cache_mod.branch_cache("pr-base", b.branch).write_text(a.branch)
     cache_mod.branch_cache("pr-base", c.branch).write_text(b.branch)
     assert [(wt.path, depth) for wt, depth in _stack_rows([a, b, c])] == [
@@ -824,7 +843,7 @@ def test_a_deep_stack_indents_every_member_the_same_single_step(cache_dir):
 
 
 def test_unstacked_row_has_no_indent(cache_dir):
-    wt = _wt(path="/tmp/solo", branch="khivi/solo")
+    wt = _wt(path="solo", branch="khivi/solo")
     assert _stack_rows([wt]) == [(wt, 0)]
     assert _plain(wt)[0] == _ws("khivi-solo")
 
@@ -843,9 +862,9 @@ def _coworker(wt, login="someone"):
 def test_reviews_and_snoozed_rows_sink_below_my_queue(cache_dir):
     # The pile the sidebar already parks at the bottom must not bury the row
     # that actually wants me — git's order interleaves them.
-    dozing = _wt(path="/tmp/dozing", branch="khivi/dozing")
-    review = _wt(path="/tmp/review", branch="khivi/review")
-    mine = _wt(path="/tmp/mine", branch="khivi/mine")
+    dozing = _wt(path="dozing", branch="khivi/dozing")
+    review = _wt(path="review", branch="khivi/review")
+    mine = _wt(path="mine", branch="khivi/mine")
     _snooze(dozing)
     _coworker(review)
     rows = _stack_rows([dozing, review, mine])
@@ -855,8 +874,8 @@ def test_reviews_and_snoozed_rows_sink_below_my_queue(cache_dir):
 def test_a_snoozed_coworker_pr_sinks_past_the_reviews_band(cache_dir):
     # Snooze outranks review: a coworker PR I've already read belongs below the
     # ones I haven't, matching the sidebar's stacks → snoozed → reviews order.
-    read = _wt(path="/tmp/read", branch="khivi/read")
-    unread = _wt(path="/tmp/unread", branch="khivi/unread")
+    read = _wt(path="read", branch="khivi/read")
+    unread = _wt(path="unread", branch="khivi/unread")
     _coworker(read)
     _coworker(unread)
     _snooze(read)
@@ -866,16 +885,16 @@ def test_a_snoozed_coworker_pr_sinks_past_the_reviews_band(cache_dir):
 
 def test_banding_keeps_git_order_within_a_band(cache_dir):
     # Stable sort: rows that share a band must not be reshuffled.
-    a, b, c = (_wt(path=f"/tmp/{n}", branch=f"khivi/{n}") for n in "abc")
+    a, b, c = (_wt(path=f"{n}", branch=f"khivi/{n}") for n in "abc")
     assert [wt.path for wt, _ in _stack_rows([a, b, c])] == [a.path, b.path, c.path]
 
 
 def test_a_stack_sinks_whole_and_bands_by_its_tip(cache_dir):
     # A chain with one snoozed member must not split: contiguity under the tip
     # is what keeps the table and the sidebar reading as the same stack.
-    root = _wt(path="/tmp/root", branch="khivi/root")
-    tip = _wt(path="/tmp/tip", branch="khivi/tip")
-    mine = _wt(path="/tmp/mine", branch="khivi/mine")
+    root = _wt(path="root", branch="khivi/root")
+    tip = _wt(path="tip", branch="khivi/tip")
+    mine = _wt(path="mine", branch="khivi/mine")
     cache_mod.branch_cache("pr-base", tip.branch).write_text(root.branch)
     _snooze(tip)  # the tip heads the chain, so the whole chain sinks
     assert [(wt.path, depth) for wt, depth in _stack_rows([root, tip, mine])] == [
@@ -889,9 +908,9 @@ def test_a_snooze_below_the_tip_does_not_sink_the_chain(cache_dir):
     # The other half of banding-by-tip: one snoozed dependency must not bury the
     # active stack sitting on top of it, so a snooze on a non-tip member moves
     # nothing. (The sidebar applies the same tip rule by moving the group.)
-    root = _wt(path="/tmp/root", branch="khivi/root")
-    tip = _wt(path="/tmp/tip", branch="khivi/tip")
-    mine = _wt(path="/tmp/mine", branch="khivi/mine")
+    root = _wt(path="root", branch="khivi/root")
+    tip = _wt(path="tip", branch="khivi/tip")
+    mine = _wt(path="mine", branch="khivi/mine")
     cache_mod.branch_cache("pr-base", tip.branch).write_text(root.branch)
     _snooze(root)  # a member below the tip, so the chain keeps its band
     assert [(wt.path, depth) for wt, depth in _stack_rows([root, tip, mine])] == [
@@ -904,8 +923,8 @@ def test_a_snooze_below_the_tip_does_not_sink_the_chain(cache_dir):
 def test_a_muted_row_stays_in_my_queue(cache_dir):
     # Mute is "stop nudging me about a PR I'm working on", not "not my turn" —
     # only a snooze sinks.
-    muted = _wt(path="/tmp/muted", branch="khivi/muted")
-    plain = _wt(path="/tmp/plain", branch="khivi/plain")
+    muted = _wt(path="muted", branch="khivi/muted")
+    plain = _wt(path="plain", branch="khivi/plain")
     cache_mod.branch_cache("pr-muted", muted.branch).write_text("muted")
     assert [wt.path for wt, _ in _stack_rows([muted, plain])] == [
         muted.path,
@@ -913,10 +932,156 @@ def test_a_muted_row_stays_in_my_queue(cache_dir):
     ]
 
 
+# ── the per-repo snoozed fold ───────────────────────────────────────────────
+
+
+def test_split_snoozed_separates_the_last_band(cache_dir):
+    dozing = _wt(path="dozing", branch="khivi/dozing")
+    review = _wt(path="review", branch="khivi/review")
+    mine = _wt(path="mine", branch="khivi/mine")
+    _snooze(dozing)
+    _coworker(review)
+    live, snoozed = _split_snoozed([dozing, review, mine])
+    assert [wt.path for wt, _ in live] == [mine.path, review.path]
+    assert [wt.path for wt, _ in snoozed] == [dozing.path]
+
+
+def test_a_folding_stack_goes_whole(cache_dir):
+    # The fold takes or leaves a whole chain: a tip that folds away without its
+    # members would tear the stack in half.
+    root = _wt(path="root", branch="khivi/root")
+    tip = _wt(path="tip", branch="khivi/tip")
+    cache_mod.branch_cache("pr-base", tip.branch).write_text(root.branch)
+    _snooze(tip)
+    live, snoozed = _split_snoozed([root, tip])
+    assert live == []
+    assert [(wt.path, d) for wt, d in snoozed] == [(tip.path, 0), (root.path, 1)]
+
+
+def test_a_snooze_below_the_tip_folds_nothing(cache_dir):
+    # The other half: one snoozed dependency must not fold the active stack
+    # sitting on top of it.
+    root = _wt(path="root", branch="khivi/root")
+    tip = _wt(path="tip", branch="khivi/tip")
+    cache_mod.branch_cache("pr-base", tip.branch).write_text(root.branch)
+    _snooze(root)
+    live, snoozed = _split_snoozed([root, tip])
+    assert [wt.path for wt, _ in live] == [tip.path, root.path]
+    assert snoozed == []
+
+
+def test_stack_rows_still_returns_every_row_in_band_order(cache_dir):
+    # `_stack_rows` is the un-folded view (the band order the fold builds on) —
+    # splitting it must not drop the snoozed half.
+    dozing = _wt(path="dozing", branch="khivi/dozing")
+    mine = _wt(path="mine", branch="khivi/mine")
+    _snooze(dozing)
+    assert [wt.path for wt, _ in _stack_rows([dozing, mine])] == [
+        mine.path,
+        dozing.path,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_snoozed_rows_collapse_behind_a_disclosure_row(cache_dir):
+    dozing = _wt(path="dozing", branch="khivi/dozing")
+    mine = _wt(path="mine", branch="khivi/mine")
+    _snooze(dozing)
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [dozing, mine])])
+        await pilot.pause()
+        # header, my live row, then the fold standing in for the snoozed one.
+        assert table.row_count == 3
+        assert table.get_row_at(1)[0].plain == _ws("khivi-mine")
+        fold = table.get_row_at(2)
+        assert fold[0].plain == f"{ROW_INDENT}▸ 1 snoozed"
+        # Collapsed, the trailing column names what's folded away.
+        assert "khivi-dozing" in fold[-1].plain
+        assert table._row_caps[snoozed_row_key("R")] == frozenset({SNOOZED_CAP})
+
+
+@pytest.mark.asyncio
+async def test_expanding_the_fold_renders_the_snoozed_rows(cache_dir):
+    dozing = _wt(path="dozing", branch="khivi/dozing")
+    mine = _wt(path="mine", branch="khivi/mine")
+    _snooze(dozing)
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory(
+            [("R", "R", None, "none", [dozing, mine])], expanded_snoozed={"R"}
+        )
+        await pilot.pause()
+        assert table.row_count == 4
+        assert table.get_row_at(2)[0].plain == f"{ROW_INDENT}▾ 1 snoozed"
+        assert table.get_row_at(3)[0].plain == _ws("khivi-dozing")
+        assert "expanded" in table._row_caps[snoozed_row_key("R")]
+
+
+@pytest.mark.asyncio
+async def test_no_fold_row_when_nothing_is_snoozed(cache_dir):
+    mine = _wt(path="mine", branch="khivi/mine")
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [mine])])
+        await pilot.pause()
+        assert table.row_count == 2
+        assert snoozed_row_key("R") not in table._row_caps
+
+
+@pytest.mark.asyncio
+async def test_the_cursor_rests_on_a_fold_row(cache_dir):
+    # A repo whose rows are ALL snoozed collapses to header + fold. The
+    # cursor-skip loop hops off group headers; it must stop at the fold, which is
+    # the row `z` acts on (and the row a snooze lands the cursor on).
+    dozing = _wt(path="dozing", branch="khivi/dozing")
+    _snooze(dozing)
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [dozing])])
+        await pilot.pause()
+        assert table._current_row_key() == snoozed_row_key("R")
+        # No workspace behind it, so every row action no-ops there.
+        assert table.current_path() is None
+        assert table.current_repo_name() == "R"
+
+
+@pytest.mark.parametrize("show_cost", [False, True])
+def test_a_disclosure_tail_lands_in_title_not_the_cost_column(cache_dir, show_cost):
+    # `Title` is not the last column — `show_cost` appends `$` after it — so a
+    # `ncols - 1` tail would blank Title and (DataTable auto-sizes to content)
+    # widen the numeric column for every row in the table.
+    cols = column_labels(show_tickets=False, show_cost=show_cost)
+    for cells in (
+        _snoozed_cells(["alpha", "beta"], cols, expanded=False),
+        _hidden_cells(["gamma"], cols, expanded=False),
+    ):
+        by_col = dict(zip(cols, (c.plain for c in cells), strict=False))
+        assert "z to show" in by_col["Title"] or "h to show" in by_col["Title"]
+        assert by_col.get("$", "") == ""
+
+
+@pytest.mark.asyncio
+async def test_move_cursor_to_key_reports_a_miss(cache_dir):
+    mine = _wt(path="mine", branch="khivi/mine")
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [mine])])
+        await pilot.pause()
+        assert table.move_cursor_to_key(str(mine.path))
+        assert not table.move_cursor_to_key(snoozed_row_key("R"))
+        assert table._current_row_key() == str(mine.path)  # unmoved
+
+
 def test_indent_precedes_the_nudge_glyph(cache_dir):
     # The tree spine has to stay leftmost or the indent column ragged-edges on
     # whichever rows happen to carry a bell.
-    wt = _wt(path="/tmp/bell", branch="khivi/b")
+    wt = _wt(path="bell", branch="khivi/b")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False, depth=1)[0].plain
     assert cell == _ws("khivi-b", glyph=ICON_PR_NUDGE, depth=1)
@@ -926,8 +1091,8 @@ def test_indent_precedes_the_nudge_glyph(cache_dir):
 async def test_update_inventory_renders_a_stack_tip_first(cache_dir):
     # git lists worktrees alphabetically-ish; the chain must still render as
     # tip-then-members rather than in git's order.
-    root = _wt(path="/tmp/stack-root", branch="khivi/root")
-    child = _wt(path="/tmp/stack-child", branch="khivi/child")
+    root = _wt(path="stack-root", branch="khivi/root")
+    child = _wt(path="stack-child", branch="khivi/child")
     cache_mod.branch_cache("pr-base", child.branch).write_text(root.branch)
     app = _Host()
     async with app.run_test() as pilot:
@@ -939,48 +1104,55 @@ async def test_update_inventory_renders_a_stack_tip_first(cache_dir):
         assert table.get_row_at(2)[0].plain == _ws("khivi-root", depth=1)
 
 
-def test_snoozed_pr_prefixes_sleep_glyph(cache_dir):
+def test_a_snoozed_row_carries_no_glyph(cache_dir):
+    """Snooze is expressed by the `▾ N snoozed` fold the row sits in, not by a
+    per-row glyph — that's what makes the slot free for the 🔇 below."""
     wt = _wt(branch="khivi/dozing", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == _ws("dozing", glyph=ICON_PR_SNOOZED)
+    assert cell.plain == _ws("dozing")
 
 
-def test_snooze_wins_over_nudge_glyph(cache_dir):
-    """A snooze silences the nudge, so 💤 replaces 🔔 — the row can't advertise a
-    bell it won't ring."""
+def test_a_snoozed_row_shows_no_bell(cache_dir):
+    """Dropping the 💤 glyph must not drop snooze's *suppression* of the bell.
+    `pr-nudge` is never blanked for a snoozed PR, so a snooze that later goes
+    CI-red would otherwise advertise a 🔔 `should_nudge` will never ring."""
     wt = _wt(branch="khivi/resting", branch_prefix="khivi/")
     cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
     cache_mod.branch_cache("pr-nudge", wt.branch).write_text("ci")
     cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == _ws("resting", glyph=ICON_PR_SNOOZED)
+    assert cell.plain == _ws("resting")
+    # ...and the hover text agrees with the (absent) glyph.
+    tips = row_tooltips(wt, "r", "none", show_tickets=False)
+    assert tips[0] == "Snoozed until a new comment or review"
+
+
+def test_a_snoozed_row_still_shows_its_mute(cache_dir):
+    """The one thing left worth saying inside the fold: a row that is muted *and*
+    snoozed keeps its 🔇, because the fold says nothing about the mute."""
+    wt = _wt(branch="khivi/both", branch_prefix="khivi/")
+    cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
+    cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
+    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
+    assert cell.plain == _ws("both", glyph=ICON_PR_MUTED)
 
 
 def test_every_glyph_takes_the_same_slot_so_labels_align(cache_dir):
-    """The whole point of the fixed slot: a belled row, a snoozed row, a muted
-    row and a quiet one all start their label at the same column. The three
-    glyphs differ in ink width per font, so this asserts *cells*, not bytes."""
+    """The whole point of the fixed slot: a belled row, a muted row and a quiet
+    one all start their label at the same column. The glyphs differ in ink width
+    per font, so this asserts *cells*, not bytes."""
     starts = set()
     for cell_name, value in (
         ("pr-muted", "muted"),
-        ("pr-snoozed", "snoozed"),
         ("pr-nudge", "ci"),
         ("", ""),  # a quiet row — no cell seeded
     ):
-        wt = _wt(path=f"/tmp/{cell_name or 'quiet'}", branch=f"khivi/{cell_name}")
+        wt = _wt(path=f"{cell_name or 'quiet'}", branch=f"khivi/{cell_name}")
         if cell_name:
             cache_mod.branch_cache(cell_name, wt.branch).write_text(value)
         plain = worktree_cells(wt, "r", None, "none", show_tickets=False)[0].plain
         starts.add(cell_len(plain[: plain.index("khivi")]))
     assert starts == {len(ROW_INDENT) + _STATUS_SLOT}
-
-
-def test_mute_wins_over_snooze_glyph(cache_dir):
-    wt = _wt(branch="khivi/both", branch_prefix="khivi/")
-    cache_mod.branch_cache("pr-muted", wt.branch).write_text("muted")
-    cache_mod.branch_cache("pr-snoozed", wt.branch).write_text("snoozed")
-    cell = worktree_cells(wt, "r", None, "none", show_tickets=False)[0]
-    assert cell.plain == _ws("both", glyph=ICON_PR_MUTED)
 
 
 def test_row_capabilities_snoozed(cache_dir, monkeypatch):
@@ -1050,7 +1222,7 @@ def test_cost_cell_is_blank_at_zero(costed):
 
 
 def test_cost_cell_is_blank_with_no_cell_at_all(cache_dir):
-    assert _cost(_wt(path="/tmp/never-ticked")).plain == ""
+    assert _cost(_wt(path="never-ticked")).plain == ""
 
 
 def test_cost_cell_count_matches_columns(costed):
