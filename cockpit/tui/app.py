@@ -99,7 +99,13 @@ from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
-from cockpit.tui.widgets.worktree_table import HIDDEN_CAP, Inventory, WorktreeTable
+from cockpit.tui.widgets.worktree_table import (
+    HIDDEN_CAP,
+    SNOOZED_CAP,
+    Inventory,
+    WorktreeTable,
+    snoozed_row_key,
+)
 
 _LOG_TAIL_LINES = 200
 
@@ -247,6 +253,10 @@ class CockpitApp(App[None]):
         # *set* persists (`lib/hidden.py`), this peek deliberately doesn't, so a
         # restart comes back tidy.
         self._show_hidden = False
+        # Display names of the repos whose `▸ N snoozed` fold is open. Session-only
+        # for the same reason: the *snooze* persists (a `NudgePref`), peeking at
+        # the pile doesn't, so a restart comes back folded.
+        self._show_snoozed: set[str] = set()
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -650,7 +660,11 @@ class CockpitApp(App[None]):
         hidden_names: set[str] | None = None,
     ) -> None:
         self.query_one(WorktreeTable).update_inventory(
-            inventory, workspace_paths, hidden_names, expanded=self._show_hidden
+            inventory,
+            workspace_paths,
+            hidden_names,
+            expanded=self._show_hidden,
+            expanded_snoozed=self._show_snoozed,
         )
         # A refresh can change the highlighted row's state (PR/ticket/mute) or
         # the row set, so re-gate the footer's row keys to the current row.
@@ -772,7 +786,36 @@ class CockpitApp(App[None]):
         self._row_act(self._toggle_mute)
 
     def action_snooze_row(self) -> None:
+        """`z` — snooze, wake, or open the pile, read off the cursor row:
+
+        - on a repo's `▸ N snoozed` disclosure row → expand/collapse that fold,
+          so the pile is reachable from the row that says it exists (the same
+          shape as `h` on the `▸ N hidden` row);
+        - anywhere else → toggle the row PR's snooze.
+
+        One key for both because they're one concept: `z` is where the snoozed
+        rows go and `z` is how you get them back."""
+        table = self.query_one(WorktreeTable)
+        if SNOOZED_CAP in (table.current_capabilities() or frozenset()):
+            self._toggle_snoozed_section(table.current_repo_name())
+            return
         self._row_act(self._toggle_snooze)
+
+    def _toggle_snoozed_section(self, repo_name: str | None) -> None:
+        """Expand / collapse one repo's snoozed fold for this session. No key of
+        its own — reached by `z`, Enter, or a click on the disclosure row.
+        Re-renders locally (`_prime_table`): peeking at the pile is a pure cache
+        read and must never cost a `gh` round-trip."""
+        if repo_name is None:
+            return
+        self._show_snoozed ^= {repo_name}
+        self._prime_table()
+
+    def on_worktree_table_snoozed_toggle(
+        self, event: WorktreeTable.SnoozedToggle
+    ) -> None:
+        """Click / Enter on a `▸ N snoozed` disclosure row → same as `z` there."""
+        self._toggle_snoozed_section(event.repo_name)
 
     def action_nudge_row(self) -> None:
         self._row_act(self._send_nudge)
@@ -1323,7 +1366,7 @@ class CockpitApp(App[None]):
             pref.wake_nudge = str(payload.get("nudge") or "")
             # A snooze supersedes a mute: mute wins everywhere it's read (glyph,
             # sidebar fold, `quiet`), so leaving it set would silently swallow
-            # both the 💤 and its wake. Snooze is the narrower ask, so it takes
+            # both the fold and its wake. Snooze is the narrower ask, so it takes
             # over — press `m` again for an indefinite mute.
             pref.muted = False
             pref.until = None
@@ -1334,19 +1377,39 @@ class CockpitApp(App[None]):
             )
         save_pref(key, pref)
         self._repaint_pref(repo, wt, pr, pref)
+        # Follow the row. `_repaint_pref` has just re-rendered, and a snooze folds
+        # the row away — `update_inventory` restores the cursor by *index*, so it
+        # would come to rest on whichever unrelated worktree slid up into that
+        # slot, reading as a dropped keypress. Land on the fold that swallowed it
+        # (its count is then the feedback), or on the row itself when it's still
+        # rendered: woken, or snoozed into a fold already open.
+        self.call_from_thread(self._follow_snoozed_row, repo, wt, snoozed=pref.snoozed)
         # Full-cycle kick, deliberately unlike every other row action's
         # repo-scoped one. `z` is the only keypress that changes *sidebar fold*
         # membership, and `cycle_all` builds `folds` only when `only_repo is
         # None` — so under a scoped kick `_reconcile_review_groups` never runs
         # and the `<org> snoozed (N)` fold lags by up to a full slow interval
-        # while everything else (`pr-snoozed`, 💤, the row band, the nudge going
-        # quiet) has already landed. The cost is one `gh` round-trip per repo on
+        # while everything else (`pr-snoozed`, the TUI fold, the row band, the
+        # nudge going quiet) has already landed. The cost is one `gh` round-trip per repo on
         # a background worker — the same work the periodic tick does anyway, so
         # this moves the schedule rather than adding steady-state load. Do *not*
         # "fix" it instead by building folds under `only_repo`: a bucket holding
         # no ref from the scoped repo matches nothing and is dissolved by the
         # pass's sweep, taking every other org's fold down with it.
         self.call_from_thread(self._kick_slow)
+
+    def _follow_snoozed_row(self, repo: dict, wt: Worktree, *, snoozed: bool) -> None:
+        """Put the cursor where the row the user just pressed `z` on now lives —
+        the repo's collapsed fold when it swallowed it, else the row itself. UI
+        thread only (called via `call_from_thread` after the repaint's render).
+        A miss is a no-op: the cursor simply stays where `update_inventory` left
+        it, which is the pre-existing behaviour."""
+        name = repo.get("name") or Path(os.path.expanduser(repo["path"])).name
+        folded = snoozed and name not in self._show_snoozed
+        target = snoozed_row_key(name) if folded else str(wt.path)
+        table = self.query_one(WorktreeTable)
+        if table.move_cursor_to_key(target):
+            self._refresh_footer_caps()
 
     @work(thread=True, group="nudge", exit_on_error=False)
     def _send_nudge(self, path_str: str) -> None:

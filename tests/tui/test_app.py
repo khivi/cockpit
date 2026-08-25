@@ -810,7 +810,7 @@ async def test_snooze_key_clears_a_mute_and_snapshots_the_wake_state(
     monkeypatch, tmp_path
 ):
     # `z` on a muted row supersedes the mute: mute wins everywhere it's read, so
-    # leaving it set would swallow both the 💤 and the snooze's wake. The wake
+    # leaving it set would swallow both the fold and the snooze's wake. The wake
     # snapshots (review activity + the PR's current issue) come off the cached
     # payload — no `gh` from the TUI.
     from cockpit.lib.nudges import NudgePref
@@ -850,7 +850,7 @@ async def test_mute_and_snooze_restamp_their_cells_on_the_keypress(
 ):
     # The keypress IS the source for mute/snooze, so the row must repaint now
     # rather than at the end of the kicked cycle — a `z` that leaves the row
-    # un-💤'd and the footer still reading "Snooze" reads as a dropped key.
+    # unfolded and the footer still reading "Snooze" reads as a dropped key.
     from cockpit.lib.nudges import NudgePref
 
     wt = _seed_one_worktree(monkeypatch, tmp_path)
@@ -1427,6 +1427,168 @@ async def test_expanded_disclosure_row_lists_parked_repos(monkeypatch, tmp_path)
         await pilot.press("h")
         await pilot.pause(0.5)
     assert not is_hidden(beta)
+
+
+# ── the per-repo snoozed fold (`z`) ─────────────────────────────────────────
+
+
+def _snoozed_repo(monkeypatch, tmp_path):
+    """A one-repo inventory whose only worktree is snoozed, with the flat cache
+    pointed at a tmp dir so the `pr-snoozed` cell the fold reads is ours."""
+    import cockpit.lib.cache as cache_mod
+
+    cdir = tmp_path / "cockpit-cache"
+    cdir.mkdir(exist_ok=True)
+    monkeypatch.setattr(cache_mod, "FLAT_CACHE_DIR", cdir)
+    dozing = Worktree(path=Path("/tmp/dozing"), branch="khivi/dozing")
+    mine = Worktree(path=Path("/tmp/mine"), branch="khivi/mine")
+    cache_mod.branch_cache("pr-snoozed", dozing.branch).write_text("snoozed")
+    return [("alpha", "alpha", None, "none", [dozing, mine])], dozing, mine
+
+
+async def test_z_opens_and_shuts_a_repos_snoozed_fold(monkeypatch, tmp_path):
+    # `z` is one key with three meanings, read off the cursor row: on the
+    # `▸ N snoozed` disclosure row it opens the pile it stands for, so the rows
+    # `z` folded away are reachable from the row that says they exist.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.worktree_table import snoozed_row_key
+
+    inv, dozing, _mine = _snoozed_repo(monkeypatch, tmp_path)
+    app, _ = _make_app()
+    del app._publish_inventory  # `z` re-renders through the real `_prime_table`
+    monkeypatch.setattr(app, "_gather_inventory", lambda *_a, **_k: inv)
+    monkeypatch.setattr(app, "_live_workspace_paths", lambda: set())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table(inv)
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        # header + my live row + the fold; the snoozed row is not rendered.
+        assert table.row_count == 3
+        table.focus()
+        table.move_cursor(row=2)
+        await pilot.pause()
+        assert "Expand" in app.query_one(FooterBar).row_text
+        await pilot.press("z")
+        await pilot.pause(0.5)
+        assert app._show_snoozed == {"alpha"}
+        assert table.row_count == 4
+        assert table.get_row_at(3)[0].plain.endswith("khivi-dozing")
+        assert table._current_row_key() == snoozed_row_key("alpha")
+        assert "Collapse" in app.query_one(FooterBar).row_text
+        await pilot.press("z")
+        await pilot.pause(0.5)
+        assert app._show_snoozed == set()
+        assert table.row_count == 3
+
+
+async def test_the_fold_row_advertises_z_and_nothing_else(monkeypatch, tmp_path):
+    # It carries no workspace, so every other row key would no-op there. `h` goes
+    # too: parking the whole repo from a row standing for one section of it would
+    # read as folding. The global keys stay, exactly as on a group header.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    inv, *_ = _snoozed_repo(monkeypatch, tmp_path)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table(inv)
+        await pilot.pause()
+        app.query_one(WorktreeTable).move_cursor(row=2)
+        await pilot.pause()
+        footer = app.query_one(FooterBar)
+        assert "Expand" in footer.row_text
+        for gone in ("Focus", "Close", "Mute", "Nudge", "PR"):
+            assert gone not in footer.row_text
+        assert "Hide" not in footer.global_text
+        assert "New" in footer.global_text and "Quit" in footer.global_text
+
+
+async def test_enter_on_the_snoozed_fold_expands(monkeypatch, tmp_path):
+    inv, *_ = _snoozed_repo(monkeypatch, tmp_path)
+    app, _ = _make_app()
+    del app._publish_inventory
+    monkeypatch.setattr(app, "_gather_inventory", lambda *_a, **_k: inv)
+    monkeypatch.setattr(app, "_live_workspace_paths", lambda: set())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table(inv)
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        table.focus()
+        table.move_cursor(row=2)
+        await pilot.press("enter")
+        await pilot.pause(0.5)
+        assert app._show_snoozed == {"alpha"}
+
+
+async def test_single_click_on_the_snoozed_fold_expands(monkeypatch, tmp_path):
+    # Same affordance as the `▸ N hidden` row, for the same reason: a disclosure
+    # triangle that needs a double-click doesn't read as one. Driven with the
+    # cursor parked elsewhere, since `on_click` runs before DataTable moves it.
+    inv, *_ = _snoozed_repo(monkeypatch, tmp_path)
+    app, _ = _make_app()
+    del app._publish_inventory
+    monkeypatch.setattr(app, "_gather_inventory", lambda *_a, **_k: inv)
+    monkeypatch.setattr(app, "_live_workspace_paths", lambda: set())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table(inv)
+        await pilot.pause()
+        app.query_one(WorktreeTable).move_cursor(row=0)
+        # y: header at 0, group header at 1, worktree at 2, `▸ 1 snoozed` at 3.
+        await pilot.click(WorktreeTable, offset=(2, 3))
+        await pilot.pause(0.5)
+        assert app._show_snoozed == {"alpha"}
+
+
+async def test_a_snooze_lands_the_cursor_on_the_fold_that_swallowed_it(
+    monkeypatch, tmp_path
+):
+    # `update_inventory` restores the cursor by *index*, so a row folding away
+    # would leave it on whichever unrelated worktree slid up into that slot —
+    # which reads as a dropped keypress. Land on the fold instead; its count is
+    # then the feedback.
+    from cockpit.tui.widgets.worktree_table import snoozed_row_key
+
+    inv, dozing, mine = _snoozed_repo(monkeypatch, tmp_path)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table(inv)
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        table.move_cursor(row=1)  # my live row
+        app._follow_snoozed_row(
+            {"name": "alpha", "path": "/tmp/alpha"}, dozing, snoozed=True
+        )
+        await pilot.pause()
+        assert table._current_row_key() == snoozed_row_key("alpha")
+        # Waking one instead leaves the cursor on the row itself — it's rendered.
+        app._follow_snoozed_row(
+            {"name": "alpha", "path": "/tmp/alpha"}, mine, snoozed=False
+        )
+        await pilot.pause()
+        assert table._current_row_key() == str(mine.path)
+
+
+async def test_a_snooze_into_an_open_fold_keeps_the_cursor_on_the_row(
+    monkeypatch, tmp_path
+):
+    # The fold is open, so the row is still rendered — following it into the
+    # disclosure row would move the cursor off the thing the user just acted on.
+    inv, dozing, _mine = _snoozed_repo(monkeypatch, tmp_path)
+    app, _ = _make_app()
+    app._show_snoozed = {"alpha"}
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table(inv)
+        await pilot.pause()
+        app._follow_snoozed_row(
+            {"name": "alpha", "path": "/tmp/alpha"}, dozing, snoozed=True
+        )
+        await pilot.pause()
+        assert app.query_one(WorktreeTable)._current_row_key() == str(dozing.path)
 
 
 async def test_gather_inventory_hides_workspaceless_no_worktree_row(
@@ -2261,7 +2423,10 @@ async def test_snooze_kicks_full_cycle_so_the_sidebar_fold_lands(monkeypatch, tm
 
     CockpitApp._toggle_snooze.__wrapped__(app, str(wt.path))  # type: ignore[attr-defined]
 
-    assert kicks == [(app._kick_slow, ())]  # no `only_repo` — full cycle
+    # The cursor-follow rides the same `call_from_thread` seam; the kick is the
+    # one that matters here, and it carries no `only_repo` — full cycle.
+    assert kicks[-1] == (app._kick_slow, ())
+    assert [fn for fn, _ in kicks] == [app._follow_snoozed_row, app._kick_slow]
 
 
 async def test_mute_still_kicks_repo_scoped(monkeypatch, tmp_path):

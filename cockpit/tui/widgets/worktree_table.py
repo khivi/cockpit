@@ -23,10 +23,14 @@ folds into a group. Rows within a repo then sink into three bands (`_row_band`):
 my live queue, then coworkers' PRs I'm reviewing, then the ones I've snoozed —
 the table's rendering of the trailing folds the sidebar parks at the bottom, so
 a pile I've already said "not my turn" to can't bury the row that wants me. The
-Author column (just before Title, since it's rarely
-populated) shows the PR author's login prefixed with `@`, populated by the daemon
-only for other-authored PRs (coworker / review PRs) and blank for my own. The
-Dirty column (headed with the
+snoozed band goes one step further and collapses behind a per-repo `▸ N snoozed`
+disclosure row (`_split_snoozed`, `z` to open it): sinking a row I've explicitly
+deferred still spends a full line on it, and reclaiming those lines is the whole
+point of snoozing.
+
+The Author column (just before Title, since it's rarely populated) shows the PR
+author's login prefixed with `@`, populated by the daemon only for other-authored
+PRs (coworker / review PRs) and blank for my own. The Dirty column (headed with the
 `✎` modifications glyph rather than the word "Dirty") reads the same
 daemon-written `git-status` cell the footer does (`●S ✎M ✚U`). The Ticket and
 Status columns are added only when some configured repo is Linear-enabled
@@ -57,16 +61,19 @@ conflicts on an OPEN PR) instead shows the 🔔 glyph, read from the `pr-nudge`
 cell — `PR.nudge_issue`, the same value the slow tick's nudge decision uses, so
 the bell can't disagree with whether a nudge would fire. Mute wins over 🔔 (a
 muted PR fires no nudge); the bell clears automatically when CI goes green /
-threads resolve / the PR merges.
+threads resolve / the PR merges. Snooze carries **no** glyph: a snoozed row only
+ever renders inside its repo's `▾ N snoozed` fold, which says it for the whole
+group, so the slot stays free for the 🔇 of a row that is both.
 
 The glyph sits in a **fixed-width slot** (`_STATUS_SLOT`) that every row pays for,
-glyphed or not — the labels of a belled row, a snoozed row and a quiet one then
+glyphed or not — the labels of a belled row, a muted row and a quiet one then
 start at the same column, so the Workspace column reads as one list instead of a
 ragged one.
 """
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
 from rich.cells import cell_len
@@ -76,7 +83,7 @@ from textual.binding import Binding
 from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.widgets import DataTable
-from textual.widgets.data_table import CellDoesNotExist
+from textual.widgets.data_table import CellDoesNotExist, RowDoesNotExist
 
 from cockpit.lib.cache import (
     branch_cache,
@@ -95,7 +102,6 @@ from cockpit.lib.starship import (
     _PR_STATE_ICON,
     ICON_PR_MUTED,
     ICON_PR_NUDGE,
-    ICON_PR_SNOOZED,
     ICON_STAGED,
     ICON_UNSTAGED,
     ICON_UNTRACKED,
@@ -182,6 +188,28 @@ HEADER_KEY_PREFIX = "\x00hdr:"
 # other header for free.
 HIDDEN_ROW_KEY = f"{HEADER_KEY_PREFIX}\x00hidden"
 
+# Row key for a repo's `▸ N snoozed` disclosure row — the collapsed form of the
+# band-2 rows (`_split_snoozed`). Its own NUL-led sentinel rather than a nesting
+# under `HEADER_KEY_PREFIX`: `current_path()` skips every sentinel alike, but the
+# cursor-skip loop must *not* hop off this one. It sits inside its repo's block,
+# it is the row the cursor lands on after a `z`, and `z` on it opens the fold.
+SNOOZED_KEY_PREFIX = "\x00snz:"
+
+
+def snoozed_row_key(repo_name: str) -> str:
+    """Row key of `repo_name`'s snoozed disclosure row. One per repo — the fold
+    is per repo, matching the table's own grouping (the sidebar's equivalent
+    folds are per *org*; the table has no org row)."""
+    return f"{SNOOZED_KEY_PREFIX}{repo_name}"
+
+
+def _is_sentinel(key: str) -> bool:
+    """Is this row key one of the synthetic non-worktree rows (group header,
+    hidden disclosure, snoozed disclosure)? Real keys are absolute filesystem
+    paths, so the leading NUL is the whole test."""
+    return key.startswith("\x00")
+
+
 # Capability sentinel handed to the footer when the highlighted row is a group
 # header: it hides every row-targeted key (nothing to act on) while keeping the
 # global keys (`n`/New, `s`/Sync, …). See `FooterBar._skip`.
@@ -194,6 +222,13 @@ HEADER_CAP = "header"
 HIDDEN_CAP = "hiddenrow"
 EXPANDED_CAP = "expanded"
 PARKED_CAP = "parked"
+
+# Cap marking the `▸ N snoozed` disclosure row, so `z` reads as Expand/Collapse
+# there (+ `EXPANDED_CAP`) instead of Snooze/Wake, and every other row key hides.
+# Deliberately NOT paired with `HEADER_CAP`: that hides *every* row key including
+# `z` itself, and it would advertise `h`/Hide — which parks the whole repo — on a
+# row that reads as one section of it.
+SNOOZED_CAP = "snoozedrow"
 
 # Raw `pr-state` enum → (icon shown in the PR-state column, style). The icons
 # reuse the sidebar's `_PR_STATE_ICON` vocabulary (single source of truth) so the
@@ -223,7 +258,7 @@ ROW_INDENT = "   "
 _STACK_INDENT = "  "
 
 # Display width of the status-glyph slot every row reserves: the widest glyph
-# (🔇/💤/🔔, 2 cells each) plus its trailing space. A row with no glyph pays the
+# (🔇/🔔, 2 cells each) plus its trailing space. A row with no glyph pays the
 # same width in blanks, so every label in the column starts at one column.
 _STATUS_SLOT = 3
 
@@ -285,9 +320,14 @@ def _display_label(wt: Worktree) -> str:
     return _ellipsize(_full_label(wt), _LABEL_MAX)
 
 
+# The band a snoozed row sinks into — the last one, and the one the table
+# renders collapsed behind the repo's `▸ N snoozed` disclosure row.
+_BAND_SNOOZED = 2
+
+
 def _row_band(wt: Worktree) -> int:
     """Which trailing band a row sinks into: 0 my live queue, 1 a coworker's PR
-    I'm reviewing, 2 one I've snoozed.
+    I'm reviewing, 2 one I've snoozed (which then folds away — `_split_snoozed`).
 
     Both discriminators are the same daemon-written flat cells the row renders
     from (`pr-snoozed`; `pr-author`, which carries a login only for a coworker's
@@ -296,10 +336,49 @@ def _row_band(wt: Worktree) -> int:
     stacks → snoozed → reviews precedence. Mute is deliberately *not* a band: it
     means "stop nudging me about a PR I'm working on", not "not my turn"."""
     if read_text(branch_cache("pr-snoozed", wt.branch)):
-        return 2
+        return _BAND_SNOOZED
     if read_text(branch_cache("pr-author", wt.branch)):
         return 1
     return 0
+
+
+def _chains(wts: list[Worktree]) -> list[list[tuple[int, int]]]:
+    """One repo's worktrees grouped into stacked-PR chains and sorted into
+    `_row_band` order — the shared half of `_stack_rows` and `_split_snoozed`.
+
+    Each chain is a list of `(index into wts, depth)`, its tip first. Chains are
+    the unit of every ordering decision below: a chain bands by its **tip** and
+    moves whole, so a snoozed tip sinks (and folds) its whole chain while a
+    snooze on a member below the tip moves nothing."""
+    chains: list[list[tuple[int, int]]] = []
+    for i, depth in stack_order(
+        [wt.branch for wt in wts],
+        lambda branch: read_text(branch_cache("pr-base", branch)),
+    ):
+        if depth == 0 or not chains:
+            chains.append([(i, depth)])
+        else:
+            chains[-1].append((i, depth))
+    chains.sort(key=lambda chain: _row_band(wts[chain[0][0]]))
+    return chains
+
+
+def _split_snoozed(
+    wts: list[Worktree],
+) -> tuple[list[tuple[Worktree, int]], list[tuple[Worktree, int]]]:
+    """`(live rows, snoozed rows)` for one repo, both in `_stack_rows` order.
+
+    The snoozed half is band 2 — the rows the table collapses behind the repo's
+    `▸ N snoozed` disclosure row. Split at *chain* granularity, never per row:
+    the fold takes or leaves a whole stack, so a chain can't be torn in half by
+    its tip folding away from its members."""
+    chains = _chains(wts)
+    live: list[tuple[Worktree, int]] = []
+    snoozed: list[tuple[Worktree, int]] = []
+    for chain in chains:
+        into = snoozed if _row_band(wts[chain[0][0]]) == _BAND_SNOOZED else live
+        into.extend((wts[i], depth) for i, depth in chain)
+    return live, snoozed
 
 
 def _stack_rows(wts: list[Worktree]) -> list[tuple[Worktree, int]]:
@@ -324,19 +403,11 @@ def _stack_rows(wts: list[Worktree]) -> list[tuple[Worktree, int]]:
     stack. The sidebar sinks the same chain by the same tip rule, just by a
     different mechanism: its snoozed *pile* excludes every ref already folded
     into a stack group, so the whole group is moved to the bottom instead
-    (`cycle._reconcile_sidebar_groups`)."""
-    rows = stack_order(
-        [wt.branch for wt in wts],
-        lambda branch: read_text(branch_cache("pr-base", branch)),
-    )
-    chains: list[list[tuple[int, int]]] = []
-    for i, depth in rows:
-        if depth == 0 or not chains:
-            chains.append([(i, depth)])
-        else:
-            chains[-1].append((i, depth))
-    chains.sort(key=lambda chain: _row_band(wts[chain[0][0]]))
-    return [(wts[i], depth) for chain in chains for i, depth in chain]
+    (`cycle._reconcile_sidebar_groups`).
+
+    This is every row in one list; `update_inventory` renders the trailing
+    snoozed band collapsed, so it goes through `_split_snoozed` instead."""
+    return [(wt, depth) for half in _split_snoozed(wts) for wt, depth in half]
 
 
 def _header_cells(
@@ -391,15 +462,38 @@ def _hidden_cells(names: list[str], ncols: int, *, expanded: bool) -> list[Text]
     ]
 
 
-def _status_glyph(*, muted: bool, snoozed: bool, nudge: bool) -> Text:
+def _snoozed_cells(labels: list[str], ncols: int, *, expanded: bool) -> list[Text]:
+    """One repo's snoozed disclosure row: a count behind a `▸`/`▾` triangle in the
+    Workspace column and, while collapsed, the folded workspace names in the wide
+    trailing Title column. Both dim — the whole band is "not my turn", so it must
+    not compete with the live rows above it.
+
+    Indented like a worktree row (`ROW_INDENT`), because that is what it stands
+    in for: it hangs under the repo's header, not beside it."""
+    return [
+        Text(
+            f"{ROW_INDENT}{'▾' if expanded else '▸'} {len(labels)} snoozed",
+            style="dim",
+        ),
+        *(Text("") for _ in range(ncols - 2)),
+        Text(
+            "z to collapse" if expanded else " · ".join(labels) + "   (z to show)",
+            style="dim",
+        ),
+    ]
+
+
+def _status_glyph(*, muted: bool, nudge: bool) -> Text:
     """The row's one status glyph, padded to `_STATUS_SLOT` cells — blanks when
-    the row carries none, so every label starts at the same column. Precedence
-    is the nudge gate's own: mute silences indefinitely, snooze until someone
-    comments/approves, so neither can coexist with the bell."""
+    the row carries none, so every label starts at the same column. Mute wins:
+    a muted PR fires no nudge, so the two can't coexist.
+
+    Snooze has no glyph of its own. A snoozed row renders only inside its repo's
+    `▾ N snoozed` fold, which says it once for the whole group instead of once
+    per row — and that leaves the slot free for the 🔇 of a row that is muted
+    *and* snoozed, which is the only thing left worth saying there."""
     if muted:
         glyph, style = ICON_PR_MUTED, "yellow"
-    elif snoozed:
-        glyph, style = ICON_PR_SNOOZED, "bright_blue"
     elif nudge:
         glyph, style = ICON_PR_NUDGE, "yellow"
     else:
@@ -413,16 +507,15 @@ def _workspace_cell(
     *,
     muted: bool,
     nudge: bool,
-    snoozed: bool = False,
     depth: int = 0,
 ) -> Text:
     """The workspace name, tinted with the repo's cmux colour when set and
-    prefixed with one status glyph: 🔇 when the PR's nudges are muted, 💤 when it
-    is snoozed until someone comments/approves (`pr-snoozed`), else 🔔 when the
-    PR has an actionable, unsilenced nudge condition (failing CI / unresolved
-    threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute and snooze
-    both silence the nudge, so neither can coexist with 🔔; mute wins over snooze
-    on the (rare) row carrying both, matching the nudge gate's own precedence.
+    prefixed with one status glyph: 🔇 when the PR's nudges are muted, else 🔔
+    when the PR has an actionable, unsilenced nudge condition (failing CI /
+    unresolved threads / conflicts on an OPEN PR — the `pr-nudge` cell). Mute
+    silences the nudge, so the two can't coexist. A snooze silences it too but
+    carries no glyph — it is expressed by the row sitting inside the repo's
+    `▾ N snoozed` fold (`_status_glyph`).
 
     The slot is `_STATUS_SLOT` cells wide whichever glyph lands in it, and a row
     with none pays it in blanks — otherwise a quiet row's label would sit three
@@ -447,7 +540,7 @@ def _workspace_cell(
         cell = Text.from_ansi(colorizer(label))
     else:
         cell = Text(label, style="bold")
-    cell = Text.assemble(_status_glyph(muted=muted, snoozed=snoozed, nudge=nudge), cell)
+    cell = Text.assemble(_status_glyph(muted=muted, nudge=nudge), cell)
     if depth:
         cell = Text.assemble((f"{_STACK_INDENT}└ ", "dim"), cell)
     return Text.assemble(ROW_INDENT, cell)
@@ -644,7 +737,6 @@ def worktree_cells(
             repo_color,
             muted=bool(cell("pr-muted")),
             nudge=bool(cell("pr-nudge")),
-            snoozed=bool(cell("pr-snoozed")),
             depth=depth,
         ),
         Text(f"#{num}") if num else Text(""),
@@ -849,6 +941,15 @@ class WorktreeTable(DataTable):
         triangle that needs a double-click doesn't read as one) and by Enter,
         which every other row spends on Focus."""
 
+    class SnoozedToggle(Message):
+        """User opened a repo's `▸ N snoozed` disclosure row → expand/collapse
+        that repo's snoozed rows. Same single-click / Enter affordance as
+        `HiddenToggle`, for the same reason."""
+
+        def __init__(self, repo_name: str) -> None:
+            self.repo_name = repo_name
+            super().__init__()
+
     def __init__(
         self, *, show_tickets: bool = False, show_cost: bool = False, **kwargs: object
     ) -> None:
@@ -885,12 +986,25 @@ class WorktreeTable(DataTable):
         return row_key.value
 
     def current_path(self) -> str | None:
-        """Worktree path under the cursor, or None on an empty table or a repo
-        group-header row (which carries no workspace, so row actions no-op)."""
+        """Worktree path under the cursor, or None on an empty table or any
+        synthetic row — a repo group header, the hidden disclosure row, a repo's
+        snoozed disclosure row — none of which carries a workspace, so row
+        actions no-op there."""
         key = self._current_row_key()
-        if key is None or key.startswith(HEADER_KEY_PREFIX):
+        if key is None or _is_sentinel(key):
             return None
         return key
+
+    def move_cursor_to_key(self, key: str) -> bool:
+        """Put the row cursor on `key`, reporting whether that row exists. Used
+        after a `z` so the keypress lands somewhere meaningful: the row it
+        snoozed has just folded away, and restoring the cursor by *index* (what
+        `update_inventory` does) would leave it on an unrelated worktree."""
+        try:
+            self.move_cursor(row=self.get_row_index(key))
+        except RowDoesNotExist:
+            return False
+        return True
 
     def current_repo_name(self) -> str | None:
         """The repo display name owning the cursor row — the header's own repo on
@@ -940,13 +1054,24 @@ class WorktreeTable(DataTable):
             return tips[col]
         return header
 
+    def _disclosure_message(self, key: str | None) -> Message | None:
+        """The expand/collapse message for a disclosure row, or None for any
+        other row. Shared by Enter and the single click — the two rows whose
+        entire purpose is "open me" would otherwise each need saying twice."""
+        if key == HIDDEN_ROW_KEY:
+            return self.HiddenToggle()
+        if key is not None and key.startswith(SNOOZED_KEY_PREFIX):
+            return self.SnoozedToggle(key[len(SNOOZED_KEY_PREFIX) :])
+        return None
+
     def action_request_focus(self) -> None:
-        # Enter on the disclosure row expands/collapses it, same as `h` and a
-        # single click. `current_path()` is None there (a header sentinel), so
-        # without this the one row whose entire purpose is "open me" would be
-        # the one row Enter ignored.
-        if self._current_row_key() == HIDDEN_ROW_KEY:
-            self.post_message(self.HiddenToggle())
+        # Enter on a disclosure row expands/collapses it, same as its key (`h` /
+        # `z`) and a single click. `current_path()` is None there (a sentinel
+        # key), so without this the rows that exist to be opened would be the
+        # ones Enter ignored.
+        opened = self._disclosure_message(self._current_row_key())
+        if opened is not None:
+            self.post_message(opened)
             return
         path = self.current_path()
         if path:
@@ -966,9 +1091,10 @@ class WorktreeTable(DataTable):
         if isinstance(row, int) and row >= 0:
             self.cursor_coordinate = Coordinate(row, self.cursor_coordinate.column)
         # Double-click focuses; a single click only moves the cursor — except on
-        # the hidden row, the one row a single click acts on.
-        if self._current_row_key() == HIDDEN_ROW_KEY:
-            self.post_message(self.HiddenToggle())
+        # a disclosure row, the rows a single click acts on.
+        opened = self._disclosure_message(self._current_row_key())
+        if opened is not None:
+            self.post_message(opened)
             return
         if getattr(event, "chain", 1) >= 2:
             path = self.current_path()
@@ -978,12 +1104,55 @@ class WorktreeTable(DataTable):
                 # Double-clicked a repo header row (no path) → open new-workspace.
                 self.post_message(self.NewRequest())
 
+    def _add_worktree_row(
+        self,
+        wt: Worktree,
+        depth: int,
+        *,
+        repo_name: str,
+        cache_key: str,
+        repo_color: str | None,
+        tickets_provider: str,
+        workspace_paths: set[Path],
+    ) -> None:
+        """Append one worktree row and its bookkeeping (caps, owning repo, hover
+        tooltips). Called twice per repo — once for the live rows, once for the
+        snoozed ones a `▾ N snoozed` fold has revealed."""
+        key = str(wt.path)
+        self.add_row(
+            *worktree_cells(
+                wt,
+                cache_key,
+                repo_color,
+                tickets_provider,
+                show_tickets=self._show_tickets,
+                show_cost=self._show_cost,
+                depth=depth,
+            ),
+            key=key,
+        )
+        self._row_caps[key] = row_capabilities(
+            wt,
+            cache_key,
+            tickets_provider,
+            has_workspace=wt.path.resolve() in workspace_paths,
+        )
+        self._row_repo[key] = repo_name
+        self._cell_tooltips[key] = row_tooltips(
+            wt,
+            cache_key,
+            tickets_provider,
+            show_tickets=self._show_tickets,
+            show_cost=self._show_cost,
+        )
+
     def update_inventory(
         self,
         inventory: Inventory,
         workspace_paths: set[Path] | None = None,
         hidden_repos: set[str] | None = None,
         expanded: bool = False,
+        expanded_snoozed: set[str] | None = None,
     ) -> None:
         """Rebuild rows from the worktree inventory, keeping the cursor on the
         same row index so a refresh doesn't yank the selection away. Each repo
@@ -997,9 +1166,14 @@ class WorktreeTable(DataTable):
         `h`. A parked repo is dormant, so it carries no worktrees in the
         inventory: they render as name-only rows under the trailing `▸ N hidden`
         disclosure row, and only while `expanded`. Pressing `h` on one of those
-        rows un-parks it — the whole hide/unhide loop lives on one key."""
+        rows un-parks it — the whole hide/unhide loop lives on one key.
+
+        `expanded_snoozed` is the display names of the repos whose `▸ N snoozed`
+        fold the user opened with `z` — session-only app state, like
+        `expanded`."""
         ws = workspace_paths or set()
         parked = hidden_repos or set()
+        open_snoozed = expanded_snoozed or set()
         saved = self.cursor_row
         self.clear()
         self._row_caps = {}
@@ -1018,33 +1192,37 @@ class WorktreeTable(DataTable):
             )
             self._row_caps[hkey] = frozenset({HEADER_CAP})
             self._row_repo[hkey] = repo_name
-            for wt, depth in _stack_rows(wts):
+
+            add_worktree_row = partial(
+                self._add_worktree_row,
+                repo_name=repo_name,
+                cache_key=cache_key,
+                repo_color=repo_color,
+                tickets_provider=tickets_provider,
+                workspace_paths=ws,
+            )
+            live, snoozed = _split_snoozed(wts)
+            for wt, depth in live:
+                add_worktree_row(wt, depth)
+            if snoozed:
+                # The snoozed band, collapsed behind one disclosure row per repo.
+                # It trails the repo's live rows, where the band already sank it.
+                open_here = repo_name in open_snoozed
+                skey = snoozed_row_key(repo_name)
                 self.add_row(
-                    *worktree_cells(
-                        wt,
-                        cache_key,
-                        repo_color,
-                        tickets_provider,
-                        show_tickets=self._show_tickets,
-                        show_cost=self._show_cost,
-                        depth=depth,
+                    *_snoozed_cells(
+                        [_full_label(wt) for wt, _ in snoozed],
+                        ncols,
+                        expanded=open_here,
                     ),
-                    key=str(wt.path),
+                    key=skey,
                 )
-                self._row_caps[str(wt.path)] = row_capabilities(
-                    wt,
-                    cache_key,
-                    tickets_provider,
-                    has_workspace=wt.path.resolve() in ws,
-                )
-                self._row_repo[str(wt.path)] = repo_name
-                self._cell_tooltips[str(wt.path)] = row_tooltips(
-                    wt,
-                    cache_key,
-                    tickets_provider,
-                    show_tickets=self._show_tickets,
-                    show_cost=self._show_cost,
-                )
+                caps = {SNOOZED_CAP} | ({EXPANDED_CAP} if open_here else set())
+                self._row_caps[skey] = frozenset(caps)
+                self._row_repo[skey] = repo_name
+                if open_here:
+                    for wt, depth in snoozed:
+                        add_worktree_row(wt, depth)
         shown = {repo_name for repo_name, *_ in inventory}
         collapsed = sorted(parked - shown)
         # First row of the hidden section (or the row count when there is none) —

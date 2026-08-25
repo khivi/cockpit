@@ -436,7 +436,7 @@ The dotted `KEY → DISK` edge is the one write a row action makes. `pr-muted` a
 `pr-snoozed` are the only cells the daemon does not derive — it reads them back
 out of the pref file the `m`/`z` keypress just wrote — so waiting for the kicked
 cycle to republish them was pure lag, and it read as a dropped keypress (`z`
-leaving the row un-💤'd, unbanded, and the footer still saying "Snooze"). So both
+leaving the row unfolded, unbanded, and the footer still saying "Snooze"). So both
 toggles re-stamp the snapshot's two fields and their cells (`cache.restamp_pref`)
 before kicking, writing exactly what the cycle would have written. Both halves
 are needed: cells alone are reverted within 30s by the fast tick's republish,

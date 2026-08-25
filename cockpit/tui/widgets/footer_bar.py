@@ -22,6 +22,7 @@ from cockpit.tui.widgets.worktree_table import (
     HEADER_CAP,
     HIDDEN_CAP,
     PARKED_CAP,
+    SNOOZED_CAP,
 )
 
 
@@ -160,9 +161,14 @@ class FooterBar(Horizontal):
         caps = self._row_caps or frozenset()
         if action == "mute_row" and "muted" in caps:
             return "Unmute"
-        # Same idea for `z`: a snoozed row's key wakes it.
-        if action == "snooze_row" and "snoozed" in caps:
-            return "Wake"
+        if action == "snooze_row":
+            # `z` is one key with three meanings, read off the cursor row (like
+            # `h`): on a repo's `▸ N snoozed` disclosure row it opens/shuts the
+            # fold, on a snoozed row it wakes it, elsewhere it snoozes.
+            if SNOOZED_CAP in caps:
+                return "Collapse" if EXPANDED_CAP in caps else "Expand"
+            if "snoozed" in caps:
+                return "Wake"
         # `h` is one key with three meanings, read off the cursor row — the hint
         # says which one is live (see `app.action_hide_repo`).
         if action == "hide_repo":
@@ -210,6 +216,18 @@ class FooterBar(Horizontal):
         # (escape/back) never shown.
         if action in self.HIDDEN_ACTIONS:
             return True
+        # A repo's `▸ N snoozed` disclosure row: `z` opens/shuts the fold, and no
+        # other row key has anything to act on (it carries no workspace). The
+        # global keys stay, exactly as on a group header. `h` needs no rule of
+        # its own — the row carries no HEADER_CAP, so the branch below already
+        # hides it, which is right: parking the whole repo from a row standing
+        # for one *section* of it would read as folding, not parking.
+        if (
+            action in self.ROW_ACTIONS
+            and self._row_caps is not None
+            and SNOOZED_CAP in self._row_caps
+        ):
+            return action != "snooze_row"
         # A repo group-header row carries no workspace, so hide every
         # row-targeted key — only the global keys stay.
         if (

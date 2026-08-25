@@ -173,13 +173,13 @@ def restamp_pref(repo_name: str, number: int, branch: str, pref: NudgePref) -> N
     The TUI's `m`/`z` keys are the only writers of a state the daemon does not
     derive — it reads it back out of the pref file — so they are the one case
     where waiting for the next reconcile is pure lag: pressing `z` left the row
-    un-💤'd and the footer still reading "Snooze" until the kicked cycle had
-    fetched every repo, which reads as a dropped keypress.
+    unfolded, unbanded and the footer still reading "Snooze" until the kicked
+    cycle had fetched every repo, which reads as a dropped keypress.
 
     Both fields have to move together. The pref file is the authority, but every
     republish path (`refresh_pr_data`, `republish_pr_caches_from_disk`) reads the
     payload's copy of it — so writing only the cells would have the next fast
-    tick revert the glyph 30s later.
+    tick revert it 30s later.
 
     No-op when the snapshot is missing; the kicked cycle rebuilds it.
     """
@@ -570,7 +570,7 @@ def _write_pr_flat_cells(
 
     `snoozed` follows the `pr-snoozed` flat-cell contract: "" (awake) or
     "snoozed". Always written so the daemon's auto-wake (a new comment or a
-    review decision — see `nudges.wake_signature`) clears the 💤 same-tick,
+    review decision — see `nudges.wake_signature`) un-folds the row same-tick,
     with no separate clearing path.
     """
     atomic_write(branch_cache("pr-state", branch), state)
