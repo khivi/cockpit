@@ -52,10 +52,8 @@ UNDOCUMENTED_VERBS = frozenset({"workspace-group"})
 NOT_A_VERB = frozenset({"--help"})
 
 # Every advertised verb cockpit does NOT call, bucketed by why. This is the one
-# place bucket membership lives: `docs/cmux-surface-audit.md` carries the prose
-# rationale per bucket and deliberately carries no verb lists or counts, because
-# a hand-maintained count in prose is what silently went stale (the first pass of
-# that audit missed 22 verbs and nothing caught it).
+# place bucket membership lives; `docs/cmux-surface-audit.md` carries the prose
+# rationale per bucket and deliberately carries no verb lists or counts.
 #
 # `test_every_advertised_verb_is_accounted_for` fails when cmux ships a verb that
 # is in no bucket — so a new cmux release lands here as one failing test naming
@@ -181,9 +179,13 @@ def test_parse_verbs_still_understands_the_real_help_format(live):
     returning junk, and must never be tightened into a version assertion.
     """
     assert len(live.verbs) > 50
-    # Spot-check shapes the parser has to survive: a bare verb, one trailing
-    # into `[flags]`, and one whose line lists `a | b` alternatives.
-    assert {"send", "list-workspaces", "capabilities"} <= live.verbs
+    # One line shape per assertion: bare, trailing into `[flags]`, and a
+    # verb-position alternation. `enable-browser` is only ever the middle term of
+    # `disable-browser | enable-browser | browser-status`, so it appears here iff
+    # the split still happens — the path a first-token reading never exercises.
+    assert "capabilities" in live.verbs
+    assert {"send", "list-workspaces"} <= live.verbs
+    assert "enable-browser" in live.verbs
     assert not any(v.startswith(("-", "<", "[")) for v in live.verbs)
 
 
@@ -199,11 +201,8 @@ def test_every_required_verb_is_really_advertised(live):
 def test_every_required_capability_is_really_offered(live):
     """`REQUIRED_CAPABILITIES` must name ids this cmux actually negotiates.
 
-    This is the test that would have caught `terminal.replay.v1` and
-    `notification.feed.v1` — except it would NOT have, and that asymmetry is
-    worth stating: the real cmux offers both. They were wrong because cockpit
-    had no feature behind them, not because cmux lacked them. So this catches
-    only the over-declaring half; the under-delivering half is
+    Catches only over-declaring. Requiring an id cmux does not offer is a
+    different fault from requiring one for a feature cockpit lacks, which is
     `test_required_capabilities_only_name_tiers_cockpit_actually_has` in
     `tests/lib/test_capabilities.py`. **Do not** "fix" a failure here by
     requiring whatever the installed cmux happens to offer.
@@ -227,7 +226,7 @@ def test_every_verb_cockpit_invokes_exists(live):
 
 
 def test_the_buckets_do_not_overlap_and_do_not_claim_used_verbs():
-    """Pure bookkeeping on `UNUSED_VERBS` — no cmux needed to check it."""
+    """Bookkeeping on `UNUSED_VERBS`: no bucket overlaps another or a used verb."""
     seen: set[str] = set()
     for name, bucket in UNUSED_VERBS.items():
         clash = seen & bucket
@@ -239,14 +238,10 @@ def test_the_buckets_do_not_overlap_and_do_not_claim_used_verbs():
 def test_every_advertised_verb_is_accounted_for(live):
     """Each advertised verb is either invoked by cockpit or in exactly one bucket.
 
-    This is the regression test for how the surface audit went wrong: its first
-    pass read only the first blank-line-delimited group of `cmux --help`'s
-    `Commands:` section and missed 22 verbs, and nothing anywhere noticed. An
-    audit that silently describes an older cmux is worse than no audit.
-
-    A cmux upgrade adding verbs fails here, naming them. That is the intended
-    signal, not a breakage — classify them in `UNUSED_VERBS` (and, if one is
-    interesting, write it up in `docs/cmux-surface-audit.md`).
+    An audit that silently comes to describe an older cmux is worse than no audit.
+    A cmux upgrade adding verbs fails here, naming them — the intended signal, not
+    a breakage. Classify them in `UNUSED_VERBS`, and write up anything interesting
+    in `docs/cmux-surface-audit.md`.
     """
     bucketed = frozenset().union(*UNUSED_VERBS.values())
     unclassified = _advertised_top_level() - _invoked_verbs() - bucketed
