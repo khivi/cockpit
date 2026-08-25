@@ -27,6 +27,7 @@ from .config import (
     jira_dev_done,
     jira_email,
     jira_site_url,
+    jira_token_env,
     linear_api_key,
     linear_dev_done,
     linear_project,
@@ -165,6 +166,13 @@ class TicketProvider:
     # kwargs the other needs — the TUI's "open ticket" action passes all four so
     # neither provider has to branch on the caller.
     ticket_url: Callable[..., str | None]
+    # (cfg, repo_entry) → the env var *names* this provider needs credentials in,
+    # resolved for that repo (so a per-org `token_env` yields the org's name).
+    # Names only — a value never reaches this seam. Empty for GitHub, which
+    # authenticates through `gh`; two for Trello, which needs a key *and* a token.
+    # `preflight` warns on the unset ones so a missing credential surfaces at
+    # start rather than as a silently unresolved ticket cell cycles later.
+    credential_envs: Callable[[dict, dict | None], list[str]]
 
 
 def _github_fetch_states(
@@ -493,6 +501,7 @@ LINEAR = TicketProvider(
     fetch_titles=_linear_fetch_titles,
     narrow_repos=_linear_narrow_repos,
     ticket_url=_linear_ticket_url,
+    credential_envs=lambda cfg, repo: [linear_token_env(cfg, repo)],
 )
 
 JIRA = TicketProvider(
@@ -503,6 +512,7 @@ JIRA = TicketProvider(
     fetch_titles=_jira_fetch_titles,
     narrow_repos=_no_narrow,
     ticket_url=_jira_ticket_url,
+    credential_envs=lambda cfg, repo: [jira_token_env(cfg, repo)],
 )
 
 GITHUB = TicketProvider(
@@ -513,6 +523,8 @@ GITHUB = TicketProvider(
     fetch_titles=_github_fetch_titles,
     narrow_repos=_no_narrow,
     ticket_url=_github_ticket_url,
+    # `gh` owns the auth; there is no cockpit-read env var to warn about.
+    credential_envs=lambda _cfg, _repo: [],
 )
 
 TRELLO = TicketProvider(
@@ -523,6 +535,10 @@ TRELLO = TicketProvider(
     fetch_titles=_trello_fetch_titles,
     narrow_repos=_trello_narrow_repos,
     ticket_url=_trello_ticket_url,
+    credential_envs=lambda cfg, repo: [
+        trello_key_env(cfg, repo),
+        trello_token_env(cfg, repo),
+    ],
 )
 
 _PROVIDERS: dict[str, TicketProvider] = {

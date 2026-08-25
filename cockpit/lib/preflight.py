@@ -371,84 +371,96 @@ def _validate_orphan_nudge_grace(cfg: dict) -> None:
     _validate_field(cfg, "orphan_nudge_grace_hours", _check, per_repo_key_suffix=False)
 
 
-def _unset_linear_key_envs(cfg: dict, repos: list[dict | None]) -> list[str]:
-    """The distinct Linear API-key env var *names* `repos` resolve to
-    (`tickets.token_env` per-repo → org → global → `LINEAR_API_KEY`) that are
+def _unset_credential_envs(cfg: dict, repos: list[dict | None]) -> list[str]:
+    """The distinct ticket-credential env var *names* `repos` resolve to that are
     currently unset, sorted.
 
-    Names only — a resolved key value never reaches a warning message. `None` in
-    `repos` resolves at global level (a repo-less config).
-    """
-    from .config import linear_token_env
+    Provider-neutral: each repo's resolved provider names its own variables via
+    `TicketProvider.credential_envs`, so a Trello repo yields its key *and* token
+    (`tickets.key_env` / `token_env`), a Linear or Jira repo its single
+    `token_env`, and a GitHub repo none at all (`gh` owns that auth). Each is
+    resolved per-repo → org → global → default, so a per-org credential yields
+    that org's variable rather than the default.
 
-    names = {linear_token_env(cfg, r) for r in repos}
+    Names only — a resolved value never reaches a warning message. `None` in
+    `repos` resolves at global level (a repo-less config); a repo with no
+    provider contributes nothing.
+    """
+    from .tickets import provider_for
+
+    names: set[str] = set()
+    for r in repos:
+        provider = provider_for(cfg, r)
+        if provider is not None:
+            names.update(provider.credential_envs(cfg, r))
     return sorted(n for n in names if not os.environ.get(n))
 
 
-def _validate_linear_dev_done(cfg: dict) -> None:
-    """Warn on a missing Linear API key for a repo that needs one.
+def _validate_ticket_credentials(cfg: dict) -> None:
+    """Warn on a missing ticket-provider credential for a repo that needs one.
 
-    For every repo that is Linear-configured (`tickets.keys`) whose resolved
-    API-key env var is unset, the daemon can't query Linear, so the `devdone=`
-    pill silently stays off. That's a soft degrade, not a config error — warn
-    once per distinct env var name at start so it isn't a mystery cycles later.
-    The warning names the *variable* each repo actually reads (per-org configs
-    point at different ones), never its value.
+    For every repo with a provider configured whose resolved credential env var
+    is unset, the daemon can't query the tracker — so the `devdone=` pill stays
+    off and every delivered ticket resolves to a null state and title, which the
+    TUI renders as the bare id with a red `!`. That degrade is silent at the
+    point it happens and only looks like a cosmetic problem cycles later, which
+    is exactly why it is worth one line at start. Not a config error: a repo may
+    legitimately run without the tracker.
 
-    `tickets.keys` is Jira's routing field too, so the resolved *provider* gates
-    the list — else every Jira repo would be warned about an unset LINEAR_API_KEY.
+    Provider-neutral — the resolved provider names its own variables
+    (`credential_envs`), so Trello is warned about both halves of its key+token
+    pair and GitHub about neither. One warning per distinct name, naming the
+    *variable* each repo actually reads (per-org configs point at different
+    ones), never its value.
 
     (The `tickets` block's own field *types* are checked by `_validate_tickets`
-    via each provider's `CONFIG_FIELDS`; there is nothing left to type-check here
-    now that the flat `linear_dev_done_state` key is gone.)
+    via each provider's `CONFIG_FIELDS`.)
     """
-    from .config import linear_team_keys
-    from .tickets import LINEAR, provider_for
+    from .tickets import provider_for
 
-    linear_repos: list[dict | None] = [
-        r
-        for r in cfg.get("repos", [])
-        if linear_team_keys(cfg, r) and provider_for(cfg, r) is LINEAR
+    tracked: list[dict | None] = [
+        r for r in cfg.get("repos", []) if provider_for(cfg, r) is not None
     ]
-    for env_name in _unset_linear_key_envs(cfg, linear_repos):
+    for env_name in _unset_credential_envs(cfg, tracked):
         print(
-            f"{yellow('cockpit:')} a repo sets Linear team keys but "
-            f"{env_name} is unset — the Linear dev-done pill stays "
-            f"off. Export {env_name} to enable it.",
+            f"{yellow('cockpit:')} a repo tracks tickets but {env_name} is "
+            f"unset — its dev-done pill stays off and delivered tickets show "
+            f"as bare ids. Export {env_name} to enable it.",
             file=sys.stderr,
             flush=True,
         )
 
 
 def _validate_ticket_close_on_merge(cfg: dict) -> None:
-    """Warn when the Linear merge transition is on but its API key env var isn't.
+    """Warn when the merge transition is on but its credential env var isn't.
 
     Soft degrade, not a config error — the daemon simply can't perform the write
-    — so it mirrors `_validate_linear_dev_done`: one warning per distinct
+    — so it mirrors `_validate_ticket_credentials`: one warning per distinct
     variable name, naming the variable and never its value. `close_on_merge` is
-    the *shared* opt-in across all four providers, so the resolved provider gates
-    the list; without that, a Trello or Jira repo enabling the merge write would
-    be warned about an unset LINEAR_API_KEY it has no use for.
+    the *shared* opt-in across all four providers, and so is this check: each
+    repo's resolved provider names its own variables, so a Trello repo enabling
+    the merge write is warned about its key+token pair rather than about an
+    unset LINEAR_API_KEY it has no use for.
 
     Type-checking lives in `_validate_tickets` now (`close_on_merge` and
-    `merge_done_state` are fields of the `tickets` block, checked against
-    Linear's `CONFIG_FIELDS`), so this function only warns.
+    `merge_done` are fields of the `tickets` block, checked against each
+    provider's `CONFIG_FIELDS`), so this function only warns.
     """
     from .config import ticket_close_on_merge
-    from .tickets import LINEAR, provider_for
+    from .tickets import provider_for
 
     repos = cfg.get("repos", [])
     on_repos: list[dict | None] = [
         r
         for r in repos
-        if ticket_close_on_merge(cfg, r) and provider_for(cfg, r) is LINEAR
+        if ticket_close_on_merge(cfg, r) and provider_for(cfg, r) is not None
     ]
     # A repo-less config can still enable it globally; resolve at global level.
-    if not repos and ticket_close_on_merge(cfg) and provider_for(cfg) is LINEAR:
+    if not repos and ticket_close_on_merge(cfg) and provider_for(cfg) is not None:
         on_repos = [None]
     if not on_repos:
         return
-    for env_name in _unset_linear_key_envs(cfg, on_repos):
+    for env_name in _unset_credential_envs(cfg, on_repos):
         print(
             f"{yellow('cockpit:')} tickets.close_on_merge is enabled but "
             f"{env_name} is unset — linked tickets won't transition "
@@ -626,7 +638,7 @@ def validate_config(cfg: dict) -> None:
     _validate_statusline_hide(cfg)
     _validate_tickets(cfg)
     _validate_orphan_nudge_grace(cfg)
-    _validate_linear_dev_done(cfg)
+    _validate_ticket_credentials(cfg)
     _validate_ticket_close_on_merge(cfg)
 
 
