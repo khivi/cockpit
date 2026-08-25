@@ -100,7 +100,8 @@ def _run(repo: Path, real_home: Path, *args: str) -> subprocess.CompletedProcess
 
 
 def _sandbox_config(repo: Path) -> dict:
-    return json.loads((repo / ".cockpit-dev" / "config.json").read_text())
+    data: dict = json.loads((repo / ".cockpit-dev" / "config.json").read_text())
+    return data
 
 
 def test_refuses_setup(fake_repo):

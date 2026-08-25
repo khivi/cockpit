@@ -113,12 +113,13 @@ def test_watch_dry_flag_reaches_the_cycle(tmp_path, monkeypatch):
 
     importlib.reload(cockpit)
     built: list[dict] = []
+
+    def _record(dry: bool = False) -> dict:
+        built.append({"dry": dry})
+        return built[-1]
+
     monkeypatch.setattr(cockpit, "_watch", lambda state, *_a, **_kw: 0)
-    monkeypatch.setattr(
-        cockpit,
-        "_build_state",
-        lambda dry=False: built.append({"dry": dry}) or built[-1],
-    )
+    monkeypatch.setattr(cockpit, "_build_state", _record)
 
     assert cockpit.main(["--watch", "--dry"]) == 0
     assert built[-1]["dry"] is True
@@ -150,12 +151,13 @@ def test_watch_is_not_dry_by_default(tmp_path, monkeypatch):
 
     importlib.reload(cockpit)
     built: list[dict] = []
+
+    def _record(dry: bool = False) -> dict:
+        built.append({"dry": dry})
+        return built[-1]
+
     monkeypatch.setattr(cockpit, "_watch", lambda state, *_a, **_kw: 0)
-    monkeypatch.setattr(
-        cockpit,
-        "_build_state",
-        lambda dry=False: built.append({"dry": dry}) or built[-1],
-    )
+    monkeypatch.setattr(cockpit, "_build_state", _record)
 
     assert cockpit.main(["--watch"]) == 0
     assert built[-1]["dry"] is False

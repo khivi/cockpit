@@ -2215,11 +2215,12 @@ def test_atomic_write_temps_do_not_collide_across_processes(tmp_path, monkeypatc
     for pid in (111, 222):
         monkeypatch.setattr(config_mod.os, "getpid", lambda pid=pid: pid)
         real_replace = config_mod.os.replace
-        monkeypatch.setattr(
-            config_mod.os,
-            "replace",
-            lambda s, d, _r=real_replace: (temps.add(Path(s).name), _r(s, d))[1],
-        )
+
+        def _spy(src, dst, _r=real_replace):
+            temps.add(Path(src).name)
+            _r(src, dst)
+
+        monkeypatch.setattr(config_mod.os, "replace", _spy)
         config_mod._atomic_write_text(dest, f"{pid}\n")
 
     assert len(temps) == 2
