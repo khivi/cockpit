@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.0](https://github.com/khivi/cockpit/compare/v2.5.0...v2.6.0) (2026-08-25)
+
+
+### Features
+
+* **tui:** add FEATURES.md and make it reachable from the dashboard ([#382](https://github.com/khivi/cockpit/issues/382)) ([3364b11](https://github.com/khivi/cockpit/commit/3364b11191c4780be766296ccd245bf2617d8d00))
+
 ## [2.5.0](https://github.com/khivi/cockpit/compare/v2.4.0...v2.5.0) (2026-08-25)
 
 
