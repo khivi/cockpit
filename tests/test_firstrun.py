@@ -7,8 +7,19 @@ fixture in `tests/conftest.py`).
 
 from __future__ import annotations
 
+import pytest
+
 import cockpit.lib.firstrun as firstrun_mod
 from cockpit.lib.firstrun import mark_welcomed, welcome_pending
+
+
+@pytest.fixture(autouse=True)
+def _unmarked():
+    """The suite-wide fixture pre-marks the file so unrelated TUI tests don't
+    grow a toast; this module is *about* the unmarked state, so it starts
+    from there."""
+    firstrun_mod.WELCOME_MARKER.unlink(missing_ok=True)
+
 
 # NB: reach the path as `firstrun_mod.WELCOME_MARKER`, never a module-level
 # `from ... import WELCOME_MARKER` — that binds the real `~/.config/cockpit`

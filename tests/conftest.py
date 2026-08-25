@@ -96,18 +96,36 @@ def _isolate_hidden_repos(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_welcome_marker(tmp_path):
+def _isolate_welcome_marker(tmp_path_factory):
     """`firstrun.WELCOME_MARKER` is resolved off the real `COCKPIT_HOME` at
     import. Without this the welcome-hint tests would pass or fail depending on
     whether the developer's own install had already shown the hint — and a test
     run would suppress it on their real install.
+
+    It is redirected **and pre-marked**, i.e. every test defaults to "already
+    welcomed". Left unmarked, `_maybe_welcome` fires in the `on_mount` of every
+    TUI test that builds a `CockpitApp`, mounting a Toast none of them expects —
+    an extra widget racing the mount those tests then query into. A test that
+    wants the first-run path unlinks the marker itself (`tests/test_firstrun.py`
+    does it module-wide; the two welcome tests in `tests/tui/test_app.py` do it
+    inline).
+
+    It deliberately does **not** live under the test's own `tmp_path`, which is
+    why this asks for `tmp_path_factory` instead. Because the marker is written
+    eagerly, anything under `tmp_path` is visible to the test: that directory is
+    a git repo in `tests/test_cut_release.py`, which asserts a clean
+    `git status --porcelain`, and `cockpit-home` under it is already `mkdir()`'d
+    (no `exist_ok`) by the `cockpit_repo` fixture below. `hidden.py`'s fixture
+    gets away with `tmp_path` only because nothing writes its file unless a test
+    asks.
 
     Same shape as `_isolate_hidden_repos` above, including not requesting
     `monkeypatch` — see its docstring for why that ordering matters."""
     import cockpit.lib.firstrun as firstrun_mod
 
     prev = firstrun_mod.WELCOME_MARKER
-    firstrun_mod.WELCOME_MARKER = tmp_path / "welcomed"
+    firstrun_mod.WELCOME_MARKER = tmp_path_factory.mktemp("welcome") / "welcomed"
+    firstrun_mod.WELCOME_MARKER.touch()
     yield
     firstrun_mod.WELCOME_MARKER = prev
 

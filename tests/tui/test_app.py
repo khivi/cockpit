@@ -3095,10 +3095,12 @@ async def test_feature_guide_action_opens_the_docs_url(monkeypatch):
 
 
 async def test_welcome_hint_fires_once_then_never_again(monkeypatch):
-    # The marker is redirected to tmp_path by the autouse
-    # `_isolate_welcome_marker` fixture, so this starts genuinely "unseen".
+    # The autouse `_isolate_welcome_marker` fixture pre-marks the file (so the
+    # other ~115 TUI tests don't grow a toast in on_mount) — unlink it to get
+    # the genuine first-run path this test is about.
     import cockpit.lib.firstrun as firstrun_mod
 
+    firstrun_mod.WELCOME_MARKER.unlink(missing_ok=True)
     seen: list[str] = []
 
     def _capture(self, message, *a, **kw):
