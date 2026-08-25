@@ -299,6 +299,8 @@ Keyed by number alone — the original shape — two repos' PR #10 shared one fi
 - **Test isolation is `tests/conftest._isolate_runtime_dir`, and it sets the env var, not just the module attributes.** Several fixtures `importlib.reload(lib.config)` after setting `$COCKPIT_HOME`; a reload re-derives these paths from the environment and silently undoes an attribute-only patch. That is not theoretical — the first run after the split deposited a real `workspace:99` marker and a fake `4242` pidfile in the author's own `~/.local/state/cockpit`. The many fixtures that isolate only `COCKPIT_HOME` **do not** cover the runtime dir, and that is by design.
 - **`preflight`'s two `COCKPIT_HOME`-inspecting warnings need a hermetic home in tests** (`tests/lib/test_preflight._clean_cockpit_home`). Without it the module reads the developer's real `~/.config/cockpit`, so every "preflight is silent" assertion turns on what happens to be sitting there — green for the author, red for anyone holding a legacy `state/` dir or a conflicted copy, i.e. exactly the users the warnings exist for.
 
+`./dev.sh` therefore exports **three** paths (`COCKPIT_HOME`, `COCKPIT_RUNTIME_DIR`, `TMPDIR`); isolating the first alone leaves a dev build claiming the installed daemon's pidfile.
+
 ### Config surface has three faces — keep them in sync
 
 `cockpit/lib/config.py` is the authoritative reader (default + resolution per field), but it has two documentation mirrors that drift silently: `cockpit/config.example.json` (the sample schema — documentation only, never installed; a fresh install seeds `{"repos": []}`) and `docs/config.md` (the human field reference). **Any change to a config field — new key, renamed key, changed default, new `tickets`/provider field — MUST update all three in the same PR:** the `config.py` reader, the `config.example.json` sample, and the `docs/config.md` table. Adding a reader without the sample+doc entry is the drift this prevents — a field the code honors but nobody can discover. (Provider ticket fields also flow through the provider's `CONFIG_FIELDS` per the `tickets` note below; that's a fourth touch-point for ticket settings specifically.)
@@ -356,6 +358,10 @@ A falsy/failed identity fetch is never cached (retries next tick); a failed writ
 # One-time after cloning — wires pre-commit hooks for commit + push stages:
 ./setup.sh
 
+# Run THIS worktree's build against a throwaway sandbox (never `uv run cockpit
+# watch`, which shares state with the installed daemon — see below):
+./dev.sh
+
 # Run the test suite serially — right for a single test or a small selection:
 pytest tests/test_spawn.py::test_linear_key_routes_to_matching_repo_without_repo_flag
 
@@ -381,6 +387,59 @@ newer style, producing unrelated churn that the pinned pre-commit hook then
 fights on commit. Bare `ruff` isn't installed here on purpose; the pinned hook
 *is* the formatter, and it's what CI enforces. Format only your changed paths
 with `pre-commit run ... --files`, not the whole tree.
+
+### `./dev.sh` — five isolation axes, and none of them is optional
+
+`uv run cockpit watch` from a worktree is **not** a dev run: it shares every
+piece of state with the installed daemon. `dev.sh` seeds a `.cockpit-dev/`
+sandbox and execs the worktree's build against it. Each axis blocks a different
+path to real damage, and each was verified against the code rather than assumed:
+
+- **`COCKPIT_HOME`** → `config.json` and `cache/*__pr-*.json`.
+- **`COCKPIT_RUNTIME_DIR`** → `cockpit.pid` and `close-requests/`, a *separate*
+  variable because they deliberately don't follow `COCKPIT_HOME` (see the
+  runtime-dir invariant below). Shared, `claim_pidfile` either exits 1 on the
+  installed daemon's live PID or reclaims the pidfile — after which every
+  `cockpit close` and spawn kick in *every* worktree routes into the dev build,
+  and `_drain_close_requests` runs the real `teardown`.
+- **`TMPDIR`** → the statusline/starship flat cells are `FLAT_CACHE_DIR =
+  tempfile.gettempdir() / "cockpit-cache"` (`cache.py`), **not** under
+  `COCKPIT_HOME`. Isolating only `COCKPIT_HOME` leaves the fast tick repainting
+  the user's live footer from a dev build.
+- **`tool: none`** → every cmux write becomes a no-op through the existing
+  `has_workspace_backend()` / `is_cmux()` gates: spawn, close, rename,
+  `set-color`, `workspace-group`, and `send` into a live Claude session. This is
+  deliberately an existing, validated config value and **not** a dev-only code
+  branch — a branch nobody exercises in production is the wrong place to put a
+  safety property.
+- **`--dry`** → `tool: none` does **not** cover `_maybe_autoclose`: it removes
+  merged worktrees and runs `git branch -D` through **git**, not through the
+  workspace backend, so a sandbox with a real repo list would tear down real
+  worktrees. `--dry` is also what gates the tracker writes (`gh issue close`,
+  Linear `issueUpdate`, Jira transitions, Trello `move_card`).
+
+**`--dry` was fully plumbed through `cycle.py`/`teardown.py` long before it was
+reachable** — `cockpit.py` hardcoded `dry=False` and no flag exposed it. It is
+now `cockpit watch --dry`, threaded via `_build_state(dry)` → `state["dry"]` →
+`_once_with` → `cycle_all`. **Do not** re-hardcode that call site, and **do not**
+add a second dev-only suppression path beside it; if a new side effect needs
+gating, gate it on `ctx.dry` like every other one.
+
+Consequences worth stating rather than discovering: `--dry` also suppresses the
+**cache writes** (`_write_pr_caches` early-returns), which is *why* snapshot mode
+copies the real PR JSONs in — the table renders from seeded cache via the fast
+tick's `republish_pr_caches_from_disk`. And every cmux-facing feature (folds,
+`f`, `a`, `d`, colours) is **inert** under `tool: none`, so the sandbox is right
+for the table, cells, config, prompts and the cycle's *decisions*, and wrong for
+anything cmux-facing — those need a real cmux and therefore real risk.
+
+`dev.sh` **refuses `cockpit setup`** (exit 2). Setup writes `sys.executable`
+into `~/.claude/settings.json` and `~/.config/starship.toml`, both *outside* the
+sandbox, so from a worktree it bakes in `.venv/bin/python` and the statusline
+dies when the worktree is removed — the `{python}` pin invariant's "footer
+disappeared" bug. Guards are covered by `tests/test_dev_script.py`; the happy
+path ends in a TUI and is deliberately untested, same precedent as
+`cut-release.sh`.
 
 ## Release versioning
 
