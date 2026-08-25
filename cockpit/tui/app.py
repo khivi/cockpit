@@ -101,7 +101,12 @@ from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
-from cockpit.tui.widgets.worktree_table import HIDDEN_CAP, Inventory, WorktreeTable
+from cockpit.tui.widgets.worktree_table import (
+    HEADER_CAP,
+    HIDDEN_CAP,
+    Inventory,
+    WorktreeTable,
+)
 
 _LOG_TAIL_LINES = 200
 
@@ -816,6 +821,21 @@ class CockpitApp(App[None]):
         the main thread (`push_screen` requires it) and the resolve+send runs on
         a worker, so the git/cmux round-trips never block the UI."""
         table = self.query_one(WorktreeTable)
+        # One key, meaning read off the cursor row — the `h` pattern. On a repo
+        # group header there is no single session to reach, so `a` addresses the
+        # whole repo; on a worktree row it addresses that row. The footer
+        # relabels itself ("Ask repo") so the live meaning is always announced.
+        if HEADER_CAP in (table.current_capabilities() or frozenset()):
+            repo = self._repo_config_by_name(table.current_repo_name())
+            if repo is None:
+                self.notify("no repo under the cursor", severity="warning")
+                return
+            key = f"repo:{Path(os.path.expanduser(repo['path'])).resolve()}"
+            screen = AskScreen(
+                target=repo.get("name") or "", initial=self._ask_drafts.get(key, "")
+            )
+            self.push_screen(screen, lambda text: self._on_ask_repo(repo, key, text))
+            return
         path = table.current_path()
         if not path:
             return
@@ -834,6 +854,54 @@ class CockpitApp(App[None]):
         # should not throw the text away either.
         if text:
             self._send_ask(path_str, text)
+
+    def _on_ask_repo(self, repo: dict, key: str, text: str | None) -> None:
+        if text:
+            self._send_ask_repo(repo, key, text)
+
+    @work(thread=True, group="nudge", exit_on_error=False)
+    def _send_ask_repo(self, repo: dict, key: str, text: str) -> None:
+        # `a` on a repo header: the same gated send as the per-row `a`, fanned
+        # over the repo's own workspaces. Matched by cwd against the repo's
+        # `worktrees()` — never a path-prefix test, since a worktree usually
+        # lives in a *sibling* directory — exactly like `_park_workspaces`.
+        #
+        # Delivery is PARTIAL by construction: these sessions' states are not
+        # visible from the header row, so some will be mid-turn and refuse. The
+        # count is therefore reported rather than assumed ("sent to 3 of 7"), or
+        # a half-landed broadcast would look like a whole one.
+        if not is_cmux():
+            self._notify("ask requires cmux", severity="warning")
+            return
+        repo_path = Path(os.path.expanduser(repo["path"]))
+        try:
+            wts = worktrees(repo_path, repo.get("branch_prefix", ""))
+            paths = {repo_path.resolve(), *(wt.path.resolve() for wt in wts)}
+            cwds = workspace_cwds()  # self-excluded: never ask our own TUI
+        except (CmuxUnavailable, RuntimeError, OSError) as e:
+            self._notify(f"ask: could not enumerate workspaces: {e}", severity="error")
+            return
+        refs = [
+            ref
+            for ref, cwd in cwds.items()
+            if cwd.resolve() in paths and ref != self._self_ws
+        ]
+        if not refs:
+            self._notify("no open sessions in this repo", severity="warning")
+            return
+        sent = sum(1 for ref in refs if nudge_if_idle(ref, text, tag="ask-repo"))
+        name = repo.get("name") or repo_path.name
+        if sent == len(refs):
+            self._ask_drafts.pop(key, None)
+            self._notify(f"sent to all {sent} session(s) in {name}")
+        else:
+            # Keep the draft: a retry should reach the ones that missed.
+            self._ask_drafts[key] = text
+            self._notify(
+                f"{name}: sent to {sent} of {len(refs)} — "
+                f"{len(refs) - sent} busy · press a to retry",
+                severity="warning",
+            )
 
     @work(thread=True, group="askhint", exit_on_error=False)
     def _ask_state_hint(self, path_str: str, screen: AskScreen) -> None:

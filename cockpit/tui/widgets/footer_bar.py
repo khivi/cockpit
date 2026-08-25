@@ -128,6 +128,15 @@ class FooterBar(Horizontal):
         "quit": "Quit",
     }
 
+    # Row actions that stay advertised on a repo group header, where every
+    # other row key is suppressed. `a` is one key whose meaning is read off the
+    # cursor row (the `h` pattern): on a worktree row it asks that session, on a
+    # header it asks the whole repo — so a header is exactly where it must stay
+    # visible, and `_label` renames it there so the live meaning is announced.
+    # It also drops its `workspace` requirement on a header: a header carries no
+    # workspace cap, but the repo behind it may have several sessions.
+    HEADER_ROW_ACTIONS = frozenset({"ask_row"})
+
     # Actions never shown in the footer (handled implicitly / not key-hint worthy).
     HIDDEN_ACTIONS = frozenset({"dismiss_overlay"})
 
@@ -186,6 +195,9 @@ class FooterBar(Horizontal):
             return "Wake"
         # `h` is one key with three meanings, read off the cursor row — the hint
         # says which one is live (see `app.action_hide_repo`).
+        # `a` on a header addresses the repo, not a session — say so.
+        if action == "ask_row" and HEADER_CAP in caps:
+            return "Ask repo"
         if action == "hide_repo":
             if HIDDEN_CAP in caps:
                 return "Collapse" if EXPANDED_CAP in caps else "Reveal"
@@ -233,10 +245,11 @@ class FooterBar(Horizontal):
             return True
         # A repo group-header row carries no workspace, so hide every
         # row-targeted key — only the global keys stay.
+        on_header = self._row_caps is not None and HEADER_CAP in self._row_caps
         if (
             action in self.ROW_ACTIONS
-            and self._row_caps is not None
-            and HEADER_CAP in self._row_caps
+            and on_header
+            and action not in self.HEADER_ROW_ACTIONS
         ):
             return True
         # `h` parks the cursor row's whole *repo*, so it's only advertised on a
@@ -276,6 +289,11 @@ class FooterBar(Horizontal):
         # capability the highlighted row lacks. Unknown caps (None) → no gating.
         if self._row_caps is not None:
             req = self.ACTION_REQUIRES.get(action)
+            # A HEADER_ROW_ACTION drops its per-row requirement on a header: `a`
+            # needs a live `workspace` on a worktree row, but a header carries no
+            # workspace cap while the repo behind it may have several sessions.
+            if on_header and action in self.HEADER_ROW_ACTIONS:
+                req = None
             if req is not None and req not in self._row_caps:
                 return True
         return False

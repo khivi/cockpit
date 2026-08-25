@@ -2049,7 +2049,13 @@ async def test_footer_hides_all_row_keys_on_group_header():
 
     fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
     fb._row_caps = frozenset({HEADER_CAP})
-    assert all(fb._skip(a) for a in FooterBar.ROW_ACTIONS)
+    # …except the header-ok ones: `a` addresses the whole repo there, which is
+    # exactly the row where it must stay visible (the `h` pattern).
+    assert all(
+        fb._skip(a) for a in FooterBar.ROW_ACTIONS - FooterBar.HEADER_ROW_ACTIONS
+    )
+    assert not fb._skip("ask_row")
+    assert fb._label("ask_row", "Ask") == "Ask repo"
     assert not fb._skip("sync") and not fb._skip("quit")
 
 
@@ -2816,3 +2822,113 @@ async def test_footer_gates_diff_on_pr_and_cmux():
         fb2._row_caps = frozenset({"pr"})
         assert fb2._skip("open_diff"), backend  # no viewer there; `p` instead
         assert not fb2._skip("read_pr"), backend  # but `r` still works
+
+
+# ── `a` on a repo header → repo-wide ─────────────────────────────────────────
+
+
+async def _press_a_on_header(monkeypatch, wt, text, toasts):
+    """Move the cursor to the repo group header, press `a`, submit `text`."""
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        app.query_one(WorktreeTable).move_cursor(row=0)  # the header row
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = text
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    return app
+
+
+async def test_ask_on_header_fans_out_to_every_session_in_the_repo(
+    monkeypatch, tmp_path
+):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
+    )
+    sent: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.nudge_if_idle",
+        lambda ref, msg, **k: (sent.append((ref, msg)), True)[1],
+    )
+    toasts: list[str] = []
+    await _press_a_on_header(monkeypatch, wt, "all of you rebase", toasts)
+    assert {r for r, _ in sent} == {"ws1", "ws2"}
+    assert all(m == "all of you rebase" for _, m in sent)
+    assert any("sent to all 2" in t for t in toasts)
+
+
+async def test_ask_on_header_never_asks_the_dashboards_own_session(
+    monkeypatch, tmp_path
+):
+    """Self-exclusion, same rule broadcast has: the TUI must not nudge itself."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "SELF": wt.path}
+    )
+    sent: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.nudge_if_idle",
+        lambda ref, msg, **k: (sent.append(ref), True)[1],
+    )
+    app, _ = _make_app()
+    app._self_ws = "SELF"
+    monkeypatch.setattr(app, "notify", lambda msg, **k: None)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        app.query_one(WorktreeTable).move_cursor(row=0)
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "hello"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert sent == ["ws1"]  # SELF excluded
+
+
+async def test_ask_on_header_reports_partial_delivery_and_keeps_the_draft(
+    monkeypatch, tmp_path
+):
+    """Fanning out from a header hits sessions whose state you can't see, so a
+    half-landed send must never read as a whole one."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
+    )
+    monkeypatch.setattr(  # ws1 accepts, ws2 is mid-turn
+        "cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: ref == "ws1"
+    )
+    toasts: list[str] = []
+    app = await _press_a_on_header(monkeypatch, wt, "please rebase", toasts)
+    assert any("sent to 1 of 2" in t and "1 busy" in t for t in toasts)
+    key = f"repo:{tmp_path.resolve()}"
+    assert app._ask_drafts[key] == "please rebase"  # retry reaches the misses
+
+
+async def test_ask_on_header_warns_when_the_repo_has_no_sessions(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    sent: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.nudge_if_idle", lambda *a, **k: sent.append(a) or True
+    )
+    toasts: list[str] = []
+    await _press_a_on_header(monkeypatch, wt, "hi", toasts)
+    assert sent == []
+    assert any("no open sessions" in t for t in toasts)
