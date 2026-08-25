@@ -26,12 +26,13 @@ from tests.fixtures import make_bin_on_path
 def _clean_cockpit_home(tmp_path):
     """Point `preflight.COCKPIT_HOME` at an empty tmp dir for every test here.
 
-    `_warn_sync_conflicts` inspects that directory, so without this the whole
-    module reads the *developer's* real `~/.config/cockpit`, and every
-    "preflight is silent" assertion depends on what happens to be sitting in
-    it. That is machine state deciding a test result: green here, red for
-    anyone whose home holds a Dropbox conflicted copy — exactly the users this
-    warning exists for. Tests that need specific contents `setattr` over this.
+    Two of preflight's warnings inspect that directory — `_warn_sync_conflicts`
+    and `_warn_legacy_runtime_state` — so without this the whole module reads
+    the *developer's* real `~/.config/cockpit`, and every "preflight is silent"
+    assertion depends on what happens to be sitting in it. That is machine
+    state deciding a test result: green here, red for anyone whose home holds a
+    legacy `state/` dir or a Dropbox conflicted copy (exactly the users these
+    warnings exist for). Tests that need specific contents `setattr` over this.
 
     Not requesting `monkeypatch` for the ordering reason in
     `tests/conftest._isolate_hidden_repos`.
@@ -1549,3 +1550,34 @@ def test_conflict_scan_survives_a_missing_cockpit_home(tmp_path, monkeypatch, ca
 
     assert capsys.readouterr().err == ""
 
+
+def test_warns_about_a_legacy_pidfile_and_queue(tmp_path, monkeypatch, capsys):
+    """Both moved to COCKPIT_RUNTIME_DIR because they are machine-local. The
+    old files are named, never read and never deleted: another machine may
+    still be running an older cockpit against the same synced directory, and
+    removing its live pidfile mid-run is the failure this change prevents."""
+    home = tmp_path / "cockpit-home"
+    (home / "state" / "close-requests").mkdir(parents=True)
+    (home / "cockpit.pid").write_text("4242")
+    monkeypatch.setattr(preflight_mod, "COCKPIT_HOME", home)
+    monkeypatch.setattr(preflight_mod, "COCKPIT_RUNTIME_DIR", tmp_path / "runtime")
+
+    preflight_mod._warn_legacy_runtime_state()
+    err = capsys.readouterr().err
+
+    assert "leftover machine-local state" in err
+    assert "cockpit.pid" in err and "state" in err
+    # Named, not touched.
+    assert (home / "cockpit.pid").exists()
+    assert (home / "state" / "close-requests").exists()
+
+
+def test_no_legacy_warning_on_a_clean_home(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "cockpit-home"
+    (home / "cache").mkdir(parents=True)
+    monkeypatch.setattr(preflight_mod, "COCKPIT_HOME", home)
+    monkeypatch.setattr(preflight_mod, "COCKPIT_RUNTIME_DIR", tmp_path / "runtime")
+
+    preflight_mod._warn_legacy_runtime_state()
+
+    assert capsys.readouterr().err == ""

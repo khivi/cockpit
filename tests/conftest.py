@@ -119,6 +119,53 @@ def _isolate_pidfile(tmp_path):
     daemon_mod.PID_FILE = prev
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runtime_dir(tmp_path):
+    """Point `$COCKPIT_RUNTIME_DIR` — the pidfile + close-request queue — at a
+    per-test tmp path.
+
+    The runtime dir deliberately does NOT follow `$COCKPIT_HOME` (that is the
+    whole point of the split: COCKPIT_HOME may be synced, this must not be), so
+    the many fixtures that isolate only COCKPIT_HOME do not cover it. Without
+    this, any test reaching `enqueue` writes a real teardown marker into the
+    developer's own queue and the next live daemon tick drains it —
+    `orchestrators.teardown` against whatever path the test happened to name.
+    That is not hypothetical: the first run after the split deposited a
+    `workspace:99` marker and a fake `4242` pidfile in the author's real
+    `~/.local/state/cockpit`.
+
+    It sets the **environment variable** and not just the module attributes,
+    because several fixtures `importlib.reload(cockpit.lib.config)` after
+    setting `$COCKPIT_HOME` — a reload re-derives these paths from the
+    environment and would otherwise silently undo an attribute-only patch,
+    which is exactly how the markers above escaped. The attributes are patched
+    too, for modules already imported that nothing reloads.
+
+    Same shape as `_hermetic_git_env` above, including not requesting
+    `monkeypatch` — see `_isolate_hidden_repos` for why that ordering matters.
+    """
+    import cockpit.lib.config as config_mod
+    import cockpit.lib.daemon_signal as signal_mod
+
+    runtime = tmp_path / "runtime"
+    prev_env = os.environ.get("COCKPIT_RUNTIME_DIR")
+    os.environ["COCKPIT_RUNTIME_DIR"] = str(runtime)
+    prev = (config_mod.COCKPIT_RUNTIME_DIR, config_mod.PID_FILE, signal_mod.STATE_DIR)
+    config_mod.COCKPIT_RUNTIME_DIR = runtime
+    config_mod.PID_FILE = runtime / "cockpit.pid"
+    signal_mod.STATE_DIR = runtime / "close-requests"
+    yield
+    (
+        config_mod.COCKPIT_RUNTIME_DIR,
+        config_mod.PID_FILE,
+        signal_mod.STATE_DIR,
+    ) = prev
+    if prev_env is None:
+        os.environ.pop("COCKPIT_RUNTIME_DIR", None)
+    else:
+        os.environ["COCKPIT_RUNTIME_DIR"] = prev_env
+
+
 def _git(cwd: Path, *args: str) -> str:
     env = {
         **os.environ,

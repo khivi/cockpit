@@ -71,7 +71,28 @@ COCKPIT_HOME = Path(os.environ.get("COCKPIT_HOME", Path.home() / ".config" / "co
 CONFIG_PATH = COCKPIT_HOME / "config.json"
 CACHE_DIR = COCKPIT_HOME / "cache"
 
-PID_FILE = COCKPIT_HOME / "cockpit.pid"
+
+def _default_runtime_dir() -> Path:
+    xdg = os.environ.get("XDG_STATE_HOME")
+    return (Path(xdg) if xdg else Path.home() / ".local" / "state") / "cockpit"
+
+
+# Machine-local runtime state, deliberately NOT under COCKPIT_HOME: that
+# directory holds host-neutral, worth-syncing things (config, PR cache, nudge
+# prefs) and is commonly a symlink into Dropbox/iCloud/Drive. The pidfile is a
+# bare integer and a close-request's `ref` is a cmux workspace id — both mean a
+# different thing on a different machine, so syncing them lets two machines
+# fight over one pidfile and drain each other's teardown queue.
+#
+# NOT $TMPDIR, which is where FLAT_CACHE_DIR lives: the pidfile is an IPC
+# rendezvous between the daemon and the `cockpit close`/`cockpit new` CLIs, and
+# TMPDIR resolves differently per launch context (/var/folders/... from a login
+# shell, /tmp under launchd or a stripped env), so the two would look in
+# different places. Flat cells tolerate that; a rendezvous point cannot.
+COCKPIT_RUNTIME_DIR = Path(
+    os.environ.get("COCKPIT_RUNTIME_DIR", _default_runtime_dir())
+)
+PID_FILE = COCKPIT_RUNTIME_DIR / "cockpit.pid"
 CONFIG_EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.json"
 CSHIP_DEFAULT_TOML = Path(__file__).resolve().parent.parent / "defaults" / "cship.toml"
 STARSHIP_DEFAULT_TOML = (
@@ -325,7 +346,7 @@ def reset_config_cache() -> None:
 
 
 def ensure_state_dirs() -> None:
-    for p in (COCKPIT_HOME, CACHE_DIR):
+    for p in (COCKPIT_HOME, CACHE_DIR, COCKPIT_RUNTIME_DIR):
         p.mkdir(parents=True, exist_ok=True)
     if not CONFIG_PATH.exists():
         # Seed an empty, valid config rather than copying config.example.json:

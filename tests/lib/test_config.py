@@ -2239,3 +2239,60 @@ def test_atomic_write_leaves_no_temp_behind_when_the_write_fails(tmp_path, monke
 
     assert list(tmp_path.iterdir()) == []
 
+
+def test_runtime_dir_does_not_follow_cockpit_home(tmp_path, monkeypatch):
+    """The invariant of the split. COCKPIT_HOME is host-neutral and commonly
+    synced (Dropbox/iCloud/Drive); the pidfile is a bare integer and a
+    close-request's `ref` is a cmux workspace id, so both mean a different
+    thing on a different machine. If the runtime dir tracked COCKPIT_HOME,
+    syncing one would sync the other and two machines could drain each other's
+    teardown queue."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "synced-home"))
+    monkeypatch.delenv("COCKPIT_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+    reloaded = importlib.reload(config_mod)
+    try:
+        assert tmp_path / "xdg-state" / "cockpit" == reloaded.COCKPIT_RUNTIME_DIR
+        assert reloaded.PID_FILE.parent == reloaded.COCKPIT_RUNTIME_DIR
+        assert tmp_path / "synced-home" not in reloaded.PID_FILE.parents
+    finally:
+        importlib.reload(config_mod)
+
+
+def test_runtime_dir_defaults_under_local_state(tmp_path, monkeypatch):
+    """Not $TMPDIR, where FLAT_CACHE_DIR lives: the pidfile is an IPC
+    rendezvous between the daemon and the `cockpit close`/`cockpit new` CLIs,
+    and TMPDIR resolves differently per launch context (/var/folders/... from a
+    login shell, /tmp under launchd), so the two would look in different
+    places."""
+    import importlib
+
+    monkeypatch.delenv("COCKPIT_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    reloaded = importlib.reload(config_mod)
+    try:
+        assert (
+            tmp_path / "home" / ".local" / "state" / "cockpit"
+        ) == reloaded.COCKPIT_RUNTIME_DIR
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config_mod)
+
+
+def test_ensure_state_dirs_creates_the_runtime_dir(tmp_path, monkeypatch):
+    """`claim_pidfile` calls this before writing; without the mkdir a fresh
+    install fails on a missing directory instead of starting."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("COCKPIT_RUNTIME_DIR", str(tmp_path / "runtime"))
+    reloaded = importlib.reload(config_mod)
+    try:
+        reloaded.ensure_state_dirs()
+        assert (tmp_path / "runtime").is_dir()
+    finally:
+        importlib.reload(config_mod)

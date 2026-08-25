@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from .colors import yellow
-from .config import COCKPIT_HOME
+from .config import COCKPIT_HOME, COCKPIT_RUNTIME_DIR
 from .tool import resolve_tool
 
 REQUIRED_BINARIES = ("gh", "git")
@@ -526,6 +526,37 @@ def _warn_sync_conflicts() -> None:
     )
 
 
+def _warn_legacy_runtime_state() -> None:
+    """Soft-warn about a pidfile / close-request queue left in `$COCKPIT_HOME`.
+
+    Both moved to `$COCKPIT_RUNTIME_DIR` because they are machine-local: the
+    pidfile is a bare integer and a marker's `ref` is a cmux workspace id, so a
+    synced COCKPIT_HOME let two machines fight over one pidfile and drain each
+    other's teardown queue.
+
+    The old files are deliberately **not read and not deleted**. Not read
+    because honouring a queued close from an unidentified machine is the exact
+    bug being fixed; not deleted because another machine may still be running
+    an older cockpit against the same synced directory, and removing its live
+    pidfile mid-run is the failure this whole change exists to prevent. So:
+    name them, let the user delete them once every machine is upgraded.
+    """
+    legacy = [
+        p for p in (COCKPIT_HOME / "cockpit.pid", COCKPIT_HOME / "state") if p.exists()
+    ]
+    if not legacy:
+        return
+    names = ", ".join(p.name for p in legacy)
+    print(
+        f"{yellow('cockpit:')} leftover machine-local state in {COCKPIT_HOME} "
+        f"({names}). The pidfile and close-request queue now live in "
+        f"{COCKPIT_RUNTIME_DIR} — these are no longer read. Delete them once "
+        "every machine sharing this directory is upgraded.",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _warn_unresolvable_base(cfg: dict) -> None:
     """Soft-warn when a managed repo's `origin/{default_base}` doesn't resolve.
 
@@ -702,6 +733,7 @@ def preflight(cfg: dict, *, for_setup: bool = False) -> None:
 
     validate_config(cfg)
     _warn_sync_conflicts()
+    _warn_legacy_runtime_state()
     _warn_unresolvable_base(cfg)
 
     if cfg.get("tool", "auto") == "auto":
