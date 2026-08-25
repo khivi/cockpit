@@ -1,12 +1,18 @@
 """The one-time welcome hint's "already shown" marker.
 
-An empty file at `$COCKPIT_HOME/welcomed`: present means the TUI has pointed the
-user at the feature guide once and must not do it again. Same shape as
-`hidden.py` — a user-facing preference persisted *outside* `config.json`, so it
-never rewrites a hand-edited config.
+An empty file at `$COCKPIT_HOME/state/welcomed`: present means the TUI has
+pointed the user at the feature guide once and must not do it again.
 
-Deliberately not a config field: it is app state nobody sets by hand, and a
-`config.json` key would cost the three-face schema sync (reader +
+**Under `state/`, not at the `$COCKPIT_HOME` root.** The root is what a user
+opens — `config.json`, the logs, `hidden-repos.json` — while `state/` is the
+daemon's own durable, non-derived bookkeeping (its only other resident is
+`close-requests/`, the queued teardown markers). This is an internal breadcrumb
+nobody will ever read, so it belongs with the latter. It emphatically does not
+belong under `cache/`: that tree is derived and safe to wipe, and a wipe
+re-showing a one-shot hint would make the marker meaningless.
+
+Deliberately not a config field either: it is app state nobody sets by hand, and
+a `config.json` key would cost the three-face schema sync (reader +
 `config.example.json` + `docs/config.md`) for a boolean with no reader but this
 one.
 
@@ -19,7 +25,7 @@ from __future__ import annotations
 
 from .config import COCKPIT_HOME
 
-WELCOME_MARKER = COCKPIT_HOME / "welcomed"
+WELCOME_MARKER = COCKPIT_HOME / "state" / "welcomed"
 
 
 def welcome_pending() -> bool:
