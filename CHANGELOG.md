@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.3](https://github.com/khivi/cockpit/compare/v2.3.2...v2.3.3) (2026-08-25)
+
+
+### Documentation
+
+* reframe cockpit as the human's join, not an agent orchestrator ([#373](https://github.com/khivi/cockpit/issues/373)) ([8676018](https://github.com/khivi/cockpit/commit/8676018e55f171ace05f9272c400d21e4b6e3563))
+
 ## [2.3.2](https://github.com/khivi/cockpit/compare/v2.3.1...v2.3.2) (2026-08-25)
 
 
