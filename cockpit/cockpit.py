@@ -177,7 +177,11 @@ def _fast_tick(state: dict) -> None:
         for wt in wts:
             write_git_state_cache(wt.path, wt.repo_name)
             write_worktree_cost_cache(wt.path)
-        if cwds:
+        # The disk-cache writes above are local and always run; these two reach
+        # cmux and *rename and recolour the user's live workspaces*, which
+        # `--dry` promises not to do. The slow tick's equivalents are gated on
+        # `ctx.dry` already.
+        if cwds and not state.get("dry"):
             reconcile_workspace_names(names, cwds, wts)
             _tint_repo_workspaces(repo_entry, repo_path, wts, cwds, pill_state)
     republish_pr_caches_from_disk()
@@ -217,6 +221,7 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
         slow_secs=watch_secs,
         fast_secs=fast_secs,
         self_ws=self_ws,
+        dry=bool(state.get("dry", False)),
     )
     # Run on a loop we own, NOT Textual's default `asyncio.run()`. A slow-tick
     # worker runs `gh`/`git` in a non-daemon executor thread (Textual dispatches
@@ -344,9 +349,11 @@ def main(argv: list[str] | None = None) -> int:
         "--dry",
         action="store_true",
         help="With --watch: decide and print, but never act. No teardown, "
-        "autoclose, spawn, nudge, tracker write, or cache write. Reads still "
-        "happen. Intended for ./dev.sh, which pairs it with tool=none and a "
-        "sandbox COCKPIT_HOME; the table then renders from seeded cache only.",
+        "autoclose, spawn, nudge, tracker write, PR-cache write, or cmux "
+        "rename/recolour, and the row keys that reach outside (n/f/h/a) refuse. "
+        "Reads still happen. Intended for ./dev.sh, which pairs it with "
+        "tool=none and a sandbox COCKPIT_HOME; the table then renders from "
+        "seeded cache only.",
     )
     args = p.parse_args(argv)
 

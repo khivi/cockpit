@@ -538,12 +538,19 @@ def _warn_legacy_runtime_state() -> None:
     because honouring a queued close from an unidentified machine is the exact
     bug being fixed; not deleted because another machine may still be running
     an older cockpit against the same synced directory, and removing its live
-    pidfile mid-run is the failure this whole change exists to prevent. So:
-    name them, let the user delete them once every machine is upgraded.
+    pidfile mid-run is the failure this whole change exists to prevent.
+
+    The legacy pidfile IS liveness-checked, though, because relocating it opens
+    a one-time hole in single-daemon mutual exclusion: a pre-upgrade daemon
+    holds `$COCKPIT_HOME/cockpit.pid`, the new build's `claim_pidfile` looks
+    only at the new path, finds nothing, and starts — two daemons on one machine
+    both writing cells, spawning workspaces and nudging. `claim_pidfile` cannot
+    check the old path itself (on a *synced* home that pid belongs to another
+    machine and would block startup forever), so this warns loudly instead and
+    leaves the call.
     """
-    legacy = [
-        p for p in (COCKPIT_HOME / "cockpit.pid", COCKPIT_HOME / "state") if p.exists()
-    ]
+    legacy_pid = COCKPIT_HOME / "cockpit.pid"
+    legacy = [p for p in (legacy_pid, COCKPIT_HOME / "state") if p.exists()]
     if not legacy:
         return
     names = ", ".join(p.name for p in legacy)
@@ -552,6 +559,19 @@ def _warn_legacy_runtime_state() -> None:
         f"({names}). The pidfile and close-request queue now live in "
         f"{COCKPIT_RUNTIME_DIR} — these are no longer read. Delete them once "
         "every machine sharing this directory is upgraded.",
+        file=sys.stderr,
+        flush=True,
+    )
+    try:
+        old_pid = int(legacy_pid.read_text().strip())
+        os.kill(old_pid, 0)
+    except (OSError, ValueError):
+        return
+    print(
+        f"{yellow('cockpit:')} pid {old_pid} from that legacy pidfile is still "
+        "ALIVE. If that is a pre-upgrade cockpit on this machine, stop it before "
+        "continuing — it holds the old pidfile, this build claims the new one, "
+        "and two daemons would both spawn workspaces and nudge.",
         file=sys.stderr,
         flush=True,
     )

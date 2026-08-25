@@ -150,15 +150,25 @@ def _isolate_runtime_dir(tmp_path):
     runtime = tmp_path / "runtime"
     prev_env = os.environ.get("COCKPIT_RUNTIME_DIR")
     os.environ["COCKPIT_RUNTIME_DIR"] = str(runtime)
-    prev = (config_mod.COCKPIT_RUNTIME_DIR, config_mod.PID_FILE, signal_mod.STATE_DIR)
+    prev = (
+        config_mod.COCKPIT_RUNTIME_DIR,
+        config_mod.PID_FILE,
+        signal_mod.STATE_DIR,
+        signal_mod.PID_FILE,
+    )
     config_mod.COCKPIT_RUNTIME_DIR = runtime
     config_mod.PID_FILE = runtime / "cockpit.pid"
     signal_mod.STATE_DIR = runtime / "close-requests"
+    # daemon_signal does `from .config import PID_FILE`, binding it by value at
+    # import — so patching config's alone leaves `kick_running` reading (and
+    # `os.kill`-ing, and unlinking) the developer's real pidfile.
+    signal_mod.PID_FILE = runtime / "cockpit.pid"
     yield
     (
         config_mod.COCKPIT_RUNTIME_DIR,
         config_mod.PID_FILE,
         signal_mod.STATE_DIR,
+        signal_mod.PID_FILE,
     ) = prev
     if prev_env is None:
         os.environ.pop("COCKPIT_RUNTIME_DIR", None)

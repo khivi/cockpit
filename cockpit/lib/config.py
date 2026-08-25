@@ -89,8 +89,13 @@ def _default_runtime_dir() -> Path:
 # TMPDIR resolves differently per launch context (/var/folders/... from a login
 # shell, /tmp under launchd or a stripped env), so the two would look in
 # different places. Flat cells tolerate that; a rendezvous point cannot.
-COCKPIT_RUNTIME_DIR = Path(
-    os.environ.get("COCKPIT_RUNTIME_DIR", _default_runtime_dir())
+# `or` not a `get` default: an empty override (`COCKPIT_RUNTIME_DIR=`) would
+# otherwise be Path("") -> Path("."), putting the pidfile in each process's
+# cwd — the daemon and a `cockpit close` in a worktree would then look in
+# different places, the exact rendezvous break the TMPDIR note above warns of.
+_RUNTIME_OVERRIDE = os.environ.get("COCKPIT_RUNTIME_DIR")
+COCKPIT_RUNTIME_DIR = (
+    Path(_RUNTIME_OVERRIDE) if _RUNTIME_OVERRIDE else _default_runtime_dir()
 )
 PID_FILE = COCKPIT_RUNTIME_DIR / "cockpit.pid"
 CONFIG_EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.json"

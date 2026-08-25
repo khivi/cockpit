@@ -2258,6 +2258,10 @@ def test_runtime_dir_does_not_follow_cockpit_home(tmp_path, monkeypatch):
         assert reloaded.PID_FILE.parent == reloaded.COCKPIT_RUNTIME_DIR
         assert tmp_path / "synced-home" not in reloaded.PID_FILE.parents
     finally:
+        # undo() first: reloading while the test's env is still set would
+        # re-derive COCKPIT_HOME/CONFIG_PATH/CACHE_DIR onto a tmp_path that is
+        # deleted after this test, leaking them into every later test here.
+        monkeypatch.undo()
         importlib.reload(config_mod)
 
 
@@ -2295,4 +2299,5 @@ def test_ensure_state_dirs_creates_the_runtime_dir(tmp_path, monkeypatch):
         reloaded.ensure_state_dirs()
         assert (tmp_path / "runtime").is_dir()
     finally:
+        monkeypatch.undo()
         importlib.reload(config_mod)

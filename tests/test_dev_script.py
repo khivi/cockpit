@@ -147,8 +147,10 @@ def test_snapshot_scrubs_write_enabling_config(fake_repo):
     # these and the sandbox stops rendering what it is supposed to show.
     assert entry["tickets"]["provider"] == "linear"
     assert entry["tickets"]["dev_done"] == "Dev Done"
-    # Seeded first turns shell out to `claude -p`; a sandbox must spawn no agents.
-    assert "skills" not in cfg
+    # `skills` is only slash-command *names* interpolated into seed prompts, so
+    # it survives; the keys that actually start agents are covered by
+    # test_scrub_drops_the_keys_that_actually_start_agents.
+    assert cfg["skills"] == {"plan": "/plan"}
     # The repo itself still has to survive the scrub, or the table is empty and
     # snapshot mode is pointless.
     assert entry["name"] == "testrepo"
@@ -223,3 +225,34 @@ def test_sandbox_home_is_never_the_real_one(fake_repo):
 
     assert reported == [str(repo / ".cockpit-dev")]
     assert not (real_home / "cockpit.pid").exists()
+
+
+def test_watch_always_gets_dry_even_when_named_explicitly(fake_repo):
+    """`./dev.sh -- watch` is a form the help advertises. Without --dry the
+    daemon acts for real, and `tool: none` does not cover autoclose — which
+    removes worktrees and deletes branches through git, not the backend."""
+    repo, real_home = fake_repo
+    res = _run(repo, real_home, "--", "watch", "--help")
+    resolved = [
+        ln for ln in res.stdout.splitlines() if ln.startswith("dev.sh: cockpit ")
+    ]
+
+    assert resolved == ["dev.sh: cockpit watch --help --dry"]
+
+
+def test_scrub_drops_the_keys_that_actually_start_agents(fake_repo):
+    """`fast_skills` shells out to `claude -p` and `slow_skills` spawns a
+    workspace running `claude`. The `skills` block is only slash-command names
+    interpolated into seed prompts, so it is kept — dropping it instead was the
+    bug: it left both agent-starting keys intact."""
+    repo, real_home = fake_repo
+    cfg = json.loads((real_home / "config.json").read_text())
+    cfg["repos"][0]["fast_skills"] = ["triage"]
+    cfg["repos"][0]["slow_skills"] = ["deepdive"]
+    (real_home / "config.json").write_text(json.dumps(cfg))
+
+    _run(repo, real_home, "--", "--version")
+    entry = _sandbox_config(repo)["repos"][0]
+
+    assert "fast_skills" not in entry
+    assert "slow_skills" not in entry

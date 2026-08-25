@@ -20,16 +20,17 @@ output lands in the conversation, or run it in their own terminal.
 
 ## What the sandbox does and does not cover
 
-`./dev.sh` isolates four things. Read `dev.sh`'s header comment for why each one
+`./dev.sh` isolates five things. Read `dev.sh`'s header comment for why each one
 is load-bearing; the short version is that missing any single one reaches real
 state:
 
 | Isolated | Covers |
 |---|---|
-| `COCKPIT_HOME` | config, PR cache, `cockpit.pid`, close-request queue |
+| `COCKPIT_HOME` | `config.json`, PR cache |
+| `COCKPIT_RUNTIME_DIR` | `cockpit.pid`, close-request queue — a **separate** variable, because these are machine-local and deliberately do not follow `COCKPIT_HOME` |
 | `TMPDIR` | statusline/starship flat cells (they live in `$TMPDIR/cockpit-cache`, not under `COCKPIT_HOME`) |
 | `tool: none` | every cmux write — spawn, close, rename, set-color, workspace-group, `send` |
-| `--dry` | teardown, autoclose, `git branch -D`, tracker writes, spawn, nudge |
+| `--dry` | teardown, autoclose, `git branch -D`, tracker writes, spawn, nudge, the fast tick's cmux rename/recolour, and the row keys that reach outside (`n`/`f`/`h`/`a`, which refuse) |
 
 **Two things it does not cover, and you should say so rather than imply full
 coverage:**

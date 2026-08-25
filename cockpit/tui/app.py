@@ -223,8 +223,10 @@ class CockpitApp(App[None]):
         slow_secs: int,
         fast_secs: int,
         self_ws: str | None = None,
+        dry: bool = False,
     ) -> None:
         super().__init__()
+        self._dry = dry
         self._slow_tick = slow_tick
         self._fast_tick = fast_tick
         self._slow_secs = slow_secs
@@ -788,7 +790,29 @@ class CockpitApp(App[None]):
         if path:
             fn(path)
 
+    def _blocked_by_dry(self, what: str) -> bool:
+        """Refuse an outward row action under `cockpit watch --dry`.
+
+        `--dry` gates the reconcile cycle, but a row key is a *separate* path to
+        the same effects: `n`/`f` shell out to `cockpit new` (a real `git
+        worktree add` + branch), `h` closes real cmux workspaces, and `a` types
+        into a live Claude session. A flag documented as "never act" that still
+        spawns a worktree on a keypress is worse than no flag, so the gate sits
+        on the actions and not only on the tick.
+
+        Deliberately NOT applied to `c`/`C`: those only *enqueue* a
+        TeardownRequest, and `_drain_close_requests` already honours `dry` when
+        the daemon drains one. Nor to `m`/`z`, which write prefs and cells under
+        COCKPIT_HOME and reach nothing outside it.
+        """
+        if not self._dry:
+            return False
+        self.notify(f"{what} is disabled under --dry", severity="warning")
+        return True
+
     def action_focus_row(self) -> None:
+        if self._blocked_by_dry("focus/spawn"):
+            return
         self._row_act(self._focus_worktree)
 
     def action_open_pr(self) -> None:
@@ -836,6 +860,8 @@ class CockpitApp(App[None]):
         knows all three, is untouched.) The modal is pushed here on
         the main thread (`push_screen` requires it) and the resolve+send runs on
         a worker, so the git/cmux round-trips never block the UI."""
+        if self._blocked_by_dry("ask"):
+            return
         table = self.query_one(WorktreeTable)
         # One key, meaning read off the cursor row — the `h` pattern. On a repo
         # group header there is no single session to reach, so `a` addresses the
@@ -1028,6 +1054,8 @@ class CockpitApp(App[None]):
         only move the clutter. Un-parking does not respawn them: a
         worktree-managed repo gets its workspaces back from the next slow tick's
         `_spawn_missing_workspaces`, a `use_worktree: false` one from `n`/`f`."""
+        if self._blocked_by_dry("park"):
+            return
         table = self.query_one(WorktreeTable)
         if HIDDEN_CAP in (table.current_capabilities() or frozenset()):
             self._toggle_hidden_section()
@@ -1108,6 +1136,8 @@ class CockpitApp(App[None]):
         self._toggle_hidden_section()
 
     def action_new_workspace(self) -> None:
+        if self._blocked_by_dry("new workspace"):
+            return
         # Spawn a worktree + workspace from the typed source (the `cockpit new`
         # path). The modal offers a repo picker (when more than one is
         # configured) so a bare branch name can be routed to any repo; it

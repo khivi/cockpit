@@ -55,8 +55,24 @@ done
 
 # Default to the TUI. `--dry` is a real cockpit flag, not a dev.sh one.
 if [ $# -eq 0 ]; then
-  set -- watch --dry
+  set -- watch
 fi
+
+# Force --dry on every `watch`, not only the no-args default: `./dev.sh -- watch`
+# is a form the help advertises, and without the flag the daemon acts for real.
+# `tool: none` does not cover autoclose, which removes worktrees and deletes
+# branches through git rather than through the workspace backend.
+if [ "$1" = watch ]; then
+  case " $* " in
+    *" --dry "*) ;;
+    *) set -- "$@" --dry ;;
+  esac
+fi
+
+# Announced before the guards below so the resolved argv is visible even when
+# one of them refuses — `watch` silently losing its forced --dry is the failure
+# worth seeing.
+echo "dev.sh: cockpit $*"
 
 # `cockpit setup` writes ~/.claude/settings.json and ~/.config/starship.toml
 # with `sys.executable` baked in. From this worktree that is .venv/bin/python,
@@ -114,7 +130,17 @@ if mode == "snapshot":
 # never go near the daemon's dry flag. Write-enabling keys only: `dev_done`
 # stays, being the value a fetched ticket state is *compared* against rather
 # than one anything moves a ticket to.
-DROP = {"close_on_merge", "start_label", "merge_done"}
+# `fast_skills` shells out to `claude -p` inline and `slow_skills` spawns a
+# workspace running `claude` (cycle.py::_run_repo_skills) — a sandbox must start
+# no agents. NOT the `skills` block, which holds only slash-command *names*
+# interpolated into seed prompts and writes nothing.
+DROP = {
+    "close_on_merge",
+    "start_label",
+    "merge_done",
+    "fast_skills",
+    "slow_skills",
+}
 FALSE = {"review_prs", "dependabot", "review_external"}
 
 
@@ -132,8 +158,6 @@ def scrub(node):
 
 cfg = scrub(cfg)
 cfg["tool"] = "none"
-# Seeded first turns shell out to `claude -p`; a sandbox must not spawn agents.
-cfg.pop("skills", None)
 
 with open(dest, "w") as fh:
     json.dump(cfg, fh, indent=2)

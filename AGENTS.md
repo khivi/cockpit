@@ -299,6 +299,13 @@ Keyed by number alone — the original shape — two repos' PR #10 shared one fi
 - **Test isolation is `tests/conftest._isolate_runtime_dir`, and it sets the env var, not just the module attributes.** Several fixtures `importlib.reload(lib.config)` after setting `$COCKPIT_HOME`; a reload re-derives these paths from the environment and silently undoes an attribute-only patch. That is not theoretical — the first run after the split deposited a real `workspace:99` marker and a fake `4242` pidfile in the author's own `~/.local/state/cockpit`. The many fixtures that isolate only `COCKPIT_HOME` **do not** cover the runtime dir, and that is by design.
 - **`preflight`'s two `COCKPIT_HOME`-inspecting warnings need a hermetic home in tests** (`tests/lib/test_preflight._clean_cockpit_home`). Without it the module reads the developer's real `~/.config/cockpit`, so every "preflight is silent" assertion turns on what happens to be sitting there — green for the author, red for anyone holding a legacy `state/` dir or a conflicted copy, i.e. exactly the users the warnings exist for.
 
+`dev.sh` forces `--dry` onto **every** `watch` invocation, not just its no-args
+default — `./dev.sh -- watch` is a form its own help advertises, and without the
+flag the daemon acts for real. Its config scrub drops `fast_skills`/`slow_skills`
+(which shell out to `claude -p` and spawn a `claude` workspace respectively) and
+deliberately **keeps** `skills`, which holds only slash-command *names*
+interpolated into seed prompts and writes nothing.
+
 `./dev.sh` therefore exports **three** paths (`COCKPIT_HOME`, `COCKPIT_RUNTIME_DIR`, `TMPDIR`); isolating the first alone leaves a dev build claiming the installed daemon's pidfile.
 
 ### Config surface has three faces — keep them in sync
@@ -417,6 +424,20 @@ path to real damage, and each was verified against the code rather than assumed:
   workspace backend, so a sandbox with a real repo list would tear down real
   worktrees. `--dry` is also what gates the tracker writes (`gh issue close`,
   Linear `issueUpdate`, Jira transitions, Trello `move_card`).
+
+  **`--dry` covers three surfaces, not one, and each was a hole found in
+  review.** (1) the reconcile cycle, via `ctx.dry`; (2) the **fast tick**, whose
+  `reconcile_workspace_names` + `_tint_repo_workspaces` rename and recolour the
+  user's *live* cmux workspaces every 30s and are gated on `state["dry"]` — the
+  disk-cache republish beside them is local and deliberately still runs; (3) the
+  **TUI row keys that reach outside**, via `CockpitApp._blocked_by_dry` on
+  `n`/`f` (which shell out to `cockpit new`, a real `git worktree add` +
+  branch), `h` (real `cmux close`) and `a` (types into a live Claude session).
+  Deliberately **not** `c`/`C`, which only *enqueue* a `TeardownRequest` that
+  `_drain_close_requests` already drains under `dry`, nor `m`/`z`, which write
+  prefs and cells under `COCKPIT_HOME` and reach nothing outside it. A flag
+  documented as "never act" that still spawns a worktree on a keypress is worse
+  than no flag — **do not** narrow the gate back to the cycle.
 
 **`--dry` was fully plumbed through `cycle.py`/`teardown.py` long before it was
 reachable** — `cockpit.py` hardcoded `dry=False` and no flag exposed it. It is

@@ -548,3 +548,44 @@ def test_fast_tick_writes_a_cost_cell_per_worktree(tmp_path, monkeypatch):
     cockpit._fast_tick({})
 
     assert costed == [wt.path for wt in wts]
+
+
+def test_fast_tick_does_not_touch_cmux_under_dry(tmp_path, monkeypatch):
+    """`--dry` promises never to act, but the fast tick is a second path to the
+    same effects: it renames and recolours the user's LIVE cmux workspaces every
+    30s, independent of the reconcile cycle's `ctx.dry`. The disk-cache
+    republish beside it is local and deliberately still runs."""
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+    touched: list[str] = []
+    monkeypatch.setattr(
+        cockpit,
+        "workspace_state",
+        lambda: ({"workspace:1": "n"}, {"workspace:1": tmp_path}),
+    )
+    monkeypatch.setattr(
+        cockpit, "reconcile_workspace_names", lambda *_a: touched.append("rename")
+    )
+    monkeypatch.setattr(
+        cockpit, "_tint_repo_workspaces", lambda *_a: touched.append("tint")
+    )
+    republished: list[bool] = []
+    monkeypatch.setattr(
+        cockpit, "republish_pr_caches_from_disk", lambda: republished.append(True)
+    )
+    monkeypatch.setattr(
+        cockpit,
+        "load_config",
+        lambda: {"repos": [{"path": str(tmp_path), "name": "r"}]},
+    )
+    monkeypatch.setattr(cockpit, "worktrees", lambda *_a: [])
+
+    cockpit._fast_tick(cockpit._build_state(True))
+    assert touched == []
+    assert republished == [True]  # local republish still runs
+
+    cockpit._fast_tick(cockpit._build_state(False))
+    assert touched == ["rename", "tint"]
