@@ -59,8 +59,9 @@ _EXTERNAL_PATHS = {
     # The morning-align repo's strict-delivery helper, referenced as precedent.
     "linear_delivery.py",
     # Runtime artifacts under $COCKPIT_HOME — written by the daemon, never
-    # tracked. `config.example.json` is the tracked sample of this one.
+    # tracked. `config.example.json` is the tracked sample of the first.
     "config.json",
+    "hidden-repos.json",
 }
 
 
