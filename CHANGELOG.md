@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.2](https://github.com/khivi/cockpit/compare/v2.2.1...v2.2.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* **spawn:** don't adopt a worktree cockpit new is still setting up ([#364](https://github.com/khivi/cockpit/issues/364)) ([0a68edf](https://github.com/khivi/cockpit/commit/0a68edfc58205a6f1c6d96968a72b5b6888cbc59))
+
 ## [2.2.1](https://github.com/khivi/cockpit/compare/v2.2.0...v2.2.1) (2026-08-24)
 
 
