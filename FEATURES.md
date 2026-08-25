@@ -65,14 +65,16 @@ picker that persists your choice, and a link back to this guide.
 | `f` | Focus this row's terminal — spawning one first if it doesn't have one yet |
 | `p` | Open the PR in a browser |
 | `t` | Open the linked ticket (Linear / Jira / GitHub / Trello) |
+| `d` | Open the PR's diff in cmux's viewer |
+| `a` | Ask — send a line to this row's session; on a repo header, to every session in it |
 | `c` | Close the worktree + terminal |
 | `C` | Force close — overrides the open-PR refusal, never the ones that would lose work |
 | `m` | Mute / unmute this PR's nudges, indefinitely |
 | `z` | Snooze / wake — quiet until the PR actually changes |
-| `N` | Nudge this row now |
 | `n` | Start something new |
 | `h` | Park / reveal / un-park a repo |
 | `s` `o` `q` | Sync · logs · quit |
+| `^P` | More — config, theme, and this guide |
 
 Footer hints follow the highlighted row. A row with no PR doesn't advertise `p`; a muted
 row's `m` reads **Unmute**; a backend that can't focus doesn't offer `f`. You never press
