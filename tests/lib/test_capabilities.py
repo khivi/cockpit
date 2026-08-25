@@ -63,11 +63,27 @@ def _clear_probe_cache():
     probe.cache_clear()
 
 
-def _fake_cmux(help_text: str = HELP, caps: str = ALL_CAPS):
+def _fake_cmux(help_text: str = HELP, caps: str = ALL_CAPS, browser: str = "disabled"):
     def _run(*args: str, check: bool = True) -> str:
-        return {"--help": help_text, "capabilities": caps}.get(args[0], "")
+        return {
+            "--help": help_text,
+            "capabilities": caps,
+            "browser-status": browser,
+        }.get(args[0], "")
 
     return _run
+
+
+# `browser-status` must be in the Commands: section for `probe` to run it —
+# the verb is only invoked when advertised.
+HELP_WITH_BROWSER = HELP.replace(
+    "  capabilities\n", "  capabilities\n  browser-status\n"
+)
+HELP_WITHOUT_DIFF = HELP_WITH_BROWSER
+HELP_WITH_DIFF = HELP_WITH_BROWSER.replace(
+    "  capabilities\n",
+    "  capabilities\n  diff [patch-file|-] [--layout <split|unified>]\n",
+)
 
 
 def test_parse_verbs_reads_the_commands_section():
@@ -158,6 +174,9 @@ def test_probe_shells_out_once_per_process():
     ):
         probe()
         probe()
+    # `browser-status` is not advertised by the bare HELP fixture, so `probe`
+    # skips it: two calls. The three-call case is pinned separately below, so
+    # this assertion can't quietly stop counting a probe that grew a third.
     assert fake.call_count == 2  # one --help + one capabilities, not four
 
 
@@ -178,3 +197,85 @@ def test_required_capabilities_only_name_tiers_cockpit_actually_has():
     assert "notification.feed.v1" not in REQUIRED_CAPABILITIES
     assert "workspace.groups.v1" in REQUIRED_CAPABILITIES
     assert "workspace-group" not in REQUIRED_VERBS
+
+
+# ── browser-status → the `d` diff viewer gate ────────────────────────────────
+
+
+def test_probe_reads_browser_status_when_the_verb_exists():
+    with (
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch(
+            "cockpit.lib.cmux.cmux",
+            side_effect=_fake_cmux(HELP_WITH_BROWSER, browser="enabled"),
+        ) as fake,
+    ):
+        found = probe()
+        probe()
+    assert found.browser_enabled is True
+    # Three subprocesses ONCE, not per call — the lru_cache still holds.
+    assert fake.call_count == 3
+
+
+def test_probe_skips_browser_status_when_the_verb_is_absent():
+    """An older cmux without the verb must not be shelled out to for it, and
+    reads as browser-off — erring toward hiding an optional key."""
+    with (
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.cmux", side_effect=_fake_cmux()) as fake,
+    ):
+        found = probe()
+    assert found.browser_enabled is False
+    assert "browser-status" not in [c.args[0] for c in fake.call_args_list]
+
+
+def test_probe_treats_anything_but_enabled_as_off():
+    """Regression guard: a cmux printing `Browser: enabled` (or anything but the
+    bare word) must not be read as on — the `d` key would then be advertised and
+    fail at press time."""
+    for reply in ("disabled", "Browser: enabled", "", "ENABLED\n"):
+        probe.cache_clear()
+        with (
+            patch("cockpit.lib.tool.is_cmux", return_value=True),
+            patch(
+                "cockpit.lib.cmux.cmux",
+                side_effect=_fake_cmux(HELP_WITH_BROWSER, browser=reply),
+            ),
+        ):
+            found = probe()
+        expected = reply.strip().lower() == "enabled"
+        assert found.browser_enabled is expected, reply
+
+
+def test_has_diff_viewer_needs_both_the_verb_and_a_live_browser():
+    from cockpit.lib.capabilities import BackendProbe
+
+    both = BackendProbe(frozenset({"diff"}), frozenset(), browser_enabled=True)
+    assert both.has_diff_viewer is True
+    assert BackendProbe(frozenset({"diff"}), frozenset()).has_diff_viewer is False
+    assert (
+        BackendProbe(frozenset(), frozenset(), browser_enabled=True).has_diff_viewer
+        is False
+    )
+
+
+def test_diff_viewer_available_reflects_the_probe():
+    from cockpit.lib.capabilities import diff_viewer_available
+
+    with (
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch(
+            "cockpit.lib.cmux.cmux",
+            side_effect=_fake_cmux(HELP_WITH_DIFF, browser="enabled"),
+        ),
+    ):
+        assert diff_viewer_available() is True
+    probe.cache_clear()
+    with (
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch(
+            "cockpit.lib.cmux.cmux",
+            side_effect=_fake_cmux(HELP_WITH_DIFF, browser="disabled"),
+        ),
+    ):
+        assert diff_viewer_available() is False

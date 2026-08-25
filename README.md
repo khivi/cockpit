@@ -59,7 +59,8 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 | `c` / `C` | Close the worktree + workspace. Refuses uncommitted work, unpushed commits, and an open PR — `C` overrides the open-PR refusal only, never the two that would lose work |
 | `m` | Mute / unmute the row's nudge — indefinite |
 | `z` | Snooze / wake — silences the row until the PR's reviews change or new work lands |
-| `N` | Nudge the row now (honours the idle gate) |
+| `d` | Open the PR diff in cmux's diff viewer (needs the cmux browser; cockpit warns at startup if it's off) |
+| `a` | Send a line to the row's Claude session — on a repo header it goes to every session in that repo. Refuses a mid-turn session and keeps your text so you can retry |
 | `n` | New workspace (branch / PR / URL / ticket / Slack thread) |
 | `h` | Park the row's repo — stops polling and closes its idle cmux workspaces. On the `▸ N hidden` row it expands the parked repos (click works too); on one of those it un-parks |
 | `s` / `o` / `q` | Sync · show logs · quit |

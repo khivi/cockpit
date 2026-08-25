@@ -20,6 +20,7 @@ from cockpit.lib.cmux import (
     DEVDONE_KEY,
     GREEN,
     MUTED_KEY,
+    PARKED_KEY,
     WORKSPACE_COLORS,
     YELLOW,
     CmuxUnavailable,
@@ -33,10 +34,12 @@ from cockpit.lib.cmux import (
     move_workspace_group_to_end,
     move_workspace_group_to_start,
     nudge_if_idle,
+    one_line,
     reconcile_workspace_names,
     remove_from_workspace_group,
     rename_workspace_group,
     rename_workspace_if_needed,
+    rest_skip_reason,
     select_workspace,
     set_workspace_color,
     spawn_workspace,
@@ -1468,3 +1471,147 @@ def test_group_verbs_noop_on_limux():
         ungroup_workspaces("workspace_group:1")
 
     run_mock.assert_not_called()
+
+
+# ── send-text normalization (every newline is an Enter) ──────────────────────
+
+
+def test_one_line_collapses_real_newlines():
+    assert one_line("first\nsecond") == "first second"
+    assert one_line("a\r\nb") == "a b"
+
+
+def test_one_line_collapses_literal_backslash_escapes():
+    r"""The two-character `\n` is what `cmux send` documents as Enter, so it is
+    just as dangerous as a real newline — and far likelier, since it survives
+    a shell single-quote (`cockpit broadcast 'fix the \n handling'`)."""
+    assert one_line(r"fix the \n handling") == "fix the handling"
+    assert one_line(r"a\rb") == "a b"
+    assert one_line(r"a\tb") == "a b"
+
+
+def test_one_line_leaves_a_plain_message_untouched():
+    assert one_line("fix CI") == "fix CI"
+    assert one_line("/compact") == "/compact"
+
+
+def test_one_line_folds_runs_of_whitespace_and_strips():
+    assert one_line("  a   b  ") == "a b"
+    assert one_line("") == ""
+
+
+def test_nudge_if_idle_sends_multiline_text_as_one_line():
+    """A multi-line message must reach `cmux send` as ONE argv with no newline:
+    cmux synthesizes keypresses (not a bracketed paste), so each newline would
+    arrive as Enter and submit a truncated fragment as its own prompt."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        result = nudge_if_idle("workspace:1", "rebase onto main\nthen force-push")
+
+    assert result is True
+    sent = [args for args in calls if args[0] == "send"]
+    assert len(sent) == 1
+    assert sent[0][3] == "rebase onto main then force-push"
+    assert "\n" not in sent[0][3]
+
+
+def test_nudge_if_idle_neutralizes_literal_backslash_n():
+    r"""Regression: `cockpit broadcast 'fix the \n handling'` used to submit
+    `fix the ` to every idle session and `handling` as a second prompt."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        nudge_if_idle("workspace:1", r"fix the \n handling")
+
+    sent = [args for args in calls if args[0] == "send"]
+    assert sent[0][3] == "fix the handling"
+
+
+def test_nudge_dry_run_reports_the_normalized_text(capsys):
+    """`--dry` must show what would actually be delivered, not the raw input —
+    so the normalize happens before the print."""
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return _idle_status_lines()
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        nudge_if_idle("workspace:1", "one\ntwo", tag="t", dry=True)
+
+    out = capsys.readouterr().out
+    assert "one two" in out
+
+
+# ── rest_skip_reason (the gate's own verdict, for display callers) ───────────
+
+
+def test_rest_skip_reason_is_none_when_a_send_would_land():
+    with patch("cockpit.lib.cmux.cmux", return_value=_idle_status_lines()):
+        assert rest_skip_reason("workspace:1") is None
+
+
+def test_rest_skip_reason_never_sends():
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return _idle_status_lines()
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        rest_skip_reason("workspace:1")
+
+    assert [a[0] for a in calls] == ["list-status"]
+
+
+def test_rest_skip_reason_agrees_with_the_gate_on_every_case():
+    """The whole point: a display caller must not be able to disagree with the
+    decision. Same inputs through both paths, same verdict."""
+    cases = (
+        _native_line("Running") + "\nidle=1",
+        _idle_status_lines(),
+        _native_line("Idle"),
+        _native_line("Needs input"),
+        f"idle=1\n{PARKED_KEY}=1",
+    )
+    for lines in cases:
+        with patch(
+            "cockpit.lib.cmux.cmux",
+            side_effect=lambda *a, _l=lines, **k: (_l if a[0] == "list-status" else ""),
+        ):
+            would_land = rest_skip_reason("workspace:1") is None
+            fired = nudge_if_idle("workspace:1", "m")
+        assert would_land is fired, lines
+
+
+def test_nudge_gate_order_unchanged_by_the_shared_read():
+    """Regression guard on the refactor: the four documented outcomes must be
+    byte-for-byte the same decisions as before the gate was factored out."""
+    cases = [
+        (_native_line("Running") + "\nidle=1", False),  # running beats idle pill
+        (_idle_status_lines(), True),  # idle pill fires
+        (_native_line("Idle"), True),  # native Idle fires (+ self-heal)
+        (_native_line("Needs input"), False),  # ambiguous → never
+        (f"idle=1\n{PARKED_KEY}=1", False),  # parked beats idle pill
+    ]
+    for lines, expected in cases:
+        with patch(
+            "cockpit.lib.cmux.cmux",
+            # `_l=lines` binds per iteration — a bare closure over the loop
+            # variable would read the last case for every case (ruff B023).
+            side_effect=lambda *a, _l=lines, **k: (_l if a[0] == "list-status" else ""),
+        ):
+            assert nudge_if_idle("workspace:1", "m") is expected, lines

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from textual.widgets import Input
 
 from cockpit.lib.config import apply_org_defaults
 from cockpit.lib.git import Worktree
@@ -41,6 +42,13 @@ def _isolate(monkeypatch, tmp_path):
     # of whether cmux/limux is on PATH (CI has neither → would resolve "none").
     # Backend-specific tests override this.
     monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
+    # `compose` resolves the diff-viewer gate, which probes cmux (`--help` +
+    # `browser-status`). Unstubbed that is a real subprocess in every TUI test —
+    # slow, machine-dependent, and it collides with tests that stub
+    # `subprocess.run` for their own purposes (compose would consume their fake
+    # and blow up on its return value). Footer tests that care about the gate
+    # construct `FooterBar` directly with the kwarg instead.
+    monkeypatch.setattr("cockpit.tui.app.diff_viewer_available", lambda: True)
     # `_cache_repo_name` shells out to `gh repo view` for the PR-cache key; stub
     # it so no test hits the network (the nwo tests re-patch with their own).
     monkeypatch.setattr("cockpit.tui.app.repo_nwo", lambda p: ("acme", Path(p).name))
@@ -421,6 +429,26 @@ async def test_current_path_none_when_empty():
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.query_one(WorktreeTable).current_path() is None
+
+
+def _recorder(log: list, *, pair: bool = False, ref_only: bool = False):
+    """A `nudge_if_idle` stand-in that records the call and reports success.
+
+    A named function rather than `log.append(x) or True`: `append` returns None,
+    so that idiom is a value-position use of a None-returning call (mypy's
+    func-returns-value, which the pre-push hook checks over tests/ too).
+    """
+
+    def _fake(*args, **_kwargs) -> bool:
+        if pair:
+            log.append((args[0], args[1]))
+        elif ref_only:
+            log.append(args[0])
+        else:
+            log.append(args)
+        return True
+
+    return _fake
 
 
 def _seed_one_worktree(monkeypatch, tmp_path, *, branch="khivi/feat-a"):
@@ -945,80 +973,6 @@ async def test_mute_key_noop_when_no_pr(monkeypatch, tmp_path):
         await pilot.press("m")
         await pilot.pause(0.6)
     assert saved == []  # no PR on this row → nothing written
-
-
-async def test_nudge_key_sends_when_idle(monkeypatch, tmp_path):
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    calls: list[tuple[str, str]] = []
-
-    def _fake_nudge(ref, msg, **k):
-        calls.append((ref, msg))
-        return True
-
-    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake_nudge)
-    toasts: list[str] = []
-    app, _ = _make_app()
-    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("N")
-        await pilot.pause(0.6)
-    assert len(calls) == 1
-    ref, _msg = calls[0]
-    assert ref == "ws1"  # resolved cwd→path workspace ref
-    assert any("nudged" in t for t in toasts)
-
-
-async def test_nudge_key_skips_when_not_idle(monkeypatch, tmp_path):
-    # nudge_if_idle returns False when the session is busy / awaiting permission
-    # / parked — the manual nudge must report a skip, never a forced send.
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: False)
-    toasts: list[str] = []
-    app, _ = _make_app()
-    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("N")
-        await pilot.pause(0.6)
-    assert any("skipped" in t for t in toasts)
-
-
-async def test_nudge_key_noop_on_limux(monkeypatch, tmp_path):
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
-    calls: list = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: calls.append(ref)
-    )
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("N")
-        await pilot.pause(0.6)
-    assert calls == []  # a nudge is a cmux-only `send`
-
-
-async def test_nudge_key_noop_when_table_empty(monkeypatch):
-    calls: list = []
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr(
-        "cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: calls.append(ref)
-    )
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        await pilot.press("N")
-        await pilot.pause(0.3)
-    assert calls == []
 
 
 async def test_new_key_opens_text_box(monkeypatch, tmp_path):
@@ -2291,7 +2245,13 @@ async def test_footer_hides_all_row_keys_on_group_header():
 
     fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
     fb._row_caps = frozenset({HEADER_CAP})
-    assert all(fb._skip(a) for a in FooterBar.ROW_ACTIONS)
+    # …except the header-ok ones: `a` addresses the whole repo there, which is
+    # exactly the row where it must stay visible (the `h` pattern).
+    assert all(
+        fb._skip(a) for a in FooterBar.ROW_ACTIONS - FooterBar.HEADER_ROW_ACTIONS
+    )
+    assert not fb._skip("ask_row")
+    assert fb._label("ask_row", "Ask") == "Ask repo"
     assert not fb._skip("sync") and not fb._skip("quit")
 
 
@@ -2339,10 +2299,9 @@ async def test_footer_cmux_shows_focus_gates_nudge_on_workspace():
 
     fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
     fb._row_caps = frozenset({"workspace"})
-    assert not fb._skip("focus_row") and not fb._skip("nudge_row")
+    assert not fb._skip("focus_row")
     fb._row_caps = frozenset()
     assert not fb._skip("focus_row")  # `f` still shown — it spawns
-    assert fb._skip("nudge_row")  # nothing to nudge
 
 
 async def test_footer_limux_shows_focus_hides_nudge():
@@ -2354,7 +2313,6 @@ async def test_footer_limux_shows_focus_hides_nudge():
     for caps in (frozenset(), frozenset({"workspace"})):
         fb._row_caps = caps
         assert not fb._skip("focus_row")
-        assert fb._skip("nudge_row")
 
 
 async def test_footer_on_no_backend_hides_all_backend_keys():
@@ -2366,7 +2324,6 @@ async def test_footer_on_no_backend_hides_all_backend_keys():
     for caps in (frozenset(), frozenset({"workspace"})):
         fb._row_caps = caps
         assert fb._skip("focus_row")
-        assert fb._skip("nudge_row")
 
 
 async def test_footer_hides_close_on_workspaceless_primary_checkout():
@@ -2658,3 +2615,438 @@ async def test_table_shows_cost_column_when_spend_is_reported(monkeypatch):
         table = app.query_one(WorktreeTable)
         assert table._show_cost is True
         assert [str(c.label) for c in table.columns.values()][-1] == "$"
+
+
+# ── `a` ask ──────────────────────────────────────────────────────────────────
+
+
+async def test_ask_key_sends_typed_text_through_the_idle_gate(monkeypatch, tmp_path):
+    """`a` routes the typed line through `nudge_if_idle` — the same gated send
+    the automatic nudge uses — so a busy or permission-pending session
+    refuses it."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    calls: list[tuple[str, str]] = []
+
+    def _fake_nudge(ref, msg, **k):
+        calls.append((ref, msg))
+        return True
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake_nudge)
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "rebase onto main"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert calls == [("ws1", "rebase onto main")]
+    assert any("sent to" in t for t in toasts)
+
+
+async def test_ask_key_cancelled_sends_nothing(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    calls: list = []
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(calls))
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        await pilot.press("escape")  # dismissed with None
+        await pilot.pause(0.6)
+    assert calls == []
+
+
+async def test_ask_key_reports_skip_when_not_idle(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda *a, **k: False)
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "hello"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert any("skipped" in t for t in toasts)
+
+
+async def test_ask_key_noop_on_limux(monkeypatch, tmp_path):
+    # `a` delivers through cmux's `send`; limux has no equivalent.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
+    calls: list = []
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(calls))
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "hello"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert calls == []
+    assert any("requires cmux" in t for t in toasts)
+
+
+# ── `d` diff → cmux's native viewer ──────────────────────────────────────────
+
+
+def _seed_diff_row(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
+    )
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    return wt
+
+
+async def _press_d(monkeypatch, wt, toasts):
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause(0.6)
+
+
+async def test_diff_key_pipes_plain_gh_diff_into_cmux_diff(monkeypatch, tmp_path):
+    """Plain `gh pr diff`, NOT --color: the viewer does its own highlighting and
+    ANSI would only fight it. Unified layout, because the pane is narrow."""
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+    seen: list = []
+
+    def _run(args, **kwargs):
+        seen.append((args, kwargs.get("input")))
+        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
+
+    monkeypatch.setattr("subprocess.run", _run)
+    toasts: list[str] = []
+    await _press_d(monkeypatch, wt, toasts)
+
+    gh, cmux_call = (
+        [a for a, _ in seen if a[0] == "gh"],
+        [(a, i) for a, i in seen if a[0] == "cmux"],
+    )
+    assert gh == [["gh", "pr", "diff", "7"]]
+    assert "--color" not in gh[0]
+    args, piped = cmux_call[0]
+    assert args[:3] == ["cmux", "diff", "-"]
+    assert "--layout" in args and args[args.index("--layout") + 1] == "unified"
+    assert piped == "PATCH"  # the patch goes in on stdin
+    assert any("diff open" in t for t in toasts)
+
+
+async def test_diff_key_names_the_fix_when_the_browser_is_disabled(
+    monkeypatch, tmp_path
+):
+    """cmux's diff viewer is a browser surface and the browser is a runtime
+    toggle, so this failure gets the actual remedy, not a generic error."""
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+
+    def _run(args, **kwargs):
+        if args[0] == "cmux":
+            return subprocess.CompletedProcess(
+                args, 1, "", "Error: browser_disabled: cmux browser is disabled"
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
+
+    monkeypatch.setattr("subprocess.run", _run)
+    toasts: list[str] = []
+    await _press_d(monkeypatch, wt, toasts)
+    assert any("cmux enable-browser" in t for t in toasts)
+
+
+async def test_diff_key_needs_no_gh_call_without_a_pr(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)  # find_pr_payload → None
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    ran: list = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: ran.append(a))
+    toasts: list[str] = []
+    await _press_d(monkeypatch, wt, toasts)
+    assert ran == []
+    assert any("no PR" in t for t in toasts)
+
+
+async def test_diff_key_points_at_p_on_a_non_cmux_backend(monkeypatch, tmp_path):
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
+    ran: list = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: ran.append(a))
+    toasts: list[str] = []
+    await _press_d(monkeypatch, wt, toasts)
+    assert ran == []
+    assert any("requires cmux" in t and "p" in t for t in toasts)
+
+
+async def test_diff_key_survives_a_raising_subprocess(monkeypatch, tmp_path):
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+
+    def _boom(args, **kwargs):
+        raise OSError("no cmux")
+
+    monkeypatch.setattr("subprocess.run", _boom)
+    toasts: list[str] = []
+    await _press_d(monkeypatch, wt, toasts)
+    assert any("failed" in t for t in toasts)  # a toast, not a traceback
+
+
+async def test_footer_gates_diff_on_pr_and_cmux():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset()
+    assert fb._skip("open_diff")  # nothing to diff
+    fb._row_caps = frozenset({"pr"})
+    assert not fb._skip("open_diff")
+    for backend in ("limux", "none"):
+        fb2 = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend=backend)
+        fb2._row_caps = frozenset({"pr"})
+        assert fb2._skip("open_diff"), backend  # no viewer there; `p` instead
+
+
+# ── `a` on a repo header → repo-wide ─────────────────────────────────────────
+
+
+async def _press_a_on_header(monkeypatch, wt, text, toasts):
+    """Move the cursor to the repo group header, press `a`, submit `text`."""
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        app.query_one(WorktreeTable).move_cursor(row=0)  # the header row
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = text
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    return app
+
+
+async def test_ask_on_header_fans_out_to_every_session_in_the_repo(
+    monkeypatch, tmp_path
+):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
+    )
+    sent: list = []
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent, pair=True))
+    toasts: list[str] = []
+    await _press_a_on_header(monkeypatch, wt, "all of you rebase", toasts)
+    assert {r for r, _ in sent} == {"ws1", "ws2"}
+    assert all(m == "all of you rebase" for _, m in sent)
+    assert any("sent to all 2" in t for t in toasts)
+
+
+async def test_ask_on_header_never_asks_the_dashboards_own_session(
+    monkeypatch, tmp_path
+):
+    """Self-exclusion, same rule broadcast has: the TUI must not nudge itself."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "SELF": wt.path}
+    )
+    sent: list = []
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent, ref_only=True))
+    app, _ = _make_app()
+    app._self_ws = "SELF"
+    monkeypatch.setattr(app, "notify", lambda msg, **k: None)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        app.query_one(WorktreeTable).move_cursor(row=0)
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "hello"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert sent == ["ws1"]  # SELF excluded
+
+
+async def test_ask_on_header_reports_partial_delivery_and_keeps_the_draft(
+    monkeypatch, tmp_path
+):
+    """Fanning out from a header hits sessions whose state you can't see, so a
+    half-landed send must never read as a whole one."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
+    )
+
+    def _fake(ref, msg, *, skips=None, **k):
+        # Mirrors the real contract: a refusal records WHY in `skips`.
+        if ref == "ws1":
+            return True
+        if skips is not None:
+            skips[ref] = "mid-turn"
+        return False
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake)
+    toasts: list[str] = []
+    app = await _press_a_on_header(monkeypatch, wt, "please rebase", toasts)
+    # The toast names the gate's own reason, not a bare count — "1× mid-turn"
+    # tells you whether to retry now or later.
+    assert any("sent to 1 of 2" in t and "1× mid-turn" in t for t in toasts)
+    key = f"repo:{tmp_path.resolve()}"
+    assert app._ask_drafts[key] == "please rebase"  # retry reaches the misses
+
+
+async def test_ask_on_header_warns_when_the_repo_has_no_sessions(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    sent: list = []
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent))
+    toasts: list[str] = []
+    await _press_a_on_header(monkeypatch, wt, "hi", toasts)
+    assert sent == []
+    assert any("no open sessions" in t for t in toasts)
+
+
+async def test_footer_hides_diff_when_the_viewer_is_unavailable():
+    """`d` renders through cmux's browser-backed viewer. When that can't run,
+    the key hides rather than offering something that would error — preflight
+    has already said why at startup."""
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar(
+        CockpitApp.BINDINGS, show_tickets=True, backend="cmux", diff_viewer=False
+    )
+    fb._row_caps = frozenset({"pr"})
+    assert fb._skip("open_diff")
+    assert not fb._skip("open_pr")  # `p` is the fallback and stays
+
+    fb2 = FooterBar(
+        CockpitApp.BINDINGS, show_tickets=True, backend="cmux", diff_viewer=True
+    )
+    fb2._row_caps = frozenset({"pr"})
+    assert not fb2._skip("open_diff")
+
+
+# ── retry narrowing + draft lifecycle ────────────────────────────────────────
+
+
+async def test_repo_retry_reaches_only_the_sessions_that_missed(monkeypatch, tmp_path):
+    """The bug this guards: re-sending to a session that already accepted hands
+    it the same instruction twice — "rebase and force-push" run again is not a
+    harmless repeat."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
+    )
+    seen: list[str] = []
+    busy = {"ws2"}
+
+    def _fake(ref, msg, *, skips=None, **k):
+        seen.append(ref)
+        if ref in busy:
+            if skips is not None:
+                skips[ref] = "mid-turn"
+            return False
+        return True
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake)
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: None)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        for _attempt in range(2):  # first send, then the retry
+            app.query_one(WorktreeTable).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("a")
+            await pilot.pause()
+            app.screen.query_one(Input).value = "rebase onto main"
+            await pilot.press("enter")
+            await pilot.pause(0.6)
+            busy.clear()  # ws2 frees up before the retry
+
+    assert seen == ["ws1", "ws2", "ws2"]  # ws1 delivered ONCE, not twice
+    assert f"repo:{tmp_path.resolve()}" not in app._ask_drafts  # retry completed
+
+
+async def test_blank_submit_drops_the_stashed_draft(monkeypatch, tmp_path):
+    """The only way to retract a draft. Escape can't do it — that stashes."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    app, _ = _make_app()
+    app._ask_drafts[str(wt.path)] = "on second thoughts, no"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = ""
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert str(wt.path) not in app._ask_drafts
+
+
+async def test_escape_stashes_what_you_typed(monkeypatch, tmp_path):
+    """Matches the documented intent: stepping away to check something must not
+    cost the text."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "half a thought"
+        await pilot.press("escape")
+        await pilot.pause(0.6)
+    assert app._ask_drafts[str(wt.path)] == "half a thought"
+
+
+async def test_footer_hides_ask_repo_on_the_hidden_disclosure_row():
+    """HEADER_CAP covers three row kinds; the `▸ N hidden` row names no repo, so
+    a repo-scoped action can't resolve a target there — and in a single-repo
+    config the sole-repo fallback would silently pick one it doesn't name."""
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.worktree_table import HEADER_CAP, HIDDEN_CAP
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset({HEADER_CAP, HIDDEN_CAP})
+    assert fb._skip("ask_row")
+    fb._row_caps = frozenset({HEADER_CAP})  # a real repo group header
+    assert not fb._skip("ask_row")
+    assert fb._label("ask_row", "Ask") == "Ask repo"

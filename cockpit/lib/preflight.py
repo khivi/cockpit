@@ -548,6 +548,32 @@ def _validate_workspace_backend() -> None:
             flush=True,
         )
 
+    # The `d` key renders through `cmux diff`, a browser surface. Two distinct
+    # reasons it can be unavailable, and they have different fixes — so they get
+    # different warnings rather than one vague "diff disabled". Warn, never die:
+    # every other key still works and `p` opens the PR.
+    #
+    # Deliberately ABOVE the `supports_capabilities` early return: neither the
+    # verb check nor `browser-status` needs capability negotiation, and a cmux
+    # too old to have `capabilities` is exactly the one most likely to lack
+    # `diff` — so returning first would suppress the warning in the very case
+    # it is certainly true.
+    if "diff" not in found.verbs:
+        print(
+            f"{yellow('cockpit:')} this cmux has no `diff` verb — "
+            "the d key (PR diff viewer) is hidden. Upgrade cmux.",
+            file=sys.stderr,
+            flush=True,
+        )
+    elif not found.browser_enabled:
+        print(
+            f"{yellow('cockpit:')} the cmux browser is disabled — "
+            "the d key (PR diff viewer) is hidden. Enable it with "
+            "`cmux enable-browser`, or use p to open the PR.",
+            file=sys.stderr,
+            flush=True,
+        )
+
     if not found.supports_capabilities:
         print(
             f"{yellow('cockpit:')} this cmux predates `cmux capabilities` — "

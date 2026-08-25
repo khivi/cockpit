@@ -33,9 +33,10 @@ import json
 import os
 import queue
 import signal
+import subprocess
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -50,6 +51,7 @@ from cockpit.lib.cache import (
     read_text,
     restamp_pref,
 )
+from cockpit.lib.capabilities import diff_viewer_available
 from cockpit.lib.cmux import (
     BLUE,
     LOOP_ICON,
@@ -58,6 +60,7 @@ from cockpit.lib.cmux import (
     cmux,
     cmux_close_workspace_best_effort,
     nudge_if_idle,
+    rest_skip_reason,
     select_workspace,
     spawn_orphan_workspace,
     spawn_pr_workspace,
@@ -95,11 +98,13 @@ from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
 from cockpit.orchestrators.teardown import resolve_pr_state, worktree_state_blockers
+from cockpit.tui.widgets.ask_screen import AskScreen
 from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
 from cockpit.tui.widgets.worktree_table import (
+    HEADER_CAP,
     HIDDEN_CAP,
     SNOOZED_CAP,
     Inventory,
@@ -108,6 +113,7 @@ from cockpit.tui.widgets.worktree_table import (
 )
 
 _LOG_TAIL_LINES = 200
+
 
 # The `n` (New) action shells out via the same module dispatch the daemon's
 # `_bg_spawn_pr` uses: `python -m cockpit.cli new …`. NOT `python spawn.py …` by
@@ -196,12 +202,13 @@ class CockpitApp(App[None]):
         ("f", "focus_row", "Focus"),
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
+        ("d", "open_diff", "Diff"),
+        ("a", "ask_row", "Ask"),
         ("o", "show_output", "Output"),
         ("c", "close_row", "Close"),
         ("C", "force_close_row", "Force close"),
         ("m", "mute_row", "Mute"),
         ("z", "snooze_row", "Snooze"),
-        ("N", "nudge_row", "Nudge"),
         ("n", "new_workspace", "New"),
         ("h", "hide_repo", "Hide repo"),
         ("q", "quit", "Quit"),
@@ -253,6 +260,16 @@ class CockpitApp(App[None]):
         # *set* persists (`lib/hidden.py`), this peek deliberately doesn't, so a
         # restart comes back tidy.
         self._show_hidden = False
+        # Undelivered `a` text, keyed by worktree path. A refusal (session
+        # mid-turn) must not cost you what you typed, so the draft is stashed
+        # and `a` restores it. Keyed per row so a draft for one worktree can't
+        # surface on another; session-only and unbounded only by row count, so
+        # it needs no eviction. Cleared on a successful send.
+        self._ask_drafts: dict[str, str] = {}
+        # Repo-scoped sends only: which refs a partial fan-out failed to reach,
+        # so `a` again retries just those instead of re-delivering to sessions
+        # that already accepted. Cleared with the draft.
+        self._ask_misses: dict[str, frozenset[str]] = {}
         # Display names of the repos whose `▸ N snoozed` fold is open. Session-only
         # for the same reason: the *snooze* persists (a `NudgePref`), peeking at
         # the pile doesn't, so a restart comes back folded.
@@ -291,6 +308,10 @@ class CockpitApp(App[None]):
             self.BINDINGS,
             show_tickets=show_tickets,
             backend=resolve_tool(),
+            # `d` renders through cmux's browser-backed diff viewer. Resolved
+            # ONCE here (the probe is process-cached) rather than per render —
+            # footer gating must stay a pure lookup, never a subprocess.
+            diff_viewer=diff_viewer_available(),
             id="footer",
         )
 
@@ -801,6 +822,176 @@ class CockpitApp(App[None]):
             return
         self._row_act(self._toggle_snooze)
 
+    def action_open_diff(self) -> None:
+        self._row_act(self._open_diff)
+
+    def action_ask_row(self) -> None:
+        """`a` — type a line and send it to this row's Claude session.
+
+        The one manual send: your text, through the same gated path the
+        daemon's automatic nudge uses. (`N` used to sit beside this with a
+        hardcoded string; it was removed — it could not tell whose PR a row
+        was, whether it had one, or what was wrong, so its message was wrong on
+        review rows, PR-less rows and healthy ones. The automatic nudge, which
+        knows all three, is untouched.) The modal is pushed here on
+        the main thread (`push_screen` requires it) and the resolve+send runs on
+        a worker, so the git/cmux round-trips never block the UI."""
+        table = self.query_one(WorktreeTable)
+        # One key, meaning read off the cursor row — the `h` pattern. On a repo
+        # group header there is no single session to reach, so `a` addresses the
+        # whole repo; on a worktree row it addresses that row. The footer
+        # relabels itself ("Ask repo") so the live meaning is always announced.
+        if HEADER_CAP in (table.current_capabilities() or frozenset()):
+            repo = self._repo_config_by_name(table.current_repo_name())
+            if repo is None:
+                self.notify("no repo under the cursor", severity="warning")
+                return
+            key = f"repo:{Path(os.path.expanduser(repo['path'])).resolve()}"
+            screen = AskScreen(
+                target=repo.get("name") or "", initial=self._ask_drafts.get(key, "")
+            )
+            self.push_screen(screen, lambda text: self._on_ask_repo(repo, key, text))
+            return
+        path = table.current_path()
+        if not path:
+            return
+        # Restore a draft a previous send couldn't deliver. Keyed by row, not
+        # global: a draft typed for one worktree must not surface when you press
+        # `a` on a different one.
+        screen = AskScreen(initial=self._ask_drafts.get(path, ""))
+        self.push_screen(screen, lambda text: self._on_ask(path, text))
+        # Reading cmux costs a subprocess, so the modal is pushed first and the
+        # state hint lands a moment later — `a` stays instant.
+        self._ask_state_hint(path, screen)
+
+    def _on_ask(self, path_str: str, result: tuple[str, str] | None) -> None:
+        self._route_ask(result, lambda text: self._send_ask(path_str, text), path_str)
+
+    def _route_ask(self, result, send, key: str) -> None:
+        """Apply an `AskScreen` outcome: send, drop the draft, or stash it.
+
+        Escape stashes whatever was typed (stepping away to check something
+        shouldn't cost it); an emptied box submitted with Enter *drops* the
+        draft, which is the only way to retract one. Those two used to be the
+        same `None` and so could not be told apart."""
+        if not result:
+            return
+        outcome, text = result
+        if outcome == "send" and text:
+            send(text)
+        elif outcome == "clear":
+            self._ask_drafts.pop(key, None)
+            self._ask_misses.pop(key, None)
+        elif outcome == "cancel" and text:
+            self._ask_drafts[key] = text
+
+    def _on_ask_repo(
+        self, repo: dict, key: str, result: tuple[str, str] | None
+    ) -> None:
+        self._route_ask(result, lambda text: self._send_ask_repo(repo, key, text), key)
+
+    @work(thread=True, group="nudge", exit_on_error=False)
+    def _send_ask_repo(self, repo: dict, key: str, text: str) -> None:
+        # `a` on a repo header: the same gated send as the per-row `a`, fanned
+        # over the repo's own workspaces. Matched by cwd against the repo's
+        # `worktrees()` — never a path-prefix test, since a worktree usually
+        # lives in a *sibling* directory — exactly like `_park_workspaces`.
+        #
+        # Delivery is PARTIAL by construction: these sessions' states are not
+        # visible from the header row, so some will be mid-turn and refuse. The
+        # count is therefore reported rather than assumed ("sent to 3 of 7"), or
+        # a half-landed broadcast would look like a whole one.
+        if not is_cmux():
+            self._notify("ask requires cmux", severity="warning")
+            return
+        repo_path = Path(os.path.expanduser(repo["path"]))
+        try:
+            wts = worktrees(repo_path, repo.get("branch_prefix", ""))
+            paths = {repo_path.resolve(), *(wt.path.resolve() for wt in wts)}
+            cwds = workspace_cwds()  # self-excluded: never ask our own TUI
+        except (CmuxUnavailable, RuntimeError, OSError) as e:
+            self._notify(f"ask: could not enumerate workspaces: {e}", severity="error")
+            return
+        live = [
+            ref
+            for ref, cwd in cwds.items()
+            if cwd.resolve() in paths and ref != self._self_ws
+        ]
+        # A retry must reach ONLY the sessions that missed. Re-sending to one
+        # that already accepted would hand it the same instruction twice —
+        # "rebase onto main and force-push" executed a second time is not a
+        # harmless repeat. The misses are recorded per repo on a partial send;
+        # intersected with what's live now, since a session can vanish between
+        # attempts.
+        pending = self._ask_misses.get(key)
+        refs = [r for r in live if r in pending] if pending is not None else live
+        if not refs:
+            self._ask_drafts.pop(key, None)
+            self._ask_misses.pop(key, None)
+            self._notify(
+                "no sessions left to reach in this repo"
+                if pending is not None
+                else "no open sessions in this repo",
+                severity="warning",
+            )
+            return
+        skips: dict[str, str] = {}
+        sent = sum(
+            1 for ref in refs if nudge_if_idle(ref, text, tag="ask-repo", skips=skips)
+        )
+        name = repo.get("name") or repo_path.name
+        if sent == len(refs):
+            self._ask_drafts.pop(key, None)
+            self._ask_misses.pop(key, None)
+            self._notify(f"sent to all {sent} session(s) in {name}")
+        else:
+            # Record the misses alongside the draft; the retry filter above
+            # reads them.
+            self._ask_drafts[key] = text
+            self._ask_misses[key] = frozenset(skips)
+            # Name the reasons rather than a bare count: "2 mid-turn, 1 parked"
+            # tells you whether to retry now or later. `nudge_if_idle` reports
+            # them, so they are the gate's own words.
+            why = ", ".join(
+                f"{n}× {r}"
+                for r, n in sorted(
+                    Counter(skips.values()).items(), key=lambda kv: -kv[1]
+                )
+            )
+            self._notify(
+                f"{name}: sent to {sent} of {len(refs)} — {why} · press a to retry",
+                severity="warning",
+            )
+
+    @work(thread=True, group="askhint", exit_on_error=False)
+    def _ask_state_hint(self, path_str: str, screen: AskScreen) -> None:
+        # Advisory pre-warning only. `nudge_if_idle` re-checks at send time and
+        # stays the authority — a turn can end while you type, and that message
+        # must still go through, so this never blocks the submit.
+        if not is_cmux():
+            return
+        resolved = self._resolve_worktree(path_str)
+        if resolved is None:
+            return
+        wt = resolved[1]
+        ref = self._workspace_ref(wt)
+        if ref is None:
+            return
+        who = wt.label or wt.short
+        # The gate's OWN verdict, not a re-derivation of it: `rest_skip_reason`
+        # runs the same `_idle_skip_reason` that `nudge_if_idle` gates on, so
+        # the warning and the decision cannot disagree. (An earlier version read
+        # raw signals here and mapped them itself — which promptly got the guard
+        # order wrong, checking `parked` before the at-rest test.)
+        reason = rest_skip_reason(ref)
+        if reason is None:
+            msg, warn = f"{who} is idle — ready", False
+        else:
+            msg, warn = f"{who} is {reason} — this will be refused", True
+        # The user may have escaped out while cmux was being read.
+        if screen.is_attached:
+            self.call_from_thread(screen.set_state_hint, msg, warn=warn)
+
     def _toggle_snoozed_section(self, repo_name: str | None) -> None:
         """Expand / collapse one repo's snoozed fold for this session. No key of
         its own — reached by `z`, Enter, or a click on the disclosure row.
@@ -816,9 +1007,6 @@ class CockpitApp(App[None]):
     ) -> None:
         """Click / Enter on a `▸ N snoozed` disclosure row → same as `z` there."""
         self._toggle_snoozed_section(event.repo_name)
-
-    def action_nudge_row(self) -> None:
-        self._row_act(self._send_nudge)
 
     def action_hide_repo(self) -> None:
         """`h` — the one hide/unhide key, read off the cursor row:
@@ -1418,37 +1606,132 @@ class CockpitApp(App[None]):
             self._refresh_footer_caps()
 
     @work(thread=True, group="nudge", exit_on_error=False)
-    def _send_nudge(self, path_str: str) -> None:
-        # Manual nudge NOW (not the slow tick): a deliberate keypress overrides
-        # mute + throttle (`nudge_if_idle` without pr_number) but still
-        # respects its idle/parked safety gate, so it never types into a running
-        # turn or a pending permission prompt. cmux-only; never writes a cache cell.
+    def _send_ask(self, path_str: str, text: str) -> None:
+        # Routed through `nudge_if_idle` rather than a raw `cmux send` so the whole
+        # idle-gate story applies — a mid-turn or permission-pending session
+        # refuses it instead of having the text typed into a y/n prompt. No
+        # pref_key: a deliberate keypress overrides mute/snooze.
+        # `nudge_if_idle` collapses the text to one line (see
+        # `cmux.one_line`). Writes no cache cell.
         if not is_cmux():
-            self._notify("nudge requires cmux", severity="warning")
+            self._notify("ask requires cmux", severity="warning")
             return
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
-            self._notify(f"nudge: no worktree at {path_str}", severity="error")
+            self._notify(f"ask: no worktree at {path_str}", severity="error")
             return
         _repo, wt = resolved
         ref = self._workspace_ref(wt)
         if ref is None:
             self._notify(
-                f"nudge: no workspace for {wt.label or wt.short}", severity="warning"
-            )
-            return
-        message = (
-            "Check this PR now — CI status, unresolved review comments, and "
-            "merge conflicts vs base — and address anything actionable."
-        )
-        if nudge_if_idle(ref, message):
-            self._notify(f"nudged {wt.label or wt.short}")
-        else:
-            self._notify(
-                f"nudge skipped {wt.label or wt.short}: not idle "
-                "(busy, awaiting permission, or parked)",
+                f"ask: no workspace for {wt.label or wt.short} — press f first",
                 severity="warning",
             )
+            return
+        if nudge_if_idle(ref, text, tag="ask"):
+            self._ask_drafts.pop(path_str, None)
+            self._notify(f"sent to {wt.label or wt.short}")
+        else:
+            # Keep the text. The refusal is transient (a turn ends, a permission
+            # is answered), so throwing away what the user typed would make them
+            # retype it verbatim — `a` restores this draft.
+            self._ask_drafts[path_str] = text
+            self._notify(
+                f"ask skipped {wt.label or wt.short}: not idle "
+                "(busy, awaiting permission, or parked) — press a to retry",
+                severity="warning",
+            )
+
+    @work(thread=True, group="read", exit_on_error=False)
+    def _open_diff(self, path_str: str) -> None:
+        # `d`: the row's PR diff in cmux's NATIVE viewer — `gh pr diff` piped to
+        # `cmux diff`, which renders it in a browser split with syntax
+        # highlighting, dual line numbers and collapsed unmodified regions.
+        # Cockpit deliberately does not reimplement any of that: a diff wants
+        # search and folding, a scrolling `Static` has neither, and the
+        # truncation cap that shape needed was the tell.
+        #
+        # Plain `gh pr diff`, NOT `--color always` — the viewer does its own
+        # highlighting and ANSI would only get in its way.
+        #
+        # `--layout unified` rather than split: the pane lands beside the
+        # dashboard and is therefore narrowish, where the split columns
+        # overprint each other (observed). Unified degrades gracefully.
+        #
+        # Writes no cell — a user-initiated navigation gesture, like `p`.
+        if not is_cmux():
+            self._notify("diff viewer requires cmux — press p", severity="warning")
+            return
+        resolved = self._resolve_worktree(path_str)
+        if resolved is None:
+            self._notify(f"diff: no worktree at {path_str}", severity="error")
+            return
+        repo, wt = resolved
+        payload = (
+            find_pr_payload(wt.branch, self._cache_repo_name(repo))
+            if wt.branch
+            else None
+        )
+        number = (payload or {}).get("number")
+        if not number:
+            self._notify("no PR for this row", severity="warning")
+            return
+        num = str(number)
+        self._notify(f"opening diff for PR #{num}…")
+        try:
+            patch = subprocess.run(
+                ["gh", "pr", "diff", num],
+                cwd=wt.path,
+                capture_output=True,
+                text=True,
+                # A diff can carry a non-UTF-8 byte; decoding strictly would
+                # raise UnicodeDecodeError (a ValueError, not caught below) and
+                # the `exit_on_error=False` worker would swallow it, leaving the
+                # "opening diff…" toast and nothing else. Replace and render.
+                errors="replace",
+                timeout=60,
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            self._notify(f"diff: gh failed: {e}", severity="error")
+            return
+        if patch.returncode != 0:
+            self._notify(
+                f"diff: gh failed: {patch.stderr.strip()[:80]}", severity="error"
+            )
+            return
+        try:
+            proc = subprocess.run(
+                [
+                    "cmux",
+                    "diff",
+                    "-",
+                    "--title",
+                    f"PR #{num} — {wt.label or wt.short}",
+                    "--layout",
+                    "unified",
+                ],
+                input=patch.stdout,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            self._notify(f"diff: cmux failed: {e}", severity="error")
+            return
+        if proc.returncode != 0:
+            err = proc.stderr.strip()
+            # The one failure worth naming precisely: cmux's diff viewer is a
+            # browser surface, and the browser is a runtime toggle. Say the fix.
+            if "browser_disabled" in err:
+                self._notify(
+                    "diff viewer needs the cmux browser — "
+                    "`cmux enable-browser`, or press p",
+                    severity="warning",
+                )
+            else:
+                self._notify(f"diff failed: {err[:80]}", severity="error")
+            return
+        self._notify(f"diff open for PR #{num}")
 
     @work(thread=True, group="new", exit_on_error=False)
     def _launch_spawn(self, source: str, cwd: str | None) -> None:

@@ -61,7 +61,7 @@ NOT_A_VERB = frozenset({"--help"})
 UNUSED_VERBS: dict[str, frozenset[str]] = {
     "actionable": frozenset(
         """browser clear-log clear-notifications clear-progress current-workspace
-        diff dismiss-notification identify jump-to-unread list-log
+        dismiss-notification identify jump-to-unread list-log
         list-notifications log mark-notification-read markdown memory notify open
         open-notification read-screen reorder-workspace reorder-workspaces
         right-sidebar set-progress sidebar sidebar-state surface-health todo top

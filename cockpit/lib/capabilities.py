@@ -67,6 +67,19 @@ class BackendProbe:
 
     verbs: frozenset[str]
     capabilities: frozenset[str]
+    #: Is cmux's embedded browser switched on? **Not** answerable from
+    #: `capabilities`: the ids advertise `browser.stream.v1` even while the
+    #: browser is off, because they describe what this build *can* do, not what
+    #: is currently enabled. `disable-browser`/`enable-browser` is a runtime
+    #: toggle and `browser-status` is the only thing that tracks it. Features
+    #: rendering into a browser surface (`cmux diff`) must gate on this, not on
+    #: a capability id.
+    browser_enabled: bool = False
+
+    @property
+    def has_diff_viewer(self) -> bool:
+        """Can `cmux diff` actually render? Needs the verb AND a live browser."""
+        return "diff" in self.verbs and self.browser_enabled
 
     @property
     def supports_capabilities(self) -> bool:
@@ -144,12 +157,33 @@ def probe() -> BackendProbe:
     if not is_cmux():
         return BackendProbe(frozenset(), frozenset())
     verbs = parse_verbs(cmux("--help", check=False))
+    # One extra subprocess, once per process. `browser-status` prints
+    # `enabled` / `disabled`; anything else (older cmux without the verb) reads
+    # as off, which errs toward hiding an optional key rather than advertising
+    # one that would fail.
+    browser = (
+        cmux("browser-status", check=False).strip().lower() == "enabled"
+        if "browser-status" in verbs
+        else False
+    )
     capabilities = (
         parse_capabilities(cmux("capabilities", check=False))
         if "capabilities" in verbs
         else frozenset()
     )
-    return BackendProbe(verbs, capabilities)
+    return BackendProbe(verbs, capabilities, browser_enabled=browser)
+
+
+def diff_viewer_available() -> bool:
+    """True when `cmux diff` can render — the gate for the TUI's `d` key.
+
+    Verb plus a live browser (see `BackendProbe.browser_enabled` for why a
+    capability id can't answer this). Probed once per process, so a browser
+    toggled *after* startup isn't seen; `_open_diff` still matches
+    `browser_disabled` at press time and names the fix, and preflight warns
+    once at startup.
+    """
+    return probe().has_diff_viewer
 
 
 def has_capability(name: str) -> bool:

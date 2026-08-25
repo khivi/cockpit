@@ -58,7 +58,8 @@ class FooterBar(Horizontal):
             "force_close_row",
             "mute_row",
             "snooze_row",
-            "nudge_row",
+            "open_diff",
+            "ask_row",
         }
     )
 
@@ -73,11 +74,12 @@ class FooterBar(Horizontal):
         "mute_row": "pr",
         "snooze_row": "pr",
         "open_ticket": "ticket",
-        # `N` (nudge) reaches an *existing* workspace — it no-ops on a
-        # workspace-less row, so only advertise it when one is live. `f` is NOT
-        # gated: it focuses an existing workspace or spawns one first, so it's
-        # meaningful on any backed row.
-        "nudge_row": "workspace",
+        # `d` needs a PR to diff, same cached `pr-num` cell as `p`.
+        "open_diff": "pr",
+        # `a` sends text to an *existing* session — it can't spawn one (that's
+        # `f`), so advertise it only when one is live. On a repo header it
+        # addresses the repo instead and this requirement is dropped.
+        "ask_row": "workspace",
     }
 
     # Explicit render order for the global (right) group — independent of BINDINGS
@@ -109,11 +111,21 @@ class FooterBar(Horizontal):
         "force_close_row": "Force",
         "mute_row": "Mute",
         "snooze_row": "Snooze",
-        "nudge_row": "Nudge",
+        "open_diff": "Diff",
+        "ask_row": "Ask",
         "new_workspace": "New",
         "hide_repo": "Hide",
         "quit": "Quit",
     }
+
+    # Row actions that stay advertised on a repo group header, where every
+    # other row key is suppressed. `a` is one key whose meaning is read off the
+    # cursor row (the `h` pattern): on a worktree row it asks that session, on a
+    # header it asks the whole repo — so a header is exactly where it must stay
+    # visible, and `_label` renames it there so the live meaning is announced.
+    # It also drops its `workspace` requirement on a header: a header carries no
+    # workspace cap, but the repo behind it may have several sessions.
+    HEADER_ROW_ACTIONS = frozenset({"ask_row"})
 
     # Actions never shown in the footer (handled implicitly / not key-hint worthy).
     HIDDEN_ACTIONS = frozenset({"dismiss_overlay"})
@@ -123,10 +135,14 @@ class FooterBar(Horizontal):
     # both spawns a missing workspace and focuses an existing one; spawning works
     # on cmux AND limux (focus is the cmux-only bonus — on limux `f` spawns and
     # the user switches via limux's own UI), so it's hidden only on "none" (no
-    # backend to spawn into). `N` (nudge) is a cmux-only verb.
+    # backend to spawn into).
     BACKEND_ACTIONS = {
         "focus_row": frozenset({"cmux", "limux"}),
-        "nudge_row": frozenset({"cmux"}),
+        # `a` delivers through cmux's `send`, which limux has no equivalent for.
+        "ask_row": frozenset({"cmux"}),
+        # `d` pipes into `cmux diff`; limux/none have no such viewer, so the
+        # hint hides there and `p` is the answer instead.
+        "open_diff": frozenset({"cmux"}),
     }
 
     def __init__(
@@ -135,6 +151,7 @@ class FooterBar(Horizontal):
         *,
         show_tickets: bool = True,
         backend: str,
+        diff_viewer: bool = True,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -147,6 +164,10 @@ class FooterBar(Horizontal):
         ]
         self._show_tickets = show_tickets
         self._backend = backend
+        # Can `cmux diff` actually render (verb + live browser)? Resolved once
+        # by the caller; preflight warns at startup when it can't, so the key
+        # doesn't just silently vanish.
+        self._diff_viewer = diff_viewer
         # The highlighted row's capability tokens (e.g. {"pr", "ticket",
         # "muted"}), or None when no row is selected — drives per-row gating of
         # the row keys and the Mute/Unmute label.
@@ -171,6 +192,9 @@ class FooterBar(Horizontal):
                 return "Wake"
         # `h` is one key with three meanings, read off the cursor row — the hint
         # says which one is live (see `app.action_hide_repo`).
+        # `a` on a header addresses the repo, not a session — say so.
+        if action == "ask_row" and HEADER_CAP in caps and HIDDEN_CAP not in caps:
+            return "Ask repo"
         if action == "hide_repo":
             if HIDDEN_CAP in caps:
                 return "Collapse" if EXPANDED_CAP in caps else "Reveal"
@@ -230,10 +254,18 @@ class FooterBar(Horizontal):
             return action != "snooze_row"
         # A repo group-header row carries no workspace, so hide every
         # row-targeted key — only the global keys stay.
+        on_header = self._row_caps is not None and HEADER_CAP in self._row_caps
+        # HEADER_CAP covers three row kinds; only two of them name a repo. The
+        # `▸ N hidden` disclosure row sets caps but no `_row_repo`, so
+        # `current_repo_name()` is None there and a repo-scoped action cannot
+        # resolve a target — worse, in a single-repo config
+        # `_repo_config_by_name`'s sole-repo fallback would silently pick a repo
+        # this row does not name. So it is not a repo row for these purposes.
+        on_repo_row = on_header and HIDDEN_CAP not in (self._row_caps or frozenset())
         if (
             action in self.ROW_ACTIONS
-            and self._row_caps is not None
-            and HEADER_CAP in self._row_caps
+            and not (on_repo_row and action in self.HEADER_ROW_ACTIONS)
+            and on_header
         ):
             return True
         # `h` parks the cursor row's whole *repo*, so it's only advertised on a
@@ -251,6 +283,8 @@ class FooterBar(Horizontal):
         ):
             return True
         if action == "open_ticket" and not self._show_tickets:
+            return True
+        if action == "open_diff" and not self._diff_viewer:
             return True
         allowed = self.BACKEND_ACTIONS.get(action)
         if allowed is not None and self._backend not in allowed:
@@ -273,6 +307,11 @@ class FooterBar(Horizontal):
         # capability the highlighted row lacks. Unknown caps (None) → no gating.
         if self._row_caps is not None:
             req = self.ACTION_REQUIRES.get(action)
+            # A HEADER_ROW_ACTION drops its per-row requirement on a header: `a`
+            # needs a live `workspace` on a worktree row, but a header carries no
+            # workspace cap while the repo behind it may have several sessions.
+            if on_repo_row and action in self.HEADER_ROW_ACTIONS:
+                req = None
             if req is not None and req not in self._row_caps:
                 return True
         return False

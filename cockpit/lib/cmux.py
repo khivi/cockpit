@@ -628,6 +628,46 @@ def _idle_skip_reason(status_lines: list[str]) -> str | None:
     return None
 
 
+def one_line(text: str) -> str:
+    r"""Collapse `text` to a single line so `cmux send` delivers it as one prompt.
+
+    `cmux send` synthesizes keypresses; it does NOT do a bracketed paste. Its
+    own help says "Escape sequences: \n and \r send Enter, \t sends Tab", and
+    probing cmux 0.64.22 confirms both spellings of a newline — the literal
+    two-character `\n` AND a real 0x0A byte in the argv — arrive as **Enter**.
+
+    In a Claude Code composer Enter means submit, so an un-normalized
+    multi-line message does not deliver one prompt with newlines in it: it
+    submits the first fragment as its own truncated prompt and the remainder as
+    a second. `cockpit broadcast 'fix the \n handling'` hit exactly that.
+
+    There is no escape that survives — `\\` arrives as two literal backslashes
+    and the Enter still fires — so collapsing is the only faithful delivery.
+    Applied inside `nudge_if_idle` rather than at each call site, for the same
+    single-funnel reason `_note_self_close` lives inside
+    `cmux_close_workspace_best_effort`: a new send path is covered for free.
+    """
+    for esc in ("\\n", "\\r", "\\t"):
+        text = text.replace(esc, " ")
+    # Bare `.split()` also folds real newlines, tabs and runs of spaces.
+    return " ".join(text.split())
+
+
+def rest_skip_reason(ref: str) -> str | None:
+    """Why a `send` into `ref` would be refused right now — None when it'd land.
+
+    One `list-status`, then the gate's own `_idle_skip_reason`. The point is
+    that a display caller (the TUI's `a` modal, warning you before you type
+    into a session that will refuse the message) gets the verdict from the
+    *same* function `nudge_if_idle` gates on, so the warning and the decision
+    can never disagree. Advisory only: the gate re-checks at send time and
+    stays the authority, because a turn can end while you type.
+    """
+    return _idle_skip_reason(
+        cmux("list-status", "--workspace", ref, check=False).splitlines()
+    )
+
+
 def nudge_if_idle(
     ref: str,
     message: str,
@@ -689,6 +729,10 @@ def nudge_if_idle(
     has_idle_pill = _has_pill(status_lines, "idle")
     if native == "Idle" and not has_idle_pill and not dry:
         _set_status(ref, "idle", "idle", GREY)
+    # Every newline in `message` would arrive as Enter and split it into
+    # several truncated prompts — see `one_line`. Normalized before the dry
+    # print so `--dry` reports the text that would actually be delivered.
+    message = one_line(message)
     if dry:
         print(f"  [dry] nudge {tag} → {ref}: {message[:70]}", flush=True)
         return False
