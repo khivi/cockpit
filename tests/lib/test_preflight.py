@@ -1374,7 +1374,7 @@ def test_workspace_backend_warns_when_cmux_predates_the_capabilities_verb(
     err = capsys.readouterr().err
     assert "predates `cmux capabilities`" in err
     # …and it does NOT also list every capability as individually missing.
-    assert "terminal.replay.v1" not in err
+    assert "workspace.groups.v1" not in err
 
 
 def test_workspace_backend_warns_on_a_missing_capability(monkeypatch, capsys):
@@ -1382,12 +1382,12 @@ def test_workspace_backend_warns_on_a_missing_capability(monkeypatch, capsys):
     healthy = _healthy()
     _probing(
         monkeypatch,
-        _found(set(healthy.verbs), set(healthy.capabilities) - {"terminal.replay.v1"}),
+        _found(set(healthy.verbs), set(healthy.capabilities) - {"workspace.groups.v1"}),
     )
     preflight_mod._validate_workspace_backend()
     err = capsys.readouterr().err
-    assert "terminal.replay.v1" in err
-    assert "screen preview" in err
+    assert "workspace.groups.v1" in err
+    assert "sidebar folds" in err
 
 
 def test_preflight_probes_the_backend_for_the_daemon_but_not_for_setup(
