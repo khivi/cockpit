@@ -22,10 +22,11 @@ already be fixed.
 
 ## Security Model
 
-Cockpit auto-spawns Bash-capable Claude agents into git worktrees, so the risk
-that matters is untrusted content reaching one of them. A PR's title,
-description, and diff are attacker-controlled if the PR comes from outside your
-team — and `review_prs: true` points an agent at exactly that.
+Cockpit mostly reads: git, GitHub, and your terminal backend. The one place it
+acts on your behalf is auto-review, and that's the risk surface that matters —
+`review_prs: true` spawns a Bash-capable Claude session per coworker PR, and a
+PR's title, description, and diff are attacker-controlled when the PR comes from
+outside your team.
 
 Two per-repo gates guard that, both defaulting to `false`
 ([`docs/config.md`](docs/config.md#per-repo-fields-repos)):
