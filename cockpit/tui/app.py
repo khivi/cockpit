@@ -109,6 +109,16 @@ _LOG_TAIL_LINES = 200
 # `p` as the escape hatch to the full PR.
 _READ_MAX_LINES = 2000
 
+# `gh`'s markdown renderer (glamour) pads every line to the requested
+# `GH_FORCE_TTY` width *plus* a 2-column left margin, so asking for the box
+# width exactly overruns it by 2 and every prose line wraps a second time,
+# orphaning a word onto its own line. Measured, not guessed: request 98 → lines
+# 100 wide; request 96 → exactly 98. Two things still overflow and cannot be
+# fixed by width — gh's own header line (never wrapped; its length follows the
+# branch and repo names) and markdown tables (glamour renders them at natural
+# width) — both merely wrap, so they stay readable.
+_GLAMOUR_MARGIN = 2
+
 # The `n` (New) action shells out via the same module dispatch the daemon's
 # `_bg_spawn_pr` uses: `python -m cockpit.cli new …`. NOT `python spawn.py …` by
 # path — that puts the package dir on sys.path[0], where `cockpit.py` shadows the
@@ -786,7 +796,10 @@ class CockpitApp(App[None]):
         self._row_act(self._send_nudge)
 
     def action_read_pr(self) -> None:
-        self._row_act(self._read_pr)
+        # Width is read here, on the main thread, and passed down: it sizes
+        # glamour's hard wrap to the overlay's body box (see `_read_pr`).
+        width = ConfigScreen.content_width(self.size.width)
+        self._row_act(lambda path: self._read_pr(path, width))
 
     def action_ask_row(self) -> None:
         """`a` — type a line and send it to this row's Claude session.
@@ -1429,7 +1442,7 @@ class CockpitApp(App[None]):
             )
 
     @work(thread=True, group="read", exit_on_error=False)
-    def _read_pr(self, path_str: str) -> None:
+    def _read_pr(self, path_str: str, width: int) -> None:
         # `r`: read the row's PR — body, review comments, diff — without leaving
         # the dashboard. A keypress-time `gh` read that caches NOTHING: the
         # daemon stays the sole cache writer, and this is the same sanctioned
@@ -1455,6 +1468,15 @@ class CockpitApp(App[None]):
         num = str(number)
         self._notify(f"reading PR #{num}…")
 
+        # `gh` renders markdown (and colours its header) only when stdout is a
+        # TTY, and we capture it — so without this the body arrives as *raw*
+        # markdown, literal backticks and asterisks and all, which is strictly
+        # worse than GitHub. `GH_FORCE_TTY` takes a width: glamour hard-wraps
+        # and pads to it, so it is sized to the overlay's body box (a wider
+        # value makes every line wrap twice). It is a no-op on `pr diff`, whose
+        # output is byte-identical either way, so it is set once for both.
+        env = {**os.environ, "GH_FORCE_TTY": str(max(20, width - _GLAMOUR_MARGIN))}
+
         def _gh(args: list[str]) -> str:
             # Run in the worktree so `gh` resolves the repo from its remote; a
             # failure is rendered inline rather than aborting the overlay, so a
@@ -1466,6 +1488,7 @@ class CockpitApp(App[None]):
                     capture_output=True,
                     text=True,
                     timeout=60,
+                    env=env,
                 )
             except (OSError, subprocess.SubprocessError) as e:
                 return f"(gh {' '.join(args)} failed: {e})"
@@ -1473,21 +1496,20 @@ class CockpitApp(App[None]):
                 return f"(gh {' '.join(args)} failed: {proc.stderr.strip()})"
             return proc.stdout
 
-        # Three calls, not two: `gh pr view --comments` renders the comments
-        # *instead of* the body, so asking for both needs both invocations —
-        # with `--comments` alone, a PR with no discussion showed an empty
-        # section where its description should be. The comments block is
-        # appended only when non-empty, so an undiscussed PR reads as body +
-        # diff rather than body + a bare rule + nothing.
+        # One view call, not two. Under `GH_FORCE_TTY`, `--comments` renders the
+        # full view *plus* the discussion, so it is a superset of a bare
+        # `pr view` and asking for both would duplicate the body. (Without the
+        # forced TTY the flag instead *replaces* the body with the comments,
+        # which is why the piped form needed two calls and a
+        # skip-the-empty-block dance.) Verified against PRs with 0 and 1
+        # comments, where the two forms are byte-identical; `--comments` is
+        # still the right one to send, since showing every comment is exactly
+        # what the flag is for.
         # `--color always` survives into the overlay: ConfigScreen renders its
         # body through `Text.from_ansi`, so the diff arrives already coloured.
-        rule = "─" * 60
-        blocks = [_gh(["pr", "view", num])]
-        comments = _gh(["pr", "view", num, "--comments"]).strip()
-        if comments:
-            blocks.append(comments)
-        blocks.append(_gh(["pr", "diff", num, "--color", "always"]))
-        lines = f"\n\n{rule}\n\n".join(blocks).splitlines()
+        view = _gh(["pr", "view", num, "--comments"])
+        diff = _gh(["pr", "diff", num, "--color", "always"])
+        lines = f"{view}\n\n{'─' * 60}\n\n{diff}".splitlines()
         if len(lines) > _READ_MAX_LINES:
             # Never a silent cap — say what was dropped and where to get it.
             dropped = len(lines) - _READ_MAX_LINES

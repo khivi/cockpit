@@ -92,3 +92,24 @@ async def test_plain_json_body_is_unstyled():
         text = _body_content(app.screen)
         assert text.plain == '{"repos": ["a", "b"]}'
         assert text.spans == []
+
+
+async def test_content_width_fits_inside_the_body_box():
+    """`GH_FORCE_TTY` hard-wraps to this width, so it must never exceed the
+    box the text lands in — a wider value wraps every line twice."""
+    for term in (80, 100, 130, 200, 400):
+        w = ConfigScreen.content_width(term)
+        box = min(int(term * 0.8), 110)  # CSS: width 80%, max-width 110
+        assert w <= box - 6, term  # minus round border + `padding: 1 2`
+        assert w <= term
+
+
+async def test_content_width_never_collapses_on_a_tiny_terminal():
+    # Erring narrow only costs trailing padding; erring at 0/negative would
+    # make glamour emit one character per line.
+    assert ConfigScreen.content_width(20) >= 40
+    assert ConfigScreen.content_width(1) >= 40
+
+
+async def test_content_width_is_capped_by_max_width_on_a_huge_terminal():
+    assert ConfigScreen.content_width(10_000) == 110 - 6

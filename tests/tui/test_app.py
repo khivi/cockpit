@@ -2478,13 +2478,8 @@ async def test_read_key_opens_overlay_with_view_and_diff(monkeypatch, tmp_path):
     seen: list[list[str]] = []
 
     def _fake_run(args, **kwargs):
-        seen.append(args)
-        if "diff" in args:
-            out = "THE DIFF"
-        elif "--comments" in args:
-            out = "A REVIEW COMMENT"
-        else:
-            out = "PR BODY"
+        seen.append((args, kwargs.get("env", {}).get("GH_FORCE_TTY")))
+        out = "THE DIFF" if "diff" in args else "PR BODY + A REVIEW COMMENT"
         return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
 
     monkeypatch.setattr("subprocess.run", _fake_run)
@@ -2497,12 +2492,15 @@ async def test_read_key_opens_overlay_with_view_and_diff(monkeypatch, tmp_path):
         await pilot.pause(0.6)
         assert isinstance(app.screen, ConfigScreen)
         body = app.screen._body
-    assert "PR BODY" in body and "A REVIEW COMMENT" in body and "THE DIFF" in body
-    # Three calls: `--comments` renders the comments *instead of* the body, so
-    # both invocations are needed to show both.
-    assert ["gh", "pr", "view", "7"] in seen
-    assert ["gh", "pr", "view", "7", "--comments"] in seen
-    assert ["gh", "pr", "diff", "7", "--color", "always"] in seen
+    assert "PR BODY + A REVIEW COMMENT" in body and "THE DIFF" in body
+    # Two calls. Under GH_FORCE_TTY `--comments` is a superset of a bare
+    # `pr view`, so a second view call would only duplicate the body.
+    calls = [args for args, _ in seen]
+    assert ["gh", "pr", "view", "7", "--comments"] in calls
+    assert ["gh", "pr", "diff", "7", "--color", "always"] in calls
+    assert ["gh", "pr", "view", "7"] not in calls
+    # Every call carries the forced-TTY width, or gh emits raw markdown.
+    assert all(w and w.isdigit() for _, w in seen)
 
 
 async def test_read_key_renders_a_failing_gh_inline(monkeypatch, tmp_path):
@@ -2582,34 +2580,32 @@ async def test_footer_read_survives_a_missing_backend_but_ask_does_not():
         assert fb._skip("ask_row"), backend
 
 
-async def test_read_key_omits_the_comments_block_when_there_are_none(
-    monkeypatch, tmp_path
-):
-    """`gh pr view --comments` renders comments *instead of* the body and is
-    empty on an undiscussed PR — that must not leave a bare rule with nothing
-    under it."""
+async def test_read_key_sizes_glamour_below_the_overlay_box(monkeypatch, tmp_path):
+    """`GH_FORCE_TTY` must be the body box MINUS glamour's 2-column left margin.
+    Ask for the box width exactly and every prose line renders 2 columns over
+    it, wraps twice, and orphans a word onto its own line."""
+    from cockpit.tui.app import _GLAMOUR_MARGIN
+    from cockpit.tui.widgets.config_screen import ConfigScreen
+
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr(
         "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
     )
+    widths: list[int] = []
 
     def _fake_run(args, **kwargs):
-        if "diff" in args:
-            out = "THE DIFF"
-        elif "--comments" in args:
-            out = "\n"  # no discussion on this PR
-        else:
-            out = "PR BODY"
-        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+        widths.append(int(kwargs["env"]["GH_FORCE_TTY"]))
+        return subprocess.CompletedProcess(args, 0, stdout="x", stderr="")
 
     monkeypatch.setattr("subprocess.run", _fake_run)
     app, _ = _make_app()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(130, 40)) as pilot:
         await pilot.pause()
         app._render_table([("repo", "repo", None, "none", [wt])])
         await pilot.pause()
         await pilot.press("r")
         await pilot.pause(0.6)
-        body = app.screen._body
-    assert "PR BODY" in body and "THE DIFF" in body
-    assert body.count("─" * 60) == 1  # one rule (body|diff), not two
+
+    box = ConfigScreen.content_width(130)
+    assert widths and set(widths) == {box - _GLAMOUR_MARGIN}
+    assert all(w + _GLAMOUR_MARGIN <= box for w in widths)
