@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.4](https://github.com/khivi/cockpit/compare/v2.3.3...v2.3.4) (2026-08-25)
+
+
+### Documentation
+
+* correct the count of installed slash commands ([#375](https://github.com/khivi/cockpit/issues/375)) ([5f80c9e](https://github.com/khivi/cockpit/commit/5f80c9e4f51a7a0b6eacc7c6ac70d08fe1f9aee9))
+
 ## [2.3.3](https://github.com/khivi/cockpit/compare/v2.3.2...v2.3.3) (2026-08-25)
 
 
