@@ -406,6 +406,7 @@ flowchart LR
 
   SLOW --> DISK[("PR JSON<br/>on disk")]
   DISK -.republish.-> FAST
+  KEY["TUI m / z keypress"] -.restamp_pref: mute+snooze only.-> DISK
 
   SLOW --> CELLS["daemon cells<br/>pr-state · git-state · base-dist · wt-cost"]
   FAST --> CELLS
@@ -430,6 +431,18 @@ workspace, the visible signal that nothing was torn down). cockpit's own closes
 teardown's trailing close — are filtered first by the `cmux.was_self_closed`
 ledger; without it, park (workspace-only by definition) would tear down every
 worktree in the parked repo. See AGENTS.md's doorbell invariant.
+
+The dotted `KEY → DISK` edge is the one write a row action makes. `pr-muted` and
+`pr-snoozed` are the only cells the daemon does not derive — it reads them back
+out of the pref file the `m`/`z` keypress just wrote — so waiting for the kicked
+cycle to republish them was pure lag, and it read as a dropped keypress (`z`
+leaving the row un-💤'd, unbanded, and the footer still saying "Snooze"). So both
+toggles re-stamp the snapshot's two fields and their cells (`cache.restamp_pref`)
+before kicking, writing exactly what the cycle would have written. Both halves
+are needed: cells alone are reverted within 30s by the fast tick's republish,
+which reads the snapshot. Everything else the keypress implies (pills, the
+trailing `snoozed` fold, the nudge going quiet) *is* derived and stays the
+cycle's job. This does not generalize to a derived cell.
 
 The dotted `SESS → FAST` edge is the one place the daemon *reads* a
 session-scoped cell: `cost-<sid>` is keyed by Claude Code session while every

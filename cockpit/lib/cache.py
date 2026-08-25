@@ -166,6 +166,34 @@ def write_pr_cache(
     return payload
 
 
+def restamp_pref(repo_name: str, number: int, branch: str, pref: NudgePref) -> None:
+    """Re-stamp one PR snapshot's `muted`/`snoozed` fields from `pref` and
+    republish its flat cells, without the `gh` round-trip `write_pr_cache` needs.
+
+    The TUI's `m`/`z` keys are the only writers of a state the daemon does not
+    derive — it reads it back out of the pref file — so they are the one case
+    where waiting for the next reconcile is pure lag: pressing `z` left the row
+    un-💤'd and the footer still reading "Snooze" until the kicked cycle had
+    fetched every repo, which reads as a dropped keypress.
+
+    Both fields have to move together. The pref file is the authority, but every
+    republish path (`refresh_pr_data`, `republish_pr_caches_from_disk`) reads the
+    payload's copy of it — so writing only the cells would have the next fast
+    tick revert the glyph 30s later.
+
+    No-op when the snapshot is missing; the kicked cycle rebuilds it.
+    """
+    path = CACHE_DIR / f"{_repo_slug(repo_name)}__pr-{number}.json"
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    payload["muted"] = muted_payload(pref)
+    payload["snoozed"] = snoozed_payload(pref)
+    _atomic_write_json(path, payload)
+    refresh_pr_data(branch)
+
+
 def _iter_cache(pattern: str):
     """Yield (path, payload) for each readable JSON cache file matching pattern."""
     if not CACHE_DIR.is_dir():

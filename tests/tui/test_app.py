@@ -844,6 +844,38 @@ async def test_snooze_key_clears_a_mute_and_snapshots_the_wake_state(
     assert pref.wake_nudge == "ci"  # already failing → this issue won't re-wake it
 
 
+@pytest.mark.parametrize("key,snoozed", [("m", False), ("z", True)])
+async def test_mute_and_snooze_restamp_their_cells_on_the_keypress(
+    monkeypatch, tmp_path, key, snoozed
+):
+    # The keypress IS the source for mute/snooze, so the row must repaint now
+    # rather than at the end of the kicked cycle — a `z` that leaves the row
+    # un-💤'd and the footer still reading "Snooze" reads as a dropped key.
+    from cockpit.lib.nudges import NudgePref
+
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.read_text", lambda *a, **k: "123")
+    monkeypatch.setattr("cockpit.tui.app.load_pref", lambda pr: NudgePref())
+    monkeypatch.setattr("cockpit.tui.app.save_pref", lambda pr, pref: None)
+    stamped: list = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.restamp_pref",
+        lambda repo, num, branch, pref: stamped.append((repo, num, branch, pref)),
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press(key)
+        await pilot.pause(0.6)
+    assert len(stamped) == 1
+    repo_name, num, branch, pref = stamped[0]
+    # The nwo-derived cache key and the PR number the snapshot is filed under.
+    assert (repo_name, num, branch) == (tmp_path.name, 123, wt.branch)
+    assert pref.snoozed is snoozed and pref.muted is not snoozed
+
+
 async def test_sync_key_kicks_full_cycle_not_scoped(monkeypatch, tmp_path):
     # The global `s` sync key reconciles *every* repo — its kick passes
     # only_repo=None, unlike the per-row keys which scope to the cursor row.
