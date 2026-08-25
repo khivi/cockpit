@@ -417,6 +417,26 @@ async def test_current_path_none_when_empty():
         assert app.query_one(WorktreeTable).current_path() is None
 
 
+def _recorder(log: list, *, pair: bool = False, ref_only: bool = False):
+    """A `nudge_if_idle` stand-in that records the call and reports success.
+
+    A named function rather than `log.append(x) or True`: `append` returns None,
+    so that idiom is a value-position use of a None-returning call (mypy's
+    func-returns-value, which the pre-push hook checks over tests/ too).
+    """
+
+    def _fake(*args, **_kwargs) -> bool:
+        if pair:
+            log.append((args[0], args[1]))
+        elif ref_only:
+            log.append(args[0])
+        else:
+            log.append(args)
+        return True
+
+    return _fake
+
+
 def _seed_one_worktree(monkeypatch, tmp_path, *, branch="khivi/feat-a"):
     """Patch the resolution leaves so the cursor row maps to one worktree whose
     cmux workspace is `ws1`. Returns the Worktree."""
@@ -2417,9 +2437,7 @@ async def test_ask_key_cancelled_sends_nothing(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     calls: list = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.nudge_if_idle", lambda *a, **k: calls.append(a) or True
-    )
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(calls))
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2456,9 +2474,7 @@ async def test_ask_key_noop_on_limux(monkeypatch, tmp_path):
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
     calls: list = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.nudge_if_idle", lambda *a, **k: calls.append(a) or True
-    )
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(calls))
     toasts: list[str] = []
     app, _ = _make_app()
     monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
@@ -2624,10 +2640,7 @@ async def test_ask_on_header_fans_out_to_every_session_in_the_repo(
         "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
     )
     sent: list = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.nudge_if_idle",
-        lambda ref, msg, **k: (sent.append((ref, msg)), True)[1],
-    )
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent, pair=True))
     toasts: list[str] = []
     await _press_a_on_header(monkeypatch, wt, "all of you rebase", toasts)
     assert {r for r, _ in sent} == {"ws1", "ws2"}
@@ -2646,10 +2659,7 @@ async def test_ask_on_header_never_asks_the_dashboards_own_session(
         "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "SELF": wt.path}
     )
     sent: list = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.nudge_if_idle",
-        lambda ref, msg, **k: (sent.append(ref), True)[1],
-    )
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent, ref_only=True))
     app, _ = _make_app()
     app._self_ws = "SELF"
     monkeypatch.setattr(app, "notify", lambda msg, **k: None)
@@ -2703,9 +2713,7 @@ async def test_ask_on_header_warns_when_the_repo_has_no_sessions(monkeypatch, tm
     monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
     monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
     sent: list = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.nudge_if_idle", lambda *a, **k: sent.append(a) or True
-    )
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent))
     toasts: list[str] = []
     await _press_a_on_header(monkeypatch, wt, "hi", toasts)
     assert sent == []
