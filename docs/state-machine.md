@@ -369,11 +369,14 @@ fires), so collapsing is the only faithful delivery. It sits inside
 `nudge_if_idle` — the single send funnel every caller already goes through — and
 runs *before* the `dry` print, so `--dry` reports what would actually land.
 
-Four callers reach this gate, all through the same door: the slow tick's PR
+Three callers reach this gate, all through the same door: the slow tick's PR
 nudge (`cycle.py`, the only one passing `pref_key`), `cockpit broadcast`, and
-the TUI's `N` (canned prose) and `a` (user-typed text). The last three pass no
-`pref_key`, so a deliberate keypress overrides mute/snooze while still honouring
-every guard above.
+the TUI's `a` (user-typed text, per row or per repo). The last two pass no
+`pref_key`, so a deliberate gesture overrides mute/snooze while still honouring
+every guard above. There is deliberately no manual *nudge* key: `N` sent a
+canned catch-all through this same path and was removed — `a` already did
+everything it added, and its preset was wrong on review rows, PR-less rows and
+healthy ones (see the row-actions invariant in AGENTS.md).
 
 `pref_key` is `nudges.pref_key(<repo nwo name>, <PR number>)`, not a bare PR
 number: numbers are only unique within a repo, so a bare one made every repo
