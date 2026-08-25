@@ -917,9 +917,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             actions_head_branch = head_branch
             # Always synthesize a fresh investigation branch. Reusing the
-            # run's headBranch attaches to the existing worktree (often the
-            # main repo checkout when CI failed on master after a merge),
-            # which is the bug this branch fixes.
+            # run's headBranch attaches to the existing worktree — often the
+            # main repo checkout, when CI failed on master after a merge — so
+            # the investigation lands in a checkout it must not disturb.
             branch = _actions_short_name(actions_run_info, actions_job_id)
             from_name = True
         elif mode == "slack":
@@ -1002,8 +1002,8 @@ def main(argv: list[str] | None = None) -> int:
             # land in this one mode. No `claude mcp list` pre-flight for either:
             # the probe connects to each server to health-check it, and a
             # claude.ai-managed connector handshakes asynchronously, so it
-            # reported Linear absent while it was live and this branch silently
-            # downgraded the spawn to a plain branch. `linear.txt` and `jira.txt`
+            # reported Linear absent while it was live and the spawn silently
+            # downgraded to a plain branch. `linear.txt` and `jira.txt`
             # both carry the retry-then-STOP step that handles a truly-absent MCP.
             #
             # ponytail: a Jira project key with digits or >6 letters won't match
