@@ -569,6 +569,26 @@ def _validate_workspace_backend() -> None:
             flush=True,
         )
 
+    # The `d` key renders through `cmux diff`, a browser surface. Two distinct
+    # reasons it can be unavailable, and they have different fixes — so they get
+    # different warnings rather than one vague "diff disabled". Warn, never die:
+    # every other key still works and `p` opens the PR.
+    if "diff" not in found.verbs:
+        print(
+            f"{yellow('cockpit:')} this cmux has no `diff` verb — "
+            "the d key (PR diff viewer) is hidden. Upgrade cmux.",
+            file=sys.stderr,
+            flush=True,
+        )
+    elif not found.browser_enabled:
+        print(
+            f"{yellow('cockpit:')} the cmux browser is disabled — "
+            "the d key (PR diff viewer) is hidden. Enable it with "
+            "`cmux enable-browser`, or use p to open the PR.",
+            file=sys.stderr,
+            flush=True,
+        )
+
 
 def validate_config(cfg: dict) -> None:
     """Run every config-shape validator (no binary/PATH checks).

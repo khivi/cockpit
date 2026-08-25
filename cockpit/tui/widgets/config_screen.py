@@ -41,25 +41,6 @@ class ConfigScreen(ModalScreen[None]):
 
     BINDINGS = [Binding("escape,q", "dismiss", "Close")]
 
-    #: Body-box geometry, mirrored from DEFAULT_CSS above so a caller rendering
-    #: pre-wrapped content can size it to the same box. Kept next to the CSS
-    #: deliberately — split them and a stylesheet edit silently mis-wraps.
-    _MAX_WIDTH = 110
-    _WIDTH_PCT = 0.8
-    _CHROME = 6  # round border (1 each side) + `padding: 1 2` (2 each side)
-
-    @classmethod
-    def content_width(cls, terminal_width: int) -> int:
-        """Usable text columns inside the body box at `terminal_width`.
-
-        For callers whose content is hard-wrapped *before* it arrives — glamour
-        (`GH_FORCE_TTY`) pads and wraps to a fixed width, and a value wider than
-        this box makes every line wrap a second time, raggedly. Erring narrow
-        only costs trailing padding, so the floor is generous.
-        """
-        box = min(int(terminal_width * cls._WIDTH_PCT), cls._MAX_WIDTH)
-        return max(40, box - cls._CHROME)
-
     def __init__(self, title: str, body: str) -> None:
         super().__init__()
         self._title = title

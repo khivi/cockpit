@@ -50,6 +50,7 @@ from cockpit.lib.cache import (
     find_pr_payload,
     read_text,
 )
+from cockpit.lib.capabilities import diff_viewer_available
 from cockpit.lib.cmux import (
     BLUE,
     LOOP_ICON,
@@ -109,16 +110,6 @@ from cockpit.tui.widgets.worktree_table import (
 )
 
 _LOG_TAIL_LINES = 200
-
-# `gh`'s markdown renderer (glamour) pads every line to the requested
-# `GH_FORCE_TTY` width *plus* a 2-column left margin, so asking for the box
-# width exactly overruns it by 2 and every prose line wraps a second time,
-# orphaning a word onto its own line. Measured, not guessed: request 98 → lines
-# 100 wide; request 96 → exactly 98. Two things still overflow and cannot be
-# fixed by width — gh's own header line (never wrapped; its length follows the
-# branch and repo names) and markdown tables (glamour renders them at natural
-# width) — both merely wrap, so they stay readable.
-_GLAMOUR_MARGIN = 2
 
 
 # The `n` (New) action shells out via the same module dispatch the daemon's
@@ -208,7 +199,6 @@ class CockpitApp(App[None]):
         ("f", "focus_row", "Focus"),
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
-        ("r", "read_pr", "Read PR"),
         ("d", "open_diff", "Diff"),
         ("a", "ask_row", "Ask"),
         ("o", "show_output", "Output"),
@@ -308,6 +298,10 @@ class CockpitApp(App[None]):
             self.BINDINGS,
             show_tickets=show_tickets,
             backend=resolve_tool(),
+            # `d` renders through cmux's browser-backed diff viewer. Resolved
+            # ONCE here (the probe is process-cached) rather than per render —
+            # footer gating must stay a pure lookup, never a subprocess.
+            diff_viewer=diff_viewer_available(),
             id="footer",
         )
 
@@ -803,12 +797,6 @@ class CockpitApp(App[None]):
 
     def action_nudge_row(self) -> None:
         self._row_act(self._send_nudge)
-
-    def action_read_pr(self) -> None:
-        # Width is read here, on the main thread, and passed down: it sizes
-        # glamour's hard wrap to the overlay's body box (see `_read_pr`).
-        width = ConfigScreen.content_width(self.size.width)
-        self._row_act(lambda path: self._read_pr(path, width))
 
     def action_open_diff(self) -> None:
         self._row_act(self._open_diff)
@@ -1563,87 +1551,14 @@ class CockpitApp(App[None]):
             )
 
     @work(thread=True, group="read", exit_on_error=False)
-    def _read_pr(self, path_str: str, width: int) -> None:
-        # `r`: read the row's PR — body, review comments, diff — without leaving
-        # the dashboard. A keypress-time `gh` read that caches NOTHING: the
-        # daemon stays the sole cache writer, and this is the same sanctioned
-        # shape as `t`'s Linear branch (which reads `gh.pr_body` on the
-        # keystroke). The PR *number* comes off the cached payload, so the
-        # fetch is skipped entirely on a row with no PR.
-        resolved = self._resolve_worktree(path_str)
-        if resolved is None:
-            self._notify(f"read: no worktree at {path_str}", severity="error")
-            return
-        repo, wt = resolved
-        payload = (
-            find_pr_payload(wt.branch, self._cache_repo_name(repo))
-            if wt.branch
-            else None
-        )
-        number = (payload or {}).get("number")
-        if not number:
-            self._notify("no PR for this row", severity="warning")
-            return
-        num = str(number)
-        self._notify(f"reading PR #{num}…")
-
-        # `gh` renders markdown (and colours its header) only when stdout is a
-        # TTY, and we capture it — so without this the body arrives as *raw*
-        # markdown, literal backticks and asterisks and all, which is strictly
-        # worse than GitHub. `GH_FORCE_TTY` takes a width: glamour hard-wraps
-        # and pads to it, so it is sized to the overlay's body box (a wider
-        # value makes every line wrap twice). It is a no-op on `pr diff`, whose
-        # output is byte-identical either way, so it is set once for both.
-        env = {**os.environ, "GH_FORCE_TTY": str(max(20, width - _GLAMOUR_MARGIN))}
-
-        def _gh(args: list[str]) -> str:
-            # Run in the worktree so `gh` resolves the repo from its remote; a
-            # failure is rendered inline rather than aborting the overlay, so a
-            # fetchable body still shows when only the diff fails.
-            try:
-                proc = subprocess.run(
-                    ["gh", *args],
-                    cwd=wt.path,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    env=env,
-                )
-            except (OSError, subprocess.SubprocessError) as e:
-                return f"(gh {' '.join(args)} failed: {e})"
-            if proc.returncode != 0:
-                return f"(gh {' '.join(args)} failed: {proc.stderr.strip()})"
-            return proc.stdout
-
-        # One view call, not two. Under `GH_FORCE_TTY`, `--comments` renders the
-        # full view *plus* the discussion, so it is a superset of a bare
-        # `pr view` and asking for both would duplicate the body. (Without the
-        # forced TTY the flag instead *replaces* the body with the comments,
-        # which is why the piped form needed two calls and a
-        # skip-the-empty-block dance.) Verified against PRs with 0 and 1
-        # comments, where the two forms are byte-identical; `--comments` is
-        # still the right one to send, since showing every comment is exactly
-        # what the flag is for.
-        # The DIFF is deliberately NOT here — that is `d` / `_open_diff`, which
-        # routes it to cmux's native viewer. A diff needs search, folding and
-        # syntax highlighting; a scrolling `Static` has none of the three, and
-        # the truncation cap this used to need was the tell. What the modal IS
-        # good at is the discussion: short, needs no search, and the one thing
-        # the table structurally cannot show — what the comment actually says.
-        body = _gh(["pr", "view", num, "--comments"])
-        self.call_from_thread(
-            self.push_screen,
-            ConfigScreen(f"PR #{num} — {wt.label or wt.short}", body),
-        )
-
-    @work(thread=True, group="read", exit_on_error=False)
     def _open_diff(self, path_str: str) -> None:
         # `d`: the row's PR diff in cmux's NATIVE viewer — `gh pr diff` piped to
         # `cmux diff`, which renders it in a browser split with syntax
         # highlighting, dual line numbers and collapsed unmodified regions.
-        # Cockpit deliberately does not reimplement any of that in the overlay
-        # (see `_read_pr`): a diff wants search and folding, a `Static` has
-        # neither, and the truncation cap that shape needed was the tell.
+        # Cockpit deliberately does not reimplement any of that: a diff wants
+        # search and folding, a scrolling `Static` has neither, and the
+        # truncation cap that shape needed was the tell. An in-overlay reader
+        # was built and removed rather than kept alongside this.
         #
         # Plain `gh pr diff`, NOT `--color always` — the viewer does its own
         # highlighting and ANSI would only get in its way.

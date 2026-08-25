@@ -1306,18 +1306,22 @@ def _probing(monkeypatch, found) -> None:
     monkeypatch.setattr(capabilities, "probe", lambda: found)
 
 
-def _found(verbs: set[str], caps: set[str]):
+def _found(verbs: set[str], caps: set[str], *, browser: bool = False):
     from cockpit.lib.capabilities import BackendProbe
 
-    return BackendProbe(frozenset(verbs), frozenset(caps))
+    return BackendProbe(frozenset(verbs), frozenset(caps), browser_enabled=browser)
 
 
 def _healthy():
     from cockpit.lib.capabilities import REQUIRED_CAPABILITIES, REQUIRED_VERBS
 
+    # "Current" now includes the optional diff viewer: the verb plus a live
+    # browser. Without both, `_validate_workspace_backend` warns that `d` is
+    # hidden — correct behaviour, so a silent probe has to have them.
     return _found(
-        set(REQUIRED_VERBS) | {"capabilities"},
+        set(REQUIRED_VERBS) | {"capabilities", "diff", "browser-status"},
         set(REQUIRED_CAPABILITIES),
+        browser=True,
     )
 
 
@@ -1402,3 +1406,57 @@ def test_preflight_probes_the_backend_for_the_daemon_but_not_for_setup(
     assert calls == []
     preflight({"tool": "cmux"})
     assert calls == [True]
+
+
+# ── the `d` diff viewer: verb + a LIVE browser ───────────────────────────────
+
+
+def test_warns_when_cmux_has_no_diff_verb(monkeypatch, capsys):
+    monkeypatch.setattr(preflight_mod, "resolve_tool", lambda: "cmux")
+    from cockpit.lib.capabilities import REQUIRED_CAPABILITIES, REQUIRED_VERBS
+
+    _probing(
+        monkeypatch,
+        _found(
+            set(REQUIRED_VERBS) | {"capabilities"},  # no `diff`
+            set(REQUIRED_CAPABILITIES),
+            browser=True,
+        ),
+    )
+    preflight_mod._validate_workspace_backend()
+    err = capsys.readouterr().err
+    assert "no `diff` verb" in err and "Upgrade cmux" in err
+
+
+def test_warns_with_the_fix_when_the_browser_is_disabled(monkeypatch, capsys):
+    """The verb exists but the browser is a runtime toggle — a capability id
+    cannot see that, so this is the one thing `browser-status` is read for. The
+    warning names the actual remedy."""
+    monkeypatch.setattr(preflight_mod, "resolve_tool", lambda: "cmux")
+    from cockpit.lib.capabilities import REQUIRED_CAPABILITIES, REQUIRED_VERBS
+
+    _probing(
+        monkeypatch,
+        _found(
+            set(REQUIRED_VERBS) | {"capabilities", "diff"},
+            set(REQUIRED_CAPABILITIES),
+            browser=False,
+        ),
+    )
+    preflight_mod._validate_workspace_backend()
+    err = capsys.readouterr().err
+    assert "cmux enable-browser" in err
+    assert "no `diff` verb" not in err  # distinct cause, distinct message
+
+
+def test_diff_viewer_warning_never_dies(monkeypatch, capsys):
+    # Warn, never die — every other key still works and `p` opens the PR.
+    monkeypatch.setattr(preflight_mod, "resolve_tool", lambda: "cmux")
+    from cockpit.lib.capabilities import REQUIRED_CAPABILITIES, REQUIRED_VERBS
+
+    _probing(
+        monkeypatch,
+        _found(set(REQUIRED_VERBS) | {"capabilities"}, set(REQUIRED_CAPABILITIES)),
+    )
+    preflight_mod._validate_workspace_backend()  # must not raise SystemExit
+    assert capsys.readouterr().err

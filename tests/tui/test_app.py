@@ -16,9 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.widgets import Input, Static
+from textual.widgets import Input
 
-from cockpit.lib.cmux import RestSignals
 from cockpit.lib.config import apply_org_defaults
 from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
@@ -42,6 +41,13 @@ def _isolate(monkeypatch, tmp_path):
     # of whether cmux/limux is on PATH (CI has neither → would resolve "none").
     # Backend-specific tests override this.
     monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
+    # `compose` resolves the diff-viewer gate, which probes cmux (`--help` +
+    # `browser-status`). Unstubbed that is a real subprocess in every TUI test —
+    # slow, machine-dependent, and it collides with tests that stub
+    # `subprocess.run` for their own purposes (compose would consume their fake
+    # and blow up on its return value). Footer tests that care about the gate
+    # construct `FooterBar` directly with the kwarg instead.
+    monkeypatch.setattr("cockpit.tui.app.diff_viewer_available", lambda: True)
     # `_cache_repo_name` shells out to `gh repo view` for the PR-cache key; stub
     # it so no test hits the network (the nwo tests re-patch with their own).
     monkeypatch.setattr("cockpit.tui.app.repo_nwo", lambda p: ("acme", Path(p).name))
@@ -2454,257 +2460,6 @@ async def test_ask_key_noop_on_limux(monkeypatch, tmp_path):
     assert any("requires cmux" in t for t in toasts)
 
 
-async def test_read_key_warns_and_shells_out_to_nothing_without_a_pr(
-    monkeypatch, tmp_path
-):
-    """No cached PR → no `gh` call at all. The number comes off the cached
-    payload, so a PR-less row costs nothing."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)  # find_pr_payload → None
-    ran: list = []
-    monkeypatch.setattr("subprocess.run", lambda *a, **k: ran.append(a))
-    toasts: list[str] = []
-    app, _ = _make_app()
-    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("r")
-        await pilot.pause(0.6)
-    assert ran == []
-    assert any("no PR" in t for t in toasts)
-
-
-async def test_read_key_opens_overlay_with_body_and_comments(monkeypatch, tmp_path):
-    """`r` fetches body+comments and the diff and renders both into the generic
-    ConfigScreen overlay — a keypress-time read that caches nothing."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
-    )
-    seen: list[list[str]] = []
-
-    def _fake_run(args, **kwargs):
-        seen.append((args, kwargs.get("env", {}).get("GH_FORCE_TTY")))
-        return subprocess.CompletedProcess(
-            args, 0, stdout="PR BODY + A REVIEW COMMENT", stderr=""
-        )
-
-    monkeypatch.setattr("subprocess.run", _fake_run)
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("r")
-        await pilot.pause(0.6)
-        assert isinstance(app.screen, ConfigScreen)
-        body = app.screen._body
-    assert "PR BODY + A REVIEW COMMENT" in body
-    # ONE call: `--comments` is a superset of a bare `pr view` under
-    # GH_FORCE_TTY, and the diff belongs to `d` now, not to this overlay.
-    calls = [args for args, _ in seen]
-    assert ["gh", "pr", "view", "7", "--comments"] in calls
-    assert ["gh", "pr", "view", "7"] not in calls
-    assert not [c for c in calls if "diff" in c]
-    # Every call carries the forced-TTY width, or gh emits raw markdown.
-    assert all(w and w.isdigit() for _, w in seen)
-
-
-async def test_read_key_renders_a_failing_gh_inline(monkeypatch, tmp_path):
-    """A failed fetch renders its stderr in the overlay rather than opening an
-    empty one — a silent blank box reads as "this PR has no discussion"."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
-    )
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda args, **k: subprocess.CompletedProcess(
-            args, 1, stdout="", stderr="boom"
-        ),
-    )
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("r")
-        await pilot.pause(0.6)
-        assert isinstance(app.screen, ConfigScreen)
-        body = app.screen._body
-    assert "boom" in body  # surfaced, not swallowed into a blank overlay
-
-
-async def test_read_key_sizes_glamour_below_the_overlay_box(monkeypatch, tmp_path):
-    """`GH_FORCE_TTY` must be the body box MINUS glamour's 2-column left margin.
-    Ask for the box width exactly and every prose line renders 2 columns over
-    it, wraps twice, and orphans a word onto its own line."""
-    from cockpit.tui.app import _GLAMOUR_MARGIN
-    from cockpit.tui.widgets.config_screen import ConfigScreen
-
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
-    )
-    widths: list[int] = []
-
-    def _fake_run(args, **kwargs):
-        widths.append(int(kwargs["env"]["GH_FORCE_TTY"]))
-        return subprocess.CompletedProcess(args, 0, stdout="x", stderr="")
-
-    monkeypatch.setattr("subprocess.run", _fake_run)
-    app, _ = _make_app()
-    async with app.run_test(size=(130, 40)) as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("r")
-        await pilot.pause(0.6)
-
-    box = ConfigScreen.content_width(130)
-    assert widths and set(widths) == {box - _GLAMOUR_MARGIN}
-    assert all(w + _GLAMOUR_MARGIN <= box for w in widths)
-
-
-# ── `a` draft preservation + pre-warn hint ───────────────────────────────────
-
-
-async def test_ask_refusal_preserves_the_draft_and_a_restores_it(monkeypatch, tmp_path):
-    """A refusal must not cost you what you typed. The send is transient
-    (a turn ends, a permission is answered), so retyping is pure waste."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda *a, **k: False)
-    monkeypatch.setattr(
-        "cockpit.tui.app.read_rest_signals",
-        lambda ref: RestSignals(native="Running", idle_pill=False, parked=False),
-    )
-    app, _ = _make_app()
-    monkeypatch.setattr(app, "notify", lambda msg, **k: None)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause()
-        app.screen.query_one(Input).value = "rebase onto main"
-        await pilot.press("enter")
-        await pilot.pause(0.6)
-        assert app._ask_drafts[str(wt.path)] == "rebase onto main"
-        # Pressing `a` again restores it rather than opening an empty box.
-        await pilot.press("a")
-        await pilot.pause()
-        assert app.screen.query_one(Input).value == "rebase onto main"
-
-
-async def test_ask_success_clears_the_draft(monkeypatch, tmp_path):
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda *a, **k: True)
-    monkeypatch.setattr(
-        "cockpit.tui.app.read_rest_signals",
-        lambda ref: RestSignals(native="Idle", idle_pill=True, parked=False),
-    )
-    app, _ = _make_app()
-    monkeypatch.setattr(app, "notify", lambda msg, **k: None)
-    app._ask_drafts[str(wt.path)] = "stale draft"
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause()
-        app.screen.query_one(Input).value = "go"
-        await pilot.press("enter")
-        await pilot.pause(0.6)
-    assert str(wt.path) not in app._ask_drafts
-
-
-async def test_ask_draft_is_keyed_per_row(monkeypatch, tmp_path):
-    """A draft typed for one worktree must not surface on another."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr(
-        "cockpit.tui.app.read_rest_signals",
-        lambda ref: RestSignals(native="Idle", idle_pill=True, parked=False),
-    )
-    app, _ = _make_app()
-    app._ask_drafts["/some/other/worktree"] = "not mine"
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause()
-        assert app.screen.query_one(Input).value == ""
-
-
-async def test_ask_hint_warns_when_session_is_mid_turn(monkeypatch, tmp_path):
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr(
-        "cockpit.tui.app.read_rest_signals",
-        lambda ref: RestSignals(native="Running", idle_pill=False, parked=False),
-    )
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause(0.6)
-        hint = str(app.screen.query_one("#ask-state", Static).render())
-    assert "mid-turn" in hint and "refused" in hint
-
-
-async def test_ask_hint_says_ready_when_idle(monkeypatch, tmp_path):
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr(
-        "cockpit.tui.app.read_rest_signals",
-        lambda ref: RestSignals(native="Idle", idle_pill=True, parked=False),
-    )
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause(0.6)
-        hint = str(app.screen.query_one("#ask-state", Static).render())
-    assert "idle" in hint and "refused" not in hint
-
-
-async def test_ask_hint_never_blocks_the_submit(monkeypatch, tmp_path):
-    """The hint is advisory. A turn that ends while you type would accept the
-    message, so a stale mid-turn warning must never become a refusal here —
-    `nudge_if_idle` re-checks at send time and stays the authority."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr(
-        "cockpit.tui.app.read_rest_signals",  # hint says "mid-turn"
-        lambda ref: RestSignals(native="Running", idle_pill=False, parked=False),
-    )
-    sent: list = []
-    monkeypatch.setattr(  # …but by send time the turn has ended
-        "cockpit.tui.app.nudge_if_idle",
-        lambda ref, msg, **k: (sent.append(msg), True)[1],
-    )
-    app, _ = _make_app()
-    monkeypatch.setattr(app, "notify", lambda msg, **k: None)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause(0.6)
-        app.screen.query_one(Input).value = "ship it"
-        await pilot.press("enter")
-        await pilot.pause(0.6)
-    assert sent == ["ship it"]  # delivered despite the warning
-
-
 # ── `d` diff → cmux's native viewer ──────────────────────────────────────────
 
 
@@ -2821,7 +2576,6 @@ async def test_footer_gates_diff_on_pr_and_cmux():
         fb2 = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend=backend)
         fb2._row_caps = frozenset({"pr"})
         assert fb2._skip("open_diff"), backend  # no viewer there; `p` instead
-        assert not fb2._skip("read_pr"), backend  # but `r` still works
 
 
 # ── `a` on a repo header → repo-wide ─────────────────────────────────────────
@@ -2932,3 +2686,23 @@ async def test_ask_on_header_warns_when_the_repo_has_no_sessions(monkeypatch, tm
     await _press_a_on_header(monkeypatch, wt, "hi", toasts)
     assert sent == []
     assert any("no open sessions" in t for t in toasts)
+
+
+async def test_footer_hides_diff_when_the_viewer_is_unavailable():
+    """`d` renders through cmux's browser-backed viewer. When that can't run,
+    the key hides rather than offering something that would error — preflight
+    has already said why at startup."""
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar(
+        CockpitApp.BINDINGS, show_tickets=True, backend="cmux", diff_viewer=False
+    )
+    fb._row_caps = frozenset({"pr"})
+    assert fb._skip("open_diff")
+    assert not fb._skip("open_pr")  # `p` is the fallback and stays
+
+    fb2 = FooterBar(
+        CockpitApp.BINDINGS, show_tickets=True, backend="cmux", diff_viewer=True
+    )
+    fb2._row_caps = frozenset({"pr"})
+    assert not fb2._skip("open_diff")
