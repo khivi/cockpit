@@ -2030,6 +2030,44 @@ def _bg_spawn_pr(
 # collaborator for the `review_prs` external-contributor gate below.
 _COLLABORATOR_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
+# Seconds a worktree is left alone after it appears on disk before this cycle
+# will attach a workspace to it. See `_too_young_to_adopt`.
+_SPAWN_ADOPT_GRACE_SECONDS = 120.0
+
+
+def _too_young_to_adopt(wt: Worktree, why: str) -> bool:
+    """True when `wt` appeared on disk too recently for this cycle to spawn a
+    workspace onto it — the process that created it is probably still finishing.
+
+    `cockpit new` materialises the worktree BEFORE it creates the workspace, and
+    the two are separate processes, so there is a window in which the worktree is
+    real on disk while its workspace does not exist yet. A poll landing inside
+    that window sees a worktree no workspace covers and spawns a second one: two
+    cmux workspaces on one worktree, each starting its own Claude, each told to
+    do the same task. Observed at ~2s; the fetch of `refs/pull/N/head` that
+    precedes `git worktree add` can stretch it much further on a large repo,
+    hence a grace generous beyond the measured window.
+
+    A lock or a spawn-side registration would close the window rather than shrink
+    it, but both mean cross-process state on disk — stored identity, which the
+    inventory-is-derived rule exists to forbid — plus a stale-lock failure mode
+    where a crashed `cockpit new` strands its worktree unadopted forever. Age is
+    derived from the filesystem on every call and needs no cleanup.
+
+    `worktree_age_seconds` returns `inf` for an unstattable path, so a transient
+    filesystem error fails OPEN (spawn anyway), never silently withholding a
+    workspace forever. **Do not** invert that.
+    """
+    age = worktree_age_seconds(wt.path)
+    if age >= _SPAWN_ADOPT_GRACE_SECONDS:
+        return False
+    print(
+        f"  {verb('skip')} "
+        f"{dim(f'{why} {wt.short} — worktree is {age:.0f}s old, still settling')}",
+        flush=True,
+    )
+    return True
+
 
 def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
     """Spawn/create the workspaces and worktrees a cycle is missing:
@@ -2041,6 +2079,12 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
        review worktree (`spawn.py --review`) in the background. Uncapped, but
        gated to repo collaborators by default (see `review_external` below).
     4. My-prefix orphan worktrees not yet covered by any workspace → spawn one.
+
+    Paths 1 and 4 — the two that attach a workspace to a worktree that already
+    exists — are gated on `_too_young_to_adopt`, so a worktree `cockpit new` has
+    just created isn't adopted out from under the process still spawning its
+    workspace. Paths 2 and 3 have no worktree yet, so there is no age to read;
+    their double-launch guard is `_bg_spawn_pr`'s in-flight key.
 
     A `use_worktree: false` repo (registered via bare `cockpit new`) opts out of
     all auto-spawning: its row still renders from `git worktree list` + the cell
@@ -2056,6 +2100,8 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
     tracked_pr_numbers = {pr.number for pr, _ in ctx.tracked.values()}
     for pr, wt in matched:
         if pr.number not in tracked_pr_numbers:
+            if _too_young_to_adopt(wt, "pr-spawn"):
+                continue
             spawn_pr_workspace(
                 pr,
                 wt,
@@ -2123,6 +2169,8 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
                 f"  {verb('skip')} {dim(f'orphan-spawn {wt.workspace_name} — workspace name already used by {other}')}",
                 flush=True,
             )
+            continue
+        if _too_young_to_adopt(wt, "orphan-spawn"):
             continue
         spawn_orphan_workspace(wt, dry=ctx.dry)
 
