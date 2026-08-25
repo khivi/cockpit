@@ -606,6 +606,28 @@ def reconcile_workspace_names(
     return renamed
 
 
+def _idle_skip_reason(status_lines: list[str]) -> str | None:
+    """Why `status_lines` is unsafe to `send` into — `None` when it is safe.
+
+    The gate itself, factored out so a caller can *report* the verdict without
+    re-deriving it from a second `list-status` (which would be both a wasted
+    round-trip and a second copy of the rule that must never drift from this
+    one). Guard order matches `nudge_if_idle`'s: `Running` outranks the at-rest
+    check, which outranks `parked=`, so a mid-turn parked workspace reports
+    "mid-turn". The strings are user-facing in `cockpit broadcast`'s summary.
+    """
+    native = _native_claude_state(status_lines)
+    if native == "Running":
+        return "mid-turn"
+    if not (_has_pill(status_lines, "idle") or native == "Idle"):
+        # `Needs input` is the ambiguous one — a pending y/n permission looks
+        # exactly like a session parked at the composer, so both land here.
+        return f"not at rest ({native or 'no Claude session'})"
+    if _has_pill(status_lines, PARKED_KEY):
+        return "parked"
+    return None
+
+
 def nudge_if_idle(
     ref: str,
     message: str,
@@ -613,6 +635,7 @@ def nudge_if_idle(
     dry: bool = False,
     tag: str = "",
     pref_key: str | None = None,
+    skips: dict[str, str] | None = None,
 ) -> bool:
     """Send `message` + enter to workspace `ref` if it's idle and not parked.
 
@@ -642,21 +665,28 @@ def nudge_if_idle(
     There is no time-based throttle. The slow tick's cadence
     (`slow_poll_interval_seconds`, default 300s) is the implicit rate limit
     — each tick re-evaluates and re-fires if the underlying issue persists.
+
+    `skips` is an optional out-dict: on a gate skip it gets `{ref: reason}`,
+    so a fan-out caller can report *why* each workspace was passed over. The
+    return value stays "the nudge actually fired" — under `dry` an eligible
+    workspace returns False (it sent nothing), and its absence from `skips` is
+    what marks it as would-have-received.
     """
     if pref_key is not None:
         from . import nudges
 
         if not nudges.should_nudge(pref_key):
+            if skips is not None:
+                skips[ref] = "muted or snoozed"
             return False
     status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
     native = _native_claude_state(status_lines)
-    if native == "Running":
+    reason = _idle_skip_reason(status_lines)
+    if reason is not None:
+        if skips is not None:
+            skips[ref] = reason
         return False
     has_idle_pill = _has_pill(status_lines, "idle")
-    if not (has_idle_pill or native == "Idle"):
-        return False
-    if _has_pill(status_lines, PARKED_KEY):
-        return False
     if native == "Idle" and not has_idle_pill and not dry:
         _set_status(ref, "idle", "idle", GREY)
     if dry:
@@ -667,6 +697,8 @@ def nudge_if_idle(
         cmux("send-key", "--workspace", ref, "enter", check=True)
     except (RuntimeError, FileNotFoundError) as e:
         print(f"  warn: {tool.resolve_tool()} send failed for {ref}: {e}", flush=True)
+        if skips is not None:
+            skips[ref] = "send failed"
         return False
     if pref_key is not None:
         from . import nudges
