@@ -72,11 +72,12 @@ MIN_POLL_SECS = 5
 # "running" (holds the lock) from "waiting" (blocked on it) for the header.
 
 
-def _build_state() -> dict:
+def _build_state(dry: bool = False) -> dict:
     return {
         "self_user": None,
         "pr_cache": {},
         "pill_state": {},
+        "dry": dry,
     }
 
 
@@ -91,7 +92,7 @@ def _once_with(
     cycle_all(
         cfg,
         self_user,
-        dry=False,
+        dry=bool(state.get("dry", False)),
         pr_cache=state["pr_cache"],
         pill_state=state["pill_state"],
         on_repo_done=on_repo_done,
@@ -339,6 +340,14 @@ def main(argv: list[str] | None = None) -> int:
         "statusline opt-in, then set up fresh (re-prompts). Leaves your "
         "~/.config/cockpit config and cship/starship seeds in place.",
     )
+    p.add_argument(
+        "--dry",
+        action="store_true",
+        help="With --watch: decide and print, but never act. No teardown, "
+        "autoclose, spawn, nudge, tracker write, or cache write. Reads still "
+        "happen. Intended for ./dev.sh, which pairs it with tool=none and a "
+        "sandbox COCKPIT_HOME; the table then renders from seeded cache only.",
+    )
     args = p.parse_args(argv)
 
     require_git()
@@ -397,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        state = _build_state()
+        state = _build_state(args.dry)
         return _watch(state, slow_secs, fast_secs)
     # The mutually-exclusive group is required, so setup/watch are the only
     # paths; both return above.

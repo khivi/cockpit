@@ -63,7 +63,7 @@ def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
     import cockpit.cockpit as cockpit
 
     importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda: {})
+    monkeypatch.setattr(cockpit, "_build_state", lambda *_a: {})
     monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: 0)
 
     assert cockpit.main(["--watch"]) == 0
@@ -84,7 +84,7 @@ def test_cli_watch_reasserts_existing_claude_integration(tmp_path, monkeypatch):
     import cockpit.cockpit as cockpit
 
     importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda: {})
+    monkeypatch.setattr(cockpit, "_build_state", lambda *_a: {})
     monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: 0)
     reasserted = []
     monkeypatch.setattr(cockpit, "claude_integration_present", lambda: True)
@@ -97,6 +97,68 @@ def test_cli_watch_reasserts_existing_claude_integration(tmp_path, monkeypatch):
 
     assert cockpit.main(["--watch"]) == 0
     assert reasserted == ["hooks", "cmds"]
+
+
+def test_watch_dry_flag_reaches_the_cycle(tmp_path, monkeypatch):
+    """`--dry` is the whole safety gate `./dev.sh` leans on: it stops autoclose
+    removing worktrees and `git branch -D`ing their refs, which `tool: none`
+    does NOT cover (autoclose goes through git, not the workspace backend). A
+    flag that parses but never reaches `cycle_all` would be silently unsafe, so
+    assert the value all the way through rather than just on the parsed args."""
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+    built: list[dict] = []
+    monkeypatch.setattr(cockpit, "_watch", lambda state, *_a, **_kw: 0)
+    monkeypatch.setattr(
+        cockpit,
+        "_build_state",
+        lambda dry=False: built.append({"dry": dry}) or built[-1],
+    )
+
+    assert cockpit.main(["--watch", "--dry"]) == 0
+    assert built[-1]["dry"] is True
+
+
+def test_once_with_threads_dry_into_the_cycle(monkeypatch):
+    """The other half of the gate: a flag that lands in `state` but never
+    reaches `cycle_all` would be silently unsafe — autoclose would still remove
+    worktrees and `git branch -D` their refs."""
+    import cockpit.cockpit as cockpit
+
+    seen: list[bool] = []
+    monkeypatch.setattr(cockpit, "load_config", lambda: {"repos": []})
+    monkeypatch.setattr(cockpit, "gh_self_user", lambda: "khivi")
+    monkeypatch.setattr(cockpit, "cycle_all", lambda *_a, **kw: seen.append(kw["dry"]))
+
+    cockpit._once_with(cockpit._build_state(True))
+    cockpit._once_with(cockpit._build_state(False))
+    assert seen == [True, False]
+
+
+def test_watch_is_not_dry_by_default(tmp_path, monkeypatch):
+    """The real daemon must keep acting — `--dry` is opt-in, never the default."""
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+    built: list[dict] = []
+    monkeypatch.setattr(cockpit, "_watch", lambda state, *_a, **_kw: 0)
+    monkeypatch.setattr(
+        cockpit,
+        "_build_state",
+        lambda dry=False: built.append({"dry": dry}) or built[-1],
+    )
+
+    assert cockpit.main(["--watch"]) == 0
+    assert built[-1]["dry"] is False
 
 
 def test_cli_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, capsys):
