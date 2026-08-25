@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1](https://github.com/khivi/cockpit/compare/v2.3.0...v2.3.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* **tui:** kick full-cycle on snooze so the sidebar fold lands on the keypress ([#369](https://github.com/khivi/cockpit/issues/369)) ([1918285](https://github.com/khivi/cockpit/commit/19182857c331cac448f61a51eac154857d67d865))
+
 ## [2.3.0](https://github.com/khivi/cockpit/compare/v2.2.2...v2.3.0) (2026-08-25)
 
 
