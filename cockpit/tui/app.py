@@ -206,7 +206,6 @@ class CockpitApp(App[None]):
         ("C", "force_close_row", "Force close"),
         ("m", "mute_row", "Mute"),
         ("z", "snooze_row", "Snooze"),
-        ("N", "nudge_row", "Nudge"),
         ("n", "new_workspace", "New"),
         ("h", "hide_repo", "Hide repo"),
         ("q", "quit", "Quit"),
@@ -795,17 +794,18 @@ class CockpitApp(App[None]):
     def action_snooze_row(self) -> None:
         self._row_act(self._toggle_snooze)
 
-    def action_nudge_row(self) -> None:
-        self._row_act(self._send_nudge)
-
     def action_open_diff(self) -> None:
         self._row_act(self._open_diff)
 
     def action_ask_row(self) -> None:
         """`a` — type a line and send it to this row's Claude session.
 
-        The text half of `N`: same gated send (`nudge_if_idle`), but the message
-        is yours rather than the canned nudge prose. The modal is pushed here on
+        The one manual send: your text, through the same gated path the
+        daemon's automatic nudge uses. (`N` used to sit beside this with a
+        hardcoded string; it was removed — it could not tell whose PR a row
+        was, whether it had one, or what was wrong, so its message was wrong on
+        review rows, PR-less rows and healthy ones. The automatic nudge, which
+        knows all three, is untouched.) The modal is pushed here on
         the main thread (`push_screen` requires it) and the resolve+send runs on
         a worker, so the git/cmux round-trips never block the UI."""
         table = self.query_one(WorktreeTable)
@@ -1480,42 +1480,8 @@ class CockpitApp(App[None]):
         )
 
     @work(thread=True, group="nudge", exit_on_error=False)
-    def _send_nudge(self, path_str: str) -> None:
-        # Manual nudge NOW (not the slow tick): a deliberate keypress overrides
-        # mute + throttle (`nudge_if_idle` without pr_number) but still
-        # respects its idle/parked safety gate, so it never types into a running
-        # turn or a pending permission prompt. cmux-only; never writes a cache cell.
-        if not is_cmux():
-            self._notify("nudge requires cmux", severity="warning")
-            return
-        resolved = self._resolve_worktree(path_str)
-        if resolved is None:
-            self._notify(f"nudge: no worktree at {path_str}", severity="error")
-            return
-        _repo, wt = resolved
-        ref = self._workspace_ref(wt)
-        if ref is None:
-            self._notify(
-                f"nudge: no workspace for {wt.label or wt.short}", severity="warning"
-            )
-            return
-        message = (
-            "Check this PR now — CI status, unresolved review comments, and "
-            "merge conflicts vs base — and address anything actionable."
-        )
-        if nudge_if_idle(ref, message):
-            self._notify(f"nudged {wt.label or wt.short}")
-        else:
-            self._notify(
-                f"nudge skipped {wt.label or wt.short}: not idle "
-                "(busy, awaiting permission, or parked)",
-                severity="warning",
-            )
-
-    @work(thread=True, group="nudge", exit_on_error=False)
     def _send_ask(self, path_str: str, text: str) -> None:
-        # The text half of `N`: same gated send, user-supplied message. Routed
-        # through `nudge_if_idle` rather than a raw `cmux send` so the whole
+        # Routed through `nudge_if_idle` rather than a raw `cmux send` so the whole
         # idle-gate story applies — a mid-turn or permission-pending session
         # refuses it instead of having the text typed into a y/n prompt. No
         # pref_key: a deliberate keypress overrides mute/snooze, exactly like

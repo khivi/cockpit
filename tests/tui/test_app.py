@@ -909,80 +909,6 @@ async def test_mute_key_noop_when_no_pr(monkeypatch, tmp_path):
     assert saved == []  # no PR on this row → nothing written
 
 
-async def test_nudge_key_sends_when_idle(monkeypatch, tmp_path):
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    calls: list[tuple[str, str]] = []
-
-    def _fake_nudge(ref, msg, **k):
-        calls.append((ref, msg))
-        return True
-
-    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake_nudge)
-    toasts: list[str] = []
-    app, _ = _make_app()
-    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("N")
-        await pilot.pause(0.6)
-    assert len(calls) == 1
-    ref, _msg = calls[0]
-    assert ref == "ws1"  # resolved cwd→path workspace ref
-    assert any("nudged" in t for t in toasts)
-
-
-async def test_nudge_key_skips_when_not_idle(monkeypatch, tmp_path):
-    # nudge_if_idle returns False when the session is busy / awaiting permission
-    # / parked — the manual nudge must report a skip, never a forced send.
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: False)
-    toasts: list[str] = []
-    app, _ = _make_app()
-    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("N")
-        await pilot.pause(0.6)
-    assert any("skipped" in t for t in toasts)
-
-
-async def test_nudge_key_noop_on_limux(monkeypatch, tmp_path):
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
-    calls: list = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: calls.append(ref)
-    )
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("N")
-        await pilot.pause(0.6)
-    assert calls == []  # a nudge is a cmux-only `send`
-
-
-async def test_nudge_key_noop_when_table_empty(monkeypatch):
-    calls: list = []
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    monkeypatch.setattr(
-        "cockpit.tui.app.nudge_if_idle", lambda ref, msg, **k: calls.append(ref)
-    )
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        await pilot.press("N")
-        await pilot.pause(0.3)
-    assert calls == []
-
-
 async def test_new_key_opens_text_box(monkeypatch, tmp_path):
     # `n` pushes the new-workspace modal with an input ready for typing.
     from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
@@ -2109,10 +2035,9 @@ async def test_footer_cmux_shows_focus_gates_nudge_on_workspace():
 
     fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
     fb._row_caps = frozenset({"workspace"})
-    assert not fb._skip("focus_row") and not fb._skip("nudge_row")
+    assert not fb._skip("focus_row")
     fb._row_caps = frozenset()
     assert not fb._skip("focus_row")  # `f` still shown — it spawns
-    assert fb._skip("nudge_row")  # nothing to nudge
 
 
 async def test_footer_limux_shows_focus_hides_nudge():
@@ -2124,7 +2049,6 @@ async def test_footer_limux_shows_focus_hides_nudge():
     for caps in (frozenset(), frozenset({"workspace"})):
         fb._row_caps = caps
         assert not fb._skip("focus_row")
-        assert fb._skip("nudge_row")
 
 
 async def test_footer_on_no_backend_hides_all_backend_keys():
@@ -2136,7 +2060,6 @@ async def test_footer_on_no_backend_hides_all_backend_keys():
     for caps in (frozenset(), frozenset({"workspace"})):
         fb._row_caps = caps
         assert fb._skip("focus_row")
-        assert fb._skip("nudge_row")
 
 
 async def test_footer_hides_close_on_workspaceless_primary_checkout():

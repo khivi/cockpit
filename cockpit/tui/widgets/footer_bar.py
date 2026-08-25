@@ -57,7 +57,6 @@ class FooterBar(Horizontal):
             "force_close_row",
             "mute_row",
             "snooze_row",
-            "nudge_row",
             "open_diff",
             "ask_row",
         }
@@ -74,15 +73,11 @@ class FooterBar(Horizontal):
         "mute_row": "pr",
         "snooze_row": "pr",
         "open_ticket": "ticket",
-        # `N` (nudge) reaches an *existing* workspace — it no-ops on a
-        # workspace-less row, so only advertise it when one is live. `f` is NOT
-        # gated: it focuses an existing workspace or spawns one first, so it's
-        # meaningful on any backed row.
-        "nudge_row": "workspace",
         # `d` needs a PR to diff, same cached `pr-num` cell as `p`/`r`.
         "open_diff": "pr",
-        # `a` sends text to an *existing* session, exactly like `N` — it can't
-        # spawn one (that's `f`), so advertise it only when one is live.
+        # `a` sends text to an *existing* session — it can't spawn one (that's
+        # `f`), so advertise it only when one is live. On a repo header it
+        # addresses the repo instead and this requirement is dropped.
         "ask_row": "workspace",
     }
 
@@ -115,7 +110,6 @@ class FooterBar(Horizontal):
         "force_close_row": "Force",
         "mute_row": "Mute",
         "snooze_row": "Snooze",
-        "nudge_row": "Nudge",
         "open_diff": "Diff",
         "ask_row": "Ask",
         "new_workspace": "New",
@@ -140,10 +134,9 @@ class FooterBar(Horizontal):
     # both spawns a missing workspace and focuses an existing one; spawning works
     # on cmux AND limux (focus is the cmux-only bonus — on limux `f` spawns and
     # the user switches via limux's own UI), so it's hidden only on "none" (no
-    # backend to spawn into). `N` (nudge) is a cmux-only verb.
+    # backend to spawn into).
     BACKEND_ACTIONS = {
         "focus_row": frozenset({"cmux", "limux"}),
-        "nudge_row": frozenset({"cmux"}),
         # `a` rides the same cmux-only send verb as `N`.
         "ask_row": frozenset({"cmux"}),
         # `d` pipes into `cmux diff`; limux/none have no such viewer, so the
