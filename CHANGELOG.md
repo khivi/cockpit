@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.2](https://github.com/khivi/cockpit/compare/v2.3.1...v2.3.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* **tui:** repaint mute/snooze on the keypress instead of at cycle end ([#371](https://github.com/khivi/cockpit/issues/371)) ([690aa29](https://github.com/khivi/cockpit/commit/690aa29b2a3601c535868a855d0c5b6ac34ebc38))
+
 ## [2.3.1](https://github.com/khivi/cockpit/compare/v2.3.0...v2.3.1) (2026-08-25)
 
 
