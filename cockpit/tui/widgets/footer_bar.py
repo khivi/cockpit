@@ -272,7 +272,7 @@ class FooterBar(Horizontal):
         # row-targeted key — only the global keys stay.
         on_header = self._row_caps is not None and HEADER_CAP in self._row_caps
         # HEADER_CAP covers three row kinds; only two of them name a repo. The
-        # `▸ N hidden` disclosure row sets caps but no `_row_repo`, so
+        # `▸ N repos hidden` disclosure row sets caps but no `_row_repo`, so
         # `current_repo_name()` is None there and a repo-scoped action cannot
         # resolve a target — worse, in a single-repo config
         # `_repo_config_by_name`'s sole-repo fallback would silently pick a repo
@@ -285,7 +285,7 @@ class FooterBar(Horizontal):
         ):
             return True
         # `h` parks the cursor row's whole *repo*, so it's only advertised on a
-        # row that reads as a repo: a group header, the `▸ N hidden` disclosure
+        # row that reads as a repo: a group header, the `▸ N repos hidden` disclosure
         # row, or a revealed parked repo — all three carry HEADER_CAP, and all
         # three are where `h`'s Hide/Reveal/Collapse/Unhide labels are
         # unambiguous. On a worktree row "Hide" would read as "hide this row"

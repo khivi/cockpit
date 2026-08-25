@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.command import DiscoveryHit
 from textual.screen import Screen
 from textual.widgets import Static
 
@@ -103,3 +104,49 @@ async def test_palette_offers_the_feature_guide():
         provider = ConfigCommands(app.screen)
         hits = [h async for h in provider.search("feature guide")]
         assert any("Feature guide" in str(h.text) for h in hits)
+
+
+async def test_every_entry_shows_on_an_empty_palette():
+    # `discover` is what fills the palette before anything is typed; `search`
+    # runs only once there IS a query. Implementing search alone left `^P`
+    # showing Textual's system commands and none of cockpit's, so all three
+    # entries — including the keyless feature guide — were reachable only by
+    # typing a label you'd have to already know. Testing search alone is what
+    # let that ship, so this asserts the empty-palette path directly.
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        provider = ConfigCommands(app.screen)
+        labels = []
+        async for hit in provider.discover():
+            # A plain `Hit` here would score-sort into the typed-query list
+            # instead of showing on the empty palette, so the type is the
+            # assertion — and it narrows the union for `.display`.
+            assert isinstance(hit, DiscoveryHit)
+            labels.append(str(hit.display))
+        assert labels == [label for label, _, _ in ConfigCommands.COMMANDS]
+
+
+async def test_discovered_entries_invoke_their_app_action():
+    # A DiscoveryHit carries the callback the palette fires on selection; a
+    # late-bound closure over the loop variable would make all three run the
+    # last action.
+    called: list[str] = []
+
+    class _Recorder(_Host):
+        def action_show_full_config(self) -> None:
+            called.append("show")
+
+        def action_edit_config(self) -> None:
+            called.append("edit")
+
+        def action_open_feature_guide(self) -> None:
+            called.append("guide")
+
+    app = _Recorder()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        provider = ConfigCommands(app.screen)
+        async for hit in provider.discover():
+            hit.command()
+    assert called == ["show", "edit", "guide"]

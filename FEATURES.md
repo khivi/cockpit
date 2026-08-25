@@ -47,7 +47,7 @@ each PR's base branch is the previous PR's head. Cockpit reads that and renders 
 contiguously under its tip with a `└`, and groups the same chain in your cmux sidebar. No
 `gh stack` state in the worktree needed, and it works on a coworker's stack too.
 
-**Park a repo you're not touching this week.** `h` drops it into a `▸ N hidden` row: it
+**Park a repo you're not touching this week.** `h` drops it into a `▸ N repos hidden` row: it
 stops being polled entirely — no GitHub round-trip, no spawning, no nudges — and its idle
 terminals close. It stays in your config, untouched. Starting work there un-parks it
 automatically.

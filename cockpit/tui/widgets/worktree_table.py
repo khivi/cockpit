@@ -182,7 +182,7 @@ Inventory = list[tuple[str, str, str | None, str, list[Worktree]]]
 HEADER_KEY_PREFIX = "\x00hdr:"
 
 # Row key for the disclosure line standing in for the hidden (parked) repos —
-# `▸ N hidden` collapsed, `▾ N hidden` expanded, with one dim repo row per parked
+# `▸ N repos hidden` collapsed, `▾ N repos hidden` expanded, with one dim repo row per parked
 # repo underneath while expanded. Nested under `HEADER_KEY_PREFIX` so
 # `current_path()` returns None on it and the cursor-skip loop treats it like any
 # other header for free.
@@ -420,7 +420,7 @@ def _header_cells(
     The trailing rule fills the column out to `_RULE_WIDTH`, so the header reads
     as a break between groups rather than as another row — the worktree rows
     below it are the ones carrying `ROW_INDENT`. (The old `▸` prefix also read as
-    a disclosure triangle, which a repo header isn't: only the `▸ N hidden` row
+    a disclosure triangle, which a repo header isn't: only the `▸ N repos hidden` row
     expands.)
 
     `hidden` renders a *parked* repo revealed by expanding the hidden row: the
@@ -468,9 +468,16 @@ def _hidden_cells(
     in the Workspace column (so it can't stretch that column) and, while
     collapsed, the repo names in the wide Title column. Both dim — it's a
     reminder, not a row. Expanded, the names render as their own rows below, so
-    the tail just says how to put them back."""
+    the tail just says how to put them back.
+
+    The count names its unit ("5 repos hidden", not "5 hidden") because this row
+    sits directly under a repo's `▸ N snoozed` row, whose count is *worktree
+    rows* — two adjacent bare numbers counting different things read as the same
+    kind of thing. `h` parks a whole repo, so saying so is what distinguishes
+    them."""
+    noun = "repo" if len(names) == 1 else "repos"
     return _disclosure_row(
-        Text(f"{'▾' if expanded else '▸'} {len(names)} hidden", style="dim"),
+        Text(f"{'▾' if expanded else '▸'} {len(names)} {noun} hidden", style="dim"),
         Text(
             "h to collapse" if expanded else " · ".join(names) + "   (h to show)",
             style="dim",
@@ -962,7 +969,7 @@ class WorktreeTable(DataTable):
         action is `n`)."""
 
     class HiddenToggle(Message):
-        """User opened the `▸ N hidden` disclosure row → expand/collapse the
+        """User opened the `▸ N repos hidden` disclosure row → expand/collapse the
         parked repos. Raised by a *single* click (unlike the double-click every
         other row needs: expanding is free and reversible, and a disclosure
         triangle that needs a double-click doesn't read as one) and by Enter,
@@ -1191,7 +1198,7 @@ class WorktreeTable(DataTable):
 
         `hidden_repos` is the display names of every repo the user parked with
         `h`. A parked repo is dormant, so it carries no worktrees in the
-        inventory: they render as name-only rows under the trailing `▸ N hidden`
+        inventory: they render as name-only rows under the trailing `▸ N repos hidden`
         disclosure row, and only while `expanded`. Pressing `h` on one of those
         rows un-parks it — the whole hide/unhide loop lives on one key.
 

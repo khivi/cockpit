@@ -263,7 +263,7 @@ class CockpitApp(App[None]):
         # `gh`; memoized here since a repo's nwo is stable and the TUI reads the
         # cache on every render. See `_cache_repo_name`.
         self._repo_nwo_cache: dict[str, str] = {}
-        # Is the `▸ N hidden` disclosure row expanded? Session-only: the parked
+        # Is the `▸ N repos hidden` disclosure row expanded? Session-only: the parked
         # *set* persists (`lib/hidden.py`), this peek deliberately doesn't, so a
         # restart comes back tidy.
         self._show_hidden = False
@@ -880,7 +880,7 @@ class CockpitApp(App[None]):
 
         - on a repo's `▸ N snoozed` disclosure row → expand/collapse that fold,
           so the pile is reachable from the row that says it exists (the same
-          shape as `h` on the `▸ N hidden` row);
+          shape as `h` on the `▸ N repos hidden` row);
         - anywhere else → toggle the row PR's snooze.
 
         One key for both because they're one concept: `z` is where the snoozed
@@ -1082,7 +1082,7 @@ class CockpitApp(App[None]):
     def action_hide_repo(self) -> None:
         """`h` — the one hide/unhide key, read off the cursor row:
 
-        - on the `▸ N hidden` disclosure row → expand/collapse the parked repos
+        - on the `▸ N repos hidden` disclosure row → expand/collapse the parked repos
           (`_toggle_hidden_section`), so unhiding is reachable without a second
           keybinding to remember;
         - on a revealed parked repo's row → un-park it;
@@ -1177,7 +1177,7 @@ class CockpitApp(App[None]):
     def on_worktree_table_hidden_toggle(
         self, event: WorktreeTable.HiddenToggle
     ) -> None:
-        """Click on the `▸ N hidden` disclosure row → same as `h` there."""
+        """Click on the `▸ N repos hidden` disclosure row → same as `h` there."""
         self._toggle_hidden_section()
 
     def action_new_workspace(self) -> None:
@@ -1267,7 +1267,7 @@ class CockpitApp(App[None]):
             toggle_hidden(cwd)
             label = (repo or {}).get("name") or Path(cwd).name
             self.notify(f"{label} un-hidden — creating a workspace there")
-            # Local re-render so the repo leaves the `▸ N hidden` fold now
+            # Local re-render so the repo leaves the `▸ N repos hidden` fold now
             # rather than whenever the kicked cycle finishes (same as `h`).
             self._prime_table()
         if repo is not None and not repo.get("use_worktree", True) and cwd:
