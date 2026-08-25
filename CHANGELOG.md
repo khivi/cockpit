@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://github.com/khivi/cockpit/compare/v2.2.2...v2.3.0) (2026-08-25)
+
+
+### Features
+
+* **broadcast:** report why each workspace was skipped ([#366](https://github.com/khivi/cockpit/issues/366)) ([99d2caa](https://github.com/khivi/cockpit/commit/99d2caaaf1266f6eb4cc748e3e7d9538fa85fff5))
+
 ## [2.2.2](https://github.com/khivi/cockpit/compare/v2.2.1...v2.2.2) (2026-08-25)
 
 
