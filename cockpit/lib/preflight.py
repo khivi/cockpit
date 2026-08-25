@@ -478,28 +478,6 @@ def _warn_cockpit_not_on_path() -> None:
         )
 
 
-def _warn_pr_reader_delta(cfg: dict) -> None:
-    """Soft-warn when `pr_reader_delta` is on but `delta` isn't on PATH.
-
-    Warn, never die — the same call `_validate_workspace_backend` makes, and
-    with far less at stake: the TUI's `r` key falls back to
-    `gh pr diff --color always` and still shows the whole PR. Killing the
-    daemon over an absent diff prettifier would be the harshest gate in the
-    codebase guarding its least important feature. Silence would be wrong too
-    (the flag is on and doing nothing), hence the warning.
-    """
-    from .config import pr_reader_delta
-
-    if pr_reader_delta(cfg) and shutil.which("delta") is None:
-        print(
-            f"{yellow('cockpit:')} pr_reader_delta is on but `delta` is not on "
-            "PATH — the TUI's r key falls back to plain diff colouring. "
-            "Install with `brew install git-delta`, or unset the flag.",
-            file=sys.stderr,
-            flush=True,
-        )
-
-
 def _warn_unresolvable_base(cfg: dict) -> None:
     """Soft-warn when a managed repo's `origin/{default_base}` doesn't resolve.
 
@@ -619,7 +597,6 @@ def validate_config(cfg: dict) -> None:
     _validate_skills(cfg)
     _validate_base_remote(cfg)
     _validate_global_bool(cfg, "use_slack")
-    _validate_global_bool(cfg, "pr_reader_delta")
     _validate_statusline_hide(cfg)
     _validate_tickets(cfg)
     _validate_orphan_nudge_grace(cfg)
@@ -676,5 +653,4 @@ def preflight(cfg: dict, *, for_setup: bool = False) -> None:
     # Daemon-only: `cockpit setup` may be about to install/upgrade the backend,
     # and the two probe subprocesses shouldn't ride every non-daemon entry.
     if not for_setup:
-        _warn_pr_reader_delta(cfg)
         _validate_workspace_backend()

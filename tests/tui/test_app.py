@@ -2469,7 +2469,7 @@ async def test_read_key_warns_and_shells_out_to_nothing_without_a_pr(
     assert any("no PR" in t for t in toasts)
 
 
-async def test_read_key_opens_overlay_with_view_and_diff(monkeypatch, tmp_path):
+async def test_read_key_opens_overlay_with_body_and_comments(monkeypatch, tmp_path):
     """`r` fetches body+comments and the diff and renders both into the generic
     ConfigScreen overlay — a keypress-time read that caches nothing."""
     wt = _seed_one_worktree(monkeypatch, tmp_path)
@@ -2480,8 +2480,9 @@ async def test_read_key_opens_overlay_with_view_and_diff(monkeypatch, tmp_path):
 
     def _fake_run(args, **kwargs):
         seen.append((args, kwargs.get("env", {}).get("GH_FORCE_TTY")))
-        out = "THE DIFF" if "diff" in args else "PR BODY + A REVIEW COMMENT"
-        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+        return subprocess.CompletedProcess(
+            args, 0, stdout="PR BODY + A REVIEW COMMENT", stderr=""
+        )
 
     monkeypatch.setattr("subprocess.run", _fake_run)
     app, _ = _make_app()
@@ -2493,55 +2494,29 @@ async def test_read_key_opens_overlay_with_view_and_diff(monkeypatch, tmp_path):
         await pilot.pause(0.6)
         assert isinstance(app.screen, ConfigScreen)
         body = app.screen._body
-    assert "PR BODY + A REVIEW COMMENT" in body and "THE DIFF" in body
-    # Two calls. Under GH_FORCE_TTY `--comments` is a superset of a bare
-    # `pr view`, so a second view call would only duplicate the body.
+    assert "PR BODY + A REVIEW COMMENT" in body
+    # ONE call: `--comments` is a superset of a bare `pr view` under
+    # GH_FORCE_TTY, and the diff belongs to `d` now, not to this overlay.
     calls = [args for args, _ in seen]
     assert ["gh", "pr", "view", "7", "--comments"] in calls
-    assert ["gh", "pr", "diff", "7", "--color", "always"] in calls
     assert ["gh", "pr", "view", "7"] not in calls
+    assert not [c for c in calls if "diff" in c]
     # Every call carries the forced-TTY width, or gh emits raw markdown.
     assert all(w and w.isdigit() for _, w in seen)
 
 
 async def test_read_key_renders_a_failing_gh_inline(monkeypatch, tmp_path):
-    """A failed fetch must not abort the overlay — a readable body still shows
-    when only the diff fails."""
+    """A failed fetch renders its stderr in the overlay rather than opening an
+    empty one — a silent blank box reads as "this PR has no discussion"."""
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr(
         "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
     )
-
-    def _fake_run(args, **kwargs):
-        if "diff" in args:
-            return subprocess.CompletedProcess(args, 1, stdout="", stderr="boom")
-        return subprocess.CompletedProcess(args, 0, stdout="BODY", stderr="")
-
-    monkeypatch.setattr("subprocess.run", _fake_run)
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("r")
-        await pilot.pause(0.6)
-        body = app.screen._body
-        assert isinstance(app.screen, ConfigScreen)
-    assert "BODY" in body
-    assert "boom" in body  # failure surfaced, not swallowed
-
-
-async def test_read_key_truncation_is_never_silent(monkeypatch, tmp_path):
-    from cockpit.tui.app import _READ_MAX_LINES
-
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
-    )
-    huge = "\n".join(f"line {i}" for i in range(_READ_MAX_LINES + 500))
     monkeypatch.setattr(
         "subprocess.run",
-        lambda args, **k: subprocess.CompletedProcess(args, 0, stdout=huge, stderr=""),
+        lambda args, **k: subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="boom"
+        ),
     )
     app, _ = _make_app()
     async with app.run_test() as pilot:
@@ -2550,35 +2525,9 @@ async def test_read_key_truncation_is_never_silent(monkeypatch, tmp_path):
         await pilot.pause()
         await pilot.press("r")
         await pilot.pause(0.6)
+        assert isinstance(app.screen, ConfigScreen)
         body = app.screen._body
-    assert "truncated" in body  # the drop is reported, not silent
-    assert "press p" in body  # …with the escape hatch to the full PR
-
-
-async def test_footer_gates_read_on_pr_and_ask_on_workspace():
-    from cockpit.tui.widgets.footer_bar import FooterBar
-
-    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
-    fb._row_caps = frozenset()
-    assert fb._skip("read_pr")  # nothing to read
-    assert fb._skip("ask_row")  # no session to reach
-    fb._row_caps = frozenset({"pr"})
-    assert not fb._skip("read_pr")
-    assert fb._skip("ask_row")
-    fb._row_caps = frozenset({"workspace"})
-    assert not fb._skip("ask_row")
-
-
-async def test_footer_read_survives_a_missing_backend_but_ask_does_not():
-    """`r` shells out to `gh`, not to a workspace backend, so it stays useful on
-    limux and on tool=none; `a` is a cmux-only send verb."""
-    from cockpit.tui.widgets.footer_bar import FooterBar
-
-    for backend in ("limux", "none"):
-        fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend=backend)
-        fb._row_caps = frozenset({"pr", "workspace"})
-        assert not fb._skip("read_pr"), backend
-        assert fb._skip("ask_row"), backend
+    assert "boom" in body  # surfaced, not swallowed into a blank overlay
 
 
 async def test_read_key_sizes_glamour_below_the_overlay_box(monkeypatch, tmp_path):
@@ -2610,102 +2559,6 @@ async def test_read_key_sizes_glamour_below_the_overlay_box(monkeypatch, tmp_pat
     box = ConfigScreen.content_width(130)
     assert widths and set(widths) == {box - _GLAMOUR_MARGIN}
     assert all(w + _GLAMOUR_MARGIN <= box for w in widths)
-
-
-# ── pr_reader_delta (opt-in diff prettifier) ─────────────────────────────────
-
-
-def _seed_delta_row(monkeypatch, tmp_path, *, flag: bool, on_path: bool):
-    """One row with a PR, `pr_reader_delta` = `flag`, delta present = `on_path`."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
-    )
-    monkeypatch.setattr("cockpit.tui.app.pr_reader_delta", lambda: flag)
-    monkeypatch.setattr(
-        "cockpit.tui.app.shutil.which", lambda b: "/usr/bin/delta" if on_path else None
-    )
-    return wt
-
-
-def _fake_gh_and_delta(seen: list, *, delta_rc: int = 0, delta_out: str = "DELTA DIFF"):
-    def _run(args, **kwargs):
-        seen.append(args)
-        if args[0] == "delta":
-            return subprocess.CompletedProcess(args, delta_rc, delta_out, "")
-        out = "PLAIN DIFF" if "diff" in args else "THE BODY"
-        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
-
-    return _run
-
-
-async def _press_r(monkeypatch, wt) -> str:
-    app, _ = _make_app()
-    async with app.run_test(size=(130, 40)) as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("r")
-        await pilot.pause(0.6)
-        return app.screen._body
-
-
-async def test_read_pr_uses_delta_when_flag_on_and_installed(monkeypatch, tmp_path):
-    wt = _seed_delta_row(monkeypatch, tmp_path, flag=True, on_path=True)
-    seen: list = []
-    monkeypatch.setattr("subprocess.run", _fake_gh_and_delta(seen))
-    body = await _press_r(monkeypatch, wt)
-    assert "DELTA DIFF" in body and "PLAIN DIFF" not in body
-    assert any(a[0] == "delta" for a in seen)
-
-
-async def test_read_pr_skips_delta_when_flag_off_even_if_installed(
-    monkeypatch, tmp_path
-):
-    """Installed-but-unwanted is the case presence-detection alone gets wrong:
-    most delta users installed it for plain git, not for this overlay."""
-    wt = _seed_delta_row(monkeypatch, tmp_path, flag=False, on_path=True)
-    seen: list = []
-    monkeypatch.setattr("subprocess.run", _fake_gh_and_delta(seen))
-    body = await _press_r(monkeypatch, wt)
-    assert "PLAIN DIFF" in body
-    assert not any(a[0] == "delta" for a in seen)
-
-
-async def test_read_pr_falls_back_when_flag_on_but_delta_absent(monkeypatch, tmp_path):
-    """A missing prettifier must never cost you the PR — preflight warns, `r`
-    still renders."""
-    wt = _seed_delta_row(monkeypatch, tmp_path, flag=True, on_path=False)
-    seen: list = []
-    monkeypatch.setattr("subprocess.run", _fake_gh_and_delta(seen))
-    body = await _press_r(monkeypatch, wt)
-    assert "PLAIN DIFF" in body
-    assert not any(a[0] == "delta" for a in seen)
-
-
-async def test_read_pr_falls_back_when_delta_fails_or_is_empty(monkeypatch, tmp_path):
-    for rc, out in ((1, ""), (0, ""), (0, "   \n")):
-        wt = _seed_delta_row(monkeypatch, tmp_path, flag=True, on_path=True)
-        seen: list = []
-        monkeypatch.setattr(
-            "subprocess.run", _fake_gh_and_delta(seen, delta_rc=rc, delta_out=out)
-        )
-        body = await _press_r(monkeypatch, wt)
-        assert "PLAIN DIFF" in body, (rc, out)
-
-
-async def test_read_pr_survives_delta_raising(monkeypatch, tmp_path):
-    wt = _seed_delta_row(monkeypatch, tmp_path, flag=True, on_path=True)
-
-    def _run(args, **kwargs):
-        if args[0] == "delta":
-            raise OSError("delta exploded")
-        out = "PLAIN DIFF" if "diff" in args else "THE BODY"
-        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
-
-    monkeypatch.setattr("subprocess.run", _run)
-    body = await _press_r(monkeypatch, wt)
-    assert "PLAIN DIFF" in body  # not a traceback, not an empty overlay
 
 
 # ── `a` draft preservation + pre-warn hint ───────────────────────────────────
@@ -2844,3 +2697,122 @@ async def test_ask_hint_never_blocks_the_submit(monkeypatch, tmp_path):
         await pilot.press("enter")
         await pilot.pause(0.6)
     assert sent == ["ship it"]  # delivered despite the warning
+
+
+# ── `d` diff → cmux's native viewer ──────────────────────────────────────────
+
+
+def _seed_diff_row(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
+    )
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    return wt
+
+
+async def _press_d(monkeypatch, wt, toasts):
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause(0.6)
+
+
+async def test_diff_key_pipes_plain_gh_diff_into_cmux_diff(monkeypatch, tmp_path):
+    """Plain `gh pr diff`, NOT --color: the viewer does its own highlighting and
+    ANSI would only fight it. Unified layout, because the pane is narrow."""
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+    seen: list = []
+
+    def _run(args, **kwargs):
+        seen.append((args, kwargs.get("input")))
+        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
+
+    monkeypatch.setattr("subprocess.run", _run)
+    toasts: list[str] = []
+    await _press_d(monkeypatch, wt, toasts)
+
+    gh, cmux_call = (
+        [a for a, _ in seen if a[0] == "gh"],
+        [(a, i) for a, i in seen if a[0] == "cmux"],
+    )
+    assert gh == [["gh", "pr", "diff", "7"]]
+    assert "--color" not in gh[0]
+    args, piped = cmux_call[0]
+    assert args[:3] == ["cmux", "diff", "-"]
+    assert "--layout" in args and args[args.index("--layout") + 1] == "unified"
+    assert piped == "PATCH"  # the patch goes in on stdin
+    assert any("diff open" in t for t in toasts)
+
+
+async def test_diff_key_names_the_fix_when_the_browser_is_disabled(
+    monkeypatch, tmp_path
+):
+    """cmux's diff viewer is a browser surface and the browser is a runtime
+    toggle, so this failure gets the actual remedy, not a generic error."""
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+
+    def _run(args, **kwargs):
+        if args[0] == "cmux":
+            return subprocess.CompletedProcess(
+                args, 1, "", "Error: browser_disabled: cmux browser is disabled"
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
+
+    monkeypatch.setattr("subprocess.run", _run)
+    toasts: list[str] = []
+    await _press_d(monkeypatch, wt, toasts)
+    assert any("cmux enable-browser" in t for t in toasts)
+
+
+async def test_diff_key_needs_no_gh_call_without_a_pr(monkeypatch, tmp_path):
+    wt = _seed_one_worktree(monkeypatch, tmp_path)  # find_pr_payload → None
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    ran: list = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: ran.append(a))
+    toasts: list[str] = []
+    await _press_d(monkeypatch, wt, toasts)
+    assert ran == []
+    assert any("no PR" in t for t in toasts)
+
+
+async def test_diff_key_points_at_p_on_a_non_cmux_backend(monkeypatch, tmp_path):
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
+    ran: list = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: ran.append(a))
+    toasts: list[str] = []
+    await _press_d(monkeypatch, wt, toasts)
+    assert ran == []
+    assert any("requires cmux" in t and "p" in t for t in toasts)
+
+
+async def test_diff_key_survives_a_raising_subprocess(monkeypatch, tmp_path):
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+
+    def _boom(args, **kwargs):
+        raise OSError("no cmux")
+
+    monkeypatch.setattr("subprocess.run", _boom)
+    toasts: list[str] = []
+    await _press_d(monkeypatch, wt, toasts)
+    assert any("failed" in t for t in toasts)  # a toast, not a traceback
+
+
+async def test_footer_gates_diff_on_pr_and_cmux():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    fb._row_caps = frozenset()
+    assert fb._skip("open_diff")  # nothing to diff
+    fb._row_caps = frozenset({"pr"})
+    assert not fb._skip("open_diff")
+    for backend in ("limux", "none"):
+        fb2 = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend=backend)
+        fb2._row_caps = frozenset({"pr"})
+        assert fb2._skip("open_diff"), backend  # no viewer there; `p` instead
+        assert not fb2._skip("read_pr"), backend  # but `r` still works

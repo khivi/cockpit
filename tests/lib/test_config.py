@@ -2181,34 +2181,3 @@ def test_credential_env_names_tolerates_a_malformed_config():
     # raise (preflight is what rejects it).
     names = config_mod.credential_env_names({"repos": ["junk"], "orgs": "junk"})
     assert "LINEAR_API_KEY" in names
-
-
-# ── pr_reader_delta ──────────────────────────────────────────────────────────
-
-
-def test_pr_reader_delta_defaults_off():
-    """Off by default: delta targets a truncating pager, so it can render
-    *worse* than plain colouring in the wrapping overlay."""
-    from cockpit.lib.config import pr_reader_delta
-
-    assert pr_reader_delta({}) is False
-
-
-def test_pr_reader_delta_reads_the_flag():
-    from cockpit.lib.config import pr_reader_delta
-
-    assert pr_reader_delta({"pr_reader_delta": True}) is True
-    assert pr_reader_delta({"pr_reader_delta": False}) is False
-
-
-def test_pr_reader_delta_documented_in_all_three_config_faces():
-    """The three-faces rule: a reader without the sample + doc entry is a field
-    the code honours but nobody can discover."""
-    import json
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[2]
-    sample = json.loads((root / "cockpit" / "config.example.json").read_text())
-    assert "pr_reader_delta" in sample
-    assert sample["pr_reader_delta"] is False  # sample shows the real default
-    assert "`pr_reader_delta`" in (root / "docs" / "config.md").read_text()

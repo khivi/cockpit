@@ -719,29 +719,6 @@ def use_slack() -> bool:
     return bool(load_config().get("use_slack", False))
 
 
-def pr_reader_delta(cfg: dict | None = None) -> bool:
-    """Whether the TUI's `r` (Read PR) renders its diff through `delta`.
-
-    Default **False**, and the default is the interesting part. `delta` is a
-    strictly nicer diff renderer — syntax highlighting, line numbers, GitHub-ish
-    file headers — but it targets a *truncating pager*, not a wrapping
-    container: `--width` sets decoration width only (its own `--help` says so),
-    so a long source line passes through intact and the overlay wraps it
-    raggedly with the added/removed background bleeding across the wrap. A repo
-    whose prose lines run long (markdown docs) therefore reads *worse* with it
-    on. So this is opt-in per user rather than auto-enabled on presence: unlike
-    `wt-cost`'s "gate on the data, never on a config field", the question here
-    isn't "is delta installed" (most delta users installed it for plain git)
-    but "do I want its rendering in this box", which nothing can detect.
-
-    Missing binary is **not** an error — `preflight._warn_pr_reader_delta`
-    soft-warns and `app._read_pr` falls back to `gh pr diff --color always`.
-    Nothing about reading a PR should fail because a prettifier is absent.
-    """
-    cfg = load_config() if cfg is None else cfg
-    return bool(cfg.get("pr_reader_delta", False))
-
-
 def linear_dev_done(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the Linear workflow state that the `devdone=` pill keys off
     (default: "Dev Done"). Matched case-insensitively against the ticket's live

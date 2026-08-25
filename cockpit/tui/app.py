@@ -32,7 +32,6 @@ import io
 import json
 import os
 import queue
-import shutil
 import signal
 import subprocess
 import threading
@@ -73,7 +72,6 @@ from cockpit.lib.config import (
     CONFIG_PATH,
     ensure_state_dirs,
     load_config,
-    pr_reader_delta,
     repo_tickets,
     repos_grouped_by_org,
     reset_config_cache,
@@ -107,12 +105,6 @@ from cockpit.tui.widgets.worktree_table import HIDDEN_CAP, Inventory, WorktreeTa
 
 _LOG_TAIL_LINES = 200
 
-# `r` (Read PR) renders body + comments + diff into one `ConfigScreen`, whose
-# body is a single `Static`. A large diff would stall the render, so the blob is
-# capped — with the drop reported in the body (never a silent truncation) and
-# `p` as the escape hatch to the full PR.
-_READ_MAX_LINES = 2000
-
 # `gh`'s markdown renderer (glamour) pads every line to the requested
 # `GH_FORCE_TTY` width *plus* a 2-column left margin, so asking for the box
 # width exactly overruns it by 2 and every prose line wraps a second time,
@@ -122,35 +114,6 @@ _READ_MAX_LINES = 2000
 # branch and repo names) and markdown tables (glamour renders them at natural
 # width) — both merely wrap, so they stay readable.
 _GLAMOUR_MARGIN = 2
-
-
-def _pipe_through_delta(diff: str, width: int, *, cwd: Path) -> str:
-    """`diff` re-rendered by `delta`, or "" if it can't be (caller keeps plain).
-
-    Opt-in via `pr_reader_delta`. Runs with the user's own delta config, so the
-    overlay matches the diffs they already read in a terminal — the point of
-    honouring an installed tool rather than reimplementing one.
-
-    `--paging never` because there is no terminal to page into, and `--width`
-    sizes delta's *decorations* (its `--help` is explicit that this is not
-    content wrapping — a long source line still passes through whole, which is
-    exactly why the feature is opt-in rather than on-by-default).
-
-    Never raises: a delta that is missing, misconfigured, slow or angry returns
-    "" and the caller shows the plain coloured diff it already fetched.
-    """
-    try:
-        proc = subprocess.run(
-            ["delta", "--paging", "never", "--width", str(width)],
-            input=diff,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return proc.stdout if proc.returncode == 0 and proc.stdout.strip() else ""
 
 
 # The `n` (New) action shells out via the same module dispatch the daemon's
@@ -241,6 +204,7 @@ class CockpitApp(App[None]):
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
         ("r", "read_pr", "Read PR"),
+        ("d", "open_diff", "Diff"),
         ("a", "ask_row", "Ask"),
         ("o", "show_output", "Output"),
         ("c", "close_row", "Close"),
@@ -840,6 +804,9 @@ class CockpitApp(App[None]):
         # glamour's hard wrap to the overlay's body box (see `_read_pr`).
         width = ConfigScreen.content_width(self.size.width)
         self._row_act(lambda path: self._read_pr(path, width))
+
+    def action_open_diff(self) -> None:
+        self._row_act(self._open_diff)
 
     def action_ask_row(self) -> None:
         """`a` — type a line and send it to this row's Claude session.
@@ -1589,34 +1556,103 @@ class CockpitApp(App[None]):
         # comments, where the two forms are byte-identical; `--comments` is
         # still the right one to send, since showing every comment is exactly
         # what the flag is for.
-        # `--color always` survives into the overlay: ConfigScreen renders its
-        # body through `Text.from_ansi`, so the diff arrives already coloured.
-        view = _gh(["pr", "view", num, "--comments"])
-        diff = _gh(["pr", "diff", num, "--color", "always"])
-        # Opt-in prettifier (`pr_reader_delta`, default off): syntax
-        # highlighting + line numbers + GitHub-ish file headers. Two guards, and
-        # both matter — the flag is the user's taste (delta targets a
-        # *truncating* pager, so long lines wrap raggedly in this box), and the
-        # `which` is because the binary is not a cockpit dependency. Missing or
-        # failing, we keep the plain diff we already have: reading a PR must
-        # never fail because a prettifier is absent (preflight soft-warns once).
-        if pr_reader_delta() and shutil.which("delta"):
-            pretty = _pipe_through_delta(diff, width, cwd=wt.path)
-            if pretty:
-                diff = pretty
-        lines = f"{view}\n\n{'─' * 60}\n\n{diff}".splitlines()
-        if len(lines) > _READ_MAX_LINES:
-            # Never a silent cap — say what was dropped and where to get it.
-            dropped = len(lines) - _READ_MAX_LINES
-            lines = lines[:_READ_MAX_LINES] + [
-                "",
-                f"… truncated {dropped} more lines — press p to open the full "
-                "PR in a browser",
-            ]
+        # The DIFF is deliberately NOT here — that is `d` / `_open_diff`, which
+        # routes it to cmux's native viewer. A diff needs search, folding and
+        # syntax highlighting; a scrolling `Static` has none of the three, and
+        # the truncation cap this used to need was the tell. What the modal IS
+        # good at is the discussion: short, needs no search, and the one thing
+        # the table structurally cannot show — what the comment actually says.
+        body = _gh(["pr", "view", num, "--comments"])
         self.call_from_thread(
             self.push_screen,
-            ConfigScreen(f"PR #{num} — {wt.label or wt.short}", "\n".join(lines)),
+            ConfigScreen(f"PR #{num} — {wt.label or wt.short}", body),
         )
+
+    @work(thread=True, group="read", exit_on_error=False)
+    def _open_diff(self, path_str: str) -> None:
+        # `d`: the row's PR diff in cmux's NATIVE viewer — `gh pr diff` piped to
+        # `cmux diff`, which renders it in a browser split with syntax
+        # highlighting, dual line numbers and collapsed unmodified regions.
+        # Cockpit deliberately does not reimplement any of that in the overlay
+        # (see `_read_pr`): a diff wants search and folding, a `Static` has
+        # neither, and the truncation cap that shape needed was the tell.
+        #
+        # Plain `gh pr diff`, NOT `--color always` — the viewer does its own
+        # highlighting and ANSI would only get in its way.
+        #
+        # `--layout unified` rather than split: the pane lands beside the
+        # dashboard and is therefore narrowish, where the split columns
+        # overprint each other (observed). Unified degrades gracefully.
+        #
+        # Writes no cell — a user-initiated navigation gesture, like `p`.
+        if not is_cmux():
+            self._notify("diff viewer requires cmux — press p", severity="warning")
+            return
+        resolved = self._resolve_worktree(path_str)
+        if resolved is None:
+            self._notify(f"diff: no worktree at {path_str}", severity="error")
+            return
+        repo, wt = resolved
+        payload = (
+            find_pr_payload(wt.branch, self._cache_repo_name(repo))
+            if wt.branch
+            else None
+        )
+        number = (payload or {}).get("number")
+        if not number:
+            self._notify("no PR for this row", severity="warning")
+            return
+        num = str(number)
+        self._notify(f"opening diff for PR #{num}…")
+        try:
+            patch = subprocess.run(
+                ["gh", "pr", "diff", num],
+                cwd=wt.path,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            self._notify(f"diff: gh failed: {e}", severity="error")
+            return
+        if patch.returncode != 0:
+            self._notify(
+                f"diff: gh failed: {patch.stderr.strip()[:80]}", severity="error"
+            )
+            return
+        try:
+            proc = subprocess.run(
+                [
+                    "cmux",
+                    "diff",
+                    "-",
+                    "--title",
+                    f"PR #{num} — {wt.label or wt.short}",
+                    "--layout",
+                    "unified",
+                ],
+                input=patch.stdout,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            self._notify(f"diff: cmux failed: {e}", severity="error")
+            return
+        if proc.returncode != 0:
+            err = proc.stderr.strip()
+            # The one failure worth naming precisely: cmux's diff viewer is a
+            # browser surface, and the browser is a runtime toggle. Say the fix.
+            if "browser_disabled" in err:
+                self._notify(
+                    "diff viewer needs the cmux browser — "
+                    "`cmux enable-browser`, or press p",
+                    severity="warning",
+                )
+            else:
+                self._notify(f"diff failed: {err[:80]}", severity="error")
+            return
+        self._notify(f"diff open for PR #{num}")
 
     @work(thread=True, group="new", exit_on_error=False)
     def _launch_spawn(self, source: str, cwd: str | None) -> None:

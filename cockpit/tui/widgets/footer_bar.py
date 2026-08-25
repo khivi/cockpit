@@ -59,6 +59,7 @@ class FooterBar(Horizontal):
             "snooze_row",
             "nudge_row",
             "read_pr",
+            "open_diff",
             "ask_row",
         }
     )
@@ -82,6 +83,8 @@ class FooterBar(Horizontal):
         # `r` reads the row's PR — nothing to read without one. Gated on the
         # same cached `pr-num` cell as `p`, so it costs no network to decide.
         "read_pr": "pr",
+        # `d` needs a PR to diff, same cached `pr-num` cell as `p`/`r`.
+        "open_diff": "pr",
         # `a` sends text to an *existing* session, exactly like `N` — it can't
         # spawn one (that's `f`), so advertise it only when one is live.
         "ask_row": "workspace",
@@ -118,6 +121,7 @@ class FooterBar(Horizontal):
         "snooze_row": "Snooze",
         "nudge_row": "Nudge",
         "read_pr": "Read",
+        "open_diff": "Diff",
         "ask_row": "Ask",
         "new_workspace": "New",
         "hide_repo": "Hide",
@@ -140,6 +144,9 @@ class FooterBar(Horizontal):
         # absent: it shells out to `gh`, not to a workspace backend, so reading
         # a PR works on limux and on `none`.
         "ask_row": frozenset({"cmux"}),
+        # `d` pipes into `cmux diff`; limux/none have no such viewer, so the
+        # hint hides there and `p` is the answer instead.
+        "open_diff": frozenset({"cmux"}),
     }
 
     def __init__(
