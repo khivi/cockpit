@@ -43,6 +43,7 @@ ORANGE = "#ff9500"
 BLUE = "#3b82f6"
 GREY = "#6b7280"
 YELLOW = "#facc15"
+PURPLE = "#8957e5"
 
 # cmux's named workspace-entry colors (`workspace-action --action set-color`).
 # These tint the whole sidebar row, distinct from the per-state pill colors
@@ -82,6 +83,21 @@ DEVDONE_ICON = "🏁"
 
 MUTED_KEY = "muted"
 MUTED_ICON = "🔇"
+
+# The PR-identity pill (`🟢 PR #332 open`), replacing cmux's native sidebar PR
+# row — see the `pr` paragraph in pills.py for why that row can't be trusted or
+# configured. Passive like `devdone`, so it stays out of ACTIONABLE_KEYS, but it
+# IS written by apply_pills and so must be cleared with the rest.
+PR_KEY = "pr"
+
+# GitHub's own colour language, so the pill reads the same as the PR page:
+# grey draft, green open, purple merged, red closed.
+PR_STATUS_STYLE = {
+    "draft": ("⚪", GREY),
+    "open": ("🟢", GREEN),
+    "merged": ("🟣", PURPLE),
+    "closed": ("🔴", RED),
+}
 
 ACTIONABLE_KEYS = (
     "ci",
@@ -883,6 +899,12 @@ def find_cockpit_workspaces(
     return out
 
 
+def _pr_pill(p: dict) -> tuple[str, str, str]:
+    """`pr` kind → the PR-identity pill. Unknown status falls back to grey."""
+    icon, color = PR_STATUS_STYLE.get(p["status"], ("🔀", GREY))
+    return (PR_KEY, f"{icon} PR #{p['number']} {p['status']}", color)
+
+
 _CMUX_RENDERERS = {
     "muted": lambda _p: (MUTED_KEY, f"{MUTED_ICON} muted", YELLOW),
     "rebase": lambda _p: ("rebase", "🔄 rebasing", ORANGE),
@@ -895,13 +917,15 @@ _CMUX_RENDERERS = {
     "unaddressed": lambda p: ("comments", f"💬 {p['count']} unaddressed", RED),
     "changes_requested": lambda _p: ("comments", "💬 changes requested", RED),
     "conflict": lambda _p: ("merge", "⚠️ conflict", ORANGE),
-    "draft": lambda _p: ("draft", "📝 draft", GREY),
+    # `draft` and `state` are both footer-only: the `pr` pill below already
+    # names draftness and MERGED/CLOSED, so rendering either here would print
+    # the same fact twice on one card. `state` stays emitted by decide_pills
+    # because it is load-bearing for merged-but-dirty workspaces, where
+    # autoclose is blocked and a non-OPEN PR persists in `ctx.prs` across cycles.
+    "draft": lambda _p: None,
     "approved": lambda _p: ("approved", "✅ approved", GREEN),
-    # `state` is footer-only; cmux already surfaces MERGED/CLOSED natively in
-    # its sidebar, so the cockpit pill map drops it (None) to avoid double-
-    # rendering. Load-bearing for merged-but-dirty workspaces where autoclose
-    # is blocked and a non-OPEN PR persists in `ctx.prs` across cycles.
     "state": lambda _p: None,
+    "pr": _pr_pill,
 }
 
 
@@ -956,7 +980,7 @@ def apply_pills(
     return frozenset(desired)
 
 
-_PR_PILL_CLEAR_KEYS = [*ACTIONABLE_KEYS, COCKPIT_KEY, OWNER_KEY]
+_PR_PILL_CLEAR_KEYS = [*ACTIONABLE_KEYS, COCKPIT_KEY, OWNER_KEY, PR_KEY]
 
 
 def _clear_pr_pill_keys(ref: str) -> None:
