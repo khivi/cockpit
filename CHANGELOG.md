@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.11.1](https://github.com/khivi/cockpit/compare/v2.11.0...v2.11.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* **tui:** strip inherited CMUX_SURFACE_ID from the diff subprocess ([#405](https://github.com/khivi/cockpit/issues/405)) ([6307263](https://github.com/khivi/cockpit/commit/6307263a161b0d2b263983c628a4fde5e64cd41e))
+
+
+### Documentation
+
+* **features:** add a What it costs section ([#407](https://github.com/khivi/cockpit/issues/407)) ([e798fed](https://github.com/khivi/cockpit/commit/e798feda87dd813542cc8045cc8255aac000ae14))
+
 ## [2.11.0](https://github.com/khivi/cockpit/compare/v2.10.0...v2.11.0) (2026-08-26)
 
 
