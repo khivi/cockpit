@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.0](https://github.com/khivi/cockpit/compare/v2.7.0...v2.8.0) (2026-08-26)
+
+
+### Features
+
+* **tui:** move sync and output to the command palette ([#396](https://github.com/khivi/cockpit/issues/396)) ([0609d27](https://github.com/khivi/cockpit/commit/0609d27852b424d71a43f8b417d6e046411269c1))
+
 ## [2.7.0](https://github.com/khivi/cockpit/compare/v2.6.4...v2.7.0) (2026-08-26)
 
 
