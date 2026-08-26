@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.0](https://github.com/khivi/cockpit/compare/v2.10.0...v2.11.0) (2026-08-26)
+
+
+### Features
+
+* **cmux:** fold CI into the sidebar PR pill ([#403](https://github.com/khivi/cockpit/issues/403)) ([f987b9f](https://github.com/khivi/cockpit/commit/f987b9f50f1089a1d150d3eccf2bdf2209b64c50))
+
 ## [2.10.0](https://github.com/khivi/cockpit/compare/v2.9.0...v2.10.0) (2026-08-26)
 
 
