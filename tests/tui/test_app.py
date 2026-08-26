@@ -1491,7 +1491,7 @@ async def test_enter_on_the_snoozed_fold_expands(monkeypatch, tmp_path):
 
 
 async def test_single_click_on_the_snoozed_fold_expands(monkeypatch, tmp_path):
-    # Same affordance as the `▸ N hidden` row, for the same reason: a disclosure
+    # Same affordance as the `▸ N repos hidden` row, for the same reason: a disclosure
     # triangle that needs a double-click doesn't read as one. Driven with the
     # cursor parked elsewhere, since `on_click` runs before DataTable moves it.
     inv, *_ = _snoozed_repo(monkeypatch, tmp_path)
@@ -1809,7 +1809,7 @@ async def test_single_click_on_hidden_row_expands():
         await pilot.pause()
         table = app.query_one(WorktreeTable)
         table.move_cursor(row=0)  # cursor elsewhere — do NOT pre-select the row
-        # y: header at 0, group header at 1, worktree at 2, `▸ 1 hidden` at 3.
+        # y: header at 0, group header at 1, worktree at 2, `▸ 1 repo hidden` at 3.
         await pilot.click(WorktreeTable, offset=(2, 3))
         await pilot.pause()
         assert app._show_hidden
@@ -1826,7 +1826,7 @@ async def test_enter_on_hidden_row_expands():
         await pilot.pause()
         table = app.query_one(WorktreeTable)
         table.focus()
-        table.move_cursor(row=2)  # the `▸ 1 hidden` row
+        table.move_cursor(row=2)  # the `▸ 1 repo hidden` row
         await pilot.press("enter")
         await pilot.pause()
         assert app._show_hidden
@@ -2257,7 +2257,7 @@ async def test_footer_hides_all_row_keys_on_group_header():
 
 async def test_footer_hide_key_shows_only_on_repo_rows():
     # `h` parks a whole repo, so its hint rides the rows that read as a repo —
-    # the group header, the `▸ N hidden` disclosure row, a revealed parked repo
+    # the group header, the `▸ N repos hidden` disclosure row, a revealed parked repo
     # (all HEADER_CAP) — and hides on a worktree row, where "Hide" would read as
     # "hide this row". Caps unknown (empty table) → full legend, so it shows.
     from cockpit.tui.widgets.footer_bar import FooterBar
@@ -3038,7 +3038,7 @@ async def test_escape_stashes_what_you_typed(monkeypatch, tmp_path):
 
 
 async def test_footer_hides_ask_repo_on_the_hidden_disclosure_row():
-    """HEADER_CAP covers three row kinds; the `▸ N hidden` row names no repo, so
+    """HEADER_CAP covers three row kinds; the `▸ N repos hidden` row names no repo, so
     a repo-scoped action can't resolve a target there — and in a single-repo
     config the sole-repo fallback would silently pick one it doesn't name."""
     from cockpit.tui.widgets.footer_bar import FooterBar
