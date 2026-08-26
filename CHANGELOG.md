@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.9.0](https://github.com/khivi/cockpit/compare/v2.8.0...v2.9.0) (2026-08-26)
+
+
+### Features
+
+* **tui:** open the PR diff in the row's own workspace ([#398](https://github.com/khivi/cockpit/issues/398)) ([67f308b](https://github.com/khivi/cockpit/commit/67f308b062c61315de5dc326c4824b8ac5e79058))
+
 ## [2.8.0](https://github.com/khivi/cockpit/compare/v2.7.0...v2.8.0) (2026-08-26)
 
 
