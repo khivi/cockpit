@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.10.0](https://github.com/khivi/cockpit/compare/v2.9.0...v2.10.0) (2026-08-26)
+
+
+### Features
+
+* **tui:** header menu replaces the footer's palette hint, keys explain on hover ([#399](https://github.com/khivi/cockpit/issues/399)) ([f3b69d9](https://github.com/khivi/cockpit/commit/f3b69d9345b337363c24d5627e83161190baaff8))
+
+
+### Bug Fixes
+
+* **sidebar:** give fold anchors a live shell so cmux stops reaping them ([#401](https://github.com/khivi/cockpit/issues/401)) ([d429269](https://github.com/khivi/cockpit/commit/d42926983c36a53595fbaa7c2df16b86834d36a4))
+
 ## [2.9.0](https://github.com/khivi/cockpit/compare/v2.8.0...v2.9.0) (2026-08-26)
 
 
