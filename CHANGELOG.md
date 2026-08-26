@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.4](https://github.com/khivi/cockpit/compare/v2.6.3...v2.6.4) (2026-08-26)
+
+
+### Bug Fixes
+
+* **tui:** show palette entries on an empty ^P and name the parked-repos count ([#389](https://github.com/khivi/cockpit/issues/389)) ([92d8169](https://github.com/khivi/cockpit/commit/92d81690f229c1afdde9182a4955602eb021c26d))
+
 ## [2.6.3](https://github.com/khivi/cockpit/compare/v2.6.2...v2.6.3) (2026-08-26)
 
 
