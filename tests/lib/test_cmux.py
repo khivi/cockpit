@@ -1335,7 +1335,7 @@ class _FakeCmux:
         # so the fake has to serve `new-workspace` + `list-workspaces` or every
         # caller silently takes the respawn-failed path instead.
         self.workspaces = ["workspace:99", "workspace:2", "workspace:1"]
-        self.next_spawn = "workspace:500"
+        self.next_spawn: str | None = "workspace:500"
 
     def __call__(self, *args, **_kwargs):
         self.calls.append(args)
