@@ -1752,6 +1752,24 @@ class CockpitApp(App[None]):
             self._notify("no PR for this row", severity="warning")
             return
         num = str(number)
+        # Open the split in the ROW's workspace, not cockpit's own. cmux's diff
+        # viewer lets you leave line-anchored comments, and they attach to the
+        # hosting workspace's composer — they ride that session's next submit
+        # (cmux's own `textbox.diffComments.tooltip`: "Diff review comments are
+        # included when you submit"). Defaulted, `cmux diff` targets
+        # `$CMUX_WORKSPACE_ID`, which for a daemon-spawned subprocess is the
+        # dashboard's own workspace — so the comments landed on a Textual TUI
+        # with no agent behind it and could never be addressed. They never reach
+        # GitHub either way; `p` is still the route to the PR.
+        #
+        # Degrade rather than refuse: a row with no workspace (`f` spawns one,
+        # `d` deliberately does not) and a backend hiccup both fall back to the
+        # untargeted call, which renders exactly as before minus a place to send
+        # comments — a diff you can read beats no diff.
+        try:
+            ref = self._workspace_ref(wt)
+        except (CmuxUnavailable, RuntimeError, OSError):
+            ref = None
         self._notify(f"opening diff for PR #{num}…")
         try:
             patch = subprocess.run(
@@ -1774,17 +1792,20 @@ class CockpitApp(App[None]):
                 f"diff: gh failed: {patch.stderr.strip()[:80]}", severity="error"
             )
             return
+        cmd = [
+            "cmux",
+            "diff",
+            "-",
+            "--title",
+            f"PR #{num} — {wt.label or wt.short}",
+            "--layout",
+            "unified",
+        ]
+        if ref:
+            cmd += ["--workspace", ref]
         try:
             proc = subprocess.run(
-                [
-                    "cmux",
-                    "diff",
-                    "-",
-                    "--title",
-                    f"PR #{num} — {wt.label or wt.short}",
-                    "--layout",
-                    "unified",
-                ],
+                cmd,
                 input=patch.stdout,
                 capture_output=True,
                 text=True,

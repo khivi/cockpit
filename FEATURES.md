@@ -80,7 +80,7 @@ registered repos shows no PR at all.
 | `f` | Focus this row's terminal — spawning one first if it doesn't have one yet |
 | `p` | Open the PR in a browser |
 | `t` | Open the linked ticket (Linear / Jira / GitHub / Trello) |
-| `d` | Open the PR's diff in cmux's viewer |
+| `d` | Open the PR's diff in cmux's viewer — comment on a line and it goes to that row's session |
 | `a` | Ask — send a line to this row's session; on a repo header, to every session in it |
 | `c` | Close the worktree + terminal |
 | `C` | Force close — overrides the open-PR refusal, never the ones that would lose work |
@@ -94,6 +94,14 @@ registered repos shows no PR at all.
 Footer hints follow the highlighted row. A row with no PR doesn't advertise `p`; a muted
 row's `m` reads **Unmute**; a backend that can't focus doesn't offer `f`. You never press
 a key that turns out to be meaningless here.
+
+**`d` is how you review your agent's work.** The diff opens in a browser split belonging to
+that row's terminal, so cmux's line comments have somewhere to go: click a line, leave a
+note, and the notes are handed to the agent on that branch the next time you submit in its
+composer. They stay local — nothing is posted to the PR, so use `p` for that — which makes
+`d` the fast loop for "this line is wrong, fix it" without leaving the dashboard. A row
+whose terminal isn't open yet still gets the diff; there's just nowhere to send comments
+until you press `f`.
 
 ---
 
