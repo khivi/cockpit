@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.0](https://github.com/khivi/cockpit/compare/v2.6.4...v2.7.0) (2026-08-26)
+
+
+### Features
+
+* **sidebar:** render the PR as a cockpit pill, not cmux's native row ([#394](https://github.com/khivi/cockpit/issues/394)) ([2543379](https://github.com/khivi/cockpit/commit/254337982ee34049fa4ac03261512a0c4e1f7ac1))
+
 ## [2.6.4](https://github.com/khivi/cockpit/compare/v2.6.3...v2.6.4) (2026-08-26)
 
 
