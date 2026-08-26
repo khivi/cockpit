@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.7.0](https://github.com/khivi/cockpit/compare/v2.6.2...v2.7.0) (2026-08-26)
+## [2.6.3](https://github.com/khivi/cockpit/compare/v2.6.2...v2.6.3) (2026-08-26)
 
 
 ### Features
