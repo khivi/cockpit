@@ -68,8 +68,8 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 | `c` · `C` | Close the worktree + workspace — [never discards work](FEATURES.md#closing-up) |
 | `m` · `z` | Mute indefinitely · [snooze until the PR changes](FEATURES.md#the-nudge) |
 | `n` · `h` | Start something new · park the row's repo, or reveal / un-park a parked one |
-| `s` · `o` · `q` | Sync · logs · quit |
-| `^P` | More — config, theme, and the [feature guide](FEATURES.md) |
+| `q` | Quit |
+| `^P` | More — sync, logs, config, theme, and the [feature guide](FEATURES.md) |
 
 ## Configuration
 

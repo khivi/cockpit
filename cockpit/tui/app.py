@@ -199,17 +199,15 @@ class CockpitApp(App[None]):
     #table > .datatable--cursor { background: $accent 30%; }
     """
 
-    # Add "Show config: …" to the built-in command palette (Ctrl+P).
+    # Add cockpit's own entries to the built-in command palette (Ctrl+P).
     COMMANDS = App.COMMANDS | {ConfigCommands}
 
     BINDINGS = [
-        ("s", "sync", "Sync now"),
         ("f", "focus_row", "Focus"),
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
         ("d", "open_diff", "Diff"),
         ("a", "ask_row", "Ask"),
-        ("o", "show_output", "Output"),
         ("c", "close_row", "Close"),
         ("C", "force_close_row", "Force close"),
         ("m", "mute_row", "Mute"),
@@ -423,8 +421,8 @@ class CockpitApp(App[None]):
     def _kick_slow(self, only_repo: str | None = None) -> None:
         # `only_repo` (a repo path) scopes the kick to one repo — a row keypress
         # refreshes just that row's repo, skipping the `gh` round-trips for every
-        # other repo. The periodic interval, SIGUSR1, startup, and the `s` sync
-        # key pass None for a full reconcile.
+        # other repo. The periodic interval, SIGUSR1, startup, and the palette's
+        # "Sync now" entry pass None for a full reconcile.
         if self._slow_phase != "idle":
             return
         self._slow_phase = "waiting"
@@ -806,8 +804,9 @@ class CockpitApp(App[None]):
         )
 
     def action_show_output(self) -> None:
-        # Captured tick output (bounded log tail) in a dismissable overlay
-        # (ConfigScreen is a generic text modal). Snapshot, not live.
+        # Palette-only (`^P` → "Output"). Captured tick output (bounded log
+        # tail) in a dismissable overlay (ConfigScreen is a generic text modal).
+        # Snapshot, not live.
         body = "\n".join(self._log_tail) or "(no tick output yet)"
         self.push_screen(ConfigScreen("slow / fast output", body))
 
@@ -825,6 +824,7 @@ class CockpitApp(App[None]):
     # ---- actions ---------------------------------------------------------
 
     def action_sync(self) -> None:
+        # Palette-only (`^P` → "Sync now"). Full-cycle, never repo-scoped.
         print("kick: manual sync — running cycle now")
         self._kick_slow()
 

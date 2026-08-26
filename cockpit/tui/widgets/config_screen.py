@@ -66,10 +66,20 @@ class ConfigScreen(ModalScreen[None]):
 
 
 class ConfigCommands(Provider):
-    """Command-palette entries for showing cockpit config."""
+    """Command-palette entries for cockpit's app-level actions."""
 
     # (label, app action, help text) — walked by BOTH `discover` and `search`.
     COMMANDS = (
+        (
+            "Sync now: run a full cycle",
+            "action_sync",
+            "Reconcile every repo immediately instead of waiting for the tick",
+        ),
+        (
+            "Output: recent tick log",
+            "action_show_output",
+            "Show the captured slow / fast tick output",
+        ),
         (
             "Show config: all repos",
             "action_show_full_config",
@@ -92,15 +102,15 @@ class ConfigCommands(Provider):
         return lambda: getattr(app, action)()
 
     async def discover(self) -> Hits:
-        """The three entries as they appear on an *empty* palette.
+        """Every entry as it appears on an *empty* palette.
 
         Textual calls `search` only once the box has a query, and the base
         `Provider.discover` yields nothing — so a provider implementing `search`
         alone is invisible the moment the palette opens, which is the only state
         someone hunting for these ever sees it in. Without this, `^P` listed
-        Textual's own system commands and nothing of cockpit's, leaving all three
-        entries reachable solely by typing a name you'd have no way to guess.
-        The feature guide has no key at all, so that made it unreachable.
+        Textual's own system commands and nothing of cockpit's, leaving every
+        entry reachable solely by typing a name you'd have no way to guess.
+        None of them has a key, so that made them unreachable.
         """
         for label, action, help_text in self.COMMANDS:
             yield DiscoveryHit(label, self._runner(action), text=label, help=help_text)

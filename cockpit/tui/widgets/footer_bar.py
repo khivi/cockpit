@@ -48,7 +48,7 @@ class FooterBar(Horizontal):
     """
 
     # Actions that operate on the selected row's workspace → left group. Anything
-    # not listed (sync, quit) is global → right.
+    # not listed (quit) is global → right.
     ROW_ACTIONS = frozenset(
         {
             "focus_row",
@@ -93,20 +93,16 @@ class FooterBar(Horizontal):
         # global keys.
         "hide_repo",
         "new_workspace",
-        "sync",
-        "show_output",
         "quit",
     )
 
     # One-word footer label per action — the BINDINGS descriptions are verbose
-    # ("Sync now", "Force close") and two open_* actions would both first-word to
-    # "Open". Unmapped actions fall back to the description's first word.
+    # ("Force close") and two open_* actions would both first-word to "Open".
+    # Unmapped actions fall back to the description's first word.
     LABELS = {
-        "sync": "Sync",
         "focus_row": "Focus",
         "open_pr": "PR",
         "open_ticket": "Ticket",
-        "show_output": "Output",
         "close_row": "Close",
         "force_close_row": "Force",
         "mute_row": "Mute",
@@ -211,9 +207,9 @@ class FooterBar(Horizontal):
 
         Not derived from BINDINGS: `ctrl+p` is Textual's own binding, not one of
         cockpit's, so nothing in `self._hints` would ever produce it. Without
-        this segment the palette is invisible — which is why "Show config",
-        "Edit config" and the feature guide were unreachable to anyone who
-        didn't already know the Textual convention.
+        this segment the palette is invisible — and it is the *only* route to
+        every `ConfigCommands` entry (sync, output, the config views, the
+        feature guide), none of which has a key.
 
         Labelled "More" rather than "Palette": it has to read as *there is
         something else here* to someone who is looking for a thing they can't
