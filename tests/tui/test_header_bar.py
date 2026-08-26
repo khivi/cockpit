@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Static
 
 from cockpit.tui.widgets.header_bar import (
     OFF,
@@ -18,6 +19,7 @@ from cockpit.tui.widgets.header_bar import (
     HeaderBar,
     _fmt,
     build_tooltip,
+    status_text,
 )
 
 # --- _fmt: sentinel decoding + normal countdowns -----------------------------
@@ -98,13 +100,69 @@ def test_tooltip_always_includes_base_descriptions_even_when_decoding():
     assert "disabled" in text.lower()
 
 
-# --- watcher wiring: proves the tooltip updates on reactive change, not just
-# --- at mount -----------------------------------------------------------------
+# --- status_text: pure function ----------------------------------------------
+
+
+def test_status_text_shows_the_slow_countdown_alone_by_default():
+    assert status_text("", 65, OFF) == "slow ⏱ 1:05"
+
+
+def test_status_text_leads_with_the_version_when_set():
+    text = status_text("9.9.9", 65, OFF)
+    assert text.startswith("[bold cyan]cockpit 9.9.9[/]")
+    assert "slow ⏱ 1:05" in text
+
+
+def test_status_text_adds_the_fast_countdown_when_the_fast_tick_is_on():
+    assert "fast ⏱ 0:20" in status_text("", 65, 20)
+
+
+# --- the two halves ----------------------------------------------------------
 
 
 class _HeaderBarHarness(App[None]):
     def compose(self) -> ComposeResult:
         yield HeaderBar()
+
+
+@pytest.mark.asyncio
+async def test_menu_half_carries_its_own_tooltip():
+    # The menu explains the menu: its own tooltip wins the ancestor walk over
+    # the bar's tick explanation.
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#header-menu", Static).tooltip == HeaderBar.MENU_TOOLTIP
+
+
+@pytest.mark.asyncio
+async def test_status_half_defers_to_the_bar_for_its_tooltip():
+    # It carries none of its own, so hovering the countdowns walks up to the
+    # bar and finds the slow/fast explanation.
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bar = app.query_one(HeaderBar)
+        assert app.query_one("#header-status", Static).tooltip is None
+        assert bar.tooltip == build_tooltip(bar.slow_remaining, bar.fast_remaining)
+
+
+@pytest.mark.asyncio
+async def test_status_half_repaints_when_a_countdown_changes():
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bar = app.query_one(HeaderBar)
+        bar.version_text = "9.9.9"
+        bar.slow_remaining = 65
+        await pilot.pause()
+        painted = str(app.query_one("#header-status", Static).render())
+        assert "cockpit 9.9.9" in painted
+        assert "slow ⏱ 1:05" in painted
+
+
+# --- watcher wiring: proves the tooltip updates on reactive change, not just
+# --- at mount -----------------------------------------------------------------
 
 
 @pytest.mark.asyncio

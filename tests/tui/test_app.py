@@ -2153,16 +2153,15 @@ async def test_footer_merges_close_and_force_into_one_segment():
 
 async def test_footer_global_group_orders_hide_new_first():
     # The global group renders Hide, New in that order regardless of BINDINGS
-    # order (FooterBar.GLOBAL_ORDER), with Quit trailing and `^P More` last.
-    # `h` leads so it sits against the row-key group — it's the repo-targeted
-    # key, the most row-adjacent of the globals.
+    # order (FooterBar.GLOBAL_ORDER), with Quit trailing. The menu is not here
+    # at all — it lives in the header (see test_header_advertises_the_menu).
     from cockpit.tui.widgets.footer_bar import FooterBar
 
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
         gt = app.query_one(FooterBar).global_text
-        assert gt.index("Hide") < gt.index("New") < gt.index("Quit") < gt.index("More")
+        assert gt.index("Hide") < gt.index("New") < gt.index("Quit")
 
 
 async def test_footer_advertises_no_sync_or_output_key():
@@ -3060,32 +3059,116 @@ async def test_footer_hides_ask_repo_on_the_hidden_disclosure_row():
     assert fb._label("ask_row", "Ask") == "Ask repo"
 
 
-async def test_footer_always_advertises_the_command_palette():
-    # `ctrl+p` is Textual's binding, not one of cockpit's, so nothing in
-    # BINDINGS would ever render it — without the static segment the palette
-    # (and so "Show config", "Edit config", and the feature guide) is invisible.
+async def test_header_advertises_the_menu_and_the_footer_no_longer_does():
+    # The command palette's only visible entry point. It is in the header, not
+    # the footer: without it, "Show config", "Edit config", "Sync now",
+    # "Output" and the feature guide are reachable only by someone who already
+    # knows `ctrl+p` is a convention.
+    from textual.widgets import Static
+
     from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.header_bar import HeaderBar
 
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert "^P" in app.query_one(FooterBar).global_text
-        assert "More" in app.query_one(FooterBar).global_text
+        menu = app.query_one("#header-menu", Static)
+        assert str(menu.render()) == HeaderBar.MENU_LABEL
+        # Clickable where it is painted, not merely marked up as such.
+        region = app.screen.find_widget(menu).region
+        meta = app.screen.get_style_at(region.x, region.y).meta
+        assert meta.get("@click") == "app.command_palette"
+        # The key is deliberately not printed on the bar — it is in the tooltip.
+        assert "^P" not in HeaderBar.MENU_LABEL
+        assert "ctrl+p" in HeaderBar.MENU_TOOLTIP
+        footer = app.query_one(FooterBar)
+        assert "command_palette" not in footer.global_text
 
 
-async def test_palette_hint_survives_a_row_with_no_capabilities():
-    # Every other global hint can be gated off (`h` hides on a worktree row).
-    # The palette targets the app, not the row, so no row state may suppress it
-    # — least of all the empty table a first-time user actually sees.
+async def test_menu_is_not_row_gated():
+    # Every footer hint can be gated off by row state (`h` hides on a worktree
+    # row). The menu targets the app, so it must survive any row state — least
+    # of all the empty table a first-time user actually sees.
+    from textual.widgets import Static
+
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.header_bar import HeaderBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one(FooterBar).set_row_state(frozenset())
+        await pilot.pause()
+        menu = app.query_one("#header-menu", Static)
+        assert str(menu.render()) == HeaderBar.MENU_LABEL
+
+
+async def test_footer_key_hover_explains_that_key():
+    # The footer's one-word labels say what a key is called, never what it
+    # does. Hovering a segment — key or label — sets the bar's tooltip to that
+    # action's explanation, read off the segment's own `@click` meta.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
         footer = app.query_one(FooterBar)
-        footer.row_caps = frozenset()
+        row = app.query_one("#footer-row")
+        region = app.screen.find_widget(row).region
+        seen: set[str] = set()
+        for x in range(region.x, region.x + region.width):
+            meta = app.screen.get_style_at(x, region.y).meta
+            action = str(meta.get("@click", "")).removeprefix("app.")
+            if action not in FooterBar.TOOLTIPS:
+                continue
+            await pilot.hover("#footer-row", offset=(x - region.x, 0))
+            assert footer.tooltip == FooterBar.TOOLTIPS[action], action
+            seen.add(action)
+        # Not just the first key: the whole legend explains itself.
+        assert {"focus_row", "open_pr", "close_row"} <= seen
+
+
+async def test_footer_hover_between_keys_clears_the_tooltip():
+    # A gap carries no `@click` meta, so nothing is being pointed at and the
+    # previous key's explanation must not linger over it.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
         await pilot.pause()
-        assert "^P" in footer.global_text
+        footer = app.query_one(FooterBar)
+        row = app.query_one("#footer-row")
+        region = app.screen.find_widget(row).region
+        columns = [
+            (x, "@click" in app.screen.get_style_at(x, region.y).meta)
+            for x in range(region.x, region.x + region.width)
+        ]
+        on_key = next(x for x, hit in columns if hit)
+        # The gap between two keys, not the empty run trailing the legend.
+        gap = next(x for x, hit in columns if not hit and x > on_key)
+
+        await pilot.hover("#footer-row", offset=(on_key - region.x, 0))
+        assert footer.tooltip is not None
+        await pilot.hover("#footer-row", offset=(gap - region.x, 0))
+        assert footer.tooltip is None
+
+
+async def test_every_advertised_footer_key_has_a_tooltip():
+    # A key with no hover text is one the footer names and never explains —
+    # exactly the gap this exists to close. Derived from what actually renders,
+    # so a new binding fails here rather than shipping mute.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        footer = app.query_one(FooterBar)
+        rendered = {
+            action
+            for key, action, _ in footer._hints
+            if not footer._skip(action) and action != "force_close_row"
+        }
+        assert rendered <= set(FooterBar.TOOLTIPS), rendered - set(FooterBar.TOOLTIPS)
 
 
 async def test_feature_guide_action_opens_the_docs_url(monkeypatch):
@@ -3146,18 +3229,22 @@ async def test_welcome_hint_never_breaks_startup_when_the_marker_is_unwritable(
         assert app.is_running
 
 
-async def test_palette_hint_is_not_clipped_at_a_narrow_terminal():
-    # `^P More` renders last in the global group, so it would be first to
-    # overflow — except the group is `width: auto` and the row group is `1fr`,
-    # so every squeeze lands on the row keys instead. Pinned at 80 columns (the
-    # classic floor); measured to survive to 55, below which the table itself is
-    # unusable.
+async def test_menu_is_not_clipped_at_a_narrow_terminal():
+    # The menu is `width: auto` against a `1fr` status half, so every squeeze
+    # lands on the countdowns instead. Pinned at 80 columns (the classic
+    # floor); below ~55 the table itself is unusable.
     from textual.widgets import Static
+
+    from cockpit.tui.widgets.header_bar import HeaderBar
 
     app, _ = _make_app()
     async with app.run_test(size=(80, 20)) as pilot:
         await pilot.pause()
-        glob = app.query_one("#footer-global", Static)
-        region = app.screen.find_widget(glob).region
+        menu = app.query_one("#header-menu", Static)
+        region = app.screen.find_widget(menu).region
         assert region.width > 0 and region.x >= 0
-        assert "^P" in app.export_screenshot()
+        # Top row, hard against the right edge — the corner a pointer goes to.
+        assert region.y == 0
+        assert region.right == 80
+        assert str(menu.render()) == HeaderBar.MENU_LABEL
+        assert "Menu" in app.export_screenshot()

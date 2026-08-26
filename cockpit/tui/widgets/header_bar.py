@@ -1,4 +1,4 @@
-"""Top bar: slow + fast tick countdowns.
+"""Top bar: slow + fast tick countdowns on the left, the menu on the right.
 
 Pure display: the app sets the reactive attributes each second; this widget
 just formats them. A remaining value of -1 means "tick running now", -2 means
@@ -8,7 +8,8 @@ waiting on the app's tick lock" (the other tick currently holds it).
 
 from __future__ import annotations
 
-from rich.console import RenderableType
+from textual.app import ComposeResult
+from textual.containers import Horizontal
 from textual.reactive import reactive
 from textual.widgets import Static
 
@@ -70,41 +71,89 @@ def build_tooltip(slow_remaining: int, fast_remaining: int) -> str:
     return "\n".join(lines)
 
 
-class HeaderBar(Static):
-    """A one-line bar; re-renders whenever a reactive changes."""
+def status_text(version_text: str, slow_remaining: int, fast_remaining: int) -> str:
+    """The left half: version + tick countdowns, as Textual markup."""
+    text = ""
+    if version_text:
+        text += f"[bold cyan]cockpit {version_text}[/]   "
+    text += f"slow ⏱ {_fmt(slow_remaining)}"
+    if fast_remaining != OFF:
+        text += f"   fast ⏱ {_fmt(fast_remaining)}"
+    return text
+
+
+class HeaderBar(Horizontal):
+    """A one-line bar; both halves repaint whenever a reactive changes."""
 
     DEFAULT_CSS = """
     HeaderBar {
         height: 1;
         background: $boost;
         color: $text;
-        padding: 0 1;
+    }
+    HeaderBar > #header-status {
+        width: 1fr;
+        content-align: left middle;
+        padding-left: 1;
+    }
+    HeaderBar > #header-menu {
+        width: auto;
+        color: $text-muted;
+        content-align: right middle;
+        padding-right: 1;
     }
     """
+
+    # The command palette's only visible entry point. It lives here rather than
+    # in the footer because it targets the app, not the cursor row — the footer
+    # is the row-key reference, gated per row, and every key in it is a letter
+    # you press. This one is clicked, so it sits in the corner a pointer goes
+    # to. The key is deliberately NOT printed: `ctrl+p` is Textual's binding,
+    # not one of cockpit's, and the label has to read as "there is something
+    # else here" to someone hunting for a thing they can't find. The glyph is
+    # what says clickable; the tooltip carries the key for anyone who wants it.
+    MENU_LABEL = "☰ Menu"
+    MENU_TOOLTIP = (
+        "Sync now, output log, show/edit config, theme, and the feature guide.\n"
+        "Click, or press ctrl+p."
+    )
 
     version_text: reactive[str] = reactive("")
     slow_remaining: reactive[int] = reactive(0)
     fast_remaining: reactive[int] = reactive(OFF)
 
+    def compose(self) -> ComposeResult:
+        yield Static("", id="header-status")
+        yield Static(
+            f"[@click=app.command_palette]{self.MENU_LABEL}[/]", id="header-menu"
+        )
+
     def on_mount(self) -> None:
         self._sync_tooltip()
+        # Its own tooltip, so it wins the ancestor walk over the bar's tick
+        # explanation — hovering the menu should explain the menu.
+        self.query_one("#header-menu", Static).tooltip = self.MENU_TOOLTIP
+        self._repaint()
+
+    def watch_version_text(self, version_text: str) -> None:
+        self._repaint()
 
     def watch_slow_remaining(self, slow_remaining: int) -> None:
         self._sync_tooltip()
+        self._repaint()
 
     def watch_fast_remaining(self, fast_remaining: int) -> None:
         self._sync_tooltip()
+        self._repaint()
 
     def _sync_tooltip(self) -> None:
-        # Never assign self.tooltip from render() (also reactive) — drive it
-        # from the watchers instead, so this can't turn into a refresh loop.
         self.tooltip = build_tooltip(self.slow_remaining, self.fast_remaining)
 
-    def render(self) -> RenderableType:
-        left = ""
-        if self.version_text:
-            left += f"[bold cyan]cockpit {self.version_text}[/]   "
-        left += f"slow ⏱ {_fmt(self.slow_remaining)}"
-        if self.fast_remaining != OFF:
-            left += f"   fast ⏱ {_fmt(self.fast_remaining)}"
-        return left
+    def _repaint(self) -> None:
+        # Watchers fire before compose has run, so there is nothing to query yet
+        # on the first assignments; on_mount paints the initial state.
+        if not self.is_mounted:
+            return
+        self.query_one("#header-status", Static).update(
+            status_text(self.version_text, self.slow_remaining, self.fast_remaining)
+        )
