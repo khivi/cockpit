@@ -1329,11 +1329,22 @@ class _FakeCmux:
 
     def __init__(self):
         self.calls: list[tuple] = []
-        self.anchor = "workspace:99"  # the spawned anchor
+        self.anchor = "workspace:99"  # the anchor `workspace-group create` spawns
         self.members = ["workspace:99", "workspace:2", "workspace:1"]
+        # `create_workspace_group` re-anchors onto a workspace it spawns itself,
+        # so the fake has to serve `new-workspace` + `list-workspaces` or every
+        # caller silently takes the respawn-failed path instead.
+        self.workspaces = ["workspace:99", "workspace:2", "workspace:1"]
+        self.next_spawn: str | None = "workspace:500"
 
     def __call__(self, *args, **_kwargs):
         self.calls.append(args)
+        if args[0] == "new-workspace":
+            if self.next_spawn is not None:
+                self.workspaces.append(self.next_spawn)
+            return ""
+        if args[0] == "list-workspaces":
+            return "\n".join(self.workspaces)
         if args[:2] == ("workspace-group", "create"):
             return json.dumps(
                 {
@@ -1354,29 +1365,27 @@ class _FakeCmux:
             )
         if args[0] == "close-workspace":
             self.members = [m for m in self.members if m != args[2]]
+            self.workspaces = [w for w in self.workspaces if w != args[2]]
         return ""
 
     def verbs(self) -> list[tuple]:
         return [a[:2] for a in self.calls if a[0] == "workspace-group"]
 
 
-def test_create_workspace_group_keeps_the_spawned_anchor_as_the_header():
+def test_create_workspace_group_keeps_a_dedicated_workspace_as_the_header():
     # The anchor's row IS the group header, so anchoring on a stack member
     # would swallow that member's row — a 2-PR stack showing one row under a
-    # header that says (2). The spawned anchor stays as a dedicated header.
+    # header that says (2). The anchor stays a dedicated workspace of its own
+    # (which one it is changes when it is swapped for a durable one; that it is
+    # never a member is the invariant).
     fake = _FakeCmux()
 
     with patch("cockpit.lib.cmux.cmux", side_effect=fake):
         group = create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
 
     assert group is not None
-    assert group.anchor == "workspace:99"
+    assert group.anchor not in ("workspace:1", "workspace:2")
     assert {"workspace:1", "workspace:2"} <= set(group.members)
-    assert fake.verbs() == [
-        ("workspace-group", "create"),
-        ("workspace-group", "set-icon"),
-    ]
-    assert [a for a in fake.calls if a[0] == "close-workspace"] == []
 
 
 def test_create_workspace_group_spawns_the_anchor_outside_every_repo():
@@ -1389,6 +1398,63 @@ def test_create_workspace_group_spawns_the_anchor_outside_every_repo():
 
     create = next(a for a in fake.calls if a[:2] == ("workspace-group", "create"))
     assert create[create.index("--cwd") + 1] == str(Path.home())
+
+
+def test_create_workspace_group_reanchors_onto_a_workspace_with_a_live_shell():
+    # `workspace-group create` spawns its anchor with no command, and a
+    # command-less cmux workspace has no terminal surface at all — so cmux
+    # reaps it and the fold dies silently (no dissolve runs, so nothing is
+    # logged), costing a full rebuild next slow cycle. The spawned anchor is
+    # therefore swapped for one that owns a live shell.
+    fake = _FakeCmux()
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake):
+        group = create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
+
+    assert group is not None
+    assert group.anchor == "workspace:500"
+    assert fake.verbs() == [
+        ("workspace-group", "create"),
+        ("workspace-group", "set-icon"),
+        ("workspace-group", "add"),
+        ("workspace-group", "set-anchor"),
+    ]
+    # Carrying a command is the whole point — that is what gives the workspace a
+    # terminal — and $HOME keeps it outside every registered repo.
+    spawn = next(a for a in fake.calls if a[0] == "new-workspace")
+    assert spawn[spawn.index("--command") + 1] == cmux_mod.ANCHOR_KEEPALIVE_COMMAND
+    assert spawn[spawn.index("--cwd") + 1] == str(Path.home())
+
+
+def test_create_workspace_group_closes_the_husk_anchor_through_the_self_close_funnel():
+    # A raw `close-workspace` would leave the resulting `workspace.closed` event
+    # looking like the user clicking cmux's ✕, which routes into teardown.
+    fake = _FakeCmux()
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake),
+        patch("cockpit.lib.cmux.cmux_close_workspace_best_effort") as close,
+    ):
+        create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
+
+    close.assert_called_once_with("workspace:99")
+
+
+def test_create_workspace_group_keeps_the_husk_anchor_when_the_respawn_fails():
+    # Fails open: a fold that may churn beats no fold at all.
+    fake = _FakeCmux()
+    fake.next_spawn = None
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake):
+        group = create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
+
+    assert group is not None
+    assert group.anchor == "workspace:99"
+    assert fake.verbs() == [
+        ("workspace-group", "create"),
+        ("workspace-group", "set-icon"),
+    ]
+    assert [a for a in fake.calls if a[0] == "close-workspace"] == []
 
 
 def test_create_workspace_group_passes_refs_leaf_first():
@@ -1458,6 +1524,8 @@ def test_create_workspace_group_collapses_when_asked():
         ("workspace-group", "create"),
         ("workspace-group", "set-icon"),
         ("workspace-group", "collapse"),
+        ("workspace-group", "add"),
+        ("workspace-group", "set-anchor"),
     ]
     collapse = next(a for a in fake.calls if a[:2] == ("workspace-group", "collapse"))
     assert collapse[2] == group.ref
