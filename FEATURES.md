@@ -60,9 +60,14 @@ persists your choice, and a link back to this guide. Click it, or press `ctrl+p`
 
 ### The sidebar card
 
-Every workspace cockpit tracks carries its PR's state as pills in the cmux sidebar — CI,
+Every workspace cockpit tracks carries its PR's state as pills in the cmux sidebar —
 uncommitted count, unresolved comments, merge conflict, approval, mute — plus the PR
-itself: `🟢 PR #332 open`, `⚪ draft`, `🟣 merged`, `🔴 closed`, in GitHub's own colours.
+itself: `🟢 PR #332 open ✓`, `⚪ draft`, `🟣 merged`, `🔴 closed`, in GitHub's own colours.
+
+**CI rides that same line**, as a trailing `✓` passing, `✗` failing, `•` pending, `?` errored
+— a card has few lines and CI never needs one of its own. A pill has a single colour, so a
+build that isn't passing takes it: a failing PR reads red whatever its state. The statusLine
+footer has room and keeps CI as its own pill.
 
 **Turn cmux's own PR row off when you use this.** Set `"sidebar": {"showPullRequests":
 false}` in `~/.config/cmux/cmux.json` and run `cmux reload-config`. cmux resolves a branch

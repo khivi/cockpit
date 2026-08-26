@@ -16,9 +16,15 @@ from cockpit.lib.git import Worktree
 from cockpit.lib.nudges import NudgePref
 from cockpit.lib.pills import KIND_ORDER, decide_pills, pr_status
 
+
 # `_pr()`'s defaults rendered as the trailing PR-identity pill. Every PR emits
-# one, so the equality cases below all carry it.
-OPEN_PR = {"kind": "pr", "number": 1, "status": "open"}
+# one, so the equality cases below all carry it. `ci` rides the payload because
+# cmux renders it as the pill's trailing glyph instead of a second pill.
+def _pr_kind(number: int = 1, status: str = "open", ci: str = "passed") -> dict:
+    return {"kind": "pr", "number": number, "status": status, "ci": ci}
+
+
+OPEN_PR = _pr_kind()
 
 
 def _pr(**overrides) -> PR:
@@ -64,16 +70,24 @@ def _wt(
     "pr_overrides,wt_kwargs,expected",
     [
         ({}, {}, [{"kind": "ci_passed"}, OPEN_PR]),
-        ({"ci": "none"}, {}, [OPEN_PR]),
+        ({"ci": "none"}, {}, [_pr_kind(ci="none")]),
         (
             {"review_decision": "APPROVED"},
             {},
             [{"kind": "ci_passed"}, {"kind": "approved"}, OPEN_PR],
         ),
-        ({"ci": "failed:lint"}, {}, [{"kind": "ci_failed", "phase": "lint"}, OPEN_PR]),
-        ({"ci": "failed"}, {}, [{"kind": "ci_failed", "phase": ""}, OPEN_PR]),
-        ({"ci": "pending"}, {}, [{"kind": "ci_pending"}, OPEN_PR]),
-        ({"ci": "unknown"}, {}, [{"kind": "ci_unknown"}, OPEN_PR]),
+        (
+            {"ci": "failed:lint"},
+            {},
+            [{"kind": "ci_failed", "phase": "lint"}, _pr_kind(ci="failed:lint")],
+        ),
+        (
+            {"ci": "failed"},
+            {},
+            [{"kind": "ci_failed", "phase": ""}, _pr_kind(ci="failed")],
+        ),
+        ({"ci": "pending"}, {}, [{"kind": "ci_pending"}, _pr_kind(ci="pending")]),
+        ({"ci": "unknown"}, {}, [{"kind": "ci_unknown"}, _pr_kind(ci="unknown")]),
         (
             {"review_decision": "CHANGES_REQUESTED"},
             {},
@@ -90,7 +104,7 @@ def _wt(
             [
                 {"kind": "ci_passed"},
                 {"kind": "state", "state": "MERGED"},
-                {"kind": "pr", "number": 1, "status": "merged"},
+                _pr_kind(status="merged"),
             ],
         ),
         (
@@ -163,14 +177,14 @@ def test_decide_pills_membership(pr_overrides, must_have, must_not_have):
 def test_state_pill_only_for_non_open():
     # OPEN + ci=none → the pr pill alone; MERGED/CLOSED add `state`.
     # ci_passed is independent of state (see ci_passed_coexists_with_merged_state).
-    assert decide_pills(_pr(state="OPEN", ci="none"), _wt()) == [OPEN_PR]
+    assert decide_pills(_pr(state="OPEN", ci="none"), _wt()) == [_pr_kind(ci="none")]
     assert decide_pills(_pr(state="MERGED", ci="none"), _wt()) == [
         {"kind": "state", "state": "MERGED"},
-        {"kind": "pr", "number": 1, "status": "merged"},
+        _pr_kind(status="merged", ci="none"),
     ]
     assert decide_pills(_pr(state="CLOSED", ci="none"), _wt()) == [
         {"kind": "state", "state": "CLOSED"},
-        {"kind": "pr", "number": 1, "status": "closed"},
+        _pr_kind(status="closed", ci="none"),
     ]
 
 
@@ -179,14 +193,23 @@ def test_state_pill_only_for_non_open():
 
 def test_pr_pill_is_last_and_names_the_pr():
     pills = decide_pills(_pr(number=332), _wt())
-    assert pills[-1] == {"kind": "pr", "number": 332, "status": "open"}
+    assert pills[-1] == _pr_kind(number=332)
     assert KIND_ORDER[-1] == "pr"
 
 
 def test_pr_pill_emitted_for_every_state_including_open():
     for state, status in (("OPEN", "open"), ("MERGED", "merged"), ("CLOSED", "closed")):
         pills = decide_pills(_pr(state=state), _wt())
-        assert pills[-1] == {"kind": "pr", "number": 1, "status": status}
+        assert pills[-1] == _pr_kind(status=status)
+
+
+def test_pr_pill_payload_carries_ci_for_the_cmux_glyph():
+    # cmux renders CI as this pill's trailing glyph rather than a second pill,
+    # so the payload has to carry it; the `ci_*` kinds stay for the footer.
+    for ci in ("passed", "failed:lint", "pending", "unknown", "none"):
+        pills = decide_pills(_pr(ci=ci), _wt())
+        assert pills[-1]["ci"] == ci
+        assert any(p["kind"].startswith("ci_") for p in pills) == (ci != "none")
 
 
 def test_pr_status_draft_only_supersedes_open():
