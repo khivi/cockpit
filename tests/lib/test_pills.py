@@ -14,7 +14,11 @@ import pytest
 from cockpit.lib.gh import PR
 from cockpit.lib.git import Worktree
 from cockpit.lib.nudges import NudgePref
-from cockpit.lib.pills import KIND_ORDER, decide_pills
+from cockpit.lib.pills import KIND_ORDER, decide_pills, pr_status
+
+# `_pr()`'s defaults rendered as the trailing PR-identity pill. Every PR emits
+# one, so the equality cases below all carry it.
+OPEN_PR = {"kind": "pr", "number": 1, "status": "open"}
 
 
 def _pr(**overrides) -> PR:
@@ -59,31 +63,35 @@ def _wt(
 @pytest.mark.parametrize(
     "pr_overrides,wt_kwargs,expected",
     [
-        ({}, {}, [{"kind": "ci_passed"}]),
-        ({"ci": "none"}, {}, []),
+        ({}, {}, [{"kind": "ci_passed"}, OPEN_PR]),
+        ({"ci": "none"}, {}, [OPEN_PR]),
         (
             {"review_decision": "APPROVED"},
             {},
-            [{"kind": "ci_passed"}, {"kind": "approved"}],
+            [{"kind": "ci_passed"}, {"kind": "approved"}, OPEN_PR],
         ),
-        ({"ci": "failed:lint"}, {}, [{"kind": "ci_failed", "phase": "lint"}]),
-        ({"ci": "failed"}, {}, [{"kind": "ci_failed", "phase": ""}]),
-        ({"ci": "pending"}, {}, [{"kind": "ci_pending"}]),
-        ({"ci": "unknown"}, {}, [{"kind": "ci_unknown"}]),
+        ({"ci": "failed:lint"}, {}, [{"kind": "ci_failed", "phase": "lint"}, OPEN_PR]),
+        ({"ci": "failed"}, {}, [{"kind": "ci_failed", "phase": ""}, OPEN_PR]),
+        ({"ci": "pending"}, {}, [{"kind": "ci_pending"}, OPEN_PR]),
+        ({"ci": "unknown"}, {}, [{"kind": "ci_unknown"}, OPEN_PR]),
         (
             {"review_decision": "CHANGES_REQUESTED"},
             {},
-            [{"kind": "ci_passed"}, {"kind": "changes_requested"}],
+            [{"kind": "ci_passed"}, {"kind": "changes_requested"}, OPEN_PR],
         ),
         (
             {"mergeable": "CONFLICTING"},
             {},
-            [{"kind": "ci_passed"}, {"kind": "conflict"}],
+            [{"kind": "ci_passed"}, {"kind": "conflict"}, OPEN_PR],
         ),
         (
             {"state": "MERGED"},
             {},
-            [{"kind": "ci_passed"}, {"kind": "state", "state": "MERGED"}],
+            [
+                {"kind": "ci_passed"},
+                {"kind": "state", "state": "MERGED"},
+                {"kind": "pr", "number": 1, "status": "merged"},
+            ],
         ),
         (
             {},
@@ -92,6 +100,7 @@ def _wt(
                 {"kind": "rebase"},
                 {"kind": "wip", "count": 4},
                 {"kind": "ci_passed"},
+                OPEN_PR,
             ],
         ),
     ],
@@ -118,7 +127,7 @@ def test_decide_pills_equality(pr_overrides, wt_kwargs, expected):
     [
         (
             {"is_draft": True, "review_decision": "APPROVED"},
-            ["ci_passed", "draft", "approved"],
+            ["ci_passed", "draft", "approved", "pr"],
         ),
     ],
     ids=["draft_and_approved_coexist"],
@@ -152,15 +161,52 @@ def test_decide_pills_membership(pr_overrides, must_have, must_not_have):
 
 
 def test_state_pill_only_for_non_open():
-    # OPEN + ci=none → no pills; MERGED/CLOSED + ci=none → state pill only.
+    # OPEN + ci=none → the pr pill alone; MERGED/CLOSED add `state`.
     # ci_passed is independent of state (see ci_passed_coexists_with_merged_state).
-    assert decide_pills(_pr(state="OPEN", ci="none"), _wt()) == []
+    assert decide_pills(_pr(state="OPEN", ci="none"), _wt()) == [OPEN_PR]
     assert decide_pills(_pr(state="MERGED", ci="none"), _wt()) == [
-        {"kind": "state", "state": "MERGED"}
+        {"kind": "state", "state": "MERGED"},
+        {"kind": "pr", "number": 1, "status": "merged"},
     ]
     assert decide_pills(_pr(state="CLOSED", ci="none"), _wt()) == [
-        {"kind": "state", "state": "CLOSED"}
+        {"kind": "state", "state": "CLOSED"},
+        {"kind": "pr", "number": 1, "status": "closed"},
     ]
+
+
+# ── pr pill ─────────────────────────────────────────────────────────────────
+
+
+def test_pr_pill_is_last_and_names_the_pr():
+    pills = decide_pills(_pr(number=332), _wt())
+    assert pills[-1] == {"kind": "pr", "number": 332, "status": "open"}
+    assert KIND_ORDER[-1] == "pr"
+
+
+def test_pr_pill_emitted_for_every_state_including_open():
+    for state, status in (("OPEN", "open"), ("MERGED", "merged"), ("CLOSED", "closed")):
+        pills = decide_pills(_pr(state=state), _wt())
+        assert pills[-1] == {"kind": "pr", "number": 1, "status": status}
+
+
+def test_pr_status_draft_only_supersedes_open():
+    # A draft is only ever OPEN on GitHub; if one is closed, `closed` is the
+    # more useful label, and MERGED is unreachable for a draft.
+    assert pr_status(_pr(is_draft=True, state="OPEN")) == "draft"
+    assert pr_status(_pr(is_draft=True, state="CLOSED")) == "closed"
+    assert pr_status(_pr(is_draft=False, state="OPEN")) == "open"
+
+
+def test_draft_pill_still_emitted_alongside_pr_pill():
+    # decide_pills keeps `draft` for the footer; only the cmux renderer drops it
+    # (see tests/lib/test_cmux.py). Losing it here would take the footer's too.
+    kinds = [p["kind"] for p in decide_pills(_pr(is_draft=True), _wt())]
+    assert "draft" in kinds
+    assert kinds[-1] == "pr"
+
+
+def test_pr_pill_dropped_without_a_number():
+    assert all(p["kind"] != "pr" for p in decide_pills(_pr(number=0), _wt()))
 
 
 def test_wip_dropped_when_no_worktree():
@@ -191,6 +237,7 @@ def test_full_house_canonical_order():
         "conflict",
         "draft",
         "approved",
+        "pr",
     ]
 
 
@@ -202,9 +249,13 @@ def test_muted_first_in_kind_order():
 
 
 def test_muted_pref_none_or_empty_emits_no_muted():
-    assert [p["kind"] for p in decide_pills(_pr(), _wt(), pref=None)] == ["ci_passed"]
+    assert [p["kind"] for p in decide_pills(_pr(), _wt(), pref=None)] == [
+        "ci_passed",
+        "pr",
+    ]
     assert [p["kind"] for p in decide_pills(_pr(), _wt(), pref=NudgePref())] == [
-        "ci_passed"
+        "ci_passed",
+        "pr",
     ]
 
 
@@ -217,7 +268,7 @@ def test_muted_anchors_front():
 def test_muted_does_not_suppress_ci_passed_sentinel():
     pref = NudgePref(muted=True)
     kinds = [p["kind"] for p in decide_pills(_pr(), _wt(), pref=pref)]
-    assert kinds == ["muted", "ci_passed"]
+    assert kinds == ["muted", "ci_passed", "pr"]
 
 
 def test_muted_coexists_with_actionable_pills():

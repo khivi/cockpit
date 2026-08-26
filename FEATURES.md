@@ -58,6 +58,21 @@ closes out from under you. Press `s` to force a sync; `o` shows the daemon log; 
 footer's **More**) opens a palette holding your resolved config, an editor for it, a theme
 picker that persists your choice, and a link back to this guide.
 
+### The sidebar card
+
+Every workspace cockpit tracks carries its PR's state as pills in the cmux sidebar — CI,
+uncommitted count, unresolved comments, merge conflict, approval, mute — plus the PR
+itself: `🟢 PR #332 open`, `⚪ draft`, `🟣 merged`, `🔴 closed`, in GitHub's own colours.
+
+**Turn cmux's own PR row off when you use this.** Set `"sidebar": {"showPullRequests":
+false}` in `~/.config/cmux/cmux.json` and run `cmux reload-config`. cmux resolves a branch
+to a PR itself, and when a branch has carried more than one it can show you the earlier,
+closed one — so a reused branch name reads as a dead PR. Cockpit's pill comes from the
+open PR it already tracks, so it can't. Left on, you get both numbers on one card.
+
+The trade: cockpit's pill only reaches workspaces it tracks, so a terminal outside your
+registered repos shows no PR at all.
+
 ### Keys
 
 | Key | Does |

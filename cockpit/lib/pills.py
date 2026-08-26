@@ -10,9 +10,20 @@ display order.
 
 The `state` kind (MERGED/CLOSED) is emitted always; surfaces decide whether to
 render it. cmux drops it (via a `None` renderer in cmux._CMUX_RENDERERS) because
-cmux already surfaces merge state natively in the sidebar. Footer keeps it
-because the statusLine renders in any git dir indefinitely, including
+the `pr` kind below already carries the state. Footer keeps it because the
+statusLine renders in any git dir indefinitely, including
 merged-but-not-cleaned-up worktrees (e.g. dirty worktrees autoclose skips).
+
+The `pr` kind is the one pill that names the PR itself (number + state), and it
+exists because cmux's *native* sidebar PR row resolves a branch to the wrong PR
+when that branch has carried more than one: a second PR on a reused branch
+renders as the first, closed one. That row is not settable from cockpit (it is
+cmux's own GitHub integration — no `pr` key in `list-status`, no field on
+`workspace.list`), so the only fix is to turn it off (`sidebar.showPullRequests:
+false` in `~/.config/cmux/cmux.json`) and render our own from `ctx.prs`, which
+is `is:open`-scoped and so cannot pick a stale PR. Draftness rides here too —
+which is why cmux drops the separate `draft` pill, and why turning
+`showPullRequests` back on double-renders both PR number and draft state.
 """
 
 from __future__ import annotations
@@ -47,7 +58,18 @@ KIND_ORDER = (
     "draft",
     "approved",
     "state",
+    "pr",
 )
+
+
+def pr_status(pr: PR) -> str:
+    """`draft` / `open` / `merged` / `closed` for the `pr` pill's label.
+
+    Draftness only supersedes OPEN: a closed draft is more usefully described as
+    closed, and MERGED is unreachable for a draft.
+    """
+    state = (pr.state or "OPEN").lower()
+    return "draft" if pr.is_draft and state == "open" else state
 
 
 def _muted_pill(pref: NudgePref | None) -> dict | None:
@@ -100,4 +122,6 @@ def decide_pills(
         pills.append({"kind": "approved"})
     if pr.state and pr.state != "OPEN":
         pills.append({"kind": "state", "state": pr.state})
+    if pr.number:
+        pills.append({"kind": "pr", "number": pr.number, "status": pr_status(pr)})
     return pills

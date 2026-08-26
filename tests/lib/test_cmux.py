@@ -21,6 +21,7 @@ from cockpit.lib.cmux import (
     GREEN,
     MUTED_KEY,
     PARKED_KEY,
+    PR_KEY,
     WORKSPACE_COLORS,
     YELLOW,
     CmuxUnavailable,
@@ -128,20 +129,24 @@ def test_apply_pills_clears_legacy_managed_key():
 # ── status_pills (cmux mapper) ──────────────────────────────────────────────
 
 
+OPEN_PR_PILL = ("pr", "🟢 PR #1 open", "#16a34a")
+
+
 def test_cmux_status_pills_matches_decisions():
     out = status_pills(_pr(ci="failed:lint", unaddressed=2), _wt(dirty=1))
     assert out == [
         ("wip", "✏️ 1 dirty", "#ff9500"),
         ("ci", "❌ ci:lint", "#eb445a"),
         ("comments", "💬 2 unaddressed", "#eb445a"),
+        OPEN_PR_PILL,
     ]
 
 
 def test_cmux_drops_state_pill():
-    # cmux suppresses the `state` pill (sidebar surfaces merge state natively);
+    # cmux suppresses the `state` pill — the `pr` pill already carries MERGED.
     # ci_passed still renders so the user sees CI status alongside merge.
     out = status_pills(_pr(state="MERGED"), _wt())
-    assert out == [("ci", "✓ ci", "#16a34a")]
+    assert out == [("ci", "✓ ci", "#16a34a"), ("pr", "🟣 PR #1 merged", "#8957e5")]
 
 
 def test_cmux_conflict_emits_merge_key():
@@ -149,12 +154,59 @@ def test_cmux_conflict_emits_merge_key():
     assert out == [
         ("ci", "✓ ci", "#16a34a"),
         ("merge", "⚠️ conflict", "#ff9500"),
+        OPEN_PR_PILL,
     ]
 
 
 def test_cmux_ci_unknown_renders_error_pill():
     out = status_pills(_pr(ci="unknown"), _wt())
-    assert out == [("ci", "⚠️ ci error", "#eb445a")]
+    assert out == [("ci", "⚠️ ci error", "#eb445a"), OPEN_PR_PILL]
+
+
+# ── pr pill (replaces cmux's native sidebar PR row) ──────────────────────────
+
+
+def test_cmux_pr_pill_icon_and_color_track_state():
+    assert status_pills(_pr(number=332), _wt())[-1] == (
+        "pr",
+        "🟢 PR #332 open",
+        "#16a34a",
+    )
+    assert status_pills(_pr(number=332, is_draft=True), _wt())[-1] == (
+        "pr",
+        "⚪ PR #332 draft",
+        "#6b7280",
+    )
+    assert status_pills(_pr(number=330, state="MERGED"), _wt())[-1] == (
+        "pr",
+        "🟣 PR #330 merged",
+        "#8957e5",
+    )
+    assert status_pills(_pr(number=296, state="CLOSED"), _wt())[-1] == (
+        "pr",
+        "🔴 PR #296 closed",
+        "#eb445a",
+    )
+
+
+def test_cmux_drops_draft_pill_because_the_pr_pill_says_draft():
+    # Both would print draftness on one card. The footer keeps its own `draft`
+    # pill — only this renderer drops it.
+    out = status_pills(_pr(is_draft=True), _wt())
+    assert all(k != "draft" for k, _, _ in out)
+    assert out[-1] == ("pr", "⚪ PR #1 draft", "#6b7280")
+
+
+def test_apply_pills_clears_the_pr_key():
+    # Without this the pill would survive `clear_pr_pills` on a reused branch —
+    # the exact stale-PR bug cmux's native row has.
+    calls: list[tuple] = []
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: calls.append(a)):
+        apply_pills("workspace:1", _pr(), _wt())
+
+    cleared = {args[1] for args in calls if args and args[0] == "clear-status"}
+    assert PR_KEY in cleared
 
 
 def test_cmux_owner_pill_added_for_coworker():

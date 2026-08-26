@@ -667,7 +667,7 @@ def test_write_pr_cache_includes_pills(tmp_path, monkeypatch):
 
     assert "pills" in payload
     kinds = [p["kind"] for p in payload["pills"]]
-    assert kinds == ["wip", "ci_failed", "approved"]
+    assert kinds == ["wip", "ci_failed", "approved", "pr"]
 
     on_disk = cache_mod.find_pr_payload("khivi/feature", repo_name="testrepo")
     assert on_disk is not None
