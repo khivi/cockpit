@@ -29,7 +29,7 @@ from .git import Worktree
 from .issue_color import issue_color
 from .log_format import verb
 from .nudges import NudgePref
-from .pills import decide_pills
+from .pills import ci_glyph, decide_pills
 from .prompts import (
     build_orphan_prompt,
     build_pr_prompt,
@@ -84,7 +84,7 @@ DEVDONE_ICON = "🏁"
 MUTED_KEY = "muted"
 MUTED_ICON = "🔇"
 
-# The PR-identity pill (`🟢 PR #332 open`), replacing cmux's native sidebar PR
+# The PR-identity pill (`🟢 PR #332 open ✓`), replacing cmux's native sidebar PR
 # row — see the `pr` paragraph in pills.py for why that row can't be trusted or
 # configured. Passive like `devdone`, so it stays out of ACTIONABLE_KEYS, but it
 # IS written by apply_pills and so must be cleared with the rest.
@@ -98,6 +98,10 @@ PR_STATUS_STYLE = {
     "merged": ("🟣", PURPLE),
     "closed": ("🔴", RED),
 }
+
+# CI overriding the status colour above, for the non-passing states only.
+# `failed` is prefix-matched (it carries a `:phase` suffix), so it isn't here.
+_CI_PILL_COLOR = {"pending": ORANGE, "unknown": RED}
 
 ACTIONABLE_KEYS = (
     "ci",
@@ -900,9 +904,19 @@ def find_cockpit_workspaces(
 
 
 def _pr_pill(p: dict) -> tuple[str, str, str]:
-    """`pr` kind → the PR-identity pill. Unknown status falls back to grey."""
+    """`pr` kind → the PR-identity pill, with CI as a trailing glyph.
+
+    Unknown status falls back to grey. A pill carries exactly one colour, so a
+    CI that isn't passing takes it: red `✗` is the actionable half of the line,
+    and a green "open" saying nothing about a broken build is the reading this
+    replaces. A passing or absent CI leaves GitHub's colour language alone.
+    """
     icon, color = PR_STATUS_STYLE.get(p["status"], ("🔀", GREY))
-    return (PR_KEY, f"{icon} PR #{p['number']} {p['status']}", color)
+    ci = str(p.get("ci") or "")
+    color = RED if ci.startswith("failed") else _CI_PILL_COLOR.get(ci, color)
+    label = f"{icon} PR #{p['number']} {p['status']}"
+    glyph = ci_glyph(ci)
+    return (PR_KEY, f"{label} {glyph}" if glyph else label, color)
 
 
 _CMUX_RENDERERS = {
@@ -910,18 +924,19 @@ _CMUX_RENDERERS = {
     "rebase": lambda _p: ("rebase", "🔄 rebasing", ORANGE),
     "merge": lambda _p: ("merge", "🔀 merging", ORANGE),
     "wip": lambda p: ("wip", f"✏️ {p['count']} dirty", ORANGE),
-    "ci_failed": lambda p: ("ci", f"❌ ci:{p['phase']}", RED),
-    "ci_pending": lambda _p: ("ci", "⏳ ci pending", ORANGE),
-    "ci_passed": lambda _p: ("ci", "✓ ci", GREEN),
-    "ci_unknown": lambda _p: ("ci", "⚠️ ci error", RED),
+    # The four `ci_*` kinds join `draft` and `state` as footer-only: the `pr`
+    # pill below already names draftness, MERGED/CLOSED and CI, so rendering any
+    # of them here would print the same fact twice on one card. All six stay
+    # emitted by decide_pills — the footer renders them, and `state` is besides
+    # load-bearing for merged-but-dirty workspaces, where autoclose is blocked
+    # and a non-OPEN PR persists in `ctx.prs` across cycles.
+    "ci_failed": lambda _p: None,
+    "ci_pending": lambda _p: None,
+    "ci_passed": lambda _p: None,
+    "ci_unknown": lambda _p: None,
     "unaddressed": lambda p: ("comments", f"💬 {p['count']} unaddressed", RED),
     "changes_requested": lambda _p: ("comments", "💬 changes requested", RED),
     "conflict": lambda _p: ("merge", "⚠️ conflict", ORANGE),
-    # `draft` and `state` are both footer-only: the `pr` pill below already
-    # names draftness and MERGED/CLOSED, so rendering either here would print
-    # the same fact twice on one card. `state` stays emitted by decide_pills
-    # because it is load-bearing for merged-but-dirty workspaces, where
-    # autoclose is blocked and a non-OPEN PR persists in `ctx.prs` across cycles.
     "draft": lambda _p: None,
     "approved": lambda _p: ("approved", "✅ approved", GREEN),
     "state": lambda _p: None,

@@ -129,38 +129,36 @@ def test_apply_pills_clears_legacy_managed_key():
 # ── status_pills (cmux mapper) ──────────────────────────────────────────────
 
 
-OPEN_PR_PILL = ("pr", "🟢 PR #1 open", "#16a34a")
+OPEN_PR_PILL = ("pr", "🟢 PR #1 open ✓", "#16a34a")
 
 
 def test_cmux_status_pills_matches_decisions():
     out = status_pills(_pr(ci="failed:lint", unaddressed=2), _wt(dirty=1))
     assert out == [
         ("wip", "✏️ 1 dirty", "#ff9500"),
-        ("ci", "❌ ci:lint", "#eb445a"),
         ("comments", "💬 2 unaddressed", "#eb445a"),
-        OPEN_PR_PILL,
+        ("pr", "🟢 PR #1 open ✗", "#eb445a"),
     ]
 
 
 def test_cmux_drops_state_pill():
-    # cmux suppresses the `state` pill — the `pr` pill already carries MERGED.
-    # ci_passed still renders so the user sees CI status alongside merge.
+    # cmux suppresses the `state` pill — the `pr` pill already carries MERGED,
+    # and its trailing glyph carries CI.
     out = status_pills(_pr(state="MERGED"), _wt())
-    assert out == [("ci", "✓ ci", "#16a34a"), ("pr", "🟣 PR #1 merged", "#8957e5")]
+    assert out == [("pr", "🟣 PR #1 merged ✓", "#8957e5")]
 
 
 def test_cmux_conflict_emits_merge_key():
     out = status_pills(_pr(mergeable="CONFLICTING"), _wt())
     assert out == [
-        ("ci", "✓ ci", "#16a34a"),
         ("merge", "⚠️ conflict", "#ff9500"),
         OPEN_PR_PILL,
     ]
 
 
-def test_cmux_ci_unknown_renders_error_pill():
+def test_cmux_ci_unknown_reddens_the_pr_pill():
     out = status_pills(_pr(ci="unknown"), _wt())
-    assert out == [("ci", "⚠️ ci error", "#eb445a"), OPEN_PR_PILL]
+    assert out == [("pr", "🟢 PR #1 open ?", "#eb445a")]
 
 
 # ── pr pill (replaces cmux's native sidebar PR row) ──────────────────────────
@@ -169,24 +167,73 @@ def test_cmux_ci_unknown_renders_error_pill():
 def test_cmux_pr_pill_icon_and_color_track_state():
     assert status_pills(_pr(number=332), _wt())[-1] == (
         "pr",
-        "🟢 PR #332 open",
+        "🟢 PR #332 open ✓",
         "#16a34a",
     )
     assert status_pills(_pr(number=332, is_draft=True), _wt())[-1] == (
         "pr",
-        "⚪ PR #332 draft",
+        "⚪ PR #332 draft ✓",
         "#6b7280",
     )
     assert status_pills(_pr(number=330, state="MERGED"), _wt())[-1] == (
         "pr",
-        "🟣 PR #330 merged",
+        "🟣 PR #330 merged ✓",
         "#8957e5",
     )
     assert status_pills(_pr(number=296, state="CLOSED"), _wt())[-1] == (
         "pr",
-        "🔴 PR #296 closed",
+        "🔴 PR #296 closed ✓",
         "#eb445a",
     )
+
+
+def test_cmux_drops_ci_pills_because_the_pr_pill_carries_ci():
+    # Both would print CI on one card. decide_pills still emits the `ci_*`
+    # kinds for the footer — only this renderer drops them.
+    for ci in ("passed", "failed:lint", "pending", "unknown"):
+        out = status_pills(_pr(ci=ci), _wt())
+        assert all(k != "ci" for k, _, _ in out), ci
+
+
+def test_cmux_pr_pill_glyph_and_color_track_ci():
+    # A pill carries one colour, so a non-passing CI takes it from the PR state.
+    for ci, glyph, color in (
+        ("passed", "✓", "#16a34a"),
+        ("failed:lint", "✗", "#eb445a"),
+        ("failed", "✗", "#eb445a"),
+        ("pending", "•", "#ff9500"),
+        ("unknown", "?", "#eb445a"),
+    ):
+        assert status_pills(_pr(ci=ci), _wt())[-1] == (
+            "pr",
+            f"🟢 PR #1 open {glyph}",
+            color,
+        ), ci
+
+
+def test_cmux_failing_ci_outranks_the_pr_state_color():
+    # A red ✗ on a grey draft is the whole point: the state colour would say
+    # nothing about the broken build.
+    assert status_pills(_pr(is_draft=True, ci="failed:1"), _wt())[-1] == (
+        "pr",
+        "⚪ PR #1 draft ✗",
+        "#eb445a",
+    )
+
+
+def test_cmux_passing_ci_leaves_the_state_color_alone():
+    # Otherwise every merged PR with green CI would render green, not purple.
+    assert status_pills(_pr(state="MERGED"), _wt())[-1][2] == "#8957e5"
+
+
+def test_cmux_pr_pill_has_no_trailing_space_without_ci():
+    assert status_pills(_pr(ci="none"), _wt())[-1] == ("pr", "🟢 PR #1 open", "#16a34a")
+
+
+def test_ci_stays_in_actionable_keys_so_an_upgraded_install_clears_it():
+    # The renderer no longer writes `ci=`, but an install that ran an older
+    # cockpit still has one on its cards; only this membership sweeps it.
+    assert "ci" in ACTIONABLE_KEYS
 
 
 def test_cmux_drops_draft_pill_because_the_pr_pill_says_draft():
@@ -194,7 +241,7 @@ def test_cmux_drops_draft_pill_because_the_pr_pill_says_draft():
     # pill — only this renderer drops it.
     out = status_pills(_pr(is_draft=True), _wt())
     assert all(k != "draft" for k, _, _ in out)
-    assert out[-1] == ("pr", "⚪ PR #1 draft", "#6b7280")
+    assert out[-1] == ("pr", "⚪ PR #1 draft ✓", "#6b7280")
 
 
 def test_apply_pills_clears_the_pr_key():
@@ -868,9 +915,9 @@ def test_devdone_not_in_actionable_keys():
 def test_status_pills_mute_emits_muted_tuple_at_front():
     pref = NudgePref(muted=True)
     out = status_pills(_pr(), _wt(), pref=pref)
-    # muted anchors the row; ci_passed still emits since muted doesn't suppress it.
+    # muted anchors the row; the pr pill still emits since muted doesn't suppress it.
     assert out[0] == (MUTED_KEY, "🔇 muted", YELLOW)
-    assert any(k == "ci" for k, _, _ in out)
+    assert out[-1] == OPEN_PR_PILL
 
 
 def test_status_pills_no_mute_no_muted_tuple():

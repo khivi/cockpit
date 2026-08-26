@@ -14,6 +14,11 @@ the `pr` kind below already carries the state. Footer keeps it because the
 statusLine renders in any git dir indefinitely, including
 merged-but-not-cleaned-up worktrees (e.g. dirty worktrees autoclose skips).
 
+The four `ci_*` kinds are the same story: cmux drops them because the `pr` kind
+carries `ci` in its payload and renders it as a trailing glyph, so a card would
+otherwise spend two of its few lines on one PR. The footer has a whole line per
+pill and keeps them.
+
 The `pr` kind is the one pill that names the PR itself (number + state), and it
 exists because cmux's *native* sidebar PR row resolves a branch to the wrong PR
 when that branch has carried more than one: a second PR on a reused branch
@@ -123,5 +128,12 @@ def decide_pills(
     if pr.state and pr.state != "OPEN":
         pills.append({"kind": "state", "state": pr.state})
     if pr.number:
-        pills.append({"kind": "pr", "number": pr.number, "status": pr_status(pr)})
+        pills.append(
+            {
+                "kind": "pr",
+                "number": pr.number,
+                "status": pr_status(pr),
+                "ci": pr.ci,
+            }
+        )
     return pills
