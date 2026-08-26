@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.3](https://github.com/khivi/cockpit/compare/v2.6.2...v2.6.3) (2026-08-26)
+
+
+### Features
+
+* **dev:** sandboxed dev runs, a --dry daemon mode, and machine-local runtime state ([#391](https://github.com/khivi/cockpit/issues/391)) ([15e2587](https://github.com/khivi/cockpit/commit/15e25876340fb7ebfe65c06cb306b97d1790e9bf))
+
 ## [2.6.2](https://github.com/khivi/cockpit/compare/v2.6.1...v2.6.2) (2026-08-25)
 
 
