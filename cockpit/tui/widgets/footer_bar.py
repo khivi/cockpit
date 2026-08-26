@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
@@ -114,6 +115,63 @@ class FooterBar(Horizontal):
         "quit": "Quit",
     }
 
+    # `c` and `C` share one footer slot, so they share one tooltip — hovering
+    # either letter has to explain both, since neither is described anywhere
+    # else on screen.
+    _CLOSE_TOOLTIP = (
+        "c closes the workspace and removes the worktree; C additionally "
+        "overrides the refusal on a PR that is still open.\n"
+        "Neither ever discards uncommitted changes or unlanded commits — those "
+        "refuse both ways, naming what is in the way."
+    )
+
+    # Hover text per action: the sentence the one-word label can't carry.
+    # Keyed by action, matched off the hovered segment's `@click` meta
+    # (`on_mouse_move`), so a segment's whole width — key and label — explains
+    # itself. An action missing here simply has no tooltip.
+    TOOLTIPS = {
+        "focus_row": (
+            "Go to this row's workspace, spawning one first if it doesn't have "
+            "one yet."
+        ),
+        "open_pr": "Open this row's pull request on GitHub in your browser.",
+        "open_ticket": (
+            "Open the ticket this PR delivers — Linear, Jira, GitHub issue or "
+            "Trello card, whichever the repo tracks — in your browser."
+        ),
+        "open_diff": (
+            "Show this PR's diff in cmux's viewer: syntax-highlighted, in a "
+            "browser split beside the dashboard."
+        ),
+        "ask_row": (
+            "Send one line to this row's Claude session. A session that is "
+            "mid-turn or waiting on a permission prompt refuses it, and your "
+            "text is kept.\n"
+            "On a repo header it goes to every session in that repo."
+        ),
+        "close_row": _CLOSE_TOOLTIP,
+        "force_close_row": _CLOSE_TOOLTIP,
+        "mute_row": (
+            "Stop nudging me about this PR, indefinitely. Press again to unmute."
+        ),
+        "snooze_row": (
+            "Not my turn: fold this PR into the repo's snoozed section and go "
+            "quiet.\n"
+            "It wakes itself on review activity or on new trouble like CI going "
+            "red — there is no timer."
+        ),
+        "hide_repo": (
+            "Park this repo: it stops polling GitHub, its rows fold into "
+            "'▸ N repos hidden', and its idle workspaces close.\n"
+            "Nothing is torn down — no worktree removed, no branch deleted."
+        ),
+        "new_workspace": (
+            "Start new work. A branch name, PR number, ticket id, or Slack link "
+            "becomes a worktree with a workspace on it."
+        ),
+        "quit": "Quit the dashboard. The reconcile daemon stops with it.",
+    }
+
     # Row actions that stay advertised on a repo group header, where every
     # other row key is suppressed. `a` is one key whose meaning is read off the
     # cursor row (the `h` pattern): on a worktree row it asks that session, on a
@@ -199,31 +257,20 @@ class FooterBar(Horizontal):
         return self.LABELS.get(action) or (desc.split()[0] if desc else action)
 
     def _seg(self, key: str, action: str, desc: str) -> str:
-        # Clickable key (bold) + one-word label, via a Textual markup action link.
-        return f"[@click=app.{action}][b]{key}[/b][/] {self._label(action, desc)}"
-
-    def _palette_seg(self) -> str:
-        """`^P More` — the command palette, always advertised, never gated.
-
-        Not derived from BINDINGS: `ctrl+p` is Textual's own binding, not one of
-        cockpit's, so nothing in `self._hints` would ever produce it. Without
-        this segment the palette is invisible — and it is the *only* route to
-        every `ConfigCommands` entry (sync, output, the config views, the
-        feature guide), none of which has a key.
-
-        Labelled "More" rather than "Palette": it has to read as *there is
-        something else here* to someone who is looking for a thing they can't
-        find, which is the only moment it matters. It renders last (appended
-        after `GLOBAL_ORDER`) because it targets the app, not the table, and it
-        is the one hint with no row or backend state to follow."""
-        return "[@click=app.command_palette][b]^P[/b][/] More"
+        # Clickable key (bold) + one-word label, via a Textual markup action
+        # link. The link spans the label too, not just the key: it carries the
+        # `@click` meta `on_mouse_move` reads, so wrapping the whole segment is
+        # what makes the *label* hoverable — and pointing at the word is what
+        # anyone hunting for an explanation does.
+        return f"[@click=app.{action}][b]{key}[/b] {self._label(action, desc)}[/]"
 
     def _close_seg(self, close_key: str, force_key: str | None) -> str:
         # `c/C Close`: close and force-close share one footer slot. Each letter
         # stays independently clickable (`c` → close, `C` → force). `force_close_row`
-        # is folded in here rather than rendered as its own segment.
+        # is folded in here rather than rendered as its own segment. The shared
+        # label links back to `close_row`, whose tooltip describes both.
         close_link = f"[@click=app.close_row][b]{close_key}[/b][/]"
-        label = self._label("close_row", "Close")
+        label = f"[@click=app.close_row]{self._label('close_row', 'Close')}[/]"
         if force_key is None:
             return f"{close_link} {label}"
         force_link = f"[@click=app.force_close_row][b]{force_key}[/b][/]"
@@ -235,6 +282,21 @@ class FooterBar(Horizontal):
 
     def on_mount(self) -> None:
         self._rebuild()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """Explain whichever key the pointer is over.
+
+        The hints are two `Static`s of concatenated markup, not a widget per
+        key, so there is nothing per-key to hang a tooltip on — but every
+        segment already carries an action link, and Textual puts that action in
+        the hovered cell's style meta. So the segment under the pointer names
+        itself, and this sets the bar's own tooltip to match; the children carry
+        none, so the ancestor walk lands here. A gap between segments has no
+        meta and clears it."""
+        action = str(event.style.meta.get("@click", "")).removeprefix("app.")
+        tooltip = self.TOOLTIPS.get(action)
+        if tooltip != self.tooltip:
+            self.tooltip = tooltip
 
     def set_row_state(self, caps: frozenset[str] | None) -> None:
         """Set the highlighted row's capability tokens and re-render. `None` (no
@@ -354,7 +416,6 @@ class FooterBar(Horizontal):
                 right.append((order, len(right), seg))
         right.sort()
         right_segs = [seg for _, _, seg in right]
-        right_segs.append(self._palette_seg())
         self.row_text = "   ".join(left)
         self.global_text = "   ".join(right_segs)
         self.query_one("#footer-row", Static).update(self.row_text)

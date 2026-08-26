@@ -69,7 +69,8 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 | `m` · `z` | Mute indefinitely · [snooze until the PR changes](FEATURES.md#the-nudge) |
 | `n` · `h` | Start something new · park the row's repo, or reveal / un-park a parked one |
 | `q` | Quit |
-| `^P` | More — sync, logs, config, theme, and the [feature guide](FEATURES.md) |
+
+Hover any footer key for a sentence on what it does. **☰ Menu**, top right, holds sync, logs, config, theme, and the [feature guide](FEATURES.md) — click it, or press `ctrl+p`.
 
 ## Configuration
 
