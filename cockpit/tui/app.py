@@ -1803,6 +1803,14 @@ class CockpitApp(App[None]):
         ]
         if ref:
             cmd += ["--workspace", ref]
+        # Drop the inherited `CMUX_SURFACE_ID`: it is `--surface`'s default, the
+        # surface the split is cut from, and the daemon carries whichever one
+        # launched it. A *stale* value is fatal (`not_found: Source surface not
+        # found`, observed), while an *absent* one is fine — cmux resolves a
+        # surface in the target workspace itself. Since `--workspace` already
+        # says where the split belongs, cockpit's own surface is never the
+        # answer, so unsetting it is both the fix and the correct default.
+        env = {k: v for k, v in os.environ.items() if k != "CMUX_SURFACE_ID"}
         try:
             proc = subprocess.run(
                 cmd,
@@ -1810,6 +1818,7 @@ class CockpitApp(App[None]):
                 capture_output=True,
                 text=True,
                 timeout=30,
+                env=env,
             )
         except (OSError, ValueError, subprocess.SubprocessError) as e:
             self._notify(f"diff: cmux failed: {e}", severity="error")

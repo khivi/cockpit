@@ -2805,6 +2805,28 @@ async def test_diff_still_opens_untargeted_without_a_workspace(monkeypatch, tmp_
     assert args[:3] == ["cmux", "diff", "-"]
 
 
+async def test_diff_drops_the_inherited_source_surface(monkeypatch, tmp_path):
+    """`CMUX_SURFACE_ID` is `--surface`'s default — the surface the split is cut
+    from — and the daemon carries whichever one launched it. Stale, cmux fails
+    the whole call with `not_found: Source surface not found`; absent, it
+    resolves one in the target workspace itself."""
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+    monkeypatch.setenv("CMUX_SURFACE_ID", "DEAD-BEEF")
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", "keep-me")
+    seen: list = []
+
+    def _run(args, **kwargs):
+        seen.append((args, kwargs.get("env")))
+        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
+
+    monkeypatch.setattr("subprocess.run", _run)
+    await _press_d(monkeypatch, wt, [])
+
+    env = next(e for a, e in seen if a[0] == "cmux")
+    assert "CMUX_SURFACE_ID" not in env
+    assert env["CMUX_WORKSPACE_ID"] == "keep-me"  # only the one variable goes
+
+
 async def test_diff_survives_a_backend_hiccup_resolving_the_workspace(
     monkeypatch, tmp_path
 ):
