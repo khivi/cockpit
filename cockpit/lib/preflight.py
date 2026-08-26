@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from .colors import yellow
+from .config import COCKPIT_HOME, COCKPIT_RUNTIME_DIR
 from .tool import resolve_tool
 
 REQUIRED_BINARIES = ("gh", "git")
@@ -490,6 +491,104 @@ def _warn_cockpit_not_on_path() -> None:
         )
 
 
+_CONFLICT_MARKERS = ("conflicted copy", ".sync-conflict-")
+
+
+def _warn_sync_conflicts() -> None:
+    """Soft-warn when a file-sync client has left a conflicted copy in
+    `$COCKPIT_HOME`.
+
+    `_atomic_write_text`'s `os.replace` is atomic *on one machine*. It says
+    nothing about two machines editing the same synced file: Dropbox resolves
+    that by renaming one side to `config (conflicted copy 2026-08-25).json` and
+    keeping the other. Nothing reads the renamed file, so an edit — a repo you
+    registered, a `use_cship` opt-in, a theme — is silently gone, and the only
+    visible symptom is a setting that "didn't take".
+
+    Cockpit cannot prevent this (the resolution happens outside the process,
+    after the write returns), so surfacing it is the whole fix. Warn, never die:
+    a conflicted copy means a *past* lost write, and refusing to start over one
+    helps nobody.
+
+    Matches only the two unambiguous spellings. iCloud's `<name> 2.json`,
+    Google Drive's `<name> (1).json` and OneDrive's `<name>-<machine>.json`
+    collide with ordinary filenames, and a false alarm here trains the user to
+    ignore a warning that means real data loss.
+    """
+    try:
+        found = sorted(
+            p
+            for p in COCKPIT_HOME.rglob("*")
+            if p.is_file() and any(m in p.name for m in _CONFLICT_MARKERS)
+        )
+    except OSError:
+        return
+    if not found:
+        return
+    shown = ", ".join(p.name for p in found[:3])
+    more = f" (+{len(found) - 3} more)" if len(found) > 3 else ""
+    print(
+        f"{yellow('cockpit:')} {len(found)} sync-conflict file(s) in "
+        f"{COCKPIT_HOME}: {shown}{more}. A conflicted copy means an edit on one "
+        "machine was overwritten by another and now lives in a file nothing "
+        "reads — reconcile it by hand, then delete it. Cockpit's pidfile and "
+        "close-request queue are machine-local and must not be synced.",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _warn_legacy_runtime_state() -> None:
+    """Soft-warn about a pidfile / close-request queue left in `$COCKPIT_HOME`.
+
+    Both moved to `$COCKPIT_RUNTIME_DIR` because they are machine-local: the
+    pidfile is a bare integer and a marker's `ref` is a cmux workspace id, so a
+    synced COCKPIT_HOME let two machines fight over one pidfile and drain each
+    other's teardown queue.
+
+    The old files are deliberately **not read and not deleted**. Not read
+    because honouring a queued close from an unidentified machine is the exact
+    bug being fixed; not deleted because another machine may still be running
+    an older cockpit against the same synced directory, and removing its live
+    pidfile mid-run is the failure this whole change exists to prevent.
+
+    The legacy pidfile IS liveness-checked, though, because relocating it opens
+    a one-time hole in single-daemon mutual exclusion: a pre-upgrade daemon
+    holds `$COCKPIT_HOME/cockpit.pid`, the new build's `claim_pidfile` looks
+    only at the new path, finds nothing, and starts — two daemons on one machine
+    both writing cells, spawning workspaces and nudging. `claim_pidfile` cannot
+    check the old path itself (on a *synced* home that pid belongs to another
+    machine and would block startup forever), so this warns loudly instead and
+    leaves the call.
+    """
+    legacy_pid = COCKPIT_HOME / "cockpit.pid"
+    legacy = [p for p in (legacy_pid, COCKPIT_HOME / "state") if p.exists()]
+    if not legacy:
+        return
+    names = ", ".join(p.name for p in legacy)
+    print(
+        f"{yellow('cockpit:')} leftover machine-local state in {COCKPIT_HOME} "
+        f"({names}). The pidfile and close-request queue now live in "
+        f"{COCKPIT_RUNTIME_DIR} — these are no longer read. Delete them once "
+        "every machine sharing this directory is upgraded.",
+        file=sys.stderr,
+        flush=True,
+    )
+    try:
+        old_pid = int(legacy_pid.read_text().strip())
+        os.kill(old_pid, 0)
+    except (OSError, ValueError):
+        return
+    print(
+        f"{yellow('cockpit:')} pid {old_pid} from that legacy pidfile is still "
+        "ALIVE. If that is a pre-upgrade cockpit on this machine, stop it before "
+        "continuing — it holds the old pidfile, this build claims the new one, "
+        "and two daemons would both spawn workspaces and nudge.",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _warn_unresolvable_base(cfg: dict) -> None:
     """Soft-warn when a managed repo's `origin/{default_base}` doesn't resolve.
 
@@ -665,6 +764,8 @@ def preflight(cfg: dict, *, for_setup: bool = False) -> None:
                 )
 
     validate_config(cfg)
+    _warn_sync_conflicts()
+    _warn_legacy_runtime_state()
     _warn_unresolvable_base(cfg)
 
     if cfg.get("tool", "auto") == "auto":

@@ -8,7 +8,10 @@ Two channels live here because they're two halves of the same conversation:
 
   - **Signal**: `kick_running` (SIGUSR1 to wake).
   - **Queue**: `enqueue` / `iter_pending` / `pop` / `prune_stale` — durable
-    JSON markers under `$COCKPIT_HOME/state/close-requests/<repo>/<ref>.json`.
+    JSON markers under `$COCKPIT_RUNTIME_DIR/close-requests/<repo>/<ref>.json`.
+    Machine-local, NOT under `$COCKPIT_HOME`: a marker's `ref` is a cmux
+    workspace id, so a synced queue lets one machine tear down another's
+    workspace. See `config.COCKPIT_RUNTIME_DIR`.
     The TUI's close action writes a marker when the daemon is up; the daemon
     drains them each cycle through `orchestrators.teardown.teardown`. Markers older
     than `STALE_SECONDS` are pruned silently — long enough for a brief daemon
@@ -25,7 +28,7 @@ import sys
 import time
 from pathlib import Path
 
-from .config import COCKPIT_HOME, PID_FILE
+from .config import COCKPIT_RUNTIME_DIR, PID_FILE
 from .teardown_types import TeardownRequest
 
 
@@ -64,7 +67,7 @@ def kick_running(*, quiet: bool = False) -> bool:
     return True
 
 
-STATE_DIR = COCKPIT_HOME / "state" / "close-requests"
+STATE_DIR = COCKPIT_RUNTIME_DIR / "close-requests"
 STALE_SECONDS = 3600
 
 

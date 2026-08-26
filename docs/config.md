@@ -8,6 +8,31 @@ by `cockpit new` / `registry.register_cwd`.
 The config is read **once per process** (`config.py::load_config`) — edits are picked up
 on the next daemon start, not mid-run.
 
+## State directories
+
+Cockpit writes to two directories, and the split matters if you sync your dotfiles.
+
+| Directory | Default | Override | Holds | Safe to sync? |
+| --- | --- | --- | --- | --- |
+| Config + cache | `~/.config/cockpit` | `$COCKPIT_HOME` | `config.json`, PR cache, nudge prefs (mute/snooze), `hidden-repos.json` | **Yes** — host-neutral, and syncing it carries your repo list and mutes between machines |
+| Runtime | `$XDG_STATE_HOME/cockpit`, else `~/.local/state/cockpit` | `$COCKPIT_RUNTIME_DIR` | `cockpit.pid`, `close-requests/` | **No** — machine-local |
+
+The runtime directory deliberately does **not** follow `$COCKPIT_HOME`. Its contents only
+mean something on the machine that wrote them: the pidfile is a bare process id, and a
+close-request's `ref` is a cmux workspace id. Sync them and two machines fight over one
+pidfile — each seeing the other's pid as either a live daemon (refusing to start) or a
+stale one (reclaiming it) — and either can drain the other's teardown queue, closing a
+workspace that on this machine is something else entirely.
+
+It is not under `$TMPDIR` (where the statusline's flat cells live) because the pidfile is
+how `cockpit close` and `cockpit new` *find* the daemon. `TMPDIR` resolves differently
+depending on how a process was started — `/var/folders/…` from a login shell, `/tmp` under
+launchd or a stripped environment — so the two sides would look in different places.
+
+If you upgraded from a version that kept these under `$COCKPIT_HOME`, cockpit warns once at
+startup and names the leftovers. They are no longer read; delete `cockpit.pid` and `state/`
+from `$COCKPIT_HOME` once every machine sharing the directory is upgraded.
+
 **How settings are set.** Every field below is set by editing `config.json` directly —
 `cockpit setup` is not a config wizard. The **one** setting it prompts for is `use_cship`
 (the footer statusline), and only because it also installs the required cship/starship

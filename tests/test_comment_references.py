@@ -190,7 +190,10 @@ def test_backticked_paths_in_comments_still_exist(
     """
     stale: list[str] = []
     for name, sites in sorted(references.items()):
-        base = name.split("::")[0]
+        # A repo-root script is normally named the way it is invoked
+        # (`./dev.sh`, `./setup.sh`), and the suffix match below can never
+        # resolve that: tracked paths are repo-relative with no leading "./".
+        base = name.split("::")[0].removeprefix("./")
         if not _PATH_RE.match(base) or base in _EXTERNAL_PATHS:
             continue
         if any(rel == base or rel.endswith("/" + base) for rel in tracked):
@@ -201,3 +204,12 @@ def test_backticked_paths_in_comments_still_exist(
         "Comments name files that do not exist. Fix the path, or add it to "
         "_EXTERNAL_PATHS if it lives in another repo:\n" + "\n".join(stale)
     )
+
+
+def test_a_repo_root_script_resolves_when_named_as_invoked(tracked):
+    """`./dev.sh` must resolve. Tracked paths are repo-relative with no leading
+    "./", so without normalization the suffix match can never hit one — and a
+    root script is normally named the way it is run."""
+    assert "dev.sh" in tracked
+    base = "./dev.sh".removeprefix("./")
+    assert any(rel == base or rel.endswith("/" + base) for rel in tracked)

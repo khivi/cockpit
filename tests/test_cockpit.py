@@ -63,7 +63,7 @@ def test_cli_watch_does_not_touch_footer_files(tmp_path, monkeypatch):
     import cockpit.cockpit as cockpit
 
     importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda: {})
+    monkeypatch.setattr(cockpit, "_build_state", lambda *_a: {})
     monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: 0)
 
     assert cockpit.main(["--watch"]) == 0
@@ -84,7 +84,7 @@ def test_cli_watch_reasserts_existing_claude_integration(tmp_path, monkeypatch):
     import cockpit.cockpit as cockpit
 
     importlib.reload(cockpit)
-    monkeypatch.setattr(cockpit, "_build_state", lambda: {})
+    monkeypatch.setattr(cockpit, "_build_state", lambda *_a: {})
     monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: 0)
     reasserted = []
     monkeypatch.setattr(cockpit, "claude_integration_present", lambda: True)
@@ -97,6 +97,70 @@ def test_cli_watch_reasserts_existing_claude_integration(tmp_path, monkeypatch):
 
     assert cockpit.main(["--watch"]) == 0
     assert reasserted == ["hooks", "cmds"]
+
+
+def test_watch_dry_flag_reaches_the_cycle(tmp_path, monkeypatch):
+    """`--dry` is the whole safety gate `./dev.sh` leans on: it stops autoclose
+    removing worktrees and `git branch -D`ing their refs, which `tool: none`
+    does NOT cover (autoclose goes through git, not the workspace backend). A
+    flag that parses but never reaches `cycle_all` would be silently unsafe, so
+    assert the value all the way through rather than just on the parsed args."""
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+    built: list[dict] = []
+
+    def _record(dry: bool = False) -> dict:
+        built.append({"dry": dry})
+        return built[-1]
+
+    monkeypatch.setattr(cockpit, "_watch", lambda state, *_a, **_kw: 0)
+    monkeypatch.setattr(cockpit, "_build_state", _record)
+
+    assert cockpit.main(["--watch", "--dry"]) == 0
+    assert built[-1]["dry"] is True
+
+
+def test_once_with_threads_dry_into_the_cycle(monkeypatch):
+    """The other half of the gate: a flag that lands in `state` but never
+    reaches `cycle_all` would be silently unsafe — autoclose would still remove
+    worktrees and `git branch -D` their refs."""
+    import cockpit.cockpit as cockpit
+
+    seen: list[bool] = []
+    monkeypatch.setattr(cockpit, "load_config", lambda: {"repos": []})
+    monkeypatch.setattr(cockpit, "gh_self_user", lambda: "khivi")
+    monkeypatch.setattr(cockpit, "cycle_all", lambda *_a, **kw: seen.append(kw["dry"]))
+
+    cockpit._once_with(cockpit._build_state(True))
+    cockpit._once_with(cockpit._build_state(False))
+    assert seen == [True, False]
+
+
+def test_watch_is_not_dry_by_default(tmp_path, monkeypatch):
+    """The real daemon must keep acting — `--dry` is opt-in, never the default."""
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+    built: list[dict] = []
+
+    def _record(dry: bool = False) -> dict:
+        built.append({"dry": dry})
+        return built[-1]
+
+    monkeypatch.setattr(cockpit, "_watch", lambda state, *_a, **_kw: 0)
+    monkeypatch.setattr(cockpit, "_build_state", _record)
+
+    assert cockpit.main(["--watch"]) == 0
+    assert built[-1]["dry"] is False
 
 
 def test_cli_exits_when_use_cship_and_cship_missing(tmp_path, monkeypatch, capsys):
@@ -486,3 +550,44 @@ def test_fast_tick_writes_a_cost_cell_per_worktree(tmp_path, monkeypatch):
     cockpit._fast_tick({})
 
     assert costed == [wt.path for wt in wts]
+
+
+def test_fast_tick_does_not_touch_cmux_under_dry(tmp_path, monkeypatch):
+    """`--dry` promises never to act, but the fast tick is a second path to the
+    same effects: it renames and recolours the user's LIVE cmux workspaces every
+    30s, independent of the reconcile cycle's `ctx.dry`. The disk-cache
+    republish beside it is local and deliberately still runs."""
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+    touched: list[str] = []
+    monkeypatch.setattr(
+        cockpit,
+        "workspace_state",
+        lambda: ({"workspace:1": "n"}, {"workspace:1": tmp_path}),
+    )
+    monkeypatch.setattr(
+        cockpit, "reconcile_workspace_names", lambda *_a: touched.append("rename")
+    )
+    monkeypatch.setattr(
+        cockpit, "_tint_repo_workspaces", lambda *_a: touched.append("tint")
+    )
+    republished: list[bool] = []
+    monkeypatch.setattr(
+        cockpit, "republish_pr_caches_from_disk", lambda: republished.append(True)
+    )
+    monkeypatch.setattr(
+        cockpit,
+        "load_config",
+        lambda: {"repos": [{"path": str(tmp_path), "name": "r"}]},
+    )
+    monkeypatch.setattr(cockpit, "worktrees", lambda *_a: [])
+
+    cockpit._fast_tick(cockpit._build_state(True))
+    assert touched == []
+    assert republished == [True]  # local republish still runs
+
+    cockpit._fast_tick(cockpit._build_state(False))
+    assert touched == ["rename", "tint"]

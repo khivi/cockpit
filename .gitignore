@@ -23,3 +23,6 @@ uv.lock
 # Per-worktree planning scratch
 PLAN.md
 plan.md
+
+# ./dev.sh sandbox (COCKPIT_HOME + TMPDIR for a dev run); re-seeded every run
+.cockpit-dev/

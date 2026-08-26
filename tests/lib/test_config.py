@@ -11,9 +11,12 @@ update — long after the test would have flagged it if we had one.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 DEFAULTS = Path(__file__).resolve().parent.parent.parent / "cockpit" / "defaults"
 
@@ -2181,3 +2184,121 @@ def test_credential_env_names_tolerates_a_malformed_config():
     # raise (preflight is what rejects it).
     names = config_mod.credential_env_names({"repos": ["junk"], "orgs": "junk"})
     assert "LINEAR_API_KEY" in names
+
+
+def test_atomic_write_uses_a_pid_scoped_temp(tmp_path, monkeypatch):
+    """A fixed `<name>.tmp` is shared scratch. Several cockpit processes write
+    these files concurrently (daemon, `cockpit close`, a detached `cockpit
+    new`), so two of them would write one path and `os.replace` it in turn —
+    the loser's whole content landing under the winner's name. `os.replace`
+    prevents a *torn* file, not a wrong one."""
+    dest = tmp_path / "config.json"
+    seen: list[str] = []
+    real_replace = config_mod.os.replace
+
+    def _spy(src, dst):
+        seen.append(Path(src).name)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(config_mod.os, "replace", _spy)
+    config_mod._atomic_write_text(dest, "one\n")
+
+    assert dest.read_text() == "one\n"
+    assert seen == [f"config.json.tmp.{os.getpid()}"]
+
+
+def test_atomic_write_temps_do_not_collide_across_processes(tmp_path, monkeypatch):
+    """The property that matters: two writers never share a scratch path."""
+    dest = tmp_path / "config.json"
+    temps: set[str] = set()
+
+    for pid in (111, 222):
+        monkeypatch.setattr(config_mod.os, "getpid", lambda pid=pid: pid)
+        real_replace = config_mod.os.replace
+
+        def _spy(src, dst, _r=real_replace):
+            temps.add(Path(src).name)
+            _r(src, dst)
+
+        monkeypatch.setattr(config_mod.os, "replace", _spy)
+        config_mod._atomic_write_text(dest, f"{pid}\n")
+
+    assert len(temps) == 2
+
+
+def test_atomic_write_leaves_no_temp_behind_when_the_write_fails(tmp_path, monkeypatch):
+    """On a synced directory litter is uploaded and propagated to every other
+    machine, so a failed write must not strand its scratch file."""
+    dest = tmp_path / "config.json"
+
+    def _boom(src, dst):
+        raise OSError("sync client says no")
+
+    monkeypatch.setattr(config_mod.os, "replace", _boom)
+    with pytest.raises(OSError):
+        config_mod._atomic_write_text(dest, "x\n")
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_runtime_dir_does_not_follow_cockpit_home(tmp_path, monkeypatch):
+    """The invariant of the split. COCKPIT_HOME is host-neutral and commonly
+    synced (Dropbox/iCloud/Drive); the pidfile is a bare integer and a
+    close-request's `ref` is a cmux workspace id, so both mean a different
+    thing on a different machine. If the runtime dir tracked COCKPIT_HOME,
+    syncing one would sync the other and two machines could drain each other's
+    teardown queue."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "synced-home"))
+    monkeypatch.delenv("COCKPIT_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+    reloaded = importlib.reload(config_mod)
+    try:
+        assert tmp_path / "xdg-state" / "cockpit" == reloaded.COCKPIT_RUNTIME_DIR
+        assert reloaded.PID_FILE.parent == reloaded.COCKPIT_RUNTIME_DIR
+        assert tmp_path / "synced-home" not in reloaded.PID_FILE.parents
+    finally:
+        # undo() first: reloading while the test's env is still set would
+        # re-derive COCKPIT_HOME/CONFIG_PATH/CACHE_DIR onto a tmp_path that is
+        # deleted after this test, leaking them into every later test here.
+        monkeypatch.undo()
+        importlib.reload(config_mod)
+
+
+def test_runtime_dir_defaults_under_local_state(tmp_path, monkeypatch):
+    """Not $TMPDIR, where FLAT_CACHE_DIR lives: the pidfile is an IPC
+    rendezvous between the daemon and the `cockpit close`/`cockpit new` CLIs,
+    and TMPDIR resolves differently per launch context (/var/folders/... from a
+    login shell, /tmp under launchd), so the two would look in different
+    places."""
+    import importlib
+
+    monkeypatch.delenv("COCKPIT_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    reloaded = importlib.reload(config_mod)
+    try:
+        assert (
+            tmp_path / "home" / ".local" / "state" / "cockpit"
+        ) == reloaded.COCKPIT_RUNTIME_DIR
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config_mod)
+
+
+def test_ensure_state_dirs_creates_the_runtime_dir(tmp_path, monkeypatch):
+    """`claim_pidfile` calls this before writing; without the mkdir a fresh
+    install fails on a missing directory instead of starting."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("COCKPIT_RUNTIME_DIR", str(tmp_path / "runtime"))
+    reloaded = importlib.reload(config_mod)
+    try:
+        reloaded.ensure_state_dirs()
+        assert (tmp_path / "runtime").is_dir()
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config_mod)

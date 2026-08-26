@@ -42,16 +42,62 @@ from .trello import TRELLO_API_KEY_ENV, TRELLO_API_TOKEN_ENV
 
 def _atomic_write_text(path: Path, text: str) -> None:
     """Write text via a temp file + os.replace so a crash can't leave a
-    truncated config. Same pattern save_config_value already uses."""
-    tmp = path.parent / (path.name + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
+    truncated config.
+
+    The temp name carries the pid (as `daemon_signal.enqueue` already does):
+    several cockpit processes write these files concurrently — the daemon, a
+    `cockpit close` CLI, a detached `cockpit new` — and a fixed `<name>.tmp`
+    means two of them share one scratch path. Both write it, both `os.replace`
+    it, and the loser's content lands under the winner's name: not a torn file,
+    which is what `os.replace` protects against, but a whole wrong one. The
+    window is wide enough to hit on a synced directory, where a write can block
+    on the sync client.
+
+    The temp is removed if the write fails, so a crash mid-write leaves no
+    litter next to the real file (on a synced dir, litter is uploaded and then
+    propagated to every other machine).
+    """
+    tmp = path.parent / f"{path.name}.tmp.{os.getpid()}"
+    try:
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
 
 
 COCKPIT_HOME = Path(os.environ.get("COCKPIT_HOME", Path.home() / ".config" / "cockpit"))
 CONFIG_PATH = COCKPIT_HOME / "config.json"
 CACHE_DIR = COCKPIT_HOME / "cache"
-PID_FILE = COCKPIT_HOME / "cockpit.pid"
+
+
+def _default_runtime_dir() -> Path:
+    xdg = os.environ.get("XDG_STATE_HOME")
+    return (Path(xdg) if xdg else Path.home() / ".local" / "state") / "cockpit"
+
+
+# Machine-local runtime state, deliberately NOT under COCKPIT_HOME: that
+# directory holds host-neutral, worth-syncing things (config, PR cache, nudge
+# prefs) and is commonly a symlink into Dropbox/iCloud/Drive. The pidfile is a
+# bare integer and a close-request's `ref` is a cmux workspace id — both mean a
+# different thing on a different machine, so syncing them lets two machines
+# fight over one pidfile and drain each other's teardown queue.
+#
+# NOT $TMPDIR, which is where FLAT_CACHE_DIR lives: the pidfile is an IPC
+# rendezvous between the daemon and the `cockpit close`/`cockpit new` CLIs, and
+# TMPDIR resolves differently per launch context (/var/folders/... from a login
+# shell, /tmp under launchd or a stripped env), so the two would look in
+# different places. Flat cells tolerate that; a rendezvous point cannot.
+# `or` not a `get` default: an empty override (`COCKPIT_RUNTIME_DIR=`) would
+# otherwise be Path("") -> Path("."), putting the pidfile in each process's
+# cwd — the daemon and a `cockpit close` in a worktree would then look in
+# different places, the exact rendezvous break the TMPDIR note above warns of.
+_RUNTIME_OVERRIDE = os.environ.get("COCKPIT_RUNTIME_DIR")
+COCKPIT_RUNTIME_DIR = (
+    Path(_RUNTIME_OVERRIDE) if _RUNTIME_OVERRIDE else _default_runtime_dir()
+)
+PID_FILE = COCKPIT_RUNTIME_DIR / "cockpit.pid"
 CONFIG_EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.json"
 CSHIP_DEFAULT_TOML = Path(__file__).resolve().parent.parent / "defaults" / "cship.toml"
 STARSHIP_DEFAULT_TOML = (
@@ -153,9 +199,7 @@ def save_tui_theme(name: str) -> None:
         return
     data["tui_theme"] = name
     ensure_state_dirs()
-    tmp = CONFIG_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
-    os.replace(tmp, CONFIG_PATH)
+    _atomic_write_text(CONFIG_PATH, json.dumps(data, indent=2) + "\n")
     reset_config_cache()
 
 
@@ -307,7 +351,7 @@ def reset_config_cache() -> None:
 
 
 def ensure_state_dirs() -> None:
-    for p in (COCKPIT_HOME, CACHE_DIR):
+    for p in (COCKPIT_HOME, CACHE_DIR, COCKPIT_RUNTIME_DIR):
         p.mkdir(parents=True, exist_ok=True)
     if not CONFIG_PATH.exists():
         # Seed an empty, valid config rather than copying config.example.json:
