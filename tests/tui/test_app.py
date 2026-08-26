@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from textual.widgets import Input
 
+from cockpit.lib.cmux import CmuxUnavailable
 from cockpit.lib.config import apply_org_defaults
 from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
@@ -2763,6 +2764,64 @@ async def test_diff_key_pipes_plain_gh_diff_into_cmux_diff(monkeypatch, tmp_path
     assert "--layout" in args and args[args.index("--layout") + 1] == "unified"
     assert piped == "PATCH"  # the patch goes in on stdin
     assert any("diff open" in t for t in toasts)
+
+
+def _diff_cmux_args(seen):
+    return next(a for a, _ in seen if a[0] == "cmux")
+
+
+async def _press_d_capturing(monkeypatch, wt, seen):
+    def _run(args, **kwargs):
+        seen.append((args, kwargs.get("input")))
+        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
+
+    monkeypatch.setattr("subprocess.run", _run)
+    await _press_d(monkeypatch, wt, [])
+
+
+async def test_diff_opens_in_the_rows_own_workspace(monkeypatch, tmp_path):
+    """The viewer's line comments attach to the HOSTING workspace's composer and
+    ride its next submit, so the split has to open in the row's session. Left to
+    cmux's `$CMUX_WORKSPACE_ID` default it lands in the dashboard's own
+    workspace, where a comment has no agent to reach."""
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+    seen: list = []
+    await _press_d_capturing(monkeypatch, wt, seen)
+
+    args = _diff_cmux_args(seen)
+    assert args[args.index("--workspace") + 1] == "ws1"
+
+
+async def test_diff_still_opens_untargeted_without_a_workspace(monkeypatch, tmp_path):
+    """`f` spawns a workspace, `d` deliberately does not — so a row without one
+    still gets its diff, just with nowhere to send comments. Degrade, don't
+    refuse: a diff you can read beats no diff."""
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    seen: list = []
+    await _press_d_capturing(monkeypatch, wt, seen)
+
+    args = _diff_cmux_args(seen)
+    assert "--workspace" not in args
+    assert args[:3] == ["cmux", "diff", "-"]
+
+
+async def test_diff_survives_a_backend_hiccup_resolving_the_workspace(
+    monkeypatch, tmp_path
+):
+    """`workspace_cwds` raises rather than reporting an empty set, and that must
+    not cost the diff — the targeting is an enhancement, not a precondition."""
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+
+    def _boom():
+        raise CmuxUnavailable("list-workspaces failed")
+
+    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", _boom)
+    seen: list = []
+    await _press_d_capturing(monkeypatch, wt, seen)
+
+    args = _diff_cmux_args(seen)
+    assert "--workspace" not in args
 
 
 async def test_diff_key_names_the_fix_when_the_browser_is_disabled(
