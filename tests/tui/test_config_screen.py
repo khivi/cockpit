@@ -95,6 +95,19 @@ async def test_plain_json_body_is_unstyled():
         assert text.spans == []
 
 
+async def test_palette_offers_sync_and_output():
+    # Both lost their key (`s` / `o`) and are now palette-only, so these hits
+    # are their ONLY in-app route.
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        provider = ConfigCommands(app.screen)
+        synced = [h async for h in provider.search("sync")]
+        assert any("Sync now" in str(h.text) for h in synced)
+        output = [h async for h in provider.search("output")]
+        assert any("Output" in str(h.text) for h in output)
+
+
 async def test_palette_offers_the_feature_guide():
     # The guide is palette-only (no key), so the palette entry is its ONLY
     # in-app route — a missing hit means the feature is unreachable.
@@ -109,10 +122,10 @@ async def test_palette_offers_the_feature_guide():
 async def test_every_entry_shows_on_an_empty_palette():
     # `discover` is what fills the palette before anything is typed; `search`
     # runs only once there IS a query. Implementing search alone left `^P`
-    # showing Textual's system commands and none of cockpit's, so all three
-    # entries — including the keyless feature guide — were reachable only by
-    # typing a label you'd have to already know. Testing search alone is what
-    # let that ship, so this asserts the empty-palette path directly.
+    # showing Textual's system commands and none of cockpit's, so every entry —
+    # none of which has a key — was reachable only by typing a label you'd have
+    # to already know. Testing search alone is what let that ship, so this
+    # asserts the empty-palette path directly.
     app = _Host()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -129,11 +142,17 @@ async def test_every_entry_shows_on_an_empty_palette():
 
 async def test_discovered_entries_invoke_their_app_action():
     # A DiscoveryHit carries the callback the palette fires on selection; a
-    # late-bound closure over the loop variable would make all three run the
+    # late-bound closure over the loop variable would make every entry run the
     # last action.
     called: list[str] = []
 
     class _Recorder(_Host):
+        def action_sync(self) -> None:
+            called.append("sync")
+
+        def action_show_output(self) -> None:
+            called.append("output")
+
         def action_show_full_config(self) -> None:
             called.append("show")
 
@@ -149,4 +168,4 @@ async def test_discovered_entries_invoke_their_app_action():
         provider = ConfigCommands(app.screen)
         async for hit in provider.discover():
             hit.command()
-    assert called == ["show", "edit", "guide"]
+    assert called == ["sync", "output", "show", "edit", "guide"]

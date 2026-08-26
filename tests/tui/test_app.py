@@ -298,12 +298,12 @@ async def test_run_slow_starts_fast_even_if_publish_raises(monkeypatch):
         assert app._fast_started
 
 
-async def test_sync_key_kicks_slow_tick():
+async def test_sync_action_kicks_slow_tick():
     app, calls = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause(0.6)
         before = calls["slow"]
-        await pilot.press("s")
+        app.action_sync()
         await pilot.pause(0.6)
         assert calls["slow"] > before
 
@@ -918,15 +918,15 @@ async def test_mute_and_snooze_restamp_their_cells_on_the_keypress(
     assert pref.snoozed is snoozed and pref.muted is not snoozed
 
 
-async def test_sync_key_kicks_full_cycle_not_scoped(monkeypatch, tmp_path):
-    # The global `s` sync key reconciles *every* repo — its kick passes
+async def test_sync_action_kicks_full_cycle_not_scoped(monkeypatch, tmp_path):
+    # The palette's "Sync now" reconciles *every* repo — its kick passes
     # only_repo=None, unlike the per-row keys which scope to the cursor row.
     _seed_one_worktree(monkeypatch, tmp_path)
     app, calls = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause(0.8)
         before = calls["slow"]
-        await pilot.press("s")
+        app.action_sync()
         await pilot.pause(0.6)
     assert calls["slow"] > before
     assert calls["only_repo"][-1] is None  # full reconcile, not scoped
@@ -1958,11 +1958,13 @@ async def test_open_pr_no_pr_warns(monkeypatch, tmp_path):
 
 
 async def test_show_output_and_escape_close(monkeypatch):
+    # Output is palette-only — no key binding, so the action is invoked the way
+    # the palette invokes it.
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
         app._log_tail.append("slow-tick: every 300s")
-        await pilot.press("o")
+        app.action_show_output()
         await pilot.pause()
         assert isinstance(app.screen, ConfigScreen)
         assert "slow-tick" in app.screen._body
@@ -2129,8 +2131,8 @@ async def test_footer_groups_row_keys_left_global_right():
         await pilot.pause()
         footer = app.query_one(FooterBar)
         assert "Focus" in footer.row_text and "Close" in footer.row_text
-        assert "Sync" in footer.global_text and "Quit" in footer.global_text
-        assert "Focus" not in footer.global_text and "Sync" not in footer.row_text
+        assert "New" in footer.global_text and "Quit" in footer.global_text
+        assert "Focus" not in footer.global_text and "Quit" not in footer.row_text
 
 
 async def test_footer_merges_close_and_force_into_one_segment():
@@ -2149,24 +2151,31 @@ async def test_footer_merges_close_and_force_into_one_segment():
         assert "Force" not in rt  # folded in, no separate label
 
 
-async def test_footer_global_group_orders_hide_new_sync_output_first():
-    # The global group renders Hide, New, Sync, Output in that order regardless
-    # of BINDINGS order (FooterBar.GLOBAL_ORDER), with Quit trailing. `h` leads
-    # so it sits against the row-key group — it's the repo-targeted key, the most
-    # row-adjacent of the globals.
+async def test_footer_global_group_orders_hide_new_first():
+    # The global group renders Hide, New in that order regardless of BINDINGS
+    # order (FooterBar.GLOBAL_ORDER), with Quit trailing and `^P More` last.
+    # `h` leads so it sits against the row-key group — it's the repo-targeted
+    # key, the most row-adjacent of the globals.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
         gt = app.query_one(FooterBar).global_text
-        assert (
-            gt.index("Hide")
-            < gt.index("New")
-            < gt.index("Sync")
-            < gt.index("Output")
-            < gt.index("Quit")
-        )
+        assert gt.index("Hide") < gt.index("New") < gt.index("Quit") < gt.index("More")
+
+
+async def test_footer_advertises_no_sync_or_output_key():
+    # Both moved to the `^P` palette; the footer must not claim a key for them.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        fb = app.query_one(FooterBar)
+        assert "Sync" not in fb.global_text and "Output" not in fb.global_text
+        actions = {b[1] for b in CockpitApp.BINDINGS if isinstance(b, tuple)}
+        assert not actions & {"sync", "show_output"}
 
 
 async def test_footer_labels_are_one_word():
@@ -2177,7 +2186,6 @@ async def test_footer_labels_are_one_word():
     fb = FooterBar([], backend="cmux")
     assert fb._label("open_pr", "Open PR") == "PR"
     assert fb._label("force_close_row", "Force close") == "Force"
-    assert fb._label("sync", "Sync now") == "Sync"
     assert fb._label("whatever", "Multi word thing") == "Multi"
 
 
@@ -2252,7 +2260,7 @@ async def test_footer_hides_all_row_keys_on_group_header():
     )
     assert not fb._skip("ask_row")
     assert fb._label("ask_row", "Ask") == "Ask repo"
-    assert not fb._skip("sync") and not fb._skip("quit")
+    assert not fb._skip("quit")
 
 
 async def test_footer_hide_key_shows_only_on_repo_rows():

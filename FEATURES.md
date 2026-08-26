@@ -54,9 +54,9 @@ automatically.
 
 **Everything refreshes itself.** A full reconcile every 5 minutes and a network-free
 repaint every 30 seconds — both tunable — plus an instant repaint when a workspace opens or
-closes out from under you. Press `s` to force a sync; `o` shows the daemon log; `^P` (the
-footer's **More**) opens a palette holding your resolved config, an editor for it, a theme
-picker that persists your choice, and a link back to this guide.
+closes out from under you. `^P` (the footer's **More**) opens a palette holding a manual
+sync, the daemon log, your resolved config, an editor for it, a theme picker that persists
+your choice, and a link back to this guide.
 
 ### Keys
 
@@ -73,8 +73,8 @@ picker that persists your choice, and a link back to this guide.
 | `z` | Snooze / wake — quiet until the PR actually changes |
 | `n` | Start something new |
 | `h` | Park / reveal / un-park a repo |
-| `s` `o` `q` | Sync · logs · quit |
-| `^P` | More — config, theme, and this guide |
+| `q` | Quit |
+| `^P` | More — sync, logs, config, theme, and this guide |
 
 Footer hints follow the highlighted row. A row with no PR doesn't advertise `p`; a muted
 row's `m` reads **Unmute**; a backend that can't focus doesn't offer `f`. You never press
