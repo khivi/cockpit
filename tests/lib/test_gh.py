@@ -22,10 +22,12 @@ from cockpit.lib.gh import (
     _collect_nodes,
     _graphql,
     _identify_stale,
+    _one_pr_per_branch,
     _relevant_pr_query,
     fetch_merged_branches,
     fetch_pr_state_for_branch,
     list_open_pr_heads,
+    list_relevant_prs,
     pr_worktree_branch,
     require_gh,
     resolve_pr_branch,
@@ -403,6 +405,49 @@ def test_identify_stale_refetches_unknown_ci_even_when_updated_at_unchanged():
     cache = {1: (pr, "2025-01-01")}
     stale = _identify_stale({1: "2025-01-01"}, cache)
     assert stale == [1]
+
+
+# ── one PR per head branch — the join key every downstream reader uses ──────
+
+
+def test_a_closed_duplicate_never_wins_its_branch():
+    """The live shape that churned a workspace every slow tick: a duplicate PR
+    opened seconds after the real one and closed. It carries the *higher*
+    number and the newer updatedAt, so any "newest wins" rule resolves the
+    branch to the dead PR — `match_worktrees` then pairs the worktree with the
+    open one that no branch map points at, and the cycle spawns it a workspace
+    forever."""
+    live = _issue_pr(number=335, state="OPEN", updated_at="2026-08-26T17:50:01Z")
+    dupe = _issue_pr(number=336, state="CLOSED", updated_at="2026-08-26T17:50:12Z")
+    assert [pr.number for pr in _one_pr_per_branch([live, dupe])] == [335]
+    assert [pr.number for pr in _one_pr_per_branch([dupe, live])] == [335]
+
+
+def test_the_sole_pr_on_a_branch_survives_whatever_its_state():
+    """The per-branch fetch leg exists to keep a MERGED/CLOSED PR's cache fresh
+    after the transition. Collapsing must not drop one that has no open rival."""
+    merged = _issue_pr(number=10, state="MERGED", branch="khivi/done")
+    assert _one_pr_per_branch([merged]) == [merged]
+
+
+def test_distinct_branches_keep_every_pr_in_order():
+    prs = [
+        _issue_pr(number=1, branch="khivi/a"),
+        _issue_pr(number=2, branch="khivi/b"),
+        _issue_pr(number=3, branch="khivi/c"),
+    ]
+    assert _one_pr_per_branch(prs) == prs
+
+
+def test_list_relevant_prs_returns_one_pr_per_branch():
+    """The guarantee holds through the two-phase fetch, where the `author:self`
+    search leg and the per-branch alias leg can each contribute one."""
+    live = _issue_pr(number=335, state="OPEN", updated_at="a")
+    dupe = _issue_pr(number=336, state="CLOSED", updated_at="b")
+    cache = {335: (live, "a"), 336: (dupe, "b")}
+    with patch("cockpit.lib.gh._fetch_light_phase", return_value={335: "a", 336: "b"}):
+        prs = list_relevant_prs("o", "n", "khivi", ["khivi/feature"], cache=cache)
+    assert [pr.number for pr in prs] == [335]
 
 
 # ── PR.nudge_issue — single source for the nudge decision + TUI 🔔 ──────────

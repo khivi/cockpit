@@ -824,6 +824,49 @@ def _hydrate_stale(
             cache[num] = (pr, light_by_number.get(num, ""))
 
 
+def _pr_rank(pr: PR) -> tuple[int, str, int]:
+    """Sort key for choosing among PRs sharing a head branch; higher wins.
+
+    The live-PR twin of `cache._pr_payload_rank`, and deliberately the same
+    rule: OPEN (draft included — a draft is `state: OPEN`) beats MERGED/CLOSED,
+    then newer `updated_at` (ISO-8601 sorts lexically), then higher number.
+    Number alone is not enough and picking it is the bug this exists to stop —
+    a duplicate PR opened seconds after the real one and then closed carries the
+    *higher* number, so "newest wins" resolves the branch to the dead PR.
+    """
+    return (1 if pr.state.upper() == "OPEN" else 0, pr.updated_at, pr.number)
+
+
+def _one_pr_per_branch(prs: list[PR]) -> list[PR]:
+    """Collapse PRs sharing a head branch to the highest-ranked one.
+
+    Everything downstream joins a PR to its worktree, workspace and cache *by
+    head branch* (`match_worktrees`, `cmux.find_cockpit_workspaces`,
+    `stacks.find_stacks`, the branch-keyed flat cells), so two PRs on one branch
+    make those readers disagree: a plain `{pr.branch: pr}` comprehension is
+    last-wins, while `match_worktrees` emits a pair for *each*. That mismatch is
+    a spawn/close loop — `_spawn_missing_workspaces` sees the PR the branch map
+    resolved *away* from as having no workspace and spawns one, and
+    `_dedupe_workspaces` closes it next cycle, forever (observed: a duplicate PR
+    opened 11s after the real one and closed, churning a workspace every slow
+    tick and leaving a fresh un-grouped row at the top of the cmux sidebar).
+
+    Both legs of the fetch above can produce this: the `author:self` search
+    returns the open PR while the per-branch alias returns the newest for that
+    head, whatever its state. `cache.prune_superseded_pr_caches` is the on-disk
+    half of the same rule.
+    """
+    winners: dict[str, PR] = {}
+    for pr in prs:
+        if not pr.branch:
+            continue
+        cur = winners.get(pr.branch)
+        if cur is None or _pr_rank(pr) > _pr_rank(cur):
+            winners[pr.branch] = pr
+    keep = {pr.number for pr in winners.values()}
+    return [pr for pr in prs if not pr.branch or pr.number in keep]
+
+
 def list_relevant_prs(
     owner: str,
     name: str,
@@ -832,12 +875,15 @@ def list_relevant_prs(
     cache: dict[int, tuple[PR, str]] | None = None,
 ) -> list[PR]:
     """My open PRs (by author search) + newest PR for each local worktree
-    branch (any state — OPEN, MERGED, or CLOSED).
+    branch (any state — OPEN, MERGED, or CLOSED), at most one per head branch.
 
     The per-branch leg includes non-OPEN states so the daemon's tick can keep
     the per-PR cache fresh after a PR transitions to MERGED or CLOSED. The
     statusline footer renders from that cache; without this it would freeze
-    at the last pre-merge snapshot until the worktree is torn down.
+    at the last pre-merge snapshot until the worktree is torn down. That is also
+    what lets two PRs on one head reach the result, so the union is collapsed by
+    `_one_pr_per_branch` before it is returned — see there for why every caller
+    needs that guarantee rather than defending itself.
 
     Two-phase fetch when `cache` is given: a cheap (number, updatedAt) query
     first, then full detail only for PRs whose updatedAt changed (or whose
@@ -856,4 +902,6 @@ def list_relevant_prs(
     for num in list(cache):
         if num not in light_by_number:
             del cache[num]
-    return [cache[num][0] for num in light_by_number if num in cache]
+    return _one_pr_per_branch(
+        [cache[num][0] for num in light_by_number if num in cache]
+    )
