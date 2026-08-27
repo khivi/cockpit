@@ -309,12 +309,12 @@ Key gates (all from `cycle.py`):
     via `stacks.find_stacks`, reconciled against cmux's live
     `workspace-group list`, never stored; it also collects the repo's
     `not PR.mine` workspaces and its snoozed ones (`NudgePref.snoozed`) into the
-    `ReviewFolds` accumulator that the repo-spanning `_reconcile_review_groups`
-    drains at the end of `cycle_all` into two trailing folds per org —
-    `<org> reviews (N)` above `<org> snoozed (N)`, each created collapsed since
-    both piles are by definition not-my-turn; create-time only, so a fold the
-    user expands stays open — and then re-parks `folds.sunk`, the stack groups
-    the per-repo pass sank for a snoozed tip, below both piles),
+    `ReviewFolds` accumulator — a chain whose tip is snoozed goes in whole,
+    giving up its stack group — that the repo-spanning
+    `_reconcile_review_groups` drains at the end of `cycle_all` into two
+    trailing folds per org — `<org> reviews (N)` above `<org> snoozed (N)`, each
+    created collapsed since both piles are by definition not-my-turn;
+    create-time only, so a fold the user expands stays open),
     `_dedupe_workspaces` (scoped to workspaces whose cwd resolves under this
     repo's worktrees — a foreign repo's same-named workspace is never grouped or
     closed; sorts by the PID in cmux `workspace:<pid>` refs — limux refs are

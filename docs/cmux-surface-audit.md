@@ -117,9 +117,9 @@ Grouped by the tier each verb serves. Call sites are current as of this measurem
 - `clear-status` — `cmux.py:152` `_clear_status`, `app.py:1451` `_set_loop_pill`
 - `workspace-action` — `cmux.py:171` `set_workspace_color`, only ever `--action set-color`
 
-**Sidebar folds** — stacks, reviews, snoozed. One verb, ten call sites, nine subverbs.
+**Sidebar folds** — stacks, reviews, snoozed. One verb, nine call sites, eight subverbs.
 
-- `workspace-group` — `cmux.py:233` `list_workspace_groups`, `:282`/`:302` `create_workspace_group`, `:307` `_set_group_icon`, `:311` `add_to_workspace_group`, `:317` `remove_from_workspace_group`, `:321` `rename_workspace_group`, `:331` `move_workspace_group_to_end`, `:346` `move_workspace_group_to_start`, `:351` `ungroup_workspaces`
+- `workspace-group` — `cmux.py` `list_workspace_groups`, `create_workspace_group`, `_set_group_icon`, `add_to_workspace_group`, `remove_from_workspace_group`, `rename_workspace_group`, `move_workspace_group_to_end`, `ungroup_workspaces`
 
 **Workspace lifecycle** — spawn, rename, close, focus.
 
@@ -221,7 +221,7 @@ the unused set is bucketed below.
 | `right-sidebar` | `files\|find\|vault\|sessions\|feed\|dock` — native file browser and finder. | A file browser per worktree, free, instead of anything hand-built. | Cosmetic; changes the user's sidebar state, which cockpit does not otherwise own. |
 | `sidebar-state` | Reads current sidebar state. | The one read that could tell cockpit what it just did to the sidebar — currently every group operation is write-only and reconciled against `workspace-group list`. | Unprobed. Would be the first sidebar *read* other than group list. |
 | `reorder-workspace` | Moves a **single** workspace, `--index/--before/--after`. | Row-order control without a group. cockpit currently sinks rows only via `workspace-group move --to-index 9999`, which needs a group and an anchor workspace to exist. | Per-workspace, so ordering N rows is N subprocesses. |
-| `reorder-workspaces` | Bulk reorder, `--order <ref>,<ref>,…`. | The bulk form of the above — one call for a whole repo's ordering, sidestepping the per-workspace cost. | Would fight the user's own drag-ordering unless transition-gated, exactly like the stack-park lift. |
+| `reorder-workspaces` | Bulk reorder, `--order <ref>,<ref>,…`. | The bulk form of the above — one call for a whole repo's ordering, sidestepping the per-workspace cost. | Would fight the user's own drag-ordering: cockpit only ever parks a *group* it built, and has nowhere to record where a row used to sit. |
 | `todo` | Per-workspace todo list: `add/list/check/uncheck/start/rm/clear`. | Surfacing a session's plan in the sidebar. | Writes UI state cockpit would then own and have to reconcile. |
 | `set-progress` / `clear-progress` | Per-workspace progress bar, `0.0-1.0` + `--label`. | A visible long-operation indicator (spawn, fetch, teardown) on the affected row. | Trivial; nothing blocks it. |
 | `log` / `list-log` / `clear-log` | Per-workspace log buffer, `--level`, `--source`. | Somewhere for `spawn.log` and per-cycle errors to land that is attached to the row they concern, instead of a file. | `list-log` is per-workspace, so reading N rows is N subprocesses. |

@@ -415,21 +415,6 @@ def move_workspace_group_to_end(group_ref: str) -> None:
     cmux("workspace-group", "move", group_ref, "--to-index", "9999", check=False)
 
 
-def move_workspace_group_to_start(group_ref: str) -> None:
-    """Park the group at the top of the sidebar — the inverse of the above.
-
-    Only ever called to undo a sink: a stack group sunk while its tip was
-    snoozed would otherwise stay at the bottom forever once the snooze woke,
-    burying exactly the chain that just asked for attention. Cockpit has nowhere
-    to record where the group *used* to sit (inventory is derived, never
-    stored), so the lift is a fixed top rather than a restore — which is why the
-    caller fires it on that transition only, never as a per-cycle re-assert
-    (unlike the sink, which re-asserts so it self-heals). Best-effort like every
-    other group verb.
-    """
-    cmux("workspace-group", "move", group_ref, "--to-index", "0", check=False)
-
-
 def ungroup_workspaces(group_ref: str) -> None:
     """Dissolve the group, keeping every member workspace open."""
     cmux("workspace-group", "ungroup", group_ref, check=False)

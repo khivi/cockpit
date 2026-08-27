@@ -33,7 +33,6 @@ from cockpit.lib.cmux import (
     deliver_followup,
     list_workspace_groups,
     move_workspace_group_to_end,
-    move_workspace_group_to_start,
     nudge_if_idle,
     one_line,
     reconcile_workspace_names,
@@ -1609,20 +1608,6 @@ def test_move_workspace_group_to_end_clamps_past_the_sidebar():
     )
 
 
-def test_move_workspace_group_to_start_moves_to_the_top():
-    with patch("cockpit.lib.cmux.cmux") as cmux_mock:
-        move_workspace_group_to_start("workspace_group:1")
-
-    cmux_mock.assert_called_once_with(
-        "workspace-group",
-        "move",
-        "workspace_group:1",
-        "--to-index",
-        "0",
-        check=False,
-    )
-
-
 def test_group_verbs_noop_on_limux():
     # workspace-group is cmux-only; limux users silently skip stack folding.
     with (
@@ -1634,7 +1619,6 @@ def test_group_verbs_noop_on_limux():
         remove_from_workspace_group("workspace:2")
         rename_workspace_group("workspace_group:1", "auth (2)")
         move_workspace_group_to_end("workspace_group:1")
-        move_workspace_group_to_start("workspace_group:1")
         ungroup_workspaces("workspace_group:1")
 
     run_mock.assert_not_called()
