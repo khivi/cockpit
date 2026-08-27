@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.2](https://github.com/khivi/cockpit/compare/v2.12.1...v2.12.2) (2026-08-27)
+
+
+### Documentation
+
+* **features:** name the ticket cache as the exception to nothing-is-stored ([#414](https://github.com/khivi/cockpit/issues/414)) ([60b33f3](https://github.com/khivi/cockpit/commit/60b33f3b0e88f22a5dd7b026dafc867274356416))
+
 ## [2.12.1](https://github.com/khivi/cockpit/compare/v2.12.0...v2.12.1) (2026-08-27)
 
 
