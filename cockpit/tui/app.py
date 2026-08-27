@@ -1704,7 +1704,14 @@ class CockpitApp(App[None]):
                 severity="warning",
             )
             return
-        if nudge_if_idle(ref, text, tag="ask"):
+        # The gate's own verdict, so a refusal names its cause instead of
+        # listing every cause it might have been — the same reasons the header
+        # fan-out prints, and the same ones the modal's advisory hint showed.
+        # "not at rest (Needs input)" and "mid-turn" call for different
+        # responses, and only the first tells you the session needs a turn
+        # completed by hand before `a` can ever reach it.
+        skips: dict[str, str] = {}
+        if nudge_if_idle(ref, text, tag="ask", skips=skips):
             self._ask_drafts.pop(path_str, None)
             self._notify(f"sent to {wt.label or wt.short}")
         else:
@@ -1712,9 +1719,9 @@ class CockpitApp(App[None]):
             # is answered), so throwing away what the user typed would make them
             # retype it verbatim — `a` restores this draft.
             self._ask_drafts[path_str] = text
+            why = skips.get(ref, "not idle")
             self._notify(
-                f"ask skipped {wt.label or wt.short}: not idle "
-                "(busy, awaiting permission, or parked) — press a to retry",
+                f"ask skipped {wt.label or wt.short}: {why} — press a to retry",
                 severity="warning",
             )
 

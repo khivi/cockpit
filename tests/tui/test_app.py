@@ -2676,6 +2676,38 @@ async def test_ask_key_cancelled_sends_nothing(monkeypatch, tmp_path):
 
 
 async def test_ask_key_reports_skip_when_not_idle(monkeypatch, tmp_path):
+    """A refusal names the gate's own reason. "not at rest (Needs input)" and
+    "mid-turn" call for different responses — only the first means the session
+    needs a turn completed by hand before `a` can ever reach it — so listing
+    every cause it might have been is no help."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+
+    def _refuse(ref, msg, **k):
+        k["skips"][ref] = "not at rest (Needs input)"
+        return False
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _refuse)
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "hello"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert any("not at rest (Needs input)" in t for t in toasts)
+    assert app._ask_drafts[str(wt.path)] == "hello"
+
+
+async def test_ask_key_skip_falls_back_when_the_gate_names_no_reason(
+    monkeypatch, tmp_path
+):
+    """A False with no `skips` entry still has to say something."""
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda *a, **k: False)
@@ -2691,7 +2723,7 @@ async def test_ask_key_reports_skip_when_not_idle(monkeypatch, tmp_path):
         app.screen.query_one(Input).value = "hello"
         await pilot.press("enter")
         await pilot.pause(0.6)
-    assert any("skipped" in t for t in toasts)
+    assert any("skipped" in t and "not idle" in t for t in toasts)
 
 
 async def test_ask_key_noop_on_limux(monkeypatch, tmp_path):
