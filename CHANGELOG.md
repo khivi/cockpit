@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.4](https://github.com/khivi/cockpit/compare/v2.12.3...v2.12.4) (2026-08-27)
+
+
+### Bug Fixes
+
+* **sidebar:** sink a snoozed stack below the trailing folds ([#418](https://github.com/khivi/cockpit/issues/418)) ([11fa1dd](https://github.com/khivi/cockpit/commit/11fa1dda71ffd54a4a53b8ab02ddcc7225714866))
+
 ## [2.12.3](https://github.com/khivi/cockpit/compare/v2.12.2...v2.12.3) (2026-08-27)
 
 
