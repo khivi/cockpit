@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.0](https://github.com/khivi/cockpit/compare/v2.11.2...v2.12.0) (2026-08-27)
+
+
+### Features
+
+* **tui:** bind sync to s, drop it from the menu ([#410](https://github.com/khivi/cockpit/issues/410)) ([8ee6509](https://github.com/khivi/cockpit/commit/8ee65095427120a2c11a4ab1dab0f6ac92e4750a))
+
 ## [2.11.2](https://github.com/khivi/cockpit/compare/v2.11.1...v2.11.2) (2026-08-27)
 
 
