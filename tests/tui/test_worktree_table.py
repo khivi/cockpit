@@ -873,7 +873,7 @@ def test_reviews_and_snoozed_rows_sink_below_my_queue(cache_dir):
 
 def test_a_snoozed_coworker_pr_sinks_past_the_reviews_band(cache_dir):
     # Snooze outranks review: a coworker PR I've already read belongs below the
-    # ones I haven't, matching the sidebar's stacks → snoozed → reviews order.
+    # ones I haven't, matching the sidebar's reviews → snoozed → sunk-stack order.
     read = _wt(path="read", branch="khivi/read")
     unread = _wt(path="unread", branch="khivi/unread")
     _coworker(read)

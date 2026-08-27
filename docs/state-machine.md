@@ -313,7 +313,8 @@ Key gates (all from `cycle.py`):
     drains at the end of `cycle_all` into two trailing folds per org —
     `<org> reviews (N)` above `<org> snoozed (N)`, each created collapsed since
     both piles are by definition not-my-turn; create-time only, so a fold the
-    user expands stays open),
+    user expands stays open — and then re-parks `folds.sunk`, the stack groups
+    the per-repo pass sank for a snoozed tip, below both piles),
     `_dedupe_workspaces` (scoped to workspaces whose cwd resolves under this
     repo's worktrees — a foreign repo's same-named workspace is never grouped or
     closed; sorts by the PID in cmux `workspace:<pid>` refs — limux refs are
