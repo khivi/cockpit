@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.1](https://github.com/khivi/cockpit/compare/v2.12.0...v2.12.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **tui:** name the gate's reason when ask refuses a row ([#412](https://github.com/khivi/cockpit/issues/412)) ([91d8fa1](https://github.com/khivi/cockpit/commit/91d8fa100b75e3c9cf63b47997d9536505a17ad4))
+
 ## [2.12.0](https://github.com/khivi/cockpit/compare/v2.11.2...v2.12.0) (2026-08-27)
 
 
