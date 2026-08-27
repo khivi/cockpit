@@ -60,7 +60,6 @@ from cockpit.lib.cmux import (
     find_cockpit_workspaces,
     list_workspace_groups,
     move_workspace_group_to_end,
-    move_workspace_group_to_start,
     nudge_if_idle,
     remove_from_workspace_group,
     rename_workspace_group,
@@ -2344,22 +2343,16 @@ class ReviewFolds:
     this as it walks each repo; `cycle_all` drains it once, after every repo.
 
     `reviews` is the coworker PRs I haven't read; `snoozed` is everything I have
-    read and handed back (`NudgePref.snoozed`), mine or not. They are separate
-    buckets rather than one, because they answer different questions — one is a
-    queue to work through, the other a pile to ignore until someone replies.
+    read and handed back (`NudgePref.snoozed`), mine or not — including a whole
+    stacked chain whose tip is snoozed, contributed as one contiguous run. They
+    are separate buckets rather than one, because they answer different
+    questions — one is a queue to work through, the other a pile to ignore until
+    someone replies.
 
     `owned` is the union of every repo's live workspace refs — the same
     spare-hand-added-workspaces guard the per-repo pass applies, which needs to
     tell "a member that stopped being a review" (ours, drop it) from "a foreign
     workspace the user added by hand" (leave it).
-
-    `sunk` is the group ref of every stack chain this cycle sank for a snoozed
-    tip. A snoozed stack keeps its own group (it can't join a pile — a workspace
-    lives in exactly one), so its *position* is all it has to say "not my turn",
-    and the per-repo sink alone doesn't hold: this pass's own `--to-index 9999`
-    moves run afterwards and would land both piles below it. Re-parking these
-    last is what puts a chain I've deferred where the table already puts it —
-    below the folds, not above them.
 
     `partial` says a repo dropped out of the cycle before contributing, so an
     absent bucket means "not asked" rather than "empty" — see
@@ -2368,7 +2361,6 @@ class ReviewFolds:
 
     buckets: dict[str, list[str]] = field(default_factory=dict)
     snoozed: dict[str, list[str]] = field(default_factory=dict)
-    sunk: list[str] = field(default_factory=list)
     owned: set[str] = field(default_factory=set)
     partial: bool = False
 
@@ -2393,15 +2385,14 @@ def _reconcile_sidebar_groups(
     where `stacked` is known, but *folded* by `_reconcile_review_groups` at the
     end of the cycle, since those piles are keyed by org and span repos.
 
-    A snoozed stack therefore never joins the `snoozed` pile — it stays its own
-    group — so the group's *position* is the only thing left to say "not my
-    turn": each chain is sunk to the bottom when its **tip** is snoozed, the
-    same tip rule the TUI bands rows by. The sink re-asserts every cycle (so it
-    self-heals); the lift back fires only on the `pill_state` transition out of
-    a sink cockpit made, so a live stack is never moved. Sinking here is not the
-    chain's final position: `_reconcile_review_groups` runs afterwards and each
-    of its `--to-index 9999` moves would land a pile *below* the chain, so every
-    sunk ref is handed to `folds.sunk` for that pass to re-park last.
+    A chain whose **tip** is snoozed is the one stack that doesn't get a group:
+    its members go into the org's `snoozed` pile whole, tip first, exactly where
+    the TUI puts them (`worktree_table._split_snoozed` folds a snoozed chain
+    into the repo's `▸ N snoozed` disclosure rather than beside it). The tip is
+    the same discriminator `_row_band` uses, so a snooze below the tip still
+    moves nothing. The chain only diverts when there is a pile to join: a
+    repo-scoped kick passes no `folds` and runs no cross-repo pass, so it keeps
+    its group and the next full cycle folds it.
 
     Only groups overlapping *this* repo's workspaces are touched — a group the
     user made by hand around unrelated workspaces is never claimed or dissolved.
@@ -2426,8 +2417,9 @@ def _reconcile_sidebar_groups(
         if ref in owned and pr.branch
     }
 
-    desired: list[tuple[str, list[str], bool]] = []
+    desired: list[tuple[str, list[str]]] = []
     stacked: set[str] = set()
+    snoozed_chains: list[str] = []
     for chain in find_stacks(ctx.prs):
         present = [pr for pr in chain if pr.branch in tracked]
         if len(present) < 2:
@@ -2438,15 +2430,15 @@ def _reconcile_sidebar_groups(
         ordered = [tracked[pr.branch] for pr in (present[-1], *present[:-1])]
         refs = [ref for ref, _ in ordered]
         stacked.update(refs)
-        # Position follows the *tip*, the same discriminator the TUI bands a
-        # chain by (`worktree_table._row_band`): a snoozed tip sinks its whole
-        # chain, a live one keeps it up top. A snoozed stack stays one group —
-        # it never joins the `snoozed` pile (see `_pile(…, stacked)` below) —
-        # so the fold is the only thing left to say "not my turn", and without
-        # this a chain I'd read sat in the live area looking active while the
-        # TUI had already sunk it.
-        tip_snoozed = bool((ctx.prefs.get(present[-1].number) or NudgePref()).snoozed)
-        desired.append((_stack_group_name(ordered[0][1], len(refs)), refs, tip_snoozed))
+        # A snoozed tip hands the whole chain to the org's snoozed pile instead
+        # of keeping a group of its own: a workspace lives in exactly one group,
+        # and the pile is where the TUI already files it. Only when a pile
+        # exists to receive it — see the docstring.
+        tip = ctx.prefs.get(present[-1].number) or NudgePref()
+        if folds is not None and tip.snoozed:
+            snoozed_chains.extend(refs)
+            continue
+        desired.append((_stack_group_name(ordered[0][1], len(refs)), refs))
 
     if folds is not None:
         folds.owned |= owned
@@ -2463,11 +2455,12 @@ def _reconcile_sidebar_groups(
         # Snoozed is resolved before reviews so a coworker PR I've already read
         # sinks with the snoozed pile rather than staying in the to-read queue —
         # a workspace can live in exactly one group. Passing `stacked` is what
-        # keeps a snoozed *stack member* with its chain: a stack already folds,
-        # and pulling one member out to the snoozed pile would split the fold
-        # that makes the chain readable. The TUI's `_row_band` is the looser
-        # half of the same rule — it sinks a chain whose *tip* is snoozed.
-        snoozed = _pile(
+        # keeps a snoozed *stack member* with its chain: pulling one member out
+        # would split a fold that is still live. A chain whose *tip* is snoozed
+        # is already in `snoozed_chains`, leading the pile as one contiguous
+        # run — the same tip rule, and the same shape the TUI's `_split_snoozed`
+        # renders.
+        snoozed = snoozed_chains + _pile(
             lambda pr: bool((ctx.prefs.get(pr.number) or NudgePref()).snoozed),
             stacked,
         )
@@ -2500,71 +2493,18 @@ def _reconcile_sidebar_groups(
         if g not in mine and g.icon == STACK_GROUP_ICON and set(g.members) <= {g.anchor}
     ]
 
-    def _park(group_ref: str, sink: bool) -> None:
-        """Sink a snoozed chain to the bottom; lift it back when it wakes.
-
-        Deliberately **asymmetric**, and both halves are load-bearing:
-
-        - the **sink** is unconditional every cycle, exactly like the trailing
-          folds' own `--to-index 9999`, so it self-heals: anything that shuffles
-          the sidebar between ticks (cmux reordering on activity, a `broadcast`
-          waking the sessions, a hand drag) is undone on the next slow tick.
-        - the **lift** fires only on the `pill_state` transition out of a sink
-          this daemon made (`stack-park:<group ref>`, deduped like
-          `color:<ref>`; an unknown key reads as live). Re-asserting *it* every
-          cycle would pin every live stack group to the top of the sidebar and
-          fight the user's own ordering — cockpit owns where a chain goes when
-          it snoozes, not where it sits the rest of the time.
-
-        Keyed by the **cmux group ref**, never by the chain's tip PR: the tip is
-        `present[-1]`, the deepest member that currently has a workspace, so it
-        *changes* when the tip merges and its worktree is torn down while the
-        group itself lives on (it matches by member overlap). A tip-keyed marker
-        would be orphaned at exactly that moment — the surviving chain, now
-        live, would look unsunk and stay pinned at the bottom for good, the very
-        failure the lift exists to prevent. The group ref instead dies with the
-        group, so the dissolve below drops the key and a rebuilt group starts
-        clean rather than inheriting a stale `"end"` and lifting a live chain.
-
-        The sink here is not the last word on where the chain lands: the
-        trailing folds are re-parked after every repo has run, and each of their
-        `--to-index 9999` moves would leave both piles *below* it. So a sunk ref
-        is recorded on `folds` for `_reconcile_review_groups` to re-park last,
-        putting the chain under the folds — where `worktree_table._row_band`
-        already puts it (band 2, below reviews, folded away). The move still
-        happens here as well, because a repo-scoped kick passes no `folds` and
-        has no later pass to defer to.
-
-        ponytail: `pill_state` is process-local, so a sink outlives the lift's
-        memory of it — restart the daemon while a stack is sunk and the later
-        wake won't lift it (`workspace-group list` reports no index, so there is
-        nothing to read the position back from). Re-snoozing and waking fixes
-        it. Upgrade path if that bites: persist the marker beside the pref.
-        """
-        key = f"stack-park:{group_ref}"
-        if sink:
-            move_workspace_group_to_end(group_ref)
-            if folds is not None:
-                folds.sunk.append(group_ref)
-            ctx.pill_state[key] = "end"
-        elif ctx.pill_state.get(key) == "end":
-            move_workspace_group_to_start(group_ref)
-            ctx.pill_state[key] = "start"
-
     matched: set[str] = set()
-    for name, refs, sink in desired:
+    for name, refs in desired:
         group = _match_stack_group(groups, refs, matched)
         if group is None:
             created = create_workspace_group(name, refs, icon=STACK_GROUP_ICON)
             if created is not None:
-                _park(created.ref, sink)
                 print(
                     f"  {verb('grouped')} {cyan(name)} {dim(' → '.join(refs))}",
                     flush=True,
                 )
             continue
         matched.add(group.ref)
-        _park(group.ref, sink)
         if group.name != name:
             rename_workspace_group(group.ref, name)
         for ref in refs:
@@ -2578,10 +2518,6 @@ def _reconcile_sidebar_groups(
     for group in mine + strays:
         if group.ref not in matched:
             ungroup_workspaces(group.ref)
-            # The park marker dies with the group, so a chain that reforms is
-            # built on a fresh ref and can't inherit a stale `"end"` — which
-            # would lift a live group to the top on its very first cycle.
-            ctx.pill_state.pop(f"stack-park:{group.ref}", None)
             # The header is cockpit's own throwaway anchor (never a group
             # member — see `create_workspace_group`), so dissolving the group
             # would otherwise leave it behind as a stray sidebar row.
@@ -2614,10 +2550,10 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
     icons), so this pass owns the whole set: one that matches no bucket is
     dissolved, which also reaps a stranded anchor-only header for free. Each
     surviving fold is re-parked at the bottom of the sidebar — both are passive
-    piles, out of the way of my own rows — and then, lower still, every stack
-    chain `_reconcile_sidebar_groups` sank for a snoozed tip (`folds.sunk`). A
-    chain I've handed back is the most passive thing on screen, so it sits
-    under both piles, matching the band the table already files it in.
+    piles, out of the way of my own rows. A stacked chain whose tip is snoozed
+    arrives here as ordinary members of the `snoozed` bucket (its stack group is
+    dissolved upstream), so it folds away with the rest of the pile rather than
+    keeping a row of its own — the shape the table already renders.
 
     The two families are matched separately (`_match_stack_group` keys on member
     overlap, which is icon-blind), so a fold can never be claimed by the wrong
@@ -2701,13 +2637,6 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
                 if group.anchor and group.anchor not in folds.owned:
                     cmux_close_workspace_best_effort(group.anchor)
                 print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
-    # Last, so the bottom reads reviews → snoozed → deferred chains: every move
-    # above lands its target below everything moved before it, so the two piles
-    # would otherwise overtake the stack `_reconcile_sidebar_groups` already
-    # sank. Unguarded by `folds.partial` — a move is idempotent, the dissolve
-    # above is the only irreversible thing here.
-    for group_ref in folds.sunk:
-        move_workspace_group_to_end(group_ref)
 
 
 def _match_stack_group(

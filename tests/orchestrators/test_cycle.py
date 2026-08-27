@@ -5072,21 +5072,11 @@ def test_snoozed_coworker_leaves_the_reviews_bucket(tmp_path):
     assert folds.buckets == {"Cockpit": ["workspace:1"]}
 
 
-def test_a_stacked_snoozed_pr_stays_in_its_stack(tmp_path):
-    ctx = _stack_ctx(
-        tmp_path,
-        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
-        snoozed=("workspace:1", "workspace:2"),
-        repo_entry={"name": "Cockpit"},
-    )
-    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
-    assert folds.snoozed == {"Cockpit": []}
+def _snoozed_stack(tmp_path, snoozed, folds=None):
+    """Reconcile a two-PR stack, returning (folds, created_names, dissolved).
 
-
-def _park_stack(tmp_path, snoozed, pill_state=None):
-    """Reconcile a two-PR stack, returning (sunk_refs, lifted_refs, pill_state).
-
-    `workspace:2` is the tip — `khivi/b` is stacked on `khivi/a`.
+    `workspace:2` is the tip — `khivi/b` is stacked on `khivi/a` — and the chain
+    already has a group, so a diverted chain shows up as a dissolve.
     """
     ctx = _stack_ctx(
         tmp_path,
@@ -5094,128 +5084,91 @@ def _park_stack(tmp_path, snoozed, pill_state=None):
         snoozed=snoozed,
         repo_entry={"name": "Cockpit"},
     )
-    ctx.pill_state = {} if pill_state is None else pill_state
     group = _group(
         "wg:stack", "b (2)", "workspace:9", ["workspace:2", "workspace:1"], icon=""
     )
-    sunk: list[str] = []
-    lifted: list[str] = []
+    dissolved: list[str] = []
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[group]),
-        patch.object(cycle, "move_workspace_group_to_end", side_effect=sunk.append),
-        patch.object(cycle, "move_workspace_group_to_start", side_effect=lifted.append),
+        patch.object(cycle, "create_workspace_group", return_value=None) as create,
+        patch.object(cycle, "ungroup_workspaces", side_effect=dissolved.append),
+        patch.object(cycle, "cmux_close_workspace_best_effort"),
     ):
-        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
-    return sunk, lifted, ctx.pill_state
+        cycle._reconcile_sidebar_groups(
+            ctx, {"workspace:1", "workspace:2"}, folds if folds else cycle.ReviewFolds()
+        )
+    return create, dissolved
 
 
-def test_a_stack_with_a_snoozed_tip_sinks_to_the_bottom(tmp_path):
-    # A snoozed stack never joins the `snoozed` pile (it stays its own group),
-    # so position is the only thing left to say "not my turn".
-    sunk, lifted, state = _park_stack(tmp_path, snoozed=("workspace:2",))
-    assert (sunk, lifted) == (["wg:stack"], [])
-    assert state == {"stack-park:wg:stack": "end"}
+def test_a_stack_with_a_snoozed_tip_joins_the_snoozed_pile_whole(tmp_path):
+    # A workspace lives in exactly one group, so the chain gives up its own to
+    # fold away inside `<org> snoozed (N)` — where the table already files it
+    # (`_split_snoozed` swallows a snoozed chain whole). Tip first, contiguous,
+    # so the pile reads in the order the table renders.
+    ctx = _stack_ctx(
+        tmp_path,
+        [
+            ("workspace:1", "khivi/a", "main"),
+            ("workspace:2", "khivi/b", "khivi/a"),
+            ("workspace:3", "khivi/c", "main"),
+        ],
+        snoozed=("workspace:2", "workspace:3"),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2", "workspace:3"}))
+    assert folds.snoozed == {
+        "Cockpit": ["workspace:2", "workspace:1", "workspace:3"],
+    }
 
 
-def test_a_freshly_created_group_is_sunk_too(tmp_path):
-    # The create path parks as well: a chain snoozed before its group existed
-    # (first cycle after a spawn, or after the group was dissolved and rebuilt)
-    # must land at the bottom, not wait for the next tick's re-assert.
+def test_a_diverted_chain_gives_up_its_stack_group(tmp_path):
+    # The other half: leaving the stack group in place would show the chain
+    # twice — once as its own sidebar row, once inside the snoozed fold.
+    create, dissolved = _snoozed_stack(tmp_path, snoozed=("workspace:2",))
+    create.assert_not_called()
+    assert dissolved == ["wg:stack"]
+
+
+def test_a_snooze_below_the_tip_keeps_the_stack_intact(tmp_path):
+    # Same tip rule the TUI bands rows by: one snoozed dependency must not bury
+    # the active chain stacked on top of it, and pulling that member into the
+    # pile alone would split the fold that makes the chain readable.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
+        snoozed=("workspace:1",),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+    assert folds.snoozed == {"Cockpit": []}
+
+
+def test_a_live_stack_keeps_its_group(tmp_path):
+    create, dissolved = _snoozed_stack(tmp_path, snoozed=())
+    create.assert_not_called()  # matched the existing group
+    assert dissolved == []
+
+
+def test_a_repo_scoped_kick_leaves_a_snoozed_chain_grouped(tmp_path):
+    # `only_repo` passes no accumulator and runs no cross-repo pass, so there is
+    # no pile to divert into: dissolving here would strand the members as loose
+    # rows until the next full cycle folded them.
     ctx = _stack_ctx(
         tmp_path,
         [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
         snoozed=("workspace:2",),
         repo_entry={"name": "Cockpit"},
     )
-    made = _group("wg:new", "b (2)", "workspace:9", ["workspace:2", "workspace:1"])
-    sunk: list[str] = []
-    with (
-        patch.object(cycle, "list_workspace_groups", return_value=[]),
-        patch.object(cycle, "create_workspace_group", return_value=made),
-        patch.object(cycle, "move_workspace_group_to_end", side_effect=sunk.append),
-    ):
-        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
-
-    assert sunk == ["wg:new"]
-    assert ctx.pill_state["stack-park:wg:new"] == "end"
-
-
-def test_the_sink_re_asserts_every_cycle(tmp_path):
-    # Unconditional like the trailing folds' own move, so it self-heals: a
-    # broadcast, cmux reordering on activity, or a hand drag is undone next tick.
-    sunk, lifted, _ = _park_stack(
-        tmp_path, snoozed=("workspace:2",), pill_state={"stack-park:wg:stack": "end"}
-    )
-    assert (sunk, lifted) == (["wg:stack"], [])
-
-
-def test_a_live_stack_is_never_moved(tmp_path):
-    # The *lift* must not become a per-cycle re-assert: that would pin every
-    # stack group to the top of the sidebar and fight the user's own ordering.
-    # With no recorded sink, a stack cockpit never sank is left alone.
-    assert _park_stack(tmp_path, snoozed=())[:2] == ([], [])
-
-
-def test_a_woken_stack_is_lifted_once(tmp_path):
-    # The one lift that does fire: undoing a sink this daemon made. Without it
-    # the sink is one-way and a woken chain stays buried at the bottom.
-    key = "stack-park:wg:stack"
-    sunk, lifted, state = _park_stack(tmp_path, snoozed=(), pill_state={key: "end"})
-    assert (sunk, lifted) == ([], ["wg:stack"])
-    assert state == {key: "start"}
-    # ...and it stays lifted: the next cycle sees no change and moves nothing.
-    assert _park_stack(tmp_path, snoozed=(), pill_state=state)[:2] == ([], [])
-
-
-def test_the_lift_survives_the_tip_leaving_the_chain(tmp_path):
-    # Regression: the park marker used to be keyed by the tip PR number, but the
-    # tip is the deepest member that still has a workspace — so when the snoozed
-    # tip merged and its worktree was torn down, the surviving (live) chain
-    # looked up a different key, found nothing, and stayed pinned at the bottom
-    # forever. Keying by the group ref, which outlives any one member, lifts it.
-    ctx = _stack_ctx(
-        tmp_path,
-        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
-        repo_entry={"name": "Cockpit"},
-    )  # tip #3 already gone; nobody left is snoozed
     group = _group(
         "wg:stack", "b (2)", "workspace:9", ["workspace:2", "workspace:1"], icon=""
     )
-    ctx.pill_state = {"stack-park:wg:stack": "end"}  # sunk last cycle, on tip #3
-    lifted: list[str] = []
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[group]),
-        patch.object(cycle, "move_workspace_group_to_start", side_effect=lifted.append),
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
     ):
         cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
 
-    assert lifted == ["wg:stack"]
-
-
-def test_dissolving_a_group_drops_its_park_marker(tmp_path):
-    # The other half of the same regression: a stale `"end"` outliving its group
-    # made the *next* group built for that chain lift a live stack to the top.
-    ctx = _stack_ctx(
-        tmp_path,
-        [("workspace:1", "khivi/a", "main")],  # chain of one — no fold
-        repo_entry={"name": "Cockpit"},
-    )
-    group = _group("wg:stack", "a (2)", "workspace:9", ["workspace:1"], icon="")
-    ctx.pill_state = {"stack-park:wg:stack": "end"}
-    with (
-        patch.object(cycle, "list_workspace_groups", return_value=[group]),
-        patch.object(cycle, "ungroup_workspaces"),
-        patch.object(cycle, "cmux_close_workspace_best_effort"),
-    ):
-        cycle._reconcile_sidebar_groups(ctx, {"workspace:1"})
-
-    assert ctx.pill_state == {}
-
-
-def test_a_snooze_below_the_tip_does_not_sink_the_stack(tmp_path):
-    # Same tip rule the TUI bands rows by: one snoozed dependency must not bury
-    # the active chain stacked on top of it.
-    assert _park_stack(tmp_path, snoozed=("workspace:1",))[:2] == ([], [])
+    ungroup.assert_not_called()
 
 
 def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
@@ -5261,10 +5214,10 @@ def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
     assert moved == ["wg:reviews", "wg:snoozed"]
 
 
-def _sunk_stack_folds(tmp_path):
-    """`ReviewFolds` from a repo with a snoozed-tip stack, a review, and a loose
-    snooze — the stacked refs never reach the `snoozed` pile, so a fold needs
-    one of its own."""
+def test_a_snoozed_chain_folds_with_the_rest_of_the_pile(tmp_path):
+    # End to end across both passes: the chain's members are ordinary snoozed
+    # refs by the time the cross-repo pass runs, so they land in the one
+    # `<org> snoozed (N)` fold with the loose snooze rather than beside it.
     ctx = _stack_ctx(
         tmp_path,
         [
@@ -5284,27 +5237,16 @@ def _sunk_stack_folds(tmp_path):
     )
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[group]),
-        patch.object(cycle, "move_workspace_group_to_end"),
+        patch.object(cycle, "ungroup_workspaces"),
+        patch.object(cycle, "cmux_close_workspace_best_effort"),
     ):
         cycle._reconcile_sidebar_groups(ctx, refs, folds)
-    return folds
 
-
-def test_a_sunk_stack_is_recorded_for_the_cross_repo_pass(tmp_path):
-    # The per-repo sink can't be the last word: the trailing folds are parked
-    # afterwards and each `--to-index 9999` lands below everything before it.
-    assert _sunk_stack_folds(tmp_path).sunk == ["wg:stack"]
-
-
-def test_a_sunk_stack_is_re_parked_below_both_trailing_folds(tmp_path):
-    # The fix for table/sidebar disagreement: `_row_band` files a snoozed chain
-    # in band 2 (below reviews, then folded away), so the sidebar must not leave
-    # it sitting above both piles as the most prominent thing on screen.
-    folds = _sunk_stack_folds(tmp_path)
+    assert folds.snoozed == {"Cockpit": ["workspace:2", "workspace:1", "workspace:4"]}
     made = iter(
         [
             _group("wg:reviews", "Cockpit reviews (1)", "workspace:8", []),
-            _group("wg:snoozed", "Cockpit snoozed (1)", "workspace:7", []),
+            _group("wg:snoozed", "Cockpit snoozed (3)", "workspace:7", []),
         ]
     )
     moved: list[str] = []
@@ -5312,41 +5254,21 @@ def test_a_sunk_stack_is_re_parked_below_both_trailing_folds(tmp_path):
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(
             cycle, "create_workspace_group", side_effect=lambda *a, **k: next(made)
-        ),
+        ) as create,
         patch.object(cycle, "move_workspace_group_to_end", side_effect=moved.append),
     ):
         cycle._reconcile_review_groups(folds, dry=False)
 
-    assert moved == ["wg:reviews", "wg:snoozed", "wg:stack"]
-
-
-def test_a_repo_scoped_kick_still_sinks_a_stack_with_no_folds(tmp_path):
-    # `only_repo` passes no accumulator and runs no cross-repo pass, so the
-    # immediate move in `_park` is the only one there will be — dropping it in
-    # favour of the deferred re-park would leave a scoped kick doing nothing.
-    sunk, lifted, _ = _park_stack(tmp_path, snoozed=("workspace:2",))
-    assert (sunk, lifted) == (["wg:stack"], [])
-
-
-def test_a_live_stack_is_never_re_parked(tmp_path):
-    # Only a snoozed tip contributes: re-parking a live chain would drag every
-    # stack to the bottom of the sidebar on every cycle.
-    ctx = _stack_ctx(
-        tmp_path,
-        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
-        repo_entry={"name": "Cockpit"},
-    )
-    folds = cycle.ReviewFolds()
-    group = _group(
-        "wg:stack", "b (2)", "workspace:9", ["workspace:2", "workspace:1"], icon=""
-    )
-    with (
-        patch.object(cycle, "list_workspace_groups", return_value=[group]),
-        patch.object(cycle, "move_workspace_group_to_end"),
-    ):
-        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"}, folds)
-
-    assert folds.sunk == []
+    assert [c.args[0] for c in create.call_args_list] == [
+        "Cockpit reviews (1)",
+        "Cockpit snoozed (3)",
+    ]
+    assert create.call_args_list[1].args[1] == [
+        "workspace:2",
+        "workspace:1",
+        "workspace:4",
+    ]
+    assert moved == ["wg:reviews", "wg:snoozed"]
 
 
 def test_reconcile_review_groups_folds_a_lone_snooze(tmp_path):
