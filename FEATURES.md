@@ -231,7 +231,9 @@ The guardrails are the point:
 
 Reviews also collect themselves out of your way: they fold into one collapsed
 `<org> reviews (N)` group at the bottom of your cmux sidebar, per organisation — one review
-queue for a team, however many repos it spans. Snoozed PRs get a second fold below it.
+queue for a team, however many repos it spans. Snoozed PRs get a second fold below it, and
+below both sits any stacked chain whose tip you snoozed — a stack stays one group rather
+than being split into a pile, so its position is what says "not my turn".
 
 ---
 

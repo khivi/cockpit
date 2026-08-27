@@ -332,8 +332,9 @@ def _row_band(wt: Worktree) -> int:
     Both discriminators are the same daemon-written flat cells the row renders
     from (`pr-snoozed`; `pr-author`, which carries a login only for a coworker's
     PR) — no network, nothing stored. Snooze outranks review so a coworker PR
-    I've already read sinks past the ones I haven't, matching the sidebar's
-    stacks → snoozed → reviews precedence. Mute is deliberately *not* a band: it
+    I've already read sinks past the ones I haven't, matching the sidebar, which
+    parks its snoozed fold under its reviews fold (and a sunk stack chain under
+    both — `cycle._reconcile_review_groups`). Mute is deliberately *not* a band: it
     means "stop nudging me about a PR I'm working on", not "not my turn"."""
     if read_text(branch_cache("pr-snoozed", wt.branch)):
         return _BAND_SNOOZED

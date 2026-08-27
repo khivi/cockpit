@@ -5261,6 +5261,94 @@ def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
     assert moved == ["wg:reviews", "wg:snoozed"]
 
 
+def _sunk_stack_folds(tmp_path):
+    """`ReviewFolds` from a repo with a snoozed-tip stack, a review, and a loose
+    snooze — the stacked refs never reach the `snoozed` pile, so a fold needs
+    one of its own."""
+    ctx = _stack_ctx(
+        tmp_path,
+        [
+            ("workspace:1", "khivi/a", "main"),
+            ("workspace:2", "khivi/b", "khivi/a"),
+            ("workspace:3", "them/c", "main"),
+            ("workspace:4", "khivi/d", "main"),
+        ],
+        coworkers=("workspace:3",),
+        snoozed=("workspace:2", "workspace:4"),
+        repo_entry={"name": "Cockpit"},
+    )
+    refs = {"workspace:1", "workspace:2", "workspace:3", "workspace:4"}
+    folds = cycle.ReviewFolds()
+    group = _group(
+        "wg:stack", "b (2)", "workspace:9", ["workspace:2", "workspace:1"], icon=""
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[group]),
+        patch.object(cycle, "move_workspace_group_to_end"),
+    ):
+        cycle._reconcile_sidebar_groups(ctx, refs, folds)
+    return folds
+
+
+def test_a_sunk_stack_is_recorded_for_the_cross_repo_pass(tmp_path):
+    # The per-repo sink can't be the last word: the trailing folds are parked
+    # afterwards and each `--to-index 9999` lands below everything before it.
+    assert _sunk_stack_folds(tmp_path).sunk == ["wg:stack"]
+
+
+def test_a_sunk_stack_is_re_parked_below_both_trailing_folds(tmp_path):
+    # The fix for table/sidebar disagreement: `_row_band` files a snoozed chain
+    # in band 2 (below reviews, then folded away), so the sidebar must not leave
+    # it sitting above both piles as the most prominent thing on screen.
+    folds = _sunk_stack_folds(tmp_path)
+    made = iter(
+        [
+            _group("wg:reviews", "Cockpit reviews (1)", "workspace:8", []),
+            _group("wg:snoozed", "Cockpit snoozed (1)", "workspace:7", []),
+        ]
+    )
+    moved: list[str] = []
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(
+            cycle, "create_workspace_group", side_effect=lambda *a, **k: next(made)
+        ),
+        patch.object(cycle, "move_workspace_group_to_end", side_effect=moved.append),
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    assert moved == ["wg:reviews", "wg:snoozed", "wg:stack"]
+
+
+def test_a_repo_scoped_kick_still_sinks_a_stack_with_no_folds(tmp_path):
+    # `only_repo` passes no accumulator and runs no cross-repo pass, so the
+    # immediate move in `_park` is the only one there will be — dropping it in
+    # favour of the deferred re-park would leave a scoped kick doing nothing.
+    sunk, lifted, _ = _park_stack(tmp_path, snoozed=("workspace:2",))
+    assert (sunk, lifted) == (["wg:stack"], [])
+
+
+def test_a_live_stack_is_never_re_parked(tmp_path):
+    # Only a snoozed tip contributes: re-parking a live chain would drag every
+    # stack to the bottom of the sidebar on every cycle.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "khivi/b", "khivi/a")],
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = cycle.ReviewFolds()
+    group = _group(
+        "wg:stack", "b (2)", "workspace:9", ["workspace:2", "workspace:1"], icon=""
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[group]),
+        patch.object(cycle, "move_workspace_group_to_end"),
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"}, folds)
+
+    assert folds.sunk == []
+
+
 def test_reconcile_review_groups_folds_a_lone_snooze(tmp_path):
     # Like a lone review: the dedicated anchor makes a one-member fold real.
     ctx = _stack_ctx(

@@ -2353,6 +2353,14 @@ class ReviewFolds:
     tell "a member that stopped being a review" (ours, drop it) from "a foreign
     workspace the user added by hand" (leave it).
 
+    `sunk` is the group ref of every stack chain this cycle sank for a snoozed
+    tip. A snoozed stack keeps its own group (it can't join a pile — a workspace
+    lives in exactly one), so its *position* is all it has to say "not my turn",
+    and the per-repo sink alone doesn't hold: this pass's own `--to-index 9999`
+    moves run afterwards and would land both piles below it. Re-parking these
+    last is what puts a chain I've deferred where the table already puts it —
+    below the folds, not above them.
+
     `partial` says a repo dropped out of the cycle before contributing, so an
     absent bucket means "not asked" rather than "empty" — see
     `_reconcile_review_groups`, which refuses to dissolve on that.
@@ -2360,6 +2368,7 @@ class ReviewFolds:
 
     buckets: dict[str, list[str]] = field(default_factory=dict)
     snoozed: dict[str, list[str]] = field(default_factory=dict)
+    sunk: list[str] = field(default_factory=list)
     owned: set[str] = field(default_factory=set)
     partial: bool = False
 
@@ -2389,10 +2398,10 @@ def _reconcile_sidebar_groups(
     turn": each chain is sunk to the bottom when its **tip** is snoozed, the
     same tip rule the TUI bands rows by. The sink re-asserts every cycle (so it
     self-heals); the lift back fires only on the `pill_state` transition out of
-    a sink cockpit made, so a live stack is never moved. This runs before
-    `_reconcile_review_groups`, whose own `--to-index 9999` moves therefore land
-    the reviews and snoozed piles *below* a sunk stack — a read chain still
-    outranks a loose pile.
+    a sink cockpit made, so a live stack is never moved. Sinking here is not the
+    chain's final position: `_reconcile_review_groups` runs afterwards and each
+    of its `--to-index 9999` moves would land a pile *below* the chain, so every
+    sunk ref is handed to `folds.sunk` for that pass to re-park last.
 
     Only groups overlapping *this* repo's workspaces are touched — a group the
     user made by hand around unrelated workspaces is never claimed or dissolved.
@@ -2517,6 +2526,15 @@ def _reconcile_sidebar_groups(
         group, so the dissolve below drops the key and a rebuilt group starts
         clean rather than inheriting a stale `"end"` and lifting a live chain.
 
+        The sink here is not the last word on where the chain lands: the
+        trailing folds are re-parked after every repo has run, and each of their
+        `--to-index 9999` moves would leave both piles *below* it. So a sunk ref
+        is recorded on `folds` for `_reconcile_review_groups` to re-park last,
+        putting the chain under the folds — where `worktree_table._row_band`
+        already puts it (band 2, below reviews, folded away). The move still
+        happens here as well, because a repo-scoped kick passes no `folds` and
+        has no later pass to defer to.
+
         ponytail: `pill_state` is process-local, so a sink outlives the lift's
         memory of it — restart the daemon while a stack is sunk and the later
         wake won't lift it (`workspace-group list` reports no index, so there is
@@ -2526,6 +2544,8 @@ def _reconcile_sidebar_groups(
         key = f"stack-park:{group_ref}"
         if sink:
             move_workspace_group_to_end(group_ref)
+            if folds is not None:
+                folds.sunk.append(group_ref)
             ctx.pill_state[key] = "end"
         elif ctx.pill_state.get(key) == "end":
             move_workspace_group_to_start(group_ref)
@@ -2572,7 +2592,8 @@ def _reconcile_sidebar_groups(
 
 # The two trailing piles, in sidebar order. Each `--to-index 9999` move lands
 # its target below everything moved before it, so processing reviews first
-# leaves snoozed bottom-most — the most passive pile sits lowest.
+# leaves snoozed lower — the more passive pile sits under the queue. The sunk
+# stack chains re-parked after this loop land lower still.
 _TRAILING_FOLDS: tuple[tuple[str, str, Callable[[str, int], str]], ...] = (
     ("buckets", REVIEW_GROUP_ICON, _review_group_name),
     ("snoozed", SNOOZE_GROUP_ICON, _snoozed_group_name),
@@ -2593,7 +2614,10 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
     icons), so this pass owns the whole set: one that matches no bucket is
     dissolved, which also reaps a stranded anchor-only header for free. Each
     surviving fold is re-parked at the bottom of the sidebar — both are passive
-    piles, out of the way of my own rows.
+    piles, out of the way of my own rows — and then, lower still, every stack
+    chain `_reconcile_sidebar_groups` sank for a snoozed tip (`folds.sunk`). A
+    chain I've handed back is the most passive thing on screen, so it sits
+    under both piles, matching the band the table already files it in.
 
     The two families are matched separately (`_match_stack_group` keys on member
     overlap, which is icon-blind), so a fold can never be claimed by the wrong
@@ -2677,6 +2701,13 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
                 if group.anchor and group.anchor not in folds.owned:
                     cmux_close_workspace_best_effort(group.anchor)
                 print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
+    # Last, so the bottom reads reviews → snoozed → deferred chains: every move
+    # above lands its target below everything moved before it, so the two piles
+    # would otherwise overtake the stack `_reconcile_sidebar_groups` already
+    # sank. Unguarded by `folds.partial` — a move is idempotent, the dissolve
+    # above is the only irreversible thing here.
+    for group_ref in folds.sunk:
+        move_workspace_group_to_end(group_ref)
 
 
 def _match_stack_group(
