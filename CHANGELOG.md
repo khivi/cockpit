@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.3](https://github.com/khivi/cockpit/compare/v2.12.2...v2.12.3) (2026-08-27)
+
+
+### Documentation
+
+* **features:** name the ticket cache TTL where tickets are described ([#416](https://github.com/khivi/cockpit/issues/416)) ([e586e1a](https://github.com/khivi/cockpit/commit/e586e1ad9e09cddc823e40e14380829bc6e16d97))
+
 ## [2.12.2](https://github.com/khivi/cockpit/compare/v2.12.1...v2.12.2) (2026-08-27)
 
 
