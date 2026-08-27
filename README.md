@@ -68,9 +68,9 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 | `c` · `C` | Close the worktree + workspace — [never discards work](FEATURES.md#closing-up) |
 | `m` · `z` | Mute indefinitely · [snooze until the PR changes](FEATURES.md#the-nudge) |
 | `n` · `h` | Start something new · park the row's repo, or reveal / un-park a parked one |
-| `q` | Quit |
+| `s` · `q` | Reconcile every repo now · quit |
 
-Hover any footer key for a sentence on what it does. **☰ Menu**, top right, holds sync, logs, config, theme, and the [feature guide](FEATURES.md) — click it, or press `ctrl+p`.
+Hover any footer key for a sentence on what it does. **☰ Menu**, top right, holds logs, config, theme, and the [feature guide](FEATURES.md) — click it, or press `ctrl+p`.
 
 ## Configuration
 

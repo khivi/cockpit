@@ -114,7 +114,7 @@ class HeaderBar(Horizontal):
     # what says clickable; the tooltip carries the key for anyone who wants it.
     MENU_LABEL = "☰ Menu"
     MENU_TOOLTIP = (
-        "Sync now, output log, show/edit config, theme, and the feature guide.\n"
+        "Output log, show/edit config, theme, and the feature guide.\n"
         "Click, or press ctrl+p."
     )
 

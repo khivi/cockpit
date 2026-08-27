@@ -2153,8 +2153,8 @@ async def test_footer_merges_close_and_force_into_one_segment():
 
 
 async def test_footer_global_group_orders_hide_new_first():
-    # The global group renders Hide, New in that order regardless of BINDINGS
-    # order (FooterBar.GLOBAL_ORDER), with Quit trailing. The menu is not here
+    # The global group renders Hide, New, Sync in that order regardless of
+    # BINDINGS order (FooterBar.GLOBAL_ORDER), with Quit trailing. The menu is not here
     # at all — it lives in the header (see test_header_advertises_the_menu).
     from cockpit.tui.widgets.footer_bar import FooterBar
 
@@ -2162,20 +2162,21 @@ async def test_footer_global_group_orders_hide_new_first():
     async with app.run_test() as pilot:
         await pilot.pause()
         gt = app.query_one(FooterBar).global_text
-        assert gt.index("Hide") < gt.index("New") < gt.index("Quit")
+        assert gt.index("Hide") < gt.index("New") < gt.index("Sync")
+        assert gt.index("Sync") < gt.index("Quit")
 
 
-async def test_footer_advertises_no_sync_or_output_key():
-    # Both moved to the `^P` palette; the footer must not claim a key for them.
+async def test_footer_advertises_sync_but_not_output():
+    # `s` is a global key; output stays behind the `^P` palette.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
         fb = app.query_one(FooterBar)
-        assert "Sync" not in fb.global_text and "Output" not in fb.global_text
+        assert "Sync" in fb.global_text and "Output" not in fb.global_text
         actions = {b[1] for b in CockpitApp.BINDINGS if isinstance(b, tuple)}
-        assert not actions & {"sync", "show_output"}
+        assert "sync" in actions and "show_output" not in actions
 
 
 async def test_footer_labels_are_one_word():
@@ -3142,7 +3143,7 @@ async def test_footer_hides_ask_repo_on_the_hidden_disclosure_row():
 
 async def test_header_advertises_the_menu_and_the_footer_no_longer_does():
     # The command palette's only visible entry point. It is in the header, not
-    # the footer: without it, "Show config", "Edit config", "Sync now",
+    # the footer: without it, "Show config", "Edit config",
     # "Output" and the feature guide are reachable only by someone who already
     # knows `ctrl+p` is a convention.
     from textual.widgets import Static

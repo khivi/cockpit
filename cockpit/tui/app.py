@@ -214,6 +214,7 @@ class CockpitApp(App[None]):
         ("z", "snooze_row", "Snooze"),
         ("n", "new_workspace", "New"),
         ("h", "hide_repo", "Hide repo"),
+        ("s", "sync", "Sync"),
         ("q", "quit", "Quit"),
         ("escape", "dismiss_overlay", "Back"),
     ]
@@ -824,7 +825,7 @@ class CockpitApp(App[None]):
     # ---- actions ---------------------------------------------------------
 
     def action_sync(self) -> None:
-        # Palette-only (`^P` → "Sync now"). Full-cycle, never repo-scoped.
+        # Global key `s`. Full-cycle, never repo-scoped.
         print("kick: manual sync — running cycle now")
         self._kick_slow()
 
