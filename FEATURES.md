@@ -21,7 +21,7 @@ having to remember.
 | [**Broadcast**](#reaching-every-session-at-once) | One line into every idle session at once, same safety gate as the nudge |
 | [**Config**](#config-that-scales-past-one-repo) | Sane defaults for one repo; an `orgs` block for fifteen |
 | [**Design**](#design-decisions-youll-feel) · [**Non-goals**](#what-it-deliberately-doesnt-do) | Why nothing drifts, why it degrades instead of dying, and what it refuses to do |
-| [**Limits**](#what-it-costs) | Where the bookkeeping stops and your judgment starts — what cockpit can't do for you |
+| [**What it costs**](#what-it-costs) | Where the bookkeeping stops and your judgment starts — the trades you are actually making |
 
 ---
 
@@ -320,7 +320,11 @@ Four consequences you'll actually notice:
 
 **Nothing is stored, so nothing drifts.** All three sources are re-derived from scratch
 every cycle. There's no identity file to get out of sync with reality, which is why a row
-can't tell you about a worktree that isn't there or a PR state from twenty minutes ago.
+can't tell you about a worktree that isn't there or a PR state from twenty minutes ago. The
+one exception is ticket state. A ticket can move without anything in the PR changing, so the
+delivery block is cached and refetched when the PR's footer ids change or after
+`linear_state_ttl_seconds` (three slow ticks by default). It is the only field in the table
+that can be up to fifteen minutes behind.
 
 **One writer.** The daemon decides and writes; the table and statusline only read. A
 renderer that went and asked `git` itself could disagree with the field beside it in the
@@ -340,30 +344,28 @@ things assigned to you, or requires you to say yes.
 
 ## What it costs
 
-Everything above is bookkeeping — the clerical half of working on several changes at once.
-The other half is still yours, and the line between them is worth naming before you install
-anything. Five limits:
+Everything above removes bookkeeping. None of it removes judgment, and the difference is
+worth being explicit about.
 
 **The bottleneck moves, it doesn't clear.** Ten rows produce ten diffs, and you read diffs
-at the speed you always have. What cockpit gives back is the time you spent working out
-which of the ten wanted you — not the time you spend deciding what to do about it.
+at the speed you always have. Cockpit removes lookup, not review. Five to ten live rows is
+honest; fifty is a review queue you're lying to yourself about.
 
 **Nothing stored means no history.** The rule that keeps the table from drifting also means
-it can't tell you what changed since yesterday. Every row is the state right now: no trend,
-no record of how long a PR sat red, nothing to look back at.
+it can't tell you what changed since yesterday. Every row is what is true right now. For the
+arc of a change, go read the PR.
 
-**A nudged session digs.** Red CI at 2am sometimes gets fixed by weakening the test. The
-nudge names a category and hands over a prompt; it has no opinion on whether that branch
-should be worked on unsupervised at all. `m` and `z` exist for the branches where that trade
-isn't worth taking.
+**A nudged session digs.** Red CI at 2am gets fixed while you're asleep, and once in a while
+it gets fixed by weakening the test. The nudge buys a shorter path to the review, never a
+shorter review — and sometimes it buys work you throw away. `m` and `z` exist for the
+branches where that trade isn't worth taking.
 
-**The backend is yours to install.** No cmux or limux on `PATH` and nothing can be spawned.
-The table, the cells, and the statusline still work — but the half of cockpit that starts
-and reaches sessions needs a terminal backend that cockpit doesn't ship.
+**The backend is yours to install.** Cockpit drives terminals; it doesn't ship them. Without
+cmux or limux on `PATH`, the table and statusline still work and nothing can be spawned.
 
 **One human's attention is the ceiling.** Every refusal in this document exists to keep a
-decision in front of you, which caps cockpit at as many changes as you can actually hold.
-Past that, more rows is just a longer list of things you're behind on.
+decision in front of you. If what you want is a queue that runs itself overnight without
+you, this is the wrong tool.
 
 ---
 
