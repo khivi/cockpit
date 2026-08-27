@@ -191,7 +191,8 @@ delivery claim.
 From that link you get:
 
 - **The ticket and its live state in the table**, and on the workspace card — the real
-  title, not just an id.
+  title, not just an id. Refetched on a TTL, so it can trail the tracker by up to fifteen
+  minutes.
 - **A `🏁` dev-done pill** when every ticket the PR delivers has reached your
   dev-done state. Whatever your tracker calls that thing — a Linear state, a GitHub label,
   a Jira status, a Trello list — it's one config field, `dev_done`.
