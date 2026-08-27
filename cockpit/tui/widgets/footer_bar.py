@@ -94,6 +94,7 @@ class FooterBar(Horizontal):
         # global keys.
         "hide_repo",
         "new_workspace",
+        "sync",
         "quit",
     )
 
@@ -112,6 +113,7 @@ class FooterBar(Horizontal):
         "ask_row": "Ask",
         "new_workspace": "New",
         "hide_repo": "Hide",
+        "sync": "Sync",
         "quit": "Quit",
     }
 
@@ -168,6 +170,10 @@ class FooterBar(Horizontal):
         "new_workspace": (
             "Start new work. A branch name, PR number, ticket id, or Slack link "
             "becomes a worktree with a workspace on it."
+        ),
+        "sync": (
+            "Reconcile every repo now instead of waiting for the tick — the "
+            "same full cycle the timer runs, never scoped to one repo."
         ),
         "quit": "Quit the dashboard. The reconcile daemon stops with it.",
     }

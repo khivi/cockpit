@@ -95,17 +95,18 @@ async def test_plain_json_body_is_unstyled():
         assert text.spans == []
 
 
-async def test_palette_offers_sync_and_output():
-    # Both lost their key (`s` / `o`) and are now palette-only, so these hits
-    # are their ONLY in-app route.
+async def test_palette_offers_output_but_not_sync():
+    # Output is palette-only, so its hit is the ONLY in-app route to it. Sync
+    # has the `s` key instead — one surface per action, or the two drift.
     app = _Host()
     async with app.run_test() as pilot:
         await pilot.pause()
         provider = ConfigCommands(app.screen)
-        synced = [h async for h in provider.search("sync")]
-        assert any("Sync now" in str(h.text) for h in synced)
         output = [h async for h in provider.search("output")]
         assert any("Output" in str(h.text) for h in output)
+        assert not any(
+            "Sync" in str(h.text) for h in [x async for x in provider.search("sync")]
+        )
 
 
 async def test_palette_offers_the_feature_guide():
@@ -147,9 +148,6 @@ async def test_discovered_entries_invoke_their_app_action():
     called: list[str] = []
 
     class _Recorder(_Host):
-        def action_sync(self) -> None:
-            called.append("sync")
-
         def action_show_output(self) -> None:
             called.append("output")
 
@@ -168,4 +166,4 @@ async def test_discovered_entries_invoke_their_app_action():
         provider = ConfigCommands(app.screen)
         async for hit in provider.discover():
             hit.command()
-    assert called == ["sync", "output", "show", "edit", "guide"]
+    assert called == ["output", "show", "edit", "guide"]

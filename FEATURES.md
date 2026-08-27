@@ -55,9 +55,10 @@ automatically.
 
 **Everything refreshes itself.** A full reconcile every 5 minutes and a network-free
 repaint every 30 seconds — both tunable — plus an instant repaint when a workspace opens or
-closes out from under you. **☰ Menu**, in the top right corner, opens a palette holding a
-manual sync, the daemon log, your resolved config, an editor for it, a theme picker that
-persists your choice, and a link back to this guide. Click it, or press `ctrl+p`.
+closes out from under you. `s` reconciles every repo on demand. **☰ Menu**, in the top right
+corner, opens a palette holding the daemon log, your resolved config, an editor for it, a
+theme picker that persists your choice, and a link back to this guide. Click it, or press
+`ctrl+p`.
 
 ### The sidebar card
 
@@ -94,6 +95,7 @@ registered repos shows no PR at all.
 | `z` | Snooze / wake — quiet until the PR actually changes |
 | `n` | Start something new |
 | `h` | Park / reveal / un-park a repo |
+| `s` | Reconcile every repo now |
 | `q` | Quit |
 
 Footer hints follow the highlighted row. A row with no PR doesn't advertise `p`; a muted
@@ -101,8 +103,8 @@ row's `m` reads **Unmute**; a backend that can't focus doesn't offer `f`. You ne
 a key that turns out to be meaningless here. Hovering a key explains it in a sentence —
 what it refuses and why, which is the part a one-word label can't carry.
 
-Everything that isn't a row action lives behind **☰ Menu** in the top right corner: sync,
-logs, config, theme, and this guide. Click it, or press `ctrl+p`.
+Everything that isn't a key lives behind **☰ Menu** in the top right corner: logs, config,
+theme, and this guide. Click it, or press `ctrl+p`.
 
 **`d` is how you review your agent's work.** The diff opens in a browser split belonging to
 that row's terminal, so cmux's line comments have somewhere to go: click a line, leave a

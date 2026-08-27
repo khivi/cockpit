@@ -71,11 +71,6 @@ class ConfigCommands(Provider):
     # (label, app action, help text) — walked by BOTH `discover` and `search`.
     COMMANDS = (
         (
-            "Sync now: run a full cycle",
-            "action_sync",
-            "Reconcile every repo immediately instead of waiting for the tick",
-        ),
-        (
             "Output: recent tick log",
             "action_show_output",
             "Show the captured slow / fast tick output",
