@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.2](https://github.com/khivi/cockpit/compare/v2.11.1...v2.11.2) (2026-08-27)
+
+
+### Bug Fixes
+
+* **gh:** collapse PRs sharing a head branch to one ([#408](https://github.com/khivi/cockpit/issues/408)) ([fd51647](https://github.com/khivi/cockpit/commit/fd516475f768d0d0b117e280c6b0eee33b9ead80))
+
 ## [2.11.1](https://github.com/khivi/cockpit/compare/v2.11.0...v2.11.1) (2026-08-26)
 
 
