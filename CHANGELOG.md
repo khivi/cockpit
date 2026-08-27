@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.5](https://github.com/khivi/cockpit/compare/v2.12.4...v2.12.5) (2026-08-27)
+
+
+### Bug Fixes
+
+* **sidebar:** fold a snoozed stack into the snoozed pile ([#420](https://github.com/khivi/cockpit/issues/420)) ([231268d](https://github.com/khivi/cockpit/commit/231268de608bf54d6653cd687c411177959a1b07))
+
 ## [2.12.4](https://github.com/khivi/cockpit/compare/v2.12.3...v2.12.4) (2026-08-27)
 
 
