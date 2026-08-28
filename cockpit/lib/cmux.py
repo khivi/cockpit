@@ -250,17 +250,30 @@ def _group_from_json(blob: dict) -> WorkspaceGroup | None:
     )
 
 
-def list_workspace_groups() -> list[WorkspaceGroup]:
-    """Every sidebar group in the window. Empty on any failure (cmux absent,
-    limux, malformed JSON) — grouping is additive, so a failed read just means
-    "reconcile nothing this cycle", never an exception into the tick.
+def read_workspace_groups() -> list[WorkspaceGroup] | None:
+    """Every sidebar group in the window, or None when the read itself failed.
+
+    The distinction matters to exactly one caller. A reconcile pass that only
+    ever *removes* can treat a failed read as "no groups" and safely do nothing,
+    which is why `list_workspace_groups` flattens the two. A pass that *creates*
+    cannot: "cmux answered nothing" and "cmux did not answer" are the same empty
+    list, and building a fold on the second one duplicates a group that is still
+    on screen. Such a caller reads this and gives up on None.
     """
     out = cmux("workspace-group", "list", "--json", check=False)
     try:
         blobs = json.loads(out or "{}").get("groups") or []
     except (json.JSONDecodeError, AttributeError):
-        return []
+        return None
     return [g for g in (_group_from_json(b) for b in blobs) if g is not None]
+
+
+def list_workspace_groups() -> list[WorkspaceGroup]:
+    """Every sidebar group in the window. Empty on any failure (cmux absent,
+    limux, malformed JSON) — grouping is additive, so a failed read just means
+    "reconcile nothing this cycle", never an exception into the tick.
+    """
+    return read_workspace_groups() or []
 
 
 def create_workspace_group(

@@ -3909,7 +3909,7 @@ def test_cycle_all_marks_folds_partial_when_a_repo_raises():
         # whether the machine running the tests happens to have cmux installed.
         patch.object(cycle, "_cache_only", lambda _cfg: False),
         patch.object(
-            cycle, "_reconcile_review_groups", lambda folds, *, dry: seen.append(folds)
+            cycle, "_reconcile_review_groups", lambda folds, **kw: seen.append(folds)
         ),
     ):
         cycle.cycle_all(cfg, "khivi", dry=False, pr_cache={}, pill_state={})
@@ -3931,7 +3931,7 @@ def test_cycle_all_leaves_folds_complete_when_every_repo_succeeds():
         # whether the machine running the tests happens to have cmux installed.
         patch.object(cycle, "_cache_only", lambda _cfg: False),
         patch.object(
-            cycle, "_reconcile_review_groups", lambda folds, *, dry: seen.append(folds)
+            cycle, "_reconcile_review_groups", lambda folds, **kw: seen.append(folds)
         ),
     ):
         cycle.cycle_all(cfg, "khivi", dry=False, pr_cache={}, pill_state={})
@@ -5625,3 +5625,251 @@ def test_bg_spawn_pr_strips_ticket_credentials_from_the_child_env(
     assert child_env["COCKPIT_HOME"] == str(tmp_path)
     assert child_env["CMUX_WORKSPACE_ID"] == "workspace:1"
     assert child_env.get("PATH") == os.environ.get("PATH")
+
+
+# --- trailing-fold restore: the fast tick's replay of the slow pass -----------
+#
+# The gap being closed: only `_reconcile_review_groups` can build a trailing
+# fold, and it runs once at the end of a full cycle. A fold lost mid-interval
+# therefore leaves the sidebar flat for up to `slow_poll_interval_seconds`.
+
+
+def _record(icon, bucket, name, refs):
+    return {cycle._fold_record_key(icon, bucket): {"name": name, "refs": list(refs)}}
+
+
+def test_the_slow_pass_records_a_fold_it_created(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "them/b", "main")],
+        coworkers=("workspace:2",),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+    pill_state = {}
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(
+            cycle,
+            "create_workspace_group",
+            return_value=_group("wg:1", "Cockpit reviews (1)", "workspace:9", []),
+        ),
+        patch.object(cycle, "move_workspace_group_to_end"),
+    ):
+        cycle._reconcile_review_groups(folds, dry=False, pill_state=pill_state)
+
+    assert pill_state == _record(
+        REVIEW_GROUP_ICON, "Cockpit", "Cockpit reviews (1)", ["workspace:2"]
+    )
+
+
+def test_the_slow_pass_records_a_fold_it_matched_in_place(tmp_path):
+    # A fold that already existed is just as losable as one built this cycle, so
+    # the match path records too — not only the create path.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "them/b", "main")],
+        coworkers=("workspace:2",),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+    existing = _group(
+        "wg:1", "Cockpit reviews (1)", "workspace:9", ["workspace:2"], REVIEW_GROUP_ICON
+    )
+    pill_state = {}
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "create_workspace_group") as create,
+        patch.object(cycle, "move_workspace_group_to_end"),
+    ):
+        cycle._reconcile_review_groups(folds, dry=False, pill_state=pill_state)
+
+    create.assert_not_called()
+    assert pill_state == _record(
+        REVIEW_GROUP_ICON, "Cockpit", "Cockpit reviews (1)", ["workspace:2"]
+    )
+
+
+def test_a_dissolved_fold_drops_its_record(tmp_path):
+    # Retiring the record is what stops the fast tick rebuilding a pile this
+    # cycle decided is genuinely gone.
+    existing = _group(
+        "wg:1", "n reviews (1)", "workspace:9", ["workspace:1"], REVIEW_GROUP_ICON
+    )
+    pill_state = dict(_record(REVIEW_GROUP_ICON, "n", "n reviews (1)", ["workspace:1"]))
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "ungroup_workspaces"),
+        patch.object(cycle, "cmux_close_workspace_best_effort"),
+    ):
+        cycle._reconcile_review_groups(
+            cycle.ReviewFolds(), dry=False, pill_state=pill_state
+        )
+
+    assert pill_state == {}
+
+
+def test_a_partial_cycle_keeps_its_fold_records(tmp_path):
+    # Same guard as the dissolve: an absent bucket means "not asked". Dropping
+    # the record there would disarm the repair for a fold the cycle explicitly
+    # declined to dissolve.
+    existing = _group(
+        "wg:1", "n reviews (1)", "workspace:9", ["workspace:1"], REVIEW_GROUP_ICON
+    )
+    keep = _record(REVIEW_GROUP_ICON, "n", "n reviews (1)", ["workspace:1"])
+    pill_state = dict(keep)
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "ungroup_workspaces"),
+        patch.object(cycle, "cmux_close_workspace_best_effort"),
+    ):
+        cycle._reconcile_review_groups(
+            cycle.ReviewFolds(partial=True), dry=False, pill_state=pill_state
+        )
+
+    assert pill_state == keep
+
+
+def test_restore_rebuilds_a_fold_that_vanished():
+    pill_state = dict(
+        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (2)", ["workspace:1", "ws:2"])
+    )
+    with (
+        patch.object(cycle, "read_workspace_groups", return_value=[]),
+        patch.object(
+            cycle,
+            "workspace_state",
+            return_value=({"workspace:1": "a", "ws:2": "b"}, {}),
+        ),
+        patch.object(
+            cycle,
+            "create_workspace_group",
+            return_value=_group("wg:7", "Env snoozed (2)", "workspace:9", []),
+        ) as create,
+        patch.object(cycle, "move_workspace_group_to_end") as move,
+    ):
+        cycle.restore_trailing_folds(pill_state)
+
+    create.assert_called_once_with(
+        "Env snoozed (2)",
+        ["workspace:1", "ws:2"],
+        icon=SNOOZE_GROUP_ICON,
+        collapsed=True,
+    )
+    move.assert_called_once_with("wg:7")
+
+
+def test_restore_leaves_a_fold_that_is_still_there_alone():
+    live = _group(
+        "wg:1", "Env snoozed (2)", "workspace:9", ["workspace:1"], SNOOZE_GROUP_ICON
+    )
+    pill_state = dict(
+        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (2)", ["workspace:1", "ws:2"])
+    )
+    with (
+        patch.object(cycle, "read_workspace_groups", return_value=[live]),
+        patch.object(
+            cycle,
+            "workspace_state",
+            return_value=({"workspace:1": "a", "ws:2": "b"}, {}),
+        ),
+        patch.object(cycle, "create_workspace_group") as create,
+    ):
+        cycle.restore_trailing_folds(pill_state)
+
+    # Matched by member overlap, not by name — a fold re-membered since the
+    # record was written is still that fold, and the slow pass owns its shape.
+    create.assert_not_called()
+
+
+def test_restore_gives_up_when_the_group_read_failed():
+    # The whole reason `read_workspace_groups` exists: a failed read flattens to
+    # an empty list, which reads as "every fold is gone" and would duplicate
+    # every group still on screen.
+    pill_state = dict(
+        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (1)", ["workspace:1"])
+    )
+    with (
+        patch.object(cycle, "read_workspace_groups", return_value=None),
+        patch.object(cycle, "workspace_state", return_value=({"workspace:1": "a"}, {})),
+        patch.object(cycle, "create_workspace_group") as create,
+    ):
+        cycle.restore_trailing_folds(pill_state)
+
+    create.assert_not_called()
+
+
+def test_restore_skips_a_fold_whose_members_are_all_gone():
+    pill_state = dict(
+        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (1)", ["workspace:1"])
+    )
+    with (
+        patch.object(cycle, "read_workspace_groups", return_value=[]),
+        patch.object(cycle, "workspace_state", return_value=({"workspace:8": "z"}, {})),
+        patch.object(cycle, "create_workspace_group") as create,
+    ):
+        cycle.restore_trailing_folds(pill_state)
+
+    create.assert_not_called()
+    # The record stays — retiring it is the slow pass's call, not this one's.
+    assert pill_state
+
+
+def test_restore_rebuilds_around_only_the_members_still_live():
+    pill_state = dict(
+        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (2)", ["workspace:1", "ws:2"])
+    )
+    with (
+        patch.object(cycle, "read_workspace_groups", return_value=[]),
+        patch.object(cycle, "workspace_state", return_value=({"ws:2": "b"}, {})),
+        patch.object(
+            cycle,
+            "create_workspace_group",
+            return_value=_group("wg:7", "Env snoozed (2)", "workspace:9", []),
+        ) as create,
+        patch.object(cycle, "move_workspace_group_to_end"),
+    ):
+        cycle.restore_trailing_folds(pill_state)
+
+    assert create.call_args.args[1] == ["ws:2"]
+
+
+def test_restore_can_only_create():
+    # The property that makes a 30s network-free fold pass safe at all: every
+    # failure mode costs a missing fold for one more interval, never a closed
+    # one. No dissolve, no rename, no member add or remove.
+    pill_state = dict(
+        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (1)", ["workspace:1"])
+    )
+    stray = _group("wg:9", "stale", "workspace:9", ["workspace:5"], SNOOZE_GROUP_ICON)
+    with (
+        patch.object(cycle, "read_workspace_groups", return_value=[stray]),
+        patch.object(cycle, "workspace_state", return_value=({"workspace:1": "a"}, {})),
+        patch.object(cycle, "create_workspace_group", return_value=None),
+        patch.object(cycle, "ungroup_workspaces") as ungroup,
+        patch.object(cycle, "cmux_close_workspace_best_effort") as close,
+        patch.object(cycle, "rename_workspace_group") as rename,
+        patch.object(cycle, "remove_from_workspace_group") as remove,
+        patch.object(cycle, "add_to_workspace_group") as add,
+    ):
+        cycle.restore_trailing_folds(pill_state)
+
+    for stub in (ungroup, close, rename, remove, add):
+        stub.assert_not_called()
+
+
+def test_restore_noops_without_records():
+    # A fresh daemon has recorded nothing, so it behaves exactly as it did
+    # before this existed — including making no cmux call at all.
+    with patch.object(cycle, "read_workspace_groups") as read:
+        cycle.restore_trailing_folds({})
+    read.assert_not_called()
+
+
+def test_restore_dry_noops():
+    pill_state = dict(
+        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (1)", ["workspace:1"])
+    )
+    with patch.object(cycle, "read_workspace_groups") as read:
+        cycle.restore_trailing_folds(pill_state, dry=True)
+    read.assert_not_called()

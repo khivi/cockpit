@@ -661,3 +661,54 @@ def test_fast_tick_does_not_touch_cmux_under_dry(tmp_path, monkeypatch):
 
     cockpit._fast_tick(cockpit._build_state(False))
     assert touched == ["rename", "tint"]
+
+
+def test_fast_tick_restores_a_lost_trailing_fold(tmp_path, monkeypatch):
+    """A trailing fold lost mid-interval is otherwise rebuilt only by the
+    cross-repo pass at the end of a full slow cycle, so the sidebar reads flat
+    for up to `slow_poll_interval_seconds`. The fast tick replays the slow
+    pass's own record instead, healing it in ~30s."""
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    seen: list = []
+    state = {"pill_state": {"fold:moon.zzz:Env": {"name": "x", "refs": ["ws:1"]}}}
+
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
+    )
+    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [])
+    monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda ps: seen.append(ps))
+
+    cockpit._fast_tick(state)
+
+    assert seen == [state["pill_state"]]
+
+
+def test_fast_tick_does_not_restore_folds_under_dry(tmp_path, monkeypatch):
+    """`--dry` promises not to touch the user's live cmux workspaces, and
+    rebuilding a fold spawns an anchor workspace."""
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    seen: list = []
+
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
+    )
+    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [])
+    monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda ps: seen.append(ps))
+
+    cockpit._fast_tick({"dry": True})
+
+    assert seen == []
