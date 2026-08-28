@@ -41,11 +41,18 @@ set -eu
 
 # Skip silently if the workspace was closed/recreated. Without this, every
 # Stop/UserPromptSubmit writes to a dead socket and the err log fills with
-# Broken Pipe forever. If `list-workspaces` itself fails we fall through
+# Broken Pipe forever. If the listing itself fails we fall through
 # (fail-open: same as pre-fix behavior, no regression).
-if live=$(command cmux list-workspaces 2>/dev/null | tr '\n' ' '); then
-  case " $live " in
-    *" $CMUX_WORKSPACE_ID "*) ;;
+#
+# `--json` is load-bearing: `CMUX_WORKSPACE_ID` is a UUID, and the plain
+# listing prints only refs and names (`workspace:1  khivi-feat`), so matching
+# against it never hit and this guard silently exited before writing the pill
+# — for every session, leaving the whole fleet unreachable to `nudge_if_idle`.
+# Matched with the surrounding JSON quotes so an id can't match as a substring
+# of a longer one, the same trap the old space-delimited pattern guarded.
+if live=$(command cmux workspace list --json 2>/dev/null); then
+  case "$live" in
+    *"\"$CMUX_WORKSPACE_ID\""*) ;;
     *) exit 0 ;;
   esac
 fi

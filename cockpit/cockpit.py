@@ -41,6 +41,7 @@ from cockpit.lib.cache import (
 )
 from cockpit.lib.cmux import (
     CmuxUnavailable,
+    reassert_idle_pills,
     reconcile_workspace_names,
     set_workspace_color,
     workspace_state,
@@ -190,6 +191,9 @@ def _fast_tick(state: dict) -> None:
       • each worktree's total session spend (`wt-cost`) tracks the running
         agents' cost within ~30s — it only moves while a session is live, so
         the slow tick's cadence would lag visibly behind the work
+      • a session at rest gets its `idle=` pill recorded while cmux still
+        reports native `Idle`, so it stays reachable to `a`/`A`/nudge after
+        that native state goes away (see `reassert_idle_pills`)
 
     Lock-free: the TUI serializes this against the slow tick under its own lock
     (both write the same cache cells).
@@ -234,6 +238,14 @@ def _fast_tick(state: dict) -> None:
     # decision — it never derives a fold, and never dissolves one.
     if not state.get("dry"):
         restore_trailing_folds(pill_state)
+        # Record `idle=` while cmux still reports native `Idle`. Same self-heal
+        # family as the pidfile / name / colour re-asserts, but it guards a
+        # one-way door: native state is perishable and the pill is not, so a
+        # workspace that loses the former without ever having had the latter
+        # written is unreachable to every send path for good. Writes into live
+        # cmux, hence the `dry` gate.
+        for ref in reassert_idle_pills(cwds):
+            print(f"  idle pill re-asserted for {ref}", flush=True)
     _write_worktree_cells(pending)
     republish_pr_caches_from_disk()
 
