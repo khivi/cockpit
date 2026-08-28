@@ -208,6 +208,7 @@ class CockpitApp(App[None]):
         ("t", "open_ticket", "Open ticket"),
         ("d", "open_diff", "Diff"),
         ("a", "ask_row", "Ask"),
+        ("A", "ask_snoozed", "Ask snoozed"),
         ("c", "close_row", "Close"),
         ("C", "force_close_row", "Force close"),
         ("m", "mute_row", "Mute"),
@@ -966,6 +967,70 @@ class CockpitApp(App[None]):
         elif outcome == "cancel" and text:
             self._ask_drafts[key] = text
 
+    def action_ask_snoozed(self) -> None:
+        """`A` — type a line and send it to every session in the cursor row's
+        snoozed fold, without expanding it first.
+
+        `a` already overrides mute/snooze on a row (it passes no `pref_key`, so
+        `should_nudge`'s `quiet` gate never runs), but reaching a snoozed row
+        meant pressing `z` to unfold and then `a` per row — and the pile is
+        exactly where a "back to this now" line wants to go to all of them at
+        once. Scoped to the fold the cursor row belongs to, never every repo's:
+        the row names one repo, so the key acts on one repo, the same rule `a`
+        on a header follows. `cockpit broadcast` remains the reach-everything
+        verb."""
+        if self._blocked_by_dry("ask"):
+            return
+        table = self.query_one(WorktreeTable)
+        # Resolved off `current_repo_name()`, so the key works from the `▸ N
+        # snoozed` row itself, from a worktree row, or from the repo header —
+        # the fold membership is the render's own (`snoozed_paths`), not a
+        # re-derivation.
+        repo_name = table.current_repo_name()
+        paths = table.snoozed_paths(repo_name)
+        if not paths:
+            # `self.notify`, not `self._notify`: an action runs on the main
+            # thread and `_notify` wraps `call_from_thread`, which raises there.
+            self.notify("no snoozed rows under the cursor", severity="warning")
+            return
+        key = f"snoozed:{repo_name}"
+        screen = AskScreen(
+            target=f"{repo_name} snoozed", initial=self._ask_drafts.get(key, "")
+        )
+        self.push_screen(
+            screen,
+            lambda result: self._route_ask(
+                result,
+                lambda text: self._send_ask_snoozed(repo_name, paths, key, text),
+                key,
+            ),
+        )
+
+    @work(thread=True, group="nudge", exit_on_error=False)
+    def _send_ask_snoozed(
+        self, repo_name: str | None, paths: list[str], key: str, text: str
+    ) -> None:
+        # The same gated send as `a`, fanned over the fold's own rows. Delivery
+        # is partial by construction exactly as it is on a repo header — these
+        # sessions' states aren't visible from a collapsed fold either — so
+        # `_fan_out_ask` reports the count and the gate's own reasons.
+        #
+        # The paths are the ones captured when the modal opened. A row that
+        # woke in between simply has no live workspace under this set any more
+        # and drops out; re-reading the table from a worker thread would race
+        # the render instead.
+        if not is_cmux():
+            self._notify("ask requires cmux", severity="warning")
+            return
+        self._fan_out_ask(
+            {Path(p).resolve() for p in paths},
+            key,
+            text,
+            target=f"{repo_name} snoozed",
+            tag="ask-snoozed",
+            retry_key="A",
+        )
+
     def _on_ask_repo(
         self, repo: dict, key: str, result: tuple[str, str] | None
     ) -> None:
@@ -989,6 +1054,36 @@ class CockpitApp(App[None]):
         try:
             wts = worktrees(repo_path, repo.get("branch_prefix", ""))
             paths = {repo_path.resolve(), *(wt.path.resolve() for wt in wts)}
+        except (RuntimeError, OSError) as e:
+            self._notify(f"ask: could not enumerate workspaces: {e}", severity="error")
+            return
+        self._fan_out_ask(
+            paths,
+            key,
+            text,
+            target=repo.get("name") or repo_path.name,
+            tag="ask-repo",
+            retry_key="a",
+        )
+
+    def _fan_out_ask(
+        self,
+        paths: set[Path],
+        key: str,
+        text: str,
+        *,
+        target: str,
+        tag: str,
+        retry_key: str,
+    ) -> None:
+        """Send one line to every live session rooted at `paths`, and report the
+        partial delivery honestly. The shared tail of `a`-on-a-header and `A`;
+        the callers differ only in which worktrees they resolve.
+
+        Runs on the caller's worker thread — both entry points are already
+        `@work(thread=True)`, and the cmux round-trips here must not block the
+        UI."""
+        try:
             cwds = workspace_cwds()  # self-excluded: never ask our own TUI
         except (CmuxUnavailable, RuntimeError, OSError) as e:
             self._notify(f"ask: could not enumerate workspaces: {e}", severity="error")
@@ -1001,7 +1096,7 @@ class CockpitApp(App[None]):
         # A retry must reach ONLY the sessions that missed. Re-sending to one
         # that already accepted would hand it the same instruction twice —
         # "rebase onto main and force-push" executed a second time is not a
-        # harmless repeat. The misses are recorded per repo on a partial send;
+        # harmless repeat. The misses are recorded per fan-out on a partial send;
         # intersected with what's live now, since a session can vanish between
         # attempts.
         pending = self._ask_misses.get(key)
@@ -1010,21 +1105,18 @@ class CockpitApp(App[None]):
             self._ask_drafts.pop(key, None)
             self._ask_misses.pop(key, None)
             self._notify(
-                "no sessions left to reach in this repo"
+                f"no sessions left to reach in {target}"
                 if pending is not None
-                else "no open sessions in this repo",
+                else f"no open sessions in {target}",
                 severity="warning",
             )
             return
         skips: dict[str, str] = {}
-        sent = sum(
-            1 for ref in refs if nudge_if_idle(ref, text, tag="ask-repo", skips=skips)
-        )
-        name = repo.get("name") or repo_path.name
+        sent = sum(1 for ref in refs if nudge_if_idle(ref, text, tag=tag, skips=skips))
         if sent == len(refs):
             self._ask_drafts.pop(key, None)
             self._ask_misses.pop(key, None)
-            self._notify(f"sent to all {sent} session(s) in {name}")
+            self._notify(f"sent to all {sent} session(s) in {target}")
         else:
             # Record the misses alongside the draft; the retry filter above
             # reads them.
@@ -1040,7 +1132,8 @@ class CockpitApp(App[None]):
                 )
             )
             self._notify(
-                f"{name}: sent to {sent} of {len(refs)} — {why} · press a to retry",
+                f"{target}: sent to {sent} of {len(refs)} — {why}"
+                f" · press {retry_key} to retry",
                 severity="warning",
             )
 

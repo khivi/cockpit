@@ -38,10 +38,12 @@ plan actually reports per-session cost — an absent number and a zero are diffe
 so a row that can't tell them apart renders blank rather than lying.
 
 **The row tells you whose turn it is.** `🔔` means this PR has something actionable
-waiting on you — failing CI, unresolved review threads, a merge conflict. `🔇` muted,
-`💤` snoozed. Rows sort into three bands per repo: your live queue first, coworkers' PRs
-you're reviewing next, snoozed ones last. Nothing is configured to make that happen; it's
-derived from the same data the row already shows.
+waiting on you — failing CI, unresolved review threads, a merge conflict. `🔇` means
+muted, and it wins over the bell: a row can't advertise a nudge it won't ring. A snoozed
+row carries no glyph at all — it folds away behind `▸ N snoozed`, which says it once for
+the group rather than once per row. Rows sort into three bands per repo: your live queue
+first, coworkers' PRs you're reviewing next, snoozed ones last. Nothing is configured to
+make that happen; it's derived from the same data the row already shows.
 
 **Stacked PRs indent themselves.** GitHub exposes no stack id — the only signal is that
 each PR's base branch is the previous PR's head. Cockpit reads that and renders the chain
@@ -89,6 +91,7 @@ registered repos shows no PR at all.
 | `t` | Open the linked ticket (Linear / Jira / GitHub / Trello) |
 | `d` | Open the PR's diff in cmux's viewer — comment on any line, `a` delivers the notes |
 | `a` | Ask — send a line to this row's session, carrying any diff notes; on a repo header, to every session in it |
+| `A` | Ask the snoozed — send a line to every session in this repo's snoozed pile, without unfolding it |
 | `c` | Close the worktree + terminal |
 | `C` | Force close — overrides the open-PR refusal, never the ones that would lose work |
 | `m` | Mute / unmute this PR's nudges, indefinitely |
@@ -172,6 +175,11 @@ What makes it safe to leave on:
   *actually changes* — new review activity from someone else, or new work appearing — so
   "I've read this, it's their turn" doesn't need a timer you'd have to guess at. Your own
   replies can't wake your own snooze.
+- **Quiet stops the nudge, not you.** Snoozed rows fold away behind `▸ N snoozed`, but `A`
+  on that fold — or on the repo's header — sends a line to every session in it without
+  unfolding first, which is what you want when the answer to a whole pile is the same one.
+  Muting and snoozing silence what cockpit decides to say on its own; a message you type
+  always goes through. The rows stay snoozed afterwards.
 - **`cockpit nudge mute | unmute | list | status | forget`** does the same from a shell.
 
 There's a second nudge for a worktree that has no PR after a few hours: push it or close

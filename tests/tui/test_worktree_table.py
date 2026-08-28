@@ -36,6 +36,7 @@ from cockpit.tui.widgets.worktree_table import (
     _STATUS_SLOT,
     _TICKET_MAX,
     DEVDONE_ICON,
+    FOLD_CAP,
     HEADER_KEY_PREFIX,
     ICON_PR_MUTED,
     ICON_PR_NUDGE,
@@ -999,7 +1000,11 @@ async def test_snoozed_rows_collapse_behind_a_disclosure_row(cache_dir):
         assert fold[0].plain == f"{ROW_INDENT}▸ 1 snoozed"
         # Collapsed, the trailing column names what's folded away.
         assert "khivi-dozing" in fold[-1].plain
-        assert table._row_caps[snoozed_row_key("R")] == frozenset({SNOOZED_CAP})
+        # FOLD_CAP rides alongside: the row stands for a fold, which is what
+        # advertises `A` (ask the pile) here and on the repo header.
+        assert table._row_caps[snoozed_row_key("R")] == frozenset(
+            {SNOOZED_CAP, FOLD_CAP}
+        )
 
 
 @pytest.mark.asyncio
