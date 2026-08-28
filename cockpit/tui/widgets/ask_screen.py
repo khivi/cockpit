@@ -66,13 +66,18 @@ class AskScreen(ModalScreen["tuple[str, str]"]):
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, target: str = "", initial: str = "") -> None:
+    def __init__(self, target: str = "", initial: str = "", comments: int = 0) -> None:
         super().__init__()
         self._target = target
         # A draft the previous send couldn't deliver (the session was mid-turn).
         # Restored so a refusal never costs you what you typed — see
         # `app._send_ask`.
         self._initial = initial
+        # How many `d` diff-viewer comments will ride this message
+        # (`lib.diff_comments`). Announced rather than silently appended: the
+        # send is one line and you should know what is in it before pressing
+        # enter.
+        self._comments = comments
 
     def compose(self) -> ComposeResult:
         title = f"Ask {self._target}" if self._target else "Ask"
@@ -83,6 +88,14 @@ class AskScreen(ModalScreen["tuple[str, str]"]):
                 "a newline would submit early.",
                 classes="ask-hint",
             )
+            if self._comments:
+                n = self._comments
+                yield Static(
+                    f"{n} diff review comment{'s' if n > 1 else ''} "
+                    "will be included",
+                    id="ask-comments",
+                    classes="ask-hint",
+                )
             yield Input(
                 value=self._initial,
                 placeholder="rebase onto main and force-push",

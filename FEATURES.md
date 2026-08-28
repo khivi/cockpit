@@ -87,8 +87,8 @@ registered repos shows no PR at all.
 | `f` | Focus this row's terminal — spawning one first if it doesn't have one yet |
 | `p` | Open the PR in a browser |
 | `t` | Open the linked ticket (Linear / Jira / GitHub / Trello) |
-| `d` | Open the PR's diff in cmux's viewer — comment on a line and it goes to that row's session |
-| `a` | Ask — send a line to this row's session; on a repo header, to every session in it |
+| `d` | Open the PR's diff in cmux's viewer — comment on any line, `a` delivers the notes |
+| `a` | Ask — send a line to this row's session, carrying any diff notes; on a repo header, to every session in it |
 | `c` | Close the worktree + terminal |
 | `C` | Force close — overrides the open-PR refusal, never the ones that would lose work |
 | `m` | Mute / unmute this PR's nudges, indefinitely |
@@ -106,13 +106,13 @@ what it refuses and why, which is the part a one-word label can't carry.
 Everything that isn't a key lives behind **☰ Menu** in the top right corner: logs, config,
 theme, and this guide. Click it, or press `ctrl+p`.
 
-**`d` is how you review your agent's work.** The diff opens in a browser split belonging to
-that row's terminal, so cmux's line comments have somewhere to go: click a line, leave a
-note, and the notes are handed to the agent on that branch the next time you submit in its
-composer. They stay local — nothing is posted to the PR, so use `p` for that — which makes
-`d` the fast loop for "this line is wrong, fix it" without leaving the dashboard. A row
-whose terminal isn't open yet still gets the diff; there's just nowhere to send comments
-until you press `f`.
+**`d` and `a` together are how you review your agent's work.** `d` opens the diff in a
+browser split beside that row's terminal; click a line and leave a note. The notes then
+ride the next message you send with `a` — the modal tells you how many are going with it —
+so the loop is: read the diff, mark the lines, press `a`, type "address these". They stay
+local; nothing is posted to the PR, so use `p` for that. A note is delivered once, and a
+message the session refuses (it was mid-turn) keeps its notes for the retry. A row whose
+terminal isn't open yet still gets the diff — press `f` first if you want to send anything.
 
 ---
 

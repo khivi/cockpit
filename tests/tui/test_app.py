@@ -9,6 +9,7 @@ gating / capture behaviour, not the reconcile cycle underneath.
 from __future__ import annotations
 
 import contextlib
+import json
 import subprocess
 import sys
 import threading
@@ -17,8 +18,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.widgets import Input
+from textual.widgets import Input, Static
 
+from cockpit.lib import diff_comments
 from cockpit.lib.cmux import CmuxUnavailable
 from cockpit.lib.config import apply_org_defaults
 from cockpit.lib.git import Worktree
@@ -2748,6 +2750,122 @@ async def test_ask_key_noop_on_limux(monkeypatch, tmp_path):
     assert any("requires cmux" in t for t in toasts)
 
 
+# ── `a` carries the diff viewer's comments ───────────────────────────────────
+
+
+def _seed_diff_comments(monkeypatch, tmp_path, root, comments):
+    """Write a real cmux comment store keyed to `root`, and isolate the ledger.
+
+    Patched on the leaf module rather than faked at the app boundary: the join
+    under test IS the repo-root lookup, so stubbing it out would test nothing.
+    """
+    store = tmp_path / "cmux-diff-comments"
+    store.mkdir(exist_ok=True)
+    (store / "a.json").write_text(
+        json.dumps({"repoRoot": str(root), "comments": comments})
+    )
+    monkeypatch.setattr("cockpit.lib.diff_comments.STORE_DIR", store)
+    monkeypatch.setattr(
+        "cockpit.lib.diff_comments.DELIVERED", tmp_path / "delivered.json"
+    )
+
+
+def _a_comment(cid="c1", path="app/main.py", line=10, message="reduce comments"):
+    return {"id": cid, "filePath": path, "startLine": line, "message": message}
+
+
+def _accepting_gate(calls):
+    def _gate(ref, msg, **k):
+        calls.append((ref, msg))
+        return True
+
+    return _gate
+
+
+async def _press_a(monkeypatch, wt, text, toasts=None):
+    app, _ = _make_app()
+    if toasts is not None:
+        monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = text
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+
+
+async def test_ask_carries_the_rows_pending_diff_comments(monkeypatch, tmp_path):
+    """A cockpit session is a terminal running Claude's TUI, so it has no cmux
+    composer to fold these in on submit — `a` is the delivery. They follow the
+    typed line: what you typed is the instruction, the anchors are its
+    context."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    _seed_diff_comments(monkeypatch, tmp_path, wt.path, [_a_comment()])
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _accepting_gate(calls))
+    await _press_a(monkeypatch, wt, "address these")
+
+    assert calls == [
+        ("ws1", "address these · diff comments: app/main.py:10 — reduce comments")
+    ]
+    # Consumed, so the next `a` doesn't say it all again.
+    assert diff_comments.pending([wt.path]) == []
+
+
+async def test_a_refused_ask_leaves_the_comments_pending(monkeypatch, tmp_path):
+    """The gate refuses transiently — a turn ends, a permission is answered. It
+    keeps the draft for exactly that reason, so it must keep the comments too,
+    or a retry delivers a message stripped of what it was about."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    _seed_diff_comments(monkeypatch, tmp_path, wt.path, [_a_comment()])
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda *a, **k: False)
+
+    await _press_a(monkeypatch, wt, "address these")
+
+    assert len(diff_comments.pending([wt.path])) == 1
+
+
+async def test_ask_without_comments_sends_the_typed_line_verbatim(
+    monkeypatch, tmp_path
+):
+    """No comments pending must mean no decoration — the ordinary `a` is
+    untouched by any of this."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    _seed_diff_comments(monkeypatch, tmp_path, tmp_path / "elsewhere", [_a_comment()])
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _accepting_gate(calls))
+
+    await _press_a(monkeypatch, wt, "rebase onto main")
+
+    assert calls == [("ws1", "rebase onto main")]
+
+
+async def test_the_ask_modal_announces_what_will_ride_along(monkeypatch, tmp_path):
+    """The comments are appended to a one-line send you can't see before it
+    goes, so the modal has to say they're in it — finding out afterwards is too
+    late."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    _seed_diff_comments(
+        monkeypatch, tmp_path, wt.path, [_a_comment(), _a_comment(cid="c2", line=20)]
+    )
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        hint = str(app.screen.query_one("#ask-comments", Static).render())
+
+    assert "2 diff review comments" in str(hint)
+
+
 # ── `d` diff → cmux's native viewer ──────────────────────────────────────────
 
 
@@ -2812,16 +2930,36 @@ async def _press_d_capturing(monkeypatch, wt, seen):
 
 
 async def test_diff_opens_in_the_rows_own_workspace(monkeypatch, tmp_path):
-    """The viewer's line comments attach to the HOSTING workspace's composer and
-    ride its next submit, so the split has to open in the row's session. Left to
-    cmux's `$CMUX_WORKSPACE_ID` default it lands in the dashboard's own
-    workspace, where a comment has no agent to reach."""
+    """The split belongs beside the session it describes. Left to cmux's
+    `$CMUX_WORKSPACE_ID` default it lands in the dashboard's own workspace,
+    which is a Textual TUI with no agent behind it."""
     wt = _seed_diff_row(monkeypatch, tmp_path)
     seen: list = []
     await _press_d_capturing(monkeypatch, wt, seen)
 
     args = _diff_cmux_args(seen)
     assert args[args.index("--workspace") + 1] == "ws1"
+
+
+async def test_diff_files_its_comments_against_the_rows_repo(monkeypatch, tmp_path):
+    """cmux persists viewer comments keyed by REPO ROOT, which it derives from
+    this call. Left to the daemon's inherited cwd every row's comments land
+    under whatever repo `cockpit watch` was launched in, and `a` finds none for
+    the row that made them. Which input cmux reads for a piped patch is
+    undocumented, so both are set."""
+    wt = _seed_diff_row(monkeypatch, tmp_path)
+    seen: list = []
+
+    def _run(args, **kwargs):
+        seen.append((args, kwargs.get("cwd")))
+        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
+
+    monkeypatch.setattr("subprocess.run", _run)
+    await _press_d(monkeypatch, wt, [])
+
+    args, cwd = next((a, c) for a, c in seen if a[0] == "cmux")
+    assert args[args.index("--cwd") + 1] == str(wt.path)
+    assert cwd == wt.path
 
 
 async def test_diff_still_opens_untargeted_without_a_workspace(monkeypatch, tmp_path):
