@@ -30,7 +30,8 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from cockpit.lib.cache import (
@@ -59,13 +60,19 @@ from cockpit.lib.config import (
 )
 from cockpit.lib.daemon import reassert_pidfile
 from cockpit.lib.gh import gh_self_user, require_gh
-from cockpit.lib.git import require_git, worktrees
+from cockpit.lib.git import Worktree, require_git, worktrees
 from cockpit.lib.preflight import preflight
 from cockpit.orchestrators.cycle import cycle_all
 
 DEFAULT_SLOW_POLL_SECS = 300
 DEFAULT_FAST_POLL_SECS = 30
 MIN_POLL_SECS = 5
+
+# Fan-out for the fast tick's per-worktree cell writes. Bounded well below the
+# worktree count so a large fleet can't spawn its whole census of `git`
+# subprocesses at once — the process-table churn is the cost being avoided,
+# not the wall clock alone.
+CELL_WRITE_WORKERS = 8
 
 # Slow + fast tick bodies are lock-free; the only caller is the TUI
 # (`cockpit.tui.app`), which serializes them under its own lock so it can tell
@@ -131,11 +138,45 @@ def _tint_repo_workspaces(
         pill_state[f"color:{ref}"] = color
 
 
+def _write_worktree_cells(wts: Iterable[Worktree]) -> None:
+    """Write the two per-worktree flat cells for every worktree, concurrently.
+
+    Each worktree costs four `git` subprocesses (branch, status, ahead, behind)
+    plus a scan of its Claude project dir, and every one of those is independent
+    of every other worktree's. Serially that is ~48ms x N, which at a 30-worktree
+    fleet is ~1.5s of the fast tick spent waiting on `fork`/`exec` — measured, and
+    the dominant term. Both writers touch only cwd-keyed paths under
+    `FLAT_CACHE_DIR`, so there is no shared state to guard.
+
+    `_git` never raises, so a vanished or broken worktree writes empty cells
+    exactly as it does serially; a pool worker therefore has nothing to swallow.
+    """
+    wts = list(wts)
+    if not wts:
+        return
+
+    def _one(wt: Worktree) -> None:
+        write_git_state_cache(wt.path, wt.repo_name)
+        write_worktree_cost_cache(wt.path)
+
+    if len(wts) == 1:
+        _one(wts[0])
+        return
+    with ThreadPoolExecutor(max_workers=min(CELL_WRITE_WORKERS, len(wts))) as pool:
+        list(pool.map(_one, wts))
+
+
 def _fast_tick(state: dict) -> None:
-    """Cheap, local-only refresh: write git-state cells for every worktree
-    of every registered repo, reconcile each workspace's name and sidebar
-    colour to its worktree, then re-publish PR flat cells from the persistent
-    JSON snapshots. Network-free (cmux/git are local); safe at a tight cadence.
+    """Cheap, local-only refresh: reconcile each workspace's name and sidebar
+    colour to its worktree, write git-state cells for every worktree of every
+    registered repo, then re-publish PR flat cells from the persistent JSON
+    snapshots. Network-free (cmux/git are local); safe at a tight cadence.
+
+    The cell writes are collected across repos and run last (see
+    `_write_worktree_cells`) so they fan out over the whole fleet. Nothing in
+    the tick reads them back, and the cmux reconcile above works off the
+    `Worktree` objects rather than the cells, so the two halves are independent
+    and the order between them carries no meaning.
 
     The slow tick already does all this after fetching `gh` data; the fast
     tick fills the 300s gap between slow ticks so:
@@ -162,6 +203,10 @@ def _fast_tick(state: dict) -> None:
         names, cwds = workspace_state()
     except CmuxUnavailable:
         names, cwds = {}, {}
+    # Accumulated across repos so the cell writes fan out over the whole fleet
+    # rather than per repo — most repos hold one worktree, so a per-repo pool
+    # would leave the fan-out idle exactly where the fleet is widest.
+    pending: list[Worktree] = []
     for repo_entry in cfg.get("repos", []):
         repo_path = Path(os.path.expanduser(repo_entry["path"]))
         if not repo_path.is_dir():
@@ -174,16 +219,15 @@ def _fast_tick(state: dict) -> None:
             )
         except (RuntimeError, OSError):
             continue
-        for wt in wts:
-            write_git_state_cache(wt.path, wt.repo_name)
-            write_worktree_cost_cache(wt.path)
-        # The disk-cache writes above are local and always run; these two reach
-        # cmux and *rename and recolour the user's live workspaces*, which
-        # `--dry` promises not to do. The slow tick's equivalents are gated on
+        pending.extend(wts)
+        # The disk-cache writes are local and always run; these two reach cmux
+        # and *rename and recolour the user's live workspaces*, which `--dry`
+        # promises not to do. The slow tick's equivalents are gated on
         # `ctx.dry` already.
         if cwds and not state.get("dry"):
             reconcile_workspace_names(names, cwds, wts)
             _tint_repo_workspaces(repo_entry, repo_path, wts, cwds, pill_state)
+    _write_worktree_cells(pending)
     republish_pr_caches_from_disk()
 
 
