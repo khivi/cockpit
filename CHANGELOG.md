@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.2](https://github.com/khivi/cockpit/compare/v2.13.1...v2.13.2) (2026-08-28)
+
+
+### Bug Fixes
+
+* **sidebar:** restore a lost trailing fold on the fast tick ([#426](https://github.com/khivi/cockpit/issues/426)) ([3bd33aa](https://github.com/khivi/cockpit/commit/3bd33aa459b55ae1cc156f02d302c621ffd3abac))
+
 ## [2.13.1](https://github.com/khivi/cockpit/compare/v2.13.0...v2.13.1) (2026-08-28)
 
 
