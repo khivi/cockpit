@@ -9,6 +9,9 @@ from __future__ import annotations
 import importlib
 import json as _json
 import sys
+import threading
+import time
+from pathlib import Path
 
 from tests.asserts import expected_starship as _expected_starship
 from tests.fixtures import (
@@ -549,7 +552,74 @@ def test_fast_tick_writes_a_cost_cell_per_worktree(tmp_path, monkeypatch):
 
     cockpit._fast_tick({})
 
-    assert costed == [wt.path for wt in wts]
+    # Set, not list: the cell writes fan out across a thread pool, so the order
+    # they complete in carries no meaning and asserting one would be a flake.
+    assert set(costed) == {wt.path for wt in wts}
+
+
+def test_fast_tick_writes_cells_for_every_repos_worktrees(tmp_path, monkeypatch):
+    """The cell writes are accumulated across repos and drained once, so a
+    fleet of many single-worktree repos still fans out. Pins that every repo's
+    worktrees survive the hoist out of the per-repo loop."""
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
+
+    importlib.reload(cockpit)
+
+    repos = [tmp_path / f"r{i}" for i in range(3)]
+    for r in repos:
+        r.mkdir()
+    by_repo = {r: [Worktree(path=r / "wt", branch=f"khivi/{r.name}")] for r in repos}
+    written: list = []
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(r)} for r in repos]}
+    )
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda p, _prefix="", _name="": by_repo[p]
+    )
+    monkeypatch.setattr(
+        cockpit, "write_git_state_cache", lambda p, _name="": written.append(p)
+    )
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+
+    cockpit._fast_tick({})
+
+    assert set(written) == {r / "wt" for r in repos}
+
+
+def test_fast_tick_cell_writes_stay_bounded(monkeypatch):
+    """The fan-out is capped well below the worktree count on purpose: a fleet
+    spawning its whole census of `git` subprocesses at once is the process-table
+    churn this exists to avoid, not merely slow. Pins the bound so removing it
+    fails here rather than on a 30-worktree machine."""
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
+
+    importlib.reload(cockpit)
+
+    wts = [Worktree(path=Path(f"/tmp/wt{i}"), branch=f"b{i}") for i in range(40)]
+    lock = threading.Lock()
+    live = 0
+    peak = 0
+
+    def _slow_write(_p, _name=""):
+        nonlocal live, peak
+        with lock:
+            live += 1
+            peak = max(peak, live)
+        time.sleep(0.01)  # hold the slot so overlap is observable
+        with lock:
+            live -= 1
+
+    monkeypatch.setattr(cockpit, "write_git_state_cache", _slow_write)
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+
+    cockpit._write_worktree_cells(wts)
+
+    assert peak > 1, "cell writes must actually run concurrently"
+    assert peak <= cockpit.CELL_WRITE_WORKERS
 
 
 def test_fast_tick_does_not_touch_cmux_under_dry(tmp_path, monkeypatch):
