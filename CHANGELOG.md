@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.14.0](https://github.com/khivi/cockpit/compare/v2.13.2...v2.14.0) (2026-08-28)
+
+
+### Features
+
+* **tui:** add `A` to ask a repo's snoozed fold ([#428](https://github.com/khivi/cockpit/issues/428)) ([084b8bf](https://github.com/khivi/cockpit/commit/084b8bf44cb312b7447a887ade538025cd68661c))
+
 ## [2.13.2](https://github.com/khivi/cockpit/compare/v2.13.1...v2.13.2) (2026-08-28)
 
 
