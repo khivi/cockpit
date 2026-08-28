@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.14.1](https://github.com/khivi/cockpit/compare/v2.14.0...v2.14.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **cmux:** write the idle pill again, and re-assert it on the fast tick ([#430](https://github.com/khivi/cockpit/issues/430)) ([62032d8](https://github.com/khivi/cockpit/commit/62032d8d5d5b42349bb86d52b8355d68cb4cdcf1))
+
 ## [2.14.0](https://github.com/khivi/cockpit/compare/v2.13.2...v2.14.0) (2026-08-28)
 
 
