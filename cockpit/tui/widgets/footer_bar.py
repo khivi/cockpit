@@ -20,6 +20,7 @@ from textual.widgets import Static
 
 from cockpit.tui.widgets.worktree_table import (
     EXPANDED_CAP,
+    FOLD_CAP,
     HEADER_CAP,
     HIDDEN_CAP,
     PARKED_CAP,
@@ -61,6 +62,7 @@ class FooterBar(Horizontal):
             "snooze_row",
             "open_diff",
             "ask_row",
+            "ask_snoozed",
         }
     )
 
@@ -111,6 +113,7 @@ class FooterBar(Horizontal):
         "snooze_row": "Snooze",
         "open_diff": "Diff",
         "ask_row": "Ask",
+        "ask_snoozed": "Ask snoozed",
         "new_workspace": "New",
         "hide_repo": "Hide",
         "sync": "Sync",
@@ -151,6 +154,12 @@ class FooterBar(Horizontal):
             "text is kept.\n"
             "On a repo header it goes to every session in that repo."
         ),
+        "ask_snoozed": (
+            "Send one line to every session in this repo's snoozed section, "
+            "without expanding it first.\n"
+            "Snoozing silences the automatic nudge, never a message you type — "
+            "and the rows stay snoozed afterwards."
+        ),
         "close_row": _CLOSE_TOOLTIP,
         "force_close_row": _CLOSE_TOOLTIP,
         "mute_row": (
@@ -184,8 +193,19 @@ class FooterBar(Horizontal):
     # header it asks the whole repo — so a header is exactly where it must stay
     # visible, and `_label` renames it there so the live meaning is announced.
     # It also drops its `workspace` requirement on a header: a header carries no
-    # workspace cap, but the repo behind it may have several sessions.
-    HEADER_ROW_ACTIONS = frozenset({"ask_row"})
+    # workspace cap, but the repo behind it may have several sessions. `A` is
+    # here for the same reason and keeps its own FOLD_CAP rule below: a header
+    # is a repo-level row, and asking the repo's snoozed pile is a repo-level
+    # gesture — it must not require scrolling to the disclosure row first.
+    HEADER_ROW_ACTIONS = frozenset({"ask_row", "ask_snoozed"})
+
+    # Row actions that stay advertised on a repo's `▸ N snoozed` disclosure row,
+    # where every other row key is suppressed. `z` opens and shuts the fold; `A`
+    # asks every session in it, and this is the row it exists for — reaching the
+    # pile without unfolding it first is the whole point, so the collapsed row
+    # must advertise it. Both act on the fold itself, not on a workspace, which
+    # is why neither needs the `workspace` cap the row cannot carry.
+    SNOOZED_ROW_ACTIONS = frozenset({"snooze_row", "ask_snoozed"})
 
     # Actions never shown in the footer (handled implicitly / not key-hint worthy).
     HIDDEN_ACTIONS = frozenset({"dismiss_overlay"})
@@ -200,6 +220,7 @@ class FooterBar(Horizontal):
         "focus_row": frozenset({"cmux", "limux"}),
         # `a` delivers through cmux's `send`, which limux has no equivalent for.
         "ask_row": frozenset({"cmux"}),
+        "ask_snoozed": frozenset({"cmux"}),
         # `d` pipes into `cmux diff`; limux/none have no such viewer, so the
         # hint hides there and `p` is the answer instead.
         "open_diff": frozenset({"cmux"}),
@@ -320,18 +341,40 @@ class FooterBar(Horizontal):
         # (escape/back) never shown.
         if action in self.HIDDEN_ACTIONS:
             return True
-        # A repo's `▸ N snoozed` disclosure row: `z` opens/shuts the fold, and no
-        # other row key has anything to act on (it carries no workspace). The
-        # global keys stay, exactly as on a group header. `h` needs no rule of
-        # its own — the row carries no HEADER_CAP, so the branch below already
-        # hides it, which is right: parking the whole repo from a row standing
-        # for one *section* of it would read as folding, not parking.
+        # `A` asks a whole snoozed fold, so it is advertised only on a row that
+        # stands for one — the repo group header or the `▸ N snoozed` disclosure
+        # row, both of which carry FOLD_CAP, and only when the repo actually has
+        # a pile. On a worktree row it would read as "ask this row" while
+        # addressing every snoozed sibling, the same misreading that keeps `h`
+        # off worktree rows; inside an opened fold the disclosure row sits right
+        # above, which is where a fold-level key belongs.
+        #
+        # Unknown caps (None, the empty first-run table) HIDE it, unlike every
+        # other row key. The full-legend default exists because a key that acts
+        # on the cursor row is still meaningful before one is selected; this key
+        # names a *section* that may not exist at all, and advertising a fold
+        # nobody has is worse than saying nothing.
+        if action == "ask_snoozed" and FOLD_CAP not in (self._row_caps or frozenset()):
+            return True
+        # A repo's `▸ N snoozed` disclosure row: `z` opens/shuts the fold and `A`
+        # asks every session in it, which is the one row where that key needs no
+        # unfolding first. No other row key has anything to act on (the row
+        # carries no workspace). The global keys stay, exactly as on a group
+        # header. `h` needs no rule of its own — the row carries no HEADER_CAP,
+        # so the branch below already hides it, which is right: parking the whole
+        # repo from a row standing for one *section* of it would read as folding,
+        # not parking.
+        #
+        # A permitted key falls THROUGH rather than returning False: the checks
+        # below still apply to it, and `A` is backend-gated (cmux `send`), so an
+        # early "allowed" here would advertise it on limux.
+        on_fold_row = self._row_caps is not None and SNOOZED_CAP in self._row_caps
         if (
             action in self.ROW_ACTIONS
-            and self._row_caps is not None
-            and SNOOZED_CAP in self._row_caps
+            and on_fold_row
+            and action not in self.SNOOZED_ROW_ACTIONS
         ):
-            return action != "snooze_row"
+            return True
         # A repo group-header row carries no workspace, so hide every
         # row-targeted key — only the global keys stay.
         on_header = self._row_caps is not None and HEADER_CAP in self._row_caps
@@ -391,6 +434,11 @@ class FooterBar(Horizontal):
             # needs a live `workspace` on a worktree row, but a header carries no
             # workspace cap while the repo behind it may have several sessions.
             if on_repo_row and action in self.HEADER_ROW_ACTIONS:
+                req = None
+            # Same drop on the fold row, and it is what keeps `z` visible there:
+            # the row carries no `pr` cap, so `snooze_row`'s requirement would
+            # gate away the one key that opens the pile.
+            if on_fold_row and action in self.SNOOZED_ROW_ACTIONS:
                 req = None
             if req is not None and req not in self._row_caps:
                 return True

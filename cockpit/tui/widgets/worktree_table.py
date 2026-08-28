@@ -230,6 +230,14 @@ PARKED_CAP = "parked"
 # row that reads as one section of it.
 SNOOZED_CAP = "snoozedrow"
 
+# "This row stands for a repo that HAS a snoozed fold" — on the repo group header
+# and on the `▸ N snoozed` disclosure row itself, never on a worktree row. `A`
+# asks the whole fold, so it is advertised exactly where the fold is what the
+# cursor row means: the same rule `h` follows for a repo-level action, which is
+# why "Hide" never appears beside a single worktree. A repo with nothing snoozed
+# carries no fold and so never advertises the key.
+FOLD_CAP = "snoozedfold"
+
 # Raw `pr-state` enum → (icon shown in the PR-state column, style). The icons
 # reuse the sidebar's `_PR_STATE_ICON` vocabulary (single source of truth) so the
 # table and the statusline never disagree; the style is kept for the few terminals
@@ -1004,6 +1012,13 @@ class WorktreeTable(DataTable):
         # cache on every mouse move. Header rows carry none (fall back to the
         # column meaning).
         self._cell_tooltips: dict[str, list[str | None]] = {}
+        # repo display name → the worktree paths its `▸ N snoozed` fold holds,
+        # recorded whether or not the fold is open. `A` (ask the fold) has to
+        # reach those rows from the collapsed disclosure row, where they have no
+        # rows of their own to read a path off — and re-deriving them in the app
+        # would be a second authority on fold membership, disagreeing with what
+        # is on screen the moment `_split_snoozed`'s tip rule changes.
+        self._snoozed_paths: dict[str, list[str]] = {}
 
     def on_mount(self) -> None:
         self.cursor_type = "row"
@@ -1048,6 +1063,18 @@ class WorktreeTable(DataTable):
         the row under the cursor even when that row is a header."""
         key = self._current_row_key()
         return self._row_repo.get(key) if key is not None else None
+
+    def snoozed_paths(self, repo_name: str | None) -> list[str]:
+        """The worktree paths inside `repo_name`'s snoozed fold, open or shut.
+
+        `A` fans out over exactly the rows the `▸ N snoozed` disclosure row
+        stands for, so it reads the membership the render itself recorded rather
+        than re-deriving it — the fold takes a stack whole (`_split_snoozed`
+        partitions at chain granularity), and a second derivation would sooner
+        or later disagree with what the row's own count says."""
+        if repo_name is None:
+            return []
+        return list(self._snoozed_paths.get(repo_name, ()))
 
     def current_capabilities(self) -> frozenset[str] | None:
         """The highlighted row's capability tokens (for footer row-key gating),
@@ -1214,6 +1241,7 @@ class WorktreeTable(DataTable):
         self._row_caps = {}
         self._row_repo = {}
         self._cell_tooltips = {}
+        self._snoozed_paths = {}
         columns = column_labels(
             show_tickets=self._show_tickets, show_cost=self._show_cost
         )
@@ -1253,9 +1281,18 @@ class WorktreeTable(DataTable):
                     ),
                     key=skey,
                 )
-                caps = {SNOOZED_CAP} | ({EXPANDED_CAP} if open_here else set())
+                caps = {SNOOZED_CAP, FOLD_CAP} | (
+                    {EXPANDED_CAP} if open_here else set()
+                )
                 self._row_caps[skey] = frozenset(caps)
                 self._row_repo[skey] = repo_name
+                self._snoozed_paths[repo_name] = [str(wt.path) for wt, _ in snoozed]
+                # The header stands for the same fold, so `A` is reachable —
+                # and advertised — from it too, without scrolling down to the
+                # disclosure row. Restamped rather than set at add_row time
+                # because whether a fold exists is only known once
+                # `_split_snoozed` has run.
+                self._row_caps[hkey] = frozenset({HEADER_CAP, FOLD_CAP})
                 if open_here:
                     for wt, depth in snoozed:
                         add_worktree_row(wt, depth)

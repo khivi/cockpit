@@ -1453,10 +1453,12 @@ async def test_z_opens_and_shuts_a_repos_snoozed_fold(monkeypatch, tmp_path):
         assert table.row_count == 3
 
 
-async def test_the_fold_row_advertises_z_and_nothing_else(monkeypatch, tmp_path):
-    # It carries no workspace, so every other row key would no-op there. `h` goes
-    # too: parking the whole repo from a row standing for one section of it would
-    # read as folding. The global keys stay, exactly as on a group header.
+async def test_the_fold_row_advertises_only_the_two_fold_keys(monkeypatch, tmp_path):
+    # It carries no workspace, so every workspace-targeted row key would no-op
+    # there. The two that stay both act on the FOLD itself: `z` opens and shuts
+    # it, `A` asks every session in it. `h` goes too: parking the whole repo from
+    # a row standing for one section of it would read as folding. The global keys
+    # stay, exactly as on a group header.
     from cockpit.tui.widgets.footer_bar import FooterBar
 
     inv, *_ = _snoozed_repo(monkeypatch, tmp_path)
@@ -1469,6 +1471,7 @@ async def test_the_fold_row_advertises_z_and_nothing_else(monkeypatch, tmp_path)
         await pilot.pause()
         footer = app.query_one(FooterBar)
         assert "Expand" in footer.row_text
+        assert "Ask snoozed" in footer.row_text
         for gone in ("Focus", "Close", "Mute", "Nudge", "PR"):
             assert gone not in footer.row_text
         assert "Hide" not in footer.global_text
@@ -3193,6 +3196,169 @@ async def test_ask_on_header_warns_when_the_repo_has_no_sessions(monkeypatch, tm
     await _press_a_on_header(monkeypatch, wt, "hi", toasts)
     assert sent == []
     assert any("no open sessions" in t for t in toasts)
+
+
+# ── `A` ask the snoozed fold ────────────────────────────────────────────────
+
+
+async def _press_A(monkeypatch, inv, row, text, toasts, *, app=None):
+    """Move the cursor to `row`, press `A`, submit `text`."""
+    if app is None:
+        app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table(inv)
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        table.focus()
+        table.move_cursor(row=row)
+        await pilot.pause()
+        await pilot.press("A")
+        await pilot.pause()
+        if app.screen.query("Input"):
+            app.screen.query_one(Input).value = text
+            await pilot.press("enter")
+            await pilot.pause(0.6)
+    return app
+
+
+async def test_A_on_the_fold_row_reaches_the_snoozed_sessions_without_expanding(
+    monkeypatch, tmp_path
+):
+    # The whole point of the key: the pile is where a "your turn again" line
+    # wants to go to all of them at once, and pressing `z` then `a` per row is
+    # the friction it removes.
+    inv, dozing, mine = _snoozed_repo(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds",
+        lambda: {"ws-dozing": dozing.path, "ws-mine": mine.path},
+    )
+    sent: list = []
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent, pair=True))
+    toasts: list[str] = []
+    await _press_A(monkeypatch, inv, 2, "back to this one", toasts)
+    # ONLY the fold's own rows: the repo's live worktree is not in the pile, so
+    # `A` must not reach it — that is `a` on the header.
+    assert {r for r, _ in sent} == {"ws-dozing"}
+    assert all(m == "back to this one" for _, m in sent)
+    assert any("sent to all 1" in t for t in toasts)
+
+
+async def test_A_works_from_the_repo_header_too(monkeypatch, tmp_path):
+    # A header is a repo-level row and the fold is a repo-level thing, so the
+    # key must not require scrolling down to the disclosure row first.
+    inv, dozing, mine = _snoozed_repo(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds",
+        lambda: {"ws-dozing": dozing.path, "ws-mine": mine.path},
+    )
+    sent: list = []
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent, pair=True))
+    toasts: list[str] = []
+    await _press_A(monkeypatch, inv, 0, "from the header", toasts)
+    assert {r for r, _ in sent} == {"ws-dozing"}
+
+
+async def test_A_overrides_the_snooze_it_is_aimed_at(monkeypatch, tmp_path):
+    """A snooze silences the *automatic* nudge, never a line you typed.
+
+    `should_nudge`'s quiet gate only runs when a `pref_key` is passed, so the
+    send must pass none — exactly as `a` does. Were one threaded through here,
+    the key would refuse every row it exists to reach."""
+    inv, dozing, _mine = _snoozed_repo(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda: {"ws-dozing": dozing.path}
+    )
+    calls: list[dict] = []
+
+    def _fake(ref, msg, **kwargs) -> bool:
+        calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake)
+    await _press_A(monkeypatch, inv, 2, "wake up", [])
+    assert calls and all(c.get("pref_key") is None for c in calls)
+
+
+async def test_A_reports_partial_delivery_and_keeps_the_draft(monkeypatch, tmp_path):
+    # Same contract as the header fan-out: these sessions' states are invisible
+    # from a collapsed fold, so a half-landed send must not read as a whole one,
+    # and the retry targets only the misses.
+    inv, dozing, _mine = _snoozed_repo(monkeypatch, tmp_path)
+    other = Worktree(path=tmp_path / "dozing2", branch="khivi/dozing2")
+    import cockpit.lib.cache as cache_mod
+
+    cache_mod.branch_cache("pr-snoozed", other.branch).write_text("snoozed")
+    inv = [("alpha", "alpha", None, "none", [dozing, other])]
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds",
+        lambda: {"ws1": dozing.path, "ws2": other.path},
+    )
+
+    def _fake(ref, msg, *, skips=None, **k):
+        if ref == "ws1":
+            return True
+        if skips is not None:
+            skips[ref] = "mid-turn"
+        return False
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake)
+    toasts: list[str] = []
+    app = await _press_A(monkeypatch, inv, 1, "please rebase", toasts)
+    assert any("sent to 1 of 2" in t and "1× mid-turn" in t for t in toasts)
+    # The retry key named in the toast is the one that reaches the misses.
+    assert any("press A to retry" in t for t in toasts)
+    assert app._ask_drafts["snoozed:alpha"] == "please rebase"
+
+
+async def test_A_warns_when_the_cursor_row_has_no_snoozed_fold(monkeypatch, tmp_path):
+    # The binding stays live on every row (the hint is what follows row state),
+    # so pressing it where there is no pile must say so rather than no-op.
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    sent: list = []
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent))
+    toasts: list[str] = []
+    await _press_A(monkeypatch, [("repo", "repo", None, "none", [wt])], 1, "hi", toasts)
+    assert sent == []
+    assert any("no snoozed rows" in t for t in toasts)
+
+
+async def test_A_is_advertised_only_where_a_fold_exists(monkeypatch, tmp_path):
+    """`A` names a *section*, which most rows do not have.
+
+    So unlike every other row key it is hidden on unknown caps too — the empty
+    first-run table must not advertise a fold nobody has."""
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.worktree_table import FOLD_CAP, HEADER_CAP, SNOOZED_CAP
+
+    fb = FooterBar([], backend="cmux")
+    fb._row_caps = None
+    assert fb._skip("ask_snoozed")  # empty table: no pile to ask
+    fb._row_caps = frozenset({"pr", "workspace"})
+    assert fb._skip("ask_snoozed")  # a worktree row is not a fold
+    fb._row_caps = frozenset({HEADER_CAP})
+    assert fb._skip("ask_snoozed")  # a repo with nothing snoozed
+    fb._row_caps = frozenset({HEADER_CAP, FOLD_CAP})
+    assert not fb._skip("ask_snoozed")  # a repo that HAS a pile
+    fb._row_caps = frozenset({SNOOZED_CAP, FOLD_CAP})
+    assert not fb._skip("ask_snoozed")  # the disclosure row itself
+
+
+async def test_A_hint_hides_off_cmux(monkeypatch, tmp_path):
+    # It delivers through cmux `send`, which limux has no equivalent for — the
+    # same gate `a` carries.
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.worktree_table import FOLD_CAP, SNOOZED_CAP
+
+    fb = FooterBar([], backend="limux")
+    fb._row_caps = frozenset({SNOOZED_CAP, FOLD_CAP})
+    assert fb._skip("ask_snoozed")
 
 
 async def test_footer_hides_diff_when_the_viewer_is_unavailable():
