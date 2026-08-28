@@ -235,6 +235,10 @@ queue for a team, however many repos it spans. Snoozed PRs get a second fold bel
 including a whole stacked chain whose tip you snoozed, which gives up its own group and
 folds away with the rest of the pile, exactly as the dashboard folds those rows away.
 
+If a fold ever disappears — its header row goes and everything it held spills back into the
+sidebar as loose rows — it comes back on its own within about half a minute, rather than
+waiting for the next full refresh.
+
 ---
 
 ## Closing up

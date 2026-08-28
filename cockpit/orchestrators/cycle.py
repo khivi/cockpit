@@ -61,6 +61,7 @@ from cockpit.lib.cmux import (
     list_workspace_groups,
     move_workspace_group_to_end,
     nudge_if_idle,
+    read_workspace_groups,
     remove_from_workspace_group,
     rename_workspace_group,
     rename_workspace_if_needed,
@@ -2536,7 +2537,93 @@ _TRAILING_FOLDS: tuple[tuple[str, str, Callable[[str, int], str]], ...] = (
 )
 
 
-def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
+_FOLD_RECORD_PREFIX = "fold:"
+
+
+def _fold_record_key(icon: str, bucket: str) -> str:
+    """`pill_state` key under which the slow pass records a trailing fold it
+    left standing, so the fast tick can rebuild that exact fold if it vanishes.
+
+    Keyed by icon + bucket because that pair is what identifies a pile across
+    cycles; the group ref is not, since a rebuilt fold gets a new one.
+    """
+    return f"{_FOLD_RECORD_PREFIX}{icon}:{bucket}"
+
+
+def restore_trailing_folds(pill_state: dict, *, dry: bool = False) -> None:
+    """Rebuild a trailing fold that has vanished since the slow pass built it.
+
+    The fast-tick half of `_reconcile_review_groups`, and deliberately the
+    *narrowest* thing that closes the gap it exists for: a fold can be lost
+    mid-interval (its anchor closed, cmux dropping a group that momentarily held
+    nothing else), and the only thing that rebuilds one is the cross-repo pass at
+    the end of a full `cycle_all` — so the sidebar reads flat, every review and
+    snoozed row loose among the live ones, for up to a whole
+    `slow_poll_interval_seconds`. Here it recovers in ~30s, the same self-heal
+    cadence as the pidfile, the workspace name and the sidebar colour.
+
+    **This is a replay, not a second authority, and that is the whole design.**
+    Deriving fold membership here was the obvious shape and is the wrong one:
+    the piles come from `PR.mine` / `NudgePref.snoozed` over the `gh` fetch, so a
+    network-free derivation would have to read disk payloads, and absent payloads
+    (fresh start, wiped cache) are indistinguishable from "this org has no
+    reviews left" — the exact ambiguity `ReviewFolds.partial` exists to refuse to
+    act on, with no analogue available here. So nothing is derived: the slow pass
+    records the `(name, refs)` it left standing under `_fold_record_key`, and
+    this replays that record verbatim.
+
+    **It can only create.** No dissolve, no rename, no member add or remove, no
+    re-park of a fold that is already there. Every failure mode therefore costs
+    at most a missing fold for one more interval, never a closed one — the
+    asymmetry that makes running this on a 30s network-free tick safe at all.
+
+    Three guards, each covering a way "the fold is gone" can be wrong:
+
+    * `read_workspace_groups` rather than `list_workspace_groups` — a failed read
+      flattens to an empty list, which reads as "every fold is gone" and would
+      duplicate every group still on screen. None means give up.
+    * refs are filtered against live workspaces, so a fold whose members have
+      since been closed is not rebuilt around dead refs. All gone → skip
+      entirely, and leave the record for the slow pass to retire.
+    * a live group of the same icon sharing any member means the fold is present
+      (possibly re-membered since) — leave it alone. Matching by member overlap,
+      never by name, for the same reason `_match_stack_group` does.
+
+    The record lives in `pill_state`, the daemon's in-memory dict, **not** on
+    disk: it is this process's memory of what it built, not stored inventory. A
+    restart drops it, and the first slow cycle re-records — so a fresh daemon
+    behaves exactly as it did before this existed.
+    """
+    if dry:
+        return
+    records = {k: v for k, v in pill_state.items() if k.startswith(_FOLD_RECORD_PREFIX)}
+    if not records:
+        return
+    live = read_workspace_groups()
+    if live is None:
+        return  # cmux did not answer — "no folds" here would duplicate them all
+    try:
+        names, _cwds = workspace_state()
+    except CmuxUnavailable:
+        return
+    for key, record in sorted(records.items()):
+        icon = key.split(":", 2)[1]
+        refs = [ref for ref in record.get("refs") or () if ref in names]
+        if not refs:
+            continue
+        if any(g.icon == icon and set(refs) & set(g.members) for g in live):
+            continue
+        name = record.get("name") or ""
+        created = create_workspace_group(name, refs, icon=icon, collapsed=True)
+        if created is None:
+            continue
+        move_workspace_group_to_end(created.ref)
+        print(f"  {verb('regrouped')} {cyan(name)} {dim(' → '.join(refs))}", flush=True)
+
+
+def _reconcile_review_groups(
+    folds: ReviewFolds, *, dry: bool, pill_state: dict | None = None
+) -> None:
     """Fold each org's coworker PRs into one trailing `<org> reviews (N)` group,
     and its snoozed PRs into an `<org> snoozed (N)` group below it.
 
@@ -2590,6 +2677,14 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
     bucket being empty rather than on the cycle being complete — an empty
     bucket is exactly the ambiguous case. A stranded anchor-only header waits a
     cycle; that is cosmetic, and cheap next to closing a live fold.
+
+    **Each standing fold is recorded in `pill_state` for the fast tick to
+    replay** (`_fold_record_key` → `restore_trailing_folds`). This pass is the
+    only thing that can build a trailing fold, and it runs once at the end of a
+    full cycle, so a fold lost mid-interval leaves the sidebar flat for up to
+    `slow_poll_interval_seconds`. The record is what lets the 30s tick put it
+    back without deriving anything of its own. Retiring a record rides the
+    `partial` guard for the same reason the dissolve does — see there.
     """
     if dry:
         return
@@ -2597,10 +2692,19 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
     for attr, icon, namer in _TRAILING_FOLDS:
         groups = [g for g in live if g.icon == icon]
         matched: set[str] = set()
+        recorded: set[str] = set()
         for key, refs in sorted(getattr(folds, attr).items()):
             if not refs:
                 continue
             name = namer(key, len(refs))
+            # What this pass decided the fold should be, so the fast tick can
+            # replay it if the group is lost mid-interval — see
+            # `restore_trailing_folds`. Written for a fold that ends the pass
+            # standing, whether it was created here or matched in place.
+            if pill_state is not None:
+                record_key = _fold_record_key(icon, key)
+                recorded.add(record_key)
+                pill_state[record_key] = {"name": name, "refs": list(refs)}
             # An anchor that is one of the pile's own workspaces is swallowing
             # that member's row, so keep it out of the match: the group
             # dissolves below and is rebuilt on a throwaway anchor, members
@@ -2631,6 +2735,18 @@ def _reconcile_review_groups(folds: ReviewFolds, *, dry: bool) -> None:
             move_workspace_group_to_end(group.ref)
         if folds.partial:
             continue  # an absent bucket is "not asked", not "empty" — see above
+        # Retiring a record is a dissolve by another name — it stops the fast
+        # tick rebuilding a pile this cycle decided is gone — so it rides the
+        # same `partial` guard, above. Otherwise an incomplete cycle would drop
+        # the record for a fold it deliberately declined to dissolve, and the
+        # next lost anchor would go unrepaired for a full interval.
+        if pill_state is not None:
+            for stale in [
+                k
+                for k in pill_state
+                if k.startswith(f"{_FOLD_RECORD_PREFIX}{icon}:") and k not in recorded
+            ]:
+                del pill_state[stale]
         for group in groups:
             if group.ref not in matched:
                 ungroup_workspaces(group.ref)
@@ -2952,7 +3068,7 @@ def cycle_all(
                 )
     if folds is not None and not _cache_only(cfg):
         try:
-            _reconcile_review_groups(folds, dry=dry)
+            _reconcile_review_groups(folds, dry=dry, pill_state=pill_state)
         except CmuxUnavailable as e:
             ts = datetime.now().isoformat(timespec="seconds")
             print(

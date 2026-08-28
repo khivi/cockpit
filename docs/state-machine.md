@@ -512,9 +512,13 @@ Why two ticks:
   worktree, reconciles each workspace's name to its branch-derived label
   (`reconcile_workspace_names`) and its sidebar colour to the repo's
   `sidebar_color` (`_tint_repo_workspaces`), sums each worktree's session spend
-  into its `wt-cost` cell (`write_worktree_cost_cache`), and republishes PR flat
-  cells from the persistent JSON, so a `git checkout`, a drifted workspace name,
-  a freshly spawned workspace's colour, a running agent's cost, or an OS tmpdir
+  into its `wt-cost` cell (`write_worktree_cost_cache`), republishes PR flat
+  cells from the persistent JSON, and rebuilds a trailing sidebar fold that has
+  vanished since the slow pass built it (`restore_trailing_folds` — a replay of
+  that pass's recorded `(name, refs)`, create-only, never a fold derived here),
+  so a `git checkout`, a drifted workspace name,
+  a freshly spawned workspace's colour, a running agent's cost, a lost `<org>
+  reviews (N)` / `<org> snoozed (N)` group, or an OS tmpdir
   wipe recovers on the next fast tick rather than waiting out a slow one. That
   interval is the *floor*, not the only trigger: the
   `cmux events` doorbell (`lib/events.py`, cmux-only) kicks it the moment a

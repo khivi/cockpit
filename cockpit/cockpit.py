@@ -62,7 +62,7 @@ from cockpit.lib.daemon import reassert_pidfile
 from cockpit.lib.gh import gh_self_user, require_gh
 from cockpit.lib.git import Worktree, require_git, worktrees
 from cockpit.lib.preflight import preflight
-from cockpit.orchestrators.cycle import cycle_all
+from cockpit.orchestrators.cycle import cycle_all, restore_trailing_folds
 
 DEFAULT_SLOW_POLL_SECS = 300
 DEFAULT_FAST_POLL_SECS = 30
@@ -227,6 +227,13 @@ def _fast_tick(state: dict) -> None:
         if cwds and not state.get("dry"):
             reconcile_workspace_names(names, cwds, wts)
             _tint_repo_workspaces(repo_entry, repo_path, wts, cwds, pill_state)
+    # Same self-heal shape as the pidfile / name / colour re-asserts above: a
+    # trailing fold lost mid-interval is otherwise only rebuilt by the cross-repo
+    # pass at the end of a full slow cycle, leaving the sidebar flat for up to
+    # `slow_poll_interval_seconds`. Replays the slow pass's own recorded
+    # decision — it never derives a fold, and never dissolves one.
+    if not state.get("dry"):
+        restore_trailing_folds(pill_state)
     _write_worktree_cells(pending)
     republish_pr_caches_from_disk()
 
