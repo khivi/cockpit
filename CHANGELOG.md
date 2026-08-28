@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.1](https://github.com/khivi/cockpit/compare/v2.13.0...v2.13.1) (2026-08-28)
+
+
+### Performance Improvements
+
+* **daemon:** fan out the fast tick's per-worktree cell writes ([#424](https://github.com/khivi/cockpit/issues/424)) ([5259ffa](https://github.com/khivi/cockpit/commit/5259ffa8d8517d60add7e27673eec590731b0a7a))
+
 ## [2.13.0](https://github.com/khivi/cockpit/compare/v2.12.5...v2.13.0) (2026-08-28)
 
 
