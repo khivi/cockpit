@@ -17,6 +17,7 @@ import shutil
 import sys
 import threading
 import time
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -929,6 +930,41 @@ def workspace_is_idle(ref: str) -> bool:
     """True if the workspace has an `idle=` pill (set by the Stop hook)."""
     out = cmux("list-status", "--workspace", ref, check=False)
     return _has_pill(out.splitlines(), "idle")
+
+
+def reassert_idle_pills(refs: Iterable[str]) -> list[str]:
+    """Write `idle=` for every ref cmux reports as natively `Idle` but that
+    carries no pill. Returns the refs healed.
+
+    The same rule `nudge_if_idle` applies at line-of-send, hoisted onto the
+    fast tick so it runs *unprompted*. That distinction is the whole point:
+    the pill is the durable signal and native state is the perishable one, so
+    the window in which cmux still says `Idle` is the only chance to record it.
+    Left to the send path, a workspace whose native state later disappears
+    (cmux restart, a Claude relaunched outside cmux's wrapper) has no pill and
+    no way back — permanently unreachable to `a`/`A`/nudge. Writing it while
+    the evidence is still there is what makes the pill survive.
+
+    Deliberately only ever *writes* a pill, never clears one: a stale `idle=`
+    on a now-running session is already handled by the gate's `Running` guard,
+    whereas a wrongly-cleared pill would silence a reachable session. Every
+    failure mode therefore costs at most one interval of a missing pill.
+    """
+    refs = list(refs)
+    if not refs:
+        return []
+
+    def _one(ref: str) -> str | None:
+        lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
+        if _native_claude_state(lines) != "Idle" or _has_pill(lines, "idle"):
+            return None
+        _set_status(ref, "idle", "idle", GREY)
+        return ref
+
+    # One `list-status` subprocess per workspace, ~150ms each and mutually
+    # independent — serial that is ~3.5s of a 30s tick at fleet scale.
+    with ThreadPoolExecutor(max_workers=min(8, len(refs))) as pool:
+        return [r for r in pool.map(_one, refs) if r]
 
 
 def find_cockpit_workspaces(

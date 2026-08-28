@@ -209,6 +209,7 @@ def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: (names, cwds))
+    monkeypatch.setattr(cockpit, "reassert_idle_pills", lambda _refs: [])
     monkeypatch.setattr(
         cockpit,
         "reconcile_workspace_names",
@@ -285,6 +286,7 @@ def test_fast_tick_tints_spawned_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, cwds))
+    monkeypatch.setattr(cockpit, "reassert_idle_pills", lambda _refs: [])
     monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda *a: None)
     monkeypatch.setattr(
         cockpit, "set_workspace_color", lambda ref, color: tinted.append((ref, color))
@@ -324,6 +326,7 @@ def test_fast_tick_skips_color_without_sidebar_color(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "workspace_state", lambda: ({}, {"workspace:1": repo / "feat"})
     )
+    monkeypatch.setattr(cockpit, "reassert_idle_pills", lambda _refs: [])
     monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda *a: None)
     monkeypatch.setattr(
         cockpit, "set_workspace_color", lambda ref, color: tinted.append((ref, color))
@@ -711,4 +714,47 @@ def test_fast_tick_does_not_restore_folds_under_dry(tmp_path, monkeypatch):
 
     cockpit._fast_tick({"dry": True})
 
+    assert seen == []
+
+
+def _fast_tick_env(tmp_path, monkeypatch):
+    """Minimal fast-tick wiring with one live workspace, returning the module
+    and the refs `reassert_idle_pills` was handed."""
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
+
+    importlib.reload(cockpit)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = Worktree(path=repo / "feat", branch="khivi/feat")
+    seen: list = []
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
+    )
+    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+    monkeypatch.setattr(
+        cockpit, "workspace_state", lambda: ({}, {"workspace:1": repo / "feat"})
+    )
+    monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda n, c, w: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda _s: None)
+    monkeypatch.setattr(
+        cockpit, "reassert_idle_pills", lambda refs: seen.append(list(refs)) or []
+    )
+    return cockpit, seen
+
+
+def test_fast_tick_reasserts_idle_pills_for_live_workspaces(tmp_path, monkeypatch):
+    cockpit, seen = _fast_tick_env(tmp_path, monkeypatch)
+    cockpit._fast_tick({})
+    assert seen == [["workspace:1"]]
+
+
+def test_fast_tick_does_not_reassert_idle_pills_under_dry(tmp_path, monkeypatch):
+    """`--dry` promises not to touch live cmux, and the re-assert writes a pill
+    into the user's real workspace — same gate as the rename and the tint."""
+    cockpit, seen = _fast_tick_env(tmp_path, monkeypatch)
+    cockpit._fast_tick({"dry": True})
     assert seen == []

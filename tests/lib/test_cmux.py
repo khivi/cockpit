@@ -35,6 +35,7 @@ from cockpit.lib.cmux import (
     move_workspace_group_to_end,
     nudge_if_idle,
     one_line,
+    reassert_idle_pills,
     reconcile_workspace_names,
     remove_from_workspace_group,
     rename_workspace_group,
@@ -1766,3 +1767,68 @@ def test_nudge_gate_order_unchanged_by_the_shared_read():
             side_effect=lambda *a, _l=lines, **k: (_l if a[0] == "list-status" else ""),
         ):
             assert nudge_if_idle("workspace:1", "m") is expected, lines
+
+
+def _reassert_calls(statuses: dict[str, str]) -> tuple[list[str], list[tuple]]:
+    """Drive `reassert_idle_pills` over `statuses` (ref -> list-status text),
+    returning the healed refs and every non-read cmux call it made."""
+    writes: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return statuses[args[2]]
+        writes.append(args)
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        healed = reassert_idle_pills(list(statuses))
+    return healed, writes
+
+
+def test_reassert_writes_the_pill_when_native_idle_and_pill_missing():
+    healed, writes = _reassert_calls({"workspace:1": _native_line("Idle")})
+    assert healed == ["workspace:1"]
+    assert any("set-status" in a for a in writes[0]), writes
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        _native_line("Running"),
+        _native_line("Needs input"),
+        # Already pilled — nothing to heal, and re-writing would be pure churn.
+        "idle=1\n" + _native_line("Idle"),
+        # The case this cannot fix: no native state to trust. Writing here
+        # would be exactly what the nudge gate exists to prevent.
+        "",
+    ],
+)
+def test_reassert_writes_nothing_without_an_unambiguous_idle(status):
+    healed, writes = _reassert_calls({"workspace:1": status})
+    assert healed == []
+    assert writes == []
+
+
+def test_reassert_never_clears_a_pill():
+    """It is a one-way door by design: a stale `idle=` is already caught by the
+    gate's `Running` guard, but a wrongly-cleared one silences a live session."""
+    _, writes = _reassert_calls({"workspace:1": "idle=1\n" + _native_line("Running")})
+    assert not any("clear-status" in a for a in writes), writes
+
+
+def test_reassert_heals_only_the_eligible_refs_in_a_mixed_fleet():
+    healed, _ = _reassert_calls(
+        {
+            "workspace:1": _native_line("Idle"),
+            "workspace:2": _native_line("Running"),
+            "workspace:3": "",
+            "workspace:4": _native_line("Idle"),
+        }
+    )
+    assert sorted(healed) == ["workspace:1", "workspace:4"]
+
+
+def test_reassert_on_empty_fleet_makes_no_cmux_calls():
+    with patch("cockpit.lib.cmux.cmux") as m:
+        assert reassert_idle_pills([]) == []
+    m.assert_not_called()

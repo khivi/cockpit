@@ -24,21 +24,33 @@ HOOK = (
 )
 
 
+LIVE_WS = "E42603F6-ABEA-4B08-8F36-BE9AE8C6D75B"
+OTHER_WS = "F9B5144B-78A3-448E-9D36-9206ABA1533B"
+
+
 def _plant_cmux_shim(tmp_path: Path, monkeypatch, workspaces: list[str]) -> Path:
     """Plant a cmux shim that emits a controllable workspace list for
-    `list-workspaces` and logs argv for everything else. Mirrors the format
-    of real `cmux list-workspaces` output (leading indent, then
-    `workspace:N  <name>`)."""
+    `workspace list --json` and logs argv for everything else.
+
+    The listing must be JSON carrying `id` UUIDs, because that is the only
+    form that contains `CMUX_WORKSPACE_ID`. Stubbing the old `list-workspaces`
+    (refs + names, no UUID) is what let the hook's liveness guard ship
+    permanently failing: the tests fed it ref-shaped ids that real cmux never
+    sets, so the guard matched here and never in production."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     log = tmp_path / "cmux.log"
-    listing = "\n".join(f"  {w}  name" for w in workspaces) + (
-        "\n" if workspaces else ""
+    listing = json.dumps(
+        {
+            "workspaces": [
+                {"id": w, "ref": f"workspace:{i}"} for i, w in enumerate(workspaces)
+            ]
+        }
     )
     shim = bin_dir / "cmux"
     shim.write_text(
         "#!/bin/bash\n"
-        'if [ "$1" = "list-workspaces" ]; then\n'
+        'if [ "$1" = "workspace" ] && [ "$2" = "list" ]; then\n'
         f"  printf %s {repr(listing)}\n"
         "  exit 0\n"
         "fi\n"
@@ -51,8 +63,8 @@ def _plant_cmux_shim(tmp_path: Path, monkeypatch, workspaces: list[str]) -> Path
 
 @pytest.fixture
 def fake_cmux(tmp_path, monkeypatch) -> Path:
-    log = _plant_cmux_shim(tmp_path, monkeypatch, ["workspace:99"])
-    monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
+    log = _plant_cmux_shim(tmp_path, monkeypatch, [LIVE_WS])
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", LIVE_WS)
     # Redirect the hook's operator-debug log into tmp_path so prune tests
     # control the file and so unrelated test runs don't pollute the real
     # ~/.config/cockpit/cmux-idle-pill.err.
@@ -138,8 +150,8 @@ def _plant_verify_shim(tmp_path: Path, monkeypatch, *, set_succeeds_on: int) -> 
     shim = bin_dir / "cmux"
     shim.write_text(
         "#!/bin/bash\n"
-        'if [ "$1" = "list-workspaces" ]; then\n'
-        '  printf "  workspace:99  name\\n"\n'
+        'if [ "$1" = "workspace" ] && [ "$2" = "list" ]; then\n'
+        f'  printf %s {repr(json.dumps({"workspaces": [{"id": LIVE_WS}]}))}\n'
         "  exit 0\n"
         "fi\n"
         f'printf "%s\\n" "$*" >> "{log}"\n'
@@ -153,7 +165,7 @@ def _plant_verify_shim(tmp_path: Path, monkeypatch, *, set_succeeds_on: int) -> 
     )
     shim.chmod(shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", LIVE_WS)
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
     monkeypatch.setenv("CMUX_VERIFY_TRIES", "5")
     monkeypatch.setenv("CMUX_VERIFY_SLEEP", "0")
@@ -257,28 +269,28 @@ def test_no_workspace_id_is_noop(tmp_path, monkeypatch):
 
 
 def test_dead_workspace_is_noop(tmp_path, monkeypatch):
-    # Workspace was closed/recreated — its ID is no longer in
-    # `cmux list-workspaces`. Hook must exit silently so we don't hammer a
-    # dead socket and fill the err log with Broken Pipe forever.
-    log = _plant_cmux_shim(tmp_path, monkeypatch, ["workspace:1", "workspace:42"])
-    monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:99")
+    # Workspace was closed/recreated — its ID is no longer in the listing.
+    # Hook must exit silently so we don't hammer a dead socket and fill the
+    # err log with Broken Pipe forever.
+    log = _plant_cmux_shim(tmp_path, monkeypatch, [OTHER_WS])
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", LIVE_WS)
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
     subprocess.run([str(HOOK), "prompt"], check=True)
     assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
 def test_substring_workspace_id_does_not_match(tmp_path, monkeypatch):
-    # `workspace:9` must not match against `workspace:99` in the live list.
-    # Space-delimited case match guards against the substring trap.
-    log = _plant_cmux_shim(tmp_path, monkeypatch, ["workspace:99"])
-    monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:9")
+    # A prefix of a live id must not match it. The case pattern carries the
+    # surrounding JSON quotes, which is what makes the match exact.
+    log = _plant_cmux_shim(tmp_path, monkeypatch, [LIVE_WS])
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", LIVE_WS[:-4])
     monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
     subprocess.run([str(HOOK), "prompt"], check=True)
     assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
 def test_live_workspace_passes_through(fake_cmux):
-    # Sanity: fake_cmux registers workspace:99 as live, so the phase must reach
+    # Sanity: fake_cmux registers LIVE_WS as live, so the phase must reach
     # the cmux call. (Companion to test_dead_workspace_is_noop.)
     subprocess.run([str(HOOK), "prompt"], check=True)
     calls = _poll_lines(fake_cmux, expected=1)
