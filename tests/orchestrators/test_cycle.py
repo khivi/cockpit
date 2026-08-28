@@ -5646,7 +5646,7 @@ def test_the_slow_pass_records_a_fold_it_created(tmp_path):
         repo_entry={"name": "Cockpit"},
     )
     folds = _folds((ctx, {"workspace:1", "workspace:2"}))
-    pill_state = {}
+    pill_state: dict = {}
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(
@@ -5676,7 +5676,7 @@ def test_the_slow_pass_records_a_fold_it_matched_in_place(tmp_path):
     existing = _group(
         "wg:1", "Cockpit reviews (1)", "workspace:9", ["workspace:2"], REVIEW_GROUP_ICON
     )
-    pill_state = {}
+    pill_state: dict = {}
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[existing]),
         patch.object(cycle, "create_workspace_group") as create,
