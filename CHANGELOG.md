@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.0](https://github.com/khivi/cockpit/compare/v2.12.5...v2.13.0) (2026-08-28)
+
+
+### Features
+
+* **tui:** deliver the diff viewer's comments into the row's session ([#422](https://github.com/khivi/cockpit/issues/422)) ([56f2c37](https://github.com/khivi/cockpit/commit/56f2c37adba5cd7f528df565660dbaf84a187394))
+
 ## [2.12.5](https://github.com/khivi/cockpit/compare/v2.12.4...v2.12.5) (2026-08-27)
 
 
