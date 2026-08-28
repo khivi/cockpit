@@ -740,9 +740,12 @@ def _fast_tick_env(tmp_path, monkeypatch):
     monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda n, c, w: None)
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
     monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda _s: None)
-    monkeypatch.setattr(
-        cockpit, "reassert_idle_pills", lambda refs: seen.append(list(refs)) or []
-    )
+
+    def _record(refs) -> list:
+        seen.append(list(refs))
+        return []
+
+    monkeypatch.setattr(cockpit, "reassert_idle_pills", _record)
     return cockpit, seen
 
 
