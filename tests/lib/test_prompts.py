@@ -8,6 +8,7 @@ quotes the *initial* half into a `claude '<prompt>'` shell command.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -109,6 +110,33 @@ def test_claude_command_escapes_single_quotes():
 
 def test_claude_command_none_is_bare_claude():
     assert claude_command(None) == "claude"
+
+
+def test_claude_command_print_mode_adds_the_flag():
+    assert claude_command("hi there", print_mode=True) == "claude -p 'hi there'"
+    assert claude_command(None, print_mode=True) == "claude -p"
+
+
+def test_no_launch_path_spells_the_agent_binary_inline():
+    """`claude_command` is the only place the agent binary is named.
+
+    An inline `claude ...` at a call site is invisible until someone tries to
+    run a different agent and finds one launch path still hardcoded — which is
+    exactly what `_run_repo_skills`' `fast_skills` run was.
+    """
+    root = Path(__file__).resolve().parents[2] / "cockpit"
+    # A string literal that IS the binary, or leads a flag / slash command /
+    # interpolation — never prose that merely opens with the word, of which
+    # `config.py`'s "claude hooks unchanged" prints are the honest kind.
+    invocation = re.compile(r"""["']claude(["']|\s+[-/{])""")
+    offenders = []
+    for path in root.rglob("*.py"):
+        if path.name == "prompts.py":
+            continue
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            if invocation.search(line.split("#", 1)[0]):
+                offenders.append(f"{path.relative_to(root)}:{n}")
+    assert offenders == [], f"inline claude invocation: {offenders}"
 
 
 def test_pr_prompt_header_and_action_selection():

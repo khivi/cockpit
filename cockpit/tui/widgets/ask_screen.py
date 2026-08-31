@@ -29,6 +29,11 @@ from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
+# Offered as the box's opening text when `d` comments are waiting and no draft
+# is. `_send_ask` appends them as ` · diff comments: file:line — remark`, so the
+# wording deliberately doesn't repeat that label.
+COMMENTS_LEAD = "Address the following"
+
 
 class AskScreen(ModalScreen["tuple[str, str]"]):
     """A one-line prompt. Dismisses with `(outcome, text)`.
@@ -79,6 +84,21 @@ class AskScreen(ModalScreen["tuple[str, str]"]):
         # enter.
         self._comments = comments
 
+    def _prefill(self) -> str:
+        """The lead-in this modal offered, or "" if it offered none.
+
+        Comments only travel on a message, so a pending set still needs a line
+        to ride — and inventing one for remarks that already say everything is
+        exactly the friction that leaves them sitting undelivered. Offering the
+        line makes it `a`-then-enter while keeping the send a typed gesture: the
+        text is editable, and an emptied box still means *drop the draft*.
+
+        A restored draft always wins — it is what a previous send couldn't
+        deliver, and overwriting it would cost the user the very text this modal
+        exists to preserve.
+        """
+        return "" if self._initial or not self._comments else COMMENTS_LEAD
+
     def compose(self) -> ComposeResult:
         title = f"Ask {self._target}" if self._target else "Ask"
         with VerticalScroll():
@@ -97,7 +117,7 @@ class AskScreen(ModalScreen["tuple[str, str]"]):
                     classes="ask-hint",
                 )
             yield Input(
-                value=self._initial,
+                value=self._initial or self._prefill(),
                 placeholder="rebase onto main and force-push",
                 id="ask-input",
             )
@@ -121,8 +141,9 @@ class AskScreen(ModalScreen["tuple[str, str]"]):
     def on_mount(self) -> None:
         inp = self.query_one(Input)
         inp.focus()
-        # Restored draft: cursor to the end so you can keep typing, not overtype.
-        if self._initial:
+        # Restored draft or offered lead-in: cursor to the end so you can keep
+        # typing, not overtype.
+        if inp.value:
             inp.action_end()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -131,5 +152,9 @@ class AskScreen(ModalScreen["tuple[str, str]"]):
 
     def action_cancel(self) -> None:
         # Hand the typed text back so the app can stash it — escape is "hold
-        # this thought", not "throw it away".
-        self.dismiss(("cancel", self.query_one(Input).value.strip()))
+        # this thought", not "throw it away". An untouched lead-in is not a
+        # thought the user had, and stashing it would outlive the comments that
+        # prompted it: the next `a` on a row with nothing pending would restore
+        # "Address the following" as a draft referring to nothing.
+        text = self.query_one(Input).value.strip()
+        self.dismiss(("cancel", "" if text == self._prefill() else text))

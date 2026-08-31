@@ -166,7 +166,7 @@ from cockpit.lib.log_format import verb
 from cockpit.lib.nudges import NudgePref, pref_key, save_pref, wake_signature
 from cockpit.lib.nudges import load_pref as _load_nudge_pref
 from cockpit.lib.pills import ci_glyph
-from cockpit.lib.prompts import claude_command, shell_quote, split_prompt_prefix
+from cockpit.lib.prompts import claude_command, split_prompt_prefix
 from cockpit.lib.stacks import find_stacks
 from cockpit.lib.tickets import TicketProvider, provider_for
 from cockpit.lib.tool import has_workspace_backend, is_cmux
@@ -2348,14 +2348,11 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
                 flush=True,
             )
             continue
+        command = claude_command(prompt, print_mode=True)
         if dry:
-            print(f"  dry: claude -p {shell_quote(prompt)} in {repo_path}", flush=True)
+            print(f"  dry: {command} in {repo_path}", flush=True)
             continue
-        subprocess.run(
-            f"claude -p {shell_quote(prompt)}",
-            shell=True,
-            cwd=repo_path,
-        )
+        subprocess.run(command, shell=True, cwd=repo_path)
 
     slow_skills = repo_entry.get("slow_skills") or []
     if slow_skills:
