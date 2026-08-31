@@ -12,6 +12,8 @@
       },
       "review_external": false,
       "dependabot": false,
+      "update_stale_branches": false,
+      "update_branch_method": "rebase",
       "tickets": {
         "provider": "linear",
         "keys": ["TEAM"],

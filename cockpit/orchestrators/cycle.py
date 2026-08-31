@@ -104,16 +104,20 @@ from cockpit.lib.config import (
     trello_api_key,
     trello_api_token,
     trello_merge_done,
+    update_branch_method,
+    update_stale_branches,
 )
 from cockpit.lib.constants import MAIN_BRANCHES
 from cockpit.lib.gh import (
     PR,
     OpenPRHead,
+    branch_dismisses_stale_reviews,
     fetch_merged_branches,
     is_dependabot,
     list_open_pr_heads,
     list_relevant_prs,
     repo_nwo,
+    update_pull_request_branch,
 )
 from cockpit.lib.git import (
     Worktree,
@@ -129,6 +133,7 @@ from cockpit.lib.git import (
     log_ff_advances,
     origin_head_branch,
     prune_worktrees,
+    resync_to_origin,
     worktree_age_seconds,
     worktrees,
     worktrees_basic,
@@ -640,6 +645,138 @@ def _cached_github_viewer(ctx: RepoCycle) -> str | None:
         "github-viewer",
         lambda: github_viewer_login(repo_dir=str(ctx.repo_path)),
     )
+
+
+def _update_branch_candidates(ctx: RepoCycle) -> list[tuple[PR, Worktree | None]]:
+    """The PRs eligible for an auto branch-update, with their worktree if any.
+
+    Scoped to the two *quiescent* states — approved, and snoozed — because both
+    mean no one is mid-turn on the branch: an approved PR's work is done and
+    waiting to merge, and a snooze is the user saying "not my turn". Anything
+    else may have a session actively committing to it, and rewriting the head
+    under a working agent is the failure this scoping avoids.
+
+    Snoozed candidates are `mine`-gated by `update_branch_skip_reason` like
+    every other one: the snoozed fold holds coworkers' PRs too (see the
+    trailing-folds invariant), and their branches are not ours to rewrite.
+    """
+    out: list[tuple[PR, Worktree | None]] = []
+    by_branch = {branch: wt for branch, (_pr, wt) in ctx.tracked.items()}
+    for pr in ctx.prs:
+        pref = ctx.prefs.get(pr.number)
+        snoozed = bool(pref and pref.snoozed)
+        if pr.review_decision != "APPROVED" and not snoozed:
+            continue
+        out.append((pr, by_branch.get(pr.branch)))
+    return out
+
+
+def _update_stale_branches(ctx: RepoCycle) -> None:
+    """Opt-in: bring my own approved / snoozed PR branches up to date with their
+    base, so a repo that requires up-to-date branches can merge them.
+
+    One of the daemon's few sanctioned *writes*, and it follows the done-on-merge
+    precedent exactly: opt-in (`update_stale_branches`), viewer-gated (`PR.mine`
+    plus GitHub's own `viewerCanUpdateBranch`), idempotent, and logged.
+
+    The update runs **server-side** via `updatePullRequestBranch` — the daemon
+    never rebases in the worktree, so a conflicted update can't strand a
+    `rebase-merge` state that would wedge teardown. `expected_head_oid` makes it
+    a compare-and-swap, so a head that moved since this cycle's fetch fails the
+    mutation instead of clobbering an unseen push.
+
+    The marker is keyed by **head oid**, not just the PR number: a failed or
+    superseded attempt must not retry forever, but a genuine new push (new head)
+    is a new question and re-evaluates. `_is_post_merge_stale`'s `merged-done:`
+    markers use the number alone because a merge happens once; a branch can go
+    stale repeatedly.
+    """
+    if ctx.dry:
+        return
+    if not update_stale_branches(ctx.cfg, ctx.repo_entry):
+        return
+    method = update_branch_method(ctx.cfg, ctx.repo_entry)
+    repo_dir = str(ctx.repo_path)
+    nwo = f"{ctx.owner}/{ctx.name}"
+    # Per-cycle, per-base-branch. Resolved lazily — only an APPROVED candidate
+    # can lose an approval, so the common case makes no extra call at all.
+    dismissal: dict[str, bool] = {}
+    for pr, wt in _update_branch_candidates(ctx):
+        marker = f"update-branch:{ctx.owner}/{ctx.name}:{pr.number}:{pr.head_oid}"
+        if ctx.pill_state.get(marker):
+            continue
+        dismisses: bool | None = None
+        if pr.review_decision == "APPROVED" and pr.base:
+            if pr.base not in dismissal:
+                ruleset = branch_dismisses_stale_reviews(
+                    nwo, pr.base, repo_dir=repo_dir
+                )
+                # Fails CLOSED, unlike most of cockpit: "couldn't ask" must not
+                # read as "safe", because being wrong here silently discards an
+                # approval and costs a human a second review round. Only the
+                # approved half pays it — a snoozed PR with no approval to lose
+                # never consults this.
+                dismissal[pr.base] = True if ruleset is None else ruleset
+            dismisses = pr.dismisses_stale_reviews or dismissal[pr.base]
+        reason = pr.update_branch_skip_reason(dismisses=dismisses)
+        if reason:
+            # Only the cases worth a line: a PR that simply isn't behind is the
+            # overwhelmingly common one and would drown the log every tick.
+            if pr.stale_vs_base:
+                print(
+                    f"  {verb('update-branch', color=yellow)} "
+                    f"#{pr.number} skipped {dim(f'({reason})')}",
+                    flush=True,
+                )
+                ctx.pill_state[marker] = True
+            continue
+        prior_head = pr.head_oid or ""
+        ctx.pill_state[marker] = True
+        ok, detail = update_pull_request_branch(
+            pr.node_id, prior_head, method=method, repo_dir=repo_dir
+        )
+        if not ok:
+            # Clear the marker so a transient failure retries next tick.
+            ctx.pill_state.pop(marker, None)
+            print(
+                f"  {verb('update-branch', color=yellow)} #{pr.number}: "
+                f"{detail or 'failed'} — will retry",
+                flush=True,
+            )
+            continue
+        print(
+            f"  {verb('update-branch')} #{pr.number} {method.lower()}d onto "
+            f"{pr.base or 'base'}",
+            flush=True,
+        )
+        _sync_updated_worktree(wt, pr, prior_head, method)
+
+
+def _sync_updated_worktree(
+    wt: Worktree | None, pr: PR, prior_head: str, method: str
+) -> None:
+    """Reconcile the local worktree after a server-side branch update.
+
+    Only REBASE needs this: it rewrites the head, so the checkout is diverged and
+    `pull.ff = only` refuses to pull. MERGE just adds a commit, so the worktree
+    fast-forwards on its own and this is a no-op.
+
+    `resync_to_origin` refuses unless the tree is clean *and* HEAD is still
+    `prior_head` — proof the worktree holds nothing origin didn't. A worktree
+    that fails either test keeps its state and gets a line saying so, because
+    the alternative is discarding local commits to tidy up a cosmetic
+    divergence.
+    """
+    if method != "REBASE" or wt is None:
+        return
+    if resync_to_origin(wt.path, pr.branch, expected_head=prior_head):
+        print(f"    {dim(f'resynced {wt.short} to origin/{pr.branch}')}", flush=True)
+    else:
+        print(
+            f"    {verb('update-branch', color=yellow)} {wt.short} "
+            f"{dim('diverged — local changes, resync by hand')}",
+            flush=True,
+        )
 
 
 def _transition_merged_tickets(ctx: RepoCycle) -> None:
@@ -2840,6 +2977,7 @@ def cycle_repo(
         _reconcile_sidebar_groups(ctx, keep_refs, folds)
     if workspaces_ready:
         _spawn_missing_workspaces(ctx, repo_entry)
+    _update_stale_branches(ctx)
     _transition_merged_tickets(ctx)
     _reconcile_worktree_lifecycle(ctx, dry=dry)
     log_ff_advances(

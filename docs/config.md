@@ -62,6 +62,8 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `review_external` | bool | `false` | Also auto-spawn review worktrees for non-collaborator (fork) PRs. Off by default — untrusted content reaching a Bash-capable agent is a prompt-injection risk. |
 | `dependabot` | bool | `false` | Include Dependabot PRs in `review_prs` auto-spawn. Excluded by default. |
 | `use_worktree` | bool | `true` | When `false`, the user works directly in the main checkout and cockpit never spawns PR/review/orphan worktrees for the repo (and `n` on its row creates a single named workspace on the checkout, no worktree). Absent = `true` = normal worktree-managed repo. Set to `false` by bare `cockpit new`. |
+| `update_stale_branches` | bool | `false` | Bring my own **approved or snoozed** PR branches up to date with their base when GitHub reports them `BEHIND` (i.e. the repo requires up-to-date branches before merging). Server-side via GitHub's "Update branch" — never a local rebase. Skips an approved PR whose base dismisses stale reviews, since updating it would discard the approval. Also a top-level default. |
+| `update_branch_method` | string | `"rebase"` | `rebase` or `merge` for the above. `rebase` keeps history linear but rewrites the head, so cockpit resyncs the local worktree (clean + unmodified only); `merge` adds a merge commit and the worktree fast-forwards on its own. Also a top-level default. |
 | `orphan_nudge_grace_hours` | number | `4` | Grace before a no-PR ("orphan") worktree draws the push-or-close nudge. `0` disables. Also a top-level default. |
 | `tickets` | object\|string | `{}` | Ticket-provider block (below). Bare string `"github"` == `{"provider": "github"}`. |
 | `org` | string | unset | Name of an entry in the top-level `orgs` object whose defaults this repo inherits (below). Must be defined there — a dangling reference hard-fails at start. |
@@ -92,6 +94,7 @@ those identify one repo, so preflight rejects them there.
       "sidebar_color": "Magenta",
       "branch_prefix": "khivi/",
       "use_worktree": false,
+      "update_stale_branches": true,
       "tickets": { "provider": "github" }
     }
   }

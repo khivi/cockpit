@@ -118,6 +118,35 @@ def _validate_repo_bool(cfg: dict, key: str) -> None:
             _die(f"repo {name!r}: {key} must be true or false, got {repo[key]!r}.")
 
 
+_UPDATE_BRANCH_METHODS = ("rebase", "merge")
+
+
+def _validate_update_branch_method(cfg: dict) -> None:
+    """Hard-fail on an `update_branch_method` that isn't rebase/merge.
+
+    Unlike the ticket settings (which warn), a typo here would silently fall
+    back to REBASE — and REBASE rewrites the head, so someone who asked for
+    MERGE to keep their worktrees fast-forwardable would get the opposite
+    without being told. Same reasoning as `_validate_sidebar_colors`.
+    """
+    for scope, entry in [
+        ("", cfg),
+        *[(r.get("name") or r.get("path", "?"), r) for r in cfg.get("repos", [])],
+    ]:
+        if "update_branch_method" not in entry:
+            continue
+        value = entry["update_branch_method"]
+        if (
+            not isinstance(value, str)
+            or value.strip().lower() not in _UPDATE_BRANCH_METHODS
+        ):
+            where = f"repo {scope!r}: " if scope else ""
+            _die(
+                f"{where}update_branch_method must be one of "
+                f"{', '.join(_UPDATE_BRANCH_METHODS)}, got {value!r}."
+            )
+
+
 def _validate_global_bool(cfg: dict, key: str) -> None:
     """Hard-fail on a top-level `key` that's present but isn't a bool.
 
@@ -731,9 +760,12 @@ def validate_config(cfg: dict) -> None:
     _validate_repo_bool(cfg, "use_worktree")
     _validate_repo_bool(cfg, "dependabot")
     _validate_repo_bool(cfg, "review_external")
+    _validate_repo_bool(cfg, "update_stale_branches")
+    _validate_update_branch_method(cfg)
     _validate_skills(cfg)
     _validate_base_remote(cfg)
     _validate_global_bool(cfg, "use_slack")
+    _validate_global_bool(cfg, "update_stale_branches")
     _validate_statusline_hide(cfg)
     _validate_tickets(cfg)
     _validate_orphan_nudge_grace(cfg)

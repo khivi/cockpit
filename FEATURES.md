@@ -185,6 +185,28 @@ What makes it safe to leave on:
 There's a second nudge for a worktree that has no PR after a few hours: push it or close
 it. Grace period is `orphan_nudge_grace_hours`, or `0` to switch it off.
 
+### Keeping stale branches mergeable
+
+If your repo requires branches to be up to date before merging, a PR that was ready an
+hour ago stops being mergeable the moment someone else lands on the base. Turn on
+`update_stale_branches` and cockpit brings those branches forward for you.
+
+- **Only the PRs nothing is happening on** — approved, or snoozed. Both mean no session is
+  mid-turn on that branch. A PR you're actively working on is left alone.
+- **Only your own**, like the nudge. A coworker's branch is never rewritten.
+- **GitHub does the update, not a local rebase.** It's the same "Update branch" button you
+  would click, so a conflict just reports back rather than leaving a half-finished rebase
+  in your worktree. If the branch moved since cockpit last looked, the update is refused
+  instead of overwriting the push it didn't see.
+- **It won't cost you an approval.** If the repo dismisses stale reviews when new commits
+  land, updating an approved PR would throw the approval away — so cockpit skips those and
+  says why. It checks both classic branch protection and rulesets, and if it can't find
+  out, it assumes the worst and leaves the PR alone.
+- **Your checkout is put back in sync.** `rebase` (the default) rewrites the branch, so
+  cockpit resets the local worktree to match — but only when it's clean and holds nothing
+  you haven't pushed. Anything else is left exactly as you had it, with a line in the log.
+  Prefer `update_branch_method: merge` and the worktree just fast-forwards.
+
 ---
 
 ## Tickets

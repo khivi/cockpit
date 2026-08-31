@@ -295,9 +295,14 @@ Key gates (all from `cycle.py`):
   (the order is identical across backends, so cmux behaves exactly as before;
   non-cmux backends just skip the tiers they can't run):
   - **Backend-agnostic** (cmux, limux, **and** none) — pure git + Linear:
-    `_transition_merged_tickets` (`tickets.close_on_merge`),
+    `_update_stale_branches` (`update_stale_branches`; server-side
+    `updatePullRequestBranch` for my approved/snoozed PRs GitHub reports
+    `BEHIND`, then `resync_to_origin` on the local worktree when the method is
+    REBASE), `_transition_merged_tickets` (`tickets.close_on_merge`),
     `_reconcile_worktree_lifecycle` (autoclose-on-merge + stale-branch-ref reap),
-    and the main-branch fast-forward. `cycle_all`'s close-request drain
+    and the main-branch fast-forward. The branch update runs **before** the
+    lifecycle reconcile, which reads the worktree's commit state — so the resync
+    has already landed when it does. `cycle_all`'s close-request drain
     (`_drain_close_requests` — the TUI `c`/`C` path) is likewise unconditional.
   - **Workspace-capable** (`has_workspace_backend` → cmux + limux, not none):
     `_spawn_missing_workspaces` (+ `review_prs` discovery), `_run_repo_skills`,

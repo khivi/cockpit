@@ -726,6 +726,37 @@ def review_external(repo_entry: dict) -> bool:
     return bool(repo_entry.get("review_external"))
 
 
+def update_stale_branches(cfg: dict, repo_entry: dict | None = None) -> bool:
+    """Whether the slow tick may bring my own stale PR branches up to date with
+    their base (default: False — opt in per repo, or globally).
+
+    Opt-in because it is a *write* to GitHub from an unattended process, which
+    follows the done-on-merge precedent (opt-in, viewer-gated, idempotent,
+    logged). Scoped by `_update_branch_candidates` to PRs that are approved or
+    snoozed — the two quiescent states, where no session is mid-turn on the
+    branch.
+    """
+    if repo_entry is not None and "update_stale_branches" in repo_entry:
+        return bool(repo_entry.get("update_stale_branches"))
+    return bool(cfg.get("update_stale_branches"))
+
+
+def update_branch_method(cfg: dict, repo_entry: dict | None = None) -> str:
+    """`REBASE` (default) or `MERGE` for `update_stale_branches`.
+
+    REBASE keeps history linear but rewrites the head, so a local worktree on
+    that branch diverges from origin — `cycle._sync_updated_worktree` reconciles
+    it. MERGE adds a merge commit and the local worktree fast-forwards instead.
+    """
+    raw = None
+    if repo_entry is not None:
+        raw = repo_entry.get("update_branch_method")
+    if raw is None:
+        raw = cfg.get("update_branch_method")
+    value = str(raw or "rebase").strip().upper()
+    return value if value in ("REBASE", "MERGE") else "REBASE"
+
+
 def statusline_hidden(cfg: dict | None = None) -> set[str]:
     """Statusline field names the user has hidden (global, default none).
 

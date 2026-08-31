@@ -407,6 +407,126 @@ def pr_body(repo_dir: Path, number: int) -> str:
     return res.stdout if res.returncode == 0 else ""
 
 
+def branch_dismisses_stale_reviews(
+    repo_nwo_str: str, branch: str, *, repo_dir: str | Path | None = None
+) -> bool | None:
+    """Whether a **ruleset** on `branch` dismisses stale approvals on push.
+    True/False, or None when it couldn't be determined.
+
+    The GraphQL `branchProtectionRule.dismissesStaleReviews` that `PR` carries
+    only covers **classic** branch protection. Rulesets are a separate, newer
+    mechanism carrying the same setting as `dismiss_stale_reviews_on_push`, and a
+    repo using only rulesets reports `branchProtectionRule: null` — so the
+    classic field reads False and the approval-protecting gate silently opens.
+    (khivi/cockpit is itself such a repo, which is how this was caught.)
+
+    `rules/branches/{branch}` returns the *merged* effective rules from every
+    ruleset that applies, so this is one call rather than a per-ruleset fan-out.
+    """
+    if not repo_nwo_str or not branch:
+        return None
+    try:
+        res = subprocess.run(
+            ["gh", "api", f"repos/{repo_nwo_str}/rules/branches/{branch}"],
+            capture_output=True,
+            text=True,
+            cwd=str(repo_dir) if repo_dir else None,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if res.returncode != 0:
+        return None
+    try:
+        rules = json.loads(res.stdout or "[]")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(rules, list):
+        return None
+    return any(
+        (r.get("parameters") or {}).get("dismiss_stale_reviews_on_push")
+        for r in rules
+        if isinstance(r, dict) and r.get("type") == "pull_request"
+    )
+
+
+_UPDATE_BRANCH_MUTATION = """
+mutation($id: ID!, $oid: GitObjectID!, $method: PullRequestBranchUpdateMethod!) {
+  updatePullRequestBranch(
+    input: {pullRequestId: $id, expectedHeadOid: $oid, updateMethod: $method}
+  ) { pullRequest { headRefOid } }
+}
+"""
+
+
+def update_pull_request_branch(
+    node_id: str,
+    expected_head_oid: str,
+    *,
+    method: str = "REBASE",
+    repo_dir: str | Path | None = None,
+) -> tuple[bool, str]:
+    """Bring a PR's head up to date with its base, server-side — GitHub's own
+    "Update branch" button (`updatePullRequestBranch`). Returns (ok, detail).
+
+    This is deliberately *not* a local `git rebase` + force-push. GitHub performs
+    the update on its own refs, so the daemon never touches the worktree: there
+    is no window where a conflicted rebase leaves a `rebase-merge` state behind
+    (which would read as dirty to `worktree_state_blockers` and wedge teardown),
+    and no force-push originating from an unattended process.
+
+    `expected_head_oid` is a compare-and-swap — the `--force-with-lease`
+    equivalent. A head that moved since the cycle's fetch fails the mutation
+    rather than clobbering the push we didn't see, which is what makes this safe
+    to run unattended.
+
+    `method` is REBASE (rewrites the head onto base — linear history, and the
+    local worktree diverges) or MERGE (adds a merge commit — the local worktree
+    fast-forwards). The caller owns the policy; this just performs the call.
+    Never raises.
+    """
+    if not node_id or not expected_head_oid:
+        return False, "missing node id or head oid"
+    try:
+        res = subprocess.run(
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                f"query={_UPDATE_BRANCH_MUTATION}",
+                "-f",
+                f"id={node_id}",
+                "-f",
+                f"oid={expected_head_oid}",
+                "-f",
+                f"method={method}",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(repo_dir) if repo_dir else None,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        return False, str(exc)
+    if res.returncode != 0:
+        err = (res.stderr or res.stdout).strip()
+        return False, err.splitlines()[-1] if err else "gh failed"
+    # `gh api graphql` exits 0 on a GraphQL-level error payload, so the errors
+    # array is the real verdict — a stale `expectedHeadOid` lands here, not above.
+    try:
+        data = json.loads(res.stdout or "{}")
+    except json.JSONDecodeError:
+        return False, "unparsable response"
+    if data.get("errors"):
+        return False, str(data["errors"][0].get("message") or "graphql error")
+    new_oid = (
+        ((data.get("data") or {}).get("updatePullRequestBranch") or {}).get(
+            "pullRequest"
+        )
+        or {}
+    ).get("headRefOid") or ""
+    return True, new_oid
+
+
 def repo_nwo(repo_dir: Path) -> tuple[str, str]:
     """(owner, name) from `gh repo view` run inside repo_dir."""
     out = subprocess.run(
@@ -459,6 +579,65 @@ class PR:
     # author-mode behaviour. Read by `nudge_issue` — a coworker's PR is never
     # nudged, because its CI, conflicts, and review threads are not mine to fix.
     mine: bool = True
+    # GraphQL node id — the `pullRequestId` `update_pull_request_branch` mutates.
+    # Empty when unfetched (light query), which reads as "can't update".
+    node_id: str = ""
+    # GraphQL `mergeStateStatus`. "BEHIND" means the base has moved AND the repo
+    # requires branches to be up to date before merging — the two conditions
+    # together, which is why this and not the local `behind_of_base` count drives
+    # `stale_vs_base`: falling behind is harmless without the branch-protection
+    # rule. GitHub returns "UNKNOWN" without push access, which reads as not stale.
+    merge_state: str = ""
+    # GraphQL `viewerCanUpdateBranch` — GitHub's own verdict on whether the auth
+    # user may update this head. Defaults False so a hand-built PR is never
+    # updated by a caller that didn't ask GitHub.
+    can_update_branch: bool = False
+    # The base's `dismissesStaleReviews` protection rule. Load-bearing for the
+    # approved case: updating an approved PR's branch under this rule *discards*
+    # the approval, turning a mergeable PR into one awaiting re-review. See
+    # `update_branch_skip_reason`.
+    dismisses_stale_reviews: bool = False
+
+    @property
+    def stale_vs_base(self) -> bool:
+        """True when GitHub reports the head behind a base that requires
+        up-to-date branches — i.e. this PR cannot merge until it is updated.
+        """
+        return self.merge_state == "BEHIND"
+
+    def update_branch_skip_reason(self, *, dismisses: bool | None = None) -> str:
+        """Why auto-updating this PR's branch would be wrong, or "" when it's
+        safe. The single authority for the decision, so the daemon's log line
+        and the gate can't disagree (the `_idle_skip_reason` pattern).
+
+        The dismissal clause is the one that isn't obvious: an approved PR under
+        that rule loses its approval the moment any commit lands on the head, so
+        "update the approved PRs so they can merge" would make them
+        *un*-mergeable. Leaving it stale for a human to update deliberately is
+        strictly better.
+
+        `dismisses` overrides `self.dismisses_stale_reviews`, which reads only
+        **classic** branch protection. The caller resolves rulesets too (see
+        `branch_dismisses_stale_reviews`) and passes the combined verdict; None
+        falls back to the classic field alone, so a hand-built `PR` still gates
+        on whatever it was given.
+        """
+        if self.state != "OPEN":
+            return "not open"
+        if not self.mine:
+            return "not my PR"
+        if not self.stale_vs_base:
+            return "not behind base"
+        if not self.can_update_branch:
+            return "github says the branch can't be updated"
+        if not self.node_id or not self.head_oid:
+            return "no node id / head oid"
+        stale_dismissal = (
+            self.dismisses_stale_reviews if dismisses is None else dismisses
+        )
+        if self.review_decision == "APPROVED" and stale_dismissal:
+            return "approved, and the base dismisses stale reviews"
+        return ""
 
     @property
     def primary_issue(self) -> str:
@@ -510,9 +689,10 @@ class PR:
 
 
 _PR_FIELDS = """
-  number title body url isDraft headRefName baseRefName headRefOid mergeable reviewDecision updatedAt state
+  id number title body url isDraft headRefName baseRefName headRefOid mergeable reviewDecision updatedAt state
+  mergeStateStatus viewerCanUpdateBranch
   author { login __typename }
-  baseRef { branchProtectionRule { requiredStatusChecks { context } } }
+  baseRef { branchProtectionRule { requiredStatusChecks { context } dismissesStaleReviews } }
   reviewThreads(first: 100) {
     nodes {
       isResolved
@@ -611,6 +791,9 @@ def _pr_from_node(n: dict, self_user: str = "") -> PR | None:
     # an explicit error indicator instead of pretending no checks exist.
     suites_field = commit.get("checkSuites")
     status_field = commit.get("status")
+    # Read outside the CI branch below: `dismisses_stale_reviews` needs it even
+    # when the check-suite resolver errored and CI short-circuits to "unknown".
+    bpr = (n.get("baseRef") or {}).get("branchProtectionRule") or {}
     if suites_field is None:
         ci = "unknown"
     else:
@@ -619,7 +802,6 @@ def _pr_from_node(n: dict, self_user: str = "") -> PR | None:
         # workflows, the copilot reviewer). Absent a rule (no branch protection,
         # or the current token can't see it — `branchProtectionRule` requires
         # admin/write and returns null otherwise) every check counts.
-        bpr = (n.get("baseRef") or {}).get("branchProtectionRule") or {}
         required_names = {
             c["context"]
             for c in (bpr.get("requiredStatusChecks") or [])
@@ -678,6 +860,10 @@ def _pr_from_node(n: dict, self_user: str = "") -> PR | None:
         # An unknown `self_user` (caller didn't pass one) means we can't prove the
         # PR is a coworker's, so it keeps the author-mode default.
         mine=not self_user or author == self_user,
+        node_id=n.get("id") or "",
+        merge_state=n.get("mergeStateStatus") or "",
+        can_update_branch=bool(n.get("viewerCanUpdateBranch")),
+        dismisses_stale_reviews=bool(bpr.get("dismissesStaleReviews")),
     )
 
 
