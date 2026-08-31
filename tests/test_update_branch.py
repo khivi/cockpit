@@ -346,24 +346,20 @@ def test_org_defaults_reach_both_fields_with_no_org_aware_reader():
     the `orgs` invariant there is deliberately no org-aware reader to add."""
     from cockpit.lib.config import apply_org_defaults
 
+    repos: list[dict] = [
+        {"name": "a", "path": "/tmp/a", "org": "acme"},
+        # A repo overriding one field still inherits the other.
+        {"name": "b", "path": "/tmp/b", "org": "acme", "update_stale_branches": False},
+        {"name": "c", "path": "/tmp/c"},
+    ]
     cfg = {
         "orgs": {
             "acme": {"update_stale_branches": True, "update_branch_method": "merge"}
         },
-        "repos": [
-            {"name": "a", "path": "/tmp/a", "org": "acme"},
-            # A repo overriding one field still inherits the other.
-            {
-                "name": "b",
-                "path": "/tmp/b",
-                "org": "acme",
-                "update_stale_branches": False,
-            },
-            {"name": "c", "path": "/tmp/c"},
-        ],
+        "repos": repos,
     }
     apply_org_defaults(cfg)
-    a, b, c = cfg["repos"]
+    a, b, c = repos
     assert (update_stale_branches(cfg, a), update_branch_method(cfg, a)) == (
         True,
         "MERGE",
