@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.17.1](https://github.com/khivi/cockpit/compare/v2.17.0...v2.17.1) (2026-08-31)
+
+
+### Documentation
+
+* prune AGENTS.md to rule + symbol + directives ([#440](https://github.com/khivi/cockpit/issues/440)) ([3268d0d](https://github.com/khivi/cockpit/commit/3268d0df4ebaaf8d5bf820ce8769fd37b1684aa8))
+
 ## [2.17.0](https://github.com/khivi/cockpit/compare/v2.16.1...v2.17.0) (2026-08-31)
 
 
