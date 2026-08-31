@@ -44,16 +44,23 @@ def split_prompt_prefix(prompt: str | None) -> tuple[str | None, str | None]:
     return prompt, None
 
 
-def claude_command(prompt: str | None) -> str:
+def claude_command(prompt: str | None, *, print_mode: bool = False) -> str:
     """Build the `claude [prompt]` shell command for the *initial* turn.
 
     Prefix handling lives in `split_prompt_prefix` — pass it the ``initial``
     half (the prefix when one is configured, else the body). A `None` prompt
-    yields a bare `claude`.
+    yields a bare `claude`. `print_mode` adds `-p`, for a caller that wants the
+    turn to complete and exit rather than land in an interactive session.
+
+    This is the **only** place the agent binary is named. Every launch path
+    routes through it — the workspace spawns in `cmux.py` and `_run_repo_skills`'
+    blocking `fast_skills` run — so swapping the agent stays a one-function
+    change. An inline `claude ...` at a call site quietly costs that.
     """
+    flag = " -p" if print_mode else ""
     if prompt is None:
-        return "claude"
-    return f"claude {shell_quote(prompt)}"
+        return f"claude{flag}"
+    return f"claude{flag} {shell_quote(prompt)}"
 
 
 # Maps a PR's `display_issue` onto its action template (`pr_action_*.txt`) and
