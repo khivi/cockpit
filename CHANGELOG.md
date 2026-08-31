@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.15.0](https://github.com/khivi/cockpit/compare/v2.14.1...v2.15.0) (2026-08-31)
+
+
+### Features
+
+* **cycle:** update stale approved/snoozed PR branches server-side ([#432](https://github.com/khivi/cockpit/issues/432)) ([07d4f7b](https://github.com/khivi/cockpit/commit/07d4f7b9bae766668b9d646c5f43c09b0a6fd742))
+
 ## [2.14.1](https://github.com/khivi/cockpit/compare/v2.14.0...v2.14.1) (2026-08-28)
 
 
