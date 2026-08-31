@@ -127,6 +127,49 @@ def test_linear_ticket_url_none_without_pr_context():
     pb.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "provider,ref,body,expected",
+    [
+        (
+            "LINEAR",
+            "pe-9",  # case-insensitive: the footer id is canonicalised upper
+            "Linear: [PE-9](https://linear.app/x/issue/PE-9)",
+            "https://linear.app/x/issue/PE-9",
+        ),
+        (
+            "JIRA",
+            "proj-3",
+            "Jira: [PROJ-3](https://x.atlassian.net/browse/PROJ-3)",
+            "https://x.atlassian.net/browse/PROJ-3",
+        ),
+        (
+            "TRELLO",
+            "aB3xY",  # short links are case-SENSITIVE, matched verbatim
+            "Trello: [Fix login](https://trello.com/c/aB3xY)",
+            "https://trello.com/c/aB3xY",
+        ),
+    ],
+)
+def test_ticket_url_takes_a_body_instead_of_fetching_one(provider, ref, body, expected):
+    """A caller holding the PR body skips the `gh pr body` entirely.
+
+    This is what lets the daemon resolve these links for the PR cache — one
+    parse per PR instead of one subprocess per delivered ticket — and it is the
+    only reason the TUI can render the Ticket cell as a hyperlink at all
+    (a renderer may not shell out)."""
+    with patch.object(tickets, "pr_body") as pb:
+        assert getattr(tickets, provider).ticket_url(ref, body=body) == expected
+    pb.assert_not_called()
+
+
+def test_ticket_url_with_a_body_carrying_no_footer_is_none():
+    """An empty body is an answer, not a reason to go fetch a better one."""
+    with patch.object(tickets, "pr_body") as pb:
+        assert tickets.LINEAR.ticket_url("PE-9", body="") is None
+        assert tickets.LINEAR.ticket_url("PE-9", body="no footer here") is None
+    pb.assert_not_called()
+
+
 # ── jira provider ───────────────────────────────────────────────────────────
 
 

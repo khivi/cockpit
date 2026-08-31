@@ -328,6 +328,9 @@ def _prefetch_linear_blocks(ctx: RepoCycle) -> None:
     from it. So a repo's whole crop of due tickets costs one round-trip per team,
     not one per ticket; nothing due → no network. Caller gates `ctx.dry`.
 
+    A third pass then stamps each ticket's web URL onto the resolved block
+    (`_stamp_ticket_urls`) — network-free, so it runs on carried blocks too.
+
     Runs before the write loop's `write_pr_cache` calls so the decision still
     reads the prior on-disk snapshot, matching the old per-PR resolve ordering.
     """
@@ -344,25 +347,60 @@ def _prefetch_linear_blocks(ctx: RepoCycle) -> None:
             due.update(ids)
         else:  # skip — repo has no ticket provider
             ctx.linear_blocks[pr.branch] = None
-    if not builds:
-        return
-    states = _fetch_ticket_states(ctx, sorted(due)) if due else {}
-    titles = _fetch_ticket_titles(ctx, sorted(due)) if due else {}
+    if builds:
+        states = _fetch_ticket_states(ctx, sorted(due)) if due else {}
+        titles = _fetch_ticket_titles(ctx, sorted(due)) if due else {}
+        provider = _provider(ctx)
+        prov_name = provider.name if provider else ""
+        for branch, ids in builds:
+            tickets = [
+                {"id": tid, "state": states.get(tid), "title": titles.get(tid)}
+                for tid in ids
+            ]
+            # Embed the provider so a downstream reader (`ticket_pill_id`,
+            # `ticket_display`) can pick Trello's title-over-short-link handle
+            # without re-reading config — the block is self-describing.
+            ctx.linear_blocks[branch] = {
+                "tickets": tickets,
+                "fetched_at": now,
+                "provider": prov_name,
+            }
+    for pr in ctx.prs:
+        _stamp_ticket_urls(ctx, pr)
+
+
+def _stamp_ticket_urls(ctx: RepoCycle, pr: PR) -> None:
+    """Fill each delivered ticket's `url` in `pr`'s resolved block, so a renderer
+    can link the Ticket cell without resolving a URL itself.
+
+    Three of the four providers can only *read* their URL out of the PR body's
+    delivery footer — the workspace slug / site / card slug aren't derivable from
+    the id — which is a `gh pr body` for anyone who doesn't already hold the body.
+    The daemon does, every cycle, so it resolves the link here and the TUI reads
+    a cached string. That is the same "only the daemon writes; renderers read"
+    split every other cell follows, and it is what lets the Ticket cell carry a
+    terminal hyperlink at render time.
+
+    Deliberately outside the carry/build split and run on **every** PR: the parse
+    is pure string work over a body the cycle already fetched, so stamping a
+    *carried* block costs nothing and needs no forced rebuild — an upgrade, a
+    re-aligned footer, or a URL that failed to resolve once all heal on the next
+    cycle rather than waiting out `linear_state_ttl_seconds`. `url` is written
+    even when it resolves to None, so a stale link can't outlive its footer (the
+    same always-write rule the flat cells follow). `body` is passed explicitly so
+    the leaf never falls back to its own fetch."""
     provider = _provider(ctx)
-    prov_name = provider.name if provider else ""
-    for branch, ids in builds:
-        tickets = [
-            {"id": tid, "state": states.get(tid), "title": titles.get(tid)}
-            for tid in ids
-        ]
-        # Embed the provider so a downstream reader (`ticket_pill_id`,
-        # `ticket_display`) can pick Trello's title-over-short-link handle
-        # without re-reading config — the block is self-describing.
-        ctx.linear_blocks[branch] = {
-            "tickets": tickets,
-            "fetched_at": now,
-            "provider": prov_name,
-        }
+    block = ctx.linear_blocks.get(pr.branch)
+    if provider is None or not block:
+        return
+    for ticket in block.get("tickets") or []:
+        ticket["url"] = provider.ticket_url(
+            str(ticket.get("id") or ""),
+            repo_nwo=f"{ctx.owner}/{ctx.name}",
+            repo_dir=str(ctx.repo_path),
+            pr_number=pr.number,
+            body=pr.body or "",
+        )
 
 
 def _fetch_ticket_states(ctx: RepoCycle, ids: list[str]) -> dict[str, str | None]:
