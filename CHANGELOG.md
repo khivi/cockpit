@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.16.1](https://github.com/khivi/cockpit/compare/v2.16.0...v2.16.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **tui:** drop the first-run welcome toast ([#436](https://github.com/khivi/cockpit/issues/436)) ([96304da](https://github.com/khivi/cockpit/commit/96304da3a1e45aa46bdc0bcef799c17afd3909df))
+
 ## [2.16.0](https://github.com/khivi/cockpit/compare/v2.15.0...v2.16.0) (2026-08-31)
 
 
