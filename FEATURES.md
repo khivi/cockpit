@@ -111,9 +111,11 @@ theme, and this guide. Click it, or press `ctrl+p`.
 
 **`d` and `a` together are how you review your agent's work.** `d` opens the diff in a
 browser split beside that row's terminal; click a line and leave a note. The notes then
-ride the next message you send with `a` — the modal tells you how many are going with it —
-so the loop is: read the diff, mark the lines, press `a`, type "address these". They stay
-local; nothing is posted to the PR, so use `p` for that. A note is delivered once, and a
+ride the next message you send with `a` — the modal tells you how many are going with it,
+and opens with a line already written so you can just press enter. The loop is: read the
+diff, mark the lines, press `a`, enter. Edit that line when you want to say more, or clear
+it to drop the message entirely. They stay local; nothing is posted to the PR, so use `p`
+for that. A note is delivered once, and a
 message the session refuses (it was mid-turn) keeps its notes for the retry. A row whose
 terminal isn't open yet still gets the diff — press `f` first if you want to send anything.
 
