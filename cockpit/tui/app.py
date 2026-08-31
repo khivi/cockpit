@@ -84,7 +84,6 @@ from cockpit.lib.config import (
 from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.daemon_signal import enqueue
 from cockpit.lib.events import watch_workspace_events
-from cockpit.lib.firstrun import mark_welcomed, welcome_pending
 from cockpit.lib.gh import PR, repo_nwo
 from cockpit.lib.git import Worktree, origin_head_branch, worktrees
 from cockpit.lib.hidden import is_hidden, load_hidden, toggle_hidden
@@ -349,8 +348,6 @@ class CockpitApp(App[None]):
         # worktrees show on startup, without waiting for the first (networked)
         # slow tick to finish.
         self._prime_table()
-
-        self._maybe_welcome()
 
         # Slow first; the fast loop starts only once the slow tick has populated
         # the PR caches (so the first fast republish isn't a no-op).
@@ -779,31 +776,6 @@ class CockpitApp(App[None]):
         and `t` hand a URL to the browser rather than rendering it here."""
         self.open_url(FEATURE_GUIDE_URL)
         self.notify("opening the feature guide", timeout=4.0)
-
-    def _maybe_welcome(self) -> None:
-        """Point a first-time user at the guide, exactly once ever.
-
-        The footer's `^P More` hint is the permanent, always-visible route; this
-        toast exists because a hint you've never had reason to press is not the
-        same as being told there is a tour behind it. It fires once and then
-        relies on the footer, which is why it can afford to be a toast rather
-        than anything modal.
-
-        The marker (`lib/firstrun.py`) is per-install rather than per-version:
-        this is a "here is where the docs live" pointer, not a changelog, and an
-        in-TUI release-notes surface is deliberately out of scope (brew owns
-        updates)."""
-        if not welcome_pending():
-            return
-        mark_welcomed()
-        # on_mount runs on the main thread, so `notify` directly — `_notify`
-        # wraps `call_from_thread`, which raises when already on that thread.
-        self.notify(
-            "Press ^P (bottom right) → 'Feature guide' for a tour of what "
-            "cockpit does.",
-            title="Welcome to cockpit",
-            timeout=12.0,
-        )
 
     def action_show_output(self) -> None:
         # Palette-only (`^P` → "Output"). Captured tick output (bounded log

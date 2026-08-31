@@ -3603,50 +3603,6 @@ async def test_feature_guide_action_opens_the_docs_url(monkeypatch):
     assert opened[0].startswith("https://")
 
 
-async def test_welcome_hint_fires_once_then_never_again(monkeypatch):
-    # The autouse `_isolate_welcome_marker` fixture pre-marks the file (so the
-    # other ~115 TUI tests don't grow a toast in on_mount) — unlink it to get
-    # the genuine first-run path this test is about.
-    import cockpit.lib.firstrun as firstrun_mod
-
-    firstrun_mod.WELCOME_MARKER.unlink(missing_ok=True)
-    seen: list[str] = []
-
-    def _capture(self, message, *a, **kw):
-        seen.append(str(message))
-
-    monkeypatch.setattr(CockpitApp, "notify", _capture, raising=False)
-
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-    assert any("Feature guide" in m for m in seen), seen
-    assert not firstrun_mod.welcome_pending()
-
-    seen.clear()
-    app2, _ = _make_app()
-    async with app2.run_test() as pilot:
-        await pilot.pause()
-    assert not any("Feature guide" in m for m in seen), seen
-
-
-async def test_welcome_hint_never_breaks_startup_when_the_marker_is_unwritable(
-    monkeypatch, tmp_path
-):
-    # `_maybe_welcome` runs inside on_mount — a raising marker write would abort
-    # startup, i.e. a docs hint taking the whole dashboard down.
-    import cockpit.lib.firstrun as firstrun_mod
-
-    blocked = tmp_path / "blocker"
-    blocked.write_text("")
-    monkeypatch.setattr(firstrun_mod, "WELCOME_MARKER", blocked / "welcomed")
-
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        assert app.is_running
-
-
 async def test_menu_is_not_clipped_at_a_narrow_terminal():
     # The menu is `width: auto` against a `1fr` status half, so every squeeze
     # lands on the countdowns instead. Pinned at 80 columns (the classic
