@@ -805,6 +805,40 @@ def ahead_of_base(cwd: str | os.PathLike, base: str, remote: str = "origin") -> 
     return _rev_list_count(cwd, f"{remote}/{base}..HEAD")
 
 
+def head_oid(cwd: str | os.PathLike) -> str:
+    """The worktree's current HEAD sha, or "" on any failure."""
+    res = _git(cwd, "rev-parse", "HEAD")
+    return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def resync_to_origin(wt_path: Path, branch: str, *, expected_head: str) -> bool:
+    """Hard-reset a worktree onto a rewritten `origin/{branch}`. Returns True
+    when it moved.
+
+    The counterpart to a REBASE-method `update_pull_request_branch`: GitHub
+    rewrote the head, so the local checkout is now diverged and (under
+    `pull.ff = only`) cannot pull. Nothing else reconciles that, and a fleet of
+    diverged worktrees is worse than the staleness the update fixed.
+
+    `expected_head` is what makes a hard reset safe: the caller passes the sha
+    the branch had *before* the update, and this refuses unless HEAD still
+    matches it. That proves the worktree holds nothing origin didn't already
+    have, so there is no local work to discard — a weaker "is it clean" test
+    would happily reset away committed-but-unpushed commits. A dirty tree is
+    refused for the same reason. Both failure modes leave the worktree exactly
+    as it was, for a human to resolve.
+    """
+    if not branch or not expected_head:
+        return False
+    if count_dirty(wt_path) > 0:
+        return False
+    if head_oid(wt_path) != expected_head:
+        return False
+    if _git(wt_path, "fetch", "origin", branch).returncode != 0:
+        return False
+    return _git(wt_path, "reset", "--hard", f"origin/{branch}").returncode == 0
+
+
 class GitStatusCounts(NamedTuple):
     staged: int
     unstaged: int
