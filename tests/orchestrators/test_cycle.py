@@ -3172,7 +3172,13 @@ def test_prefetch_linear_blocks_fetches_when_no_prior(tmp_path):
 
     assert block == {
         "tickets": [
-            {"id": "PE-1234", "state": "Dev Done", "title": "Fix the login flow"}
+            {
+                "id": "PE-1234",
+                "state": "Dev Done",
+                "title": "Fix the login flow",
+                # Read straight out of FOOTER's own link — no network.
+                "url": "https://linear.app/x/PE-1234",
+            }
         ],
         "fetched_at": 1000.0,
         "provider": "linear",
@@ -3253,7 +3259,12 @@ def test_prefetch_linear_blocks_refetches_when_footer_changed(tmp_path):
 
     assert block is not None
     assert block["tickets"] == [
-        {"id": "PE-1234", "state": "In Progress", "title": "Fix the login flow"}
+        {
+            "id": "PE-1234",
+            "state": "In Progress",
+            "title": "Fix the login flow",
+            "url": "https://linear.app/x/PE-1234",
+        }
     ]
     fetch.assert_called_once_with(["PE-1234"], api_key=ANY)
 
@@ -3305,12 +3316,97 @@ def test_prefetch_linear_blocks_batches_across_prs_one_call(tmp_path):
     fetch.assert_called_once_with(["ENG-3", "PE-1", "PE-2"], api_key=ANY)  # sorted
     fetch_titles.assert_called_once_with(["ENG-3", "PE-1", "PE-2"], api_key=ANY)
     assert ctx.linear_blocks["khivi/pe-a"]["tickets"] == [
-        {"id": "PE-1", "state": "Dev Done", "title": "A"}
+        {
+            "id": "PE-1",
+            "state": "Dev Done",
+            "title": "A",
+            "url": "https://linear.app/x/PE-1",
+        }
     ]
+    # Each PR's URLs come from its OWN body, so pr_b's two tickets keep their own
+    # links rather than inheriting pr_a's.
     assert ctx.linear_blocks["khivi/pe-b"]["tickets"] == [
-        {"id": "PE-2", "state": "In Progress", "title": "B"},
-        {"id": "ENG-3", "state": "Dev Done", "title": "C"},
+        {
+            "id": "PE-2",
+            "state": "In Progress",
+            "title": "B",
+            "url": "https://linear.app/x/PE-2",
+        },
+        {"id": "ENG-3", "state": "Dev Done", "title": "C", "url": "https://e/ENG-3"},
     ]
+
+
+def test_ticket_url_is_stamped_onto_a_carried_block(tmp_path):
+    """A block carried forward untouched still gets its `url` filled in.
+
+    The stamp is pure string work over a body the cycle already holds, so it
+    runs on every PR rather than only on a rebuild — otherwise a cache written
+    before the field existed would render an unlinked Ticket cell until the TTL
+    forced a refetch."""
+    ctx = _devdone_ctx(tmp_path, cfg={"slow_poll_interval_seconds": 300})
+    prior = {
+        "tickets": [{"id": "PE-1234", "state": "Dev Done"}],  # no "url"
+        "fetched_at": 900.0,
+        "provider": "linear",
+    }
+    pr = _devdone_pr(FOOTER)
+    ctx.pr_payloads = {pr.branch: {"ticket": prior}}
+    with (
+        patch("cockpit.lib.tickets.fetch_ticket_states") as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),  # fresh → carry
+    ):
+        block = _prefetch_one(ctx, pr)
+
+    fetch.assert_not_called()
+    assert block["tickets"][0]["url"] == "https://linear.app/x/PE-1234"
+
+
+def test_ticket_url_stamp_overwrites_a_stale_link(tmp_path):
+    """Re-pointing a footer at a new link updates a carried block's `url`.
+
+    The id is what decides carry-vs-rebuild, so an edited *link* under an
+    unchanged id never triggers a refetch — writing the URL unconditionally is
+    what stops the old one outliving the footer it came from."""
+    ctx = _devdone_ctx(tmp_path, cfg={"slow_poll_interval_seconds": 300})
+    prior = {
+        "tickets": [
+            {"id": "PE-1234", "state": "Dev Done", "url": "https://linear.app/x/OLD"}
+        ],
+        "fetched_at": 900.0,
+        "provider": "linear",
+    }
+    pr = _devdone_pr(FOOTER)  # same id, different link
+    ctx.pr_payloads = {pr.branch: {"ticket": prior}}
+    with (
+        patch("cockpit.lib.tickets.fetch_ticket_states") as fetch,
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        block = _prefetch_one(ctx, pr)
+
+    fetch.assert_not_called()
+    assert block["tickets"][0]["url"] == "https://linear.app/x/PE-1234"
+
+
+def test_ticket_url_stamp_never_fetches_the_pr_body(tmp_path):
+    """The daemon holds `pr.body`, so resolving the link must not shell out.
+
+    `_footer_url` falls back to `gh pr body` when handed no body — that fallback
+    is the TUI's, and one `gh` call per delivered ticket per cycle is exactly
+    what caching the URL exists to avoid."""
+    ctx = _devdone_ctx(tmp_path)
+    with (
+        patch(
+            "cockpit.lib.tickets.fetch_ticket_states",
+            return_value={"PE-1234": "Dev Done"},
+        ),
+        patch("cockpit.lib.tickets.fetch_ticket_titles", return_value={}),
+        patch("cockpit.lib.tickets.pr_body") as body,
+        patch.object(cycle.time, "time", return_value=1000.0),
+    ):
+        block = _prefetch_one(ctx, _devdone_pr(FOOTER))
+
+    body.assert_not_called()
+    assert block["tickets"][0]["url"] == "https://linear.app/x/PE-1234"
 
 
 def test_prefetch_linear_blocks_no_footers_no_fetch(tmp_path):
@@ -4222,7 +4318,16 @@ def test_github_prefetch_maps_label_to_devdone(tmp_path):
     ):
         block = _prefetch_one(ctx, pr)
     assert block == {
-        "tickets": [{"id": "#5", "state": "ready for review", "title": "Fix login"}],
+        "tickets": [
+            {
+                "id": "#5",
+                "state": "ready for review",
+                "title": "Fix login",
+                # GitHub's URL is constructed from the ref + the repo nwo — the
+                # one provider that needs no footer link.
+                "url": "https://github.com/o/n/issues/5",
+            }
+        ],
         "fetched_at": 1000.0,
         "provider": "github",
     }
@@ -4237,7 +4342,14 @@ def test_github_prefetch_unlabeled_issue_keeps_state(tmp_path):
         patch.object(cycle.time, "time", return_value=1000.0),
     ):
         block = _prefetch_one(ctx, pr)
-    assert block["tickets"] == [{"id": "#5", "state": "open", "title": "Fix login"}]
+    assert block["tickets"] == [
+        {
+            "id": "#5",
+            "state": "open",
+            "title": "Fix login",
+            "url": "https://github.com/o/n/issues/5",
+        }
+    ]
 
 
 def test_github_track_dev_done_lights_pill(tmp_path):

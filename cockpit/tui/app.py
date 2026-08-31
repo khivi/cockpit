@@ -1491,12 +1491,19 @@ class CockpitApp(App[None]):
 
     @work(thread=True, group="open", exit_on_error=False)
     def _open_ticket_url(self, path_str: str) -> None:
-        # Open the row's delivered ticket — provider-neutral, routed through the
-        # repo's `TicketProvider.ticket_url` (`tickets.provider_for`). GitHub
-        # builds the URL deterministically from the ref + the PR's repo nwo;
-        # Linear reads the exact `Linear: [ID](url)` footer link out of the PR
-        # body (its canonical URL can't be hand-constructed). The cached block is
-        # stored under the (historically named) `linear` key for both providers.
+        # Open the row's delivered ticket. The URL the daemon already resolved
+        # into the cached block wins (`cycle._stamp_ticket_urls`) — it is the
+        # exact string the Ticket cell's hyperlink carries, so the key and the
+        # click can't send you to two different places, and for the three
+        # footer-reading providers it saves a `gh pr body` on every press.
+        #
+        # The live resolve stays as the fallback for a block written before the
+        # field existed (or one whose URL didn't resolve that cycle):
+        # provider-neutral, routed through the repo's `TicketProvider.ticket_url`
+        # (`tickets.provider_for`). GitHub builds the URL deterministically from
+        # the ref + the PR's repo nwo; Linear reads the exact `Linear: [ID](url)`
+        # footer link out of the PR body (its canonical URL can't be
+        # hand-constructed).
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
             self._notify("no worktree for this row", severity="warning")
@@ -1512,7 +1519,7 @@ class CockpitApp(App[None]):
             self._notify("no ticket for this row", severity="warning")
             return
         ticket_id = str(tickets[0].get("id", ""))
-        url = provider.ticket_url(
+        url = str(tickets[0].get("url") or "") or provider.ticket_url(
             ticket_id,
             repo_nwo=_nwo_from_pr_url(payload.get("url")),
             repo_dir=wt.path,

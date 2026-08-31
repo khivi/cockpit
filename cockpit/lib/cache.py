@@ -104,10 +104,13 @@ def write_pr_cache(
     re-reading `nudges`.
 
     `ticket` is the resolved delivery block — `{"tickets": [{"id", "state",
-    "title"}], "fetched_at": ts}` — for the tickets this PR delivers (from its
-    provider footer: Linear/Jira/Trello/GitHub). Provider-neutral: stored under
-    the `ticket` key (`title` is the enrichment a statusline consumer like cship
-    reads). Network-fetched like the PR itself, so it is cached here rather than
+    "title", "url"}], "fetched_at": ts}` — for the tickets this PR delivers (from
+    its provider footer: Linear/Jira/Trello/GitHub). Provider-neutral: stored
+    under the `ticket` key (`title` is the enrichment a statusline consumer like
+    cship reads; `url` is the ticket's web link, which three of the four
+    providers can only read out of the PR body — see `cycle._stamp_ticket_urls` —
+    so caching it is what lets a renderer link the cell without a `gh` call).
+    Network-fetched like the PR itself, so it is cached here rather than
     recomputed every render. The daemon (cycle.py) decides when to refetch vs.
     carry forward; this writer just persists what it's handed.
 

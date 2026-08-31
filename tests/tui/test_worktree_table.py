@@ -330,6 +330,146 @@ def test_ticket_cell_non_trello_keeps_id_despite_title(cache_dir, monkeypatch):
     assert ticket.plain == "PE-1"
 
 
+# ── Cell hyperlinks (OSC 8) ─────────────────────────────────────────────────
+# Every cell naming something on the web carries a terminal hyperlink, so the
+# terminal (not cockpit) owns the click. The link is a Rich `link <url>` span,
+# which Textual passes straight through to the terminal — see
+# `_apply_links`. These assert the *mapping*: which column points where, and
+# which deliberately point nowhere.
+
+_PR_URL = "https://github.com/khivi/cockpit/pull/435"
+_TICKET_URL = "https://linear.app/x/issue/PE-1/foo"
+
+
+def _links(cell):
+    """The URLs `cell` links to, from its Rich `link <url>` spans."""
+    return {
+        str(s.style).split("link ", 1)[1]
+        for s in cell.spans
+        if isinstance(s.style, str) and "link " in s.style
+    }
+
+
+def _linked_row(monkeypatch, cache_dir, *, payload=None, **cells):
+    """A fully-populated row's cells, keyed by column label."""
+    wt = _wt(branch="khivi/linked")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: payload
+        if payload is not None
+        else {
+            "url": _PR_URL,
+            "ticket": {
+                "tickets": [{"id": "PE-1", "state": "Dev Done", "url": _TICKET_URL}]
+            },
+        },
+    )
+    seed = {
+        "pr-num": "435",
+        "pr-state": "OPEN",
+        "pr-checks": "✗",
+        "pr-comments": "2",
+        "pr-title": "Make cells clickable",
+        "pr-author": "kim",
+        **cells,
+    }
+    for stem, value in seed.items():
+        cache_mod.branch_cache(stem, wt.branch).write_text(value)
+    labels = column_labels(show_tickets=True)
+    built = worktree_cells(wt, "r", None, "linear", show_tickets=True)
+    return wt, dict(zip(labels, built, strict=False))
+
+
+@pytest.mark.parametrize(
+    "label,url",
+    [
+        ("PR", _PR_URL),
+        (_APPROVAL_ICON, _PR_URL),
+        ("💬", _PR_URL),
+        ("Title", _PR_URL),
+        # CI is the one GitHub cell that does NOT point at the PR: a red ✗ is
+        # the glyph you click *through*, so it lands on the checks page.
+        ("CI", f"{_PR_URL}/checks"),
+        ("Ticket", _TICKET_URL),
+        (_STATUS_ICON, _TICKET_URL),
+        ("Author", "https://github.com/kim"),
+    ],
+)
+def test_cell_links_to_what_it_names(cache_dir, monkeypatch, label, url):
+    _, cells = _linked_row(monkeypatch, cache_dir)
+    assert _links(cells[label]) == {url}
+
+
+@pytest.mark.parametrize("label", ["Workspace", _DIRTY_ICON])
+def test_local_columns_carry_no_link(cache_dir, monkeypatch, label):
+    """Workspace's gesture is already double-click → focus, and the dirty count
+    names nothing outside this machine."""
+    _, cells = _linked_row(monkeypatch, cache_dir)
+    assert _links(cells[label]) == set()
+
+
+def test_a_link_keeps_the_cell_s_own_colour(cache_dir, monkeypatch):
+    """`stylize` adds a span rather than replacing the style, so a failing CI
+    cell stays red *and* becomes a link. Losing the colour would trade the
+    signal for the affordance."""
+    _, cells = _linked_row(monkeypatch, cache_dir)
+    ci = cells["CI"]
+    assert _links(ci) == {f"{_PR_URL}/checks"}
+    assert "red" in str(ci.style)  # the base style the cell was built with
+
+
+def test_blank_cells_are_never_linked(cache_dir, monkeypatch):
+    """A hyperlink over blank padding is a click target with nothing in it —
+    and the columns most often empty (Author, CI, comments) sit right beside
+    ones that aren't."""
+    _, cells = _linked_row(
+        monkeypatch, cache_dir, **{"pr-author": "", "pr-checks": "", "pr-comments": ""}
+    )
+    for label in ("Author", "CI", "💬"):
+        assert cells[label].plain == ""
+        assert _links(cells[label]) == set()
+
+
+def test_no_pr_no_links(cache_dir, monkeypatch):
+    """With no cached PR there is nothing to point at — not even a stale one.
+
+    `Author` is the exception, and deliberately so: a login is a GitHub profile
+    on its own, with no PR needed to resolve it."""
+    _, cells = _linked_row(monkeypatch, cache_dir, payload={})
+    linked = {label for label, c in cells.items() if _links(c)}
+    assert linked == {"Author"}
+
+
+def test_ticket_cell_unlinked_when_the_daemon_resolved_no_url(cache_dir, monkeypatch):
+    """A block written before `url` existed (or one whose footer carries no
+    link) renders the ticket plainly rather than guessing a URL — resolving one
+    here would mean a `gh` call from a renderer."""
+    _, cells = _linked_row(
+        monkeypatch,
+        cache_dir,
+        payload={"url": _PR_URL, "ticket": {"tickets": [{"id": "PE-1"}]}},
+    )
+    assert cells["Ticket"].plain == "PE-1"
+    assert _links(cells["Ticket"]) == set()
+    assert _links(cells["PR"]) == {_PR_URL}  # the PR half is unaffected
+
+
+def test_tooltip_names_the_link_destination(cache_dir, monkeypatch):
+    """An OSC 8 link is invisible until hovered with a modifier down, so the
+    hover text is where a cell admits it goes somewhere."""
+    wt, _ = _linked_row(monkeypatch, cache_dir)
+    tips = dict(
+        zip(
+            column_labels(show_tickets=True),
+            row_tooltips(wt, "r", "linear", show_tickets=True),
+            strict=False,
+        )
+    )
+    assert tips["PR"] == _PR_URL  # had no hint of its own
+    assert tips["CI"] == f"CI failing — {_PR_URL}/checks"  # decoded value kept
+    assert tips[_DIRTY_ICON] is None  # unlinked columns unchanged
+
+
 @pytest.mark.parametrize(
     "state,icon,style",
     [
@@ -343,6 +483,10 @@ def test_ticket_cell_non_trello_keeps_id_despite_title(cache_dir, monkeypatch):
         # GitHub-issue states (the `tickets: github` provider's open/closed).
         ("closed", "🟢", "green"),
         ("open", "🚧", "cyan"),
+        # A Trello *list* name — the state is whatever the board calls it, and
+        # "Ongoing" is a common spelling of in-progress that none of the Linear
+        # needles ("progress"/"doing"/"started") catches.
+        ("Ongoing", "🚧", "cyan"),
     ],
 )
 def test_linear_status_icon_mapping(state, icon, style):
@@ -812,6 +956,43 @@ async def test_update_inventory_keys_cache_by_nwo_not_label(cache_dir, monkeypat
         ticket = row[_col("Ticket", show_tickets=True)]
         assert ticket.plain == "PE-7"  # Ticket cell (ticket cluster), keyed by nwo
     assert "beta" in seen and "Envesya" not in seen
+
+
+@pytest.mark.asyncio
+async def test_links_survive_all_the_way_into_terminal_output(cache_dir, monkeypatch):
+    """The one assertion that isn't about cockpit: a `link` span has to come out
+    of a rendered DataTable line as an OSC 8 escape.
+
+    Everything else here checks the *mapping* — which cell points where — and
+    would keep passing if Textual ever stopped emitting the sequence, leaving
+    every link silently dead. Textual has no public promise about this
+    (`Strip.render_style` is where it happens), so it is pinned against the real
+    render rather than assumed."""
+    import io
+    import re
+
+    from rich.console import Console
+    from rich.segment import Segments
+
+    wt = _wt(path="osc8", branch="khivi/osc8")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: {"url": _PR_URL},
+    )
+    cache_mod.branch_cache("pr-num", wt.branch).write_text("435")
+
+    app = _Host()
+    async with app.run_test(size=(160, 20)) as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [wt])])
+        await pilot.pause()
+        buf = io.StringIO()
+        Console(file=buf, force_terminal=True, width=200).print(
+            Segments(list(table.render_line(2))), end=""
+        )  # line 0 = column headers, 1 = repo group header, 2 = the worktree row
+    # Only `pr-num` was seeded, so the PR cell is the row's one non-blank
+    # linkable cell — and the sequence wraps exactly it.
+    assert re.findall(r"\x1b]8;id=\d+;([^\x1b]+)", buf.getvalue()) == [_PR_URL]
 
 
 # ── stacked-PR indentation (rows derived off the `pr-base` cells) ───────────

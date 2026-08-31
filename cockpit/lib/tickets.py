@@ -159,12 +159,18 @@ class TicketProvider:
     # failed, or nothing matched — so an inconclusive narrow degrades to the
     # caller's existing ambiguity path rather than narrowing to zero.
     narrow_repos: Callable[[str, list[dict], dict], list[dict]]
-    # (ref, *, repo_nwo, repo_dir, pr_number) → the ticket's web URL, or None.
-    # GitHub builds it deterministically from ref + repo_nwo; Linear has no
+    # (ref, *, repo_nwo, repo_dir, pr_number, body) → the ticket's web URL, or
+    # None. GitHub builds it deterministically from ref + repo_nwo; Linear has no
     # constructable URL (workspace slug unknown), so it reads the PR body's
     # `Linear: [ID](url)` footer link via repo_dir + pr_number. Both ignore the
-    # kwargs the other needs — the TUI's "open ticket" action passes all four so
-    # neither provider has to branch on the caller.
+    # kwargs the other needs — the TUI's "open ticket" action passes every one of
+    # them so neither provider has to branch on the caller.
+    #
+    # `body` is the PR body when the caller already holds it, and it makes the
+    # three footer-reading providers network-free: the daemon has `pr.body` every
+    # cycle, so it resolves the URL for the PR cache without a `gh pr body` of its
+    # own. Passing it skips the fetch entirely; omitting it keeps the fetch, so a
+    # caller that holds no body is unaffected.
     ticket_url: Callable[..., str | None]
     # (cfg, repo_entry) → the env var *names* this provider needs credentials in,
     # resolved for that repo (so a per-org `token_env` yields the org's name).
@@ -221,11 +227,35 @@ def _github_ticket_url(
     repo_nwo: str | None = None,
     repo_dir: str | None = None,
     pr_number: int | None = None,
+    body: str | None = None,
 ) -> str | None:
     """Deterministic GitHub issue URL from the delivered ref + the PR's repo nwo.
-    No network: `repo_dir`/`pr_number` are unused (kept for the uniform
+    No network: `repo_dir`/`pr_number`/`body` are unused (kept for the uniform
     `ticket_url` signature)."""
     return issue_url(ref, repo_nwo)
+
+
+def _footer_url(
+    parse: Callable[[str], list[tuple[str, str]]],
+    ref: str,
+    *,
+    repo_dir: str | None,
+    pr_number: int | None,
+    body: str | None,
+) -> str | None:
+    """The delivery-footer link for `ref`, shared by the three providers whose
+    ticket URL can only be *read* rather than constructed (Linear's workspace
+    slug, Jira's site, Trello's board/card slug are all unknown from the id).
+
+    `body` short-circuits the fetch when the caller already holds the PR body —
+    the daemon does, every cycle, so it resolves these URLs for the PR cache
+    without a `gh pr body` per ticket. Without one, `repo_dir` + `pr_number`
+    fetch it, which is the TUI's fallback path for a not-yet-restamped cache."""
+    if body is None:
+        if not repo_dir or not pr_number:
+            return None
+        body = pr_body(Path(repo_dir), pr_number)
+    return dict(parse(body)).get(ref)
 
 
 def _linear_ticket_url(
@@ -234,16 +264,20 @@ def _linear_ticket_url(
     repo_nwo: str | None = None,
     repo_dir: str | None = None,
     pr_number: int | None = None,
+    body: str | None = None,
 ) -> str | None:
     """The Linear ticket URL — read from the PR body's `Linear: [ID](url)` footer
     link (the canonical URL can't be hand-constructed; the workspace slug isn't
-    known). Needs `repo_dir` (the worktree, so `gh` resolves the repo) and
-    `pr_number`; `repo_nwo` is unused. None when the body can't be fetched or has
-    no matching footer link."""
-    if not repo_dir or not pr_number:
-        return None
-    links = dict(parse_linear_footer_links(pr_body(Path(repo_dir), pr_number)))
-    return links.get(ref.upper())
+    known). Takes the body directly, or fetches it from `repo_dir` (the worktree,
+    so `gh` resolves the repo) + `pr_number`; `repo_nwo` is unused. None when the
+    body can't be fetched or has no matching footer link."""
+    return _footer_url(
+        parse_linear_footer_links,
+        ref.upper(),
+        repo_dir=repo_dir,
+        pr_number=pr_number,
+        body=body,
+    )
 
 
 def _linear_fetch_states(
@@ -324,16 +358,20 @@ def _jira_ticket_url(
     repo_nwo: str | None = None,
     repo_dir: str | None = None,
     pr_number: int | None = None,
+    body: str | None = None,
 ) -> str | None:
     """The Jira issue URL — read from the PR body's `Jira: [PROJ-123](url)` footer
     link, uniform with Linear's `_linear_ticket_url` (the cfg-less `ticket_url`
     signature can't thread `site_url`, and the delivery footer carries the URL
-    anyway). Needs `repo_dir` + `pr_number`; None when the body can't be fetched
-    or has no matching footer link."""
-    if not repo_dir or not pr_number:
-        return None
-    links = dict(parse_jira_footer_links(pr_body(Path(repo_dir), pr_number)))
-    return links.get(ref.upper())
+    anyway). Takes the body directly, or fetches it from `repo_dir` + `pr_number`;
+    None when the body can't be fetched or has no matching footer link."""
+    return _footer_url(
+        parse_jira_footer_links,
+        ref.upper(),
+        repo_dir=repo_dir,
+        pr_number=pr_number,
+        body=body,
+    )
 
 
 def _trello_fetch_states(
@@ -381,16 +419,21 @@ def _trello_ticket_url(
     repo_nwo: str | None = None,
     repo_dir: str | None = None,
     pr_number: int | None = None,
+    body: str | None = None,
 ) -> str | None:
     """The Trello card URL — read from the PR body's `Trello: [title](url)` footer
     link (uniform with Linear/Jira; a card URL can't be hand-constructed from the
-    short link without the board/card slug). Needs `repo_dir` + `pr_number`; None
-    when the body can't be fetched or has no matching footer link. The short link
-    is case-sensitive, so the lookup keys on `ref` verbatim (no upper/lower)."""
-    if not repo_dir or not pr_number:
-        return None
-    links = dict(parse_trello_footer_links(pr_body(Path(repo_dir), pr_number)))
-    return links.get(ref)
+    short link without the board/card slug). Takes the body directly, or fetches
+    it from `repo_dir` + `pr_number`; None when the body can't be fetched or has
+    no matching footer link. The short link is case-sensitive, so the lookup keys
+    on `ref` verbatim (no upper/lower)."""
+    return _footer_url(
+        parse_trello_footer_links,
+        ref,
+        repo_dir=repo_dir,
+        pr_number=pr_number,
+        body=body,
+    )
 
 
 def _no_narrow(ref: str, candidates: list[dict], cfg: dict) -> list[dict]:

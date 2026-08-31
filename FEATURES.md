@@ -109,6 +109,18 @@ what it refuses and why, which is the part a one-word label can't carry.
 Everything that isn't a key lives behind **☰ Menu** in the top right corner: logs, config,
 theme, and this guide. Click it, or press `ctrl+p`.
 
+**The table is also a page of links.** Every cell that names something on the web is a real
+terminal hyperlink — ⌘-click it (ctrl-click on Linux) and your browser opens. The PR number,
+its review state, the comment count and the title all go to the PR; **CI goes to the checks
+page**, because a red ✗ is the thing you want to open, not read; the ticket columns go to
+the ticket, in whichever tracker it lives; and an author's `@name` goes to their GitHub
+profile. The workspace name, the dirty count and `$` link nowhere — they're about this
+machine. Hover any of them and the tooltip tells you where it goes.
+
+This needs a terminal that supports hyperlinks: iTerm2, Ghostty, kitty and WezTerm all do,
+Apple's Terminal.app doesn't. `p` and `t` open the PR and the ticket from the keyboard
+either way.
+
 **`d` and `a` together are how you review your agent's work.** `d` opens the diff in a
 browser split beside that row's terminal; click a line and leave a note. The notes then
 ride the next message you send with `a` — the modal tells you how many are going with it,
