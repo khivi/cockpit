@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.17.0](https://github.com/khivi/cockpit/compare/v2.16.1...v2.17.0) (2026-08-31)
+
+
+### Features
+
+* **tui:** open PRs, CI, tickets and authors from the table with a click ([#438](https://github.com/khivi/cockpit/issues/438)) ([bd8e00b](https://github.com/khivi/cockpit/commit/bd8e00b37248ebcf0cea441a9526a3b85f54b0e1))
+
 ## [2.16.1](https://github.com/khivi/cockpit/compare/v2.16.0...v2.16.1) (2026-08-31)
 
 
