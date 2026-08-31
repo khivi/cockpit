@@ -16,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from textual.widgets import Input, Static
@@ -2078,6 +2079,39 @@ async def test_open_ticket_linear_opens_footer_url(monkeypatch, tmp_path):
         await pilot.press("t")
         await pilot.pause(0.6)
     assert opened == ["https://linear.app/x/issue/PE-9"]
+
+
+async def test_open_ticket_prefers_the_cached_url_over_a_gh_call(monkeypatch, tmp_path):
+    # The daemon already resolved the ticket's URL into the cached block
+    # (`cycle._stamp_ticket_urls`), and it is the exact string the Ticket cell's
+    # hyperlink carries — so `t` reads it rather than re-deriving. Two things
+    # ride on that: the key and the click can't disagree, and a Linear/Jira/
+    # Trello press stops shelling out to `gh pr body`.
+    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    repo = {"name": "repo", "path": str(tmp_path), "tickets": {"provider": "linear"}}
+    opened: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "_resolve_worktree", lambda p: (repo, wt))
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload",
+        lambda b, name=None: {
+            "number": 7,
+            "ticket": {
+                "tickets": [{"id": "PE-9", "url": "https://linear.app/x/issue/PE-9"}]
+            },
+        },
+    )
+    body = MagicMock()
+    monkeypatch.setattr("cockpit.lib.tickets.pr_body", body)
+    monkeypatch.setattr(app, "open_url", lambda url: opened.append(url))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "linear", [wt])])
+        await pilot.pause()
+        await pilot.press("t")
+        await pilot.pause(0.6)
+    assert opened == ["https://linear.app/x/issue/PE-9"]
+    body.assert_not_called()
 
 
 async def test_open_ticket_github_opens_issue_url(monkeypatch, tmp_path):

@@ -43,6 +43,15 @@ Claude Code reports real spend on this machine (`show_cost`) and blank on a row
 that has cost nothing — the one column about the cost of the work rather than
 about the PR.
 
+Every cell that names something on the web is an OSC 8 terminal *hyperlink*
+(`_cell_links`): the GitHub cluster to the PR (CI to its checks page), the ticket
+cluster to the tracker, `Author` to that login's profile. The terminal owns the
+gesture and the affordance, so cockpit only supplies the destination — and,
+because a link is invisible until hovered, names it again in the tooltip. The
+ticket link is read from the daemon-written `url` (`cycle._stamp_ticket_urls`),
+never resolved here: three of the four providers can only find it in the PR body,
+which is a `gh` call this module may not make.
+
 Columns are grouped by domain so the eye doesn't hop between GitHub and ticket
 data: the local dirty column sits right after `PR` #, then the rest of the GitHub
 cluster (review-state / CI / comments), then the ticket cluster (Ticket id /
@@ -118,12 +127,14 @@ _APPROVAL_ICON = "🔀"
 # to the PR-state column, so ticket data stays grouped away from GitHub data.
 _STATUS_ICON = "📍"
 
-# Linear workflow-state *name* (case-insensitive substring) → (icon, style).
+# Ticket workflow-state *name* (case-insensitive substring) → (icon, style).
 # Matched top-to-bottom so the more specific names win over their bare
-# fallbacks ("dev done" before "done", "in review" before a bare match). State
-# names are arbitrary per team, so this is a heuristic over Linear's common
-# vocabulary — the same name-substring approach `_linear_cells` already uses for
-# the status colour. An unrecognised state falls back to a neutral ◎.
+# fallbacks ("dev done" before "done", "in review" before a bare match). The
+# name is whatever the tracker was configured with — a Linear state, a GitHub
+# label or open/closed, a Jira status, a Trello *list* — so this is a heuristic
+# over the vocabulary those four have in common, not any one provider's
+# enumeration, and it grows by adding the spelling that missed. An unrecognised
+# state falls back to a neutral ◎.
 #
 # These deliberately share NO glyph with the PR-state column (`_STATE` /
 # `_PR_STATE_ICON`): a "workflow position" family (squares + tools) rather than
@@ -138,6 +149,7 @@ _LINEAR_STATUS_ICONS: tuple[tuple[str, str, str], ...] = (
     ("review", "🔍", "yellow"),
     ("progress", "🚧", "cyan"),
     ("doing", "🚧", "cyan"),
+    ("ongoing", "🚧", "cyan"),
     ("started", "🚧", "cyan"),
     ("done", "🟢", "green"),
     ("complete", "🟢", "green"),
@@ -635,28 +647,33 @@ def _comments_cell(unaddressed_raw: str, total_raw: str) -> Text:
     return Text(label, style="red")
 
 
-def _ticket_ids(wt: Worktree, repo_name: str, provider: str) -> str:
+def _tickets_of(payload: dict | None) -> list[dict]:
+    """The delivered ticket entries of a cached PR snapshot (`[]` when the PR
+    delivers none, or there's no snapshot yet)."""
+    return ((payload or {}).get("ticket") or {}).get("tickets") or []
+
+
+def _ticket_ids(payload: dict | None, provider: str) -> str:
     """The untruncated Ticket-cell text: the delivered id(s), comma-joined —
     except Trello, whose ids are opaque short links, so `ticket_display` hands
     back the cached card title(s) (id fallback). Empty with no delivered
     tickets. Shared by the cell and its hover tooltip so the two can't drift."""
-    payload = find_pr_payload(wt.branch, repo_name) or {}
-    tickets = (payload.get("ticket") or {}).get("tickets") or []
-    return ", ".join(ticket_display(t, provider, missing="?") for t in tickets)
+    return ", ".join(
+        ticket_display(t, provider, missing="?") for t in _tickets_of(payload)
+    )
 
 
-def _linear_cells(wt: Worktree, repo_name: str, provider: str) -> tuple[Text, Text]:
+def _linear_cells(payload: dict | None, provider: str) -> tuple[Text, Text]:
     """Delivered ticket id(s) and workflow state(s) from the cached per-PR block,
     as two cells. The Ticket cell is `_ticket_ids` capped at `_TICKET_MAX` (the
     full text lands on the hover tooltip). The Status cell is one workflow-state
     *icon* per ticket (space-joined), each tinted by its own
     `_linear_status_icon` style. Both blank when there are no delivered
     tickets."""
-    payload = find_pr_payload(wt.branch, repo_name) or {}
-    tickets = (payload.get("ticket") or {}).get("tickets") or []
+    tickets = _tickets_of(payload)
     if not tickets:
         return Text(""), Text("")
-    ids = _ellipsize(_ticket_ids(wt, repo_name, provider), _TICKET_MAX)
+    ids = _ellipsize(_ticket_ids(payload, provider), _TICKET_MAX)
     icons = []
     for t in tickets:
         state = t.get("state")
@@ -723,6 +740,69 @@ def row_capabilities(
     return frozenset(caps)
 
 
+def _ticket_link(payload: dict | None) -> str:
+    """The delivered ticket's web URL, straight off the daemon-written block
+    (`cycle._stamp_ticket_urls`). Empty when the PR delivers no ticket, or when
+    the daemon couldn't resolve one (a missing footer link, or a cache written
+    before the field existed — the next slow cycle stamps it).
+
+    The **first** ticket, matching what `t` opens: a PR delivering several
+    renders them comma-joined in one cell, and one cell carries one link.
+    Reading the cached string is the whole point — three of the four providers
+    can only find their URL in the PR body, which is a `gh` call a renderer
+    isn't allowed to make."""
+    tickets = _tickets_of(payload)
+    return str((tickets[0].get("url") if tickets else "") or "")
+
+
+def _cell_links(payload: dict | None, author: str) -> dict[str, str]:
+    """Column label → the URL that column's cell becomes a terminal hyperlink to
+    (`_apply_links`). Keyed by label rather than index so a column reorder in
+    `column_labels` can't silently point a link at the wrong cell.
+
+    One rule: a cell that stands for something on the web links to it. The
+    GitHub cluster all points at the PR — except `CI`, which points at its
+    checks page, because a red ✗ is the one glyph you click *through* rather than
+    just at — the ticket cluster at the tracker, and `Author` at that person's
+    GitHub profile. `Workspace` (whose gesture is already double-click → focus),
+    the local `✎` dirty count, and `$` name nothing remote and stay unlinked.
+
+    Every URL here is either cached or pure string work; nothing in this module
+    may resolve one by asking git, gh or a tracker."""
+    links: dict[str, str] = {}
+    pr_url = str((payload or {}).get("url") or "")
+    if pr_url:
+        links["PR"] = links[_APPROVAL_ICON] = links["💬"] = links["Title"] = pr_url
+        links["CI"] = f"{pr_url}/checks"
+    if author:
+        links["Author"] = f"https://github.com/{author}"
+    ticket_url = _ticket_link(payload)
+    if ticket_url:
+        links["Ticket"] = links[_STATUS_ICON] = ticket_url
+    return links
+
+
+def _apply_links(
+    cells: list[Text], labels: tuple[str, ...], links: dict[str, str]
+) -> None:
+    """Turn each linked cell into an OSC 8 terminal hyperlink, in place.
+
+    `Text.stylize` *adds* a span rather than replacing the cell's style, so the
+    CI verdict's red and the ticket id's magenta survive — the link rides
+    alongside them. Textual passes the link through to the terminal verbatim
+    (`Strip.render_style`), so the terminal owns the gesture (⌘/ctrl-click) and
+    the underline-on-hover; cockpit paints no underline of its own, which would
+    put a rule under most of every row.
+
+    An **empty** cell is skipped: a hyperlink over blank padding is a click
+    target with nothing in it, and the columns most often blank (Author, Ticket,
+    CI on a PR with no checks) sit right beside ones that aren't."""
+    for i, label in enumerate(labels):
+        url = links.get(label)
+        if url and cells[i].plain.strip():
+            cells[i].stylize(f"link {url}")
+
+
 def _cost_cell(wt: Worktree) -> Text:
     """The `$` cell: total spend across every Claude Code session in this
     worktree, off the daemon-written `wt-cost` cell.
@@ -756,19 +836,27 @@ def worktree_cells(
     whose repo has no ticket provider, `tickets_provider == "none"`), then Author
     and Title, and finally `$` when `show_cost`.
 
+    Every cell naming something on the web ends up an OSC 8 terminal hyperlink
+    (`_cell_links` / `_apply_links`) — the PR number, its state, CI, comments and
+    title to the PR; the ticket cells to the tracker; the author to their
+    profile.
+
     `depth` indents the Workspace cell when the row is stacked on another PR
     (see `_stack_rows`)."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
 
+    # One snapshot read per row, handed to the ticket cells and the links rather
+    # than re-globbed by each of them.
+    payload = find_pr_payload(wt.branch, repo_name)
     num, state, ci = cell("pr-num"), cell("pr-state"), cell("pr-checks")
     comments = _comments_cell(cell("pr-comments"), cell("pr-comments-total"))
     title = cell("pr-title")
     author = cell("pr-author")
     state_icon, style = _STATE.get(state, (state, "white"))
     ticket, ticket_status = (
-        _linear_cells(wt, repo_name, tickets_provider)
+        _linear_cells(payload, tickets_provider)
         if tickets_provider != "none"
         else (Text(""), Text(""))
     )
@@ -799,6 +887,11 @@ def worktree_cells(
     ]
     if show_cost:
         cells += [_cost_cell(wt)]
+    _apply_links(
+        cells,
+        column_labels(show_tickets=show_tickets, show_cost=show_cost),
+        _cell_links(payload, author),
+    )
     return cells
 
 
@@ -879,13 +972,12 @@ def _dirty_tooltip(wt: Worktree) -> str | None:
     return ", ".join(segs) or None
 
 
-def _ticket_status_tooltip(wt: Worktree, repo_name: str, provider: str) -> str | None:
+def _ticket_status_tooltip(payload: dict | None, provider: str) -> str | None:
     """Hover text for the 📍 cell — each delivered ticket's `id: state` (the
     workflow-state name the icon abstracts away). Uses the same display handle as
     the Ticket cell (`ticket_display`), so Trello shows the card title rather
     than its opaque short link. None with no delivered tickets."""
-    payload = find_pr_payload(wt.branch, repo_name) or {}
-    tickets = (payload.get("ticket") or {}).get("tickets") or []
+    tickets = _tickets_of(payload)
     if not tickets:
         return None
     parts = []
@@ -905,14 +997,24 @@ def row_tooltips(
     show_cost: bool = False,
 ) -> list[str | None]:
     """Per-cell hover hints for one worktree row, aligned to `column_labels`
-    order. Two jobs: decode the cryptic value columns (workspace glyph, PR state,
-    CI, comments, ticket state, dirty), and give back whatever the column caps
+    order. Three jobs: decode the cryptic value columns (workspace glyph, PR
+    state, CI, comments, ticket state, dirty); give back whatever the column caps
     truncated (`_LABEL_MAX` / `_TICKET_MAX`) — a clipped cell has to stay
-    readable *somewhere*. The self-evident, untruncated text columns are None and
-    fall back to the column meaning on hover."""
+    readable *somewhere*; and name the **destination** of every cell that carries
+    a hyperlink (`_cell_links`). That last one is what makes the links
+    discoverable at all: an OSC 8 link is invisible until the pointer is over it
+    and the modifier is down, so the hover text is where a cell admits it goes
+    somewhere. The URL is shown rather than a "⌘-click to open" instruction
+    because the modifier is the *terminal's* choice, not cockpit's — and the
+    destination is worth reading on its own (which tracker, whose profile).
+
+    The self-evident, unlinked, untruncated text columns are None and fall back
+    to the column meaning on hover."""
 
     def cell(stem: str) -> str:
         return read_text(branch_cache(stem, wt.branch))
+
+    payload = find_pr_payload(wt.branch, repo_name)
 
     if cell("pr-muted"):
         workspace: str | None = "Nudges muted"
@@ -938,10 +1040,10 @@ def row_tooltips(
         tips += [
             # Ticket id — self-evident, so only worth a hint when `_TICKET_MAX`
             # clipped it (a long Trello card title).
-            _ticket_ids(wt, repo_name, tickets_provider) or None
+            _ticket_ids(payload, tickets_provider) or None
             if tickets_provider != "none"
             else None,
-            _ticket_status_tooltip(wt, repo_name, tickets_provider)
+            _ticket_status_tooltip(payload, tickets_provider)
             if tickets_provider != "none"
             else None,
         ]
@@ -952,6 +1054,10 @@ def row_tooltips(
         # column meaning rather than asserting "$0.00".
         total = read_worktree_cost(wt.path)
         tips += [f"${total:.2f} across all sessions here" if total > 0 else None]
+    labels = column_labels(show_tickets=show_tickets, show_cost=show_cost)
+    for label, url in _cell_links(payload, cell("pr-author")).items():
+        i = labels.index(label)
+        tips[i] = f"{tips[i]} — {url}" if tips[i] else url
     return tips
 
 
