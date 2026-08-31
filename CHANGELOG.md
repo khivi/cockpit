@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.16.0](https://github.com/khivi/cockpit/compare/v2.15.0...v2.16.0) (2026-08-31)
+
+
+### Features
+
+* **tui:** open the ask box on a lead-in when diff comments are pending ([#434](https://github.com/khivi/cockpit/issues/434)) ([8e04d3c](https://github.com/khivi/cockpit/commit/8e04d3c2c2981d155bb990c576ab17ce960735c4))
+
 ## [2.15.0](https://github.com/khivi/cockpit/compare/v2.14.1...v2.15.0) (2026-08-31)
 
 
