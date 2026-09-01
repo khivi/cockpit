@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.21.0](https://github.com/khivi/cockpit/compare/v2.20.0...v2.21.0) (2026-09-01)
+
+
+### Features
+
+* **commands:** ship /cockpit-nudge and hide the config-invoked shims from usage ([#448](https://github.com/khivi/cockpit/issues/448)) ([45a3020](https://github.com/khivi/cockpit/commit/45a3020b5bb19e18d81039d0073be17a834beef0))
+
 ## [2.20.0](https://github.com/khivi/cockpit/compare/v2.19.0...v2.20.0) (2026-09-01)
 
 
