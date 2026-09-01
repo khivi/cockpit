@@ -1303,12 +1303,12 @@ def test_a_disclosure_tail_lands_in_title_not_the_cost_column(cache_dir, show_co
     # `ncols - 1` tail would blank Title and (DataTable auto-sizes to content)
     # widen the numeric column for every row in the table.
     cols = column_labels(show_tickets=False, show_cost=show_cost)
-    for cells in (
-        _snoozed_cells(["alpha", "beta"], cols, expanded=False),
-        _hidden_cells(["gamma"], cols, expanded=False),
+    for cells, name in (
+        (_snoozed_cells(["alpha", "beta"], cols, expanded=False), "alpha"),
+        (_hidden_cells(["gamma"], cols, expanded=False), "gamma"),
     ):
         by_col = dict(zip(cols, (c.plain for c in cells), strict=False))
-        assert "z to show" in by_col["Title"] or "h to show" in by_col["Title"]
+        assert name in by_col["Title"]
         assert by_col.get("$", "") == ""
 
 
