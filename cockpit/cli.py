@@ -9,13 +9,15 @@ Subcommands:
   watch                 long-running daemon (Textual TUI)
   setup                 (re)install the statusLine config + Claude Code hooks/commands
   teardown              reverse setup's ~/.claude writes (run before brew uninstall)
-  statusline            Claude Code statusLine shim (reads stdin → renders)
-  starship <field>      starship field printer / `warm`
-  idle-pill <phase>     Claude Code hook shim → cmux idle pill (stop/prompt/…)
   new    [args]         create a worktree + workspace
   close  [args]         queue a worktree + workspace teardown for the daemon
   nudge  [args]         manage nudge mutes
   broadcast <message>   send a line of text to every idle workspace
+
+Config-invoked shims — dispatched exactly like the above, but never typed:
+  statusline            Claude Code statusLine shim (reads stdin → renders)
+  starship <field>      starship field printer / `warm`
+  idle-pill <phase>     Claude Code hook shim → cmux idle pill (stop/prompt/…)
 """
 
 from __future__ import annotations
@@ -26,20 +28,29 @@ _SUBCOMMANDS = (
     "watch",
     "setup",
     "teardown",
-    "statusline",
-    "starship",
-    "idle-pill",
     "new",
     "close",
     "nudge",
     "broadcast",
 )
 
+# Named as literal command strings inside ~/.claude/settings.json and
+# ~/.config/starship.toml by `cockpit setup`, so those spellings outlive any
+# rename here (`_COCKPIT_HOOK_CMD_RE` still matches a retired `statusline` hook
+# to sweep older installs). Kept out of `_SUBCOMMANDS` so the usage line lists
+# only what a human types; dispatch treats both tuples identically.
+_SHIM_SUBCOMMANDS = (
+    "statusline",
+    "starship",
+    "idle-pill",
+)
+
 
 def _usage() -> str:
     return (
         "usage: cockpit <" + " | ".join(_SUBCOMMANDS) + "> [args]"
-        "  (no subcommand defaults to watch)"
+        "  (no subcommand defaults to watch)\n"
+        "config-invoked shims: " + " | ".join(_SHIM_SUBCOMMANDS)
     )
 
 
