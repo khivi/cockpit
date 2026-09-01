@@ -1641,6 +1641,7 @@ def _prepare_cycle(
             repo_path,
             repo_entry.get("branch_prefix", ""),
             repo_entry.get("name", ""),
+            repo_entry.get("sidebar_tag", ""),
         )
         # cmux AND limux can list workspaces ('none' has no tool). Fetch the cwd
         # map on limux too — autoclose uses it to close the merged worktree's
@@ -3074,8 +3075,14 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
         registered_roots[repo_path.resolve()] = (repo_name, repo_path)
         try:
             # Identity only (path/branch) — skip the dirty/unlanded stat forks.
+            # `sidebar_tag` matters here: the reap keys on `workspace_name`
+            # (`wt_by_name` below), so an untagged listing would fail to match a
+            # tagged live workspace and read it as an orphan.
             for wt in worktrees_basic(
-                repo_path, entry.get("branch_prefix", ""), entry.get("name", "")
+                repo_path,
+                entry.get("branch_prefix", ""),
+                entry.get("name", ""),
+                entry.get("sidebar_tag", ""),
             ):
                 all_wts.append(wt)
                 repo_lookup[wt.path.resolve()] = (repo_name, repo_path)

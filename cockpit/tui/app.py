@@ -702,10 +702,17 @@ class CockpitApp(App[None]):
         hints follow the selection: `p`/`m` only when the row has a PR, `l` only
         with a ticket, and `m` reads "Unmute" when the row's PR is muted. Cheap
         (cache-cell reads) and UI-thread only. None (no row) → the footer shows
-        the full row-key set."""
+        the full row-key set.
+
+        Also pushes the row's repo to the header bar — the same hook for the same
+        reason: both are cursor-row context, and a repo's group header has usually
+        scrolled off by the time you need to know which repo you're looking at."""
         with contextlib.suppress(Exception):
-            caps = self.query_one(WorktreeTable).current_capabilities()
-            self.query_one(FooterBar).set_row_state(caps)
+            table = self.query_one(WorktreeTable)
+            self.query_one(FooterBar).set_row_state(table.current_capabilities())
+            header = self.query_one(HeaderBar)
+            header.repo_name = table.current_repo_name() or ""
+            header.repo_color = table.current_repo_color()
 
     def _repo_config_by_name(self, name: str | None) -> dict | None:
         """The full config dict for the repo whose display name is `name` (as
@@ -1382,7 +1389,17 @@ class CockpitApp(App[None]):
                 continue
             repo_name = repo.get("name") or rp.name
             try:
-                for wt in worktrees(rp, repo.get("branch_prefix", ""), repo_name):
+                # `sidebar_tag` matters here: `f` spawns through
+                # `spawn_pr_workspace` / `spawn_orphan_workspace`, both of which
+                # name the workspace `wt.workspace_name`. An untagged Worktree
+                # would spawn under the bare label and the daemon's next rename
+                # pass would correct it a tick later.
+                for wt in worktrees(
+                    rp,
+                    repo.get("branch_prefix", ""),
+                    repo_name,
+                    repo.get("sidebar_tag", ""),
+                ):
                     if wt.path.resolve() == target:
                         return repo, wt
             except (RuntimeError, OSError):

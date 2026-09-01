@@ -62,6 +62,11 @@ corner, opens a palette holding the daemon log, your resolved config, an editor 
 theme picker that persists your choice, and a link back to this guide. Click it, or press
 `ctrl+p`.
 
+**The top bar also names the repo the highlighted row belongs to**, in that repo's colour.
+Every repo heads its own group in the table, but that heading scrolls off the moment a repo
+holds more rows than fit — so on any real fleet the row under your cursor tells you nothing
+about which repo you're about to act on. The top bar can't scroll away.
+
 ### The sidebar card
 
 Every workspace cockpit tracks carries its PR's state as pills in the cmux sidebar —
@@ -72,6 +77,14 @@ itself: `🟢 PR #332 open ✓`, `⚪ draft`, `🟣 merged`, `🔴 closed`, in G
 — a card has few lines and CI never needs one of its own. A pill has a single colour, so a
 build that isn't passing takes it: a failing PR reads red whatever its state. The statusLine
 footer has room and keeps CI as its own pill.
+
+**Name the repo when colour runs out.** A workspace is named after its branch, and which
+repo it belongs to is carried by the card's tint. That works until you're watching enough
+repos to exhaust the sixteen colours cmux offers — and well before that, if several of
+yours land on hues that don't read apart at a glance, or if a repo has no colour set at
+all. Give the repo a `sidebar_tag` and its workspaces read `infra·fix-retry` instead of
+`fix-retry`. It's off unless you set it, so nothing is renamed until you ask; a repo's main
+checkout is already named after the repo and never takes one.
 
 **Turn cmux's own PR row off when you use this.** Set `"sidebar": {"showPullRequests":
 false}` in `~/.config/cmux/cmux.json` and run `cmux reload-config`. cmux resolves a branch

@@ -15,6 +15,7 @@ import pytest
 import cockpit.lib.git as gitlib
 from cockpit.lib.constants import MAIN_BRANCHES
 from cockpit.lib.git import (
+    SIDEBAR_TAG_SEP,
     Worktree,
     _fetch_remote_branch,
     _has_local_branch,
@@ -34,6 +35,7 @@ from cockpit.lib.git import (
     prune_worktrees,
     require_git,
     slugify,
+    tag_workspace_name,
     worktree_age_seconds,
     worktrees,
     worktrees_basic,
@@ -137,8 +139,9 @@ def test_worktrees_basic_threads_branch_prefix(cockpit_repo):
 
 
 def test_workspace_name_is_bare_label(tmp_path):
-    """`workspace_name` is the bare branch label — no `[<repo>]` prefix (the
-    repo is conveyed by `sidebar_color`, so the two never double up)."""
+    """`workspace_name` is the bare branch label with no `sidebar_tag` set — no
+    unconditional `[<repo>]` prefix, since the repo is conveyed by
+    `sidebar_color` unless the repo opts into a tag."""
     wt = Worktree(
         path=tmp_path / "pe-4516",
         branch="khivi/pe-4608-understand-dag-builder",
@@ -172,6 +175,63 @@ def test_worktrees_basic_threads_repo_name(cockpit_repo):
     `git-repo` cell."""
     wts = worktrees_basic(cockpit_repo.repo, "khivi/", "cockpit")
     assert all(wt.repo_name == "cockpit" for wt in wts)
+
+
+def test_tag_workspace_name_is_a_no_op_without_a_tag():
+    """Opt-in: an unset `sidebar_tag` must return the name byte-identical, or
+    rolling this out would rename every existing workspace."""
+    assert tag_workspace_name("fix-retry") == "fix-retry"
+    assert tag_workspace_name("fix-retry", "") == "fix-retry"
+
+
+def test_tag_workspace_name_prefixes_the_tag():
+    assert (
+        tag_workspace_name("fix-retry", "infra") == f"infra{SIDEBAR_TAG_SEP}fix-retry"
+    )
+
+
+def test_tag_workspace_name_leaves_an_empty_name_alone():
+    """A detached worktree has no label; tagging one would invent a workspace
+    named after nothing but its repo."""
+    assert tag_workspace_name("", "infra") == ""
+
+
+def test_workspace_name_applies_the_repos_sidebar_tag(tmp_path):
+    wt = Worktree(
+        path=tmp_path / "pe-4516",
+        branch="khivi/pe-4608-understand-dag-builder",
+        branch_prefix="khivi/",
+        repo_name="cockpit",
+        sidebar_tag="ckp",
+    )
+    # The label itself is untouched — the tag is a sidebar-naming concern only,
+    # so the TUI's Workspace column and the cwd→path matching stay as they were.
+    assert wt.label == "understand-dag-builder"
+    assert wt.workspace_name == f"ckp{SIDEBAR_TAG_SEP}understand-dag-builder"
+
+
+def test_workspace_name_never_tags_a_primary_checkout(tmp_path):
+    """The primary checkout is already named after the repo, so a tag would
+    print the repo twice — and `_workspace_ref_by_name` looks it up by the bare
+    repo name, so a tagged one would never match and `f` would double-spawn."""
+    wt = Worktree(
+        path=tmp_path / "needl-ai",
+        branch="master",
+        is_primary=True,
+        repo_name="needl-ai",
+        sidebar_tag="ndl",
+    )
+    assert wt.workspace_name == "needl-ai"
+
+
+def test_worktrees_basic_threads_sidebar_tag(cockpit_repo):
+    wts = worktrees_basic(cockpit_repo.repo, "khivi/", "cockpit", "ckp")
+    assert all(wt.sidebar_tag == "ckp" for wt in wts)
+    assert all(
+        wt.workspace_name.startswith(f"ckp{SIDEBAR_TAG_SEP}")
+        for wt in wts
+        if not wt.is_primary and wt.label
+    )
 
 
 def test_has_remote_branch_exact_match(cockpit_repo, push_branch):

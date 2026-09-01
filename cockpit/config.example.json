@@ -6,6 +6,7 @@
       "branch_prefix": "yourusername/",
       "default_base": "main",
       "sidebar_color": "Blue",
+      "sidebar_tag": "myr",
       "review_prs": false,
       "skills": {
         "review": "/pr-review"

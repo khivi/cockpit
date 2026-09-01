@@ -220,6 +220,7 @@ def _fast_tick(state: dict) -> None:
                 repo_path,
                 repo_entry.get("branch_prefix", ""),
                 repo_entry.get("name", ""),
+                repo_entry.get("sidebar_tag", ""),
             )
         except (RuntimeError, OSError):
             continue

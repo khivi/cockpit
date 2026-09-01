@@ -1113,6 +1113,10 @@ class WorktreeTable(DataTable):
         # so `current_repo_name()` resolves the cursor row's repo even on a
         # group-header row (where `current_path()` is None).
         self._row_repo: dict[str, str] = {}
+        # repo display name → its configured `sidebar_color`, recorded here so
+        # the cursor-row readout can tint itself without a `load_config()` read
+        # on every arrow key.
+        self._repo_color: dict[str, str | None] = {}
         # worktree path → per-column hover tooltip (aligned to `column_labels`),
         # so `watch_hover_coordinate` decodes a value cell without re-reading the
         # cache on every mouse move. Header rows carry none (fall back to the
@@ -1169,6 +1173,13 @@ class WorktreeTable(DataTable):
         the row under the cursor even when that row is a header."""
         key = self._current_row_key()
         return self._row_repo.get(key) if key is not None else None
+
+    def current_repo_color(self) -> str | None:
+        """The cursor row's repo `sidebar_color`, or None when it has none (a
+        parked repo's revealed header drops its tint, so it reads as None here
+        too — matching what `_header_cells` renders)."""
+        name = self.current_repo_name()
+        return self._repo_color.get(name) if name is not None else None
 
     def snoozed_paths(self, repo_name: str | None) -> list[str]:
         """The worktree paths inside `repo_name`'s snoozed fold, open or shut.
@@ -1346,6 +1357,7 @@ class WorktreeTable(DataTable):
         self.clear()
         self._row_caps = {}
         self._row_repo = {}
+        self._repo_color = {}
         self._cell_tooltips = {}
         self._snoozed_paths = {}
         columns = column_labels(
@@ -1353,6 +1365,7 @@ class WorktreeTable(DataTable):
         )
         ncols = len(columns)
         for repo_name, cache_key, repo_color, tickets_provider, wts in inventory:
+            self._repo_color[repo_name] = repo_color
             hkey = f"{HEADER_KEY_PREFIX}{repo_name}"
             self.add_row(
                 *_header_cells(
