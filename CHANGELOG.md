@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.22.0](https://github.com/khivi/cockpit/compare/v2.21.0...v2.22.0) (2026-09-01)
+
+
+### Features
+
+* show the review-thread ratio even when every thread is handled ([#450](https://github.com/khivi/cockpit/issues/450)) ([59bc7f8](https://github.com/khivi/cockpit/commit/59bc7f8f442621995401ce5b21a3f1f062cfddc2))
+
 ## [2.21.0](https://github.com/khivi/cockpit/compare/v2.20.0...v2.21.0) (2026-09-01)
 
 
