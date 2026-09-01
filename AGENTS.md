@@ -438,6 +438,9 @@ mypy cockpit/
 
 # Lint + format — ALWAYS via the pinned pre-commit hook, scoped to your files:
 pre-commit run ruff ruff-format --files <changed paths>
+
+# Audit the workflows for security issues after touching .github/:
+pre-commit run zizmor --all-files
 ```
 
 **Never lint/format with `uvx ruff` (or a globally-installed `ruff`).** `uvx` pulls the **latest** ruff, whose rules drift from the pinned version — running it tree-wide rewrites lines in files you never touched, producing churn the pinned hook then fights on commit. The pinned hook *is* the formatter, and it's what CI enforces.
@@ -461,6 +464,15 @@ pre-commit run ruff ruff-format --files <changed paths>
 `--dry` also suppresses the **cache writes**, which is why snapshot mode copies the real PR JSONs in. Every cmux-facing feature is **inert** under `tool: none`, so the sandbox is right for the table, cells, config, prompts and the cycle's decisions, and wrong for anything cmux-facing.
 
 `dev.sh` **refuses `cockpit setup`** (exit 2), which writes `sys.executable` *outside* the sandbox and from a worktree bakes in a `.venv/bin/python` that dies on cleanup. Guards are covered by `tests/test_dev_script.py`; the happy path is deliberately untested.
+
+### Workflow *correctness* is actionlint's; workflow *safety* is zizmor's
+
+Two hooks over the same files, and neither substitutes for the other — actionlint checks a workflow parses and names real inputs, zizmor checks it against an attack model. The pinned config is `.github/zizmor.yml`. A green test suite is not evidence here: the finding that motivated the hook was `publish.yml` restoring an attacker-influenceable cache into the `uv build` whose output uploads to PyPI under this repo's OIDC identity, which no test in the suite can observe. Four rules:
+
+- **`.github/workflows/tag.yml` is exempt from `artipacked`, and the exemption is load-bearing.** Its checkout credentials authenticate the `git push origin "v$v"` two steps later, and that push is what fires `release.yml` and `publish.yml`. Adding `persist-credentials: false` there breaks every release **silently** — the tag never lands, so neither downstream workflow runs and nothing reports a failure. **Do not** "fix" it.
+- **`actions/*` are ref-pinned, everything else hash-pinned**, by policy rather than per-line. Two third-party actions reach users directly: `mislav/bump-homebrew-formula-action` commits onto the tap `main` that every `brew install` resolves, and `pypa/gh-action-pypi-publish` uploads under our PyPI identity, so a retagged `v4` is a path to an end user's machine. The `github-actions` Dependabot ecosystem is what keeps those SHAs current — **do not** drop it.
+- **`enable-cache` must be set explicitly on `astral-sh/setup-uv`, never merely omitted** — it defaults to **on**, so deleting the line does not opt out. `publish.yml` sets it `false`; `ci.yml` keeps the cache deliberately, since nothing it produces is published.
+- **`.github/dependabot.yml` carries no `labels:` key.** Specifying it *replaces* Dependabot's defaults instead of adding to them, and a custom label absent from the repo is silently dropped rather than created — so an override naming labels that don't exist leaves every Dependabot PR unlabelled. **Do not** re-add one.
 
 ## Release versioning
 
