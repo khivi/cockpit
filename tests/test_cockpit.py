@@ -205,7 +205,9 @@ def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
     )
-    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
+    )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: (names, cwds))
@@ -242,7 +244,9 @@ def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
     )
-    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
+    )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", _boom)
@@ -282,7 +286,9 @@ def test_fast_tick_tints_spawned_workspace(tmp_path, monkeypatch):
         "load_config",
         lambda: {"repos": [{"path": str(repo), "sidebar_color": "Teal"}]},
     )
-    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
+    )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, cwds))
@@ -320,7 +326,9 @@ def test_fast_tick_skips_color_without_sidebar_color(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
     )
-    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
+    )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(
@@ -547,7 +555,9 @@ def test_fast_tick_writes_a_cost_cell_per_worktree(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
     )
-    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": wts)
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": wts
+    )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", costed.append)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
@@ -578,7 +588,7 @@ def test_fast_tick_writes_cells_for_every_repos_worktrees(tmp_path, monkeypatch)
         cockpit, "load_config", lambda: {"repos": [{"path": str(r)} for r in repos]}
     )
     monkeypatch.setattr(
-        cockpit, "worktrees", lambda p, _prefix="", _name="": by_repo[p]
+        cockpit, "worktrees", lambda p, _prefix="", _name="", _tag="": by_repo[p]
     )
     monkeypatch.setattr(
         cockpit, "write_git_state_cache", lambda p, _name="": written.append(p)
@@ -683,7 +693,9 @@ def test_fast_tick_restores_a_lost_trailing_fold(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
     )
-    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [])
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": []
+    )
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
     monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda ps: seen.append(ps))
@@ -707,7 +719,9 @@ def test_fast_tick_does_not_restore_folds_under_dry(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
     )
-    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [])
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": []
+    )
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
     monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda ps: seen.append(ps))
@@ -731,7 +745,9 @@ def _fast_tick_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
     )
-    monkeypatch.setattr(cockpit, "worktrees", lambda _p, _prefix="", _name="": [wt])
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
+    )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(

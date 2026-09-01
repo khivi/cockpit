@@ -148,6 +148,7 @@ from cockpit.lib.git import (
     create_worktree,
     main_worktree_path,
     slugify,
+    tag_workspace_name,
     worktree_for_branch,
 )
 from cockpit.lib.github_issues import (
@@ -1063,6 +1064,12 @@ def main(argv: list[str] | None = None) -> int:
     if prompt is None:
         prompt = seeded_prompt
 
+    # The repo's sidebar tag, applied to `ws_name` once below. Resolved per
+    # branch rather than at the single naming seam because only these branches
+    # know a repo was actually determined — a `--cwd` with no `--repo` has none,
+    # and guessing one from the spawn process's cwd would tag the workspace with
+    # whichever repo the user happened to be standing in.
+    sidebar_tag = ""
     if skill:
         try:
             wt, skill_prompt = resolve_skill(skill, args.repo)
@@ -1072,6 +1079,7 @@ def main(argv: list[str] | None = None) -> int:
             wt = Path(cwd).expanduser().resolve()
         if not short:
             short = slugify(skill)
+        sidebar_tag = (_repo_entry_or_none(args.repo) or {}).get("sidebar_tag", "")
         if prompt is None:
             prompt = skill_prompt
         attached_wt = True
@@ -1096,6 +1104,7 @@ def main(argv: list[str] | None = None) -> int:
         # cheap, and gives the plan/actions prompt builders below the repo
         # entry needed to resolve `skills.plan` / `skills.actions`.
         repo_cfg = select_repo(args.repo)
+        sidebar_tag = repo_cfg.get("sidebar_tag", "")
         if not short:
             # Name the workspace by the same branch-derived label the daemon
             # re-asserts each tick, so the spawn name agrees with reconcile and
@@ -1166,7 +1175,10 @@ def main(argv: list[str] | None = None) -> int:
         ctx = f"## Caller session context\n\n{args.context}"
         prompt = f"{prompt}\n\n{ctx}" if prompt else ctx
 
-    ws_name = short
+    # Same tag the daemon's `Worktree.workspace_name` applies, for the same
+    # reason the label above is branch-derived: reconcile must agree with the
+    # spawn or it renames the workspace one tick after creation.
+    ws_name = tag_workspace_name(short, sidebar_tag)
     require_workspace_binary()
     ws_refs = workspace_names()  # {ref: name}
     # Match by name first, then fall back to worktree path. The path check

@@ -39,6 +39,30 @@ def _git(repo: str | os.PathLike, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+SIDEBAR_TAG_SEP = "·"
+
+
+def tag_workspace_name(name: str, sidebar_tag: str = "") -> str:
+    """Prefix a cmux workspace name with its repo's configured `sidebar_tag`.
+
+    The sidebar otherwise conveys the repo by tint alone, which stops working
+    somewhere under twenty repos: `colors.CMUX_COLOR_ANSI` holds sixteen names,
+    several of which (Teal/Aqua, Red/Orange) don't read apart at a glance, and a
+    repo with no `sidebar_color` at all carries no repo signal whatsoever. An
+    explicit short tag is the part that scales; the tint stays as the fast
+    pre-attentive channel.
+
+    Opt-in per repo, so an unset tag returns `name` byte-identical and every
+    existing sidebar is unchanged. Both halves of the naming path apply this
+    (`Worktree.workspace_name` and `cockpit new`'s own `ws_name`) so a spawn and
+    the daemon's next `reconcile_workspace_names` agree — disagreeing would
+    rename every fresh workspace one tick after creation.
+    """
+    if not sidebar_tag or not name:
+        return name
+    return f"{sidebar_tag}{SIDEBAR_TAG_SEP}{name}"
+
+
 @dataclass
 class Worktree:
     path: Path
@@ -50,6 +74,7 @@ class Worktree:
     is_primary: bool = False
     branch_prefix: str = ""
     repo_name: str = ""
+    sidebar_tag: str = ""
 
     @property
     def short(self) -> str:
@@ -71,15 +96,18 @@ class Worktree:
 
     @property
     def workspace_name(self) -> str:
-        """cmux workspace name — the bare branch `label`.
+        """cmux workspace name — the branch `label`, under an optional repo tag.
 
         Kept as its own property (rather than folding call sites onto `label`)
         so the workspace-naming paths (spawn + `reconcile_workspace_names`) have
-        one seam to change: the repo is conveyed by `sidebar_color`, not a
-        `[<repo>]` name prefix, so the two never double up in the sidebar. The
-        prefix used to disambiguate same-label branches across repos; cockpit
-        resolves workspaces by cwd→path (never by name), so the collision is
-        cosmetic — the one exception being orphan-auto-spawn's name-clash skip.
+        one seam to change: the repo is conveyed by `sidebar_color`, and by a
+        `<tag>·` prefix only where the repo opts into one (`tag_workspace_name`),
+        so the two never double up by accident. The old *unconditional*
+        `[<repo>]` prefix disambiguated same-label branches across repos; cockpit
+        resolves workspaces by cwd→path (never by name), so that collision is
+        cosmetic — the one exception being orphan-auto-spawn's name-clash skip,
+        which a tag makes rarer rather than worse (two repos' `main` stop
+        colliding once each carries its own tag).
 
         The **primary checkout** (a repo's main worktree — notably a
         `use_worktree: false` repo's single in-place session) is named after the
@@ -88,11 +116,12 @@ class Worktree:
         so spawning under `master` and searching under the repo name would never
         match — a double-spawn. Falls back to `label` when `repo_name` is unset.
         `reconcile_workspace_names` exempts primary/main worktrees, so this never
-        gets force-renamed back to `master`.
+        gets force-renamed back to `master`. It takes **no** tag: the repo name
+        already IS the repo, so tagging it would print the repo twice.
         """
         if self.is_primary and self.repo_name:
             return self.repo_name
-        return self.label
+        return tag_workspace_name(self.label, self.sidebar_tag)
 
     @property
     def dirty(self) -> bool:
@@ -247,7 +276,10 @@ def _rebase_head_name(gitdir: Path) -> str | None:
 
 
 def worktrees_basic(
-    repo_dir: Path, branch_prefix: str = "", repo_name: str = ""
+    repo_dir: Path,
+    branch_prefix: str = "",
+    repo_name: str = "",
+    sidebar_tag: str = "",
 ) -> list[Worktree]:
     """List worktrees by structure only — path/branch/rebasing/merging/is_primary.
 
@@ -259,6 +291,9 @@ def worktrees_basic(
     its `label` strips the prefix cleanly; callers that don't render a label can
     leave it "". `repo_name` is stored likewise for the `git-repo` cell
     (`write_git_state_cache`) and can be left "" by callers that don't cache it.
+    `sidebar_tag` likewise feeds `workspace_name`, so only the callers on a
+    naming path (the fast tick's rename pass, the TUI's name-keyed lookups,
+    the cycle) need to pass it.
     """
     out = run(["git", "-C", str(repo_dir), "worktree", "list", "--porcelain"])
     blocks = [b for b in out.split("\n\n") if b.strip()]
@@ -301,23 +336,27 @@ def worktrees_basic(
                     is_primary=is_primary,
                     branch_prefix=branch_prefix,
                     repo_name=repo_name,
+                    sidebar_tag=sidebar_tag,
                 )
             )
     return wts
 
 
 def worktrees(
-    repo_dir: Path, branch_prefix: str = "", repo_name: str = ""
+    repo_dir: Path,
+    branch_prefix: str = "",
+    repo_name: str = "",
+    sidebar_tag: str = "",
 ) -> list[Worktree]:
     """Full worktree listing with dirty/unlanded counts filled in.
 
     Layers the per-worktree `count_dirty` + `count_unlanded` stats (run in
     parallel) onto `worktrees_basic`. Callers that don't need the counts
-    should use `worktrees_basic` to skip those forks. `branch_prefix` and
-    `repo_name` are passed through to `worktrees_basic` (label strip +
-    `workspace_name`).
+    should use `worktrees_basic` to skip those forks. `branch_prefix`,
+    `repo_name` and `sidebar_tag` are passed through to `worktrees_basic`
+    (label strip + `workspace_name`).
     """
-    wts = worktrees_basic(repo_dir, branch_prefix, repo_name)
+    wts = worktrees_basic(repo_dir, branch_prefix, repo_name, sidebar_tag)
 
     def _stats(w: Worktree) -> tuple[int, int]:
         return count_dirty(w.path), count_unlanded(w.path, w.branch)

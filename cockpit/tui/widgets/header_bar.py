@@ -1,4 +1,5 @@
-"""Top bar: slow + fast tick countdowns on the left, the menu on the right.
+"""Top bar: slow + fast tick countdowns on the left, the cursor row's repo and
+the menu on the right.
 
 Pure display: the app sets the reactive attributes each second; this widget
 just formats them. A remaining value of -1 means "tick running now", -2 means
@@ -8,10 +9,13 @@ waiting on the app's tick lock" (the other tick currently holds it).
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.reactive import reactive
 from textual.widgets import Static
+
+from cockpit.lib.colors import CMUX_COLOR_ANSI
 
 # Sentinel values for a tick's `*_remaining` reactive. Any non-negative int is
 # a plain "seconds until next run" countdown; these three are out-of-band
@@ -71,6 +75,28 @@ def build_tooltip(slow_remaining: int, fast_remaining: int) -> str:
     return "\n".join(lines)
 
 
+def repo_text(repo_name: str, repo_color: str | None) -> Text:
+    """The cursor row's repo, tinted with its cmux `sidebar_color`.
+
+    The table already names each repo on its group-header row, but that header
+    scrolls off as soon as a repo holds more rows than fit — so on a fleet of
+    any size the row under the cursor names no repo at all. This is the same
+    name in the same colour, pinned where it can't scroll away.
+
+    Duplicates `worktree_table._header_cells`' three-line tint deliberately: the
+    two render different things (that one appends the `─` rule) and sharing
+    would couple two sibling widgets for less code than the import costs.
+    """
+    if not repo_name:
+        return Text("")
+    colorizer = CMUX_COLOR_ANSI.get(repo_color or "")
+    name = (
+        Text(repo_name) if colorizer is None else Text.from_ansi(colorizer(repo_name))
+    )
+    name.stylize("bold")
+    return Text.assemble(("▪ ", "dim"), name)
+
+
 def status_text(version_text: str, slow_remaining: int, fast_remaining: int) -> str:
     """The left half: version + tick countdowns, as Textual markup."""
     text = ""
@@ -96,6 +122,11 @@ class HeaderBar(Horizontal):
         content-align: left middle;
         padding-left: 1;
     }
+    HeaderBar > #header-repo {
+        width: auto;
+        content-align: right middle;
+        padding-right: 2;
+    }
     HeaderBar > #header-menu {
         width: auto;
         color: $text-muted;
@@ -117,23 +148,34 @@ class HeaderBar(Horizontal):
         "Output log, show/edit config, theme, and the feature guide.\n"
         "Click, or press ctrl+p."
     )
+    REPO_TOOLTIP = (
+        "The repo owning the highlighted row — the same name and colour as its\n"
+        "group header, kept on screen once the header has scrolled away."
+    )
 
     version_text: reactive[str] = reactive("")
     slow_remaining: reactive[int] = reactive(0)
     fast_remaining: reactive[int] = reactive(OFF)
+    # Cursor-row state, so it repaints on arrow keys without dragging the
+    # once-a-second tick countdowns through a repaint with it.
+    repo_name: reactive[str] = reactive("")
+    repo_color: reactive[str | None] = reactive(None)
 
     def compose(self) -> ComposeResult:
         yield Static("", id="header-status")
+        yield Static("", id="header-repo")
         yield Static(
             f"[@click=app.command_palette]{self.MENU_LABEL}[/]", id="header-menu"
         )
 
     def on_mount(self) -> None:
         self._sync_tooltip()
-        # Its own tooltip, so it wins the ancestor walk over the bar's tick
+        # Their own tooltips, so they win the ancestor walk over the bar's tick
         # explanation — hovering the menu should explain the menu.
         self.query_one("#header-menu", Static).tooltip = self.MENU_TOOLTIP
+        self.query_one("#header-repo", Static).tooltip = self.REPO_TOOLTIP
         self._repaint()
+        self._repaint_repo()
 
     def watch_version_text(self, version_text: str) -> None:
         self._repaint()
@@ -146,8 +188,21 @@ class HeaderBar(Horizontal):
         self._sync_tooltip()
         self._repaint()
 
+    def watch_repo_name(self, repo_name: str) -> None:
+        self._repaint_repo()
+
+    def watch_repo_color(self, repo_color: str | None) -> None:
+        self._repaint_repo()
+
     def _sync_tooltip(self) -> None:
         self.tooltip = build_tooltip(self.slow_remaining, self.fast_remaining)
+
+    def _repaint_repo(self) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one("#header-repo", Static).update(
+            repo_text(self.repo_name, self.repo_color)
+        )
 
     def _repaint(self) -> None:
         # Watchers fire before compose has run, so there is nothing to query yet

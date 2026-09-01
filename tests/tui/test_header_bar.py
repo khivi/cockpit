@@ -19,6 +19,7 @@ from cockpit.tui.widgets.header_bar import (
     HeaderBar,
     _fmt,
     build_tooltip,
+    repo_text,
     status_text,
 )
 
@@ -117,6 +118,33 @@ def test_status_text_adds_the_fast_countdown_when_the_fast_tick_is_on():
     assert "fast ⏱ 0:20" in status_text("", 65, 20)
 
 
+# --- repo_text: pure function ------------------------------------------------
+
+
+def test_repo_text_is_empty_for_no_row():
+    assert repo_text("", None).plain == ""
+
+
+def test_repo_text_names_the_repo():
+    assert "myrepo" in repo_text("myrepo", None).plain
+
+
+def test_repo_text_survives_an_unknown_colour():
+    # A colour not in CMUX_COLOR_ANSI must degrade to the untinted name, never
+    # raise — preflight rejects one at startup, but a renderer is not the place
+    # to discover that.
+    assert "myrepo" in repo_text("myrepo", "Chartreuse").plain
+
+
+def test_repo_text_tints_with_the_repos_sidebar_colour():
+    # The ANSI colorizer must actually reach the Text as a style, so the readout
+    # matches the group header's tint rather than reading as plain text.
+    tinted = repo_text("myrepo", "Magenta")
+    plain = repo_text("myrepo", None)
+    assert tinted.plain == plain.plain
+    assert tinted.spans != plain.spans
+
+
 # --- the two halves ----------------------------------------------------------
 
 
@@ -189,6 +217,57 @@ async def test_tooltip_updates_when_reactive_changes_after_mount():
         # `Widget.tooltip` is typed as a renderable union, so coerce before
         # matching — `_sync_tooltip` only ever assigns a str.
         assert "slow tick is waiting" in str(bar.tooltip).lower()
+
+
+@pytest.mark.asyncio
+async def test_repo_half_carries_its_own_tooltip():
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#header-repo", Static).tooltip == HeaderBar.REPO_TOOLTIP
+
+
+@pytest.mark.asyncio
+async def test_repo_half_is_blank_until_a_row_is_highlighted():
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert str(app.query_one("#header-repo", Static).render()).strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_repo_half_repaints_when_the_cursor_row_changes_repo():
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bar = app.query_one(HeaderBar)
+        bar.repo_name = "myrepo"
+        await pilot.pause()
+        assert "myrepo" in str(app.query_one("#header-repo", Static).render())
+
+        bar.repo_name = "otherrepo"
+        await pilot.pause()
+        painted = str(app.query_one("#header-repo", Static).render())
+        assert "otherrepo" in painted
+        assert "myrepo" not in painted
+
+
+@pytest.mark.asyncio
+async def test_repo_half_repaints_when_only_the_colour_changes():
+    # Both reactives own the readout: a repo renamed to the same string with a
+    # new tint still has to repaint, so the watcher can't hang off the name.
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bar = app.query_one(HeaderBar)
+        bar.repo_name = "myrepo"
+        await pilot.pause()
+        before = app.query_one("#header-repo", Static).render().spans
+
+        bar.repo_color = "Magenta"
+        await pilot.pause()
+        after = app.query_one("#header-repo", Static).render().spans
+        assert after != before
 
 
 @pytest.mark.asyncio

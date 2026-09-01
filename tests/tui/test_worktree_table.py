@@ -1236,6 +1236,57 @@ async def test_the_cursor_rests_on_a_fold_row(cache_dir):
         assert table.current_repo_name() == "R"
 
 
+@pytest.mark.asyncio
+async def test_the_cursor_row_reports_its_repo_colour(cache_dir):
+    # The header-bar readout tints itself from this, so it must come off the
+    # inventory the table already rendered — resolving it from `load_config()`
+    # would put a disk read on every arrow key.
+    mine = _wt(path="mine", branch="khivi/mine")
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", "Magenta", "none", [mine])])
+        await pilot.pause()
+        assert table.current_repo_name() == "R"
+        assert table.current_repo_color() == "Magenta"
+
+
+@pytest.mark.asyncio
+async def test_a_repo_with_no_colour_reports_none_not_a_default(cache_dir):
+    # Blank is not a colour: `repo_text` has to be able to tell "no tint set"
+    # from a tint, or an uncoloured repo would render as whatever it defaulted to.
+    mine = _wt(path="mine", branch="khivi/mine")
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [mine])])
+        await pilot.pause()
+        assert table.current_repo_color() is None
+
+
+@pytest.mark.asyncio
+async def test_the_repo_colour_follows_the_cursor_across_repos(cache_dir):
+    # Two repos, two tints: the readout must track the cursor rather than latch
+    # onto whichever repo rendered first.
+    a = _wt(path="alpha", branch="khivi/alpha")
+    b = _wt(path="beta", branch="khivi/beta")
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory(
+            [("A", "A", "Magenta", "none", [a]), ("B", "B", "Teal", "none", [b])]
+        )
+        await pilot.pause()
+        seen = {}
+        for _ in range(table.row_count):
+            name = table.current_repo_name()
+            if name is not None:
+                seen[name] = table.current_repo_color()
+            table.action_cursor_down()
+            await pilot.pause()
+        assert seen == {"A": "Magenta", "B": "Teal"}
+
+
 @pytest.mark.parametrize("show_cost", [False, True])
 def test_a_disclosure_tail_lands_in_title_not_the_cost_column(cache_dir, show_cost):
     # `Title` is not the last column — `show_cost` appends `$` after it — so a

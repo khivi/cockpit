@@ -621,6 +621,48 @@ def test_name_with_repo_creates_new_prefixed_branch(spawn_main):
     assert _cmux_kwarg(call, "name") == "foo"
 
 
+def _set_repo_key(cockpit_repo, key: str, value) -> None:
+    """Mutate the FIRST repo entry of the on-disk config.json.
+
+    `_set_config_key`'s per-repo sibling — `sidebar_tag` is a repo field, and
+    setting it at the top level would silently be read as unset."""
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data["repos"][0][key] = value
+    cfg_path.write_text(json.dumps(data))
+
+
+def test_sidebar_tag_prefixes_the_spawned_workspace_name(spawn_main, cockpit_repo):
+    """`cockpit new` must apply the same tag `Worktree.workspace_name` does, or
+    the daemon's next reconcile renames the workspace one tick after creation."""
+    from cockpit.lib.git import SIDEBAR_TAG_SEP
+
+    _set_repo_key(cockpit_repo, "sidebar_tag", "trp")
+    code, _out, _err = spawn_main(["--name", "foo", "--repo", "testrepo"])
+    assert code == 0
+    call = spawn_main.cmux_calls[0]
+    assert _cmux_kwarg(call, "name") == f"trp{SIDEBAR_TAG_SEP}foo"
+
+
+def test_no_sidebar_tag_leaves_the_spawned_name_alone(spawn_main):
+    """The unset default must be byte-identical to the pre-tag behaviour."""
+    code, _out, _err = spawn_main(["--name", "foo", "--repo", "testrepo"])
+    assert code == 0
+    assert _cmux_kwarg(spawn_main.cmux_calls[0], "name") == "foo"
+
+
+def test_cwd_alone_takes_no_sidebar_tag(spawn_main, cockpit_repo, tmp_path):
+    """A `--cwd` with no `--repo` has no repo determined, so it gets no tag —
+    guessing one from the spawn process's cwd would stamp the workspace with
+    whichever repo the user happened to be standing in."""
+    _set_repo_key(cockpit_repo, "sidebar_tag", "trp")
+    target = tmp_path / "freestanding"
+    target.mkdir()
+    code, _out, _err = spawn_main(["--cwd", str(target)])
+    assert code == 0
+    assert _cmux_kwarg(spawn_main.cmux_calls[0], "name") == "freestanding"
+
+
 def test_name_with_cwd_spawns_at_path_without_branch(spawn_main, tmp_path):
     target = tmp_path
     code, out, _err = spawn_main(["--name", "myshort", "--cwd", str(target)])
