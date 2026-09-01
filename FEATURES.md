@@ -32,7 +32,8 @@ having to remember.
 ![cockpit watch — every worktree, workspace, and PR in one table](docs/cockpit-tui.png)
 
 **Columns.** Workspace · PR # · `✎` uncommitted files · `🔀` review state · CI · `💬`
-comment count · Ticket + `📍` its tracker state · Author · Title · `$` session spend.
+comment count (red `N/T` while threads await you, green `0/T` once they're all handled) ·
+Ticket + `📍` its tracker state · Author · Title · `$` session spend.
 The ticket pair appears only when some repo has a tracker configured; `$` only when your
 plan actually reports per-session cost — an absent number and a zero are different claims,
 so a row that can't tell them apart renders blank rather than lying.

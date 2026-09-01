@@ -634,9 +634,9 @@ def _comments_cell(unaddressed_raw: str, total_raw: str) -> Text:
 
     Reads the daemon-written `pr-comments` (unaddressed) and `pr-comments-total`
     (threads opened by others) cells. Renders:
-      - blank when nothing is unaddressed — the column reads as "needs my
-        attention", and zero-unaddressed is the happy path even if past threads
-        exist;
+      - blank only when no thread from others exists at all;
+      - `0/T` (green) when every thread has been handled — the count is still
+        worth seeing, and green reads as "nothing owed";
       - `N` (red) when every thread from others is still unaddressed (the
         denominator would add no information);
       - `N/T` (red) when `T` threads exist and `N < T` are unaddressed, so the
@@ -648,7 +648,7 @@ def _comments_cell(unaddressed_raw: str, total_raw: str) -> Text:
     except ValueError:
         return Text("")
     if unaddressed <= 0:
-        return Text("")
+        return Text(f"0/{total}", style="green") if total > 0 else Text("")
     label = f"{unaddressed}/{total}" if total > unaddressed else str(unaddressed)
     return Text(label, style="red")
 
@@ -945,14 +945,16 @@ _CI_LABEL: dict[str, str] = {
 
 def _comments_tooltip(unaddressed_raw: str, total_raw: str) -> str | None:
     """Hover text for the 💬 cell — mirrors `_comments_cell`'s parse but spells
-    the ratio out in words. None when nothing is unaddressed (no cell shown)."""
+    the ratio out in words. None when the cell is blank."""
     try:
         unaddressed = int(unaddressed_raw or 0)
         total = int(total_raw or 0)
     except ValueError:
         return None
     if unaddressed <= 0:
-        return None
+        if total <= 0:
+            return None
+        return f"all {total} review thread(s) addressed"
     if total > unaddressed:
         return f"{unaddressed} of {total} review threads unaddressed"
     return f"{unaddressed} unaddressed review thread(s)"
