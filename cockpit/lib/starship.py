@@ -491,15 +491,18 @@ def print_pr_comments(branch: str | None = None) -> str:
     if not branch:
         return ""
     raw = read_text(cwd_cache("pr-comments", os.getcwd()))
-    if not raw:
-        return ""
+    total_raw = read_text(cwd_cache("pr-comments-total", os.getcwd()))
     try:
-        count = int(raw)
+        count = int(raw or 0)
+        total = int(total_raw or 0)
     except ValueError:
         return ""
     if count <= 0:
-        return ""
-    return red(f"{ICON_PR_COMMENTS} {count}")
+        if total <= 0:
+            return ""
+        return green(f"{ICON_PR_COMMENTS} 0/{total}")
+    label = f"{count}/{total}" if total > count else str(count)
+    return red(f"{ICON_PR_COMMENTS} {label}")
 
 
 def print_pr_checks(branch: str | None = None) -> str:

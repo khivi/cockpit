@@ -288,9 +288,21 @@ def test_print_pr_comments_with_count(cache_dir):
     assert starship.print_pr_comments("khivi/foo") == red("💬 3")
 
 
+def test_print_pr_comments_ratio(cache_dir):
+    _cell("pr-comments").write_text("2")
+    _cell("pr-comments-total").write_text("5")
+    assert starship.print_pr_comments("khivi/foo") == red("💬 2/5")
+
+
 def test_print_pr_comments_zero_is_empty(cache_dir):
     _cell("pr-comments").write_text("0")
     assert starship.print_pr_comments("khivi/foo") == ""
+
+
+def test_print_pr_comments_all_addressed_is_green_ratio(cache_dir):
+    _cell("pr-comments").write_text("0")
+    _cell("pr-comments-total").write_text("7")
+    assert starship.print_pr_comments("khivi/foo") == green("💬 0/7")
 
 
 def test_print_pr_comments_empty_cache_is_empty(cache_dir):

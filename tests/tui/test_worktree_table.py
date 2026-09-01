@@ -219,11 +219,20 @@ def test_zero_comments_is_blank(cache_dir):
     assert _plain(wt)[_col("💬")] == ""
 
 
+def test_all_addressed_shows_green_ratio(cache_dir):
+    wt = _wt(branch="khivi/addressed")
+    cache_mod.cwd_cache("pr-comments", wt.path).write_text("0")
+    cache_mod.cwd_cache("pr-comments-total", wt.path).write_text("7")
+    assert _plain(wt)[_col("💬")] == "0/7"
+    assert "green" in str(_comments_cell("0", "7").style)
+
+
 @pytest.mark.parametrize(
     "unaddressed,total,expected",
     [
         ("", "", ""),  # no PR / no threads → blank
-        ("0", "5", ""),  # all addressed → blank (column = "needs attention")
+        ("0", "5", "0/5"),  # all addressed → green ratio, not blank
+        ("0", "0", ""),  # no threads at all → blank
         ("2", "", "2"),  # total cell empty → bare count
         ("2", "0", "2"),  # total zero → bare count
         ("2", "2", "2"),  # every thread fresh → denominator adds nothing
@@ -236,7 +245,8 @@ def test_comments_cell_ratio(unaddressed, total, expected):
     cell = _comments_cell(unaddressed, total)
     assert cell.plain == expected
     if expected:
-        assert "red" in str(cell.style)
+        expected_style = "green" if expected.startswith("0/") else "red"
+        assert expected_style in str(cell.style)
 
 
 def test_comments_ratio_through_worktree_cells(cache_dir):

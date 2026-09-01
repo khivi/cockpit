@@ -17,7 +17,7 @@ Subcommands:
   ticket               — ticket ID from branch name
   pr-state             — PR state (OPEN / DRAFT / APPROVED / ...)
   pr-num               — "#<n>" for the current branch's PR
-  pr-comments          — 💬 N unaddressed review threads
+  pr-comments          — 💬 N/T review threads (red unaddressed, dim all-handled)
   pr-checks            — CI glyph (✓ / • / ✗)
   pr-title             — PR title
   pr-muted             — 🔇 muted[: cats] when nudges are silenced
