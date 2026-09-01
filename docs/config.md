@@ -57,7 +57,7 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `default_base` | string | `"main"` | Base branch PRs target; drives base-distance + the `origin/{base}` startup warning. |
 | `base_remote` | string | `"origin"` | Remote half of that base. Set to `upstream` on a fork, so base-distance measures against the repo you PR into rather than your own copy. Also a top-level default. |
 | `sidebar_color` | string | unset | cmux sidebar tint + TUI row tint (one of `colors.CMUX_COLOR_ANSI`). Validated at preflight. |
-| `sidebar_tag` | string | `""` | Short repo tag prefixed to the cmux workspace name as `<tag>·<branch-label>`. Opt-in: unset leaves every name unchanged. Use it once tint alone stops scaling — there are only 16 colours and several don't read apart at a glance. Not applied to a primary checkout, which is already named after the repo. |
+| `sidebar_tag` | string | `""` | Short repo tag prefixed to the cmux workspace name as `<tag>·<branch-label>`. Opt-in: unset leaves every name unchanged. Use it once tint alone stops scaling — there are only 16 colours and several don't read apart at a glance. The literal `{repo}` expands to the repo's own name, which is what makes the tag worth setting on an **org** (a literal there labels the org, not the repo); a repo's own tag still wins, so `{repo}` on the org is the fallback and a short literal is the override. Not applied to a primary checkout, which is already named after the repo. |
 | `review_prs` | bool | `false` | Auto-spawn a review worktree for each coworker's open PR (collaborators only; see `review_external`). |
 | `skills` | object | `{}` | Slash-command overrides (below). No-op for `review` unless `review_prs`. |
 | `review_external` | bool | `false` | Also auto-spawn review worktrees for non-collaborator (fork) PRs. Off by default — untrusted content reaching a Bash-capable agent is a prompt-injection risk. |
@@ -116,9 +116,12 @@ Two effects, both falling out of that merge (`config.py::apply_org_defaults`,
 applied at load):
 
 - **One colour per org.** `sidebar_color` drives both the cmux sidebar tint and
-  the TUI row tint, so an org's repos read as one block. Set `sidebar_tag` per
-  repo to tell members of that block apart — the colour says which org, the tag
-  says which repo.
+  the TUI row tint, so an org's repos read as one block. `sidebar_tag` tells
+  members of that block apart — the colour says which org, the tag says which
+  repo. Set it to `"{repo}"` on the org and each member expands it to its own
+  name (`config.py::expand_sidebar_tags`), so a repo added later is labelled with
+  no further config; override with a short literal on any repo whose full name is
+  too wide for the sidebar.
 - **One `use_worktree: false` per org**, not one per repo — the usual shape when
   the org is many small repos you work in-place and only occasionally pull.
 

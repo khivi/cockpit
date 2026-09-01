@@ -98,6 +98,7 @@
     },
     "acme-labs": {
       "sidebar_color": "Cyan",
+      "sidebar_tag": "{repo}",
       "branch_prefix": "yourusername/",
       "tickets": {
         "provider": "linear",

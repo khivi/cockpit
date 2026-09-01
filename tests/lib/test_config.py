@@ -1892,6 +1892,59 @@ def test_apply_org_defaults_fills_unset_keys_and_the_repo_always_wins():
     assert "sidebar_color" not in solo and "use_worktree" not in solo
 
 
+def test_org_repo_token_tag_expands_to_each_member_s_own_name():
+    """The whole point of the token: a *literal* org tag labels the org, so every
+    member still reads alike — which is the ambiguity tagging exists to remove.
+    A repo's own tag still wins, so `{repo}` is the fallback and a short literal
+    is the override."""
+    cfg: dict = {
+        "repos": [
+            {"name": "svc-core", "path": "/a", "org": "acme"},
+            {"name": "svc-core-infra", "path": "/b", "org": "acme"},
+            {
+                "name": "svc-lab-cluster",
+                "path": "/c",
+                "org": "acme",
+                "sidebar_tag": "lab",
+            },
+            {"path": "/d/unnamed", "org": "acme"},
+            {"name": "solo", "path": "/e"},
+        ],
+        "orgs": {"acme": {"sidebar_tag": "{repo}"}},
+    }
+    config_mod.expand_sidebar_tags(config_mod.apply_org_defaults(cfg))
+    tags = [r.get("sidebar_tag") for r in cfg["repos"]]
+    # Inherited-and-expanded, inherited-and-expanded, repo override, path
+    # basename when the repo has no name, untouched (no org).
+    assert tags == ["svc-core", "svc-core-infra", "lab", "unnamed", None]
+
+
+def test_expand_sidebar_tags_leaves_a_literal_tag_alone():
+    cfg: dict = {"repos": [{"name": "a", "path": "/a", "sidebar_tag": "os"}]}
+    config_mod.expand_sidebar_tags(cfg)
+    assert cfg["repos"][0]["sidebar_tag"] == "os"
+
+
+def test_load_config_expands_the_repo_token(tmp_path, monkeypatch):
+    """It has to run inside `load_config`, or the five `repo_entry.get(
+    "sidebar_tag")` readers each see the raw token and every workspace is
+    named `{repo}·<branch>`."""
+    import importlib
+
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    importlib.reload(config_mod)
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "repos": [{"name": "svc-auth", "path": "/a", "org": "acme"}],
+                "orgs": {"acme": {"sidebar_tag": "{repo}"}},
+            }
+        )
+    )
+    cfg = config_mod.load_config()
+    assert cfg["repos"][0]["sidebar_tag"] == "svc-auth"
+
+
 def test_apply_org_defaults_is_idempotent():
     # validate_config re-applies it on a config load_config already merged, so a
     # second pass must be a no-op rather than re-deriving anything.

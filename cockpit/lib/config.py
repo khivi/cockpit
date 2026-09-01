@@ -301,6 +301,41 @@ def apply_org_defaults(cfg: dict) -> dict:
     return cfg
 
 
+REPO_TAG_TOKEN = "{repo}"
+
+
+def expand_sidebar_tags(cfg: dict) -> dict:
+    """Substitute `{repo}` in each repo's `sidebar_tag` with its own name, in
+    place. Returns the same dict for chaining.
+
+    The token exists so the tag can be declared **once on an org** and still name
+    each member: `apply_org_defaults` copies a scalar verbatim, so a literal
+    org-level tag labels the org rather than the repo, and the ambiguity that
+    motivates tagging at all — several repos holding a worktree of the same
+    branch name — survives it. A repo setting its own tag still wins outright,
+    which is what makes the pair useful: `{repo}` on the org is the fallback that
+    leaves nothing unlabelled, and a short literal overrides it where the full
+    name is too wide for the sidebar.
+
+    Runs at `load_config` time, immediately after the org merge, for the same
+    reason that merge lives there: every reader resolves `sidebar_tag` off
+    `repo_entry.get(...)`, so expanding here reaches all five of them with zero
+    call-site changes and nothing below this function learns the token exists.
+    Never persisted — the config writers re-read `config.json` from disk.
+
+    The substituted value is the repo's one identity (`name`, else the path
+    basename), matching `broadcast._repo_label` and what the TUI's group header
+    shows.
+    """
+    for repo in cfg.get("repos", []):
+        tag = repo.get("sidebar_tag")
+        if not isinstance(tag, str) or REPO_TAG_TOKEN not in tag:
+            continue
+        name = repo.get("name") or Path(os.path.expanduser(repo.get("path", ""))).name
+        repo["sidebar_tag"] = tag.replace(REPO_TAG_TOKEN, name)
+    return cfg
+
+
 def repos_grouped_by_org(cfg: dict) -> list[dict]:
     """Configured repos with same-`org` entries adjacent, each org sitting at the
     position of its first member.
@@ -340,7 +375,7 @@ def load_config() -> dict:
     """
     global _CONFIG_CACHE
     if _CONFIG_CACHE is None:
-        _CONFIG_CACHE = apply_org_defaults(_read_config())
+        _CONFIG_CACHE = expand_sidebar_tags(apply_org_defaults(_read_config()))
     return _CONFIG_CACHE
 
 
