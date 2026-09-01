@@ -295,6 +295,8 @@ The `$` column totals what every session rooted at a worktree has spent. The dat
 
 `cockpit/broadcast.py` fans a line out to every idle workspace via `nudge_if_idle(..., tag="broadcast")` with no `pref_key`. A one-shot gesture: no cell, pill, or `pill_state`, and skipped refs are printed, never queued. **Do not** give it its own send path, idle check, or cache cell — extend `nudge_if_idle` instead.
 
+**`--repo` is a filter over that one loop, never a second scope.** It matches each workspace's cwd against the repo's own `worktrees()` (`_repo_paths`) — **never a path-prefix test**, exactly like `_park_workspaces` and the repo-header `a`, since a worktree usually lives in a *sibling* directory. The repo is named by its **one** identity (`_repo_label`, the `name`-or-basename the table shows), casefolded — **do not** accept the path basename as a second spelling, since under a bare clone every repo's path ends in `.bare` and `--repo .bare` would then broadcast into whichever one sorted first. An unknown name exits **2** listing the configured repos rather than silently broadcasting to everything. The unscoped path makes **no** config read at all — broadcast reaches workspaces cockpit doesn't manage, so reading the config there could only narrow it.
+
 ### Nudge prefs are keyed per repo — a PR number alone is not an identity
 
 `NudgePref` persists one JSON file per PR at `$COCKPIT_HOME/cache/nudges/<repo>__<number>.json`, keyed by the git **nwo name** — the same key the PR cache files use. Every entry point threads it, including the TUI's `_resolve_row_pref` (via `_cache_repo_name`, **not** the config `name`) and `cockpit nudge`'s `_resolve_pr`, which exits 2 rather than falling back to a bare number.

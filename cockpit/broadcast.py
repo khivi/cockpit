@@ -4,6 +4,10 @@ A one-shot admin gesture (typically a slash command like `/compact`) fanned
 out to every workspace cmux/limux knows about, so one command reaches every
 open session instead of clicking through each one by hand.
 
+`--repo NAME` narrows that fan-out to one configured repo. The scope is a
+*filter over the same loop*, not a second delivery path: every ref that
+survives it still goes through `nudge_if_idle` unchanged.
+
 Reuses the two existing primitives in `cockpit.lib.cmux` rather than building
 a parallel send path:
 
@@ -29,9 +33,46 @@ and forgotten, and re-running the command is the retry.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from pathlib import Path
 
 from cockpit.lib.cmux import CmuxUnavailable, nudge_if_idle, workspace_cwds
+from cockpit.lib.config import load_config
+from cockpit.lib.git import worktrees
+
+
+def _repo_label(repo: dict) -> str:
+    """The repo's one identity — the same `name`-or-basename the table shows.
+
+    Deliberately ONE axis, not "name or basename" as alternatives: under a bare
+    clone every repo's path ends in `.bare`, so accepting the basename as a
+    second spelling makes `--repo .bare` match whichever bare repo happens to
+    come first in the config and silently broadcast into the wrong one.
+    """
+    return repo.get("name") or Path(os.path.expanduser(repo["path"])).name
+
+
+def _repo_paths(name: str) -> set[Path]:
+    """Every path a session in the configured repo `name` can be rooted at.
+
+    Matched by cwd against the repo's own `worktrees()`, never a path-prefix
+    test — a worktree usually lives in a *sibling* directory of the repo, and a
+    prefix would both miss those and claim an unrelated repo nested underneath.
+
+    Raises `LookupError`, naming the configured repos, when nothing matches.
+    """
+    repos = load_config().get("repos", [])
+    for repo in repos:
+        # Casefolded: a config `name` is a display string ("Cockpit"), and
+        # failing a broadcast over its capital letter is a papercut with no
+        # upside.
+        if _repo_label(repo).casefold() == name.casefold():
+            path = Path(os.path.expanduser(repo["path"]))
+            wts = worktrees(path, repo.get("branch_prefix", ""))
+            return {path.resolve(), *(wt.path.resolve() for wt in wts)}
+    known = ", ".join(sorted(_repo_label(r) for r in repos))
+    raise LookupError(f"unknown repo {name!r}; configured: {known or '(none)'}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,6 +90,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Report which workspaces would receive the message without sending.",
     )
+    p.add_argument(
+        "--repo",
+        metavar="NAME",
+        help="Only send to workspaces in this configured repo, named as the "
+        "dashboard names it (case-insensitive). Default: every idle workspace.",
+    )
     args = p.parse_args(argv)
 
     try:
@@ -57,8 +104,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cockpit broadcast: workspace backend unavailable: {e}", file=sys.stderr)
         return 1
 
+    if args.repo:
+        try:
+            paths = _repo_paths(args.repo)
+        except LookupError as e:
+            print(f"cockpit broadcast: {e}", file=sys.stderr)
+            return 2
+        except (RuntimeError, OSError) as e:
+            print(
+                f"cockpit broadcast: could not enumerate {args.repo} worktrees: {e}",
+                file=sys.stderr,
+            )
+            return 1
+        cwds = {ref: cwd for ref, cwd in cwds.items() if cwd.resolve() in paths}
+
+    scope = f" in {args.repo}" if args.repo else ""
     if not cwds:
-        print("cockpit broadcast: no other workspaces found")
+        print(f"cockpit broadcast: no other workspaces{scope or ' found'}")
         return 0
 
     sent: list[str] = []
@@ -72,10 +134,10 @@ def main(argv: list[str] | None = None) -> int:
         # skip set — not `sent`, which is empty by construction.
         print(
             f"cockpit broadcast: dry-run — {len(cwds) - len(skips)}/{len(cwds)} "
-            "workspace(s) would receive it"
+            f"workspace(s){scope} would receive it"
         )
     else:
-        print(f"cockpit broadcast: sent to {len(sent)}/{len(cwds)} workspace(s)")
+        print(f"cockpit broadcast: sent to {len(sent)}/{len(cwds)} workspace(s){scope}")
     _print_skips(skips, retry=not args.dry)
     return 0
 

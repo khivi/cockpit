@@ -327,13 +327,20 @@ with `statusline_hide`. Set `use_cship: true`, or accept the prompt during `cock
 ## Reaching every session at once
 
 ```bash
-cockpit broadcast /compact      # --dry to preview
+cockpit broadcast /compact                    # --dry to preview
+cockpit broadcast --repo svc-auth /compact    # just that repo's sessions
 ```
 
 One line of text into every idle Claude session cockpit knows about. Same idle gate as the
 nudge, so a session mid-turn or sitting on a permission prompt is skipped and named, never
 interrupted. Handy for `/compact` across the board, or telling every session about a
 decision you just made.
+
+`--repo` narrows it to one registered repo when the message only makes sense there. Name it
+the way the dashboard does, case-insensitively; a name it doesn't recognise lists the ones
+it has rather than broadcasting to everything. Scoping matches each session's directory
+against that repo's own worktrees, so a worktree parked in a sibling directory still counts
+and a different repo nested inside one never does.
 
 `/cockpit-new`, `/cockpit-close`, and `/cockpit-broadcast` are installed into Claude Code
 by `cockpit setup`, so you can drive all three from inside a session.

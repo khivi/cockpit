@@ -1,6 +1,6 @@
 ---
 description: "Send a line of text (often a slash command like /compact) to every idle Claude session cockpit knows about."
-argument-hint: "[--dry] <message>"
+argument-hint: "[--dry] [--repo NAME] <message>"
 allowed-tools: Bash
 ---
 
@@ -12,14 +12,20 @@ cockpit broadcast "$ARGUMENTS"
 ```
 
 The message is a **single positional argument**, so keep it quoted. If
-`$ARGUMENTS` starts with `--dry`, move that flag outside the quotes
-(`cockpit broadcast --dry "<rest>"`); everything else is the message.
+`$ARGUMENTS` starts with `--dry` or `--repo NAME`, move those outside the
+quotes (`cockpit broadcast --dry --repo svc-auth "<rest>"`); everything else
+is the message.
 
 Don't reimplement the fan-out loop or the idle check in bash —
 `cockpit broadcast` owns both.
 
 - `--dry` reports which workspaces would receive the message without sending
   it. Prefer it first when the user hasn't already confirmed the exact text.
+- `--repo NAME` scopes the fan-out to one registered repo, named as the
+  dashboard names it (case-insensitive). Use it whenever the message only makes
+  sense in one repo — the default really is every idle session, including repos
+  the user isn't thinking about. An unknown name exits 2 and lists the
+  configured ones; read that list rather than guessing a second spelling.
 - The command skips any workspace that's mid-turn, awaiting a permission
   prompt, or parked — that's the whole safety story, and it's built in. It
   also never sends to the caller's own session. Skipped workspaces are
@@ -34,9 +40,9 @@ slash-command autocomplete, and the trailing `enter` submits whatever is
 typed. An exact-prefix match usually sorts first, but that's an assumption
 about someone else's UI, not a guarantee.
 
-`cockpit broadcast` has no single-workspace target — it always fans out to
-every idle workspace at once. So before broadcasting a slash command for the
-first time, tell the user to smoke-test it by hand in ONE live workspace
-(type it into that workspace's composer and confirm it runs the intended
-command, not an autocomplete near-miss) rather than discovering a misfire
-only after it already hit every session.
+`cockpit broadcast` has no single-workspace target — the narrowest scope is
+`--repo`, which is still every idle workspace in that repo. So before
+broadcasting a slash command for the first time, tell the user to smoke-test
+it by hand in ONE live workspace (type it into that workspace's composer and
+confirm it runs the intended command, not an autocomplete near-miss) rather
+than discovering a misfire only after it already hit every session.
