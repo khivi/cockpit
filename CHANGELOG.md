@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.19.0](https://github.com/khivi/cockpit/compare/v2.18.0...v2.19.0) (2026-09-01)
+
+
+### Features
+
+* name the owning repo in the TUI header and the cmux sidebar ([#444](https://github.com/khivi/cockpit/issues/444)) ([73203d9](https://github.com/khivi/cockpit/commit/73203d989e9e6a4eac29dd165ba396a8ff519fbd))
+
 ## [2.18.0](https://github.com/khivi/cockpit/compare/v2.17.1...v2.18.0) (2026-09-01)
 
 
