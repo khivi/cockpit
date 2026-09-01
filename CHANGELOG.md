@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.18.0](https://github.com/khivi/cockpit/compare/v2.17.1...v2.18.0) (2026-09-01)
+
+
+### Features
+
+* **broadcast:** scope the fan-out to one repo with --repo ([#442](https://github.com/khivi/cockpit/issues/442)) ([90ad7a4](https://github.com/khivi/cockpit/commit/90ad7a4bfed6549c9d060a764cb1f364af377c6e))
+
 ## [2.17.1](https://github.com/khivi/cockpit/compare/v2.17.0...v2.17.1) (2026-08-31)
 
 
