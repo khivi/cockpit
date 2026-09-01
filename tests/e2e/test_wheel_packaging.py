@@ -53,6 +53,7 @@ def test_wheel_bundles_cockpit_package(built_wheel):
     assert "cockpit/claude_commands/cockpit-new.md" in names
     assert "cockpit/claude_commands/cockpit-close.md" in names
     assert "cockpit/claude_commands/cockpit-broadcast.md" in names
+    assert "cockpit/claude_commands/cockpit-nudge.md" in names
 
 
 def test_installed_wheel_console_script_runs(built_wheel, tmp_path):

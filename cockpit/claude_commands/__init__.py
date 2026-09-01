@@ -2,6 +2,6 @@
 
 Loaded by :func:`cockpit.lib.config.install_claude_commands` and copied
 verbatim into ``~/.claude/commands/``. Keep these as thin wrappers that invoke
-the ``cockpit`` CLI (`cockpit new` / `cockpit close`) — no logic beyond
-argument passthrough.
+the ``cockpit`` CLI (`cockpit new` / `cockpit close` / `cockpit broadcast` /
+`cockpit nudge`) — no logic beyond argument passthrough.
 """

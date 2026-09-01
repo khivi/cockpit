@@ -28,6 +28,29 @@ def test_help_flag_prints_usage(capsys):
     assert "usage: cockpit" in capsys.readouterr().out
 
 
+def test_usage_lists_shims_apart_from_typed_subcommands(capsys):
+    assert cli.main(["--help"]) == 0
+    out = capsys.readouterr().out
+    head, _, shims = out.partition("config-invoked shims:")
+    assert shims, "usage must name the config-invoked shims separately"
+    for sub in cli._SUBCOMMANDS:
+        assert sub in head
+    for sub in cli._SHIM_SUBCOMMANDS:
+        assert sub not in head and sub in shims
+
+
+@pytest.mark.parametrize("sub", cli._SHIM_SUBCOMMANDS)
+def test_shims_dispatch_despite_being_off_the_usage_line(monkeypatch, sub, capsys):
+    """The two tuples differ only in what `_usage` advertises — a shim left out
+    of `_SUBCOMMANDS` must still route, or every installed settings.json /
+    starship.toml command string breaks."""
+    monkeypatch.setattr("cockpit.statusline.main", lambda: 0)
+    monkeypatch.setattr("cockpit.starship.main", lambda argv: 0)
+    monkeypatch.setattr("os.execvp", lambda *a: 0)
+    assert cli.main([sub, "warm"]) == 0
+    assert "unknown subcommand" not in capsys.readouterr().err
+
+
 def test_version_flag_prints_version(capsys):
     assert cli.main(["--version"]) == 0
     out = capsys.readouterr().out

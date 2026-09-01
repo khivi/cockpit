@@ -47,7 +47,7 @@ Each cycle re-reads `git worktree list` and cmux's workspace list. Only PR paylo
 - **Pin self-heals on upgrade:** `cockpit watch` re-pins on startup via `config.repin_interpreter_if_stale`, rewriting only the interpreter prefix so user edits survive. Startup-only.
 - **idle-pill hook:** `cockpit/hooks/cmux-idle-pill.sh`, inside the package so it ships in the wheel, `bash`-exec'd (no reliance on the wheel preserving the exec bit).
 
-**Slash commands are user commands, not a plugin.** `cockpit/claude_commands/*.md` wrap `cockpit new/close/broadcast $ARGUMENTS`. **A command template documents the CLI, never reimplements it.** `parse_args` **errors** on a bare `--context` rather than defaulting to none — an unexpanded flag means the substitution didn't happen. **Do not** teach the CLI to synthesize its own context. **They install as flat, hyphenated files** (`cockpit-new.md` → `/cockpit-new`); colon-namespacing is plugin-only. hatchling ships only **VCS-tracked** files, so a new template must be `git add`ed.
+**Slash commands are user commands, not a plugin.** `cockpit/claude_commands/*.md` wrap `cockpit new/close/broadcast/nudge $ARGUMENTS`. **A command template documents the CLI, never reimplements it.** `parse_args` **errors** on a bare `--context` rather than defaulting to none — an unexpanded flag means the substitution didn't happen. **Do not** teach the CLI to synthesize its own context. **They install as flat, hyphenated files** (`cockpit-new.md` → `/cockpit-new`); colon-namespacing is plugin-only. hatchling ships only **VCS-tracked** files, so a new template must be `git add`ed.
 
 ### `cockpit watch` is a Textual TUI, and the TUI *is* the daemon (`cockpit/tui/`)
 
