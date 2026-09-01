@@ -1,4 +1,12 @@
 version: 2
+
+# No `labels:` on any entry. Specifying it *overrides* dependabot's defaults
+# rather than adding to them, and a custom label that doesn't exist in the repo
+# is silently ignored, never created. This file used to ask for "dependencies",
+# "pre-commit" and "github-actions" — none of which exist here, since the repo
+# carries only GitHub's nine stock labels — so the override cancelled the
+# defaults, the replacements were dropped, and every dependabot PR merged with
+# no label at all. Left unset, dependabot applies its own and creates them.
 updates:
   # Bump the pinned `rev`s in .pre-commit-config.yaml. Deliberately not listing
   # which hooks — that list named black, shfmt and relint long after they left
@@ -8,7 +16,6 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
-    labels: ["dependencies", "pre-commit"]
     # Don't propose a release until it has been public for a week. A
     # compromised package is usually yanked within days of publication, so the
     # delay costs nothing here (monthly interval) and drops the window in which
@@ -25,7 +32,6 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
-    labels: ["dependencies", "github-actions"]
     # This is what keeps the SHA pins in .github/zizmor.yml maintainable —
     # dependabot rewrites both the hash and its trailing version comment.
     cooldown:
