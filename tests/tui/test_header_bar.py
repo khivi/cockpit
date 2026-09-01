@@ -153,6 +153,16 @@ class _HeaderBarHarness(App[None]):
         yield HeaderBar()
 
 
+def _painted_spans(app: App[None]) -> list:
+    """The repo half's style spans.
+
+    Read reflectively: `Static.render()` is typed as a renderable union, and
+    Textual re-wraps the `Text` it was handed in its own `Content`, so narrowing
+    to a concrete class pins an internal Textual type this test has no stake in.
+    """
+    return list(getattr(app.query_one("#header-repo", Static).render(), "spans", []))
+
+
 @pytest.mark.asyncio
 async def test_menu_half_carries_its_own_tooltip():
     # The menu explains the menu: its own tooltip wins the ancestor walk over
@@ -262,12 +272,11 @@ async def test_repo_half_repaints_when_only_the_colour_changes():
         bar = app.query_one(HeaderBar)
         bar.repo_name = "myrepo"
         await pilot.pause()
-        before = app.query_one("#header-repo", Static).render().spans
+        before = _painted_spans(app)
 
         bar.repo_color = "Magenta"
         await pilot.pause()
-        after = app.query_one("#header-repo", Static).render().spans
-        assert after != before
+        assert _painted_spans(app) != before
 
 
 @pytest.mark.asyncio
