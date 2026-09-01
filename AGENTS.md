@@ -438,6 +438,9 @@ mypy cockpit/
 
 # Lint + format — ALWAYS via the pinned pre-commit hook, scoped to your files:
 pre-commit run ruff ruff-format --files <changed paths>
+
+# Audit the workflows for security issues after touching .github/:
+pre-commit run zizmor --all-files
 ```
 
 **Never lint/format with `uvx ruff` (or a globally-installed `ruff`).** `uvx` pulls the **latest** ruff, whose rules drift from the pinned version — running it tree-wide rewrites lines in files you never touched, producing churn the pinned hook then fights on commit. The pinned hook *is* the formatter, and it's what CI enforces.
@@ -461,6 +464,12 @@ pre-commit run ruff ruff-format --files <changed paths>
 `--dry` also suppresses the **cache writes**, which is why snapshot mode copies the real PR JSONs in. Every cmux-facing feature is **inert** under `tool: none`, so the sandbox is right for the table, cells, config, prompts and the cycle's decisions, and wrong for anything cmux-facing.
 
 `dev.sh` **refuses `cockpit setup`** (exit 2), which writes `sys.executable` *outside* the sandbox and from a worktree bakes in a `.venv/bin/python` that dies on cleanup. Guards are covered by `tests/test_dev_script.py`; the happy path is deliberately untested.
+
+### `.github/workflows/tag.yml`'s checkout must keep its credentials
+
+Workflow *safety* is zizmor's, workflow *correctness* is actionlint's; the policy lives in `.github/zizmor.yml` and the hook enforces it, so only the one rule it deliberately waives is written down here.
+
+`tag.yml` is exempt from `artipacked`. Its checkout credentials authenticate the `git push origin "v$v"` two steps later, and that push is what fires `release.yml` and `publish.yml`. Adding `persist-credentials: false` there breaks every release **silently** — the tag never lands, so neither downstream workflow runs and nothing reports a failure. Nothing catches it: zizmor is *satisfied* by the change, and the warning sits in `.github/zizmor.yml`, a file you have no reason to open while editing `tag.yml`. **Do not** "fix" it.
 
 ## Release versioning
 
