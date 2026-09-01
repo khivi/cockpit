@@ -164,6 +164,193 @@ def test_message_passed_through_verbatim(monkeypatch):
     assert seen == [slash_command]
 
 
+def _repo_fixture(monkeypatch, tmp_path, *, name="svc-auth", worktree_dirs=("scope",)):
+    """A configured repo at `tmp_path/<name>` whose worktrees are SIBLINGS of it.
+
+    The sibling layout is the point: a path-prefix filter would drop every one
+    of them, so a test using a nested layout would pass against the wrong
+    implementation.
+    """
+    repo_path = tmp_path / name
+    repo_path.mkdir()
+    wts = []
+    for d in worktree_dirs:
+        p = tmp_path / d
+        p.mkdir()
+        wts.append(type("WT", (), {"path": p})())
+    monkeypatch.setattr(
+        broadcast,
+        "load_config",
+        lambda: {"repos": [{"name": name, "path": str(repo_path)}]},
+    )
+    monkeypatch.setattr(broadcast, "worktrees", lambda path, prefix="": wts)
+    return repo_path, [wt.path for wt in wts]
+
+
+def test_repo_scopes_the_fan_out_to_that_repos_worktrees(monkeypatch, tmp_path, capsys):
+    repo_path, wt_paths = _repo_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        broadcast,
+        "workspace_cwds",
+        lambda: {
+            "workspace:mine": wt_paths[0],
+            "workspace:root": repo_path,
+            "workspace:other": tmp_path / "unrelated",
+        },
+    )
+    seen = []
+
+    def fake_nudge(ref, message, *, dry=False, tag="", skips=None):
+        seen.append(ref)
+        return True
+
+    monkeypatch.setattr(broadcast, "nudge_if_idle", fake_nudge)
+
+    assert broadcast.main(["/compact", "--repo", "svc-auth"]) == 0
+    assert seen == ["workspace:mine", "workspace:root"]
+    assert "sent to 2/2 workspace(s) in svc-auth" in capsys.readouterr().out
+
+
+def test_repo_match_is_case_insensitive(monkeypatch, tmp_path, capsys):
+    """A config `name` is a display string — 'Cockpit' must answer to
+    `--repo cockpit`."""
+    repo_path, wt_paths = _repo_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        broadcast,
+        "load_config",
+        lambda: {"repos": [{"name": "Cockpit", "path": str(repo_path)}]},
+    )
+    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: {"w:1": wt_paths[0]})
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact", "--repo", "cockpit"]) == 0
+    assert "sent to 1/1 workspace(s) in cockpit" in capsys.readouterr().out
+
+
+def test_unnamed_repo_falls_back_to_its_directory(monkeypatch, tmp_path, capsys):
+    repo_path, wt_paths = _repo_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        broadcast, "load_config", lambda: {"repos": [{"path": str(repo_path)}]}
+    )
+    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: {"w:1": wt_paths[0]})
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact", "--repo", repo_path.name]) == 0
+    assert "sent to 1/1" in capsys.readouterr().out
+
+
+def test_bare_repo_basename_is_not_a_second_spelling(monkeypatch, tmp_path, capsys):
+    """Under a bare clone every repo's path ends in `.bare`. If the basename
+    were accepted alongside the name, `--repo .bare` would resolve to whichever
+    bare repo sorted first in the config and broadcast into the wrong one."""
+    for name in ("Cockpit", "cockpit-app"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / ".bare").mkdir()
+    monkeypatch.setattr(
+        broadcast,
+        "load_config",
+        lambda: {
+            "repos": [
+                {"name": "Cockpit", "path": str(tmp_path / "Cockpit" / ".bare")},
+                {
+                    "name": "cockpit-app",
+                    "path": str(tmp_path / "cockpit-app" / ".bare"),
+                },
+            ]
+        },
+    )
+    monkeypatch.setattr(broadcast, "worktrees", lambda path, prefix="": [])
+    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact", "--repo", ".bare"]) == 2
+    assert "sent to" not in capsys.readouterr().out
+
+
+def test_unknown_repo_exits_2_and_names_the_configured_ones(
+    monkeypatch, tmp_path, capsys
+):
+    _repo_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact", "--repo", "typo"]) == 2
+    captured = capsys.readouterr()
+    assert "sent to" not in captured.out
+    assert "unknown repo 'typo'" in captured.err
+    assert "svc-auth" in captured.err
+
+
+def test_repo_with_no_open_workspaces_is_not_an_error(monkeypatch, tmp_path, capsys):
+    _repo_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda: {"w:1": tmp_path / "unrelated"}
+    )
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact", "--repo", "svc-auth"]) == 0
+    out = capsys.readouterr().out
+    assert "no other workspaces in svc-auth" in out
+    assert "sent to" not in out
+
+
+def test_repo_dry_run_reports_the_scoped_denominator(monkeypatch, tmp_path, capsys):
+    """The denominator must be the SCOPED count, not the whole fleet — a
+    '1/9 would receive it' on a two-workspace repo reads as a broken filter."""
+    repo_path, wt_paths = _repo_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        broadcast,
+        "workspace_cwds",
+        lambda: {
+            "workspace:mine": wt_paths[0],
+            "workspace:root": repo_path,
+            "workspace:other": tmp_path / "unrelated",
+        },
+    )
+
+    def fake_nudge(ref, message, *, dry=False, tag="", skips=None):
+        if ref == "workspace:root":
+            skips[ref] = "mid-turn"
+        return False
+
+    monkeypatch.setattr(broadcast, "nudge_if_idle", fake_nudge)
+
+    assert broadcast.main(["/compact", "--repo", "svc-auth", "--dry"]) == 0
+    assert "1/2 workspace(s) in svc-auth would receive it" in capsys.readouterr().out
+
+
+def test_worktree_enumeration_failure_exits_1_without_sending(
+    monkeypatch, tmp_path, capsys
+):
+    _repo_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    def boom(path, prefix=""):
+        raise RuntimeError("git worktree list failed")
+
+    monkeypatch.setattr(broadcast, "worktrees", boom)
+
+    assert broadcast.main(["/compact", "--repo", "svc-auth"]) == 1
+    captured = capsys.readouterr()
+    assert "sent to" not in captured.out
+    assert "could not enumerate svc-auth worktrees" in captured.err
+
+
+def test_without_repo_nothing_reads_the_config(monkeypatch):
+    """The unscoped path must stay config-free: broadcast reaches workspaces
+    cockpit doesn't manage, so a config read there could only narrow it."""
+
+    def boom():
+        raise AssertionError("load_config must not be read without --repo")
+
+    monkeypatch.setattr(broadcast, "load_config", boom)
+    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact"]) == 0
+
+
 def test_nudge_called_with_broadcast_tag(monkeypatch):
     monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
     recorded = []
