@@ -355,8 +355,8 @@ it has rather than broadcasting to everything. Scoping matches each session's di
 against that repo's own worktrees, so a worktree parked in a sibling directory still counts
 and a different repo nested inside one never does.
 
-`/cockpit-new`, `/cockpit-close`, and `/cockpit-broadcast` are installed into Claude Code
-by `cockpit setup`, so you can drive all three from inside a session.
+`/cockpit-new`, `/cockpit-close`, `/cockpit-broadcast` and `/cockpit-nudge` are installed
+into Claude Code by `cockpit setup`, so you can drive all four from inside a session.
 
 ---
 
