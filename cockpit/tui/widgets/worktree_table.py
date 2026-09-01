@@ -495,7 +495,7 @@ def _hidden_cells(
     in the Workspace column (so it can't stretch that column) and, while
     collapsed, the repo names in the wide Title column. Both dim — it's a
     reminder, not a row. Expanded, the names render as their own rows below, so
-    the tail just says how to put them back.
+    the tail is empty; the key lives in the footer, not in the table.
 
     The count names its unit ("5 repos hidden", not "5 hidden") because this row
     sits directly under a repo's `▸ N snoozed` row, whose count is *worktree
@@ -505,10 +505,7 @@ def _hidden_cells(
     noun = "repo" if len(names) == 1 else "repos"
     return _disclosure_row(
         Text(f"{'▾' if expanded else '▸'} {len(names)} {noun} hidden", style="dim"),
-        Text(
-            "h to collapse" if expanded else " · ".join(names) + "   (h to show)",
-            style="dim",
-        ),
+        Text("" if expanded else " · ".join(names), style="dim"),
         columns,
     )
 
@@ -528,10 +525,7 @@ def _snoozed_cells(
             f"{ROW_INDENT}{'▾' if expanded else '▸'} {len(labels)} snoozed",
             style="dim",
         ),
-        Text(
-            "z to collapse" if expanded else " · ".join(labels) + "   (z to show)",
-            style="dim",
-        ),
+        Text("" if expanded else " · ".join(labels), style="dim"),
         columns,
     )
 
