@@ -34,6 +34,12 @@ def _pr(**overrides) -> PR:
     return PR(**base)
 
 
+_WT_PATH = Path("/tmp/wt")
+# The flat cells are keyed by the worktree path, slugged; every assertion below
+# reads the cell `_WT_PATH` owns.
+_KEY = cache_mod._cwd_key(_WT_PATH)
+
+
 def _wt(
     branch: str = "khivi/feature",
     *,
@@ -42,7 +48,7 @@ def _wt(
     dirty: int = 0,
 ) -> Worktree:
     return Worktree(
-        path=Path("/tmp/wt"),
+        path=_WT_PATH,
         branch=branch,
         rebasing=rebasing,
         merging=merging,
@@ -50,12 +56,12 @@ def _wt(
     )
 
 
-# ── write_branch_pr_cache (daemon-tick path, lib.cache) ────────────────────
+# ── write_worktree_pr_cache (daemon-tick path, lib.cache) ────────────────────
 
 
-def test_write_branch_pr_cache_resolves_state(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_resolves_state(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="APPROVED",
@@ -63,39 +69,39 @@ def test_write_branch_pr_cache_resolves_state(cache_dir):
         title="Hello",
         ci_glyph="✓",
     )
-    assert (cache_dir / "pr-state-khivi-feature").read_text() == "APPROVED"
-    assert (cache_dir / "pr-num-khivi-feature").read_text() == "17"
-    assert (cache_dir / "pr-title-khivi-feature").read_text() == "Hello"
-    assert (cache_dir / "pr-checks-khivi-feature").read_text() == "✓"
+    assert (cache_dir / f"pr-state-{_KEY}").read_text() == "APPROVED"
+    assert (cache_dir / f"pr-num-{_KEY}").read_text() == "17"
+    assert (cache_dir / f"pr-title-{_KEY}").read_text() == "Hello"
+    assert (cache_dir / f"pr-checks-{_KEY}").read_text() == "✓"
 
 
-def test_write_branch_pr_cache_draft_overrides_open(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_draft_overrides_open(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=True,
         review_decision="",
         number=18,
         title="Draft",
     )
-    assert (cache_dir / "pr-state-khivi-feature").read_text() == "DRAFT"
+    assert (cache_dir / f"pr-state-{_KEY}").read_text() == "DRAFT"
 
 
-def test_write_branch_pr_cache_closed_state_preserved(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_closed_state_preserved(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="MERGED",
         is_draft=False,
         review_decision="APPROVED",
         number=19,
         title="Done",
     )
-    assert (cache_dir / "pr-state-khivi-feature").read_text() == "MERGED"
+    assert (cache_dir / f"pr-state-{_KEY}").read_text() == "MERGED"
 
 
-def test_write_branch_pr_cache_writes_comments(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_writes_comments(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="CHANGES_REQUESTED",
@@ -103,12 +109,12 @@ def test_write_branch_pr_cache_writes_comments(cache_dir):
         title="Review me",
         comments=3,
     )
-    assert (cache_dir / "pr-comments-khivi-feature").read_text() == "3"
+    assert (cache_dir / f"pr-comments-{_KEY}").read_text() == "3"
 
 
-def test_write_branch_pr_cache_zero_comments_writes_empty(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_zero_comments_writes_empty(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
@@ -116,12 +122,12 @@ def test_write_branch_pr_cache_zero_comments_writes_empty(cache_dir):
         title="Clean",
         comments=0,
     )
-    assert (cache_dir / "pr-comments-khivi-feature").read_text() == ""
+    assert (cache_dir / f"pr-comments-{_KEY}").read_text() == ""
 
 
-def test_write_branch_pr_cache_writes_comments_total(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_writes_comments_total(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
@@ -130,13 +136,13 @@ def test_write_branch_pr_cache_writes_comments_total(cache_dir):
         comments=2,
         total=5,
     )
-    assert (cache_dir / "pr-comments-khivi-feature").read_text() == "2"
-    assert (cache_dir / "pr-comments-total-khivi-feature").read_text() == "5"
+    assert (cache_dir / f"pr-comments-{_KEY}").read_text() == "2"
+    assert (cache_dir / f"pr-comments-total-{_KEY}").read_text() == "5"
 
 
-def test_write_branch_pr_cache_zero_total_writes_empty(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_zero_total_writes_empty(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
@@ -145,12 +151,12 @@ def test_write_branch_pr_cache_zero_total_writes_empty(cache_dir):
         comments=0,
         total=0,
     )
-    assert (cache_dir / "pr-comments-total-khivi-feature").read_text() == ""
+    assert (cache_dir / f"pr-comments-total-{_KEY}").read_text() == ""
 
 
-def test_write_branch_pr_cache_writes_author(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "coworker/feature",
+def test_write_worktree_pr_cache_writes_author(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
@@ -158,24 +164,24 @@ def test_write_branch_pr_cache_writes_author(cache_dir):
         title="Theirs",
         author="octocat",
     )
-    assert (cache_dir / "pr-author-coworker-feature").read_text() == "octocat"
+    assert (cache_dir / f"pr-author-{_KEY}").read_text() == "octocat"
 
 
-def test_write_branch_pr_cache_default_author_empty(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_default_author_empty(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
         number=23,
         title="Mine",
     )
-    assert (cache_dir / "pr-author-khivi-feature").read_text() == ""
+    assert (cache_dir / f"pr-author-{_KEY}").read_text() == ""
 
 
-def test_write_branch_pr_cache_writes_nudge(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_writes_nudge(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
@@ -183,24 +189,24 @@ def test_write_branch_pr_cache_writes_nudge(cache_dir):
         title="Failing",
         nudge="ci",
     )
-    assert (cache_dir / "pr-nudge-khivi-feature").read_text() == "ci"
+    assert (cache_dir / f"pr-nudge-{_KEY}").read_text() == "ci"
 
 
-def test_write_branch_pr_cache_default_nudge_empty(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_default_nudge_empty(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
         number=27,
         title="Clean",
     )
-    assert (cache_dir / "pr-nudge-khivi-feature").read_text() == ""
+    assert (cache_dir / f"pr-nudge-{_KEY}").read_text() == ""
 
 
-def test_write_branch_pr_cache_writes_ticket(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/fnox",
+def test_write_worktree_pr_cache_writes_ticket(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
@@ -208,19 +214,19 @@ def test_write_branch_pr_cache_writes_ticket(cache_dir):
         title="Trello card",
         ticket_id="VfqsfqUd",
     )
-    assert (cache_dir / "pr-ticket-khivi-fnox").read_text() == "VfqsfqUd"
+    assert (cache_dir / f"pr-ticket-{_KEY}").read_text() == "VfqsfqUd"
 
 
-def test_write_branch_pr_cache_default_ticket_empty(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_default_ticket_empty(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
         number=29,
         title="No ticket",
     )
-    assert (cache_dir / "pr-ticket-khivi-feature").read_text() == ""
+    assert (cache_dir / f"pr-ticket-{_KEY}").read_text() == ""
 
 
 @pytest.mark.parametrize(
@@ -269,31 +275,19 @@ def test_ticket_display(t, provider, kwargs, expected):
     assert cache_mod.ticket_display(t, provider, **kwargs) == expected
 
 
-def test_write_branch_pr_cache_no_branch_noop(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "",
-        state="OPEN",
-        is_draft=False,
-        review_decision="",
-        number=1,
-        title="x",
-    )
-    assert not any(cache_dir.iterdir())
-
-
 # ── refresh_pr_data / refresh_pr_checks read the per-PR JSON snapshot ──────
 
 
 def test_refresh_pr_data_writes_no_pr_sentinel(cache_dir):
-    with patch.object(cache_mod, "find_pr_payload", return_value=None):
-        cache_mod.refresh_pr_data("khivi/foo")
-    assert (cache_dir / "pr-state-khivi-foo").read_text() == ""
-    assert (cache_dir / "pr-num-khivi-foo").read_text() == ""
-    assert (cache_dir / "pr-title-khivi-foo").read_text() == ""
-    assert (cache_dir / "pr-comments-khivi-foo").read_text() == ""
-    assert (cache_dir / "pr-comments-total-khivi-foo").read_text() == ""
-    assert (cache_dir / "pr-nudge-khivi-foo").read_text() == ""
-    assert (cache_dir / "pr-ticket-khivi-foo").read_text() == ""
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=None):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/foo")
+    assert (cache_dir / f"pr-state-{_KEY}").read_text() == ""
+    assert (cache_dir / f"pr-num-{_KEY}").read_text() == ""
+    assert (cache_dir / f"pr-title-{_KEY}").read_text() == ""
+    assert (cache_dir / f"pr-comments-{_KEY}").read_text() == ""
+    assert (cache_dir / f"pr-comments-total-{_KEY}").read_text() == ""
+    assert (cache_dir / f"pr-nudge-{_KEY}").read_text() == ""
+    assert (cache_dir / f"pr-ticket-{_KEY}").read_text() == ""
 
 
 def test_refresh_pr_data_populates_ticket_from_json_snapshot(cache_dir):
@@ -305,9 +299,9 @@ def test_refresh_pr_data_populates_ticket_from_json_snapshot(cache_dir):
         "title": "Linear work",
         "ticket": {"tickets": [{"id": "PE-4608", "state": "Doing"}]},
     }
-    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
-        cache_mod.refresh_pr_data("khivi/fnox")
-    assert (cache_dir / "pr-ticket-khivi-fnox").read_text() == "PE-4608"
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=payload):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/fnox")
+    assert (cache_dir / f"pr-ticket-{_KEY}").read_text() == "PE-4608"
 
 
 def test_refresh_pr_data_trello_ticket_cell_is_title_not_short_link(cache_dir):
@@ -324,9 +318,9 @@ def test_refresh_pr_data_trello_ticket_cell_is_title_not_short_link(cache_dir):
             "tickets": [{"id": "VfqsfqUd", "state": "Doing", "title": "Dockerize"}],
         },
     }
-    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
-        cache_mod.refresh_pr_data("khivi/fnox")
-    assert (cache_dir / "pr-ticket-khivi-fnox").read_text() == "Dockerize"
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=payload):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/fnox")
+    assert (cache_dir / f"pr-ticket-{_KEY}").read_text() == "Dockerize"
 
 
 def test_refresh_pr_data_populates_nudge_from_json_snapshot(cache_dir):
@@ -338,9 +332,9 @@ def test_refresh_pr_data_populates_nudge_from_json_snapshot(cache_dir):
         "title": "Failing",
         "nudge": "ci",
     }
-    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
-        cache_mod.refresh_pr_data("khivi/ci")
-    assert (cache_dir / "pr-nudge-khivi-ci").read_text() == "ci"
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=payload):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/ci")
+    assert (cache_dir / f"pr-nudge-{_KEY}").read_text() == "ci"
 
 
 def test_refresh_pr_data_populates_from_json_snapshot(cache_dir):
@@ -353,13 +347,13 @@ def test_refresh_pr_data_populates_from_json_snapshot(cache_dir):
         "unaddressed": 2,
         "total": 5,
     }
-    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
-        cache_mod.refresh_pr_data("khivi/bar")
-    assert (cache_dir / "pr-state-khivi-bar").read_text() == "CHANGES_REQUESTED"
-    assert (cache_dir / "pr-num-khivi-bar").read_text() == "99"
-    assert (cache_dir / "pr-title-khivi-bar").read_text() == "Fix it"
-    assert (cache_dir / "pr-comments-khivi-bar").read_text() == "2"
-    assert (cache_dir / "pr-comments-total-khivi-bar").read_text() == "5"
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=payload):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/bar")
+    assert (cache_dir / f"pr-state-{_KEY}").read_text() == "CHANGES_REQUESTED"
+    assert (cache_dir / f"pr-num-{_KEY}").read_text() == "99"
+    assert (cache_dir / f"pr-title-{_KEY}").read_text() == "Fix it"
+    assert (cache_dir / f"pr-comments-{_KEY}").read_text() == "2"
+    assert (cache_dir / f"pr-comments-total-{_KEY}").read_text() == "5"
 
 
 def test_refresh_pr_data_zero_unaddressed_writes_empty(cache_dir):
@@ -370,9 +364,9 @@ def test_refresh_pr_data_zero_unaddressed_writes_empty(cache_dir):
         "number": 5,
         "title": "t",
     }
-    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
-        cache_mod.refresh_pr_data("khivi/clean")
-    assert (cache_dir / "pr-comments-khivi-clean").read_text() == ""
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=payload):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/clean")
+    assert (cache_dir / f"pr-comments-{_KEY}").read_text() == ""
 
 
 def test_refresh_pr_data_resolves_draft(cache_dir):
@@ -383,15 +377,15 @@ def test_refresh_pr_data_resolves_draft(cache_dir):
         "number": 12,
         "title": "wip",
     }
-    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
-        cache_mod.refresh_pr_data("khivi/draft")
-    assert (cache_dir / "pr-state-khivi-draft").read_text() == "DRAFT"
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=payload):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/draft")
+    assert (cache_dir / f"pr-state-{_KEY}").read_text() == "DRAFT"
 
 
 def test_refresh_pr_checks_writes_no_pr_sentinel(cache_dir):
-    with patch.object(cache_mod, "find_pr_payload", return_value=None):
-        cache_mod.refresh_pr_checks("khivi/foo")
-    assert (cache_dir / "pr-checks-khivi-foo").read_text() == ""
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=None):
+        cache_mod.refresh_pr_checks(_WT_PATH, "khivi/foo")
+    assert (cache_dir / f"pr-checks-{_KEY}").read_text() == ""
 
 
 @pytest.mark.parametrize(
@@ -408,9 +402,9 @@ def test_refresh_pr_checks_writes_no_pr_sentinel(cache_dir):
 def test_refresh_pr_checks_derives_glyph_from_json(cache_dir, ci, expected):
     """Daemon-written JSON snapshot is the single source for both the cmux
     sidebar pill and the footer's pr-checks cell — same ci → same glyph."""
-    with patch.object(cache_mod, "find_pr_payload", return_value={"ci": ci}):
-        cache_mod.refresh_pr_checks("khivi/feat")
-    assert (cache_dir / "pr-checks-khivi-feat").read_text() == expected
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value={"ci": ci}):
+        cache_mod.refresh_pr_checks(_WT_PATH, "khivi/feat")
+    assert (cache_dir / f"pr-checks-{_KEY}").read_text() == expected
 
 
 # ── write_base_distance / write_base_ahead (lib.cache) ─────────────────────
@@ -419,8 +413,8 @@ def test_refresh_pr_checks_derives_glyph_from_json(cache_dir, ci, expected):
 @pytest.mark.parametrize(
     "writer,cache_file",
     [
-        (cache_mod.write_base_distance, "base-distance-khivi-feature"),
-        (cache_mod.write_base_ahead, "base-ahead-khivi-feature"),
+        (cache_mod.write_base_distance, f"base-distance-{_KEY}"),
+        (cache_mod.write_base_ahead, f"base-ahead-{_KEY}"),
     ],
     ids=["write_base_distance", "write_base_ahead"],
 )
@@ -442,18 +436,8 @@ def test_write_base_relative_payload(
 ):
     """0 commits is a legitimate, fresh observation; the reader hides 0
     but the writer preserves it for staleness gating."""
-    writer(branch, count)
+    writer(_WT_PATH, count)
     assert (cache_dir / cache_file).read_text() == expected
-
-
-@pytest.mark.parametrize(
-    "writer",
-    [cache_mod.write_base_distance, cache_mod.write_base_ahead],
-    ids=["write_base_distance", "write_base_ahead"],
-)
-def test_write_base_relative_no_branch_noop(cache_dir, writer):
-    writer("", 3)
-    assert not any(cache_dir.iterdir())
 
 
 # ── atomic_write (lib.cache) ────────────────────────────────────────────────
@@ -471,11 +455,11 @@ def test_atomic_write_tmp_name_embeds_pid(cache_dir, monkeypatch):
         real_replace(src, dst)
 
     monkeypatch.setattr(cache_mod.os, "replace", _spy_replace)
-    target = cache_dir / "pr-state-khivi-feature"
+    target = cache_dir / f"pr-state-{_KEY}"
     cache_mod.atomic_write(target, "hello")
 
     assert len(seen_tmp) == 1
-    assert seen_tmp[0].name == f"pr-state-khivi-feature.tmp.{os.getpid()}"
+    assert seen_tmp[0].name == f"pr-state-{_KEY}.tmp.{os.getpid()}"
     assert target.read_text() == "hello"
     # No stray tmp file left behind after the rename.
     assert list(cache_dir.iterdir()) == [target]
@@ -484,7 +468,7 @@ def test_atomic_write_tmp_name_embeds_pid(cache_dir, monkeypatch):
 def test_atomic_write_sequential_writers_leave_no_stray_tmp(cache_dir):
     """Two sequential writes (simulating daemon then `warm`) each clean up
     their own pid-suffixed tmp file and the final content wins."""
-    target = cache_dir / "pr-state-khivi-feature"
+    target = cache_dir / f"pr-state-{_KEY}"
     cache_mod.atomic_write(target, "first")
     cache_mod.atomic_write(target, "second")
     assert target.read_text() == "second"
@@ -585,19 +569,19 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
         "pr-comments-total",
         "pr-nudge",
     ):
-        cache_mod.branch_cache(stem, "khivi/feature").unlink(missing_ok=True)
+        cache_mod.cwd_cache(stem, _WT_PATH).unlink(missing_ok=True)
     cache_mod.republish_pr_caches_from_disk()
 
     flat = cache_mod.FLAT_CACHE_DIR
-    assert (flat / "pr-state-khivi-feature").read_text() == "APPROVED"
-    assert (flat / "pr-num-khivi-feature").read_text() == "42"
-    assert (flat / "pr-title-khivi-feature").read_text() == "Fix it"
-    assert (flat / "pr-muted-khivi-feature").read_text() == "muted"
-    assert (flat / "pr-checks-khivi-feature").read_text() == "✗"
-    assert (flat / "pr-comments-khivi-feature").read_text() == "2"
-    assert (flat / "pr-comments-total-khivi-feature").read_text() == "5"
+    assert (flat / f"pr-state-{_KEY}").read_text() == "APPROVED"
+    assert (flat / f"pr-num-{_KEY}").read_text() == "42"
+    assert (flat / f"pr-title-{_KEY}").read_text() == "Fix it"
+    assert (flat / f"pr-muted-{_KEY}").read_text() == "muted"
+    assert (flat / f"pr-checks-{_KEY}").read_text() == "✗"
+    assert (flat / f"pr-comments-{_KEY}").read_text() == "2"
+    assert (flat / f"pr-comments-total-{_KEY}").read_text() == "5"
     # unaddressed=2 → primary_issue "comments" → nudge_issue "comments".
-    assert (flat / "pr-nudge-khivi-feature").read_text() == "comments"
+    assert (flat / f"pr-nudge-{_KEY}").read_text() == "comments"
 
 
 def test_pr_payload_carries_base_for_the_stack_indent(tmp_path, monkeypatch):
@@ -614,11 +598,9 @@ def test_pr_payload_carries_base_for_the_stack_indent(tmp_path, monkeypatch):
     payload = cache_mod.write_pr_cache("testrepo", _pr(base="khivi/root"), _wt())
     assert payload["base"] == "khivi/root"
 
-    cache_mod.branch_cache("pr-base", "khivi/feature").unlink(missing_ok=True)
+    cache_mod.cwd_cache("pr-base", _WT_PATH).unlink(missing_ok=True)
     cache_mod.republish_pr_caches_from_disk()
-    assert (
-        cache_mod.branch_cache("pr-base", "khivi/feature").read_text() == "khivi/root"
-    )
+    assert cache_mod.cwd_cache("pr-base", _WT_PATH).read_text() == "khivi/root"
 
 
 def test_republish_pr_caches_no_cache_dir_is_noop(tmp_path, monkeypatch):
@@ -683,9 +665,9 @@ def test_muted_payload_helper_serializes_pref():
     assert cache_mod.muted_payload(NudgePref(muted=True)) == "muted"
 
 
-def test_write_branch_pr_cache_writes_muted_cell(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_write_worktree_pr_cache_writes_muted_cell(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
@@ -693,13 +675,13 @@ def test_write_branch_pr_cache_writes_muted_cell(cache_dir):
         title="t",
         muted="muted",
     )
-    assert (cache_dir / "pr-muted-khivi-feature").read_text() == "muted"
+    assert (cache_dir / f"pr-muted-{_KEY}").read_text() == "muted"
 
 
-def test_write_branch_pr_cache_unmute_clears_cell(cache_dir):
+def test_write_worktree_pr_cache_unmute_clears_cell(cache_dir):
     # First write a muted state, then an unmuted one — cell must clear.
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
@@ -707,16 +689,16 @@ def test_write_branch_pr_cache_unmute_clears_cell(cache_dir):
         title="t",
         muted="ci,comments",
     )
-    assert (cache_dir / "pr-muted-khivi-feature").read_text() == "ci,comments"
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+    assert (cache_dir / f"pr-muted-{_KEY}").read_text() == "ci,comments"
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
         number=1,
         title="t",
     )
-    assert (cache_dir / "pr-muted-khivi-feature").read_text() == ""
+    assert (cache_dir / f"pr-muted-{_KEY}").read_text() == ""
 
 
 def test_refresh_pr_data_copies_muted_from_json(cache_dir):
@@ -728,17 +710,17 @@ def test_refresh_pr_data_copies_muted_from_json(cache_dir):
         "title": "x",
         "muted": "muted",
     }
-    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
-        cache_mod.refresh_pr_data("khivi/feat")
-    assert (cache_dir / "pr-muted-khivi-feat").read_text() == "muted"
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=payload):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/feat")
+    assert (cache_dir / f"pr-muted-{_KEY}").read_text() == "muted"
 
 
 def test_refresh_pr_data_clears_muted_on_no_pr(cache_dir):
     # Pre-seed a muted cell to ensure the no-PR branch wipes it.
-    (cache_dir / "pr-muted-khivi-gone").write_text("muted")
-    with patch.object(cache_mod, "find_pr_payload", return_value=None):
-        cache_mod.refresh_pr_data("khivi/gone")
-    assert (cache_dir / "pr-muted-khivi-gone").read_text() == ""
+    (cache_dir / f"pr-muted-{_KEY}").write_text("muted")
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=None):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/gone")
+    assert (cache_dir / f"pr-muted-{_KEY}").read_text() == ""
 
 
 def test_write_pr_cache_bakes_muted_into_json(tmp_path, monkeypatch):
@@ -866,6 +848,7 @@ def _snapshot(json_dir: Path, repo: str, number: int, branch: str, **fields) -> 
         "updatedAt": "",
         "unaddressed": 0,
         "muted": "",
+        "cwd": str(_WT_PATH),
     }
     payload.update(fields)
     path = json_dir / f"{repo.replace('/', '_')}__pr-{number}.json"
@@ -927,8 +910,36 @@ def test_republish_picks_winner_for_reused_branch(json_cache):
     _snapshot(json_cache, "cockpit", 126, "khivi/side", state="OPEN", review="APPROVED")
     cache_mod.republish_pr_caches_from_disk()
     flat = cache_mod.FLAT_CACHE_DIR
-    assert (flat / "pr-num-khivi-side").read_text() == "126"
-    assert (flat / "pr-state-khivi-side").read_text() == "APPROVED"
+    assert (flat / f"pr-num-{_KEY}").read_text() == "126"
+    assert (flat / f"pr-state-{_KEY}").read_text() == "APPROVED"
+
+
+def test_republish_keeps_two_repos_on_one_branch_apart(json_cache):
+    """Two repos each holding a worktree on `khivi/ci-gatekeeper`: the republish
+    dedups per worktree, not per branch, so neither repo's cells are overwritten
+    by the other's snapshot."""
+    other = Path("/tmp/wt-other")
+    _snapshot(json_cache, "repoA", 82, "khivi/ci-gatekeeper", state="OPEN")
+    _snapshot(
+        json_cache,
+        "repoB",
+        20,
+        "khivi/ci-gatekeeper",
+        state="OPEN",
+        cwd=str(other),
+    )
+    cache_mod.republish_pr_caches_from_disk()
+    flat = cache_mod.FLAT_CACHE_DIR
+    assert (flat / f"pr-num-{_KEY}").read_text() == "82"
+    assert (flat / f"pr-num-{cache_mod._cwd_key(other)}").read_text() == "20"
+
+
+def test_republish_skips_a_pr_with_no_worktree(json_cache):
+    """No worktree → no row, no session, nowhere to key a cell. The JSON
+    snapshot is still written; only the flat republish sits it out."""
+    _snapshot(json_cache, "cockpit", 5, "khivi/remote-only", cwd="")
+    cache_mod.republish_pr_caches_from_disk()
+    assert not any(cache_mod.FLAT_CACHE_DIR.glob("pr-num-*"))
 
 
 def test_prune_superseded_drops_loser_keeps_winner(json_cache):
@@ -993,9 +1004,9 @@ def test_write_pr_cache_defaults_other_author_empty(json_cache):
     assert cache_mod.write_pr_cache("testrepo", _pr())["author"] == ""
 
 
-def test_clear_branch_pr_cache_empties_all_cells(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/feature",
+def test_clear_pr_flat_cells_empties_all_cells(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="APPROVED",
@@ -1004,19 +1015,19 @@ def test_clear_branch_pr_cache_empties_all_cells(cache_dir):
         ci_glyph="✓",
         comments=3,
     )
-    cache_mod.clear_branch_pr_cache("khivi/feature")
-    for stem in cache_mod._BRANCH_PR_CELLS:
-        assert (cache_dir / f"{stem}-khivi-feature").read_text() == ""
+    cache_mod.clear_pr_flat_cells(_WT_PATH)
+    for stem in cache_mod._PR_CELLS:
+        assert (cache_dir / f"{stem}-{_KEY}").read_text() == ""
 
 
 def test_refresh_pr_data_blanks_reused_branch(json_cache):
     _snapshot(
         json_cache, "cockpit", 86, "khivi/side", state="MERGED", reusedBranch=True
     )
-    cache_mod.refresh_pr_data("khivi/side")
+    cache_mod.refresh_pr_data(_WT_PATH, "khivi/side")
     flat = cache_mod.FLAT_CACHE_DIR
-    assert (flat / "pr-state-khivi-side").read_text() == ""
-    assert (flat / "pr-num-khivi-side").read_text() == ""
+    assert (flat / f"pr-state-{_KEY}").read_text() == ""
+    assert (flat / f"pr-num-{_KEY}").read_text() == ""
 
 
 def test_refresh_pr_checks_blanks_reused_branch(json_cache):
@@ -1029,8 +1040,8 @@ def test_refresh_pr_checks_blanks_reused_branch(json_cache):
         ci="failed:1",
         reusedBranch=True,
     )
-    cache_mod.refresh_pr_checks("khivi/side")
-    assert (cache_mod.FLAT_CACHE_DIR / "pr-checks-khivi-side").read_text() == ""
+    cache_mod.refresh_pr_checks(_WT_PATH, "khivi/side")
+    assert (cache_mod.FLAT_CACHE_DIR / f"pr-checks-{_KEY}").read_text() == ""
 
 
 def test_republish_blanks_reused_branch(json_cache):
@@ -1041,8 +1052,8 @@ def test_republish_blanks_reused_branch(json_cache):
     )
     cache_mod.republish_pr_caches_from_disk()
     flat = cache_mod.FLAT_CACHE_DIR
-    assert (flat / "pr-num-khivi-side").read_text() == ""
-    assert (flat / "pr-state-khivi-side").read_text() == ""
+    assert (flat / f"pr-num-{_KEY}").read_text() == ""
+    assert (flat / f"pr-state-{_KEY}").read_text() == ""
 
 
 def test_republish_open_pr_wins_over_reused_merged_sibling(json_cache):
@@ -1054,16 +1065,16 @@ def test_republish_open_pr_wins_over_reused_merged_sibling(json_cache):
     _snapshot(json_cache, "cockpit", 99, "khivi/side", state="OPEN", review="APPROVED")
     cache_mod.republish_pr_caches_from_disk()
     flat = cache_mod.FLAT_CACHE_DIR
-    assert (flat / "pr-num-khivi-side").read_text() == "99"
-    assert (flat / "pr-state-khivi-side").read_text() == "APPROVED"
+    assert (flat / f"pr-num-{_KEY}").read_text() == "99"
+    assert (flat / f"pr-state-{_KEY}").read_text() == "APPROVED"
 
 
 # ── pr-base cell (the stack link the TUI indents by) ────────────────────────
 
 
-def test_write_branch_pr_cache_writes_base(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/child",
+def test_write_worktree_pr_cache_writes_base(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
@@ -1071,19 +1082,19 @@ def test_write_branch_pr_cache_writes_base(cache_dir):
         title="",
         base="khivi/root",
     )
-    assert (cache_dir / "pr-base-khivi-child").read_text() == "khivi/root"
+    assert (cache_dir / f"pr-base-{_KEY}").read_text() == "khivi/root"
 
 
-def test_write_branch_pr_cache_default_base_empty(cache_dir):
-    cache_mod.write_branch_pr_cache(
-        "khivi/solo",
+def test_write_worktree_pr_cache_default_base_empty(cache_dir):
+    cache_mod.write_worktree_pr_cache(
+        _WT_PATH,
         state="OPEN",
         is_draft=False,
         review_decision="",
         number=5,
         title="",
     )
-    assert (cache_dir / "pr-base-khivi-solo").read_text() == ""
+    assert (cache_dir / f"pr-base-{_KEY}").read_text() == ""
 
 
 # ── snoozed (pr-snoozed flat cell + JSON field) ──────────────────────────────
@@ -1097,10 +1108,10 @@ def test_snoozed_payload_helper_serializes_pref():
     assert cache_mod.snoozed_payload(NudgePref(muted=True)) == ""
 
 
-def test_write_branch_pr_cache_writes_and_clears_snoozed_cell(cache_dir):
+def test_write_worktree_pr_cache_writes_and_clears_snoozed_cell(cache_dir):
     def write(**kw):
-        cache_mod.write_branch_pr_cache(
-            "khivi/nap",
+        cache_mod.write_worktree_pr_cache(
+            _WT_PATH,
             state="OPEN",
             is_draft=False,
             review_decision="",
@@ -1110,10 +1121,10 @@ def test_write_branch_pr_cache_writes_and_clears_snoozed_cell(cache_dir):
         )
 
     write(snoozed="snoozed")
-    assert (cache_dir / "pr-snoozed-khivi-nap").read_text() == "snoozed"
+    assert (cache_dir / f"pr-snoozed-{_KEY}").read_text() == "snoozed"
     # The daemon's auto-wake clears it on the next tick with no separate path.
     write()
-    assert (cache_dir / "pr-snoozed-khivi-nap").read_text() == ""
+    assert (cache_dir / f"pr-snoozed-{_KEY}").read_text() == ""
 
 
 def test_refresh_pr_data_copies_snoozed_from_json(cache_dir):
@@ -1125,16 +1136,16 @@ def test_refresh_pr_data_copies_snoozed_from_json(cache_dir):
         "title": "x",
         "snoozed": "snoozed",
     }
-    with patch.object(cache_mod, "find_pr_payload", return_value=payload):
-        cache_mod.refresh_pr_data("khivi/feat")
-    assert (cache_dir / "pr-snoozed-khivi-feat").read_text() == "snoozed"
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=payload):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/feat")
+    assert (cache_dir / f"pr-snoozed-{_KEY}").read_text() == "snoozed"
 
 
 def test_refresh_pr_data_clears_snoozed_on_no_pr(cache_dir):
-    (cache_dir / "pr-snoozed-khivi-gone").write_text("snoozed")
-    with patch.object(cache_mod, "find_pr_payload", return_value=None):
-        cache_mod.refresh_pr_data("khivi/gone")
-    assert (cache_dir / "pr-snoozed-khivi-gone").read_text() == ""
+    (cache_dir / f"pr-snoozed-{_KEY}").write_text("snoozed")
+    with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=None):
+        cache_mod.refresh_pr_data(_WT_PATH, "khivi/gone")
+    assert (cache_dir / f"pr-snoozed-{_KEY}").read_text() == ""
 
 
 # ── restamp_pref: the TUI's `m`/`z` keypress lands without a `gh` round-trip ──
@@ -1147,14 +1158,14 @@ def test_restamp_pref_writes_the_cells_and_survives_a_republish(json_cache):
 
     flat = cache_mod.FLAT_CACHE_DIR
     _snapshot(json_cache, "cockpit", 7, "khivi/nap")
-    cache_mod.restamp_pref("cockpit", 7, "khivi/nap", NudgePref(snoozed=True))
+    cache_mod.restamp_pref("cockpit", 7, _WT_PATH, NudgePref(snoozed=True))
 
-    assert (flat / "pr-snoozed-khivi-nap").read_text() == "snoozed"
+    assert (flat / f"pr-snoozed-{_KEY}").read_text() == "snoozed"
     payload = json.loads((json_cache / "cockpit__pr-7.json").read_text())
     assert payload["snoozed"] == "snoozed"
 
     cache_mod.republish_pr_caches_from_disk()
-    assert (flat / "pr-snoozed-khivi-nap").read_text() == "snoozed"
+    assert (flat / f"pr-snoozed-{_KEY}").read_text() == "snoozed"
 
 
 def test_restamp_pref_clears_both_fields_on_wake(json_cache):
@@ -1162,15 +1173,15 @@ def test_restamp_pref_clears_both_fields_on_wake(json_cache):
     # behind would silence the row the wake just un-silenced.
     flat = cache_mod.FLAT_CACHE_DIR
     _snapshot(json_cache, "cockpit", 7, "khivi/nap", muted="muted", snoozed="snoozed")
-    cache_mod.restamp_pref("cockpit", 7, "khivi/nap", NudgePref())
-    assert (flat / "pr-snoozed-khivi-nap").read_text() == ""
-    assert (flat / "pr-muted-khivi-nap").read_text() == ""
+    cache_mod.restamp_pref("cockpit", 7, _WT_PATH, NudgePref())
+    assert (flat / f"pr-snoozed-{_KEY}").read_text() == ""
+    assert (flat / f"pr-muted-{_KEY}").read_text() == ""
 
 
 def test_restamp_pref_without_a_snapshot_is_a_noop(json_cache):
     # Nothing to stamp; the kicked cycle builds the snapshot.
-    cache_mod.restamp_pref("cockpit", 7, "khivi/nap", NudgePref(snoozed=True))
-    assert not (cache_mod.FLAT_CACHE_DIR / "pr-snoozed-khivi-nap").exists()
+    cache_mod.restamp_pref("cockpit", 7, _WT_PATH, NudgePref(snoozed=True))
+    assert not (cache_mod.FLAT_CACHE_DIR / f"pr-snoozed-{_KEY}").exists()
 
 
 # ── Per-worktree session cost ───────────────────────────────────────────────

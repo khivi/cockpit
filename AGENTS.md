@@ -126,6 +126,13 @@ Row caps are `{pr, ticket, muted, snoozed, workspace, primary}`: the first four 
 
 New cell → writer in `cache.py`, call site in the slow tick and/or fast tick. **Never** let a renderer read source state directly.
 
+**Every flat cell is keyed by worktree path (`cache.py::cwd_cache`) or session id — never by branch.** A branch name is unique inside one repo and nowhere else, so a branch key silently merges every repo holding a worktree of that name: three `khivi/ci-gatekeeper` worktrees shared one `pr-num`, `pr-snoozed` and `base-distance`, so all three rows rendered whichever repo's daemon wrote last, and `z` on any of them wrote a `NudgePref` under *its own* repo and *another* repo's PR number — a pref no cycle ever reads, so the row never folded. Four rules:
+
+- **The key is the *worktree*, deliberately not the repo+branch pair.** Both are unique, but only the path is something all three renderers (TUI row, starship footer, `restamp_pref`) already hold: starship is a separate process with no `gh`, so it cannot resolve the nwo the PR snapshots are filed under, and `git-repo` carries the mutable config label instead.
+- **The path travels in the PR payload (`write_pr_cache`'s `cwd`)**, because `republish_pr_caches_from_disk` runs on the fast tick from the JSON alone. Re-deriving it there from `branch` would reintroduce exactly the ambiguity the key removes. Dedup in that pass is therefore **per worktree, not per branch**.
+- **A PR with no local worktree writes no cells at all** — no row, no session, nothing that would read one. Its JSON snapshot is still written; every decision the cycle makes reads that.
+- **`find_pr_payload_for_cwd` is the lookup a republish uses**, preferring the snapshot stamped with this exact worktree and falling back to a branch match only for a payload written before the field existed.
+
 ### `cmux events` is a doorbell — it wakes a tick, it is never state
 
 `lib/events.py::watch_workspace_events` reads events as a **trigger only**: an event kicks the **fast** tick, which re-derives every workspace fact as the timer would. Nothing downstream reads a payload. The 30s interval stays the correctness floor, so every failure mode degrades silently. Gated on `has_capability("events.v1")` + `is_cmux()` — the shared probe, never a private `cmux capabilities` read. Five rules:

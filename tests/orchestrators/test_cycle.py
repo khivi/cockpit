@@ -1177,8 +1177,8 @@ def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
         distances = cycle._refresh_base_distance(repo_path, [wt], "main")
 
     assert distances == {}
-    wbd.assert_called_once_with("khivi/feat", -1)
-    wba.assert_called_once_with("khivi/feat", -1)
+    wbd.assert_called_once_with(wt.path, -1)
+    wba.assert_called_once_with(wt.path, -1)
     err = capsys.readouterr().err
     assert "skip" in err
     assert "exited 128" in err
@@ -1224,8 +1224,8 @@ def test_refresh_base_distance_uses_per_pr_base_and_remote(tmp_path):
     ]
     bob.assert_called_once_with(wt.path, "stage", remote="upstream")
     aob.assert_called_once_with(wt.path, "stage", remote="upstream")
-    wbd.assert_called_once_with("khivi/feat", 1)
-    wba.assert_called_once_with("khivi/feat", 2)
+    wbd.assert_called_once_with(wt.path, 1)
+    wba.assert_called_once_with(wt.path, 2)
 
 
 def test_refresh_base_distance_falls_back_to_default_without_pr(tmp_path):
@@ -1248,7 +1248,7 @@ def test_refresh_base_distance_falls_back_to_default_without_pr(tmp_path):
         cycle._refresh_base_distance(repo_path, [wt], "main")
 
     assert run.call_args.args[0][-2:] == ["origin", "main"]
-    wba.assert_called_once_with("khivi/feat", 5)
+    wba.assert_called_once_with(wt.path, 5)
 
 
 def test_refresh_base_distance_invalidates_only_failing_base(tmp_path):
@@ -1281,8 +1281,8 @@ def test_refresh_base_distance_invalidates_only_failing_base(tmp_path):
         )
 
     assert distances == {"khivi/good": 1}
-    wbd.assert_any_call("khivi/good", 1)
-    wbd.assert_any_call("khivi/bad", -1)
+    wbd.assert_any_call(good.path, 1)
+    wbd.assert_any_call(bad.path, -1)
 
 
 # ── cycle_repo phase ordering ────────────────────────────────────────────────
@@ -3691,14 +3691,14 @@ def test_write_pr_caches_clears_cells_for_reused_branch(tmp_path):
         patch.object(cycle, "write_git_state_cache"),
         patch.object(cycle, "is_ancestor", return_value=False),  # diverged → reused
         patch.object(cycle, "write_pr_cache") as wpc,
-        patch.object(cycle, "write_branch_pr_cache") as wbpc,
-        patch.object(cycle, "clear_branch_pr_cache") as cbpc,
+        patch.object(cycle, "write_worktree_pr_cache") as wbpc,
+        patch.object(cycle, "clear_pr_flat_cells") as cbpc,
         patch.object(cycle, "prune_superseded_pr_caches"),
     ):
         cycle._write_pr_caches(ctx)
 
     assert wpc.call_args.kwargs["reused_branch"] is True
-    cbpc.assert_called_once_with("khivi/feat")
+    cbpc.assert_called_once_with(wt.path)
     wbpc.assert_not_called()
 
 
@@ -3712,8 +3712,8 @@ def test_write_pr_caches_writes_cells_when_not_reused(tmp_path):
         patch.object(cycle, "write_git_state_cache"),
         patch.object(cycle, "is_ancestor", return_value=True),  # reachable → not reused
         patch.object(cycle, "write_pr_cache") as wpc,
-        patch.object(cycle, "write_branch_pr_cache") as wbpc,
-        patch.object(cycle, "clear_branch_pr_cache") as cbpc,
+        patch.object(cycle, "write_worktree_pr_cache") as wbpc,
+        patch.object(cycle, "clear_pr_flat_cells") as cbpc,
         patch.object(cycle, "prune_superseded_pr_caches"),
     ):
         cycle._write_pr_caches(ctx)
@@ -3724,6 +3724,30 @@ def test_write_pr_caches_writes_cells_when_not_reused(tmp_path):
     assert wbpc.call_args.kwargs["author"] == ""
     cbpc.assert_not_called()
     wbpc.assert_called_once()
+
+
+def test_write_pr_caches_skips_a_pr_with_no_worktree(tmp_path):
+    """The flat cells are keyed by worktree, so a PR nobody has checked out has
+    nowhere to write — and nothing that would read it. Its JSON snapshot is
+    still written; every decision the cycle makes reads that."""
+    ctx = _write_caches_ctx(tmp_path, [_reused_pr(branch="khivi/elsewhere")], None)
+    ctx.wts = []
+    with (
+        patch.object(cycle, "_refresh_base_distance", return_value={}),
+        patch.object(cycle, "load_pr_payloads_by_branch", return_value={}),
+        patch.object(cycle, "_prefetch_linear_blocks"),
+        patch.object(cycle, "write_git_state_cache"),
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "write_pr_cache") as wpc,
+        patch.object(cycle, "write_worktree_pr_cache") as wbpc,
+        patch.object(cycle, "clear_pr_flat_cells") as cbpc,
+        patch.object(cycle, "prune_superseded_pr_caches"),
+    ):
+        cycle._write_pr_caches(ctx)
+
+    wpc.assert_called_once()
+    wbpc.assert_not_called()
+    cbpc.assert_not_called()
 
 
 def test_write_pr_caches_passes_coworker_author(tmp_path):
@@ -3740,8 +3764,8 @@ def test_write_pr_caches_passes_coworker_author(tmp_path):
         patch.object(cycle, "write_git_state_cache"),
         patch.object(cycle, "is_ancestor", return_value=True),
         patch.object(cycle, "write_pr_cache") as wpc,
-        patch.object(cycle, "write_branch_pr_cache") as wbpc,
-        patch.object(cycle, "clear_branch_pr_cache"),
+        patch.object(cycle, "write_worktree_pr_cache") as wbpc,
+        patch.object(cycle, "clear_pr_flat_cells"),
         patch.object(cycle, "prune_superseded_pr_caches"),
     ):
         cycle._write_pr_caches(ctx)
@@ -3766,8 +3790,8 @@ def test_write_pr_caches_keeps_cells_when_open_pr_shares_branch(tmp_path):
         patch.object(cycle, "write_git_state_cache"),
         patch.object(cycle, "is_ancestor", return_value=False),
         patch.object(cycle, "write_pr_cache"),
-        patch.object(cycle, "write_branch_pr_cache") as wbpc,
-        patch.object(cycle, "clear_branch_pr_cache") as cbpc,
+        patch.object(cycle, "write_worktree_pr_cache") as wbpc,
+        patch.object(cycle, "clear_pr_flat_cells") as cbpc,
         patch.object(cycle, "prune_superseded_pr_caches"),
     ):
         cycle._write_pr_caches(ctx)

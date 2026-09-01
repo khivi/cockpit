@@ -23,7 +23,7 @@ from typing import IO, cast
 
 import cockpit.lib.daemon_signal as daemon_signal
 from cockpit.lib.cache import (
-    clear_branch_pr_cache,
+    clear_pr_flat_cells,
     find_pr_payload,
     load_pr_payloads_by_branch,
     muted_payload,
@@ -33,9 +33,9 @@ from cockpit.lib.cache import (
     ticket_pill_id,
     write_base_ahead,
     write_base_distance,
-    write_branch_pr_cache,
     write_git_state_cache,
     write_pr_cache,
+    write_worktree_pr_cache,
 )
 from cockpit.lib.cmux import (
     ORANGE,
@@ -1458,8 +1458,8 @@ def _refresh_base_distance(
 
     def _invalidate(targets: list[Worktree]) -> None:
         for wt in targets:
-            write_base_distance(wt.branch, -1)
-            write_base_ahead(wt.branch, -1)
+            write_base_distance(wt.path, -1)
+            write_base_ahead(wt.path, -1)
 
     # Group feature worktrees by the base branch they measure against, skipping
     # any with no resolvable base (no PR base and no repo default).
@@ -1501,10 +1501,8 @@ def _refresh_base_distance(
         for wt in group:
             n = behind_of_base(wt.path, base, remote=base_remote)
             distances[wt.branch] = n
-            write_base_distance(wt.branch, n)
-            write_base_ahead(
-                wt.branch, ahead_of_base(wt.path, base, remote=base_remote)
-            )
+            write_base_distance(wt.path, n)
+            write_base_ahead(wt.path, ahead_of_base(wt.path, base, remote=base_remote))
     return distances
 
 
@@ -1574,7 +1572,7 @@ def _resolve_prefs(repo_name: str, prs: list[PR]) -> dict[int, NudgePref]:
       would wake on the very next tick, and a CI fix would wake me to nothing.
 
     It happens here, at the one point mute/snooze state is read per cycle, so
-    every downstream consumer (`write_pr_cache`, `write_branch_pr_cache`, the
+    every downstream consumer (`write_pr_cache`, `write_worktree_pr_cache`, the
     pills, the nudge gate, the sidebar fold) sees the woken pref in the same
     tick — a woken PR un-sinks, regains its 🔔, and nudges again together.
 
@@ -1715,7 +1713,7 @@ def _prepare_cycle(
 
     tracked = find_cockpit_workspaces(prs, wts, names=names, cwds=cwds)
     # Resolve nudge prefs once per cycle — the single point of mute-state I/O.
-    # Everything downstream (write_pr_cache, write_branch_pr_cache, apply_pills,
+    # Everything downstream (write_pr_cache, write_worktree_pr_cache, apply_pills,
     # status_pills) reads from this dict. See AGENTS.md "PR cache writers".
     prefs = _resolve_prefs(name, prs)
     mine = sum(1 for pr in prs if pr.author == self_user)
@@ -1802,16 +1800,22 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
             reused_branch=reused,
             other_author=other_author,
         )
+        # The flat cells are keyed by worktree, so a PR with no local worktree
+        # has nowhere to write and nothing that would read it — no row, no
+        # session, no statusline. Its JSON snapshot is still on disk for every
+        # decision the cycle makes.
+        if wt_opt is None:
+            continue
         if reused:
             # Branch reused for new local work after this PR merged/closed —
-            # show no PR. Only clear the branch-keyed cells when no live open PR
-            # shares the branch; otherwise that PR's own iteration writes them
-            # (and `_pr_payload_rank` resolves the card to the open PR).
+            # show no PR. Only clear the cells when no live open PR shares the
+            # branch; otherwise that PR's own iteration writes them (and
+            # `_pr_payload_rank` resolves the card to the open PR).
             if pr.branch not in open_branches:
-                clear_branch_pr_cache(pr.branch)
+                clear_pr_flat_cells(wt_opt.path)
             continue
-        write_branch_pr_cache(
-            pr.branch,
+        write_worktree_pr_cache(
+            wt_opt.path,
             state=pr.state,
             is_draft=pr.is_draft,
             review_decision=pr.review_decision,
@@ -1829,7 +1833,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
         )
     # After the live snapshots are on disk, drop any superseded snapshot
     # sharing a branch (reused branch: old merged PR alongside the live one)
-    # so branch-keyed flat cells resolve deterministically.
+    # so the flat cells resolve deterministically.
     prune_superseded_pr_caches(ctx.name)
     # Reload after the writes so downstream consumers see this tick's freshly
     # computed `reusedBranch` flags and the post-prune winners (the pre-write

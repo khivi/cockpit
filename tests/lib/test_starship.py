@@ -9,6 +9,7 @@ import pytest
 
 import cockpit.lib.claude as claude_mod
 import cockpit.lib.starship as starship
+from cockpit.lib.cache import cwd_cache
 from cockpit.lib.colors import (
     Colorizer,
     amber,
@@ -177,7 +178,7 @@ def test_print_ticket_reads_pr_ticket_cell(
     repo = _make_repo(tmp_path, branch="khivi/fnox")
     monkeypatch.chdir(repo)
     _seed_git_state(repo)
-    cache_mod.branch_cache("pr-ticket", "khivi/fnox").write_text("VfqsfqUd")
+    cache_mod.cwd_cache("pr-ticket", repo).write_text("VfqsfqUd")
     assert starship.print_ticket() == "VfqsfqUd"
 
 
@@ -191,11 +192,21 @@ def test_print_ticket_cell_wins_over_branch_regex(
     repo = _make_repo(tmp_path, branch="khivi/PRO-123-fix")
     monkeypatch.chdir(repo)
     _seed_git_state(repo)
-    cache_mod.branch_cache("pr-ticket", "khivi/PRO-123-fix").write_text("PRO-999")
+    cache_mod.cwd_cache("pr-ticket", repo).write_text("PRO-999")
     assert starship.print_ticket() == "PRO-999"
 
 
 # ── PR cache reads ─────────────────────────────────────────────────────────
+
+
+def _cell(stem: str):
+    """The flat cell the printers read: keyed by cwd, since a branch name is
+    only unique inside one repo."""
+    import os
+
+    import cockpit.lib.cache as cache_mod
+
+    return cache_mod.cwd_cache(stem, os.getcwd())
 
 
 @pytest.mark.parametrize(
@@ -222,27 +233,27 @@ def test_print_ticket_cell_wins_over_branch_regex(
     ],
 )
 def test_print_pr_state(cache_dir, value, expected):
-    (cache_dir / "pr-state-khivi-foo").write_text(value)
+    _cell("pr-state").write_text(value)
     assert starship.print_pr_state("khivi/foo") == expected
 
 
 def test_print_pr_num_formats_hash(cache_dir):
-    (cache_dir / "pr-num-khivi-foo").write_text("42")
+    _cell("pr-num").write_text("42")
     assert starship.print_pr_num("khivi/foo") == "🔗 #42"
 
 
 def test_print_pr_num_zero_sentinel_empty(cache_dir):
-    (cache_dir / "pr-num-khivi-foo").write_text("0")
+    _cell("pr-num").write_text("0")
     assert starship.print_pr_num("khivi/foo") == ""
 
 
 def test_print_pr_title(cache_dir):
-    (cache_dir / "pr-title-khivi-foo").write_text("My PR")
+    _cell("pr-title").write_text("My PR")
     assert starship.print_pr_title("khivi/foo") == "📄 My PR"
 
 
 def test_print_pr_title_empty_returns_empty(cache_dir):
-    (cache_dir / "pr-title-khivi-foo").write_text("")
+    _cell("pr-title").write_text("")
     assert starship.print_pr_title("khivi/foo") == ""
 
 
@@ -251,7 +262,7 @@ def test_print_pr_muted_empty_when_not_muted(cache_dir):
 
 
 def test_print_pr_muted(cache_dir):
-    (cache_dir / "pr-muted-khivi-foo").write_text("muted")
+    _cell("pr-muted").write_text("muted")
     assert starship.print_pr_muted("khivi/foo") == yellow("🔇 muted")
 
 
@@ -266,19 +277,19 @@ def test_print_pr_muted(cache_dir):
     ids=["fresh_pass", "fresh_fail", "fresh_pending", "fresh_unknown"],
 )
 def test_print_pr_checks(cache_dir, glyph, expected):
-    (cache_dir / "pr-checks-khivi-foo").write_text(glyph)
+    _cell("pr-checks").write_text(glyph)
     assert starship.print_pr_checks("khivi/foo") == expected
 
 
 def test_print_pr_comments_with_count(cache_dir):
     from cockpit.lib.colors import red
 
-    (cache_dir / "pr-comments-khivi-foo").write_text("3")
+    _cell("pr-comments").write_text("3")
     assert starship.print_pr_comments("khivi/foo") == red("💬 3")
 
 
 def test_print_pr_comments_zero_is_empty(cache_dir):
-    (cache_dir / "pr-comments-khivi-foo").write_text("0")
+    _cell("pr-comments").write_text("0")
     assert starship.print_pr_comments("khivi/foo") == ""
 
 
@@ -293,7 +304,7 @@ def test_print_pr_state_stale_cell_still_read_no_refresh_spawn(cache_dir):
     re-introducing a renderer-side writer."""
     import os
 
-    cache = cache_dir / "pr-state-khivi-foo"
+    cache = _cell("pr-state")
     cache.write_text("OPEN")
     old = time.time() - 3600
     os.utime(cache, (old, old))
@@ -644,7 +655,7 @@ def test_worktree_status_base_distance(
     repo = _make_repo(tmp_path)
     monkeypatch.chdir(repo)
     _seed_git_state(repo)
-    setup(cache_dir / "base-distance-feature", int(time.time()))
+    setup(cwd_cache("base-distance", repo), int(time.time()))
     assert check(starship.print_worktree_status())
 
 
@@ -654,19 +665,29 @@ def test_worktree_status_base_distance_garbage_hidden(
     repo = _make_repo(tmp_path)
     monkeypatch.chdir(repo)
     _seed_git_state(repo)
-    (cache_dir / "base-distance-feature").write_text("not numbers")
+    cwd_cache("base-distance", repo).write_text("not numbers")
     assert "↻" not in starship.print_worktree_status()
 
 
-def test_worktree_status_base_distance_slash_branch_key(
+def test_two_repos_on_one_branch_keep_their_own_base_distance(
     cache_dir, _clean_git_env, tmp_path, monkeypatch
 ):
-    """branch_cache slug-escapes `/` to `-`; verify the cache file path."""
-    repo = _make_repo(tmp_path, branch="khivi/master/foo")
-    monkeypatch.chdir(repo)
-    _seed_git_state(repo)
-    (cache_dir / "base-distance-khivi-master-foo").write_text("3")
+    """The cell is keyed by worktree, not branch. A branch name is unique inside
+    a repo and nowhere else — sharing a key made every worktree named
+    `khivi/ci-gatekeeper` render whichever repo's daemon wrote last."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a = _make_repo(tmp_path / "a", branch="khivi/shared")
+    b = _make_repo(tmp_path / "b", branch="khivi/shared")
+    _seed_git_state(a)
+    _seed_git_state(b)
+    cwd_cache("base-distance", a).write_text("3")
+    cwd_cache("base-distance", b).write_text("11")
+
+    monkeypatch.chdir(a)
     assert orange("↻3") in starship.print_worktree_status()
+    monkeypatch.chdir(b)
+    assert orange("↻11") in starship.print_worktree_status()
 
 
 # ── base-ahead (↗N) on branch_identity ─────────────────────────────────────
@@ -691,7 +712,7 @@ def test_branch_identity_base_ahead(
     repo = _make_repo(tmp_path)
     monkeypatch.chdir(repo)
     _seed_git_state(repo)
-    setup(cache_dir / "base-ahead-feature", int(time.time()))
+    setup(cwd_cache("base-ahead", repo), int(time.time()))
     assert check(starship.print_branch_identity())
 
 

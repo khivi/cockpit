@@ -6,7 +6,7 @@ Two cache directories, both owned by this module:
    Rich JSON per PR. Written each reconcile cycle by `write_pr_cache`,
    read by the `cockpit watch` table (including its close actions).
 
-2. `$TMPDIR/cockpit-cache/{stem}[-<sid>|-<branch>]` (referenced as
+2. `$TMPDIR/cockpit-cache/{stem}[-<sid>|-<cwd-slug>]` (referenced as
    `FLAT_CACHE_DIR`). Flat one-string-per-file payloads consumed by
    `cockpit/starship.py`'s field printers under starship. Written by:
    - `lib.claude.stash_from_stdin` (session-scoped: context, rate-limit,
@@ -14,7 +14,7 @@ Two cache directories, both owned by this module:
    - `write_worktree_cost_cache` (`cockpit.py` fast tick — folds those
      session-scoped `cost-<sid>` cells into one `wt-cost-<cwd>` cell per
      worktree, so the TUI reads a cell instead of source state)
-   - `write_branch_pr_cache` (`cockpit.py` daemon tick, from the PR data
+   - `write_worktree_pr_cache` (`cockpit.py` daemon tick, from the PR data
      the daemon fetched — single source of truth for PR-derived fields)
    - `refresh_pr_data` / `refresh_pr_checks` (the synchronous `warm`
      prewarm: `cockpit/starship.py warm` → `warm_all`). Both re-derive
@@ -137,6 +137,13 @@ def write_pr_cache(
         "number": pr.number,
         "title": pr.title,
         "branch": pr.branch,
+        # The local worktree backing this PR, "" when none. The flat cells are
+        # keyed by worktree path (`cwd_cache`), and `republish_pr_caches_from_disk`
+        # runs on the fast tick from the JSON alone — so the path has to travel
+        # in the payload. Resolving it there from `branch` instead is exactly the
+        # ambiguity the cwd key exists to remove: several repos' worktrees answer
+        # to one branch name.
+        "cwd": str(wt.path) if wt else "",
         # The PR's base branch — the one link a stack is derived from
         # (`lib.stacks.find_stacks`), persisted so the fast tick's flat-cell
         # republish can feed the TUI's indentation without a `gh` round-trip.
@@ -169,7 +176,9 @@ def write_pr_cache(
     return payload
 
 
-def restamp_pref(repo_name: str, number: int, branch: str, pref: NudgePref) -> None:
+def restamp_pref(
+    repo_name: str, number: int, cwd: os.PathLike[str] | str, pref: NudgePref
+) -> None:
     """Re-stamp one PR snapshot's `muted`/`snoozed` fields from `pref` and
     republish its flat cells, without the `gh` round-trip `write_pr_cache` needs.
 
@@ -194,7 +203,10 @@ def restamp_pref(repo_name: str, number: int, branch: str, pref: NudgePref) -> N
     payload["muted"] = muted_payload(pref)
     payload["snoozed"] = snoozed_payload(pref)
     _atomic_write_json(path, payload)
-    refresh_pr_data(branch)
+    # Publish from the payload just written rather than re-reading it by branch:
+    # the caller named the row's worktree, and a branch lookup could resolve to
+    # a same-named branch in another repo.
+    _publish_pr_cells(cwd, payload)
 
 
 def _iter_cache(pattern: str):
@@ -245,6 +257,27 @@ def find_pr_payload(branch: str, repo_name: str | None = None) -> dict | None:
         if best is None or _pr_payload_rank(payload) > _pr_payload_rank(best):
             best = payload
     return best
+
+
+def find_pr_payload_for_cwd(cwd: os.PathLike[str] | str, branch: str) -> dict | None:
+    """Return the cached PR snapshot backing the worktree at `cwd`, or None.
+
+    Prefers the snapshot the daemon stamped with this exact worktree path, which
+    is unambiguous even when several repos hold a worktree on `branch`. Falls
+    back to a branch match for a snapshot written before the `cwd` field existed
+    (or by a `gh`-less prewarm that never saw a worktree) — a payload from the
+    wrong repo is still better than a blank card, and the next slow tick
+    overwrites it with a stamped one.
+    """
+    target = str(Path(cwd).resolve())
+    by_cwd: list[dict] = [
+        payload
+        for _, payload in _iter_cache("*__pr-*.json")
+        if payload.get("cwd") and str(Path(payload["cwd"]).resolve()) == target
+    ]
+    if by_cwd:
+        return max(by_cwd, key=_pr_payload_rank)
+    return find_pr_payload(branch)
 
 
 def load_pr_payloads_by_branch(repo_name: str) -> dict[str, dict]:
@@ -358,21 +391,26 @@ def session_cache(stem: str, sid: str | None) -> Path:
     return _ensure_flat_cache_dir() / f"{stem}{suffix}"
 
 
-def branch_cache(stem: str, branch: str) -> Path:
-    return _ensure_flat_cache_dir() / f"{stem}-{branch.replace('/', '-')}"
-
-
 def _cwd_key(cwd: os.PathLike[str] | str) -> str:
     """Filesystem-safe slug for an absolute cwd: `/` → `-`, leading dash stripped."""
     return str(Path(cwd).resolve()).replace("/", "-").lstrip("-")
 
 
 def cwd_cache(stem: str, cwd: os.PathLike[str] | str) -> Path:
-    """Per-cwd flat-cache cell (mirrors `branch_cache` but keyed by path slug).
+    """Per-cwd flat-cache cell — the only key this cache has.
 
-    Git-state cells are keyed by cwd rather than branch because the branch
-    name is itself one of the cached values — readers don't know the branch
-    until they've read the cache, so the key must be derivable from cwd alone.
+    Git-state cells are keyed by cwd because the branch name is itself one of
+    the cached values: readers don't know the branch until they've read the
+    cache, so the key must be derivable from cwd alone.
+
+    The PR and base-distance cells were once keyed by branch, and that key is
+    not unique. A branch name is unique within a repo, never across a fleet —
+    three repos each holding a `khivi/ci-gatekeeper` worktree shared one
+    `pr-num` cell, so all three rows rendered whichever repo's PR was written
+    last, and `z` on any of them snoozed a PR number belonging to a different
+    repo. Every cell is keyed by the worktree path instead, which is unique by
+    construction and is what each of the three renderers (TUI row, starship
+    footer, tooltip) already has in hand.
     """
     return _ensure_flat_cache_dir() / f"{stem}-{_cwd_key(cwd)}"
 
@@ -523,7 +561,7 @@ def ticket_pill_id(block: dict | None) -> str:
 
 
 def _write_pr_flat_cells(
-    branch: str,
+    cwd: os.PathLike[str] | str,
     *,
     state: str,
     number: int | None,
@@ -537,7 +575,7 @@ def _write_pr_flat_cells(
     base: str = "",
     snoozed: str = "",
 ) -> None:
-    """Write the eleven branch-keyed PR flat cells that every PR writer shares.
+    """Write the eleven worktree-keyed PR flat cells that every PR writer shares.
 
     `state` is already resolved (see `_resolve_state`). The `pr-checks` cell is
     deliberately NOT written here — its three writers disagree on purpose
@@ -576,23 +614,50 @@ def _write_pr_flat_cells(
     review decision — see `nudges.wake_signature`) un-folds the row same-tick,
     with no separate clearing path.
     """
-    atomic_write(branch_cache("pr-state", branch), state)
-    atomic_write(branch_cache("pr-num", branch), str(number) if number else "")
-    atomic_write(branch_cache("pr-title", branch), str(title or ""))
-    atomic_write(branch_cache("pr-muted", branch), str(muted or ""))
-    atomic_write(branch_cache("pr-comments", branch), str(comments) if comments else "")
-    atomic_write(branch_cache("pr-comments-total", branch), str(total) if total else "")
-    atomic_write(branch_cache("pr-author", branch), str(author or ""))
-    atomic_write(branch_cache("pr-nudge", branch), str(nudge or ""))
-    atomic_write(branch_cache("pr-ticket", branch), str(ticket_id or ""))
-    atomic_write(branch_cache("pr-base", branch), str(base or ""))
-    atomic_write(branch_cache("pr-snoozed", branch), str(snoozed or ""))
+    atomic_write(cwd_cache("pr-state", cwd), state)
+    atomic_write(cwd_cache("pr-num", cwd), str(number) if number else "")
+    atomic_write(cwd_cache("pr-title", cwd), str(title or ""))
+    atomic_write(cwd_cache("pr-muted", cwd), str(muted or ""))
+    atomic_write(cwd_cache("pr-comments", cwd), str(comments) if comments else "")
+    atomic_write(cwd_cache("pr-comments-total", cwd), str(total) if total else "")
+    atomic_write(cwd_cache("pr-author", cwd), str(author or ""))
+    atomic_write(cwd_cache("pr-nudge", cwd), str(nudge or ""))
+    atomic_write(cwd_cache("pr-ticket", cwd), str(ticket_id or ""))
+    atomic_write(cwd_cache("pr-base", cwd), str(base or ""))
+    atomic_write(cwd_cache("pr-snoozed", cwd), str(snoozed or ""))
 
 
-def refresh_pr_data(branch: str) -> None:
+def _publish_pr_cells(cwd: os.PathLike[str] | str, payload: dict) -> None:
+    """Write one PR snapshot's flat cells (`pr-*` minus `pr-checks`) for `cwd`.
+
+    The shared tail of every republish path — `refresh_pr_data`,
+    `republish_pr_caches_from_disk` and the TUI's `restamp_pref` — so the three
+    can't drift on which fields a cell is derived from.
+    """
+    _write_pr_flat_cells(
+        cwd,
+        state=_resolve_state(
+            str(payload.get("state") or ""),
+            bool(payload.get("isDraft")),
+            str(payload.get("review") or ""),
+        ),
+        number=payload.get("number"),
+        title=str(payload.get("title") or ""),
+        muted=str(payload.get("muted") or ""),
+        comments=int(payload.get("unaddressed") or 0),
+        total=int(payload.get("total") or 0),
+        author=str(payload.get("author") or ""),
+        nudge=str(payload.get("nudge") or ""),
+        ticket_id=ticket_pill_id(payload.get("ticket")),
+        base=str(payload.get("base") or ""),
+        snoozed=str(payload.get("snoozed") or ""),
+    )
+
+
+def refresh_pr_data(cwd: os.PathLike[str] | str, branch: str) -> None:
     """Repopulate pr-state / pr-num / pr-title / pr-muted / pr-comments /
-    pr-author / pr-nudge flat-cache cells for `branch` from the daemon's per-PR
-    JSON snapshot.
+    pr-author / pr-nudge flat-cache cells for the worktree at `cwd` from the
+    daemon's per-PR JSON snapshot.
 
     Empty (no-PR) sentinel = zero-byte file with a fresh mtime; suppresses
     per-render reads during the 60s TTL.
@@ -603,12 +668,12 @@ def refresh_pr_data(branch: str) -> None:
     """
     if not branch:
         return
-    data = find_pr_payload(branch)
+    data = find_pr_payload_for_cwd(cwd, branch)
     # A reused-branch merged/closed snapshot (see write_pr_cache) is treated
     # like "no PR" — its cells stay empty so the card shows `—`.
     if data is None or data.get("reusedBranch"):
         _write_pr_flat_cells(
-            branch,
+            cwd,
             state="",
             number=None,
             title="",
@@ -622,37 +687,20 @@ def refresh_pr_data(branch: str) -> None:
             snoozed="",
         )
         return
-    _write_pr_flat_cells(
-        branch,
-        state=_resolve_state(
-            str(data.get("state") or ""),
-            bool(data.get("isDraft")),
-            str(data.get("review") or ""),
-        ),
-        number=data.get("number"),
-        title=str(data.get("title") or ""),
-        muted=str(data.get("muted") or ""),
-        comments=int(data.get("unaddressed") or 0),
-        total=int(data.get("total") or 0),
-        author=str(data.get("author") or ""),
-        nudge=str(data.get("nudge") or ""),
-        ticket_id=ticket_pill_id(data.get("ticket")),
-        base=str(data.get("base") or ""),
-        snoozed=str(data.get("snoozed") or ""),
-    )
+    _publish_pr_cells(cwd, data)
 
 
-def refresh_pr_checks(branch: str) -> None:
-    """Repopulate pr-checks flat-cache cell for `branch` from the daemon's
-    per-PR JSON snapshot, derived via `ci_glyph(payload["ci"])` — the same
-    converter the cmux sidebar uses.
+def refresh_pr_checks(cwd: os.PathLike[str] | str, branch: str) -> None:
+    """Repopulate the pr-checks flat-cache cell for the worktree at `cwd` from
+    the daemon's per-PR JSON snapshot, derived via `ci_glyph(payload["ci"])` —
+    the same converter the cmux sidebar uses.
 
-    Empty payload when no PR snapshot exists for the branch.
+    Empty payload when no PR snapshot exists for the worktree.
     """
     if not branch:
         return
-    cache = branch_cache("pr-checks", branch)
-    data = find_pr_payload(branch)
+    cache = cwd_cache("pr-checks", cwd)
+    data = find_pr_payload_for_cwd(cwd, branch)
     if data is None or data.get("reusedBranch"):
         atomic_write(cache, "")
         return
@@ -713,31 +761,29 @@ def write_git_state_cache(cwd: os.PathLike[str] | str, repo_name: str = "") -> N
     atomic_write(sync_path, f"{ahead} {behind}")
 
 
-def _write_base_count(stem: str, branch: str, count: int) -> None:
-    """Cache a base-relative commit count for `branch` in the `stem` cell.
+def _write_base_count(stem: str, cwd: os.PathLike[str] | str, count: int) -> None:
+    """Cache a base-relative commit count for the worktree at `cwd`.
 
     Written by the cockpit daemon once per cycle, after one shared
     `git fetch origin <base>` per repo. A negative `count` (no base) writes
     the empty payload so a stale reader doesn't keep showing a value from a
     previous repo state.
     """
-    if not branch:
-        return
-    atomic_write(branch_cache(stem, branch), "" if count < 0 else str(count))
+    atomic_write(cwd_cache(stem, cwd), "" if count < 0 else str(count))
 
 
-def write_base_distance(branch: str, count: int) -> None:
-    """Cache rebase-staleness for `branch` (commits on base not in branch)."""
-    _write_base_count("base-distance", branch, count)
+def write_base_distance(cwd: os.PathLike[str] | str, count: int) -> None:
+    """Cache rebase-staleness for a worktree (commits on base not in branch)."""
+    _write_base_count("base-distance", cwd, count)
 
 
-def write_base_ahead(branch: str, count: int) -> None:
-    """Cache ahead-of-base for `branch` (commits on branch not in base)."""
-    _write_base_count("base-ahead", branch, count)
+def write_base_ahead(cwd: os.PathLike[str] | str, count: int) -> None:
+    """Cache ahead-of-base for a worktree (commits on branch not in base)."""
+    _write_base_count("base-ahead", cwd, count)
 
 
-def write_branch_pr_cache(
-    branch: str,
+def write_worktree_pr_cache(
+    cwd: os.PathLike[str] | str,
     *,
     state: str,
     is_draft: bool,
@@ -759,7 +805,7 @@ def write_branch_pr_cache(
     already has this data from its own PR fetch.
 
     `ci_glyph` is empty by default — the per-render background refresh
-    will repopulate `pr-checks-<branch>` from `gh pr checks` when stale.
+    will repopulate the `pr-checks` cell from `gh pr checks` when stale.
 
     `muted` follows the `pr-muted` flat-cell contract: "" (not muted) or
     "muted". Always written so an unmute clears the cell same-tick. `snoozed`
@@ -777,10 +823,8 @@ def write_branch_pr_cache(
 
     `base` is `PR.base` — the stack link the TUI indents rows by.
     """
-    if not branch:
-        return
     _write_pr_flat_cells(
-        branch,
+        cwd,
         state=_resolve_state(state, is_draft, review_decision),
         number=number,
         title=title,
@@ -794,10 +838,10 @@ def write_branch_pr_cache(
         snoozed=snoozed,
     )
     if ci_glyph:
-        atomic_write(branch_cache("pr-checks", branch), ci_glyph)
+        atomic_write(cwd_cache("pr-checks", cwd), ci_glyph)
 
 
-_BRANCH_PR_CELLS = (
+_PR_CELLS = (
     "pr-state",
     "pr-num",
     "pr-title",
@@ -813,28 +857,26 @@ _BRANCH_PR_CELLS = (
 )
 
 
-def clear_branch_pr_cache(branch: str) -> None:
-    """Empty every branch-keyed PR flat cell for `branch`.
+def clear_pr_flat_cells(cwd: os.PathLike[str] | str) -> None:
+    """Empty every PR flat cell for the worktree at `cwd`.
 
     The daemon writes this when a branch's only PR snapshot is a merged/closed
     PR whose head the worktree has advanced past (branch reused — see
     `cycle._is_reused_branch_merge`). The persistent JSON snapshot is kept
     (autoclose/teardown still read it), but the statusline must show no PR, so
-    every flat cell (`_BRANCH_PR_CELLS`) is zeroed — the same empty shape the
+    every flat cell (`_PR_CELLS`) is zeroed — the same empty shape the
     no-PR path in `refresh_pr_data` / `refresh_pr_checks` writes.
     """
-    if not branch:
-        return
-    for stem in _BRANCH_PR_CELLS:
-        atomic_write(branch_cache(stem, branch), "")
+    for stem in _PR_CELLS:
+        atomic_write(cwd_cache(stem, cwd), "")
 
 
 def republish_pr_caches_from_disk() -> None:
-    """Re-publish every cached PR JSON snapshot to its branch-keyed flat cells.
+    """Re-publish every cached PR JSON snapshot to its worktree's flat cells.
 
     Daemon-side replacement for the old renderer-spawned `*-refresh`
     pattern. Walks `$COCKPIT_HOME/cache/*__pr-*.json` and, for each
-    payload's `branch`, re-writes `pr-state`, `pr-num`, `pr-title`,
+    payload's `cwd`, re-writes `pr-state`, `pr-num`, `pr-title`,
     `pr-muted`, `pr-comments`, `pr-comments-total`, `pr-author`, `pr-nudge`,
     `pr-ticket`, `pr-base`, `pr-checks`.
     Pure JSON → flat-cell republish,
@@ -848,59 +890,48 @@ def republish_pr_caches_from_disk() -> None:
     the slow tick (which writes JSON + cells together) and the next
     render — without this, the renderer would have to spawn its own
     refresher to detect tmpdir-wipe.
+
+    A PR with no local worktree carries an empty `cwd` and is skipped: there is
+    no row and no session, so nothing reads a cell for it. Dedup is per worktree
+    rather than per branch, since two repos' worktrees can answer to one branch
+    and each owns its own cells.
     """
     if not CACHE_DIR.is_dir():
         return
-    best_by_branch: dict[str, dict] = {}
+    best_by_cwd: dict[str, dict] = {}
     for _, payload in _iter_cache("*__pr-*.json"):
-        branch = payload.get("branch")
-        if not branch:
+        cwd = payload.get("cwd")
+        if not cwd:
             continue
-        cur = best_by_branch.get(branch)
+        cur = best_by_cwd.get(cwd)
         if cur is None or _pr_payload_rank(payload) > _pr_payload_rank(cur):
-            best_by_branch[branch] = payload
-    for branch, payload in best_by_branch.items():
+            best_by_cwd[cwd] = payload
+    for cwd, payload in best_by_cwd.items():
         if payload.get("reusedBranch"):
             # Branch reused after its PR merged/closed — no PR to show. Clear
             # the flat cells so the OS-tmpdir-wipe recovery path doesn't
             # republish a stale merged state.
-            clear_branch_pr_cache(branch)
+            clear_pr_flat_cells(cwd)
             continue
-        _write_pr_flat_cells(
-            branch,
-            state=_resolve_state(
-                str(payload.get("state") or ""),
-                bool(payload.get("isDraft")),
-                str(payload.get("review") or ""),
-            ),
-            number=payload.get("number"),
-            title=str(payload.get("title") or ""),
-            muted=str(payload.get("muted") or ""),
-            comments=int(payload.get("unaddressed") or 0),
-            total=int(payload.get("total") or 0),
-            author=str(payload.get("author") or ""),
-            nudge=str(payload.get("nudge") or ""),
-            ticket_id=ticket_pill_id(payload.get("ticket")),
-            base=str(payload.get("base") or ""),
-            snoozed=str(payload.get("snoozed") or ""),
-        )
+        _publish_pr_cells(cwd, payload)
         atomic_write(
-            branch_cache("pr-checks", branch), _ci_glyph(str(payload.get("ci") or ""))
+            cwd_cache("pr-checks", cwd), _ci_glyph(str(payload.get("ci") or ""))
         )
 
 
 def warm_all(branch: str | None = None) -> None:
-    """Synchronous prewarm for the current branch: PR data + checks + seed a
+    """Synchronous prewarm for the current worktree: PR data + checks + seed a
     transcript-path from the latest project JSONL if Claude Code hasn't yet
     fed one via statusLine input.
     """
     from .git import current_branch
 
-    branch = branch or current_branch(os.getcwd())
+    cwd = os.getcwd()
+    branch = branch or current_branch(cwd)
     if not branch:
         return
-    refresh_pr_data(branch)
-    refresh_pr_checks(branch)
+    refresh_pr_data(cwd, branch)
+    refresh_pr_checks(cwd, branch)
     _seed_transcript_from_project_dir()
 
 
