@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.20.0](https://github.com/khivi/cockpit/compare/v2.19.0...v2.20.0) (2026-09-01)
+
+
+### Features
+
+* key the flat render cells by worktree, and expand {repo} in sidebar_tag ([#446](https://github.com/khivi/cockpit/issues/446)) ([816d22a](https://github.com/khivi/cockpit/commit/816d22aa497498eb2300a0a32821bbdd124b2d95))
+
 ## [2.19.0](https://github.com/khivi/cockpit/compare/v2.18.0...v2.19.0) (2026-09-01)
 
 
