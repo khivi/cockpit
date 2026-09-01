@@ -226,16 +226,16 @@ def test_footer_golden_full_render(footer_env):
     """
     env, cache, _cfg = footer_env
 
-    # Renderer is daemon-write-only — seed both the cwd-keyed git-branch
-    # cell (so `branch_identity` resolves) and the branch-keyed PR cells (so
-    # line 2 PR pills render). No live git fallback exists.
+    # Renderer is daemon-write-only — seed the git-branch cell (so
+    # `branch_identity` resolves) and the PR cells (so line 2 PR pills render).
+    # Both families are keyed by cwd; no live git fallback exists.
     branch = _current_branch()
-    branch_key = branch.replace("/", "-")
-    (cache / f"git-branch-{_cwd_slug()}").write_text(branch)
-    (cache / f"pr-state-{branch_key}").write_text("APPROVED")
-    (cache / f"pr-num-{branch_key}").write_text("9999")
-    (cache / f"pr-checks-{branch_key}").write_text("✓")
-    (cache / f"pr-title-{branch_key}").write_text("Golden test PR title")
+    slug = _cwd_slug()
+    (cache / f"git-branch-{slug}").write_text(branch)
+    (cache / f"pr-state-{slug}").write_text("APPROVED")
+    (cache / f"pr-num-{slug}").write_text("9999")
+    (cache / f"pr-checks-{slug}").write_text("✓")
+    (cache / f"pr-title-{slug}").write_text("Golden test PR title")
 
     blob = (
         b'{"session_id":"G","context_window":{"used_percentage":7,'

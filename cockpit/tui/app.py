@@ -45,8 +45,8 @@ from textual.app import App, ComposeResult
 
 from cockpit.lib import diff_comments, version
 from cockpit.lib.cache import (
-    branch_cache,
     cost_reporting_available,
+    cwd_cache,
     find_pr_payload,
     read_text,
     restamp_pref,
@@ -1653,7 +1653,7 @@ class CockpitApp(App[None]):
             self._notify(f"{verb}: no worktree at {path_str}", severity="error")
             return None
         repo, wt = resolved
-        raw = read_text(branch_cache("pr-num", wt.branch)) if wt.branch else ""
+        raw = read_text(cwd_cache("pr-num", wt.path)) if wt.branch else ""
         try:
             pr = int(raw)
         except ValueError:
@@ -1672,7 +1672,7 @@ class CockpitApp(App[None]):
         # cycle would write, minus the `gh` round-trip; the kick still follows
         # for everything that *is* derived (pills, sidebar folds, the nudge).
         # Worker-thread only: `_publish_inventory` marshals its own render.
-        restamp_pref(self._cache_repo_name(repo), pr, wt.branch, pref)
+        restamp_pref(self._cache_repo_name(repo), pr, wt.path, pref)
         self._publish_inventory()
 
     @work(thread=True, group="mute", exit_on_error=False)

@@ -95,7 +95,6 @@ from textual.widgets import DataTable
 from textual.widgets.data_table import CellDoesNotExist, RowDoesNotExist
 
 from cockpit.lib.cache import (
-    branch_cache,
     cwd_cache,
     find_pr_payload,
     read_text,
@@ -356,9 +355,9 @@ def _row_band(wt: Worktree) -> int:
     parks its snoozed fold under its reviews fold (and a sunk stack chain under
     both — `cycle._reconcile_review_groups`). Mute is deliberately *not* a band: it
     means "stop nudging me about a PR I'm working on", not "not my turn"."""
-    if read_text(branch_cache("pr-snoozed", wt.branch)):
+    if read_text(cwd_cache("pr-snoozed", wt.path)):
         return _BAND_SNOOZED
-    if read_text(branch_cache("pr-author", wt.branch)):
+    if read_text(cwd_cache("pr-author", wt.path)):
         return 1
     return 0
 
@@ -372,9 +371,16 @@ def _chains(wts: list[Worktree]) -> list[list[tuple[int, int]]]:
     moves whole, so a snoozed tip sinks (and folds) its whole chain while a
     snooze on a member below the tip moves nothing."""
     chains: list[list[tuple[int, int]]] = []
+    # `stack_order` links a branch to its base by name, but the cell holding the
+    # base is keyed by worktree. Within one repo a branch names exactly one
+    # worktree, so the map is total — it is only across repos that a branch name
+    # is ambiguous, and a chain never spans repos.
+    path_of = {wt.branch: wt.path for wt in wts}
     for i, depth in stack_order(
         [wt.branch for wt in wts],
-        lambda branch: read_text(branch_cache("pr-base", branch)),
+        lambda branch: read_text(cwd_cache("pr-base", path_of[branch]))
+        if branch in path_of
+        else "",
     ):
         if depth == 0 or not chains:
             chains.append([(i, depth)])
@@ -723,11 +729,11 @@ def row_capabilities(
         own authoritative (`origin_head_branch`) guards.
     """
     caps: set[str] = set()
-    if read_text(branch_cache("pr-num", wt.branch)):
+    if read_text(cwd_cache("pr-num", wt.path)):
         caps.add("pr")
-    if read_text(branch_cache("pr-muted", wt.branch)):
+    if read_text(cwd_cache("pr-muted", wt.path)):
         caps.add("muted")
-    if read_text(branch_cache("pr-snoozed", wt.branch)):
+    if read_text(cwd_cache("pr-snoozed", wt.path)):
         caps.add("snoozed")
     if tickets_provider != "none" and (
         (find_pr_payload(wt.branch, repo_name) or {}).get("ticket") or {}
@@ -845,7 +851,7 @@ def worktree_cells(
     (see `_stack_rows`)."""
 
     def cell(stem: str) -> str:
-        return read_text(branch_cache(stem, wt.branch))
+        return read_text(cwd_cache(stem, wt.path))
 
     # One snapshot read per row, handed to the ticket cells and the links rather
     # than re-globbed by each of them.
@@ -1012,7 +1018,7 @@ def row_tooltips(
     to the column meaning on hover."""
 
     def cell(stem: str) -> str:
-        return read_text(branch_cache(stem, wt.branch))
+        return read_text(cwd_cache(stem, wt.path))
 
     payload = find_pr_payload(wt.branch, repo_name)
 

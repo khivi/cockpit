@@ -1028,7 +1028,7 @@ def _one_pr_per_branch(prs: list[PR]) -> list[PR]:
 
     Everything downstream joins a PR to its worktree, workspace and cache *by
     head branch* (`match_worktrees`, `cmux.find_cockpit_workspaces`,
-    `stacks.find_stacks`, the branch-keyed flat cells), so two PRs on one branch
+    `stacks.find_stacks`, the flat render cells), so two PRs on one branch
     make those readers disagree: a plain `{pr.branch: pr}` comprehension is
     last-wins, while `match_worktrees` emits a pair for *each*. That mismatch is
     a spawn/close loop — `_spawn_missing_workspaces` sees the PR the branch map

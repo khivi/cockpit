@@ -910,7 +910,7 @@ async def test_mute_and_snooze_restamp_their_cells_on_the_keypress(
     stamped: list = []
     monkeypatch.setattr(
         "cockpit.tui.app.restamp_pref",
-        lambda repo, num, branch, pref: stamped.append((repo, num, branch, pref)),
+        lambda repo, num, cwd, pref: stamped.append((repo, num, cwd, pref)),
     )
     app, _ = _make_app()
     async with app.run_test() as pilot:
@@ -920,9 +920,11 @@ async def test_mute_and_snooze_restamp_their_cells_on_the_keypress(
         await pilot.press(key)
         await pilot.pause(0.6)
     assert len(stamped) == 1
-    repo_name, num, branch, pref = stamped[0]
-    # The nwo-derived cache key and the PR number the snapshot is filed under.
-    assert (repo_name, num, branch) == (tmp_path.name, 123, wt.branch)
+    repo_name, num, cwd, pref = stamped[0]
+    # The nwo-derived cache key, the PR number the snapshot is filed under, and
+    # the worktree whose cells repaint — keyed by path, since a branch name is
+    # only unique inside one repo.
+    assert (repo_name, num, cwd) == (tmp_path.name, 123, wt.path)
     assert pref.snoozed is snoozed and pref.muted is not snoozed
 
 
@@ -1422,7 +1424,7 @@ def _snoozed_repo(monkeypatch, tmp_path):
     monkeypatch.setattr(cache_mod, "FLAT_CACHE_DIR", cdir)
     dozing = Worktree(path=tmp_path / "dozing", branch="khivi/dozing")
     mine = Worktree(path=tmp_path / "mine", branch="khivi/mine")
-    cache_mod.branch_cache("pr-snoozed", dozing.branch).write_text("snoozed")
+    cache_mod.cwd_cache("pr-snoozed", dozing.path).write_text("snoozed")
     return [("alpha", "alpha", None, "none", [dozing, mine])], dozing, mine
 
 
@@ -1590,11 +1592,11 @@ async def test_a_snooze_that_folds_nothing_leaves_the_cursor_alone(
     tip = Worktree(path=tmp_path / "tip", branch="khivi/tip")
     member = Worktree(path=tmp_path / "member", branch="khivi/member")
     dozing = Worktree(path=tmp_path / "dozing", branch="khivi/dozing")
-    cache_mod.branch_cache("pr-base", tip.branch).write_text(member.branch)
+    cache_mod.cwd_cache("pr-base", tip.path).write_text(member.branch)
     # An unrelated snoozed row, so the repo does have a (collapsed) fold row.
-    cache_mod.branch_cache("pr-snoozed", dozing.branch).write_text("snoozed")
+    cache_mod.cwd_cache("pr-snoozed", dozing.path).write_text("snoozed")
     # ...and the snooze the user just pressed, on a member *below* the tip.
-    cache_mod.branch_cache("pr-snoozed", member.branch).write_text("snoozed")
+    cache_mod.cwd_cache("pr-snoozed", member.path).write_text("snoozed")
     inv = [("alpha", "alpha", None, "none", [tip, member, dozing])]
 
     app, _ = _make_app()
@@ -3338,7 +3340,7 @@ async def test_A_reports_partial_delivery_and_keeps_the_draft(monkeypatch, tmp_p
     other = Worktree(path=tmp_path / "dozing2", branch="khivi/dozing2")
     import cockpit.lib.cache as cache_mod
 
-    cache_mod.branch_cache("pr-snoozed", other.branch).write_text("snoozed")
+    cache_mod.cwd_cache("pr-snoozed", other.path).write_text("snoozed")
     inv = [("alpha", "alpha", None, "none", [dozing, other])]
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr(

@@ -193,7 +193,7 @@ Key gates (all from `cycle.py`):
 - **Reused-branch suppression** (`_is_reused_branch_merge`): a merged/closed PR
   whose `headRefOid` is no longer an ancestor of the worktree's HEAD means the
   branch was reused for new local work. The card shows no PR until a new one is
-  opened — the slow tick clears the pills, blanks the branch-keyed flat cells,
+  opened — the slow tick clears the pills, blanks the worktree's flat cells,
   and persists `reusedBranch: true` in the PR JSON so the git-free read paths
   (fast-tick republish, renderer refresh) stay blank without re-running `git`.
   An absent `headRefOid` (old cached PR) never suppresses, so a real PR is never

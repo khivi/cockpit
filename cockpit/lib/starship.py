@@ -19,7 +19,6 @@ from pathlib import Path
 
 from . import cache as _cache
 from .cache import (
-    branch_cache,
     cwd_cache,
     read_text,
     session_cache,
@@ -392,7 +391,7 @@ def print_branch_identity() -> str:
     parts = [slate(f"{ICON_BRANCH} {branch}")]
     if ahead > 0:
         parts.append(azure(f"{ICON_AHEAD_ORIGIN}{ahead}"))
-    ahead_base = _base_ahead_segment(branch)
+    ahead_base = _base_ahead_segment()
     if ahead_base:
         parts.append(ahead_base)
     return " ".join(parts)
@@ -418,7 +417,7 @@ def print_worktree_status() -> str:
         parts.append(shadow(f"{ICON_UNTRACKED}{counts.untracked}"))
     if behind > 0:
         parts.append(orange(f"{ICON_BEHIND_ORIGIN}{behind}"))
-    stale = _base_distance_segment(branch)
+    stale = _base_distance_segment()
     if stale:
         parts.append(stale)
     if not parts:
@@ -426,8 +425,8 @@ def print_worktree_status() -> str:
     return slate(POWERLINE_BRANCH) + " " + " ".join(parts)
 
 
-def _base_distance_segment(branch: str) -> str:
-    raw = read_text(branch_cache("base-distance", branch))
+def _base_distance_segment() -> str:
+    raw = read_text(cwd_cache("base-distance", os.getcwd()))
     if not raw:
         return ""
     try:
@@ -439,8 +438,8 @@ def _base_distance_segment(branch: str) -> str:
     return orange(f"{ICON_BEHIND_BASE}{count}")
 
 
-def _base_ahead_segment(branch: str) -> str:
-    raw = read_text(branch_cache("base-ahead", branch))
+def _base_ahead_segment() -> str:
+    raw = read_text(cwd_cache("base-ahead", os.getcwd()))
     if not raw:
         return ""
     try:
@@ -459,14 +458,14 @@ def print_ticket() -> str:
     # an unaligned footer) so a `pe-4608-` branch still shows its id pre-PR.
     # A Trello codename branch carries no id, so it stays blank until aligned.
     branch = _branch()
-    return read_text(branch_cache("pr-ticket", branch)) or extract_ticket(branch)
+    return read_text(cwd_cache("pr-ticket", os.getcwd())) or extract_ticket(branch)
 
 
 def print_pr_state(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = read_text(branch_cache("pr-state", branch))
+    raw = read_text(cwd_cache("pr-state", os.getcwd()))
     if not raw:
         return ""
     icon = _PR_STATE_ICON.get(raw, "")
@@ -481,7 +480,7 @@ def print_pr_num(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = read_text(branch_cache("pr-num", branch))
+    raw = read_text(cwd_cache("pr-num", os.getcwd()))
     if not raw or raw in ("0", "null"):
         return ""
     return f"{ICON_PR_NUM} #{raw}"
@@ -491,7 +490,7 @@ def print_pr_comments(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = read_text(branch_cache("pr-comments", branch))
+    raw = read_text(cwd_cache("pr-comments", os.getcwd()))
     if not raw:
         return ""
     try:
@@ -507,7 +506,7 @@ def print_pr_checks(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    glyph = read_text(branch_cache("pr-checks", branch))
+    glyph = read_text(cwd_cache("pr-checks", os.getcwd()))
     if not glyph:
         return ""
     color = _PR_CHECKS_COLOR.get(glyph)
@@ -520,7 +519,7 @@ def print_pr_title(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = read_text(branch_cache("pr-title", branch))
+    raw = read_text(cwd_cache("pr-title", os.getcwd()))
     if not raw:
         return ""
     return f"{ICON_PR_TITLE} {raw}"
@@ -531,7 +530,7 @@ def print_pr_muted(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = read_text(branch_cache("pr-muted", branch))
+    raw = read_text(cwd_cache("pr-muted", os.getcwd()))
     if not raw:
         return ""
     return yellow(f"{ICON_PR_MUTED} muted")
