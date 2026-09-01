@@ -1,0 +1,32 @@
+# zizmor (https://docs.zizmor.sh) — GitHub Actions security audits, run as the
+# `zizmor` pre-commit hook. Sibling to actionlint, not a replacement: actionlint
+# checks that a workflow is correct, zizmor checks that it is safe.
+
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # GitHub's own actions stay ref-pinned. They are the one publisher whose
+        # tag namespace isn't a third-party supply-chain surface, and hash-pins
+        # here would cost readability in every workflow for no real reduction in
+        # exposure.
+        actions/*: ref-pin
+
+        # Everything else is hash-pinned, because two of them reach users
+        # directly: mislav/bump-homebrew-formula-action commits onto the tap's
+        # main under a PAT — the formula every `brew install cockpit` resolves —
+        # and pypa/gh-action-pypi-publish uploads under this repo's PyPI OIDC
+        # identity. A retagged `v4` or `release/v1` is a path from a compromised
+        # action to an end user's machine, which a mutable tag does nothing to
+        # stop. Dependabot's github-actions ecosystem keeps the SHAs current.
+        "*": hash-pin
+
+  artipacked:
+    ignore:
+      # tag.yml's checkout must KEEP its credentials. The `git push origin
+      # "v$v"` two steps later authenticates with exactly what that checkout
+      # persists, and that push is what fires release.yml and publish.yml. Adding
+      # `persist-credentials: false` there breaks the whole release pipeline, and
+      # does it silently: the tag never lands, so neither downstream workflow
+      # runs and nothing reports a failure.
+      - tag.yml

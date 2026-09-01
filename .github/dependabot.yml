@@ -1,13 +1,20 @@
 version: 2
 updates:
-  # Bump pinned hook versions in .pre-commit-config.yaml
-  # (ruff, black, shellcheck, shfmt, gitleaks, pre-commit-hooks, relint).
+  # Bump the pinned `rev`s in .pre-commit-config.yaml. Deliberately not listing
+  # which hooks — that list named black, shfmt and relint long after they left
+  # the config, and would rot again on the next hook added.
   - package-ecosystem: pip
     directory: "/"
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
     labels: ["dependencies", "pre-commit"]
+    # Don't propose a release until it has been public for a week. A
+    # compromised package is usually yanked within days of publication, so the
+    # delay costs nothing here (monthly interval) and drops the window in which
+    # dependabot would open a PR for one.
+    cooldown:
+      default-days: 7
     # The repo has no requirements.txt — this ecosystem entry is here only so
     # dependabot's pre-commit detection (it reads .pre-commit-config.yaml under
     # the pip ecosystem) is enabled. Native pre-commit support landed in 2023.
@@ -19,3 +26,7 @@ updates:
       interval: monthly
     open-pull-requests-limit: 5
     labels: ["dependencies", "github-actions"]
+    # This is what keeps the SHA pins in .github/zizmor.yml maintainable —
+    # dependabot rewrites both the hash and its trailing version comment.
+    cooldown:
+      default-days: 7
