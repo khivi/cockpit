@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.23.0](https://github.com/khivi/cockpit/compare/v2.22.1...v2.23.0) (2026-09-02)
+
+
+### Features
+
+* **tickets:** render a Trello card by its card number ([#458](https://github.com/khivi/cockpit/issues/458)) ([ef9829f](https://github.com/khivi/cockpit/commit/ef9829f9840c86b228f5f4cb333067b94caa74a8))
+
 ## [2.22.0](https://github.com/khivi/cockpit/compare/v2.21.0...v2.22.0) (2026-09-01)
 
 
