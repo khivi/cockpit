@@ -180,7 +180,7 @@ def _linear_status_icon(state: str) -> tuple[str, str]:
 
 # (repo display name, cache key/nwo, sidebar_color, tickets provider, worktrees).
 # The provider is `repo_tickets(...)` verbatim ("none" when disabled) — Trello
-# renders card titles, every other provider its id. Display name → header +
+# renders card numbers, every other provider its id. Display name → header +
 # `_row_repo`; cache key → `find_pr_payload` (the daemon writes PR cache under the
 # git nwo, which differs from the config label when that label is set). See
 # `app._cache_repo_name`.
@@ -293,9 +293,10 @@ _STATUS_SLOT = 3
 _RULE_WIDTH = 29
 _LABEL_MAX = 22
 
-# Ceiling on the Ticket cell. Trello renders card *titles* there, which run long
-# enough to push the trailing Title column off a normal-width terminal. The full
-# value stays on the hover tooltip.
+# Ceiling on the Ticket cell — several delivered ids comma-joined, or a Trello
+# card name where the card's number didn't resolve, run long enough to push the
+# trailing Title column off a normal-width terminal. The full value stays on the
+# hover tooltip.
 _TICKET_MAX = 18
 
 
@@ -656,7 +657,7 @@ def _tickets_of(payload: dict | None) -> list[dict]:
 def _ticket_ids(payload: dict | None, provider: str) -> str:
     """The untruncated Ticket-cell text: the delivered id(s), comma-joined —
     except Trello, whose ids are opaque short links, so `ticket_display` hands
-    back the cached card title(s) (id fallback). Empty with no delivered
+    back the cached card number(s) (id fallback). Empty with no delivered
     tickets. Shared by the cell and its hover tooltip so the two can't drift."""
     return ", ".join(
         ticket_display(t, provider, missing="?") for t in _tickets_of(payload)
@@ -977,7 +978,7 @@ def _dirty_tooltip(wt: Worktree) -> str | None:
 def _ticket_status_tooltip(payload: dict | None, provider: str) -> str | None:
     """Hover text for the 📍 cell — each delivered ticket's `id: state` (the
     workflow-state name the icon abstracts away). Uses the same display handle as
-    the Ticket cell (`ticket_display`), so Trello shows the card title rather
+    the Ticket cell (`ticket_display`), so Trello shows the card number rather
     than its opaque short link. None with no delivered tickets."""
     tickets = _tickets_of(payload)
     if not tickets:
@@ -1041,7 +1042,7 @@ def row_tooltips(
     if show_tickets:
         tips += [
             # Ticket id — self-evident, so only worth a hint when `_TICKET_MAX`
-            # clipped it (a long Trello card title).
+            # clipped it (several delivered ids, or a Trello card name).
             _ticket_ids(payload, tickets_provider) or None
             if tickets_provider != "none"
             else None,

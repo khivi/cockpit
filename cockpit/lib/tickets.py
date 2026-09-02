@@ -62,8 +62,8 @@ from .trello import CONFIG_FIELDS as _TRELLO_CONFIG_FIELDS
 from .trello import (
     card_short_link,
     fetch_card_board,
+    fetch_card_handles,
     fetch_card_lists,
-    fetch_card_names,
     parse_trello_footer_links,
     parse_trello_footers,
 )
@@ -146,6 +146,8 @@ class TicketProvider:
     # Same signature as `fetch_states`; the enrichment cockpit writes into the PR
     # cache so a statusline consumer (cship) shows the ticket name beside its id
     # without its own API round-trip. None per id on any failure/unset creds.
+    # Trello returns the card *number* (`#122`) rather than a name — its id is an
+    # opaque short link, so this is the only human handle it has (`ticket_display`).
     fetch_titles: Callable[..., dict[str, str | None]]
     # (ref, candidates, cfg) → the subset of `candidates` (config repo entries)
     # the ticket `ref` belongs to. The tiebreaker for a ticket id that routes to
@@ -403,10 +405,11 @@ def _trello_fetch_titles(
     cfg: dict,
     repo_entry: dict | None = None,
 ) -> dict[str, str | None]:
-    """`{short_link: card_name}` via the Trello REST API (one GET per card). Same
-    per-repo cred resolution as `_trello_fetch_states`. All ids map to None when
-    creds are unset (feature off)."""
-    return fetch_card_names(
+    """`{short_link: card_number}` (`#122`, card-name fallback) via the Trello
+    REST API (one GET per card) — the handle a renderer shows instead of the
+    opaque short link. Same per-repo cred resolution as `_trello_fetch_states`.
+    All ids map to None when creds are unset (feature off)."""
+    return fetch_card_handles(
         ids,
         key=trello_api_key(cfg, repo_entry) or None,
         token=trello_api_token(cfg, repo_entry) or None,

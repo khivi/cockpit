@@ -3482,13 +3482,13 @@ def _trello_devdone_ctx(tmp_path):
     return ctx
 
 
-def test_track_dev_done_single_ticket_trello_prefers_title(tmp_path):
-    # A Trello id is an opaque short link — show the card title instead.
+def test_track_dev_done_single_ticket_trello_prefers_card_number(tmp_path):
+    # A Trello id is an opaque short link — show the card number instead.
     ctx = _trello_devdone_ctx(tmp_path)
-    block = {"tickets": [{"id": "VfqsfqUd", "state": "Done", "title": "Fix it"}]}
+    block = {"tickets": [{"id": "VfqsfqUd", "state": "Done", "title": "#122"}]}
     with patch.object(cycle, "apply_devdone_pill") as pill:
         cycle._track_dev_done(ctx, "workspace:1", block)
-    pill.assert_called_once_with("workspace:1", "Fix it")
+    pill.assert_called_once_with("workspace:1", "#122")
 
 
 def test_track_dev_done_single_ticket_trello_falls_back_to_id(tmp_path):

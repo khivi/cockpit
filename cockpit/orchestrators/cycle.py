@@ -358,7 +358,7 @@ def _prefetch_linear_blocks(ctx: RepoCycle) -> None:
                 for tid in ids
             ]
             # Embed the provider so a downstream reader (`ticket_pill_id`,
-            # `ticket_display`) can pick Trello's title-over-short-link handle
+            # `ticket_display`) can pick Trello's handle-over-short-link display
             # without re-reading config — the block is self-describing.
             ctx.linear_blocks[branch] = {
                 "tickets": tickets,
@@ -442,7 +442,7 @@ def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
     AND *every* delivered ticket is in the `linear_dev_done` workflow state
     (default "Dev Done"); the whole PR's scope is dev-complete. For a single
     ticket, shows the id (`PE-123`, `#45` — meaningful) — except Trello, whose id
-    is an opaque short link, so it shows the human title (id fallback, truncated
+    is an opaque short link, so it shows the card number (id fallback, truncated
     to `_DEVDONE_TITLE_MAX`). Several tickets show the `done/total` count. Cleared
     otherwise, so a ticket slipping back out of dev-done drops the pill. No-op in
     dry runs.
@@ -462,7 +462,7 @@ def _track_dev_done(ctx: RepoCycle, ref: str, block: dict | None) -> None:
         apply_devdone_pill(ref, None)
         return
     if len(tickets) == 1:
-        # Trello ids are opaque short links — show the card title (id fallback,
+        # Trello ids are opaque short links — show the card number (id fallback,
         # truncated so a long name can't widen the sidebar pill). Every other
         # provider's id is meaningful, so show it as-is.
         label = ticket_display(tickets[0], provider.name, max_len=_DEVDONE_TITLE_MAX)
