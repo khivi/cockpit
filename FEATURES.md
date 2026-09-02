@@ -242,15 +242,16 @@ hour ago stops being mergeable the moment someone else lands on the base. Turn o
 Point a repo at **Linear, Jira, GitHub Issues, or Trello** and the tracker joins the row.
 
 Cockpit reads delivery from one strict footer line in the PR body — `Linear: [PE-1234](…)`,
-`Closes #123`, `Jira: [PROJ-123](…)`, `Trello: [title](…)`. Deliberately strict: a branch
+`Closes #123`, `Jira: [PROJ-123](…)`, `Trello: [#122 title](…)`. Deliberately strict: a branch
 name that happens to contain a ticket id, or a passing mention in a comment, is not a
 delivery claim.
 
 From that link you get:
 
-- **The ticket and its live state in the table**, and on the workspace card — the real
-  title, not just an id. Refetched on a TTL, so it can trail the tracker by up to fifteen
-  minutes.
+- **The ticket and its live state in the table**, and on the workspace card. Every
+  provider shows the handle you'd say out loud — `PE-1234`, `PROJ-45`, `#123`, and for
+  Trello the card number `#122` rather than the opaque `trello.com/c/<id>` short link.
+  Refetched on a TTL, so it can trail the tracker by up to fifteen minutes.
 - **A `🏁` dev-done pill** when every ticket the PR delivers has reached your
   dev-done state. Whatever your tracker calls that thing — a Linear state, a GitHub label,
   a Jira status, a Trello list — it's one config field, `dev_done`.

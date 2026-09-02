@@ -19,9 +19,9 @@ from cockpit.lib.trello import (
     TRELLO_CARD_URL_RE,
     card_short_link,
     fetch_card_board,
+    fetch_card_handles,
     fetch_card_lists,
     fetch_card_meta,
-    fetch_card_names,
     fetch_myself,
     move_card,
     parse_trello_footer_links,
@@ -137,25 +137,36 @@ def test_fetch_card_lists_happy_path_and_query_auth():
     assert captured["url"].startswith("https://api.trello.com/1/cards/aB3dZ9?")
 
 
-def test_fetch_card_names_happy_path_and_fields_param():
+def test_fetch_card_handles_prefers_the_card_number():
     captured: dict = {}
 
     def fake_urlopen(req, timeout=None):
         captured["url"] = req.full_url
+        return _FakeResp({"name": "Fix the login flow", "idShort": 122})
+
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_card_handles(["aB3dZ9"], key=KEY, token=TOKEN)
+    # The number is the handle a human reads off the card; the name is only the
+    # fallback. Both fields ride one GET.
+    assert out == {"aB3dZ9": "#122"}
+    assert "fields=name%2CidShort" in captured["url"]
+
+
+def test_fetch_card_handles_falls_back_to_the_card_name():
+    def fake_urlopen(req, timeout=None):
         return _FakeResp({"name": "Fix the login flow"})
 
     with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=fake_urlopen):
-        out = fetch_card_names(["aB3dZ9"], key=KEY, token=TOKEN)
+        out = fetch_card_handles(["aB3dZ9"], key=KEY, token=TOKEN)
     assert out == {"aB3dZ9": "Fix the login flow"}
-    assert "fields=name" in captured["url"]
 
 
-def test_fetch_card_names_no_creds_skips_network():
+def test_fetch_card_handles_no_creds_skips_network():
     with (
         patch("cockpit.lib.trello.urllib.request.urlopen") as urlopen,
         patch.dict("os.environ", {}, clear=True),
     ):
-        out = fetch_card_names(["aB3dZ9"])
+        out = fetch_card_handles(["aB3dZ9"])
     assert out == {"aB3dZ9": None}
     urlopen.assert_not_called()
 

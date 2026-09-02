@@ -526,12 +526,13 @@ def ticket_display(
     t: dict, provider: str, *, missing: str = "", max_len: int | None = None
 ) -> str:
     """The human-facing handle for one delivered ticket. Trello ids are opaque
-    short links, so prefer the cached card title (id fallback, truncated with a
-    trailing "…" when `max_len` is set — a long card name can't widen a pill);
-    every other provider's id (PE-1234, #123, PROJ-45) is itself the meaningful
-    handle, returned as-is. Shared by the statusline `pr-ticket` cell
-    (`ticket_pill_id`), the TUI Ticket cell / 📍 hover (`worktree_table`), and
-    the `devdone=` pill (`cycle`)."""
+    short links, so prefer the cached handle `fetch_card_handles` resolved — the
+    card number `#122`, or the card name when the number didn't come back (id
+    fallback, truncated with a trailing "…" when `max_len` is set, so a long card
+    name can't widen a pill); every other provider's id (PE-1234, #123, PROJ-45)
+    is itself the meaningful handle, returned as-is. Shared by the statusline
+    `pr-ticket` cell (`ticket_pill_id`), the TUI Ticket cell / 📍 hover
+    (`worktree_table`), and the `devdone=` pill (`cycle`)."""
     if provider == "trello":
         text = str(t.get("title") or t.get("id") or missing)
         if max_len is not None and len(text) > max_len:
@@ -544,8 +545,8 @@ def ticket_pill_id(block: dict | None) -> str:
     """The first delivered ticket's display handle from a `ticket` block
     (`{"provider", "tickets": [{"id", "title", ...}], ...}`), or "" — the value
     the statusline `pr-ticket` cell / pill renders: Linear `PE-1234`, Jira
-    `PROJ-123`, GitHub `#123`, Trello the card *title* (short-link fallback,
-    truncated to `_STATUSLINE_TICKET_MAX`). Reads the provider off the block
+    `PROJ-123`, GitHub `#123`, Trello the card *number* `#122` (short-link
+    fallback, truncated to `_STATUSLINE_TICKET_MAX`). Reads the provider off the block
     (self-describing, written by `cycle._prefetch_linear_blocks`); an old
     provider-less on-disk block falls back to the raw id for one cycle until
     rewritten. Footer-derived by the daemon, so a codename branch that carries
@@ -598,7 +599,7 @@ def _write_pr_flat_cells(
     (derived, never stored as standalone state).
 
     `ticket_id` is the delivered ticket display handle (`ticket_pill_id` of the
-    PR's `ticket` block — the id for most providers, the card title for Trello)
+    PR's `ticket` block — the id for most providers, the card number for Trello)
     that the statusline `pr-ticket` pill renders, resolved off the footer so a
     Trello codename branch works without a branch regex. Always written so a
     re-aligned or removed footer clears the stale value.

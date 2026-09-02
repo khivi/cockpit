@@ -208,12 +208,21 @@ def fetch_card_lists(
     return out
 
 
-def fetch_card_names(
+def fetch_card_handles(
     short_links: list[str], *, key: str | None = None, token: str | None = None
 ) -> dict[str, str | None]:
-    """`{short_link: card_name_or_None}` for every card — the human title for the
-    PR-cache enrichment. Same per-card `GET /cards/{id}?fields=name` shape and
-    error isolation as `fetch_card_lists`. None on unset creds. Never raises.
+    """`{short_link: human_handle_or_None}` for every card — the display handle
+    every renderer shows in place of the opaque short link.
+
+    The handle is the card *number* (`#122`), Trello's `idShort`: the identifier
+    a human reads off the card, and the analog of `PE-1234` / `PROJ-45` / `#123`.
+    It is scoped to the board, not global, and appears nowhere in the card URL —
+    which is why the short link remains the identifier everything else keys on,
+    and why this needs a fetch at all. The card name is the fallback for a card
+    whose number doesn't come back.
+
+    Same per-card GET shape and error isolation as `fetch_card_lists`. None on
+    unset creds. Never raises.
     """
     out: dict[str, str | None] = {sl: None for sl in short_links}
     creds = _creds(key, token)
@@ -222,10 +231,11 @@ def fetch_card_names(
     k, tok = creds
     for sl in out:
         data = _request(
-            "GET", f"/cards/{sl}", key=k, token=tok, params={"fields": "name"}
+            "GET", f"/cards/{sl}", key=k, token=tok, params={"fields": "name,idShort"}
         )
         if isinstance(data, dict):
-            out[sl] = data.get("name") or None
+            num = data.get("idShort")
+            out[sl] = f"#{num}" if num else (data.get("name") or None)
     return out
 
 

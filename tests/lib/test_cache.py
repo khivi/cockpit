@@ -239,16 +239,16 @@ def test_write_worktree_pr_cache_default_ticket_empty(cache_dir):
         ({"tickets": [{"id": "VfqsfqUd"}, {"id": "AbCdEf12"}]}, "VfqsfqUd"),
         ({"tickets": [{"state": "Done"}]}, ""),
         # Trello: the block carries its provider, so the pill shows the card
-        # title (not the opaque short link); id fallback when the title is unset.
+        # number (not the opaque short link); id fallback when it is unset.
         (
             {
                 "provider": "trello",
-                "tickets": [{"id": "VfqsfqUd", "title": "Dockerize"}],
+                "tickets": [{"id": "VfqsfqUd", "title": "#122"}],
             },
-            "Dockerize",
+            "#122",
         ),
         ({"provider": "trello", "tickets": [{"id": "VfqsfqUd"}]}, "VfqsfqUd"),
-        # A long Trello title is truncated so it can't widen the statusline pill.
+        # A card-name fallback is truncated so it can't widen the statusline pill.
         (
             {"provider": "trello", "tickets": [{"id": "x", "title": "y" * 60}]},
             "y" * 39 + "…",
@@ -263,7 +263,7 @@ def test_ticket_pill_id(block, expected):
     "t,provider,kwargs,expected",
     [
         ({"id": "PE-1"}, "linear", {}, "PE-1"),
-        ({"id": "V1", "title": "Card"}, "trello", {}, "Card"),
+        ({"id": "V1", "title": "#122"}, "trello", {}, "#122"),
         ({"id": "V1"}, "trello", {}, "V1"),
         ({}, "trello", {"missing": "?"}, "?"),
         ({"id": "V1", "title": "abcdef"}, "trello", {"max_len": 4}, "abc…"),
@@ -304,8 +304,8 @@ def test_refresh_pr_data_populates_ticket_from_json_snapshot(cache_dir):
     assert (cache_dir / f"pr-ticket-{_KEY}").read_text() == "PE-4608"
 
 
-def test_refresh_pr_data_trello_ticket_cell_is_title_not_short_link(cache_dir):
-    # The statusline pill must show the human card title, not the opaque short
+def test_refresh_pr_data_trello_ticket_cell_is_number_not_short_link(cache_dir):
+    # The statusline pill must show the human card number, not the opaque short
     # link — the block's `provider` drives `ticket_pill_id`'s Trello branch.
     payload = {
         "state": "OPEN",
@@ -315,12 +315,12 @@ def test_refresh_pr_data_trello_ticket_cell_is_title_not_short_link(cache_dir):
         "title": "Trello work",
         "ticket": {
             "provider": "trello",
-            "tickets": [{"id": "VfqsfqUd", "state": "Doing", "title": "Dockerize"}],
+            "tickets": [{"id": "VfqsfqUd", "state": "Doing", "title": "#122"}],
         },
     }
     with patch.object(cache_mod, "find_pr_payload_for_cwd", return_value=payload):
         cache_mod.refresh_pr_data(_WT_PATH, "khivi/fnox")
-    assert (cache_dir / f"pr-ticket-{_KEY}").read_text() == "Dockerize"
+    assert (cache_dir / f"pr-ticket-{_KEY}").read_text() == "#122"
 
 
 def test_refresh_pr_data_populates_nudge_from_json_snapshot(cache_dir):
