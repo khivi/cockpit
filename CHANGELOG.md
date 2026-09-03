@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.27.1](https://github.com/khivi/cockpit/compare/v2.27.0...v2.27.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **tui:** survive the shutdown window instead of crashing on quit ([#476](https://github.com/khivi/cockpit/issues/476)) ([0ded603](https://github.com/khivi/cockpit/commit/0ded603273d01eacb34595ada209d796a39f2386))
+
 ## [2.27.0](https://github.com/khivi/cockpit/compare/v2.26.0...v2.27.0) (2026-09-03)
 
 
