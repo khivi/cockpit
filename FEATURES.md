@@ -94,6 +94,13 @@ on hues that don't read apart. Give the repo a [`sidebar_tag`](docs/config.md) a
 workspaces read `infra·fix-retry`; an emoji reads as an icon rather than text, so it takes a
 space instead of the dot — `🎛️ fix-retry`. Off unless you set it.
 
+The tag reaches the group headers too, where it buys back the most width. A stacked chain's
+header wears it like the rows underneath. The two piles at the bottom of the sidebar spell
+out the organisation they belong to — `Some Long Org snoozed (11)` — so a tag set on the
+*org* stands in for that name and leaves `♻️ snoozed (11)`. Set the tag on the org with the
+`{repo}` placeholder and you get both: each workspace named after its own repo, and the
+shared glyph alone on the fold. Repos with no tag read exactly as before.
+
 **Turn cmux's own PR row off when you use this** — `"sidebar": {"showPullRequests": false}`
 in `~/.config/cmux/cmux.json`, then `cmux reload-config`. cmux resolves a branch to a PR by
 name alone, so a branch that has carried more than one reads as the earlier, closed PR;

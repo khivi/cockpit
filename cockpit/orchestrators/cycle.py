@@ -87,6 +87,7 @@ from cockpit.lib.colors import (
 )
 from cockpit.lib.config import (
     COCKPIT_HOME,
+    REPO_TAG_TOKEN,
     base_remote,
     credential_env_names,
     ensure_state_dirs,
@@ -134,6 +135,7 @@ from cockpit.lib.git import (
     origin_head_branch,
     prune_worktrees,
     resync_to_origin,
+    tag_workspace_name,
     worktree_age_seconds,
     worktrees,
     worktrees_basic,
@@ -2482,8 +2484,14 @@ def _stack_group_name(tip: Worktree, size: int) -> str:
     The header is a dedicated row (`create_workspace_group` keeps cmux's own
     spawned anchor), so `size` is exactly the number of member rows folded
     below it — the count and the fold agree.
+
+    Carries the repo's `sidebar_tag` for the reason a member row does: a bare
+    branch label says nothing about which repo the chain is in, and a stack is
+    one repo, so the tag resolves exactly as it does for the rows below. Applied
+    through `tag_workspace_name`, the one function that owns tag application,
+    so the header and its members can't disagree about the separator.
     """
-    return f"{tip.label} ({size})"
+    return f"{tag_workspace_name(tip.label, tip.sidebar_tag)} ({size})"
 
 
 def _review_bucket_key(repo_entry: dict) -> str:
@@ -2498,21 +2506,51 @@ def _review_bucket_key(repo_entry: dict) -> str:
     return str(repo_entry.get("org") or repo_entry.get("name") or "")
 
 
-def _review_group_name(key: str, size: int) -> str:
+def _fold_tag(cfg: dict, repo_entry: dict) -> str:
+    """The `sidebar_tag` naming a trailing fold's bucket, or `""` for none.
+
+    Read off whatever the bucket *is* (`_review_bucket_key`): the org block for
+    an org bucket, the repo entry for an org-less one. Deliberately **not** the
+    repo's own merged tag on the org path — `apply_org_defaults` copies the org's
+    scalar down and `expand_sidebar_tags` then rewrites `{repo}` per member, so
+    a member reads `<glyph> mlops-os` and would label the whole org's fold with
+    one repo's name.
+
+    `{repo}` expands to nothing here for the same reason it expands to a name
+    there: it is the per-repo half of the tag, and a fold spans repos. What
+    survives is the constant the org declared, which is the glyph every member
+    row is already showing. A tag that is *only* the token leaves nothing, and
+    an empty result falls the header back to the bucket's own name.
+    """
+    org = repo_entry.get("org")
+    block = (cfg.get("orgs") or {}).get(org) if org else repo_entry
+    tag = (block or {}).get("sidebar_tag")
+    if not isinstance(tag, str):
+        return ""
+    return tag.replace(REPO_TAG_TOKEN, "").strip()
+
+
+def _review_group_name(key: str, size: int, tag: str = "") -> str:
     """Sidebar header for a coworker-review fold. Counted like a stack, since
     the anchor's row *is* the header and a bare label would read as a workspace.
-    Prefixed by the bucket (org, or repo name) — several piles coexist, and
+    Identified by the bucket (org, or repo name) — several piles coexist, and
     `reviews (N)` twice over says nothing about whose reviews.
+
+    A bucket with a `sidebar_tag` is named by it instead (`_fold_tag`): the
+    glyph is the identity every member row below is already carrying, and it
+    buys back the width an org name spends. The state word stays either way —
+    an org's two folds are otherwise one small monochrome symbol apart, and an
+    untagged `<name> (N)` is character-for-character a stack header.
     """
-    return f"{key} reviews ({size})"
+    return f"{tag or key} reviews ({size})"
 
 
-def _snoozed_group_name(key: str, size: int) -> str:
+def _snoozed_group_name(key: str, size: int, tag: str = "") -> str:
     """Sidebar header for a snoozed fold — PRs read and handed back (TUI `z`),
-    waiting on someone else's comment or review. Bucketed and counted exactly
-    like the reviews pile, for the same reason: several coexist.
+    waiting on someone else's comment or review. Bucketed, tagged and counted
+    exactly like the reviews pile, for the same reasons: several coexist.
     """
-    return f"{key} snoozed ({size})"
+    return f"{tag or key} snoozed ({size})"
 
 
 @dataclass
@@ -2536,6 +2574,12 @@ class ReviewFolds:
     tell "a member that stopped being a review" (ours, drop it) from "a foreign
     workspace the user added by hand" (leave it).
 
+    `tags` is each bucket's `sidebar_tag` (`_fold_tag`), which names its folds in
+    place of the bucket key. It rides here rather than being resolved in the
+    cross-repo pass because that pass sees no config — the same reason `owned`
+    travels — and it is bucket-determined, so every contributing repo writes the
+    same value.
+
     `partial` says a repo dropped out of the cycle before contributing, so an
     absent bucket means "not asked" rather than "empty" — see
     `_reconcile_review_groups`, which refuses to dissolve on that.
@@ -2543,6 +2587,7 @@ class ReviewFolds:
 
     buckets: dict[str, list[str]] = field(default_factory=dict)
     snoozed: dict[str, list[str]] = field(default_factory=dict)
+    tags: dict[str, str] = field(default_factory=dict)
     owned: set[str] = field(default_factory=set)
     partial: bool = False
 
@@ -2647,6 +2692,7 @@ def _reconcile_sidebar_groups(
             stacked,
         )
         bucket = _review_bucket_key(ctx.repo_entry)
+        folds.tags[bucket] = _fold_tag(ctx.cfg, ctx.repo_entry)
         folds.snoozed.setdefault(bucket, []).extend(snoozed)
         folds.buckets.setdefault(bucket, []).extend(
             _pile(lambda pr: not pr.mine, stacked | set(snoozed))
@@ -2712,7 +2758,7 @@ def _reconcile_sidebar_groups(
 # its target below everything moved before it, so processing reviews first
 # leaves snoozed lower — the more passive pile sits under the queue. The sunk
 # stack chains re-parked after this loop land lower still.
-_TRAILING_FOLDS: tuple[tuple[str, str, Callable[[str, int], str]], ...] = (
+_TRAILING_FOLDS: tuple[tuple[str, str, Callable[[str, int, str], str]], ...] = (
     ("buckets", REVIEW_GROUP_ICON, _review_group_name),
     ("snoozed", SNOOZE_GROUP_ICON, _snoozed_group_name),
 )
@@ -2877,7 +2923,7 @@ def _reconcile_review_groups(
         for key, refs in sorted(getattr(folds, attr).items()):
             if not refs:
                 continue
-            name = namer(key, len(refs))
+            name = namer(key, len(refs), folds.tags.get(key, ""))
             # What this pass decided the fold should be, so the fast tick can
             # replay it if the group is lost mid-interval — see
             # `restore_trailing_folds`. Written for a fold that ends the pass

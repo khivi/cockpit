@@ -4516,18 +4516,22 @@ def _stack_ctx(
     snoozed=(),
     repo_entry=None,
     repo_dir="repo",
+    sidebar_tag="",
+    cfg=None,
 ):
     """RepoCycle with one tracked workspace per (ref, branch, base) in `chain`.
 
     Refs listed in `coworkers` get a `mine=False` PR — someone else's, i.e. a
     review workspace. Refs listed in `snoozed` get a snoozed `NudgePref`.
     `repo_dir` scopes the worktrees under a distinct root so two ctxs can stand
-    in for two repos of the same org.
+    in for two repos of the same org. `sidebar_tag` is the repo's resolved tag
+    as the daemon threads it onto each `Worktree`; `cfg` carries the `orgs`
+    block `_fold_tag` reads for an org-keyed bucket.
     """
     repo = tmp_path / repo_dir
     wts, prs, tracked, cwds, prefs = [], [], {}, {}, {}
     for i, (ref, branch, base) in enumerate(chain, start=1):
-        wt = Worktree(path=repo / f"wt-{i}", branch=branch)
+        wt = Worktree(path=repo / f"wt-{i}", branch=branch, sidebar_tag=sidebar_tag)
         pr = _stack_pr(i, branch, base, mine=ref not in coworkers)
         wts.append(wt)
         prs.append(pr)
@@ -4539,6 +4543,7 @@ def _stack_ctx(
     ctx.prs = [*prs, *extra_prs]
     ctx.tracked = tracked
     ctx.repo_entry = repo_entry or {"name": "n"}
+    ctx.cfg = cfg or {}
     ctx.prefs = prefs
     return ctx
 
@@ -4576,6 +4581,47 @@ def test_reconcile_sidebar_groups_creates_a_group_named_for_the_tip(tmp_path):
         ["workspace:3", "workspace:1", "workspace:2"],
         icon=STACK_GROUP_ICON,
     )
+
+
+def test_stack_header_carries_the_repos_sidebar_tag(tmp_path):
+    # A bare branch label says nothing about which repo the chain is in, and the
+    # member rows below the header all carry the tag — so the header does too,
+    # through the one function that owns tag application.
+    ctx = _stack_ctx(
+        tmp_path,
+        [
+            ("workspace:1", "khivi/a", "main"),
+            ("workspace:2", "khivi/b", "khivi/a"),
+        ],
+        sidebar_tag="🛡️ mlops",
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group") as create,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+
+    tip = ctx.tracked["workspace:2"][1]
+    assert create.call_args.args[0] == f"🛡️ mlops·{tip.label} (2)"
+
+
+def test_an_untagged_stack_header_is_unchanged(tmp_path):
+    # `sidebar_tag` is opt-in, so an unset one leaves the header byte-identical.
+    ctx = _stack_ctx(
+        tmp_path,
+        [
+            ("workspace:1", "khivi/a", "main"),
+            ("workspace:2", "khivi/b", "khivi/a"),
+        ],
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group") as create,
+    ):
+        cycle._reconcile_sidebar_groups(ctx, {"workspace:1", "workspace:2"})
+
+    tip = ctx.tracked["workspace:2"][1]
+    assert create.call_args.args[0] == f"{tip.label} (2)"
 
 
 def test_reconcile_sidebar_groups_ignores_unstacked_prs(tmp_path):
@@ -4809,6 +4855,85 @@ def _folds(*ctx_refs):
         for ctx, refs in ctx_refs:
             cycle._reconcile_sidebar_groups(ctx, refs, folds)
     return folds
+
+
+def test_fold_tag_reads_the_org_block_not_a_members_expanded_tag(tmp_path):
+    # `apply_org_defaults` copies the org's scalar down and `expand_sidebar_tags`
+    # rewrites `{repo}` per member, so the repo entry reads `🛡️ mlops` — naming
+    # the whole org's fold after one of its repos. The org block is the identity.
+    cfg = {"orgs": {"Acme": {"sidebar_tag": "🛡️ {repo}"}}}
+    repo_entry = {"name": "mlops", "org": "Acme", "sidebar_tag": "🛡️ mlops"}
+    assert cycle._fold_tag(cfg, repo_entry) == "🛡️"
+
+
+def test_fold_tag_keeps_a_literal_org_tag_whole(tmp_path):
+    cfg = {"orgs": {"Acme": {"sidebar_tag": "♻️"}}}
+    assert cycle._fold_tag(cfg, {"name": "a", "org": "Acme"}) == "♻️"
+
+
+def test_fold_tag_reads_an_org_less_repos_own_tag(tmp_path):
+    # With no org the bucket key *is* the repo, so its own (already expanded)
+    # tag is the fold's identity.
+    assert cycle._fold_tag({}, {"name": "dotfiles", "sidebar_tag": "🎛️"}) == "🎛️"
+
+
+def test_fold_tag_is_empty_when_nothing_survives(tmp_path):
+    # No tag at all, an org that declares none, and a tag that is *only* the
+    # per-repo token — each leaves the header falling back to the bucket name.
+    assert cycle._fold_tag({}, {"name": "dotfiles"}) == ""
+    assert cycle._fold_tag({"orgs": {"Acme": {}}}, {"name": "a", "org": "Acme"}) == ""
+    assert (
+        cycle._fold_tag(
+            {"orgs": {"Acme": {"sidebar_tag": "{repo}"}}}, {"name": "a", "org": "Acme"}
+        )
+        == ""
+    )
+
+
+def test_a_tagged_bucket_names_its_folds_by_the_glyph(tmp_path):
+    # The org name is the long part; the glyph is what every member row below
+    # already shows. The state word stays — one small monochrome symbol is all
+    # that otherwise separates an org's two folds.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "khivi/b", "main")],
+        coworkers=("workspace:1",),
+        snoozed=("workspace:2",),
+        repo_entry={"name": "mlops", "org": "Acme", "sidebar_tag": "🛡️ mlops"},
+        cfg={"orgs": {"Acme": {"sidebar_tag": "🛡️ {repo}"}}},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+    assert folds.tags == {"Acme": "🛡️"}
+
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group", return_value=None) as create,
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    assert [c.args[0] for c in create.call_args_list] == [
+        "🛡️ reviews (1)",
+        "🛡️ snoozed (1)",
+    ]
+
+
+def test_an_untagged_bucket_keeps_its_name_in_the_fold_header(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main")],
+        coworkers=("workspace:1",),
+        repo_entry={"name": "dotfiles"},
+    )
+    folds = _folds((ctx, {"workspace:1"}))
+    assert folds.tags == {"dotfiles": ""}
+
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group", return_value=None) as create,
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    assert create.call_args.args[0] == "dotfiles reviews (1)"
 
 
 def test_reconcile_sidebar_groups_leaves_the_reviews_fold_to_the_org_pass(tmp_path):
