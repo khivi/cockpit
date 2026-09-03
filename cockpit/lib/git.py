@@ -57,10 +57,19 @@ def tag_workspace_name(name: str, sidebar_tag: str = "") -> str:
     (`Worktree.workspace_name` and `cockpit new`'s own `ws_name`) so a spawn and
     the daemon's next `reconcile_workspace_names` agree — disagreeing would
     rename every fresh workspace one tick after creation.
+
+    A tag ending in a non-alphanumeric — in practice an emoji, the shortest tag
+    there is — takes a space instead of `SIDEBAR_TAG_SEP`. The separator exists
+    to part two runs of text (`mlops-os·stale`), and after a glyph the sidebar
+    already reads as an icon it degenerates into a bare leading dot (`🎛️·dot`).
+    Keyed on the tag's last character, not on an emoji test: a tag is short by
+    construction, so any non-word ending is a mark the eye already reads as a
+    boundary.
     """
     if not sidebar_tag or not name:
         return name
-    return f"{sidebar_tag}{SIDEBAR_TAG_SEP}{name}"
+    sep = SIDEBAR_TAG_SEP if sidebar_tag[-1].isalnum() else " "
+    return f"{sidebar_tag}{sep}{name}"
 
 
 @dataclass
