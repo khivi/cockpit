@@ -116,16 +116,16 @@ def test_mute_rejects_invalid_duration(capsys):
 
 
 def _patched_snooze_collaborators(**overrides):
-    defaults = dict(
-        _resolve_pr=lambda arg: (7, "acme", "acme__7"),
-        load_pref=lambda key: NudgePref(),
-        current_branch=lambda cwd: "feature",
-        find_pr_payload_for_cwd=lambda cwd, branch: {
+    defaults = {
+        "_resolve_pr": lambda arg: (7, "acme", "acme__7"),
+        "load_pref": lambda key: NudgePref(),
+        "current_branch": lambda cwd: "feature",
+        "find_pr_payload_for_cwd": lambda cwd, branch: {
             "total": 3,
             "review": "APPROVED",
             "nudge": "ci",
         },
-    )
+    }
     defaults.update(overrides)
     return defaults
 

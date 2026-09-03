@@ -1196,7 +1196,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             if existing_ref is not None:
                 ws_name = ws_refs.get(existing_ref, ws_name)
-        except Exception:
+        except Exception:  # noqa: S110 - best-effort cwd match, fails open to a fresh spawn
             pass
     attached_ws = existing_ref is not None
     if existing_ref is None:

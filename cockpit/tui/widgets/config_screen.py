@@ -17,10 +17,11 @@ sanctioned full-config write (mirroring `save_tui_theme`).
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import ClassVar
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
@@ -44,7 +45,7 @@ class ConfigScreen(ModalScreen[None]):
     ConfigScreen .config-hint { color: $text-muted; margin-top: 1; }
     """
 
-    BINDINGS = [Binding("escape,q", "dismiss", "Close")]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape,q", "dismiss", "Close")]
 
     def __init__(self, title: str, body: str) -> None:
         super().__init__()

@@ -336,7 +336,7 @@ def fetch_pr_info(pr_num: str, repo_dir: Path | None = None) -> dict:
         pr_data: dict = json.loads(result.stdout)
         return pr_data
     data = gh_json(["pr", "view", pr_num, "--json", fields])
-    assert isinstance(data, dict)
+    assert isinstance(data, dict)  # noqa: S101 - mypy narrow, not a runtime check
     return data
 
 
@@ -933,7 +933,7 @@ def _graphql(query: str, variables: dict[str, str]) -> dict:
     for k, v in variables.items():
         args.extend(["-f", f"{k}={v}"])
     data = gh_json(args)
-    assert isinstance(data, dict)
+    assert isinstance(data, dict)  # noqa: S101 - mypy narrow, not a runtime check
     # Partial-success responses (200 OK with `data` + `errors`) are common
     # during GH Actions outages — checkSuites resolves to null while PR
     # identity (number, title, state) still comes through. Pass them through

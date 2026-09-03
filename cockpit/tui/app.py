@@ -39,9 +39,11 @@ import time
 from collections import Counter, deque
 from collections.abc import Callable
 from pathlib import Path
+from typing import ClassVar
 
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import BindingType
 
 from cockpit.lib import diff_comments, version
 from cockpit.lib.cache import (
@@ -201,7 +203,7 @@ class CockpitApp(App[None]):
     # Add cockpit's own entries to the built-in command palette (Ctrl+P).
     COMMANDS = App.COMMANDS | {ConfigCommands}
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("f", "focus_row", "Focus"),
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
@@ -1995,7 +1997,9 @@ class CockpitApp(App[None]):
         cmd = [sys.executable, "-m", "cockpit.cli", "new", *args]
         logfile: IO[bytes] | None = None
         try:
-            logfile = open(_SPAWN_LOG, "ab")  # noqa: SIM115 — passed to a detached Popen; must outlive this scope
+            # The detached child inherits this fd; the parent's own copy is
+            # closed in the `finally` below, once Popen has handed it over.
+            logfile = _SPAWN_LOG.open("ab")
         except OSError:
             logfile = None
         sink: IO[bytes] | int = logfile if logfile is not None else subprocess.DEVNULL
@@ -2039,5 +2043,5 @@ class CockpitApp(App[None]):
                 cmux(
                     "clear-status", LOOP_KEY, "--workspace", self._self_ws, check=False
                 )
-        except Exception:
+        except Exception:  # noqa: S110 - cosmetic pill write, fails open
             pass

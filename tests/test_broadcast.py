@@ -21,7 +21,9 @@ def _cwds(*refs: str) -> dict[str, Path]:
 
 def test_all_idle_sends_to_every_ref(monkeypatch, capsys):
     monkeypatch.setattr(
-        broadcast, "workspace_cwds", lambda: _cwds("workspace:a", "workspace:b")
+        broadcast,
+        "workspace_cwds",
+        lambda *, include_self=False: _cwds("workspace:a", "workspace:b"),
     )
     monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
 
@@ -34,7 +36,7 @@ def test_mixed_idle_busy_reports_skipped_and_still_sends(monkeypatch, capsys):
     monkeypatch.setattr(
         broadcast,
         "workspace_cwds",
-        lambda: _cwds("workspace:idle", "workspace:busy"),
+        lambda *, include_self=False: _cwds("workspace:idle", "workspace:busy"),
     )
 
     def fake_nudge(ref, message, *, dry=False, tag="", skips=None):
@@ -55,7 +57,9 @@ def test_mixed_idle_busy_reports_skipped_and_still_sends(monkeypatch, capsys):
 
 def test_dry_run_sends_nothing(monkeypatch, capsys):
     monkeypatch.setattr(
-        broadcast, "workspace_cwds", lambda: _cwds("workspace:a", "workspace:b")
+        broadcast,
+        "workspace_cwds",
+        lambda *, include_self=False: _cwds("workspace:a", "workspace:b"),
     )
     calls = []
 
@@ -82,7 +86,9 @@ def test_dry_run_counts_eligible_from_the_skip_set_not_the_return(monkeypatch, c
     monkeypatch.setattr(
         broadcast,
         "workspace_cwds",
-        lambda: _cwds("workspace:a", "workspace:b", "workspace:c"),
+        lambda *, include_self=False: _cwds(
+            "workspace:a", "workspace:b", "workspace:c"
+        ),
     )
 
     def fake_nudge(ref, message, *, dry=False, tag="", skips=None):
@@ -102,7 +108,9 @@ def test_dry_run_counts_eligible_from_the_skip_set_not_the_return(monkeypatch, c
 
 def test_skips_grouped_by_reason_largest_first(monkeypatch, capsys):
     refs = [f"workspace:{i}" for i in range(5)]
-    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds(*refs))
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: _cwds(*refs)
+    )
     reasons = {
         "workspace:0": "mid-turn",
         "workspace:1": "not at rest (Needs input)",
@@ -128,7 +136,7 @@ def test_skips_grouped_by_reason_largest_first(monkeypatch, capsys):
 
 
 def test_cmux_unavailable_returns_nonzero_and_no_success(monkeypatch, capsys):
-    def raise_unavailable():
+    def raise_unavailable(*, include_self=False):
         raise CmuxUnavailable("rpc failed")
 
     monkeypatch.setattr(broadcast, "workspace_cwds", raise_unavailable)
@@ -142,7 +150,7 @@ def test_cmux_unavailable_returns_nonzero_and_no_success(monkeypatch, capsys):
 
 
 def test_no_workspaces_is_not_an_error(monkeypatch, capsys):
-    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: {})
+    monkeypatch.setattr(broadcast, "workspace_cwds", lambda *, include_self=False: {})
     monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
 
     assert broadcast.main(["/compact"]) == 0
@@ -150,7 +158,9 @@ def test_no_workspaces_is_not_an_error(monkeypatch, capsys):
 
 
 def test_message_passed_through_verbatim(monkeypatch):
-    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: _cwds("workspace:a")
+    )
     seen = []
 
     def fake_nudge(ref, message, *, dry=False, tag="", skips=None):
@@ -192,7 +202,7 @@ def test_repo_scopes_the_fan_out_to_that_repos_worktrees(monkeypatch, tmp_path, 
     monkeypatch.setattr(
         broadcast,
         "workspace_cwds",
-        lambda: {
+        lambda *, include_self=False: {
             "workspace:mine": wt_paths[0],
             "workspace:root": repo_path,
             "workspace:other": tmp_path / "unrelated",
@@ -220,7 +230,9 @@ def test_repo_match_is_case_insensitive(monkeypatch, tmp_path, capsys):
         "load_config",
         lambda: {"repos": [{"name": "Cockpit", "path": str(repo_path)}]},
     )
-    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: {"w:1": wt_paths[0]})
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: {"w:1": wt_paths[0]}
+    )
     monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
 
     assert broadcast.main(["/compact", "--repo", "cockpit"]) == 0
@@ -232,7 +244,9 @@ def test_unnamed_repo_falls_back_to_its_directory(monkeypatch, tmp_path, capsys)
     monkeypatch.setattr(
         broadcast, "load_config", lambda: {"repos": [{"path": str(repo_path)}]}
     )
-    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: {"w:1": wt_paths[0]})
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: {"w:1": wt_paths[0]}
+    )
     monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
 
     assert broadcast.main(["/compact", "--repo", repo_path.name]) == 0
@@ -260,7 +274,9 @@ def test_bare_repo_basename_is_not_a_second_spelling(monkeypatch, tmp_path, caps
         },
     )
     monkeypatch.setattr(broadcast, "worktrees", lambda path, prefix="": [])
-    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: _cwds("workspace:a")
+    )
     monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
 
     assert broadcast.main(["/compact", "--repo", ".bare"]) == 2
@@ -271,7 +287,9 @@ def test_unknown_repo_exits_2_and_names_the_configured_ones(
     monkeypatch, tmp_path, capsys
 ):
     _repo_fixture(monkeypatch, tmp_path)
-    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: _cwds("workspace:a")
+    )
     monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
 
     assert broadcast.main(["/compact", "--repo", "typo"]) == 2
@@ -284,7 +302,9 @@ def test_unknown_repo_exits_2_and_names_the_configured_ones(
 def test_repo_with_no_open_workspaces_is_not_an_error(monkeypatch, tmp_path, capsys):
     _repo_fixture(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        broadcast, "workspace_cwds", lambda: {"w:1": tmp_path / "unrelated"}
+        broadcast,
+        "workspace_cwds",
+        lambda *, include_self=False: {"w:1": tmp_path / "unrelated"},
     )
     monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
 
@@ -301,7 +321,7 @@ def test_repo_dry_run_reports_the_scoped_denominator(monkeypatch, tmp_path, caps
     monkeypatch.setattr(
         broadcast,
         "workspace_cwds",
-        lambda: {
+        lambda *, include_self=False: {
             "workspace:mine": wt_paths[0],
             "workspace:root": repo_path,
             "workspace:other": tmp_path / "unrelated",
@@ -323,7 +343,9 @@ def test_worktree_enumeration_failure_exits_1_without_sending(
     monkeypatch, tmp_path, capsys
 ):
     _repo_fixture(monkeypatch, tmp_path)
-    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: _cwds("workspace:a")
+    )
     monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
 
     def boom(path, prefix=""):
@@ -345,14 +367,18 @@ def test_without_repo_nothing_reads_the_config(monkeypatch):
         raise AssertionError("load_config must not be read without --repo")
 
     monkeypatch.setattr(broadcast, "load_config", boom)
-    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: _cwds("workspace:a")
+    )
     monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
 
     assert broadcast.main(["/compact"]) == 0
 
 
 def test_nudge_called_with_broadcast_tag(monkeypatch):
-    monkeypatch.setattr(broadcast, "workspace_cwds", lambda: _cwds("workspace:a"))
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: _cwds("workspace:a")
+    )
     recorded = []
 
     def fake_nudge(*a, **k):

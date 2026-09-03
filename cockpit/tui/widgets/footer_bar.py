@@ -12,6 +12,7 @@ Textual markup action links.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import ClassVar
 
 from textual import events
 from textual.app import ComposeResult
@@ -72,7 +73,7 @@ class FooterBar(Horizontal):
     # for any row, subject to backend / `show_tickets` gating). When the row caps
     # are unknown (`None`, e.g. an empty table) nothing is capability-gated, so
     # the footer shows the full row-key legend.
-    ACTION_REQUIRES = {
+    ACTION_REQUIRES: ClassVar[dict[str, str]] = {
         "open_pr": "pr",
         "mute_row": "pr",
         "snooze_row": "pr",
@@ -103,7 +104,7 @@ class FooterBar(Horizontal):
     # One-word footer label per action — the BINDINGS descriptions are verbose
     # ("Force close") and two open_* actions would both first-word to "Open".
     # Unmapped actions fall back to the description's first word.
-    LABELS = {
+    LABELS: ClassVar[dict[str, str]] = {
         "focus_row": "Focus",
         "open_pr": "PR",
         "open_ticket": "Ticket",
@@ -134,7 +135,7 @@ class FooterBar(Horizontal):
     # Keyed by action, matched off the hovered segment's `@click` meta
     # (`on_mouse_move`), so a segment's whole width — key and label — explains
     # itself. An action missing here simply has no tooltip.
-    TOOLTIPS = {
+    TOOLTIPS: ClassVar[dict[str, str]] = {
         "focus_row": (
             "Go to this row's workspace, spawning one first if it doesn't have "
             "one yet."
@@ -216,7 +217,7 @@ class FooterBar(Horizontal):
     # on cmux AND limux (focus is the cmux-only bonus — on limux `f` spawns and
     # the user switches via limux's own UI), so it's hidden only on "none" (no
     # backend to spawn into).
-    BACKEND_ACTIONS = {
+    BACKEND_ACTIONS: ClassVar[dict[str, frozenset[str]]] = {
         "focus_row": frozenset({"cmux", "limux"}),
         # `a` delivers through cmux's `send`, which limux has no equivalent for.
         "ask_row": frozenset({"cmux"}),

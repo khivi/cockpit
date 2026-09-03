@@ -456,20 +456,20 @@ def test_list_relevant_prs_returns_one_pr_per_branch():
 def _issue_pr(**overrides):
     from cockpit.lib.gh import PR
 
-    base: dict = dict(
-        number=1,
-        title="t",
-        branch="khivi/feature",
-        url="https://example/pr/1",
-        author="khivi",
-        is_draft=False,
-        review_decision="REVIEW_REQUIRED",
-        mergeable="MERGEABLE",
-        ci="passed",
-        unaddressed=0,
-        total_from_others=0,
-        state="OPEN",
-    )
+    base: dict = {
+        "number": 1,
+        "title": "t",
+        "branch": "khivi/feature",
+        "url": "https://example/pr/1",
+        "author": "khivi",
+        "is_draft": False,
+        "review_decision": "REVIEW_REQUIRED",
+        "mergeable": "MERGEABLE",
+        "ci": "passed",
+        "unaddressed": 0,
+        "total_from_others": 0,
+        "state": "OPEN",
+    }
     base.update(overrides)
     return PR(**base)
 
@@ -478,17 +478,17 @@ def _issue_pr(**overrides):
     "overrides,expected",
     [
         # Actionable categories on an OPEN PR.
-        (dict(ci="failed:lint"), "ci"),
-        (dict(unaddressed=2), "comments"),
+        ({"ci": "failed:lint"}, "ci"),
+        ({"unaddressed": 2}, "comments"),
         # CHANGES_REQUESTED *with* an unresolved thread stays "comments".
-        (dict(review_decision="CHANGES_REQUESTED", unaddressed=2), "comments"),
-        (dict(mergeable="CONFLICTING"), "conflicts"),
+        ({"review_decision": "CHANGES_REQUESTED", "unaddressed": 2}, "comments"),
+        ({"mergeable": "CONFLICTING"}, "conflicts"),
         # Non-actionable display_issue values → no nudge.
-        (dict(review_decision="APPROVED"), ""),  # approved
+        ({"review_decision": "APPROVED"}, ""),  # approved
         ({}, ""),  # clean
         # changes-requested with nothing unaddressed → display_issue
         # "changes-requested", which is NOT in ACTIONABLE_ISSUES.
-        (dict(review_decision="CHANGES_REQUESTED", unaddressed=0), ""),
+        ({"review_decision": "CHANGES_REQUESTED", "unaddressed": 0}, ""),
     ],
 )
 def test_nudge_issue_open_pr(overrides, expected):
@@ -502,7 +502,7 @@ def test_nudge_issue_non_open_is_empty(state):
     assert _issue_pr(ci="failed:lint", state=state).nudge_issue == ""
 
 
-@pytest.mark.parametrize("overrides", [dict(ci="failed:lint"), dict(unaddressed=2)])
+@pytest.mark.parametrize("overrides", [{"ci": "failed:lint"}, {"unaddressed": 2}])
 def test_nudge_issue_coworker_pr_is_never_actionable(overrides):
     """A coworker's PR is reviewed, not authored — nudging it would tell the
     review session to fix someone else's CI or rewrite their branch."""

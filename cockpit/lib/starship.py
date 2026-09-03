@@ -164,10 +164,10 @@ def _read_session_or_fallback(stem: str, sid: str | None) -> str:
 
 
 def _branch() -> str:
-    return _git_state(os.getcwd())[0]
+    return _git_state(Path.cwd())[0]
 
 
-def _git_state(cwd: str) -> tuple[str, GitStatusCounts, int, int]:
+def _git_state(cwd: os.PathLike[str] | str) -> tuple[str, GitStatusCounts, int, int]:
     """Cached `(branch, status_counts, ahead_origin, behind_origin)` for `cwd`.
 
     Cell layout — written exclusively by the daemon (slow tick in
@@ -373,7 +373,7 @@ def print_repo() -> str:
     `cache.write_git_state_cache`). Empty when the cell is unset (cold start
     before the first tick, or a repo with no configured name).
     """
-    raw = read_text(cwd_cache("git-repo", os.getcwd()))
+    raw = read_text(cwd_cache("git-repo", Path.cwd()))
     if not raw:
         return ""
     return slate(f"{ICON_REPO} {raw}")
@@ -385,7 +385,7 @@ def print_branch_identity() -> str:
     Empty when not in a git repo. Inter-segment spacing belongs to TOML;
     this emits only its own content.
     """
-    branch, _, ahead, _ = _git_state(os.getcwd())
+    branch, _, ahead, _ = _git_state(Path.cwd())
     if not branch:
         return ""
     parts = [slate(f"{ICON_BRANCH} {branch}")]
@@ -405,7 +405,7 @@ def print_worktree_status() -> str:
     nothing. The leading powerline-branch separator pins this segment
     visually to the preceding `[custom.branch_identity]` segment.
     """
-    branch, counts, _, behind = _git_state(os.getcwd())
+    branch, counts, _, behind = _git_state(Path.cwd())
     if not branch:
         return ""
     parts: list[str] = []
@@ -426,7 +426,7 @@ def print_worktree_status() -> str:
 
 
 def _base_distance_segment() -> str:
-    raw = read_text(cwd_cache("base-distance", os.getcwd()))
+    raw = read_text(cwd_cache("base-distance", Path.cwd()))
     if not raw:
         return ""
     try:
@@ -439,7 +439,7 @@ def _base_distance_segment() -> str:
 
 
 def _base_ahead_segment() -> str:
-    raw = read_text(cwd_cache("base-ahead", os.getcwd()))
+    raw = read_text(cwd_cache("base-ahead", Path.cwd()))
     if not raw:
         return ""
     try:
@@ -458,14 +458,14 @@ def print_ticket() -> str:
     # an unaligned footer) so a `pe-4608-` branch still shows its id pre-PR.
     # A Trello codename branch carries no id, so it stays blank until aligned.
     branch = _branch()
-    return read_text(cwd_cache("pr-ticket", os.getcwd())) or extract_ticket(branch)
+    return read_text(cwd_cache("pr-ticket", Path.cwd())) or extract_ticket(branch)
 
 
 def print_pr_state(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = read_text(cwd_cache("pr-state", os.getcwd()))
+    raw = read_text(cwd_cache("pr-state", Path.cwd()))
     if not raw:
         return ""
     icon = _PR_STATE_ICON.get(raw, "")
@@ -480,7 +480,7 @@ def print_pr_num(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = read_text(cwd_cache("pr-num", os.getcwd()))
+    raw = read_text(cwd_cache("pr-num", Path.cwd()))
     if not raw or raw in ("0", "null"):
         return ""
     return f"{ICON_PR_NUM} #{raw}"
@@ -490,8 +490,8 @@ def print_pr_comments(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = read_text(cwd_cache("pr-comments", os.getcwd()))
-    total_raw = read_text(cwd_cache("pr-comments-total", os.getcwd()))
+    raw = read_text(cwd_cache("pr-comments", Path.cwd()))
+    total_raw = read_text(cwd_cache("pr-comments-total", Path.cwd()))
     try:
         count = int(raw or 0)
         total = int(total_raw or 0)
@@ -509,7 +509,7 @@ def print_pr_checks(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    glyph = read_text(cwd_cache("pr-checks", os.getcwd()))
+    glyph = read_text(cwd_cache("pr-checks", Path.cwd()))
     if not glyph:
         return ""
     color = _PR_CHECKS_COLOR.get(glyph)
@@ -522,7 +522,7 @@ def print_pr_title(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = read_text(cwd_cache("pr-title", os.getcwd()))
+    raw = read_text(cwd_cache("pr-title", Path.cwd()))
     if not raw:
         return ""
     return f"{ICON_PR_TITLE} {raw}"
@@ -533,7 +533,7 @@ def print_pr_muted(branch: str | None = None) -> str:
     branch = branch or _branch()
     if not branch:
         return ""
-    raw = read_text(cwd_cache("pr-muted", os.getcwd()))
+    raw = read_text(cwd_cache("pr-muted", Path.cwd()))
     if not raw:
         return ""
     return yellow(f"{ICON_PR_MUTED} muted")

@@ -404,7 +404,7 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
     monkeypatch.setattr(spawn, "spawn_workspace", fake_spawn_workspace)
     monkeypatch.setattr(spawn, "deliver_followup", fake_deliver_followup)
     monkeypatch.setattr(spawn, "workspace_names", lambda: {})
-    monkeypatch.setattr(spawn, "workspace_cwds", lambda: {})
+    monkeypatch.setattr(spawn, "workspace_cwds", lambda *, include_self=False: {})
     monkeypatch.setattr(spawn, "kick_running", lambda *a, **kw: None)
     monkeypatch.setattr(spawn, "require_workspace_binary", lambda: None)
 
@@ -2223,7 +2223,9 @@ def test_path_fallback_attaches_when_name_mismatches(
     # Name "my-slug" is not in ws_refs — name match misses.
     monkeypatch.setattr(spawn, "workspace_names", lambda: {"wt:1": "daemon-slug"})
     # Path match hits.
-    monkeypatch.setattr(spawn, "workspace_cwds", lambda: {"wt:1": wt_path})
+    monkeypatch.setattr(
+        spawn, "workspace_cwds", lambda *, include_self=False: {"wt:1": wt_path}
+    )
 
     code, _out, err = spawn_main(
         ["khivi/path-fallback", "--repo", "testrepo", "--", "do Y"]
@@ -2250,7 +2252,7 @@ def test_path_fallback_not_triggered_when_name_matches(
 
     cwds_called = []
 
-    def fake_cwds():
+    def fake_cwds(*, include_self=False):
         cwds_called.append(1)
         return {}
 
@@ -2279,7 +2281,9 @@ def test_path_fallback_deduplicates_cwd_spawn(spawn_main, monkeypatch, tmp_path)
     target.mkdir()
 
     monkeypatch.setattr(spawn, "workspace_names", lambda: {"ws:cwd": "cwd-dedup"})
-    monkeypatch.setattr(spawn, "workspace_cwds", lambda: {"ws:cwd": target})
+    monkeypatch.setattr(
+        spawn, "workspace_cwds", lambda *, include_self=False: {"ws:cwd": target}
+    )
 
     code, _out, _err = spawn_main(["--cwd", str(target)])
     assert code == 0
@@ -2305,7 +2309,7 @@ def test_path_fallback_exception_is_swallowed(spawn_main, monkeypatch, cockpit_r
     monkeypatch.setattr(
         spawn,
         "workspace_cwds",
-        lambda: (_ for _ in ()).throw(RuntimeError("cmux down")),
+        lambda *, include_self=False: (_ for _ in ()).throw(RuntimeError("cmux down")),
     )
 
     code, _out, _err = spawn_main(["khivi/cwds-error", "--repo", "testrepo"])

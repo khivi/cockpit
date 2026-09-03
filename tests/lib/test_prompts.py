@@ -26,30 +26,30 @@ from cockpit.lib.prompts import (
 # Field combos that make PR.display_issue derive to each _ISSUE_ACTIONS branch.
 # "clean" exercises the None fallback entry (display_issue never returns None).
 _DISPLAY_ISSUE_FIELDS: dict[str, dict[str, object]] = {
-    "comments": dict(unaddressed=3),
-    "changes-requested": dict(unaddressed=0, review_decision="CHANGES_REQUESTED"),
-    "ci": dict(ci="failed"),
-    "conflicts": dict(mergeable="CONFLICTING"),
-    "approved": dict(review_decision="APPROVED"),
-    "clean": dict(),
+    "comments": {"unaddressed": 3},
+    "changes-requested": {"unaddressed": 0, "review_decision": "CHANGES_REQUESTED"},
+    "ci": {"ci": "failed"},
+    "conflicts": {"mergeable": "CONFLICTING"},
+    "approved": {"review_decision": "APPROVED"},
+    "clean": {},
 }
 
 
 def _pr(display_issue: str, **overrides) -> PR:
-    base: dict = dict(
-        number=42,
-        title="Fix the thing",
-        branch="khivi/x",
-        url="https://example/pr/42",
-        author="alice",
-        is_draft=False,
-        review_decision="REVIEW_REQUIRED",
-        mergeable="MERGEABLE",
-        ci="passed",
-        unaddressed=0,
-        total_from_others=0,
-        state="OPEN",
-    )
+    base: dict = {
+        "number": 42,
+        "title": "Fix the thing",
+        "branch": "khivi/x",
+        "url": "https://example/pr/42",
+        "author": "alice",
+        "is_draft": False,
+        "review_decision": "REVIEW_REQUIRED",
+        "mergeable": "MERGEABLE",
+        "ci": "passed",
+        "unaddressed": 0,
+        "total_from_others": 0,
+        "state": "OPEN",
+    }
     base.update(_DISPLAY_ISSUE_FIELDS[display_issue])
     base.update(overrides)
     pr = PR(**base)

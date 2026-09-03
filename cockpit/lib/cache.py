@@ -375,7 +375,7 @@ def atomic_write(path: Path, payload: str) -> None:
     """
     tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(payload)
-    os.replace(tmp, path)
+    tmp.replace(path)
 
 
 def read_text(path: Path) -> str:
@@ -927,7 +927,7 @@ def warm_all(branch: str | None = None) -> None:
     """
     from .git import current_branch
 
-    cwd = os.getcwd()
+    cwd = Path.cwd()
     branch = branch or current_branch(cwd)
     if not branch:
         return
@@ -941,7 +941,7 @@ def _seed_transcript_from_project_dir() -> None:
     .jsonl under ~/.claude/projects/<mangled cwd> so session-time has
     something to render on the first statusline tick.
     """
-    cwd = os.getcwd()
+    cwd = str(Path.cwd())
     mangled = "-" + cwd.lstrip("/").replace("/", "-").replace(".", "-")
     project_dir = Path.home() / ".claude" / "projects" / mangled
     if not project_dir.is_dir():

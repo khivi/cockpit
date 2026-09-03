@@ -51,7 +51,7 @@ def _plant_cmux_shim(tmp_path: Path, monkeypatch, workspaces: list[str]) -> Path
     shim.write_text(
         "#!/bin/bash\n"
         'if [ "$1" = "workspace" ] && [ "$2" = "list" ]; then\n'
-        f"  printf %s {repr(listing)}\n"
+        f"  printf %s {listing!r}\n"
         "  exit 0\n"
         "fi\n"
         f'printf "%s\\n" "$*" >> "{log}"\n'
@@ -151,7 +151,7 @@ def _plant_verify_shim(tmp_path: Path, monkeypatch, *, set_succeeds_on: int) -> 
     shim.write_text(
         "#!/bin/bash\n"
         'if [ "$1" = "workspace" ] && [ "$2" = "list" ]; then\n'
-        f'  printf %s {repr(json.dumps({"workspaces": [{"id": LIVE_WS}]}))}\n'
+        f'  printf %s {json.dumps({"workspaces": [{"id": LIVE_WS}]})!r}\n'
         "  exit 0\n"
         "fi\n"
         f'printf "%s\\n" "$*" >> "{log}"\n'

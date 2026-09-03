@@ -221,14 +221,15 @@ def _post_graphql(query: str, variables: dict, *, api_key: str, timeout: float):
     every read/write helper below.
     """
     body = json.dumps({"query": query, "variables": variables}).encode()
-    req = urllib.request.Request(
+    # LINEAR_API_URL is a fixed https:// constant, not attacker-controlled.
+    req = urllib.request.Request(  # noqa: S310
         LINEAR_API_URL,
         data=body,
         headers={"Authorization": api_key, "Content-Type": "application/json"},
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             payload = json.loads(resp.read().decode())
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         return None
