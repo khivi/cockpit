@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.24.1](https://github.com/khivi/cockpit/compare/v2.24.0...v2.24.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **sidebar:** drop the tag separator after an emoji tag ([#464](https://github.com/khivi/cockpit/issues/464)) ([4e86098](https://github.com/khivi/cockpit/commit/4e86098ec77c27a0846b342751c7423f261bf2d2))
+
 ## [2.24.0](https://github.com/khivi/cockpit/compare/v2.23.1...v2.24.0) (2026-09-03)
 
 
