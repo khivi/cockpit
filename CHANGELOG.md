@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.26.0](https://github.com/khivi/cockpit/compare/v2.25.0...v2.26.0) (2026-09-03)
+
+
+### Features
+
+* **tui:** reorder the top bar and link the running version ([#471](https://github.com/khivi/cockpit/issues/471)) ([00d9103](https://github.com/khivi/cockpit/commit/00d910378c7364fe37ea6dff6ff501cfda8ce8f0))
+
 ## [2.25.0](https://github.com/khivi/cockpit/compare/v2.24.2...v2.25.0) (2026-09-03)
 
 
