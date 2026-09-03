@@ -120,6 +120,18 @@ async def test_palette_offers_the_feature_guide():
         assert any("Feature guide" in str(h.text) for h in hits)
 
 
+async def test_palette_offers_the_release_notes():
+    # Same as the guide: palette-only, so the entry is the only in-app route to
+    # what an upgrade changed. Searched by the words a user would actually type.
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        provider = ConfigCommands(app.screen)
+        for query in ("what's new", "release notes"):
+            hits = [h async for h in provider.search(query)]
+            assert any("What's new" in str(h.text) for h in hits), query
+
+
 async def test_every_entry_shows_on_an_empty_palette():
     # `discover` is what fills the palette before anything is typed; `search`
     # runs only once there IS a query. Implementing search alone left `^P`
@@ -160,10 +172,38 @@ async def test_discovered_entries_invoke_their_app_action():
         def action_open_feature_guide(self) -> None:
             called.append("guide")
 
+        def action_open_release_notes(self) -> None:
+            called.append("news")
+
     app = _Recorder()
     async with app.run_test() as pilot:
         await pilot.pause()
         provider = ConfigCommands(app.screen)
         async for hit in provider.discover():
             hit.command()
-    assert called == ["output", "show", "edit", "guide"]
+    assert called == ["output", "show", "edit", "news", "guide"]
+
+
+async def test_palette_order_runs_in_app_before_it_leaves():
+    # `discover` yields in COMMANDS order, so the tuple IS the empty palette.
+    # Ordered by distance from the dashboard: overlays, then $EDITOR, then the
+    # browser pair. Appending a new entry to the end would silently break that.
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        provider = ConfigCommands(app.screen)
+        labels = []
+        async for hit in provider.discover():
+            # Narrows `DiscoveryHit | Hit` for `.display`, as above.
+            assert isinstance(hit, DiscoveryHit)
+            labels.append(str(hit.display))
+    in_app = [
+        i for i, x in enumerate(labels) if "browser" not in x and "$EDITOR" not in x
+    ]
+    editor = [i for i, x in enumerate(labels) if "$EDITOR" in x]
+    browser = [i for i, x in enumerate(labels) if "browser" in x]
+    assert max(in_app) < min(editor) < min(browser)
+    # Recent before reference, inside the browser pair.
+    assert labels.index("What's new: release notes in browser") < labels.index(
+        "Feature guide: open in browser"
+    )

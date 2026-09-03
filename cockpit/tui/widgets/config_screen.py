@@ -1,11 +1,11 @@
 """Modal config viewer + command-palette commands.
 
 `ConfigScreen` is a read-only scrollable overlay that prints a JSON blob (the
-whole `config.json`). `ConfigCommands` registers "Show config: all repos" /
-"Edit config" / "Feature guide" entries in the built-in command palette
-(Ctrl+P): the show entry pushes the screen with the full config; the edit entry
-opens `config.json` in $EDITOR; the guide entry opens `FEATURES.md` in a
-browser. All three are yielded by `discover` (the empty palette) as well as
+whole `config.json`). `ConfigCommands` registers "Output" / "Show config: all
+repos" / "Edit config" / "Feature guide" / "What's new" entries in the built-in
+command palette (Ctrl+P): the show entries push the screen with a captured body;
+the edit entry opens `config.json` in $EDITOR; the last two hand a URL to the
+browser. All of them are yielded by `discover` (the empty palette) as well as
 `search` (a typed query) — implementing only the latter hides them until the
 user types a name they have no way to guess.
 
@@ -69,7 +69,12 @@ class ConfigScreen(ModalScreen[None]):
 class ConfigCommands(Provider):
     """Command-palette entries for cockpit's app-level actions."""
 
-    # (label, app action, help text) — walked by BOTH `discover` and `search`.
+    # (label, app action, help text) — walked by BOTH `discover` and `search`,
+    # and `discover` yields in THIS order, so the tuple IS the empty-palette
+    # menu. Ordered by how far each entry takes you from the dashboard: the two
+    # in-app overlays, then the one that hands you to $EDITOR, then the two that
+    # open a browser — and inside each pair, read before write and recent before
+    # reference. Slot a new entry by that rule rather than appending to the end.
     COMMANDS = (
         (
             "Output: recent tick log",
@@ -85,6 +90,11 @@ class ConfigCommands(Provider):
             "Edit config: open in $EDITOR",
             "action_edit_config",
             "Edit config.json in $EDITOR (changes apply on restart)",
+        ),
+        (
+            "What's new: release notes in browser",
+            "action_open_release_notes",
+            "Open the releases page — what changed since you upgraded",
         ),
         (
             "Feature guide: open in browser",
