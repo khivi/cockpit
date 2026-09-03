@@ -1769,18 +1769,30 @@ def test_nudge_gate_order_unchanged_by_the_shared_read():
             assert nudge_if_idle("workspace:1", "m") is expected, lines
 
 
-def _reassert_calls(statuses: dict[str, str]) -> tuple[list[str], list[tuple]]:
-    """Drive `reassert_idle_pills` over `statuses` (ref -> list-status text),
-    returning the healed refs and every non-read cmux call it made."""
+def _reassert_calls(
+    statuses: dict[str, str], screens: dict[str, str] | None = None
+) -> tuple[list[str], list[tuple]]:
+    """Drive `reassert_idle_pills` over `statuses` (ref -> list-status text)
+    and `screens` (ref -> read-screen text, consulted only for the
+    no-native-state fallback; defaults to "" — no screen evidence), returning
+    the healed refs and every non-read cmux call it made. `is_cmux` is pinned
+    True so the fallback's own gate doesn't depend on the test environment's
+    real config."""
     writes: list[tuple] = []
+    screens = screens or {}
 
     def fake_cmux(*args, **_kwargs):
         if args[0] == "list-status":
             return statuses[args[2]]
+        if args[0] == "read-screen":
+            return screens.get(args[2], "")
         writes.append(args)
         return ""
 
-    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.cmux.tool.is_cmux", return_value=True),
+    ):
         healed = reassert_idle_pills(list(statuses))
     return healed, writes
 
@@ -1798,13 +1810,48 @@ def test_reassert_writes_the_pill_when_native_idle_and_pill_missing():
         _native_line("Needs input"),
         # Already pilled — nothing to heal, and re-writing would be pure churn.
         "idle=1\n" + _native_line("Idle"),
-        # The case this cannot fix: no native state to trust. Writing here
-        # would be exactly what the nudge gate exists to prevent.
+        # No native state, and (with no screens override) no screen evidence
+        # either — the fallback refuses just as the ordinary path does.
         "",
     ],
 )
 def test_reassert_writes_nothing_without_an_unambiguous_idle(status):
     healed, writes = _reassert_calls({"workspace:1": status})
+    assert healed == []
+    assert writes == []
+
+
+_IDLE_SCREEN = "some output\n─────\n❯  \n─────\nbranch\n-- INSERT -- auto mode on"
+
+
+def test_reassert_heals_no_native_state_when_the_screen_confirms_idle():
+    """The one case the `Idle`-only path can't reach: cmux never registered
+    `claude_code=` for this ref at all. `_screen_signals_idle` is the
+    documented fallback for exactly this gap."""
+    healed, writes = _reassert_calls(
+        {"workspace:1": ""}, screens={"workspace:1": _IDLE_SCREEN}
+    )
+    assert healed == ["workspace:1"]
+    assert any("set-status" in a for a in writes[0]), writes
+
+
+@pytest.mark.parametrize(
+    "screen",
+    [
+        "",  # read failed / empty
+        "─────\n❯  \n─────\nbranch\nno insert-mode marker here",  # missing indicator
+        "─────\n❯ half-typed text\n─────\n-- INSERT --",  # not an empty prompt
+        _IDLE_SCREEN + "\n1. Yes\n2. No\nEnter to select · Esc to cancel",
+    ],
+)
+def test_reassert_refuses_no_native_state_on_inconclusive_or_pending_screen(screen):
+    """Fails closed: a read failure, a missing indicator, a non-empty prompt,
+    or ANY pending-choice marker (even alongside otherwise-idle-looking text)
+    all refuse — a false positive here would mean typing into a live y/n or
+    AskUserQuestion prompt, the exact thing the whole gate exists to prevent."""
+    healed, writes = _reassert_calls(
+        {"workspace:1": ""}, screens={"workspace:1": screen}
+    )
     assert healed == []
     assert writes == []
 
@@ -1826,6 +1873,19 @@ def test_reassert_heals_only_the_eligible_refs_in_a_mixed_fleet():
         }
     )
     assert sorted(healed) == ["workspace:1", "workspace:4"]
+
+
+def test_screen_signals_idle_is_cmux_only():
+    """Never issues (or trusts) a `read-screen` under limux — the pill it
+    would feed is a cmux-only no-op there anyway."""
+    from cockpit.lib.cmux import _screen_signals_idle
+
+    with (
+        patch("cockpit.lib.cmux.tool.is_cmux", return_value=False),
+        patch("cockpit.lib.cmux.cmux") as m,
+    ):
+        assert _screen_signals_idle("workspace:1") is False
+    m.assert_not_called()
 
 
 def test_reassert_on_empty_fleet_makes_no_cmux_calls():

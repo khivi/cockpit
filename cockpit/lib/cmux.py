@@ -932,9 +932,49 @@ def workspace_is_idle(ref: str) -> bool:
     return _has_pill(out.splitlines(), "idle")
 
 
+# Screen text `_screen_signals_idle` treats as unambiguous evidence of a
+# pending choice (a y/n permission or an `AskUserQuestion`-style numbered
+# prompt) — both render as a boxed list ending in one of these, never as the
+# bare composer. Their presence anywhere in the read refuses, on the same
+# "when in doubt, don't" bias as `_native_claude_state`'s own ambiguity note.
+_PENDING_SCREEN_MARKERS = ("Enter to select", "Esc to cancel", "to navigate")
+
+# Claude Code's own insert-mode indicator, shown in the composer's border only
+# while it has focus and is ready to accept typing — absent while a turn is
+# running (verified: a mid-turn screen's rule-bounded prompt box omits it).
+_IDLE_SCREEN_MARKER = "-- INSERT --"
+
+
+def _screen_signals_idle(ref: str, *, lines: int = 12) -> bool:
+    """Best-effort screen read confirming an idle composer, for the one case
+    `reassert_idle_pills` otherwise can never reach: cmux reporting no
+    `claude_code=` state for `ref` at all (see that function's docstring).
+
+    Never used to gate a `send` — only to decide whether *this* self-heal
+    should write the pill, so a false positive costs one wrongly-early pill
+    write, not a delivered message into a live confirmation. Kept deliberately
+    conservative: requires the composer's own insert-mode indicator AND an
+    empty prompt line, and refuses outright if any pending-choice marker
+    appears anywhere in the read.
+
+    cmux-only (limux has no `read-screen`); fails closed on any read failure,
+    a missing/renamed indicator, or an unexpected screen shape — this is a
+    heuristic over a third party's terminal chrome, and it may drift under an
+    unrelated cmux or Claude Code UI change.
+    """
+    if not tool.is_cmux():
+        return False
+    screen = cmux("read-screen", "--workspace", ref, "--lines", str(lines), check=False)
+    if not screen or any(m in screen for m in _PENDING_SCREEN_MARKERS):
+        return False
+    if _IDLE_SCREEN_MARKER not in screen:
+        return False
+    return any(line.rstrip() == "❯" for line in screen.splitlines())
+
+
 def reassert_idle_pills(refs: Iterable[str]) -> list[str]:
-    """Write `idle=` for every ref cmux reports as natively `Idle` but that
-    carries no pill. Returns the refs healed.
+    """Write `idle=` for every ref that's actually at rest but carries no
+    pill. Returns the refs healed.
 
     The same rule `nudge_if_idle` applies at line-of-send, hoisted onto the
     fast tick so it runs *unprompted*. That distinction is the whole point:
@@ -944,6 +984,13 @@ def reassert_idle_pills(refs: Iterable[str]) -> list[str]:
     (cmux restart, a Claude relaunched outside cmux's wrapper) has no pill and
     no way back — permanently unreachable to `a`/`A`/nudge. Writing it while
     the evidence is still there is what makes the pill survive.
+
+    For a ref reporting NO native state at all — cmux never registered it, or
+    lost it before this ever ran — there is no `Idle` window to catch, so the
+    fallback is `_screen_signals_idle`: a direct, narrowly-scoped read of the
+    same evidence a human would look at to answer "is this actually idle?".
+    It never overrides an unambiguous refusal (`Running`, `Needs input`) —
+    those still wait for the ordinary `Idle` window like everything else.
 
     Deliberately only ever *writes* a pill, never clears one: a stale `idle=`
     on a now-running session is already handled by the gate's `Running` guard,
@@ -956,13 +1003,18 @@ def reassert_idle_pills(refs: Iterable[str]) -> list[str]:
 
     def _one(ref: str) -> str | None:
         lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
-        if _native_claude_state(lines) != "Idle" or _has_pill(lines, "idle"):
+        if _has_pill(lines, "idle"):
+            return None
+        native = _native_claude_state(lines)
+        if native != "Idle" and not (native is None and _screen_signals_idle(ref)):
             return None
         _set_status(ref, "idle", "idle", GREY)
         return ref
 
     # One `list-status` subprocess per workspace, ~150ms each and mutually
-    # independent — serial that is ~3.5s of a 30s tick at fleet scale.
+    # independent — serial that is ~3.5s of a 30s tick at fleet scale. A
+    # second `read-screen` round-trip only fires for the no-native-state case,
+    # which should be rare.
     with ThreadPoolExecutor(max_workers=min(8, len(refs))) as pool:
         return [r for r in pool.map(_one, refs) if r]
 
