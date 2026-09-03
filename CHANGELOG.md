@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.27.0](https://github.com/khivi/cockpit/compare/v2.26.0...v2.27.0) (2026-09-03)
+
+
+### Features
+
+* name sidebar folds and stack headers by the repo's sidebar_tag ([#473](https://github.com/khivi/cockpit/issues/473)) ([4c405f3](https://github.com/khivi/cockpit/commit/4c405f318bcc481b3b3d724ccf65c584127ffbbd))
+* **tui:** give the ticks glyphs and stop the menu reading as a hyperlink ([#474](https://github.com/khivi/cockpit/issues/474)) ([6a7b174](https://github.com/khivi/cockpit/commit/6a7b1744a4819e2303aa094aba4e35528c517585))
+
 ## [2.26.0](https://github.com/khivi/cockpit/compare/v2.25.0...v2.26.0) (2026-09-03)
 
 
