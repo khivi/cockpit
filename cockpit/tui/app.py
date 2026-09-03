@@ -386,7 +386,7 @@ class CockpitApp(App[None]):
         if not (new_version := version.upgraded_version()):
             return
         self.notify(
-            f"upgraded to {new_version} — ☰ Menu › What's new for the release notes",
+            f"upgraded to {new_version} — ≡ Menu › What's new for the release notes",
             timeout=10.0,
         )
 

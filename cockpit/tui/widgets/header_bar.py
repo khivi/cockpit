@@ -30,13 +30,20 @@ WAITING = -3
 OFF = -2
 RUNNING = -1
 
+# The two ticks are named by glyph in the bar and by word in the tooltip. The
+# bar has room for one mark per counter and the pair only has to read as "one
+# of these is the slower one"; the tooltip is where each glyph is spelled out,
+# so these constants are what keep the legend from drifting off the bar.
+SLOW_GLYPH = "🐢"
+FAST_GLYPH = "🐇"
+
 _SLOW_DESC = (
-    "Slow tick: full reconcile — fetches PRs from GitHub and rebuilds the "
-    "PR cache and git-state cells."
+    f"{SLOW_GLYPH} Slow tick: full reconcile — fetches PRs from GitHub and "
+    "rebuilds the PR cache and git-state cells."
 )
 _FAST_DESC = (
-    "Fast tick: network-free republish of the already-cached git state and "
-    "PR data from disk."
+    f"{FAST_GLYPH} Fast tick: network-free republish of the already-cached "
+    "git state and PR data from disk."
 )
 
 
@@ -124,9 +131,9 @@ def brand_text(version_text: str, url: str) -> Text:
 
 def status_text(slow_remaining: int, fast_remaining: int) -> str:
     """The tick countdowns, as Textual markup."""
-    text = f"slow ⏱ {_fmt(slow_remaining)}"
+    text = f"{SLOW_GLYPH} {_fmt(slow_remaining)}"
     if fast_remaining != OFF:
-        text += f"   fast ⏱ {_fmt(fast_remaining)}"
+        text += f"   {FAST_GLYPH} {_fmt(fast_remaining)}"
     return text
 
 
@@ -157,11 +164,18 @@ class HeaderBar(Horizontal):
         content-align: right middle;
         padding-right: 2;
     }
+    /* Every theme sets `link-style: underline` and `link-color: $text` on an
+       `@click` span, which override a `color:` rule here and leave the one
+       clickable word both underlined and brighter than the telemetry beside
+       it. The table's OSC 8 cells carry no underline either, so the menu is
+       pinned to the brand's chrome weight at rest and hover — already a bold
+       `$primary` pill by default — is left to carry the whole affordance. */
     HeaderBar > #header-menu {
         width: auto;
-        color: $text-muted;
         content-align: right middle;
         padding-right: 1;
+        link-color: $text-muted;
+        link-style: none;
     }
     """
 
@@ -173,7 +187,12 @@ class HeaderBar(Horizontal):
     # not one of cockpit's, and the label has to read as "there is something
     # else here" to someone hunting for a thing they can't find. The glyph is
     # what says clickable; the tooltip carries the key for anyone who wants it.
-    MENU_LABEL = "☰ Menu"
+    #
+    # The glyph is single-cell on purpose. `☰` (U+2630) measures 2 cells but is
+    # drawn with one cell of ink, so it paints as a hamburger, a blank half, and
+    # only then the label — the glyph detaches from the word it belongs to. Same
+    # ink-width-vs-cell-width trap as the table's `_STATUS_SLOT`, inverted.
+    MENU_LABEL = "≡ Menu"
     MENU_TOOLTIP = (
         "Output log, show/edit config, theme, and the feature guide.\n"
         "Click, or press ctrl+p."
