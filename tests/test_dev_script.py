@@ -53,7 +53,7 @@ def fake_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
     (repo / "dev.sh").write_bytes(SCRIPT.read_bytes())
-    os.chmod(repo / "dev.sh", 0o755)
+    (repo / "dev.sh").chmod(0o755)
 
     real_home = tmp_path / "real-cockpit-home"
     (real_home / "cache").mkdir(parents=True)

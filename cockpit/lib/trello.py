@@ -38,7 +38,8 @@ import urllib.parse
 import urllib.request
 
 TRELLO_API_KEY_ENV = "TRELLO_API_KEY"
-TRELLO_API_TOKEN_ENV = "TRELLO_API_TOKEN"
+# An env var *name*, not a secret value - config carries names only.
+TRELLO_API_TOKEN_ENV = "TRELLO_API_TOKEN"  # noqa: S105
 
 # The Trello-specific fields the `tickets` config block accepts, as `(name,
 # kind)` (kind resolved to a validator in `tickets.py`). No credential *values* —
@@ -160,11 +161,13 @@ def _request(
     q["key"] = key
     q["token"] = token
     url = f"{_API_BASE}{path}?{urllib.parse.urlencode(q)}"
-    req = urllib.request.Request(
+    # _API_BASE is a fixed https:// constant; `path` is always one of this
+    # module's own literal endpoint strings, not attacker-controlled.
+    req = urllib.request.Request(  # noqa: S310
         url, headers={"Accept": "application/json"}, method=method
     )
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp:  # noqa: S310
             text = resp.read().decode()
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         return None

@@ -33,9 +33,11 @@ the daemon stays the sole cache writer.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, Select, Static
@@ -65,7 +67,7 @@ class NewWorkspaceScreen(ModalScreen["tuple[str, str | None] | None"]):
     NewWorkspaceScreen Select { margin: 1 0; }
     """
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", "Cancel")]
 
     #: Suffix on a `use_worktree: false` repo that already has its one workspace.
     BUSY_SUFFIX = "  (open — use f)"

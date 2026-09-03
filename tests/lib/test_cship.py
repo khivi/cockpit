@@ -17,12 +17,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import cockpit.lib.cship as cship_mod
+from tests.fixtures import make_bin_on_path
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SHIM = REPO_ROOT / "cockpit" / "bin" / "starship"
 SHIM_DIR = SHIM.parent
-
-import cockpit.lib.cship as cship_mod  # noqa: E402
-from tests.fixtures import make_bin_on_path  # noqa: E402
 
 # ── shim: STARSHIP_SHELL rewrite ──────────────────────────────────────────
 

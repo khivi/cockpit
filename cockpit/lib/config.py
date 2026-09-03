@@ -60,7 +60,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
     tmp = path.parent / f"{path.name}.tmp.{os.getpid()}"
     try:
         tmp.write_text(text)
-        os.replace(tmp, path)
+        os.replace(tmp, path)  # noqa: PTH105 - the atomicity contract above is written against this call
     except OSError:
         with contextlib.suppress(OSError):
             tmp.unlink()
@@ -301,7 +301,10 @@ def apply_org_defaults(cfg: dict) -> dict:
     return cfg
 
 
-REPO_TAG_TOKEN = "{repo}"
+# A literal placeholder substituted by `str.replace` in `expand_sidebar_tags`,
+# not a credential. Deliberately not `str.format`, which would raise on any
+# `sidebar_tag` containing an unrelated `{` or `}`.
+REPO_TAG_TOKEN = "{repo}"  # noqa: S105
 
 
 def expand_sidebar_tags(cfg: dict) -> dict:
@@ -1577,7 +1580,7 @@ def _seed_default_toml(
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.is_symlink():
-        target = Path(os.readlink(dest))
+        target = dest.readlink()
         if not target.is_absolute():
             target = dest.parent / target
         if target.exists():

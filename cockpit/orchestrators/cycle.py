@@ -2172,7 +2172,9 @@ def _bg_spawn_pr(
         cmd += ["--review", "--review-command", review_command(ctx.cfg, ctx.repo_entry)]
     logfile: IO[bytes] | None = None
     try:
-        logfile = open(_SPAWN_LOG, "ab")  # noqa: SIM115 — handle is passed to a detached Popen and must outlive this scope
+        # The detached child inherits this fd; the parent's own copy is closed in
+        # the `finally` below, once Popen has handed it over.
+        logfile = _SPAWN_LOG.open("ab")
     except OSError:
         logfile = None
     sink: IO[bytes] | int = logfile if logfile is not None else subprocess.DEVNULL
@@ -2395,7 +2397,9 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
         if dry:
             print(f"  dry: {command} in {repo_path}", flush=True)
             continue
-        subprocess.run(command, shell=True, cwd=repo_path)
+        # `command` is built by claude_command(), which shell_quote()s the prompt.
+        # shell=True is required: `command` is a single string, not an argv list.
+        subprocess.run(command, shell=True, cwd=repo_path)  # noqa: S602
 
     slow_skills = repo_entry.get("slow_skills") or []
     if slow_skills:
@@ -3242,7 +3246,8 @@ def cycle_all(
         if on_repo_done is not None:
             try:
                 on_repo_done()
-            except Exception as e:  # noqa: BLE001 — a render hiccup can't stop the tick
+            # Deliberately broad — a render hiccup can't stop the tick.
+            except Exception as e:
                 ts = datetime.now().isoformat(timespec="seconds")
                 print(
                     f"[{ts}] {yellow('skip')} on_repo_done for "

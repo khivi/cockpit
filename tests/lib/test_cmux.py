@@ -72,21 +72,21 @@ def test_select_workspace_uses_select_workspace_verb():
 
 
 def _pr(**overrides) -> PR:
-    base: dict = dict(
-        number=1,
-        title="t",
-        branch="khivi/feature",
-        url="https://example/pr/1",
-        author="khivi",
-        is_draft=False,
-        review_decision="REVIEW_REQUIRED",
-        mergeable="MERGEABLE",
-        ci="passed",
-        unaddressed=0,
-        total_from_others=0,
-        state="OPEN",
-        updated_at="",
-    )
+    base: dict = {
+        "number": 1,
+        "title": "t",
+        "branch": "khivi/feature",
+        "url": "https://example/pr/1",
+        "author": "khivi",
+        "is_draft": False,
+        "review_decision": "REVIEW_REQUIRED",
+        "mergeable": "MERGEABLE",
+        "ci": "passed",
+        "unaddressed": 0,
+        "total_from_others": 0,
+        "state": "OPEN",
+        "updated_at": "",
+    }
     base.update(overrides)
     return PR(**base)
 

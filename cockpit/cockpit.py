@@ -354,7 +354,11 @@ def _maybe_enable_statusline(*, install_deps: bool) -> None:
     if missing:
         if install_deps:
             print(f"installing statusline deps: {_CSHIP_INSTALL} -s -- --yes")
-            subprocess.run(f"{_CSHIP_INSTALL} -s -- --yes", shell=True, check=False)
+            # `_CSHIP_INSTALL` is a fixed constant, not user input - shell=True
+            # is required to pipe curl into bash.
+            subprocess.run(  # noqa: S602
+                f"{_CSHIP_INSTALL} -s -- --yes", shell=True, check=False
+            )
             missing = [b for b in ("cship", "starship") if shutil.which(b) is None]
         if missing:
             print(

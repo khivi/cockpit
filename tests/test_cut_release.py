@@ -61,7 +61,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _version(repo: Path) -> str:
     import tomllib
 
-    with open(repo / "pyproject.toml", "rb") as fh:
+    with (repo / "pyproject.toml").open("rb") as fh:
         return str(tomllib.load(fh)["project"]["version"])
 
 

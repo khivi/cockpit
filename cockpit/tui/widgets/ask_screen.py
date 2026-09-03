@@ -23,8 +23,10 @@ one-shot gesture with no cache cell, pill or retry, exactly like
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
@@ -69,7 +71,7 @@ class AskScreen(ModalScreen["tuple[str, str]"]):
     AskScreen Input { margin: 1 0; }
     """
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", "Cancel")]
 
     def __init__(self, target: str = "", initial: str = "", comments: int = 0) -> None:
         super().__init__()

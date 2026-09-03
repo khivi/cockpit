@@ -84,11 +84,12 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
+from typing import ClassVar
 
 from rich.cells import cell_len
 from rich.text import Text
 from textual import events
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.widgets import DataTable
@@ -1072,7 +1073,9 @@ class WorktreeTable(DataTable):
     # Override DataTable's Enter→select_cursor so Enter raises FocusRequest
     # instead of a RowSelected (which a *single* click also raises — we don't
     # want single click to focus). Double-click is handled in `on_click`.
-    BINDINGS = [Binding("enter", "request_focus", "Focus", show=False)]
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("enter", "request_focus", "Focus", show=False)
+    ]
 
     class FocusRequest(Message):
         """User asked to focus a row's workspace (Enter or double-click)."""

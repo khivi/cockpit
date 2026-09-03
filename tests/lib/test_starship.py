@@ -202,11 +202,11 @@ def test_print_ticket_cell_wins_over_branch_regex(
 def _cell(stem: str):
     """The flat cell the printers read: keyed by cwd, since a branch name is
     only unique inside one repo."""
-    import os
+    from pathlib import Path
 
     import cockpit.lib.cache as cache_mod
 
-    return cache_mod.cwd_cache(stem, os.getcwd())
+    return cache_mod.cwd_cache(stem, Path.cwd())
 
 
 @pytest.mark.parametrize(
@@ -452,7 +452,7 @@ def test_print_permission_mode(cache_dir, value, expected):
 
 
 # ── field printers: branch_identity + worktree_status ──────────────────────
-
+# Imported here rather than at the top - scoped to this section only.
 
 from tests.fixtures import make_git_repo as _make_repo  # noqa: E402
 

@@ -170,6 +170,7 @@ def test_kick_running_permission_error_surfaces(signal_mod, monkeypatch, capsys)
 
 
 # ── real-subprocess signal validation (no os.kill mocks) ────────────────────
+# Imported here rather than at the top - scoped to this section only.
 
 import subprocess  # noqa: E402
 import sys  # noqa: E402

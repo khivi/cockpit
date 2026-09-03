@@ -30,7 +30,8 @@ import re
 import urllib.error
 import urllib.request
 
-JIRA_API_TOKEN_ENV = "JIRA_API_TOKEN"
+# An env var *name*, not a secret value - config carries names only.
+JIRA_API_TOKEN_ENV = "JIRA_API_TOKEN"  # noqa: S105
 
 # The Jira-specific fields the `tickets` config block accepts, as `(name, kind)`
 # (kind resolved to a validator in `tickets.py`). The provider owns its own
@@ -149,7 +150,8 @@ def _request(
     authenticates in the `Authorization` header and is never logged.
     """
     data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(
+    # `url` comes from the user's own `tickets.site_url`, not attacker input.
+    req = urllib.request.Request(  # noqa: S310
         url,
         data=data,
         headers={
@@ -160,7 +162,7 @@ def _request(
         method=method,
     )
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp:  # noqa: S310
             text = resp.read().decode()
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         return None

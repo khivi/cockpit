@@ -150,7 +150,7 @@ def _stream_once(
 
     threading.Thread(target=_reap_on_stop, daemon=True).start()
     try:
-        assert proc.stdout is not None
+        assert proc.stdout is not None  # noqa: S101 - mypy narrow, not a runtime check
         for line in proc.stdout:
             if stop.is_set():
                 return

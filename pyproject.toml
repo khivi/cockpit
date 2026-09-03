@@ -44,7 +44,38 @@ no_implicit_optional = true
 warn_return_any = true
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "S", "C4", "RUF", "PTH", "PIE"]
 # E501 (line too long) is delegated to ruff-format, which cannot wrap string literals.
 # The remaining long lines are in docstrings/f-strings that are intentionally verbatim.
-ignore = ["E501"]
+#
+# S603/S607 fire on every git/gh/cmux call — the leaf-module architecture
+# (AGENTS.md, "Leaf modules ... test against the real tool"). A CLI resolves
+# these off the user's PATH; there is no absolute path to pin. Every other
+# S-rule stays on, suppressed per call site with a rationale.
+#
+# PTH111 off tree-wide — not a safe swap. `os.path.expanduser` is total: an
+# unresolvable `~user` (a `~dev/repo` typo; a config synced from a machine with
+# other accounts) returns unchanged and the next line's `is_dir()` skips that
+# repo. `Path.expanduser()` raises RuntimeError. Several call sites sit outside
+# the try/except that would absorb it — `_gather_inventory`, `cycle_all`'s
+# parked-repo filter — so one bad entry kills the tick instead of one repo.
+#
+# RUF001/002/003 (ambiguous unicode in strings/docstrings/comments) exist to
+# catch identifier-confusable homoglyphs (a Cyrillic "а" impersonating Latin
+# "a"), not deliberate typography. This codebase's comments and docstrings use
+# en-dashes, "×" as multiplication, and box-drawing/prompt glyphs throughout
+# (see AGENTS.md's own prose), and `lib/cmux.py`'s "❯" match is load-bearing —
+# it's the literal character cmux's prompt renders, not a stand-in for ">".
+ignore = ["E501", "S603", "S607", "PTH111", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test asserts and fixtures routinely build subprocess/git args from trusted,
+# in-repo values - the S-rules are aimed at untrusted input, not test scaffolding.
+#
+# PIE807: a `lambda: {}` monkeypatch stub is not a reimplemented `dict` — it is
+# an arity-checked stand-in. `dict` takes arbitrary kwargs, so it would swallow a
+# signature typo the lambda rejects. Stubs whose target takes arguments mirror
+# the real signature instead (`lambda *, include_self=False: {}`), which also
+# satisfies this rule; the ignore covers the genuinely zero-arg targets
+# (`load_config`, `workspace_names`), where `lambda: {}` is already exact.
+"tests/**" = ["S", "PIE807"]

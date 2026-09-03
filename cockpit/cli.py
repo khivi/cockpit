@@ -108,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         # Run via `bash` rather than execv'ing the script directly: a wheel does
         # not reliably preserve the file's exec bit, so relying on it would break
         # the hook on a fresh brew install.
-        os.execvp("bash", ["bash", str(script), *rest])
+        os.execvp("bash", ["bash", str(script), *rest])  # noqa: S606
         return 0  # type: ignore[unreachable]  # execvp replaces the process
 
     if sub == "close":

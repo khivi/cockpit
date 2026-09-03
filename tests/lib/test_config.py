@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pytest
 
-DEFAULTS = Path(__file__).resolve().parent.parent.parent / "cockpit" / "defaults"
+import cockpit.lib.config as config_mod
 
-import cockpit.lib.config as config_mod  # noqa: E402
+DEFAULTS = Path(__file__).resolve().parent.parent.parent / "cockpit" / "defaults"
 
 
 def _strip_comments(toml_body: str) -> str:
@@ -377,6 +377,8 @@ def test_save_tui_theme_noop_when_unchanged(tmp_path, monkeypatch):
     assert before == after
 
 
+# Imported here rather than at the top - scoped to the statusline-install
+# section below, not the rest of the file.
 from tests.asserts import expected_starship as _expected_starship  # noqa: E402
 from tests.fixtures import (  # noqa: E402
     make_bin_on_path as _make_bin_on_path,

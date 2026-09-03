@@ -471,7 +471,9 @@ def _seed_one_worktree(monkeypatch, tmp_path, *, branch="khivi/feat-a"):
         "cockpit.tui.app.worktrees",
         lambda p, prefix="", repo_name="", sidebar_tag="": [wt],
     )
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path})
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda *, include_self=False: {"ws1": wt.path}
+    )
     monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {"ws1": "feat-a"})
     monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
     return wt
@@ -577,7 +579,8 @@ def _patch_focus(monkeypatch, *, backend, has_ws):
     monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: backend)
     cwds = {"ws1": Path("/x")}  # placeholder; the test sets the real path below
     monkeypatch.setattr(
-        "cockpit.tui.app.workspace_cwds", lambda: cwds if has_ws else {}
+        "cockpit.tui.app.workspace_cwds",
+        lambda *, include_self=False: cwds if has_ws else {},
     )
     monkeypatch.setattr(
         "cockpit.tui.app.workspace_names", lambda: {"ws1": "feat-a"} if has_ws else {}
@@ -676,7 +679,8 @@ async def test_focus_no_worktree_repo_switches_by_repo_name(monkeypatch, tmp_pat
     # The repo-named workspace lives at a DIFFERENT cwd, so a cwd match misses;
     # only the name match ("myrepo") can find it.
     monkeypatch.setattr(
-        "cockpit.tui.app.workspace_cwds", lambda: {"wsX": Path("/elsewhere")}
+        "cockpit.tui.app.workspace_cwds",
+        lambda *, include_self=False: {"wsX": Path("/elsewhere")},
     )
     monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {"wsX": "myrepo"})
     refs: list[str] = []
@@ -1080,7 +1084,9 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
         "cockpit.tui.app.worktrees",
         lambda p, prefix="", repo_name="", sidebar_tag="": [wt],
     )
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path})
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda *, include_self=False: {"ws1": wt.path}
+    )
     monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {"ws1": "feat-a"})
     monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
 
@@ -1133,7 +1139,9 @@ async def test_new_box_sinks_parked_repos_and_unhides_on_spawn(monkeypatch, tmp_
         "cockpit.tui.app.worktrees",
         lambda p, prefix="", repo_name="", sidebar_tag="": [wt],
     )
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda *, include_self=False: {}
+    )
     monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
     launched: dict = {}
     monkeypatch.setattr(
@@ -1191,7 +1199,9 @@ async def test_h_parks_repo(monkeypatch, tmp_path):
         ],
     )
     # Parking closes the repo's workspaces — keep that off real cmux here.
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda *, include_self=False: {}
+    )
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1229,7 +1239,7 @@ async def test_parking_closes_the_repos_workspaces(monkeypatch, tmp_path):
     monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="", **k: [wt])
     monkeypatch.setattr(
         "cockpit.tui.app.workspace_cwds",
-        lambda: {
+        lambda *, include_self=False: {
             "workspace:1": repo,  # the checkout itself
             "workspace:2": wt.path,  # a sibling worktree — matched by cwd
             "workspace:3": repo,  # busy → spared
@@ -1271,7 +1281,10 @@ async def test_unparking_closes_nothing(monkeypatch, tmp_path):
         lambda: {"repos": [{"name": "repo", "path": str(repo)}]},
     )
     monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="", **k: [wt])
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {"workspace:1": repo})
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds",
+        lambda *, include_self=False: {"workspace:1": repo},
+    )
     monkeypatch.setattr("cockpit.tui.app.workspace_is_idle", lambda ref: True)
     closed: list[str] = []
 
@@ -1304,7 +1317,9 @@ async def test_h_on_group_header_parks_that_repo(monkeypatch, tmp_path):
         "cockpit.tui.app.load_config",
         lambda: {"repos": [{"name": "solo", "path": str(repo)}]},
     )
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda *, include_self=False: {}
+    )
     app, _ = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1380,7 +1395,9 @@ async def test_expanded_disclosure_row_lists_parked_repos(monkeypatch, tmp_path)
         },
     )
     monkeypatch.setattr("cockpit.tui.app.worktrees", lambda p, prefix="", **k: [awt])
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda *, include_self=False: {}
+    )
     toggle_hidden(beta)
     app, _ = _make_app()
     # `h` re-renders through the real `_publish_inventory` (`_prime_table`), which
@@ -1705,7 +1722,9 @@ async def test_new_box_no_worktree_repo_spawns_named_checkout(monkeypatch, tmp_p
         "cockpit.tui.app.worktrees",
         lambda p, prefix="", repo_name="", sidebar_tag="": [wt],
     )
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda *, include_self=False: {}
+    )
     monkeypatch.setattr("cockpit.tui.app.workspace_names", lambda: {})
     monkeypatch.setattr("cockpit.tui.app.find_pr_payload", lambda *a, **k: None)
 
@@ -3018,7 +3037,9 @@ async def test_diff_still_opens_untargeted_without_a_workspace(monkeypatch, tmp_
     still gets its diff, just with nowhere to send comments. Degrade, don't
     refuse: a diff you can read beats no diff."""
     wt = _seed_diff_row(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda *, include_self=False: {}
+    )
     seen: list = []
     await _press_d_capturing(monkeypatch, wt, seen)
 
@@ -3056,7 +3077,7 @@ async def test_diff_survives_a_backend_hiccup_resolving_the_workspace(
     not cost the diff — the targeting is an enhancement, not a precondition."""
     wt = _seed_diff_row(monkeypatch, tmp_path)
 
-    def _boom():
+    def _boom(*, include_self=False):
         raise CmuxUnavailable("list-workspaces failed")
 
     monkeypatch.setattr("cockpit.tui.app.workspace_cwds", _boom)
@@ -3163,7 +3184,8 @@ async def test_ask_on_header_fans_out_to_every_session_in_the_repo(
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
     monkeypatch.setattr(
-        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
+        "cockpit.tui.app.workspace_cwds",
+        lambda *, include_self=False: {"ws1": wt.path, "ws2": wt.path},
     )
     sent: list = []
     monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent, pair=True))
@@ -3182,7 +3204,8 @@ async def test_ask_on_header_never_asks_the_dashboards_own_session(
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
     monkeypatch.setattr(
-        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "SELF": wt.path}
+        "cockpit.tui.app.workspace_cwds",
+        lambda *, include_self=False: {"ws1": wt.path, "SELF": wt.path},
     )
     sent: list = []
     monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent, ref_only=True))
@@ -3212,7 +3235,8 @@ async def test_ask_on_header_reports_partial_delivery_and_keeps_the_draft(
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
     monkeypatch.setattr(
-        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
+        "cockpit.tui.app.workspace_cwds",
+        lambda *, include_self=False: {"ws1": wt.path, "ws2": wt.path},
     )
 
     def _fake(ref, msg, *, skips=None, **k):
@@ -3237,7 +3261,9 @@ async def test_ask_on_header_warns_when_the_repo_has_no_sessions(monkeypatch, tm
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", lambda: {})
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds", lambda *, include_self=False: {}
+    )
     sent: list = []
     monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent))
     toasts: list[str] = []
@@ -3281,7 +3307,7 @@ async def test_A_on_the_fold_row_reaches_the_snoozed_sessions_without_expanding(
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr(
         "cockpit.tui.app.workspace_cwds",
-        lambda: {"ws-dozing": dozing.path, "ws-mine": mine.path},
+        lambda *, include_self=False: {"ws-dozing": dozing.path, "ws-mine": mine.path},
     )
     sent: list = []
     monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent, pair=True))
@@ -3301,7 +3327,7 @@ async def test_A_works_from_the_repo_header_too(monkeypatch, tmp_path):
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr(
         "cockpit.tui.app.workspace_cwds",
-        lambda: {"ws-dozing": dozing.path, "ws-mine": mine.path},
+        lambda *, include_self=False: {"ws-dozing": dozing.path, "ws-mine": mine.path},
     )
     sent: list = []
     monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _recorder(sent, pair=True))
@@ -3319,7 +3345,8 @@ async def test_A_overrides_the_snooze_it_is_aimed_at(monkeypatch, tmp_path):
     inv, dozing, _mine = _snoozed_repo(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr(
-        "cockpit.tui.app.workspace_cwds", lambda: {"ws-dozing": dozing.path}
+        "cockpit.tui.app.workspace_cwds",
+        lambda *, include_self=False: {"ws-dozing": dozing.path},
     )
     calls: list[dict] = []
 
@@ -3345,7 +3372,7 @@ async def test_A_reports_partial_delivery_and_keeps_the_draft(monkeypatch, tmp_p
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr(
         "cockpit.tui.app.workspace_cwds",
-        lambda: {"ws1": dozing.path, "ws2": other.path},
+        lambda *, include_self=False: {"ws1": dozing.path, "ws2": other.path},
     )
 
     def _fake(ref, msg, *, skips=None, **k):
@@ -3440,7 +3467,8 @@ async def test_repo_retry_reaches_only_the_sessions_that_missed(monkeypatch, tmp
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
     monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
     monkeypatch.setattr(
-        "cockpit.tui.app.workspace_cwds", lambda: {"ws1": wt.path, "ws2": wt.path}
+        "cockpit.tui.app.workspace_cwds",
+        lambda *, include_self=False: {"ws1": wt.path, "ws2": wt.path},
     )
     seen: list[str] = []
     busy = {"ws2"}
