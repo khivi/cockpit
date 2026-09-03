@@ -1,4 +1,4 @@
-"""CLI implementation for `cockpit nudge {mute,unmute,list,status}`.
+"""CLI implementation for `cockpit nudge {mute,unmute,snooze,wake,list,status}`.
 
 Inferring the PR from the current branch (via `gh pr view`) lets the Claude
 session that's being nudged mute its own PR without knowing the number, which
@@ -7,6 +7,14 @@ is the whole point of this surface (`cockpit nudge`).
 The repo comes from the cwd the same way (`gh repo view`), because a pref is
 keyed per repo (`nudges.pref_key`) — a PR number alone is shared with every
 other repo's PR of that number. So these commands must run inside the repo.
+
+`snooze`/`wake` mirror the TUI's `z` key (`tui/app.py::_toggle_snooze`) rather
+than reusing it directly — a CLI has no row to toggle, so they're the explicit
+set/clear pair `mute`/`unmute` already established. Both repaint the cached PR
+snapshot immediately (`cache.restamp_pref`, the same call `z` makes) and kick
+the daemon for a full cycle (`z`'s one caveat: sidebar-fold membership is only
+rebuilt on an unscoped cycle), so a session doesn't have to wait out the
+next slow-tick interval for either to take visible effect.
 """
 
 from __future__ import annotations
@@ -18,7 +26,10 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .cache import find_pr_payload_for_cwd, restamp_pref
+from .daemon_signal import kick_running
 from .gh import repo_nwo
+from .git import current_branch
 from .nudges import (
     NudgePref,
     delete_pref,
@@ -27,6 +38,7 @@ from .nudges import (
     parse_duration,
     pref_key,
     save_pref,
+    wake_signature,
 )
 
 
@@ -52,8 +64,9 @@ def _infer_pr_number() -> int | None:
         return None
 
 
-def _resolve_pr(arg_pr: int | None) -> tuple[int, str]:
-    """(PR number, pref key) for the command. Exits 2 when either is unresolvable.
+def _resolve_pr(arg_pr: int | None) -> tuple[int, str, str]:
+    """(PR number, repo nwo, pref key) for the command. Exits 2 when either the
+    number or the repo is unresolvable.
 
     The number can be passed explicitly; the repo never can — it's always the
     cwd's, since that's the only thing that makes a bare number unambiguous.
@@ -77,7 +90,7 @@ def _resolve_pr(arg_pr: int | None) -> tuple[int, str]:
             file=sys.stderr,
         )
         sys.exit(2)
-    return pr, pref_key(repo, pr)
+    return pr, repo, pref_key(repo, pr)
 
 
 def _fmt_until(until: float | None) -> str:
@@ -112,7 +125,7 @@ def _cmd_mute(args: argparse.Namespace) -> int:
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return 2
-    pr, key = _resolve_pr(args.pr)
+    pr, _repo, key = _resolve_pr(args.pr)
     pref = load_pref(key)
     pref.muted = True
     pref.until = until
@@ -125,7 +138,7 @@ def _cmd_mute(args: argparse.Namespace) -> int:
 
 
 def _cmd_unmute(args: argparse.Namespace) -> int:
-    pr, key = _resolve_pr(args.pr)
+    pr, _repo, key = _resolve_pr(args.pr)
     pref = load_pref(key)
     if not pref.muted:
         print(f"PR #{pr}: not muted")
@@ -135,6 +148,47 @@ def _cmd_unmute(args: argparse.Namespace) -> int:
     pref.reason = ""
     save_pref(key, pref)
     print(f"unmuted PR #{pr}")
+    return 0
+
+
+def _cmd_snooze(args: argparse.Namespace) -> int:
+    pr, repo, key = _resolve_pr(args.pr)
+    pref = load_pref(key)
+    if pref.snoozed:
+        print(f"PR #{pr}: already snoozed")
+        return 0
+    cwd = Path.cwd()
+    branch = current_branch(cwd)
+    payload = (find_pr_payload_for_cwd(cwd, branch) if branch else None) or {}
+    pref.snoozed = True
+    pref.wake_on = wake_signature(
+        int(payload.get("total") or 0), str(payload.get("review") or "")
+    )
+    pref.wake_nudge = str(payload.get("nudge") or "")
+    # A snooze supersedes a mute — see `nudges.NudgePref` docstring.
+    pref.muted = False
+    pref.until = None
+    pref.reason = ""
+    save_pref(key, pref)
+    restamp_pref(repo, pr, cwd, pref)
+    kick_running(quiet=True)
+    print(f"snoozed PR #{pr} — wakes on a new comment, review, or CI/conflict issue")
+    return 0
+
+
+def _cmd_wake(args: argparse.Namespace) -> int:
+    pr, repo, key = _resolve_pr(args.pr)
+    pref = load_pref(key)
+    if not pref.snoozed:
+        print(f"PR #{pr}: not snoozed")
+        return 0
+    pref.snoozed = False
+    pref.wake_on = ""
+    pref.wake_nudge = ""
+    save_pref(key, pref)
+    restamp_pref(repo, pr, Path.cwd(), pref)
+    kick_running(quiet=True)
+    print(f"woke PR #{pr}")
     return 0
 
 
@@ -155,13 +209,13 @@ def _cmd_list(_args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
-    pr, key = _resolve_pr(args.pr)
+    pr, _repo, key = _resolve_pr(args.pr)
     _print_status(pr, load_pref(key))
     return 0
 
 
 def _cmd_forget(args: argparse.Namespace) -> int:
-    pr, key = _resolve_pr(args.pr)
+    pr, _repo, key = _resolve_pr(args.pr)
     if delete_pref(key):
         print(f"deleted nudge file for PR #{pr}")
     else:
@@ -189,6 +243,17 @@ def main(argv: list[str] | None = None) -> int:
     unmute = sub.add_parser("unmute", help="Resume nudges for a PR.")
     unmute.add_argument("pr", type=int, nargs="?")
     unmute.set_defaults(func=_cmd_unmute)
+
+    snooze = sub.add_parser(
+        "snooze",
+        help="Snooze a PR until it changes (new comment, review, or issue).",
+    )
+    snooze.add_argument("pr", type=int, nargs="?")
+    snooze.set_defaults(func=_cmd_snooze)
+
+    wake = sub.add_parser("wake", help="Clear a PR's snooze.")
+    wake.add_argument("pr", type=int, nargs="?")
+    wake.set_defaults(func=_cmd_wake)
 
     lst = sub.add_parser("list", help="Show currently muted PRs.")
     lst.set_defaults(func=_cmd_list)
