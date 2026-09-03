@@ -192,7 +192,11 @@ async def test_palette_order_runs_in_app_before_it_leaves():
     async with app.run_test() as pilot:
         await pilot.pause()
         provider = ConfigCommands(app.screen)
-        labels = [str(h.display) async for h in provider.discover()]
+        labels = []
+        async for hit in provider.discover():
+            # Narrows `DiscoveryHit | Hit` for `.display`, as above.
+            assert isinstance(hit, DiscoveryHit)
+            labels.append(str(hit.display))
     in_app = [
         i for i, x in enumerate(labels) if "browser" not in x and "$EDITOR" not in x
     ]
