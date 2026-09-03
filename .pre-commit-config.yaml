@@ -122,3 +122,16 @@ repos:
         always_run: true
         pass_filenames: false
         stages: [pre-push]
+
+      # An allowlist, not `--fail-on`: that flag matches the license string
+      # EXACTLY, so `--fail-on=GPL` passes a dep reporting "GNU General Public
+      # License v3 (GPLv3)" and the gate reads green while checking nothing.
+      - id: license-check
+        name: pip-licenses (dependency license allowlist)
+        entry: uv run --with pip-licenses pip-licenses
+        args:
+          - --allow-only=MIT;MIT License;BSD-2-Clause;BSD License;Apache-2.0;Apache Software License;Apache-2.0 OR BSD-2-Clause;PSF-2.0;Python Software Foundation License;Mozilla Public License 2.0 (MPL 2.0)
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]

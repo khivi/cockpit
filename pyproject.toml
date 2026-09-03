@@ -7,6 +7,8 @@ name = "cmux-cockpit"
 version = "2.24.1"
 requires-python = ">=3.12"
 description = "One terminal UI joining each change's git worktree, workspace, GitHub PR, and Linear/Jira/Trello/GitHub-issue ticket."
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "textual>=8.2.8",
 ]
