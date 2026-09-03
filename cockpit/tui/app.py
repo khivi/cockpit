@@ -44,6 +44,7 @@ from typing import ClassVar
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
+from textual.css.query import NoMatches
 
 from cockpit.lib import diff_comments, version
 from cockpit.lib.cache import (
@@ -567,12 +568,22 @@ class CockpitApp(App[None]):
             print(f"fast-tick error: {e}")
         finally:
             self._fast_phase = "idle"
-            self._publish_inventory()
+            # Guarded like the slow tick's: a publish that fails (a render on a
+            # torn-down app, a bad worktree read) must not swallow the doorbell
+            # kick below, which is the only thing that catches an event that
+            # landed mid-tick.
+            try:
+                self._publish_inventory()
+            except Exception as e:
+                print(f"fast-tick error: publish failed: {e}")
             if self._events_pending:
                 # Events landed mid-tick — this run may predate them, so owe one
                 # more. Cleared before kicking so the next batch can re-arm.
                 self._events_pending = False
-                self.call_from_thread(self._kick_fast)
+                try:
+                    self.call_from_thread(self._kick_fast)
+                except Exception as e:
+                    print(f"fast-tick error: kick failed: {e}")
 
     # ---- ui updates ------------------------------------------------------
 
@@ -586,7 +597,13 @@ class CockpitApp(App[None]):
 
     def _update_countdown(self) -> None:
         now = time.monotonic()
-        header = self.query_one(HeaderBar)
+        # A pending 1s interval can still fire after the header is gone (the
+        # timer outlives unmount on the way out), and an unguarded query there
+        # takes the app down on quit.
+        try:
+            header = self.query_one(HeaderBar)
+        except NoMatches:
+            return
         header.slow_remaining = self._phase_remaining(
             self._slow_phase, self._next_slow, now
         )

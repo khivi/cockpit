@@ -315,6 +315,25 @@ async def test_run_slow_starts_fast_even_if_publish_raises(monkeypatch):
         assert app._fast_started
 
 
+async def test_run_fast_still_owes_the_doorbell_kick_if_publish_raises(monkeypatch):
+    # The same asymmetry on the fast side: an unguarded publish in the `finally`
+    # skipped the re-kick an event that landed mid-tick is owed, so the doorbell
+    # was dropped until the next 30s timer.
+    app, calls = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.6)
+
+        def _boom() -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(app, "_publish_inventory", _boom)
+        before = calls["fast"]
+        app._events_pending = True
+        app._kick_fast()
+        await pilot.pause(0.6)
+        assert calls["fast"] >= before + 2  # the tick, plus the owed re-kick
+
+
 async def test_sync_action_kicks_slow_tick():
     app, calls = _make_app()
     async with app.run_test() as pilot:
@@ -358,6 +377,15 @@ async def test_scoped_kick_does_not_reset_header_countdown(monkeypatch):
         app._slow_phase = "idle"
         app._kick_slow(None)
         assert app._next_slow != stale  # full-cycle kick does reset it
+
+
+async def test_countdown_survives_the_header_being_gone():
+    # The 1s interval outlives the header on the way out, so an unguarded
+    # query_one there raises NoMatches and takes the app down on quit.
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.6)
+    app._update_countdown()  # no header any more: returns instead of raising
 
 
 async def test_waiting_on_lock_shows_waiting_not_running():

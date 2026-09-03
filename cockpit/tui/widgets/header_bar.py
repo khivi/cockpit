@@ -17,6 +17,7 @@ from __future__ import annotations
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import Static
 
@@ -257,25 +258,33 @@ class HeaderBar(Horizontal):
     def _sync_tooltip(self) -> None:
         self.tooltip = build_tooltip(self.slow_remaining, self.fast_remaining)
 
+    def _cell(self, selector: str) -> Static | None:
+        """The child to paint on, or None when there is none to paint on.
+
+        A watcher fires whenever the app assigns a reactive, which includes both
+        ends of this widget's life: before `compose` has run, and after teardown
+        has pruned the children. `is_mounted` answers neither — it is set only
+        after compose *and* mount have been dispatched, and is never cleared, so
+        it reads False for the whole of `on_mount` (silently skipping the
+        initial paint) and True once the children are gone, where the query then
+        raises `NoMatches` out of the app's reactive assignment. Ask for the
+        child instead, which is the thing actually in question."""
+        try:
+            return self.query_one(selector, Static)
+        except NoMatches:
+            return None
+
     def _repaint_repo(self) -> None:
-        if not self.is_mounted:
-            return
-        self.query_one("#header-repo", Static).update(
-            repo_text(self.repo_name, self.repo_color)
-        )
+        cell = self._cell("#header-repo")
+        if cell is not None:
+            cell.update(repo_text(self.repo_name, self.repo_color))
 
     def _repaint_brand(self) -> None:
-        if not self.is_mounted:
-            return
-        self.query_one("#header-brand", Static).update(
-            brand_text(self.version_text, self.version_url)
-        )
+        cell = self._cell("#header-brand")
+        if cell is not None:
+            cell.update(brand_text(self.version_text, self.version_url))
 
     def _repaint(self) -> None:
-        # Watchers fire before compose has run, so there is nothing to query yet
-        # on the first assignments; on_mount paints the initial state.
-        if not self.is_mounted:
-            return
-        self.query_one("#header-status", Static).update(
-            status_text(self.slow_remaining, self.fast_remaining)
-        )
+        cell = self._cell("#header-status")
+        if cell is not None:
+            cell.update(status_text(self.slow_remaining, self.fast_remaining))
