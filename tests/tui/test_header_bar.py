@@ -18,6 +18,7 @@ from cockpit.tui.widgets.header_bar import (
     WAITING,
     HeaderBar,
     _fmt,
+    brand_text,
     build_tooltip,
     repo_text,
     status_text,
@@ -105,17 +106,35 @@ def test_tooltip_always_includes_base_descriptions_even_when_decoding():
 
 
 def test_status_text_shows_the_slow_countdown_alone_by_default():
-    assert status_text("", 65, OFF) == "slow ⏱ 1:05"
-
-
-def test_status_text_leads_with_the_version_when_set():
-    text = status_text("9.9.9", 65, OFF)
-    assert text.startswith("[bold cyan]cockpit 9.9.9[/]")
-    assert "slow ⏱ 1:05" in text
+    assert status_text(65, OFF) == "slow ⏱ 1:05"
 
 
 def test_status_text_adds_the_fast_countdown_when_the_fast_tick_is_on():
-    assert "fast ⏱ 0:20" in status_text("", 65, 20)
+    assert "fast ⏱ 0:20" in status_text(65, 20)
+
+
+# --- brand_text: pure function -----------------------------------------------
+
+
+def test_brand_text_names_the_running_version():
+    assert brand_text("9.9.9", "").plain == "cockpit 9.9.9"
+
+
+def test_brand_text_degrades_to_the_bare_name_with_no_version():
+    # `running_version()` returns "" when the metadata can't be resolved; the
+    # segment must not render a trailing space or the word "None".
+    assert brand_text("", "").plain == "cockpit"
+
+
+def test_brand_text_links_to_the_release_notes():
+    linked = brand_text("9.9.9", "https://example.test/releases")
+    assert any(
+        "link https://example.test/releases" in str(span.style) for span in linked.spans
+    )
+
+
+def test_brand_text_carries_no_link_when_no_url_is_supplied():
+    assert not any("link" in str(span.style) for span in brand_text("9.9.9", "").spans)
 
 
 # --- repo_text: pure function ------------------------------------------------
@@ -145,7 +164,7 @@ def test_repo_text_tints_with_the_repos_sidebar_colour():
     assert tinted.spans != plain.spans
 
 
-# --- the two halves ----------------------------------------------------------
+# --- the four segments --------------------------------------------------------
 
 
 class _HeaderBarHarness(App[None]):
@@ -191,12 +210,48 @@ async def test_status_half_repaints_when_a_countdown_changes():
     async with app.run_test() as pilot:
         await pilot.pause()
         bar = app.query_one(HeaderBar)
-        bar.version_text = "9.9.9"
         bar.slow_remaining = 65
         await pilot.pause()
-        painted = str(app.query_one("#header-status", Static).render())
-        assert "cockpit 9.9.9" in painted
-        assert "slow ⏱ 1:05" in painted
+        assert "slow ⏱ 1:05" in str(app.query_one("#header-status", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_brand_half_carries_its_own_tooltip():
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#header-brand", Static).tooltip == HeaderBar.BRAND_TOOLTIP
+
+
+@pytest.mark.asyncio
+async def test_brand_half_repaints_when_the_version_arrives():
+    # The app resolves the version in `on_mount`, after the bar has composed.
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bar = app.query_one(HeaderBar)
+        bar.version_text = "9.9.9"
+        await pilot.pause()
+        assert "cockpit 9.9.9" in str(app.query_one("#header-brand", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_the_countdowns_do_not_move_when_the_cursor_changes_repo():
+    # The anchoring invariant: the repo is the only segment whose width changes
+    # while the app runs, so it owns the flexible slot and everything right of
+    # it stays pinned to the right edge. Give the countdowns that slot instead
+    # and they slide sideways on every arrow key.
+    app = _HeaderBarHarness()
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        bar = app.query_one(HeaderBar)
+        bar.repo_name = "a"
+        await pilot.pause()
+        before = app.query_one("#header-status", Static).region.x
+
+        bar.repo_name = "a-very-considerably-longer-repo-name"
+        await pilot.pause()
+        assert app.query_one("#header-status", Static).region.x == before
 
 
 # --- watcher wiring: proves the tooltip updates on reactive change, not just

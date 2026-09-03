@@ -66,10 +66,13 @@ whatever `brew upgrade` last handed you. Click it, or press `ctrl+p`. The first 
 new version says so once, and points at that entry — cockpit compares itself against its own
 last run, so it never goes looking for a version newer than the one you have.
 
-**The top bar also names the repo the highlighted row belongs to**, in that repo's colour.
-Every repo heads its own group in the table, but that heading scrolls off the moment a repo
-holds more rows than fit — so on any real fleet the row under your cursor tells you nothing
-about which repo you're about to act on. The top bar can't scroll away.
+**The top bar reads left to right as where you are, then how things are going.** It opens
+with the version you're running — dim, and a link to the release notes for it — then names
+the repo the highlighted row belongs to, in that repo's colour. Every repo heads its own
+group in the table, but that heading scrolls off the moment a repo holds more rows than fit,
+so on any real fleet the row under your cursor tells you nothing about which repo you're
+about to act on. The top bar can't scroll away. The two countdowns and the menu sit against
+the right edge, where a longer repo name can't shove them sideways as you move the cursor.
 
 ### The sidebar card
 
