@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.25.0](https://github.com/khivi/cockpit/compare/v2.24.2...v2.25.0) (2026-09-03)
+
+
+### Features
+
+* **tui:** add a What's new menu entry and a once-per-upgrade toast ([#469](https://github.com/khivi/cockpit/issues/469)) ([66e3fb7](https://github.com/khivi/cockpit/commit/66e3fb75571bb483825cf3a07deb697a170fef77))
+
 ## [2.24.2](https://github.com/khivi/cockpit/compare/v2.24.1...v2.24.2) (2026-09-03)
 
 
