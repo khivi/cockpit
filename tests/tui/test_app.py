@@ -360,6 +360,15 @@ async def test_scoped_kick_does_not_reset_header_countdown(monkeypatch):
         assert app._next_slow != stale  # full-cycle kick does reset it
 
 
+async def test_countdown_survives_the_header_being_gone():
+    # The 1s interval outlives the header on the way out, so an unguarded
+    # query_one there raises NoMatches and takes the app down on quit.
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.6)
+    app._update_countdown()  # no header any more: returns instead of raising
+
+
 async def test_waiting_on_lock_shows_waiting_not_running():
     # Hold the tick lock so the slow worker blocks acquiring it: its phase must
     # be "waiting" (header sentinel -3), not "running" (-1).

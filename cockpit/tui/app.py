@@ -44,6 +44,7 @@ from typing import ClassVar
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
+from textual.css.query import NoMatches
 
 from cockpit.lib import diff_comments, version
 from cockpit.lib.cache import (
@@ -586,7 +587,13 @@ class CockpitApp(App[None]):
 
     def _update_countdown(self) -> None:
         now = time.monotonic()
-        header = self.query_one(HeaderBar)
+        # A pending 1s interval can still fire after the header is gone (the
+        # timer outlives unmount on the way out), and an unguarded query there
+        # takes the app down on quit.
+        try:
+            header = self.query_one(HeaderBar)
+        except NoMatches:
+            return
         header.slow_remaining = self._phase_remaining(
             self._slow_phase, self._next_slow, now
         )
