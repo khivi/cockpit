@@ -70,7 +70,7 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 | `n` · `h` | Start something new · park the row's repo, or reveal / un-park a parked one |
 | `s` · `q` | Reconcile every repo now · quit |
 
-Hover any footer key for a sentence on what it does. **☰ Menu**, top right, holds logs, config, theme, and the [feature guide](FEATURES.md) — click it, or press `ctrl+p`.
+Hover any footer key for a sentence on what it does. **☰ Menu**, top right, holds logs, config, theme, the [feature guide](FEATURES.md), and the [release notes](https://github.com/khivi/cockpit/releases) — click it, or press `ctrl+p`.
 
 ## Configuration
 

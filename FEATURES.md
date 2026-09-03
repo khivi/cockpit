@@ -11,7 +11,8 @@ having to remember.
 
 | | |
 |---|---|
-| [**The dashboard**](#the-dashboard) | One row per change, every repo. Bands by whose turn it is, indents stacked PRs, parks repos you're not on. [Keys](#keys) |
+| [**The dashboard**](#the-dashboard) | One row per change, every repo. Bands by whose turn it is, indents stacked PRs, parks repos you're not on |
+| [**Keys**](#keys) | The whole keymap, the table's links, and the diff-and-ask loop for reviewing your agent's work |
 | [**Starting work**](#starting-work-one-argument-any-source) | One argument — branch, PR, issue, ticket, Slack link, failed CI run — and the worktree, terminal, and context all exist |
 | [**The nudge**](#the-nudge) | Your PR goes red, the session gets told. Only when it's genuinely parked, only your own PRs, muteable and snoozeable |
 | [**Tickets**](#tickets) | Linear, Jira, GitHub Issues, Trello — live state in the row, a dev-done pill, and the ticket moved on merge |
@@ -60,8 +61,10 @@ automatically.
 repaint every 30 seconds — both tunable — plus an instant repaint when a workspace opens or
 closes out from under you. `s` reconciles every repo on demand. **☰ Menu**, in the top right
 corner, opens a palette holding the daemon log, your resolved config, an editor for it, a
-theme picker that persists your choice, and a link back to this guide. Click it, or press
-`ctrl+p`.
+theme picker that persists your choice, a link back to this guide, and the release notes for
+whatever `brew upgrade` last handed you. Click it, or press `ctrl+p`. The first launch on a
+new version says so once, and points at that entry — cockpit compares itself against its own
+last run, so it never goes looking for a version newer than the one you have.
 
 **The top bar also names the repo the highlighted row belongs to**, in that repo's colour.
 Every repo heads its own group in the table, but that heading scrolls off the moment a repo
@@ -80,25 +83,22 @@ build that isn't passing takes it: a failing PR reads red whatever its state. Th
 footer has room and keeps CI as its own pill.
 
 **Name the repo when colour runs out.** A workspace is named after its branch, and which
-repo it belongs to is carried by the card's tint. That works until you're watching enough
-repos to exhaust the sixteen colours cmux offers — and well before that, if several of
-yours land on hues that don't read apart at a glance, or if a repo has no colour set at
-all. Give the repo a `sidebar_tag` and its workspaces read `infra·fix-retry` instead of
-`fix-retry`. An emoji works as well as a word and is shorter — it reads as an icon rather
-than as text, so it gets a space instead of the dot: `🎛️ fix-retry`. It's off unless you set
-it, so nothing is renamed until you ask; a repo's main checkout is already named after the
-repo and never takes one.
+repo it belongs to is carried by the card's tint — which stops scaling once you're watching
+enough repos to exhaust the sixteen colours cmux offers, or as soon as several of yours land
+on hues that don't read apart. Give the repo a [`sidebar_tag`](docs/config.md) and its
+workspaces read `infra·fix-retry`; an emoji reads as an icon rather than text, so it takes a
+space instead of the dot — `🎛️ fix-retry`. Off unless you set it.
 
-**Turn cmux's own PR row off when you use this.** Set `"sidebar": {"showPullRequests":
-false}` in `~/.config/cmux/cmux.json` and run `cmux reload-config`. cmux resolves a branch
-to a PR itself, and when a branch has carried more than one it can show you the earlier,
-closed one — so a reused branch name reads as a dead PR. Cockpit's pill comes from the
-open PR it already tracks, so it can't. Left on, you get both numbers on one card.
+**Turn cmux's own PR row off when you use this** — `"sidebar": {"showPullRequests": false}`
+in `~/.config/cmux/cmux.json`, then `cmux reload-config`. cmux resolves a branch to a PR by
+name alone, so a branch that has carried more than one reads as the earlier, closed PR;
+cockpit's pill comes from the open PR it already tracks. Left on, you get both numbers on
+one card. The trade either way: cockpit's pill only reaches workspaces it tracks, so a
+terminal outside your registered repos shows no PR at all.
 
-The trade: cockpit's pill only reaches workspaces it tracks, so a terminal outside your
-registered repos shows no PR at all.
+---
 
-### Keys
+## Keys
 
 | Key | Does |
 |---|---|
@@ -120,10 +120,8 @@ registered repos shows no PR at all.
 Footer hints follow the highlighted row. A row with no PR doesn't advertise `p`; a muted
 row's `m` reads **Unmute**; a backend that can't focus doesn't offer `f`. You never press
 a key that turns out to be meaningless here. Hovering a key explains it in a sentence —
-what it refuses and why, which is the part a one-word label can't carry.
-
-Everything that isn't a key lives behind **☰ Menu** in the top right corner: logs, config,
-theme, and this guide. Click it, or press `ctrl+p`.
+what it refuses and why, which is the part a one-word label can't carry. Everything that
+isn't a key lives behind **☰ Menu**.
 
 **The table is also a page of links.** Every cell that names something on the web is a real
 terminal hyperlink — ⌘-click it (ctrl-click on Linux) and your browser opens. The PR number,
@@ -138,14 +136,13 @@ Apple's Terminal.app doesn't. `p` and `t` open the PR and the ticket from the ke
 either way.
 
 **`d` and `a` together are how you review your agent's work.** `d` opens the diff in a
-browser split beside that row's terminal; click a line and leave a note. The notes then
-ride the next message you send with `a` — the modal tells you how many are going with it,
-and opens with a line already written so you can just press enter. The loop is: read the
-diff, mark the lines, press `a`, enter. Edit that line when you want to say more, or clear
-it to drop the message entirely. They stay local; nothing is posted to the PR, so use `p`
-for that. A note is delivered once, and a
-message the session refuses (it was mid-turn) keeps its notes for the retry. A row whose
-terminal isn't open yet still gets the diff — press `f` first if you want to send anything.
+browser split beside that row's terminal; click a line and leave a note. Those notes ride
+the next message you send with `a`, which opens with a line already written and tells you
+how many are going with it — so the loop is read, mark, `a`, enter. Edit that line to say
+more, or clear it to drop the message entirely. The notes stay local; nothing reaches the
+PR, so use `p` for that. Each is delivered once, and a message the session refuses (it was
+mid-turn) keeps its notes for the retry. A row whose terminal isn't open yet still gets the
+diff — press `f` first if you want to send anything.
 
 ---
 
@@ -205,11 +202,10 @@ What makes it safe to leave on:
   *actually changes* — new review activity from someone else, or new work appearing — so
   "I've read this, it's their turn" doesn't need a timer you'd have to guess at. Your own
   replies can't wake your own snooze.
-- **Quiet stops the nudge, not you.** Snoozed rows fold away behind `▸ N snoozed`, but `A`
-  on that fold — or on the repo's header — sends a line to every session in it without
-  unfolding first, which is what you want when the answer to a whole pile is the same one.
-  Muting and snoozing silence what cockpit decides to say on its own; a message you type
-  always goes through. The rows stay snoozed afterwards.
+- **Quiet stops the nudge, not you.** Muting and snoozing silence what cockpit decides to
+  say on its own; a message you type always goes through. `A` on the snoozed fold — or on
+  the repo's header — sends one line to every session in it without unfolding first, which
+  is what you want when the answer to a whole pile is the same one. The rows stay snoozed.
 - **`cockpit nudge mute | unmute | snooze | wake | list | status | forget`** does the
   same from a shell — including snoozing, so a session can quiet its own PR without
   switching back to the TUI.
@@ -452,8 +448,10 @@ you, this is the wrong tool.
   decide anything. You do that. What it takes off you is the clerical half of working on
   several things at once.
 - **It doesn't post for you.** No auto-approvals, no auto-comments, no auto-merges.
-- **It doesn't self-update.** `brew upgrade cockpit` — no in-process update check, no
-  version nag in the UI.
+- **It doesn't self-update.** `brew upgrade cockpit` — no in-process update check, and
+  nothing that tells you a newer version exists. The one thing it will say is that the
+  version *you are already running* changed since last launch, which it knows without
+  asking anyone.
 - **It doesn't phone anywhere.** git, `gh`, your terminal backend, and — only if you
   configure a tracker — that tracker's API.
 

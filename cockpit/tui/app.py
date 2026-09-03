@@ -121,6 +121,13 @@ _LOG_TAIL_LINES = 200
 # from a brew Cellar / site-packages, where FEATURES.md may not ship at all.
 FEATURE_GUIDE_URL = "https://github.com/khivi/cockpit/blob/main/FEATURES.md"
 
+# "What's new", opened by the palette's release-notes entry. The releases *index*,
+# never `/releases/tag/v<version>`: a dev build's version has no tag at all, and a
+# released one has none for the whole release-PR window (the version bump lands
+# before `tag.yml` pushes the tag), so a pinned URL 404s exactly like a pinned
+# FEATURE_GUIDE_URL would. The index also beats CHANGELOG.md's single raw blob.
+RELEASE_NOTES_URL = "https://github.com/khivi/cockpit/releases"
+
 # The `n` (New) action shells out via the same module dispatch the daemon's
 # `_bg_spawn_pr` uses: `python -m cockpit.cli new …`. NOT `python spawn.py …` by
 # path — that puts the package dir on sys.path[0], where `cockpit.py` shadows the
@@ -336,6 +343,7 @@ class CockpitApp(App[None]):
         self._install_signal_handlers()
 
         self.query_one(HeaderBar).version_text = version.running_version()
+        self._announce_upgrade()
 
         self._next_slow = time.monotonic() + self._slow_secs
         self.set_interval(1.0, self._update_countdown)
@@ -358,6 +366,26 @@ class CockpitApp(App[None]):
         # Independent of that ordering — the doorbell only ever *kicks* the fast
         # tick, which self-guards until `_start_fast` has run.
         self._watch_events()
+
+    def _announce_upgrade(self) -> None:
+        """Point at the release notes once, on the first run of a new version.
+
+        The palette entry alone is pull-only: `brew upgrade` says nothing, so
+        the notes are reachable exactly when you have no reason to go looking.
+        This is the smallest push that stays inside the no-self-update rule —
+        it names the version you are ALREADY running, from a local marker, so
+        nothing is fetched and cockpit never learns a newer release exists.
+
+        Once per upgrade, and never on a fresh install (`upgraded_version`
+        returns `""` with no marker). It is not `--dry` gated: it reaches
+        nothing outside the process, and `dev.sh` sandboxes the runtime dir the
+        marker lives in anyway."""
+        if not (new_version := version.upgraded_version()):
+            return
+        self.notify(
+            f"upgraded to {new_version} — ☰ Menu › What's new for the release notes",
+            timeout=10.0,
+        )
 
     def _apply_saved_theme(self) -> None:
         """Apply the persisted `tui_theme`, then persist any later palette pick.
@@ -785,6 +813,17 @@ class CockpitApp(App[None]):
         and `t` hand a URL to the browser rather than rendering it here."""
         self.open_url(FEATURE_GUIDE_URL)
         self.notify("opening the feature guide", timeout=4.0)
+
+    def action_open_release_notes(self) -> None:
+        """Open the releases page in a browser (palette-only, like the guide).
+
+        `brew upgrade cockpit` is the only delivery path and it says nothing
+        about what changed, so the release notes are the one thing a user wants
+        after an upgrade and has no route to from here. Passive by construction:
+        it is an entry you go and press, never a version check on the tick or a
+        "new version available" nag — cockpit does not look itself up."""
+        self.open_url(RELEASE_NOTES_URL)
+        self.notify("opening the release notes", timeout=4.0)
 
     def action_show_output(self) -> None:
         # Palette-only (`^P` → "Output"). Captured tick output (bounded log

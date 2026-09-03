@@ -3679,6 +3679,57 @@ async def test_feature_guide_action_opens_the_docs_url(monkeypatch):
     assert opened[0].startswith("https://")
 
 
+async def test_release_notes_action_opens_the_unpinned_releases_index(monkeypatch):
+    from cockpit.tui import app as app_mod
+
+    opened: list[str] = []
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(type(app), "open_url", lambda self, u: opened.append(u))
+        app.action_open_release_notes()
+        await pilot.pause()
+    assert opened == [app_mod.RELEASE_NOTES_URL]
+    # The index, never `/releases/tag/v<version>`: a dev build has no tag, and a
+    # released one has none until `tag.yml` pushes it, so a pinned URL 404s for
+    # the whole release-PR window. Same trap the feature guide avoids.
+    assert opened[0] == "https://github.com/khivi/cockpit/releases"
+    assert "/tag/" not in opened[0]
+
+
+async def test_startup_announces_an_upgrade_once_and_points_at_the_menu(monkeypatch):
+    # The palette entry is pull-only; this is the push that makes it findable
+    # after `brew upgrade`. It must name the menu route, since the toast has no
+    # click target — and must not fire on the next launch of the same version.
+    from cockpit.tui import app as app_mod
+
+    seen: list[str] = []
+    monkeypatch.setattr(app_mod.version, "upgraded_version", lambda: "9.9.9")
+    app, _ = _make_app()
+    monkeypatch.setattr(
+        type(app), "notify", lambda self, msg, **kw: seen.append(str(msg))
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+    assert len(seen) == 1
+    assert "9.9.9" in seen[0]
+    assert "What's new" in seen[0]
+
+
+async def test_startup_is_silent_when_the_version_has_not_changed(monkeypatch):
+    from cockpit.tui import app as app_mod
+
+    seen: list[str] = []
+    monkeypatch.setattr(app_mod.version, "upgraded_version", lambda: "")
+    app, _ = _make_app()
+    monkeypatch.setattr(
+        type(app), "notify", lambda self, msg, **kw: seen.append(str(msg))
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+    assert seen == []
+
+
 async def test_menu_is_not_clipped_at_a_narrow_terminal():
     # The menu is `width: auto` against a `1fr` status half, so every squeeze
     # lands on the countdowns instead. Pinned at 80 columns (the classic
