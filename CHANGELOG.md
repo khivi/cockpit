@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.24.2](https://github.com/khivi/cockpit/compare/v2.24.1...v2.24.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* declare MIT license in package metadata ([#466](https://github.com/khivi/cockpit/issues/466)) ([db24567](https://github.com/khivi/cockpit/commit/db24567839fbedeab1ed6d8f8985730c2e32f68b))
+
 ## [2.24.1](https://github.com/khivi/cockpit/compare/v2.24.0...v2.24.1) (2026-09-03)
 
 
