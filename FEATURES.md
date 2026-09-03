@@ -84,8 +84,10 @@ repo it belongs to is carried by the card's tint. That works until you're watchi
 repos to exhaust the sixteen colours cmux offers — and well before that, if several of
 yours land on hues that don't read apart at a glance, or if a repo has no colour set at
 all. Give the repo a `sidebar_tag` and its workspaces read `infra·fix-retry` instead of
-`fix-retry`. It's off unless you set it, so nothing is renamed until you ask; a repo's main
-checkout is already named after the repo and never takes one.
+`fix-retry`. An emoji works as well as a word and is shorter — it reads as an icon rather
+than as text, so it gets a space instead of the dot: `🎛️ fix-retry`. It's off unless you set
+it, so nothing is renamed until you ask; a repo's main checkout is already named after the
+repo and never takes one.
 
 **Turn cmux's own PR row off when you use this.** Set `"sidebar": {"showPullRequests":
 false}` in `~/.config/cmux/cmux.json` and run `cmux reload-config`. cmux resolves a branch
