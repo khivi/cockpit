@@ -121,7 +121,8 @@ _LOG_TAIL_LINES = 200
 # from a brew Cellar / site-packages, where FEATURES.md may not ship at all.
 FEATURE_GUIDE_URL = "https://github.com/khivi/cockpit/blob/main/FEATURES.md"
 
-# "What's new", opened by the palette's release-notes entry. The releases *index*,
+# "What's new", opened by the palette's release-notes entry and by the header's
+# linked version, which is handed this rather than importing it. The releases *index*,
 # never `/releases/tag/v<version>`: a dev build's version has no tag at all, and a
 # released one has none for the whole release-PR window (the version bump lands
 # before `tag.yml` pushes the tag), so a pinned URL 404s exactly like a pinned
@@ -342,7 +343,9 @@ class CockpitApp(App[None]):
         self._set_loop_pill(True)
         self._install_signal_handlers()
 
-        self.query_one(HeaderBar).version_text = version.running_version()
+        header = self.query_one(HeaderBar)
+        header.version_text = version.running_version()
+        header.version_url = RELEASE_NOTES_URL
         self._announce_upgrade()
 
         self._next_slow = time.monotonic() + self._slow_secs

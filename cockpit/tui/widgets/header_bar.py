@@ -1,5 +1,10 @@
-"""Top bar: slow + fast tick countdowns on the left, the cursor row's repo and
+"""Top bar: the app and the cursor row's repo on the left, tick countdowns and
 the menu on the right.
+
+Left to right that reads app · context · telemetry · control. The repo is the
+only segment whose width changes while the app runs, so it takes the flexible
+`1fr` slot and everything to its right is anchored to the right edge — put the
+countdowns in that slot instead and they slide sideways on every arrow key.
 
 Pure display: the app sets the reactive attributes each second; this widget
 just formats them. A remaining value of -1 means "tick running now", -2 means
@@ -97,12 +102,29 @@ def repo_text(repo_name: str, repo_color: str | None) -> Text:
     return Text.assemble(("▪ ", "dim"), name)
 
 
-def status_text(version_text: str, slow_remaining: int, fast_remaining: int) -> str:
-    """The left half: version + tick countdowns, as Textual markup."""
-    text = ""
-    if version_text:
-        text += f"[bold cyan]cockpit {version_text}[/]   "
-    text += f"slow ⏱ {_fmt(slow_remaining)}"
+def brand_text(version_text: str, url: str) -> Text:
+    """The leftmost segment: the app and the version it is running.
+
+    Dim, because it is the one thing in the bar that cannot change while the
+    app runs — but kept on screen rather than moved into the menu or a hover,
+    since a TUI bug report is a screenshot and neither of those survives one.
+    cockpit ships a release per merge through brew with no in-app update check,
+    so this is the only always-on answer to which build you are looking at.
+
+    Linked to the release notes, following the table's rule that a cell naming
+    something on the web is an OSC 8 hyperlink — noticing your version and
+    wanting to know what changed in it is one gesture. The URL is passed in
+    rather than imported: the app owns it, and this widget stays pure display.
+    """
+    text = Text(f"cockpit {version_text}".strip(), style="dim")
+    if url:
+        text.stylize(f"link {url}")
+    return text
+
+
+def status_text(slow_remaining: int, fast_remaining: int) -> str:
+    """The tick countdowns, as Textual markup."""
+    text = f"slow ⏱ {_fmt(slow_remaining)}"
     if fast_remaining != OFF:
         text += f"   fast ⏱ {_fmt(fast_remaining)}"
     return text
@@ -117,12 +139,20 @@ class HeaderBar(Horizontal):
         background: $boost;
         color: $text;
     }
-    HeaderBar > #header-status {
-        width: 1fr;
+    HeaderBar > #header-brand {
+        width: auto;
         content-align: left middle;
         padding-left: 1;
+        padding-right: 2;
     }
+    /* The one segment that changes width as the cursor moves, so it takes the
+       flexible slot and grows into the empty middle. Its text is left-aligned
+       against the brand, so nothing on either side of it shifts. */
     HeaderBar > #header-repo {
+        width: 1fr;
+        content-align: left middle;
+    }
+    HeaderBar > #header-status {
         width: auto;
         content-align: right middle;
         padding-right: 2;
@@ -152,8 +182,13 @@ class HeaderBar(Horizontal):
         "The repo owning the highlighted row — the same name and colour as its\n"
         "group header, kept on screen once the header has scrolled away."
     )
+    BRAND_TOOLTIP = (
+        "The cockpit version this process is running.\n"
+        "Opens the release notes; updates ship through brew, not from here."
+    )
 
     version_text: reactive[str] = reactive("")
+    version_url: reactive[str] = reactive("")
     slow_remaining: reactive[int] = reactive(0)
     fast_remaining: reactive[int] = reactive(OFF)
     # Cursor-row state, so it repaints on arrow keys without dragging the
@@ -162,8 +197,9 @@ class HeaderBar(Horizontal):
     repo_color: reactive[str | None] = reactive(None)
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="header-status")
+        yield Static("", id="header-brand")
         yield Static("", id="header-repo")
+        yield Static("", id="header-status")
         yield Static(
             f"[@click=app.command_palette]{self.MENU_LABEL}[/]", id="header-menu"
         )
@@ -174,11 +210,16 @@ class HeaderBar(Horizontal):
         # explanation — hovering the menu should explain the menu.
         self.query_one("#header-menu", Static).tooltip = self.MENU_TOOLTIP
         self.query_one("#header-repo", Static).tooltip = self.REPO_TOOLTIP
+        self.query_one("#header-brand", Static).tooltip = self.BRAND_TOOLTIP
         self._repaint()
         self._repaint_repo()
+        self._repaint_brand()
 
     def watch_version_text(self, version_text: str) -> None:
-        self._repaint()
+        self._repaint_brand()
+
+    def watch_version_url(self, version_url: str) -> None:
+        self._repaint_brand()
 
     def watch_slow_remaining(self, slow_remaining: int) -> None:
         self._sync_tooltip()
@@ -204,11 +245,18 @@ class HeaderBar(Horizontal):
             repo_text(self.repo_name, self.repo_color)
         )
 
+    def _repaint_brand(self) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one("#header-brand", Static).update(
+            brand_text(self.version_text, self.version_url)
+        )
+
     def _repaint(self) -> None:
         # Watchers fire before compose has run, so there is nothing to query yet
         # on the first assignments; on_mount paints the initial state.
         if not self.is_mounted:
             return
         self.query_one("#header-status", Static).update(
-            status_text(self.version_text, self.slow_remaining, self.fast_remaining)
+            status_text(self.slow_remaining, self.fast_remaining)
         )

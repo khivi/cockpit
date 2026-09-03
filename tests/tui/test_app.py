@@ -169,6 +169,17 @@ async def test_header_shows_running_version(monkeypatch):
         assert app.query_one(HeaderBar).version_text == "9.9.9"
 
 
+async def test_header_version_links_to_the_same_notes_the_palette_opens():
+    # The app owns the URL and hands it down, so the linked version and the
+    # palette's "What's new" entry can't drift apart onto two destinations.
+    from cockpit.tui import app as app_mod
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one(HeaderBar).version_url == app_mod.RELEASE_NOTES_URL
+
+
 async def test_initial_ticks_fire_on_mount():
     app, calls = _make_app()
     async with app.run_test() as pilot:
