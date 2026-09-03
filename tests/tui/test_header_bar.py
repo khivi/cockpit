@@ -237,6 +237,38 @@ async def test_status_half_repaints_when_a_countdown_changes():
 
 
 @pytest.mark.asyncio
+async def test_a_countdown_assignment_after_teardown_does_not_raise():
+    # The other end of the widget's life: `is_mounted` is never cleared, so it
+    # still reads True once teardown has pruned the children — a late watcher
+    # then queried a child that was gone and raised NoMatches out of the app's
+    # reactive assignment. Flaky rather than deterministic (it needs the timer
+    # to land inside the shutdown window), and it failed CI on a release PR.
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bar = app.query_one(HeaderBar)
+    assert bar.is_mounted and not bar.children  # the window the guard covers
+    bar.slow_remaining = 297
+    bar.repo_name = "cockpit"
+    bar.version_text = "2.27.0"
+
+
+@pytest.mark.asyncio
+async def test_the_bar_is_painted_by_the_time_it_is_mounted():
+    # The same flag read False for the whole of `on_mount` (it is set only after
+    # compose *and* mount have been dispatched), so the initial paint the guard
+    # was there to defer to never landed and every half rendered blank until
+    # some later watcher fired.
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bar = app.query_one(HeaderBar)
+        assert status_text(bar.slow_remaining, bar.fast_remaining) in str(
+            app.query_one("#header-status", Static).render()
+        )
+
+
+@pytest.mark.asyncio
 async def test_the_menu_is_not_underlined_and_does_not_outshine_the_telemetry():
     # Every theme styles an `@click` span `underline` at full `$text`, and both
     # beat a `color:` rule on the widget — which made the one clickable word the
