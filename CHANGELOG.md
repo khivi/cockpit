@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.24.0](https://github.com/khivi/cockpit/compare/v2.23.1...v2.24.0) (2026-09-03)
+
+
+### Features
+
+* **nudge:** add snooze/wake to the cockpit nudge CLI ([#462](https://github.com/khivi/cockpit/issues/462)) ([75d5cbb](https://github.com/khivi/cockpit/commit/75d5cbb1b9212507750aa2165085e2465225875f))
+
 ## [2.23.1](https://github.com/khivi/cockpit/compare/v2.23.0...v2.23.1) (2026-09-03)
 
 
