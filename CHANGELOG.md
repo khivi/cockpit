@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.23.1](https://github.com/khivi/cockpit/compare/v2.23.0...v2.23.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **nudge:** self-heal idle pill when cmux reports no claude_code state ([#460](https://github.com/khivi/cockpit/issues/460)) ([658fa0f](https://github.com/khivi/cockpit/commit/658fa0f15265b367b86a3a3e49d584992eb90e67))
+
 ## [2.23.0](https://github.com/khivi/cockpit/compare/v2.22.1...v2.23.0) (2026-09-02)
 
 
