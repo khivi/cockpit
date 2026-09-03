@@ -59,7 +59,7 @@ automatically.
 
 **Everything refreshes itself.** A full reconcile every 5 minutes and a network-free
 repaint every 30 seconds — both tunable — plus an instant repaint when a workspace opens or
-closes out from under you. `s` reconciles every repo on demand. **☰ Menu**, in the top right
+closes out from under you. `s` reconciles every repo on demand. **≡ Menu**, in the top right
 corner, opens a palette holding the daemon log, your resolved config, an editor for it, a
 theme picker that persists your choice, a link back to this guide, and the release notes for
 whatever `brew upgrade` last handed you. Click it, or press `ctrl+p`. The first launch on a
@@ -73,6 +73,8 @@ group in the table, but that heading scrolls off the moment a repo holds more ro
 so on any real fleet the row under your cursor tells you nothing about which repo you're
 about to act on. The top bar can't scroll away. The two countdowns and the menu sit against
 the right edge, where a longer repo name can't shove them sideways as you move the cursor.
+🐢 counts down the full reconcile and 🐇 the network-free repaint; hover either for the
+sentence naming which is which and what it does.
 
 ### The sidebar card
 
@@ -124,7 +126,7 @@ Footer hints follow the highlighted row. A row with no PR doesn't advertise `p`;
 row's `m` reads **Unmute**; a backend that can't focus doesn't offer `f`. You never press
 a key that turns out to be meaningless here. Hovering a key explains it in a sentence —
 what it refuses and why, which is the part a one-word label can't carry. Everything that
-isn't a key lives behind **☰ Menu**.
+isn't a key lives behind **≡ Menu**.
 
 **The table is also a page of links.** Every cell that names something on the web is a real
 terminal hyperlink — ⌘-click it (ctrl-click on Linux) and your browser opens. The PR number,

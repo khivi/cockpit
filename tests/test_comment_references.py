@@ -51,6 +51,9 @@ _EXTERNAL_SYMBOLS = {
     "_on_mouse_move",
     "action_back",
     "hover_coordinate",
+    # Rich's own cell-width measurement, which the header bar's glyph rules
+    # are stated against.
+    "cell_len",
     # stdlib.
     "lru_cache",
     "redirect_stdout",

@@ -9,12 +9,15 @@ style: drive the widget's own scheduling/state, not the reconcile cycle.
 from __future__ import annotations
 
 import pytest
+from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
 from cockpit.tui.widgets.header_bar import (
+    FAST_GLYPH,
     OFF,
     RUNNING,
+    SLOW_GLYPH,
     WAITING,
     HeaderBar,
     _fmt,
@@ -106,11 +109,27 @@ def test_tooltip_always_includes_base_descriptions_even_when_decoding():
 
 
 def test_status_text_shows_the_slow_countdown_alone_by_default():
-    assert status_text(65, OFF) == "slow ⏱ 1:05"
+    assert status_text(65, OFF) == f"{SLOW_GLYPH} 1:05"
 
 
 def test_status_text_adds_the_fast_countdown_when_the_fast_tick_is_on():
-    assert "fast ⏱ 0:20" in status_text(65, 20)
+    assert f"{FAST_GLYPH} 0:20" in status_text(65, 20)
+
+
+def test_the_tooltip_is_the_legend_for_the_two_tick_glyphs():
+    # The bar names each tick by glyph alone, so the tooltip is the only place
+    # the mapping is spelled out. Drop a glyph from the prose and the counters
+    # become two unlabelled numbers.
+    tooltip = build_tooltip(65, 20)
+    assert f"{SLOW_GLYPH} Slow tick" in tooltip
+    assert f"{FAST_GLYPH} Fast tick" in tooltip
+
+
+def test_the_two_tick_glyphs_are_the_same_cell_width():
+    # They sit in one right-anchored segment. Equal width means a font that
+    # disagrees with `cell_len` shifts the whole segment rather than splitting
+    # the pair's alignment against itself.
+    assert cell_len(SLOW_GLYPH) == cell_len(FAST_GLYPH)
 
 
 # --- brand_text: pure function -----------------------------------------------
@@ -212,7 +231,35 @@ async def test_status_half_repaints_when_a_countdown_changes():
         bar = app.query_one(HeaderBar)
         bar.slow_remaining = 65
         await pilot.pause()
-        assert "slow ⏱ 1:05" in str(app.query_one("#header-status", Static).render())
+        assert f"{SLOW_GLYPH} 1:05" in str(
+            app.query_one("#header-status", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_menu_is_not_underlined_and_does_not_outshine_the_telemetry():
+    # Every theme styles an `@click` span `underline` at full `$text`, and both
+    # beat a `color:` rule on the widget — which made the one clickable word the
+    # brightest thing in the bar and the only underline in a TUI whose table
+    # links deliberately carry none. Pinned because a theme change reinstates it
+    # silently.
+    app = _HeaderBarHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        menu = app.query_one("#header-menu", Static)
+        assert not menu.styles.link_style.underline
+        assert (
+            menu.styles.link_color
+            != app.query_one("#header-status", Static).styles.color
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_menu_glyph_does_not_detach_from_its_label():
+    # `☰` (U+2630) measures two cells but draws one of ink, so it painted as a
+    # hamburger, a blank half, then the word. Every cell of the label must carry
+    # ink for the glyph and its word to read as one control.
+    assert cell_len(HeaderBar.MENU_LABEL) == len(HeaderBar.MENU_LABEL)
 
 
 @pytest.mark.asyncio
