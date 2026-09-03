@@ -568,12 +568,22 @@ class CockpitApp(App[None]):
             print(f"fast-tick error: {e}")
         finally:
             self._fast_phase = "idle"
-            self._publish_inventory()
+            # Guarded like the slow tick's: a publish that fails (a render on a
+            # torn-down app, a bad worktree read) must not swallow the doorbell
+            # kick below, which is the only thing that catches an event that
+            # landed mid-tick.
+            try:
+                self._publish_inventory()
+            except Exception as e:
+                print(f"fast-tick error: publish failed: {e}")
             if self._events_pending:
                 # Events landed mid-tick — this run may predate them, so owe one
                 # more. Cleared before kicking so the next batch can re-arm.
                 self._events_pending = False
-                self.call_from_thread(self._kick_fast)
+                try:
+                    self.call_from_thread(self._kick_fast)
+                except Exception as e:
+                    print(f"fast-tick error: kick failed: {e}")
 
     # ---- ui updates ------------------------------------------------------
 
