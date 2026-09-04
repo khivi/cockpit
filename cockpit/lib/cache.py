@@ -378,10 +378,42 @@ def atomic_write(path: Path, payload: str) -> None:
     tmp.replace(path)
 
 
+# C0 controls, DEL, and the C1 block — every codepoint a terminal may read as
+# the opening of an escape sequence. C1 is in the set because 0x9B is an
+# alternate CSI on terminals that still decode it.
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def strip_control(text: str) -> str:
+    """Neutralize terminal control characters in externally-authored text.
+
+    Cell values are repo- and tracker-controlled — a PR title, a ticket id, a
+    footer URL — and every renderer writes them straight to a terminal that
+    cockpit has already taught to honour OSC 8 (`worktree_table._apply_links`).
+    Unfiltered, a PR titled with its own OSC 8 sequence paints a second
+    hyperlink *inside* cockpit's, so the Title cell points somewhere cockpit
+    never named and the row looks entirely ordinary. Anyone who can open a PR
+    or write a ticket can author that string.
+
+    Replaced with U+FFFD rather than dropped, on both counts that matter: a
+    tampered value stays visibly tampered instead of rendering as a plausible
+    title, and one codepoint in stays one codepoint out, so the widths callers
+    compute (`_ellipsize`, the table's fixed status slot) still match the ink
+    the terminal lays down.
+    """
+    return _CONTROL_RE.sub("�", text)
+
+
 def read_text(path: Path) -> str:
-    """Best-effort read; returns empty string on any IO error."""
+    """Best-effort read; returns empty string on any IO error.
+
+    The one seam every flat-cell renderer goes through — the TUI's cells and
+    tooltips, and starship's field printers — so `strip_control` is applied
+    here rather than at each of them. Whitespace is stripped first, or a
+    trailing newline would come back as a visible U+FFFD.
+    """
     try:
-        return path.read_text().strip()
+        return strip_control(path.read_text().strip())
     except OSError:
         return ""
 

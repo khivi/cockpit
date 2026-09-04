@@ -1014,6 +1014,52 @@ async def test_links_survive_all_the_way_into_terminal_output(cache_dir, monkeyp
     assert re.findall(r"\x1b]8;id=\d+;([^\x1b]+)", buf.getvalue()) == [_PR_URL]
 
 
+@pytest.mark.asyncio
+async def test_a_hostile_pr_title_cannot_paint_its_own_hyperlink(
+    cache_dir, monkeypatch
+):
+    """The companion to the test above, and the reason it is dangerous: cockpit
+    has taught the terminal to honour OSC 8, so an unfiltered PR title can open
+    a second hyperlink *inside* cockpit's own and point the Title cell at an
+    address cockpit never named — while the row reads as completely ordinary.
+    Anyone able to open a PR authors that string, and `review_prs` pulls in
+    coworkers' and (opt-in) fork contributors' PRs.
+
+    Asserted against the real render rather than `strip_control` in isolation,
+    since what matters is that no escape reaches the terminal by any route."""
+    import io
+    import re
+
+    from rich.console import Console
+    from rich.segment import Segments
+
+    wt = _wt(path="hostile", branch="khivi/hostile")
+    monkeypatch.setattr(
+        "cockpit.tui.widgets.worktree_table.find_pr_payload",
+        lambda branch, repo: {"url": _PR_URL},
+    )
+    cache_mod.cwd_cache("pr-num", wt.path).write_text("435")
+    cache_mod.cwd_cache("pr-title", wt.path).write_text(
+        "Fix\x1b]8;;https://evil.example\x1b\\CLICK\x1b]8;;\x1b\\ bug"
+    )
+
+    app = _Host()
+    async with app.run_test(size=(240, 20)) as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [wt])])
+        await pilot.pause()
+        buf = io.StringIO()
+        Console(file=buf, force_terminal=True, width=300).print(
+            Segments(list(table.render_line(2))), end=""
+        )
+    out = buf.getvalue()
+    # Every OSC 8 destination in the row is one cockpit chose. The attacker's
+    # address does still appear — as inert text, because the title really does
+    # say that, which is the whole point of neutralizing rather than deleting.
+    assert set(re.findall(r"\x1b]8;[^;]*;([^\x1b]+)", out)) == {_PR_URL}
+    assert "�" in out, "the tampering must stay visible in the cell"
+
+
 # ── stacked-PR indentation (rows derived off the `pr-base` cells) ───────────
 
 

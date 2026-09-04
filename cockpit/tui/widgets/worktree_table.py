@@ -100,6 +100,7 @@ from cockpit.lib.cache import (
     find_pr_payload,
     read_text,
     read_worktree_cost,
+    strip_control,
     ticket_display,
 )
 from cockpit.lib.cmux import DEVDONE_ICON
@@ -688,9 +689,14 @@ def _ticket_ids(payload: dict | None, provider: str) -> str:
     """The untruncated Ticket-cell text: the delivered id(s), comma-joined —
     except Trello, whose ids are opaque short links, so `ticket_display` hands
     back the cached card number(s) (id fallback). Empty with no delivered
-    tickets. Shared by the cell and its hover tooltip so the two can't drift."""
-    return ", ".join(
-        ticket_display(t, provider, missing="?") for t in _tickets_of(payload)
+    tickets. Shared by the cell and its hover tooltip so the two can't drift.
+
+    Sanitized here rather than by `read_text`, because these ids come out of the
+    per-PR JSON snapshot rather than a flat cell and so reach no other filter."""
+    return strip_control(
+        ", ".join(
+            ticket_display(t, provider, missing="?") for t in _tickets_of(payload)
+        )
     )
 
 
@@ -807,7 +813,11 @@ def _cell_links(payload: dict | None, author: str) -> dict[str, str]:
         links["CI"] = f"{pr_url}/checks"
     if author:
         links["Author"] = f"https://github.com/{author}"
-    ticket_url = _ticket_link(payload)
+    # The one destination here that isn't GitHub's own: it is read out of the
+    # PR body's delivery footer, so it is as author-controlled as the title. An
+    # ESC inside it would close the OSC 8 sequence early and let the rest of the
+    # string address the terminal directly.
+    ticket_url = strip_control(_ticket_link(payload))
     if ticket_url:
         links["Ticket"] = links[_STATUS_ICON] = ticket_url
     return links

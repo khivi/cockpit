@@ -1339,3 +1339,38 @@ def test_cost_reporting_available_ignores_worktree_totals(cache_dir, tmp_path):
     that Claude Code reports cost, or the gate would latch itself on."""
     cache_mod.atomic_write(cache_mod.cwd_cache("wt-cost", tmp_path), "12.0")
     assert cache_mod.cost_reporting_available() is False
+
+
+# ── terminal-control sanitization (`strip_control` / `read_text`) ────────────
+
+
+def test_read_text_neutralizes_an_escape_sequence_in_a_cell(cache_dir, tmp_path):
+    """Cell values are authored by whoever opened the PR. `read_text` is the one
+    seam every renderer reads them through, so the escape must not survive it."""
+    cell = cache_mod.cwd_cache("pr-title", tmp_path)
+    cell.write_text("Fix\x1b]8;;https://evil.example\x1b\\CLICK\x1b]8;;\x1b\\ bug")
+    got = cache_mod.read_text(cell)
+    assert "\x1b" not in got
+    assert got.count("�") == 4  # one per ESC, none for the printable text
+
+
+def test_strip_control_replaces_rather_than_drops(cache_dir):
+    """Width is load-bearing — `_ellipsize` and the table's fixed status slot
+    both count codepoints — and a silently-cleaned title reads as authentic."""
+    assert len(cache_mod.strip_control("a\x1bb")) == len("a\x1bb")
+    assert cache_mod.strip_control("a\x1bb") == "a�b"
+
+
+def test_strip_control_covers_c1_and_del_but_spares_real_text(cache_dir):
+    """0x9b is an alternate CSI on terminals that still decode it. Emoji and
+    accented text sit above the C1 block and must pass through untouched."""
+    assert cache_mod.strip_control("a\x9bb\x7fc") == "a�b�c"
+    assert cache_mod.strip_control("Añô 🔔 ✓") == "Añô 🔔 ✓"
+
+
+def test_read_text_strips_whitespace_before_sanitizing(cache_dir, tmp_path):
+    """Order matters: a trailing newline is ordinary cache formatting, and
+    sanitizing first would render it as a visible replacement character."""
+    cell = cache_mod.cwd_cache("pr-title", tmp_path)
+    cell.write_text("Hello\n")
+    assert cache_mod.read_text(cell) == "Hello"
