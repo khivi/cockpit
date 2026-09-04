@@ -1,20 +1,22 @@
-"""cmux diff-viewer review comments, collected so `a` can deliver them.
+"""cmux diff-viewer review comments, collected so they can actually be delivered.
 
-cmux's diff viewer (what `d` opens) lets you leave line-anchored comments, and
-its own composer folds them into the next message you submit — "Diff review
-comments are included when you submit". A cockpit-spawned workspace has no such
-composer: it is a `type: terminal` surface running Claude Code's own TUI, whose
-input belongs to Claude, not to cmux. So the comments were written and nothing
-ever read them. This module is the missing collector — `app._send_ask` asks for
-the row's pending comments and rides them along with the line you type.
+cmux's diff viewer (what `cockpit diff` opens) lets you leave line-anchored
+comments, and its own composer folds them into the next message you submit —
+"Diff review comments are included when you submit". A cockpit-spawned workspace
+has no such composer: it is a `type: terminal` surface running Claude Code's own
+TUI, whose input belongs to Claude, not to cmux. So the comments were written and
+nothing ever read them. This module is the missing collector, with two readers on
+one ledger: the TUI's `a` key (`app._send_ask` rides them along with the line you
+type) and `cockpit diff --comments` (prints them for a session already standing
+in the worktree).
 
 **The store is keyed by repo root**, at
 `~/Library/Application Support/cmux/diff-comments/<sha256(repoRoot)[:24]>.json`,
-which is why `_open_diff` has to run `cmux diff` from the row's worktree: left
-to the daemon's inherited cwd, every comment from every row is filed under
-whatever repo `cockpit watch` happened to be launched in. Lookup here matches on
-each file's own `repoRoot` field rather than recomputing that digest, so the
-filename scheme is cmux's business and a change to it costs us nothing.
+which is why `cmux.render_diff` sets both `--cwd` and the subprocess cwd: left to
+an inherited cwd, comments are filed under whatever repo the caller happened to
+be launched in. Lookup here matches on each file's own `repoRoot` field rather
+than recomputing that digest, so the filename scheme is cmux's business and a
+change to it costs us nothing.
 
 **Read-only on cmux's store, and that is deliberate.** Consuming a delivered
 comment by rewriting cmux's file is the obvious alternative and it means racing

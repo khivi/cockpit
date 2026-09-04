@@ -77,11 +77,6 @@ class BackendProbe:
     browser_enabled: bool = False
 
     @property
-    def has_diff_viewer(self) -> bool:
-        """Can `cmux diff` actually render? Needs the verb AND a live browser."""
-        return "diff" in self.verbs and self.browser_enabled
-
-    @property
     def supports_capabilities(self) -> bool:
         """False on a cmux predating the `capabilities` verb — i.e. too old.
 
@@ -172,18 +167,6 @@ def probe() -> BackendProbe:
         else frozenset()
     )
     return BackendProbe(verbs, capabilities, browser_enabled=browser)
-
-
-def diff_viewer_available() -> bool:
-    """True when `cmux diff` can render — the gate for the TUI's `d` key.
-
-    Verb plus a live browser (see `BackendProbe.browser_enabled` for why a
-    capability id can't answer this). Probed once per process, so a browser
-    toggled *after* startup isn't seen; `_open_diff` still matches
-    `browser_disabled` at press time and names the fix, and preflight warns
-    once at startup.
-    """
-    return probe().has_diff_viewer
 
 
 def has_capability(name: str) -> bool:
