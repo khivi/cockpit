@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -374,6 +375,26 @@ def worktrees(
         for wt, (d, u) in zip(wts, ex.map(_stats, wts), strict=False):
             wt.dirty_count, wt.unlanded = d, u
     return wts
+
+
+def repo_worktree_paths(repo_dir: Path, wts: Iterable[Worktree]) -> set[Path]:
+    """Every resolved directory a session in this repo can be rooted at — the
+    main checkout plus each of `wts`.
+
+    The one home for cockpit's "match a workspace to a repo by **cwd**, never by
+    path prefix" rule. A worktree usually lives in a *sibling* directory of the
+    checkout, so a prefix test both misses those and claims an unrelated repo
+    nested underneath; three call sites (park, the repo-header `a`, `cockpit
+    broadcast --repo`) have to agree or a repo-scoped gesture reaches a
+    different set of sessions depending on which one sent it.
+
+    Takes the listing rather than calling `worktrees()`: the caller already owns
+    that read, both its error handling and — load-bearing — the seam its tests
+    stub. A helper that reaches for its own input silently un-mocks every caller
+    that was mocking the old one, which is how a test run spawned live
+    workspaces on the author's machine.
+    """
+    return {repo_dir.resolve(), *(wt.path.resolve() for wt in wts)}
 
 
 def _rev_list_count(cwd: str | os.PathLike, rev_range: str, *, fail: int = 0) -> int:

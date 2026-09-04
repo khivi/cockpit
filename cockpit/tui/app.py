@@ -36,7 +36,7 @@ import signal
 import subprocess
 import threading
 import time
-from collections import Counter, deque
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
@@ -62,8 +62,10 @@ from cockpit.lib.cmux import (
     cmux,
     cmux_close_workspace_best_effort,
     nudge_if_idle,
+    refs_at,
     rest_skip_reason,
     select_workspace,
+    skip_summary,
     spawn_orphan_workspace,
     spawn_pr_workspace,
     was_self_closed,
@@ -87,7 +89,12 @@ from cockpit.lib.daemon import release_pidfile
 from cockpit.lib.daemon_signal import enqueue
 from cockpit.lib.events import watch_workspace_events
 from cockpit.lib.gh import PR, repo_nwo
-from cockpit.lib.git import Worktree, origin_head_branch, worktrees
+from cockpit.lib.git import (
+    Worktree,
+    origin_head_branch,
+    repo_worktree_paths,
+    worktrees,
+)
 from cockpit.lib.hidden import is_hidden, load_hidden, toggle_hidden
 from cockpit.lib.nudges import (
     NudgePref,
@@ -1062,9 +1069,8 @@ class CockpitApp(App[None]):
     @work(thread=True, group="nudge", exit_on_error=False)
     def _send_ask_repo(self, repo: dict, key: str, text: str) -> None:
         # `a` on a repo header: the same gated send as the per-row `a`, fanned
-        # over the repo's own workspaces. Matched by cwd against the repo's
-        # `worktrees()` — never a path-prefix test, since a worktree usually
-        # lives in a *sibling* directory — exactly like `_park_workspaces`.
+        # over the repo's own workspaces (`repo_worktree_paths`, which owns the
+        # cwd-not-prefix matching rule `_park_workspaces` and `--repo` share).
         #
         # Delivery is PARTIAL by construction: these sessions' states are not
         # visible from the header row, so some will be mid-turn and refuse. The
@@ -1075,8 +1081,9 @@ class CockpitApp(App[None]):
             return
         repo_path = Path(os.path.expanduser(repo["path"]))
         try:
-            wts = worktrees(repo_path, repo.get("branch_prefix", ""))
-            paths = {repo_path.resolve(), *(wt.path.resolve() for wt in wts)}
+            paths = repo_worktree_paths(
+                repo_path, worktrees(repo_path, repo.get("branch_prefix", ""))
+            )
         except (RuntimeError, OSError) as e:
             self._notify(f"ask: could not enumerate workspaces: {e}", severity="error")
             return
@@ -1107,15 +1114,12 @@ class CockpitApp(App[None]):
         `@work(thread=True)`, and the cmux round-trips here must not block the
         UI."""
         try:
-            cwds = workspace_cwds()  # self-excluded: never ask our own TUI
+            # Self-excluded twice over: `workspace_cwds` drops $CMUX_WORKSPACE_ID
+            # and `exclude` drops the ref we resolved — never ask our own TUI.
+            live = refs_at(workspace_cwds(), paths, exclude=self._self_ws)
         except (CmuxUnavailable, RuntimeError, OSError) as e:
             self._notify(f"ask: could not enumerate workspaces: {e}", severity="error")
             return
-        live = [
-            ref
-            for ref, cwd in cwds.items()
-            if cwd.resolve() in paths and ref != self._self_ws
-        ]
         # A retry must reach ONLY the sessions that missed. Re-sending to one
         # that already accepted would hand it the same instruction twice —
         # "rebase onto main and force-push" executed a second time is not a
@@ -1147,13 +1151,10 @@ class CockpitApp(App[None]):
             self._ask_misses[key] = frozenset(skips)
             # Name the reasons rather than a bare count: "2 mid-turn, 1 parked"
             # tells you whether to retry now or later. `nudge_if_idle` reports
-            # them, so they are the gate's own words.
-            why = ", ".join(
-                f"{n}× {r}"
-                for r, n in sorted(
-                    Counter(skips.values()).items(), key=lambda kv: -kv[1]
-                )
-            )
+            # them, so they are the gate's own words, grouped and ordered by
+            # `skip_summary` — the same order `cockpit broadcast` prints. A toast
+            # has no room for the refs themselves, which is the only difference.
+            why = ", ".join(f"{len(r)}× {reason}" for reason, r in skip_summary(skips))
             self._notify(
                 f"{target}: sent to {sent} of {len(refs)} — {why}"
                 f" · press {retry_key} to retry",
@@ -1261,23 +1262,19 @@ class CockpitApp(App[None]):
         removed, no branch deleted, nothing uncommitted is touched — parking is
         not teardown, and the only thing lost is the terminal session.
 
-        Matched by cwd against the repo's own worktrees (`git worktree list`),
-        not by name — a worktree usually lives in a *sibling* directory, so a
-        path-prefix test would miss it. Two workspaces are always spared: the one
-        the daemon itself runs in (closing it would kill this TUI) and any that
-        isn't idle, since a running agent mid-turn shouldn't be cut off. A busy
-        one is reported, never silently skipped."""
+        Matched by cwd against the repo's own worktrees (`repo_worktree_paths`),
+        not by name. Two workspaces are always spared: the one the daemon itself
+        runs in (closing it would kill this TUI) and any that isn't idle, since
+        a running agent mid-turn shouldn't be cut off. A busy one is reported,
+        never silently skipped."""
         try:
-            wts = worktrees(repo_path, branch_prefix)
-            paths = {repo_path.resolve(), *(wt.path.resolve() for wt in wts)}
-            cwds = workspace_cwds()
+            paths = repo_worktree_paths(repo_path, worktrees(repo_path, branch_prefix))
+            refs = refs_at(workspace_cwds(), paths, exclude=self._self_ws)
         except (CmuxUnavailable, RuntimeError, OSError) as e:
             print(f"park: could not enumerate workspaces for {repo_path}: {e}")
             return
         closed, busy = 0, 0
-        for ref, cwd in cwds.items():
-            if cwd.resolve() not in paths or ref == self._self_ws:
-                continue
+        for ref in refs:
             if not workspace_is_idle(ref):
                 busy += 1
                 continue
@@ -1452,11 +1449,9 @@ class CockpitApp(App[None]):
 
     @staticmethod
     def _workspace_ref(wt: Worktree) -> str | None:
-        target = wt.path.resolve()
-        return next(
-            (ref for ref, p in workspace_cwds().items() if p.resolve() == target),
-            None,
-        )
+        # First of possibly several: a `use_worktree: false` repo hosts more
+        # than one session at a single cwd, and a row-targeted key wants one.
+        return next(iter(refs_at(workspace_cwds(), [wt.path])), None)
 
     @staticmethod
     def _workspace_ref_by_name(name: str) -> str | None:
