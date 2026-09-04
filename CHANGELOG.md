@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.28.0](https://github.com/khivi/cockpit/compare/v2.27.1...v2.28.0) (2026-09-04)
+
+
+### Features
+
+* give `cockpit broadcast` a single-worktree scope, and stop the suite reaching the live machine ([#478](https://github.com/khivi/cockpit/issues/478)) ([eff9db8](https://github.com/khivi/cockpit/commit/eff9db8545960d09f0664d0515969cb1d36aedd7))
+
 ## [2.27.1](https://github.com/khivi/cockpit/compare/v2.27.0...v2.27.1) (2026-09-03)
 
 
