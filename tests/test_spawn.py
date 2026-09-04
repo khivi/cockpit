@@ -398,6 +398,12 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
 
     def fake_deliver_followup(ref, text):
         followup_calls.append((ref, text))
+        # Also synthesized into cmux-style tuples, like `spawn_workspace` above:
+        # `deliver_followup` IS the send pair (plus a readiness wait and the
+        # one-line collapse), so an assertion about "the prompt was delivered
+        # and submitted" must not care which primitive carried it.
+        cmux_calls.append(("send", "--workspace", ref, text))
+        cmux_calls.append(("send-key", "--workspace", ref, "enter"))
         return True
 
     monkeypatch.setattr(spawn, "cmux", fake_cmux)

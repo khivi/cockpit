@@ -605,7 +605,22 @@ def deliver_followup(ref: str, text: str) -> bool:
     not-yet-rendered TUI, then types the text and submits with Enter — the same
     primitive the attach path and `nudge_if_idle` use. Best-effort: a send
     failure is logged, never raised.
+
+    Collapsed to one line for the same reason `nudge_if_idle` does it: both
+    spellings of a newline arrive as **Enter**, which in a claude composer means
+    submit, so an un-normalized multi-line prompt submits its first fragment as
+    its own truncated instruction. This is the second funnel — every send that
+    does NOT go through the idle gate goes through here, so no call site has to
+    remember. **Do not** re-add a raw `cmux send` pair beside it.
+
+    Deliberately NOT idle-gated, unlike `nudge_if_idle`. Both callers are
+    delivering a prompt the user just asked for into a workspace cockpit is
+    spawning or re-using, and a refusal means the prompt is silently dropped —
+    the exact bug the existing-workspace call site was added to fix. The prefix
+    flow also *wants* mid-turn delivery: its first turn is the slash command
+    still running, and the body is meant to queue behind it.
     """
+    text = one_line(text)
     deadline = time.monotonic() + _FOLLOWUP_READY_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if _claude_ready(ref):
