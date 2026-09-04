@@ -1387,10 +1387,39 @@ def test_validate_config_checks_org_inherited_values(capsys):
 
 
 @pytest.fixture(autouse=True)
-def _clear_probe_cache():
-    from cockpit.lib.capabilities import probe
+def _clear_probe_cache(monkeypatch):
+    """Clear the probe cache around every test, and stub the probe itself.
+
+    Same reason as `_clean_cockpit_home` above, one layer down: unstubbed,
+    `probe()` shells out to the *developer's* `cmux --help`, so every "preflight
+    is silent" assertion in this module is decided by which cmux happens to be
+    installed — silent on a current one, noisy on an older one, and on a machine
+    with no cmux at all it warns about the backend being absent. The default is
+    a backend new enough to satisfy every gate, so preflight stays quiet unless
+    a test asks otherwise; `_probing` overrides it.
+    """
+    from cockpit.lib import capabilities
+    from cockpit.lib.capabilities import (
+        REQUIRED_CAPABILITIES,
+        REQUIRED_VERBS,
+        BackendProbe,
+        probe,
+    )
 
     probe.cache_clear()
+    monkeypatch.setattr(
+        capabilities,
+        "probe",
+        lambda: BackendProbe(
+            # `diff` and `capabilities` are not in REQUIRED_VERBS — the first is
+            # gated through `has_diff_viewer`, the second is the too-old signal
+            # reported on its own — so both must be added by hand or preflight
+            # warns about them under an otherwise complete backend.
+            verbs=frozenset({*REQUIRED_VERBS, "diff", "capabilities"}),
+            capabilities=frozenset(REQUIRED_CAPABILITIES),
+            browser_enabled=True,
+        ),
+    )
     yield
     probe.cache_clear()
 

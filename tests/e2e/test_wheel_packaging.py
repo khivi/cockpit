@@ -18,6 +18,11 @@ import pytest
 
 pytestmark = pytest.mark.skipif(shutil.which("uv") is None, reason="uv not installed")
 
+# Execs the real binaries — that is this file's whole purpose. Opts out of the
+# suite-wide `_no_live_backend` guard in `tests/conftest.py`. Appended rather
+# than assigned: a second `pytestmark =` silently replaces the first.
+pytestmark = [pytestmark, pytest.mark.real_backend]
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 

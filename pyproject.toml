@@ -32,6 +32,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "real_backend: test may exec the real cmux/limux/cockpit binaries (e2e only)",
+]
 
 [tool.mypy]
 explicit_package_bases = true
