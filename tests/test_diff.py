@@ -190,9 +190,12 @@ def test_comments_offers_both_candidate_roots(monkeypatch, in_worktree):
     TUI's `a` uses. Narrowing to one silently returns nothing."""
     monkeypatch.setattr(diff_cli, "main_worktree_path", lambda root: Path("/main"))
     seen: list[list] = []
-    monkeypatch.setattr(
-        diff_cli.diff_comments, "pending", lambda roots: seen.append(list(roots)) or []
-    )
+
+    def _record(roots):
+        seen.append(list(roots))
+        return []
+
+    monkeypatch.setattr(diff_cli.diff_comments, "pending", _record)
 
     assert diff_cli.main(["--comments"]) == 0
     assert seen == [[in_worktree, Path("/main")]]

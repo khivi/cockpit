@@ -930,11 +930,12 @@ def _nudge_fixture(tmp_path, monkeypatch, *, pending, workspace=True):
         else {},
     )
     sends: list = []
-    monkeypatch.setattr(
-        cockpit,
-        "nudge_if_idle",
-        lambda ref, msg, **kw: sends.append((ref, msg, kw)) or True,
-    )
+
+    def _accept(ref, msg, **kw):
+        sends.append((ref, msg, kw))
+        return True
+
+    monkeypatch.setattr(cockpit, "nudge_if_idle", _accept)
     return cockpit, repo, wt, sends
 
 
@@ -994,9 +995,12 @@ def test_a_refused_send_is_retried_next_tick(tmp_path, monkeypatch):
     """The record lands only on a send the gate accepted — a mid-turn session
     must not have its notes marked handed-over and then never re-offered."""
     cockpit, repo, _wt, sends = _nudge_fixture(tmp_path, monkeypatch, pending=["c1"])
-    monkeypatch.setattr(
-        cockpit, "nudge_if_idle", lambda ref, msg, **kw: sends.append(ref) or False
-    )
+
+    def _refuse(ref, msg, **kw):
+        sends.append(ref)
+        return False
+
+    monkeypatch.setattr(cockpit, "nudge_if_idle", _refuse)
     state: dict = {}
 
     cockpit._fast_tick(state)

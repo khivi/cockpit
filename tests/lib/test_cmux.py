@@ -1991,9 +1991,10 @@ def test_render_diff_is_always_unified():
 
 
 def test_render_diff_needs_exactly_one_of_patch_or_source():
-    for kw in ({}, {"patch": "d", "source": "branch"}):
-        with pytest.raises(ValueError):
-            cmux_mod.render_diff(cwd="/repo", title="t", **kw)
+    with pytest.raises(ValueError):
+        cmux_mod.render_diff(cwd="/repo", title="t")
+    with pytest.raises(ValueError):
+        cmux_mod.render_diff(patch="d", source="branch", cwd="/repo", title="t")
 
 
 def test_render_diff_names_the_browser_fix():
