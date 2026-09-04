@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.30.0](https://github.com/khivi/cockpit/compare/v2.29.0...v2.30.0) (2026-09-04)
+
+
+### Features
+
+* **prompts:** leave the first-turn plan behind as an untracked plan.md ([#482](https://github.com/khivi/cockpit/issues/482)) ([32a486a](https://github.com/khivi/cockpit/commit/32a486ae49f11169a56cf52ad7df9044ac92f524))
+
 ## [2.29.0](https://github.com/khivi/cockpit/compare/v2.28.0...v2.29.0) (2026-09-04)
 
 
