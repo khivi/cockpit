@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -381,13 +382,13 @@ def _no_live_backend(request):
     real_run = cmux_mod.run
     real_which = shutil_mod.which
 
-    def guarded_popen(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def guarded_popen(cmd: Any, *args: Any, **kwargs: Any) -> Any:
         hit = _live_backend_argv(cmd, real_which)
         if hit:
             _blocked(hit, cmd)
         return real_popen(cmd, *args, **kwargs)
 
-    def guarded_run(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def guarded_run(cmd: Any, *args: Any, **kwargs: Any) -> Any:
         hit = _live_backend_argv(cmd, real_which)
         if hit:
             _blocked(hit, cmd)
@@ -401,7 +402,7 @@ def _no_live_backend(request):
     # sidebar and passing because of what happened to be on it. `git` and `gh`
     # are untouched. A test that needs a backend patches `which`, `is_cmux` or
     # `resolve_tool` itself, which is now a visible choice rather than a default.
-    def guarded_which(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def guarded_which(cmd: Any, *args: Any, **kwargs: Any) -> Any:
         found = real_which(cmd, *args, **kwargs)
         # `cockpit` is deliberately NOT hidden: `preflight` only asks whether it
         # is on PATH and prints a warning, which is a read with no side effect,
@@ -410,13 +411,16 @@ def _no_live_backend(request):
             return None
         return found
 
-    subprocess_mod.Popen = guarded_popen  # type: ignore[misc]
+    # `Popen` is a class, so replacing it with a function is a type error by
+    # construction — which is the whole intent here. ruff's B010 rules out the
+    # `setattr` spelling that would dodge it, so the ignore is the honest form.
+    subprocess_mod.Popen = guarded_popen  # type: ignore[misc,assignment]
     cmux_mod.run = guarded_run
-    shutil_mod.which = guarded_which  # type: ignore[misc]
+    shutil_mod.which = guarded_which
     try:
         yield
     finally:
-        shutil_mod.which = real_which  # type: ignore[misc]
+        shutil_mod.which = real_which
         subprocess_mod.Popen = real_popen  # type: ignore[misc]
         cmux_mod.run = real_run
 
