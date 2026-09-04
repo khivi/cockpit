@@ -11,6 +11,7 @@ Subcommands:
   teardown              reverse setup's ~/.claude writes (run before brew uninstall)
   new    [args]         create a worktree + workspace
   close  [args]         queue a worktree + workspace teardown for the daemon
+  diff   [args]         open the cwd worktree's diff in cmux's viewer
   nudge  [args]         manage nudge mutes
   broadcast <message>   send a line of text to every idle workspace
   config inspect [args] print the effective (post-org-merge) config
@@ -31,6 +32,7 @@ _SUBCOMMANDS = (
     "teardown",
     "new",
     "close",
+    "diff",
     "nudge",
     "broadcast",
     "config",
@@ -117,6 +119,11 @@ def main(argv: list[str] | None = None) -> int:
         from cockpit.close import main as close_main
 
         return close_main(rest)
+
+    if sub == "diff":
+        from cockpit.diff import main as diff_main
+
+        return diff_main(rest)
 
     if sub == "nudge":
         from cockpit.lib.nudge_cli import main as nudge_main

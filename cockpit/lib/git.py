@@ -560,6 +560,21 @@ def main_worktree_path(cwd: str | os.PathLike | None = None) -> Path | None:
     return None
 
 
+def worktree_root(cwd: str | os.PathLike | None = None) -> Path | None:
+    """Return the enclosing worktree's own root, or None if not in a git repo.
+
+    The sibling of `main_worktree_path`: that one answers "which checkout was
+    this cut from", this one "which worktree am I standing in". A CLI run from a
+    subdirectory needs the latter, since cmux keys the diff-comment store by
+    repo root and a subdirectory is not one.
+    """
+    res = _git(cwd if cwd is not None else ".", "rev-parse", "--show-toplevel")
+    if res.returncode != 0:
+        return None
+    top = res.stdout.strip()
+    return Path(top).resolve() if top else None
+
+
 def worktree_for_branch(repo_dir: Path, branch: str) -> Path | None:
     for wt in worktrees(repo_dir):
         if wt.branch == branch and wt.path.exists():

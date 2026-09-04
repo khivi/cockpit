@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -123,7 +124,7 @@ OWNER_ICON = "👥"
 # no-op on limux instead of erroring; sidebar tint and stack grouping are both
 # additive cmux-only niceties.
 _CMUX_ONLY_VERBS = frozenset(
-    {"set-status", "clear-status", "workspace-action", "workspace-group"}
+    {"set-status", "clear-status", "workspace-action", "workspace-group", "diff"}
 )
 
 
@@ -481,6 +482,82 @@ def cmux(*args: str, check: bool = True) -> str:
             raise FileNotFoundError(f"cockpit: '{verb}' unavailable{hint}")
         return ""
     return run([binary, *args], check=check)
+
+
+def render_diff(
+    patch: str | None = None,
+    *,
+    cwd: str | os.PathLike,
+    title: str,
+    source: str | None = None,
+    base: str | None = None,
+    timeout: float = 30.0,
+) -> str:
+    """Render a diff in cmux's viewer. Returns "" on success, else an error.
+
+    The one `cmux diff` invocation, and it has exactly one caller: `cockpit
+    diff`, which always runs *inside* the workspace it targets. That is what
+    lets this touch neither `--workspace` nor `--surface` — cmux's own
+    `$CMUX_WORKSPACE_ID` / `$CMUX_SURFACE_ID` defaults are already the right
+    ones, and the environment passes through untouched.
+
+    **A daemon-side caller could not reuse this**, which is why the TUI's `d`
+    key was removed rather than kept: from `cockpit watch` both defaults are the
+    dashboard's own, so the split opened beside a Textual TUI, and the inherited
+    `CMUX_SURFACE_ID` was stale for the row's workspace — fatal, `not_found:
+    Source surface not found`. Adding a `workspace=`/`keep_surface=` pair back
+    here means re-introducing that whole class of bug for a second caller.
+
+    Exactly one of `patch` (a unified diff piped on stdin — the only way to show
+    a *PR*, which cmux has no source for) or `source` (one of cmux's own git
+    sources: `unstaged`, `staged`, `branch`, `last-turn`). The source form is
+    deliberately handed to cmux rather than reimplemented here: it already
+    resolves the merge base, and `last-turn` reads a surface's agent-turn
+    baseline that cockpit cannot reconstruct at all.
+
+    `--layout unified` rather than split: the pane lands beside whatever it was
+    cut from and is therefore narrowish, where the split columns overprint each
+    other (observed). Unified degrades gracefully.
+
+    `--cwd` AND the subprocess's own cwd, because the comments left in the
+    viewer are persisted per REPO ROOT (`lib.diff_comments`) and cmux derives
+    that root here. Which of the two inputs it actually reads for a piped patch
+    is undocumented — the flag is written up for `--source`/git diffs only —
+    and guessing wrong fails silently, so set both.
+    """
+    if (patch is None) == (source is None):
+        raise ValueError("render_diff needs exactly one of patch= or source=")
+    if _resolve_binary("diff") is None:
+        return f"diff viewer requires cmux (current tool: {tool.resolve_tool()})"
+    # The binary is spelled out rather than threaded from `_resolve_binary`,
+    # which for a `_CMUX_ONLY_VERBS` verb can only ever return "cmux" — the gate
+    # above is what makes that true. Keeping it a literal also keeps the verb
+    # visible to `tests/e2e/test_cmux_surface.py`, which reads invoked verbs out
+    # of the AST and cannot see one that arrives in a variable.
+    cmd = ["cmux", "diff"]
+    cmd += ["--source", source] if source else ["-"]
+    cmd += ["--title", title, "--layout", "unified", "--cwd", str(cwd)]
+    if base:
+        cmd += ["--base", base]
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=patch or None,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(cwd),
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        return f"cmux failed: {e}"
+    if proc.returncode == 0:
+        return ""
+    err = proc.stderr.strip()
+    # The one failure worth naming precisely: the diff viewer is a browser
+    # surface and the browser is a runtime toggle. Say the fix.
+    if "browser_disabled" in err:
+        return "diff viewer needs the cmux browser — `cmux enable-browser`"
+    return f"diff failed: {err[:80]}"
 
 
 def apply_wip_pill(ref: str, dirty_count: int) -> None:
