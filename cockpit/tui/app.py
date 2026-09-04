@@ -46,7 +46,7 @@ from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.css.query import NoMatches
 
-from cockpit.lib import diff_comments, version
+from cockpit.lib import version
 from cockpit.lib.cache import (
     cost_reporting_available,
     cwd_cache,
@@ -969,16 +969,7 @@ class CockpitApp(App[None]):
         # Restore a draft a previous send couldn't deliver. Keyed by row, not
         # global: a draft typed for one worktree must not surface when you press
         # `a` on a different one.
-        #
-        # The pending-comment count is read here rather than on the hint worker
-        # so the modal says what it will send the moment it opens: it is a
-        # couple of small local JSON reads, where the state hint costs a cmux
-        # subprocess. Announcing it matters — comments ride the message
-        # silently otherwise, and finding that out after the send is too late.
-        screen = AskScreen(
-            initial=self._ask_drafts.get(path, ""),
-            comments=len(diff_comments.pending([path])),
-        )
+        screen = AskScreen(initial=self._ask_drafts.get(path, ""))
         self.push_screen(screen, lambda text: self._on_ask(path, text))
         # Reading cmux costs a subprocess, so the modal is pushed first and the
         # state hint lands a moment later — `a` stays instant.
@@ -1849,18 +1840,14 @@ class CockpitApp(App[None]):
                 severity="warning",
             )
             return
-        # Comments left in `d`'s diff viewer ride this message — cmux's own
-        # semantics ("included when you submit"), delivered by us because a
-        # cockpit session is a terminal running Claude's TUI and has no cmux
-        # composer to fold them in. They follow the typed line rather than
-        # leading it: what you type is the instruction, the anchors are its
-        # context. The repo-header fan-out deliberately does NOT carry them — a
-        # comment names one file in one worktree, so copying it to every session
-        # in the repo would be N wrong deliveries for one right one.
-        pend = diff_comments.pending([wt.path, repo.get("path")])
-        body = (
-            f"{text} · diff comments: {diff_comments.summarize(pend)}" if pend else text
-        )
+        # `a` carries the typed line and nothing else. It used to append the
+        # worktree's pending diff-viewer comments, which made sense while `d`
+        # let you review from the dashboard; with the diff now opened by
+        # `cockpit diff` *inside* the workspace, whoever leaves a note is
+        # already in the session that has to act on it, and the round-trip out
+        # to a row and back was the whole cost. Reading and retiring them is
+        # `cockpit diff --comments` / `--ack`. **Do not** re-attach them here.
+        #
         # The gate's own verdict, so a refusal names its cause instead of
         # listing every cause it might have been — the same reasons the header
         # fan-out prints, and the same ones the modal's advisory hint showed.
@@ -1868,27 +1855,9 @@ class CockpitApp(App[None]):
         # responses, and only the first tells you the session needs a turn
         # completed by hand before `a` can ever reach it.
         skips: dict[str, str] = {}
-        if nudge_if_idle(ref, body, tag="ask", skips=skips):
+        if nudge_if_idle(ref, text, tag="ask", skips=skips):
             self._ask_drafts.pop(path_str, None)
-            # Only on a delivery the gate accepted: a refused send leaves the
-            # comments pending, exactly as it leaves the draft.
-            diff_comments.mark_delivered([c.id for c in pend])
-            extra = f" (+{len(pend)} diff comment(s))" if pend else ""
-            focused = ""
-            if pend:
-                # You were just in this workspace's diff viewer leaving these
-                # comments — jump back to it so watching the response doesn't
-                # cost a third manual switch. Scoped to the comment-carrying
-                # case only: a plain `a` (nudging someone, a batch of asks
-                # across rows) should leave you where you are, exactly as
-                # before. A focus failure must not read as the send failing —
-                # the message already landed.
-                try:
-                    select_workspace(ref)
-                    focused = " — focused"
-                except (CmuxUnavailable, RuntimeError, OSError):
-                    pass
-            self._notify(f"sent to {wt.label or wt.short}{extra}{focused}")
+            self._notify(f"sent to {wt.label or wt.short}")
         else:
             # Keep the text. The refusal is transient (a turn ends, a permission
             # is answered), so throwing away what the user typed would make them

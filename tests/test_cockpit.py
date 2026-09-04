@@ -883,3 +883,141 @@ def test_fast_tick_does_not_reassert_idle_pills_under_dry(tmp_path, monkeypatch)
     cockpit, seen = _fast_tick_env(tmp_path, monkeypatch)
     cockpit._fast_tick({"dry": True})
     assert seen == []
+
+
+# --- diff-comment nudge -----------------------------------------------------
+#
+# The one automatic send that isn't about a PR. It earns that by being derived
+# from real per-worktree state (a note exists, in this worktree, for the session
+# sitting in it) rather than a canned message on a key — the distinction that got
+# the `N` key removed.
+
+
+def _nudge_fixture(tmp_path, monkeypatch, *, pending, workspace=True):
+    """Drive `_fast_tick` with one repo/worktree and a stubbed nudge gate."""
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.diff_comments import Comment
+    from cockpit.lib.git import Worktree
+
+    importlib.reload(cockpit)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = Worktree(path=repo / "feat", branch="khivi/feat")
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
+    )
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
+    )
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _c: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "reassert_idle_pills", lambda _c: [])
+    monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda _s: None)
+    monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda *a: None)
+    cwds = {"ws1": repo / "feat"} if workspace else {}
+    monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, dict(cwds)))
+    monkeypatch.setattr(
+        cockpit.diff_comments,
+        "pending_by_root",
+        lambda _roots: {
+            str((repo / "feat").resolve()): [
+                Comment(id=i, file="a.py", line=1, message="fix") for i in pending
+            ]
+        }
+        if pending
+        else {},
+    )
+    sends: list = []
+    monkeypatch.setattr(
+        cockpit,
+        "nudge_if_idle",
+        lambda ref, msg, **kw: sends.append((ref, msg, kw)) or True,
+    )
+    return cockpit, repo, wt, sends
+
+
+def test_fast_tick_hands_pending_notes_to_the_session_that_owns_them(
+    tmp_path, monkeypatch
+):
+    cockpit, repo, _wt, sends = _nudge_fixture(tmp_path, monkeypatch, pending=["c1"])
+
+    cockpit._fast_tick({})
+
+    (ref, msg, kw) = sends[0]
+    assert ref == "ws1"
+    assert msg == cockpit.DIFF_COMMENTS_NUDGE
+    assert kw.get("tag") == "diff-comments"
+    # No `pref_key`: mute/snooze mean "stop telling me about this PR", and a diff
+    # note is something the user just wrote — suppressing it would discard their
+    # own input. Same call shape as `a` and `broadcast`.
+    assert "pref_key" not in kw
+
+
+def test_the_nudge_is_sent_once_per_batch_of_notes(tmp_path, monkeypatch):
+    """Keyed on the comment ids, not on the worktree: keying on the worktree
+    would either re-fire every 30s until the agent acked, or fire once and
+    silently swallow every note written afterwards."""
+    cockpit, repo, _wt, sends = _nudge_fixture(tmp_path, monkeypatch, pending=["c1"])
+    state: dict = {}
+
+    cockpit._fast_tick(state)
+    cockpit._fast_tick(state)
+    assert len(sends) == 1, "an unchanged note set must not re-nudge"
+
+
+def test_a_note_added_later_nudges_again(tmp_path, monkeypatch):
+    import cockpit.cockpit as cockpit_mod
+
+    cockpit, repo, _wt, sends = _nudge_fixture(tmp_path, monkeypatch, pending=["c1"])
+    state: dict = {}
+    cockpit._fast_tick(state)
+
+    from cockpit.lib.diff_comments import Comment
+
+    monkeypatch.setattr(
+        cockpit_mod.diff_comments,
+        "pending_by_root",
+        lambda _roots: {
+            str((repo / "feat").resolve()): [
+                Comment(id="c1", file="a.py", line=1, message="fix"),
+                Comment(id="c2", file="b.py", line=2, message="also this"),
+            ]
+        },
+    )
+    cockpit._fast_tick(state)
+    assert len(sends) == 2
+
+
+def test_a_refused_send_is_retried_next_tick(tmp_path, monkeypatch):
+    """The record lands only on a send the gate accepted — a mid-turn session
+    must not have its notes marked handed-over and then never re-offered."""
+    cockpit, repo, _wt, sends = _nudge_fixture(tmp_path, monkeypatch, pending=["c1"])
+    monkeypatch.setattr(
+        cockpit, "nudge_if_idle", lambda ref, msg, **kw: sends.append(ref) or False
+    )
+    state: dict = {}
+
+    cockpit._fast_tick(state)
+    cockpit._fast_tick(state)
+    assert len(sends) == 2
+
+
+def test_no_workspace_means_no_nudge(tmp_path, monkeypatch):
+    """A worktree nobody has open has no session to tell."""
+    cockpit, _repo, _wt, sends = _nudge_fixture(
+        tmp_path, monkeypatch, pending=["c1"], workspace=False
+    )
+
+    cockpit._fast_tick({})
+    assert sends == []
+
+
+def test_the_nudge_is_dry_gated(tmp_path, monkeypatch):
+    """It reaches a live session, so `--dry` must reach the gate — which prints
+    rather than sends. Passed through, not skipped, so the dry run still reports."""
+    cockpit, repo, _wt, sends = _nudge_fixture(tmp_path, monkeypatch, pending=["c1"])
+
+    cockpit._fast_tick({"dry": True})
+    assert sends and sends[0][2].get("dry") is True

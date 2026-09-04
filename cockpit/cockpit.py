@@ -43,6 +43,7 @@ from cockpit.lib.cache import (
 )
 from cockpit.lib.cmux import (
     CmuxUnavailable,
+    nudge_if_idle,
     reassert_idle_pills,
     reconcile_workspace_names,
     set_workspace_color,
@@ -142,26 +143,87 @@ def _tint_repo_workspaces(
         pill_state[f"color:{ref}"] = color
 
 
-def _write_diff_comment_cells(repo_path: Path, wts: list[Worktree]) -> None:
-    """Write the `diff-comments` cell for every worktree of one repo from a
-    single glob of cmux's local diff-comment store, via `pending_by_root`
-    batched at repo granularity — the two-candidate-root lookup `_send_ask`
-    makes per row (a worktree's own toplevel, or the main checkout it was cut
-    from), done once per repo instead of once per worktree.
+def _write_diff_comment_cells(
+    repo_path: Path, wts: list[Worktree]
+) -> dict[Path, list[diff_comments.Comment]]:
+    """Write the `diff-comments` cell for every worktree of one repo, and return
+    what it found so the nudge pass doesn't re-glob the store.
+
+    One glob of cmux's local diff-comment store via `pending_by_root`, batched at
+    repo granularity — the two-candidate-root lookup (a worktree's own toplevel,
+    or the main checkout it was cut from) done once per repo instead of once per
+    worktree.
 
     Local disk only, like the git-state cells below — not gated on `--dry`.
-    Advisory: `a`'s send path re-reads the store live and never trusts this
-    cell, so a stale count here costs nothing but the visual cue.
+    Advisory as a *cell*: it exists for the 📝 column. The returned lists are not
+    advisory, since `_nudge_diff_comments` keys its dedup on the ids in them.
     """
     repo_root = str(repo_path.resolve())
     roots = {repo_root} | {str(wt.path.resolve()) for wt in wts}
     by_root = diff_comments.pending_by_root(roots)
+    found: dict[Path, list[diff_comments.Comment]] = {}
     for wt in wts:
         wt_root = str(wt.path.resolve())
-        count = len(by_root.get(wt_root, []))
+        pend = list(by_root.get(wt_root, []))
         if wt_root != repo_root:
-            count += len(by_root.get(repo_root, []))
-        write_diff_comments_cache(wt.path, count)
+            pend += by_root.get(repo_root, [])
+        write_diff_comments_cache(wt.path, len(pend))
+        if pend:
+            found[wt.path] = pend
+    return found
+
+
+# What a session is told when notes are waiting on its worktree. The bundled
+# `cockpit-diff` skill carries the actual procedure (read, address, ack), so the
+# line stays one short invocation rather than a paragraph re-stating it here.
+DIFF_COMMENTS_NUDGE = "/cockpit-diff apply"
+
+
+def _nudge_diff_comments(
+    found: dict[Path, list[diff_comments.Comment]],
+    cwds: dict[str, Path],
+    pill_state: dict,
+    *,
+    dry: bool,
+) -> list[str]:
+    """Tell a session that review notes are waiting on its own worktree.
+
+    This is the only *automatic* send that isn't about a PR, and it earns that
+    the same way the PR nudge does — it is **derived from real state**, not a
+    canned message on a key (the reason the `N` key was removed): a note exists,
+    in this exact worktree, addressed to the session sitting in it. The comments
+    are line-anchored to files only that session has, so unlike a PR nudge there
+    is no other workspace it could sensibly go to.
+
+    **Deliberately no `pref_key`, so mute and snooze do not silence it.** Those
+    mean "stop telling me about this PR"; a diff note is something the user just
+    *wrote*, and dropping it would discard their own input rather than suppress
+    cockpit's. Same reasoning as `a` and `broadcast`, which also pass none. Every
+    other guard in `nudge_if_idle` still applies, so a mid-turn session is never
+    interrupted.
+
+    **Dedup is on the comment ids, not on "did we nudge this worktree".** Keying
+    on the worktree alone would either fire every 30s until the agent acked, or
+    fire once and silently swallow every note written afterwards. Keying on the
+    id set means a nudge per *batch of notes*: an agent that reads them and never
+    runs `--ack` is not re-nudged (the ids are unchanged and the 📝 column still
+    shows them), while a note added afterwards changes the set and does send.
+    The record only lands on a send the gate accepted, so a refusal retries on
+    the next tick — the same rule `a` used for marking delivered.
+    """
+    sent = []
+    for path, pend in found.items():
+        ref = next((r for r, cwd in cwds.items() if cwd.resolve() == path), None)
+        if ref is None:
+            continue
+        key = f"diff-comments:{path}"
+        ids = tuple(sorted(c.id for c in pend))
+        if pill_state.get(key) == ids:
+            continue
+        if nudge_if_idle(ref, DIFF_COMMENTS_NUDGE, dry=dry, tag="diff-comments"):
+            pill_state[key] = ids
+            sent.append(ref)
+    return sent
 
 
 def _write_worktree_cells(wts: Iterable[Worktree]) -> None:
@@ -238,6 +300,10 @@ def _fast_tick(state: dict) -> None:
     # rather than per repo — most repos hold one worktree, so a per-repo pool
     # would leave the fan-out idle exactly where the fleet is widest.
     pending: list[Worktree] = []
+    # Accumulated for the same reason the cell writes are: the nudge needs the
+    # workspace map, which is fleet-wide, and one pass keeps the "one send per
+    # batch of notes" dedup in a single place.
+    notes: dict[Path, list[diff_comments.Comment]] = {}
     for repo_entry in cfg.get("repos", []):
         repo_path = Path(os.path.expanduser(repo_entry["path"]))
         if not repo_path.is_dir():
@@ -252,7 +318,7 @@ def _fast_tick(state: dict) -> None:
         except (RuntimeError, OSError):
             continue
         pending.extend(wts)
-        _write_diff_comment_cells(repo_path, wts)
+        notes.update(_write_diff_comment_cells(repo_path, wts))
         # The disk-cache writes are local and always run; these two reach cmux
         # and *rename and recolour the user's live workspaces*, which `--dry`
         # promises not to do. The slow tick's equivalents are gated on
@@ -275,6 +341,14 @@ def _fast_tick(state: dict) -> None:
         # cmux, hence the `dry` gate.
         for ref in reassert_idle_pills(cwds):
             print(f"  idle pill re-asserted for {ref}", flush=True)
+    # After the idle re-assert above, deliberately: that pass is what makes a
+    # session at rest reachable at all, so nudging first would refuse exactly the
+    # workspaces it was about to heal. `nudge_if_idle` carries its own `dry`
+    # gate, so unlike the block above this runs either way and prints instead.
+    for ref in _nudge_diff_comments(
+        notes, cwds, pill_state, dry=state.get("dry", False)
+    ):
+        print(f"  diff comments handed to {ref}", flush=True)
     _write_worktree_cells(pending)
     republish_pr_caches_from_disk()
 

@@ -2898,46 +2898,6 @@ async def _press_a(monkeypatch, wt, text, toasts=None):
         await pilot.pause(0.6)
 
 
-async def test_ask_carries_the_rows_pending_diff_comments(monkeypatch, tmp_path):
-    """A cockpit session is a terminal running Claude's TUI, so it has no cmux
-    composer to fold these in on submit — `a` is the delivery. They follow the
-    typed line: what you typed is the instruction, the anchors are its
-    context."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    _seed_diff_comments(monkeypatch, tmp_path, wt.path, [_a_comment()])
-    calls: list[tuple[str, str]] = []
-    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _accepting_gate(calls))
-    await _press_a(monkeypatch, wt, "address these")
-
-    assert calls == [
-        ("ws1", "address these · diff comments: app/main.py:10 — reduce comments")
-    ]
-    # Consumed, so the next `a` doesn't say it all again.
-    assert diff_comments.pending([wt.path]) == []
-
-
-async def test_ask_carrying_comments_focuses_the_workspace_on_delivery(
-    monkeypatch, tmp_path
-):
-    """You were just in this workspace's diff viewer leaving these notes — land
-    back in it once they're sent, so watching the response doesn't cost a third
-    manual switch on top of the two `d`/`a` already need."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    _seed_diff_comments(monkeypatch, tmp_path, wt.path, [_a_comment()])
-    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _accepting_gate([]))
-    refs: list[str] = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
-    )
-    toasts: list[str] = []
-    await _press_a(monkeypatch, wt, "address these", toasts=toasts)
-
-    assert refs == ["ws1"]
-    assert any("focused" in t for t in toasts)
-
-
 async def test_a_plain_ask_does_not_focus(monkeypatch, tmp_path):
     """A plain `a` (nudging someone, a batch across rows) must leave you where
     you are — auto-focus is scoped to the comment-carrying case only."""
@@ -2999,29 +2959,6 @@ async def test_ask_without_comments_sends_the_typed_line_verbatim(
     await _press_a(monkeypatch, wt, "rebase onto main")
 
     assert calls == [("ws1", "rebase onto main")]
-
-
-async def test_the_ask_modal_announces_what_will_ride_along(monkeypatch, tmp_path):
-    """The comments are appended to a one-line send you can't see before it
-    goes, so the modal has to say they're in it — finding out afterwards is too
-    late."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    _seed_diff_comments(
-        monkeypatch, tmp_path, wt.path, [_a_comment(), _a_comment(cid="c2", line=20)]
-    )
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause()
-        hint = str(app.screen.query_one("#ask-comments", Static).render())
-
-    assert "2 diff review comments" in str(hint)
-
-
-# ── `a` on a repo header → repo-wide ─────────────────────────────────────────
 
 
 async def _press_a_on_header(monkeypatch, wt, text, toasts):
@@ -3403,7 +3340,6 @@ async def test_header_advertises_the_menu_and_the_footer_no_longer_does():
     # the footer: without it, "Show config", "Edit config",
     # "Output" and the feature guide are reachable only by someone who already
     # knows `ctrl+p` is a convention.
-    from textual.widgets import Static
 
     from cockpit.tui.widgets.footer_bar import FooterBar
     from cockpit.tui.widgets.header_bar import HeaderBar
@@ -3428,7 +3364,6 @@ async def test_menu_is_not_row_gated():
     # Every footer hint can be gated off by row state (`h` hides on a worktree
     # row). The menu targets the app, so it must survive any row state — least
     # of all the empty table a first-time user actually sees.
-    from textual.widgets import Static
 
     from cockpit.tui.widgets.footer_bar import FooterBar
     from cockpit.tui.widgets.header_bar import HeaderBar
@@ -3579,7 +3514,6 @@ async def test_menu_is_not_clipped_at_a_narrow_terminal():
     # The menu is `width: auto` against a `1fr` status half, so every squeeze
     # lands on the countdowns instead. Pinned at 80 columns (the classic
     # floor); below ~55 the table itself is unusable.
-    from textual.widgets import Static
 
     from cockpit.tui.widgets.header_bar import HeaderBar
 
