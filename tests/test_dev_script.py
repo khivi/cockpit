@@ -119,6 +119,20 @@ def test_refuses_setup(fake_repo):
     assert not (repo / ".cockpit-dev").exists()
 
 
+@pytest.mark.parametrize("sub", ["new", "close"])
+def test_refuses_the_subcommands_that_mutate_through_git(fake_repo, sub):
+    """`tool: none` and `--dry` are both backend-facing, and neither gates
+    `git`. The sandbox config is a snapshot pointing at the REAL repos, so
+    `cockpit new` runs `git worktree add` in one and `cockpit close` runs
+    `git worktree remove` + `git branch -D` — damage the sandbox cannot
+    contain, because it never went near the sandbox."""
+    repo, real_home = fake_repo
+    res = _run(repo, real_home, "--", sub, "khivi/whatever")
+    assert res.returncode == 2
+    assert "refusing to run" in res.stderr
+    assert not (repo / ".cockpit-dev").exists()
+
+
 def test_sandbox_forces_tool_none(fake_repo):
     """`tool: none` is what makes every cmux write a no-op — spawn, close,
     rename, set-color, workspace-group, and `send` into a live Claude session.

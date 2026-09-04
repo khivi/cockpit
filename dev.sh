@@ -25,6 +25,9 @@
 #   tool: none    no workspace backend, so every cmux write — spawn, close,
 #                 rename, set-color, workspace-group, and `send` into a live
 #                 Claude session — becomes a no-op.
+#   refusals      `setup` bakes this worktree's python outside the sandbox;
+#                 `new`/`close` mutate real worktrees and branches through git,
+#                 which no backend gate touches. All three exit 2.
 #   --dry         `tool: none` does NOT cover autoclose: `_maybe_autoclose`
 #                 removes merged worktrees and runs `git branch -D` through
 #                 git, not through the backend. --dry is the gate that stops
@@ -88,6 +91,21 @@ for arg in "$@"; do
     exit 2
   fi
 done
+
+# `tool: none` and `--dry` are both backend-facing; neither stops `git`. The
+# sandbox config is a snapshot pointing at the REAL repos, so `cockpit new`
+# runs `git worktree add` in one of them and `cockpit close` runs `git worktree
+# remove` + `git branch -D` — real worktrees created and real branches deleted,
+# with nothing in the sandbox to undo it. `watch --dry` already exercises both
+# code paths inertly; use the brew-installed `cockpit` when you mean it.
+case "$1" in
+  new|close)
+    echo "dev.sh: refusing to run \`cockpit $1\` from the sandbox." >&2
+    echo "It mutates real worktrees and branches through git, which neither" >&2
+    echo "tool=none nor --dry gates. Use the brew-installed \`cockpit $1\`." >&2
+    exit 2
+    ;;
+esac
 
 if [ "$1" = "watch" ] && [ ! -t 1 ]; then
   echo "dev.sh: \`watch\` is a Textual TUI and needs a terminal (it exits 2 without one)." >&2
