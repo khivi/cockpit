@@ -786,6 +786,25 @@ def test_plan_only_prompt_uses_custom_command():
     assert "PLAN ONLY" in p  # the shared no-code gate always rides along
 
 
+def test_both_plan_gates_persist_the_plan_and_forbid_committing_it():
+    """The gate names its artifact and refuses to stage it.
+
+    Both spellings must carry it — `plan_only.txt` is the fallback when no
+    `(mode, provider)` pair matches, while `plan_tail.txt` rides every
+    source-mode template — and cockpit's own `.gitignore` does not travel to the
+    repos it spawns into, so the never-stage line is the only thing holding a
+    tracked plan out of a squash merge there.
+    """
+    import cockpit.spawn as spawn
+
+    for prompt in (
+        spawn._plan_only_prompt("khivi/feature", None),
+        spawn._linear_prompt("khivi/pe-1", "PE-1"),
+    ):
+        assert "plan.md" in prompt
+        assert "never `git add` or commit it" in prompt
+
+
 def test_plan_only_branch_mode_seeds_configured_skills_plan_command(
     spawn_main, cockpit_repo
 ):

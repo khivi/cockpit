@@ -84,6 +84,9 @@ _EXTERNAL_PATHS = {
     # tracked. `config.example.json` is the tracked sample of the first.
     "config.json",
     "hidden-repos.json",
+    # The plan gate's artifact, written into the worktree by a spawned session
+    # and deliberately never tracked — see the prompt-templates section.
+    "plan.md",
     # The brew formula's single source of truth is the tap repo
     # (khivi/homebrew-cockpit); vendoring a copy here would drift.
     "Formula/cockpit.rb",
