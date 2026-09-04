@@ -43,7 +43,7 @@ pipx install cmux-cockpit   # or: uv tool install cmux-cockpit
 cockpit setup
 ```
 
-`cockpit setup` wires the idle hooks, the `/cockpit-new` / `/cockpit-close` / `/cockpit-broadcast` / `/cockpit-nudge` commands and the `cockpit-diff` skill into `~/.claude/`, and on a TTY offers the optional statusline. It's idempotent — re-run it any time. Update with `brew upgrade cockpit`.
+`cockpit setup` wires the idle hooks, the `/cockpit-new` / `/cockpit-close` / `/cockpit-broadcast` / `/cockpit-nudge` / `/cockpit-diff` commands into `~/.claude/`, and on a TTY offers the optional statusline. It's idempotent — re-run it any time. Update with `brew upgrade cockpit`.
 
 Coming from the old Claude Code plugin? See [`MIGRATION.md`](MIGRATION.md), and remove the plugin *before* installing — otherwise both sets of hooks fire.
 
@@ -104,7 +104,7 @@ Set `use_cship: true` (or accept the prompt at `cockpit setup`); drop fields you
 ## Uninstall
 
 ```bash
-cockpit teardown          # remove the ~/.claude statusLine/hooks/commands/skills (do this before uninstall)
+cockpit teardown          # remove the ~/.claude statusLine/hooks/commands (do this before uninstall)
 rm -rf ~/.config/cockpit  # state only; your worktrees remain
 brew uninstall cockpit
 ```

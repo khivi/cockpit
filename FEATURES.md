@@ -410,13 +410,13 @@ slash command somewhere before sending it everywhere. A repo that happens to hav
 worktree open is not the same thing: it stops being one target as soon as you open a
 second.
 
-`/cockpit-new`, `/cockpit-close`, `/cockpit-broadcast` and `/cockpit-nudge` are installed
-into Claude Code by `cockpit setup`, so you can drive all four from inside a session.
+`/cockpit-new`, `/cockpit-close`, `/cockpit-broadcast`, `/cockpit-nudge` and
+`/cockpit-diff` are installed into Claude Code by `cockpit setup`, so you can drive all
+five from inside a session.
 
-**`cockpit diff` ships as a skill rather than a command**, because it is the one of these a
-session should reach for on its own: a command has to be typed, a skill is matched from
-what you asked for. So "show me the diff" opens it, and the session checks for review notes
-left on its work without being told to.
+`/cockpit-diff` opens the diff, and `/cockpit-diff apply` addresses the notes you left in
+it. You rarely have to type the second one: when notes are waiting, cockpit sends it to
+the session sitting in that worktree itself.
 
 ---
 
