@@ -480,6 +480,22 @@ def write_worktree_cost_cache(cwd: os.PathLike[str] | str) -> None:
     atomic_write(cwd_cache("wt-cost", cwd), f"{total:.4f}" if total > 0 else "")
 
 
+def write_diff_comments_cache(cwd: os.PathLike[str] | str, count: int) -> None:
+    """Snapshot `cwd`'s pending (undelivered) cmux diff-viewer comment count into
+    the `diff-comments` flat cell — advisory only, so the TUI can show "there's
+    something to send" without globbing cmux's local store on every render.
+
+    Local-only, never GitHub: deliberately a separate cell from `pr-comments`,
+    which counts GitHub review threads. The count this writes can go stale
+    between fast ticks; `a`'s send path re-reads the store live and is the
+    only authority on what actually gets delivered.
+
+    Writes "" rather than "0" so a reader can't confuse "none pending" with
+    "cell not yet populated", matching `wt-cost`'s convention.
+    """
+    atomic_write(cwd_cache("diff-comments", cwd), str(count) if count else "")
+
+
 def read_worktree_cost(cwd: os.PathLike[str] | str) -> float:
     """Read back `write_worktree_cost_cache`'s cell; 0.0 when unset/unparsable."""
     try:

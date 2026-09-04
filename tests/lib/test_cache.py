@@ -1295,6 +1295,22 @@ def test_worktree_cost_cell_does_not_collide_with_session_cost_cells(
     assert len(list(cache_dir.glob("wt-cost-*"))) == 1
 
 
+def test_write_diff_comments_cache_round_trips(cache_dir, tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    cache_mod.write_diff_comments_cache(wt, 3)
+    assert cache_mod.cwd_cache("diff-comments", wt).read_text() == "3"
+
+
+def test_write_diff_comments_cache_writes_blank_not_zero(cache_dir, tmp_path):
+    """Matches `wt-cost`'s convention: "" for none pending, never "0", so a
+    reader can't confuse "nothing pending" with "cell not yet populated"."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    cache_mod.write_diff_comments_cache(wt, 0)
+    assert cache_mod.cwd_cache("diff-comments", wt).read_text() == ""
+
+
 def test_read_worktree_cost_survives_a_corrupt_cell(cache_dir, tmp_path):
     cache_mod.atomic_write(cache_mod.cwd_cache("wt-cost", tmp_path), "garbage")
     assert cache_mod.read_worktree_cost(tmp_path) == 0.0

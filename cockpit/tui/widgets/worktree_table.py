@@ -269,6 +269,11 @@ _CI_STYLE = {"✓": "green", "✗": "red", "•": "yellow", "?": "grey50"}
 # rather than the word "Dirty".
 _DIRTY_ICON = ICON_UNSTAGED
 
+# Pending cmux diff-viewer comments — local only, never GitHub, so it gets its
+# own glyph rather than folding into `💬` (GitHub review threads). 📝 sits in
+# the local cluster beside `_DIRTY_ICON` rather than the GitHub cluster.
+_DIFF_COMMENT_ICON = "📝"
+
 # Worktree rows hang under their repo's header row. Both write into the same
 # Workspace column, so this indent is the only thing that reads as nesting.
 ROW_INDENT = "   "
@@ -309,9 +314,12 @@ def _ellipsize(text: str, limit: int) -> str:
 
 
 def column_labels(*, show_tickets: bool, show_cost: bool = False) -> tuple[str, ...]:
-    """Column headers in display order, grouped by domain. The local `✎` dirty
-    column sits right after `PR` #, then the rest of the GitHub cluster — the `🔀`
-    review-state, `CI`, and `💬` comments. The ticket cluster — `Ticket` id then
+    """Column headers in display order, grouped by domain. The local cluster —
+    `✎` dirty then `📝` pending diff-viewer comments — sits right after `PR` #,
+    then the GitHub cluster — the `🔀` review-state, `CI`, and `💬` comments.
+    `📝` and `💬` look alike but are never the same thing: `💬` is GitHub review
+    threads, `📝` is comments left in cmux's local diff viewer that haven't been
+    sent anywhere yet (`a` sends them). The ticket cluster — `Ticket` id then
     its `📍` workflow-state — follows, present only when some configured repo has a
     ticket provider (Linear or GitHub, `show_tickets`). Then `Author` (blank for
     self-authored, the coworker login on a review PR — rarely populated, so parked
@@ -320,7 +328,15 @@ def column_labels(*, show_tickets: bool, show_cost: bool = False) -> tuple[str, 
     `$` trails everything (`show_cost`). It's the only column not about the PR,
     so it doesn't belong in any of the clusters above, and it reads as a column
     of numbers whatever the Title beside it does."""
-    cols = ["Workspace", "PR", _DIRTY_ICON, _APPROVAL_ICON, "CI", "💬"]
+    cols = [
+        "Workspace",
+        "PR",
+        _DIRTY_ICON,
+        _DIFF_COMMENT_ICON,
+        _APPROVAL_ICON,
+        "CI",
+        "💬",
+    ]
     if show_tickets:
         cols += ["Ticket", _STATUS_ICON]
     cols += ["Author", "Title"]
@@ -624,6 +640,19 @@ def _dirty_cell(wt: Worktree) -> Text:
     return Text(" ").join(segs) if segs else Text("")
 
 
+def _diff_comments_cell(raw: str) -> Text:
+    """The 📝 column: pending (undelivered) cmux diff-viewer comments, from the
+    daemon-written `diff-comments` cell. Local only — never reaches GitHub, and
+    a different count than `💬`'s GitHub review threads. Blank at zero. `a`
+    delivers them and re-reads the store live at send time, so this is a cue
+    that something's waiting, not the authority on what will actually send."""
+    try:
+        count = int(raw or 0)
+    except ValueError:
+        return Text("")
+    return Text(str(count), style="cyan") if count > 0 else Text("")
+
+
 def _comments_cell(unaddressed_raw: str, total_raw: str) -> Text:
     """The 💬 column: unaddressed review-thread count, with a `/total` denominator
     when there are addressed threads too.
@@ -874,6 +903,7 @@ def worktree_cells(
         ),
         Text(f"#{num}") if num else Text(""),
         _dirty_cell(wt),
+        _diff_comments_cell(cell("diff-comments")),
         Text(state_icon, style=style) if state else Text(""),
         Text(ci, style=_CI_STYLE.get(ci, "white")) if ci else Text(""),
         comments,
@@ -915,6 +945,7 @@ _HEADER_TOOLTIPS: dict[str, str] = {
     "Ticket": "Delivered ticket id(s)",
     _STATUS_ICON: "Ticket workflow state",
     _DIRTY_ICON: "Uncommitted changes (staged / modified / untracked)",
+    _DIFF_COMMENT_ICON: "Pending diff-viewer comments (local only — a sends them)",
     "Title": "PR title",
     "$": "Total Claude Code spend in this worktree",
 }
@@ -974,6 +1005,18 @@ def _dirty_tooltip(wt: Worktree) -> str | None:
     if untracked:
         segs.append(f"{untracked} untracked")
     return ", ".join(segs) or None
+
+
+def _diff_comments_tooltip(raw: str) -> str | None:
+    """Hover text for the 📝 cell. None when the cell is blank."""
+    try:
+        count = int(raw or 0)
+    except ValueError:
+        return None
+    if count <= 0:
+        return None
+    plural = "" if count == 1 else "s"
+    return f"{count} pending diff comment{plural} — press a to send"
 
 
 def _ticket_status_tooltip(payload: dict | None, provider: str) -> str | None:
@@ -1036,6 +1079,7 @@ def row_tooltips(
         workspace,
         None,  # PR #
         _dirty_tooltip(wt),
+        _diff_comments_tooltip(cell("diff-comments")),
         _STATE_LABEL.get(cell("pr-state")),
         _CI_LABEL.get(cell("pr-checks")),
         _comments_tooltip(cell("pr-comments"), cell("pr-comments-total")),

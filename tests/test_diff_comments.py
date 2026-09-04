@@ -139,6 +139,48 @@ def test_an_unwritable_ledger_costs_a_repeat_not_a_crash(_store, tmp_path, monke
     diff_comments.mark_delivered(["c1"])  # must not raise
 
 
+def test_pending_by_root_buckets_by_each_files_own_root(_store, tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    _write(_store, "a", a, [_comment(cid="c1")])
+    _write(_store, "b", b, [_comment(cid="c2", line=20)])
+
+    got = diff_comments.pending_by_root({str(a.resolve()), str(b.resolve())})
+
+    assert [c.id for c in got[str(a.resolve())]] == ["c1"]
+    assert [c.id for c in got[str(b.resolve())]] == ["c2"]
+
+
+def test_pending_by_root_omits_roots_asked_for_but_absent(_store, tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+
+    assert diff_comments.pending_by_root({str(wt.resolve())}) == {}
+
+
+def test_pending_by_root_skips_a_file_whose_root_was_not_asked_for(_store, tmp_path):
+    wt, other = tmp_path / "wt", tmp_path / "other"
+    wt.mkdir()
+    other.mkdir()
+    _write(_store, "a", other, [_comment()])
+
+    assert diff_comments.pending_by_root({str(wt.resolve())}) == {}
+
+
+def test_pending_delegates_to_pending_by_root_with_the_same_semantics(_store, tmp_path):
+    """`pending` is now a thin wrapper — pin that the merge across candidate
+    roots and the delivered-ledger filtering both still apply through it."""
+    wt, repo = tmp_path / "wt", tmp_path / "repo"
+    wt.mkdir()
+    repo.mkdir()
+    _write(_store, "a", wt, [_comment(cid="c1")])
+    _write(_store, "b", repo, [_comment(cid="c2", line=20)])
+    diff_comments.mark_delivered(["c1"])
+
+    assert [c.id for c in diff_comments.pending([wt, repo])] == ["c2"]
+
+
 def test_summarize_is_one_line_and_drops_the_fenced_excerpt(_store):
     """`cmux send` turns every newline into Enter, so the store's own
     multi-line `submissionText` cannot survive the trip — and the agent is in

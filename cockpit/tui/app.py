@@ -1883,7 +1883,21 @@ class CockpitApp(App[None]):
             # comments pending, exactly as it leaves the draft.
             diff_comments.mark_delivered([c.id for c in pend])
             extra = f" (+{len(pend)} diff comment(s))" if pend else ""
-            self._notify(f"sent to {wt.label or wt.short}{extra}")
+            focused = ""
+            if pend:
+                # You were just in this workspace's diff viewer leaving these
+                # comments — jump back to it so watching the response doesn't
+                # cost a third manual switch. Scoped to the comment-carrying
+                # case only: a plain `a` (nudging someone, a batch of asks
+                # across rows) should leave you where you are, exactly as
+                # before. A focus failure must not read as the send failing —
+                # the message already landed.
+                try:
+                    select_workspace(ref)
+                    focused = " — focused"
+                except (CmuxUnavailable, RuntimeError, OSError):
+                    pass
+            self._notify(f"sent to {wt.label or wt.short}{extra}{focused}")
         else:
             # Keep the text. The refusal is transient (a turn ends, a permission
             # is answered), so throwing away what the user typed would make them
