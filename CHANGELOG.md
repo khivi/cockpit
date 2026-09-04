@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.29.0](https://github.com/khivi/cockpit/compare/v2.28.0...v2.29.0) (2026-09-04)
+
+
+### Features
+
+* **tui:** surface pending diff-viewer comments and auto-focus after sending them ([#480](https://github.com/khivi/cockpit/issues/480)) ([4b043c1](https://github.com/khivi/cockpit/commit/4b043c176254304c6b52e215410ac47121cae3f5))
+
 ## [2.28.0](https://github.com/khivi/cockpit/compare/v2.27.1...v2.28.0) (2026-09-04)
 
 
