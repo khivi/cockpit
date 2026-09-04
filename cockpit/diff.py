@@ -11,13 +11,13 @@ Two things make this more than an alias for `cmux diff`:
   - **The PR diff.** cmux has no PR source; `gh pr diff` piped to `cmux diff -`
     is what the TUI's `d` adds, and there was no CLI route to it. That is the
     default here, since the PR is what you review.
-  - **`--comments`.** The notes you leave in the viewer are collected by
-    `lib.diff_comments`, whose only consumer was the TUI's `a` key — cmux folds
-    them into the next message its own composer submits, and a cockpit workspace
-    is a terminal running Claude's TUI, which has no composer. In-workspace you
-    *are* the session, so printing them here closes the loop with no dashboard
-    round-trip. The delivered-ledger is shared with `a`, so whichever surface
-    reads them, they are not delivered twice.
+  - **`--comments` / `--ack`.** The notes you leave in the viewer are collected
+    by `lib.diff_comments` — cmux folds them into the next message its own
+    composer submits, and a cockpit workspace is a terminal running Claude's
+    TUI, which has no composer, so nothing ever read them. In-workspace you
+    *are* the session, so the whole review loop closes here: leave the notes in
+    the split, `--comments` to read them, address them, `--ack` to retire them.
+    The two are separate on purpose — see `_show_comments`.
 
 Everything else (`--branch`, `--staged`, `--unstaged`, `--last-turn`) is handed
 straight to cmux, which already resolves merge bases and owns the `last-turn`
@@ -81,21 +81,54 @@ def _pr_patch(root: Path) -> tuple[str, str]:
     return res.stdout, ""
 
 
-def _print_comments(root: Path) -> int:
-    """Print this worktree's pending diff-viewer notes and mark them delivered.
+def _pending(root: Path) -> list:
+    """This worktree's undelivered diff-viewer notes.
 
     Offers both the worktree root and the checkout it was cut from as candidate
-    keys, exactly as the TUI's `a` does: which of the two cmux files a worktree
-    under is undocumented, both are cheap to offer, and the cost of guessing
-    wrong is a lookup that silently returns nothing.
+    keys: which of the two cmux files a worktree under is undocumented, both are
+    cheap to offer, and the cost of guessing wrong is a lookup that silently
+    returns nothing.
     """
-    pend = diff_comments.pending([root, main_worktree_path(root)])
+    return diff_comments.pending([root, main_worktree_path(root)])
+
+
+def _show_comments(root: Path) -> int:
+    """`--comments`: print the pending notes and mark **nothing**.
+
+    Reading is not addressing, and this is the half that must be repeatable.
+    The reader here is the agent standing in the worktree, so acknowledging on
+    *print* would mean a turn that dies between reading a remark and acting on
+    it loses it with nothing left to re-surface it — review feedback that exists
+    in no other place. Marking is `--ack`'s job, run once the work is done.
+    """
+    pend = _pending(root)
     if not pend:
         print("cockpit diff: no pending diff comments for this worktree")
         return 0
     for c in pend:
         print(f"{c.file}:{c.line} — {c.message}")
+    print(
+        f"\n{len(pend)} pending. Address them, then run `cockpit diff --ack` "
+        "so they stop being offered."
+    )
+    return 0
+
+
+def _ack_comments(root: Path) -> int:
+    """`--ack`: mark every pending note delivered, having acted on it.
+
+    Deliberately a separate gesture rather than a flag on `--comments`, so the
+    ledger records *addressed*, not *displayed*. Re-running with nothing pending
+    is a no-op that says so, since the honest answer to "did I already ack?" is
+    worth more than a silent success.
+    """
+    pend = _pending(root)
+    if not pend:
+        print("cockpit diff: nothing to acknowledge")
+        return 0
     diff_comments.mark_delivered([c.id for c in pend])
+    for c in pend:
+        print(f"acked {c.file}:{c.line}")
     print(f"\n{len(pend)} comment(s) marked delivered.")
     return 0
 
@@ -118,8 +151,14 @@ def main(argv: list[str] | None = None) -> int:
     sources.add_argument(
         "--comments",
         action="store_true",
-        help="Print the notes left in the diff viewer for this worktree and "
-        "mark them delivered, instead of opening a diff.",
+        help="Print the notes left in the diff viewer for this worktree, "
+        "instead of opening a diff. Marks nothing — see --ack.",
+    )
+    sources.add_argument(
+        "--ack",
+        action="store_true",
+        help="Mark this worktree's pending notes delivered, once you have "
+        "addressed them, so they stop being offered.",
     )
     p.add_argument(
         "--base",
@@ -134,7 +173,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.comments:
-        return _print_comments(root)
+        return _show_comments(root)
+    if args.ack:
+        return _ack_comments(root)
 
     branch = current_branch(root)
     label = branch_label(branch) or root.name

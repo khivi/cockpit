@@ -122,9 +122,12 @@ def test_viewer_failure_exits_1(monkeypatch, in_worktree, capsys):
     assert "browser is off" in capsys.readouterr().err
 
 
-def test_comments_prints_and_marks_delivered(
+def test_comments_prints_without_marking_anything(
     monkeypatch, in_worktree, rendered, capsys
 ):
+    """Reading is not addressing. The reader is the agent standing in the
+    worktree, so acking on print would lose a note to any turn that died
+    between reading it and acting on it — feedback that exists nowhere else."""
     monkeypatch.setattr(diff_cli, "main_worktree_path", lambda root: Path("/repo"))
     monkeypatch.setattr(
         diff_cli.diff_comments,
@@ -139,8 +142,46 @@ def test_comments_prints_and_marks_delivered(
     assert diff_cli.main(["--comments"]) == 0
     out = capsys.readouterr().out
     assert "a.py:7 — rename this" in out
-    assert marked == [["c1"]]
+    assert "--ack" in out, "it must say how to retire them"
+    assert marked == [], "--comments must mark nothing"
     assert not rendered, "--comments must not open a diff"
+
+
+def test_ack_marks_them_delivered(monkeypatch, in_worktree, rendered, capsys):
+    monkeypatch.setattr(diff_cli, "main_worktree_path", lambda root: Path("/repo"))
+    monkeypatch.setattr(
+        diff_cli.diff_comments,
+        "pending",
+        lambda roots: [Comment(id="c1", file="a.py", line=7, message="rename this")],
+    )
+    marked: list[list[str]] = []
+    monkeypatch.setattr(
+        diff_cli.diff_comments, "mark_delivered", lambda ids: marked.append(list(ids))
+    )
+
+    assert diff_cli.main(["--ack"]) == 0
+    assert marked == [["c1"]]
+    assert "acked a.py:7" in capsys.readouterr().out
+    assert not rendered
+
+
+def test_ack_with_nothing_pending_says_so(monkeypatch, in_worktree, capsys):
+    monkeypatch.setattr(diff_cli, "main_worktree_path", lambda root: None)
+    monkeypatch.setattr(diff_cli.diff_comments, "pending", lambda roots: [])
+    marked: list = []
+    monkeypatch.setattr(
+        diff_cli.diff_comments, "mark_delivered", lambda ids: marked.append(ids)
+    )
+
+    assert diff_cli.main(["--ack"]) == 0
+    assert "nothing to acknowledge" in capsys.readouterr().out
+    assert marked == []
+
+
+def test_comments_and_ack_are_mutually_exclusive(in_worktree):
+    with pytest.raises(SystemExit) as e:
+        diff_cli.main(["--comments", "--ack"])
+    assert e.value.code == 2
 
 
 def test_comments_offers_both_candidate_roots(monkeypatch, in_worktree):
