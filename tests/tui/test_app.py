@@ -22,7 +22,6 @@ import pytest
 from textual.widgets import Input, Static
 
 from cockpit.lib import diff_comments
-from cockpit.lib.cmux import CmuxUnavailable
 from cockpit.lib.config import apply_org_defaults
 from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
@@ -46,13 +45,6 @@ def _isolate(monkeypatch, tmp_path):
     # of whether cmux/limux is on PATH (CI has neither → would resolve "none").
     # Backend-specific tests override this.
     monkeypatch.setattr("cockpit.tui.app.resolve_tool", lambda: "cmux")
-    # `compose` resolves the diff-viewer gate, which probes cmux (`--help` +
-    # `browser-status`). Unstubbed that is a real subprocess in every TUI test —
-    # slow, machine-dependent, and it collides with tests that stub
-    # `subprocess.run` for their own purposes (compose would consume their fake
-    # and blow up on its return value). Footer tests that care about the gate
-    # construct `FooterBar` directly with the kwarg instead.
-    monkeypatch.setattr("cockpit.tui.app.diff_viewer_available", lambda: True)
     # `_cache_repo_name` shells out to `gh repo view` for the PR-cache key; stub
     # it so no test hits the network (the nwo tests re-patch with their own).
     monkeypatch.setattr("cockpit.tui.app.repo_nwo", lambda p: ("acme", Path(p).name))
@@ -2906,46 +2898,6 @@ async def _press_a(monkeypatch, wt, text, toasts=None):
         await pilot.pause(0.6)
 
 
-async def test_ask_carries_the_rows_pending_diff_comments(monkeypatch, tmp_path):
-    """A cockpit session is a terminal running Claude's TUI, so it has no cmux
-    composer to fold these in on submit — `a` is the delivery. They follow the
-    typed line: what you typed is the instruction, the anchors are its
-    context."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    _seed_diff_comments(monkeypatch, tmp_path, wt.path, [_a_comment()])
-    calls: list[tuple[str, str]] = []
-    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _accepting_gate(calls))
-    await _press_a(monkeypatch, wt, "address these")
-
-    assert calls == [
-        ("ws1", "address these · diff comments: app/main.py:10 — reduce comments")
-    ]
-    # Consumed, so the next `a` doesn't say it all again.
-    assert diff_comments.pending([wt.path]) == []
-
-
-async def test_ask_carrying_comments_focuses_the_workspace_on_delivery(
-    monkeypatch, tmp_path
-):
-    """You were just in this workspace's diff viewer leaving these notes — land
-    back in it once they're sent, so watching the response doesn't cost a third
-    manual switch on top of the two `d`/`a` already need."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    _seed_diff_comments(monkeypatch, tmp_path, wt.path, [_a_comment()])
-    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _accepting_gate([]))
-    refs: list[str] = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
-    )
-    toasts: list[str] = []
-    await _press_a(monkeypatch, wt, "address these", toasts=toasts)
-
-    assert refs == ["ws1"]
-    assert any("focused" in t for t in toasts)
-
-
 async def test_a_plain_ask_does_not_focus(monkeypatch, tmp_path):
     """A plain `a` (nudging someone, a batch across rows) must leave you where
     you are — auto-focus is scoped to the comment-carrying case only."""
@@ -3007,249 +2959,6 @@ async def test_ask_without_comments_sends_the_typed_line_verbatim(
     await _press_a(monkeypatch, wt, "rebase onto main")
 
     assert calls == [("ws1", "rebase onto main")]
-
-
-async def test_the_ask_modal_announces_what_will_ride_along(monkeypatch, tmp_path):
-    """The comments are appended to a one-line send you can't see before it
-    goes, so the modal has to say they're in it — finding out afterwards is too
-    late."""
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    _seed_diff_comments(
-        monkeypatch, tmp_path, wt.path, [_a_comment(), _a_comment(cid="c2", line=20)]
-    )
-    app, _ = _make_app()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause()
-        hint = str(app.screen.query_one("#ask-comments", Static).render())
-
-    assert "2 diff review comments" in str(hint)
-
-
-# ── `d` diff → cmux's native viewer ──────────────────────────────────────────
-
-
-def _seed_diff_row(monkeypatch, tmp_path):
-    wt = _seed_one_worktree(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        "cockpit.tui.app.find_pr_payload", lambda *a, **k: {"number": 7}
-    )
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    return wt
-
-
-async def _press_d(monkeypatch, wt, toasts):
-    app, _ = _make_app()
-    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app._render_table([("repo", "repo", None, "none", [wt])])
-        await pilot.pause()
-        await pilot.press("d")
-        await pilot.pause(0.6)
-
-
-async def test_diff_key_pipes_plain_gh_diff_into_cmux_diff(monkeypatch, tmp_path):
-    """Plain `gh pr diff`, NOT --color: the viewer does its own highlighting and
-    ANSI would only fight it. Unified layout, because the pane is narrow."""
-    wt = _seed_diff_row(monkeypatch, tmp_path)
-    seen: list = []
-
-    def _run(args, **kwargs):
-        seen.append((args, kwargs.get("input")))
-        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
-
-    monkeypatch.setattr("subprocess.run", _run)
-    toasts: list[str] = []
-    await _press_d(monkeypatch, wt, toasts)
-
-    gh, cmux_call = (
-        [a for a, _ in seen if a[0] == "gh"],
-        [(a, i) for a, i in seen if a[0] == "cmux"],
-    )
-    assert gh == [["gh", "pr", "diff", "7"]]
-    assert "--color" not in gh[0]
-    args, piped = cmux_call[0]
-    assert args[:3] == ["cmux", "diff", "-"]
-    assert "--layout" in args and args[args.index("--layout") + 1] == "unified"
-    assert piped == "PATCH"  # the patch goes in on stdin
-    assert any("diff open" in t for t in toasts)
-
-
-def _diff_cmux_args(seen):
-    return next(a for a, _ in seen if a[0] == "cmux")
-
-
-async def _press_d_capturing(monkeypatch, wt, seen):
-    def _run(args, **kwargs):
-        seen.append((args, kwargs.get("input")))
-        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
-
-    monkeypatch.setattr("subprocess.run", _run)
-    await _press_d(monkeypatch, wt, [])
-
-
-async def test_diff_opens_in_the_rows_own_workspace(monkeypatch, tmp_path):
-    """The split belongs beside the session it describes. Left to cmux's
-    `$CMUX_WORKSPACE_ID` default it lands in the dashboard's own workspace,
-    which is a Textual TUI with no agent behind it."""
-    wt = _seed_diff_row(monkeypatch, tmp_path)
-    seen: list = []
-    await _press_d_capturing(monkeypatch, wt, seen)
-
-    args = _diff_cmux_args(seen)
-    assert args[args.index("--workspace") + 1] == "ws1"
-
-
-async def test_diff_files_its_comments_against_the_rows_repo(monkeypatch, tmp_path):
-    """cmux persists viewer comments keyed by REPO ROOT, which it derives from
-    this call. Left to the daemon's inherited cwd every row's comments land
-    under whatever repo `cockpit watch` was launched in, and `a` finds none for
-    the row that made them. Which input cmux reads for a piped patch is
-    undocumented, so both are set."""
-    wt = _seed_diff_row(monkeypatch, tmp_path)
-    seen: list = []
-
-    def _run(args, **kwargs):
-        seen.append((args, kwargs.get("cwd")))
-        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
-
-    monkeypatch.setattr("subprocess.run", _run)
-    await _press_d(monkeypatch, wt, [])
-
-    args, cwd = next((a, c) for a, c in seen if a[0] == "cmux")
-    assert args[args.index("--cwd") + 1] == str(wt.path)
-    assert cwd == wt.path
-
-
-async def test_diff_still_opens_untargeted_without_a_workspace(monkeypatch, tmp_path):
-    """`f` spawns a workspace, `d` deliberately does not — so a row without one
-    still gets its diff, just with nowhere to send comments. Degrade, don't
-    refuse: a diff you can read beats no diff."""
-    wt = _seed_diff_row(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        "cockpit.tui.app.workspace_cwds", lambda *, include_self=False: {}
-    )
-    seen: list = []
-    await _press_d_capturing(monkeypatch, wt, seen)
-
-    args = _diff_cmux_args(seen)
-    assert "--workspace" not in args
-    assert args[:3] == ["cmux", "diff", "-"]
-
-
-async def test_diff_drops_the_inherited_source_surface(monkeypatch, tmp_path):
-    """`CMUX_SURFACE_ID` is `--surface`'s default — the surface the split is cut
-    from — and the daemon carries whichever one launched it. Stale, cmux fails
-    the whole call with `not_found: Source surface not found`; absent, it
-    resolves one in the target workspace itself."""
-    wt = _seed_diff_row(monkeypatch, tmp_path)
-    monkeypatch.setenv("CMUX_SURFACE_ID", "DEAD-BEEF")
-    monkeypatch.setenv("CMUX_WORKSPACE_ID", "keep-me")
-    seen: list = []
-
-    def _run(args, **kwargs):
-        seen.append((args, kwargs.get("env")))
-        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
-
-    monkeypatch.setattr("subprocess.run", _run)
-    await _press_d(monkeypatch, wt, [])
-
-    env = next(e for a, e in seen if a[0] == "cmux")
-    assert "CMUX_SURFACE_ID" not in env
-    assert env["CMUX_WORKSPACE_ID"] == "keep-me"  # only the one variable goes
-
-
-async def test_diff_survives_a_backend_hiccup_resolving_the_workspace(
-    monkeypatch, tmp_path
-):
-    """`workspace_cwds` raises rather than reporting an empty set, and that must
-    not cost the diff — the targeting is an enhancement, not a precondition."""
-    wt = _seed_diff_row(monkeypatch, tmp_path)
-
-    def _boom(*, include_self=False):
-        raise CmuxUnavailable("list-workspaces failed")
-
-    monkeypatch.setattr("cockpit.tui.app.workspace_cwds", _boom)
-    seen: list = []
-    await _press_d_capturing(monkeypatch, wt, seen)
-
-    args = _diff_cmux_args(seen)
-    assert "--workspace" not in args
-
-
-async def test_diff_key_names_the_fix_when_the_browser_is_disabled(
-    monkeypatch, tmp_path
-):
-    """cmux's diff viewer is a browser surface and the browser is a runtime
-    toggle, so this failure gets the actual remedy, not a generic error."""
-    wt = _seed_diff_row(monkeypatch, tmp_path)
-
-    def _run(args, **kwargs):
-        if args[0] == "cmux":
-            return subprocess.CompletedProcess(
-                args, 1, "", "Error: browser_disabled: cmux browser is disabled"
-            )
-        return subprocess.CompletedProcess(args, 0, stdout="PATCH", stderr="")
-
-    monkeypatch.setattr("subprocess.run", _run)
-    toasts: list[str] = []
-    await _press_d(monkeypatch, wt, toasts)
-    assert any("cmux enable-browser" in t for t in toasts)
-
-
-async def test_diff_key_needs_no_gh_call_without_a_pr(monkeypatch, tmp_path):
-    wt = _seed_one_worktree(monkeypatch, tmp_path)  # find_pr_payload → None
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
-    ran: list = []
-    monkeypatch.setattr("subprocess.run", lambda *a, **k: ran.append(a))
-    toasts: list[str] = []
-    await _press_d(monkeypatch, wt, toasts)
-    assert ran == []
-    assert any("no PR" in t for t in toasts)
-
-
-async def test_diff_key_points_at_p_on_a_non_cmux_backend(monkeypatch, tmp_path):
-    wt = _seed_diff_row(monkeypatch, tmp_path)
-    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: False)
-    ran: list = []
-    monkeypatch.setattr("subprocess.run", lambda *a, **k: ran.append(a))
-    toasts: list[str] = []
-    await _press_d(monkeypatch, wt, toasts)
-    assert ran == []
-    assert any("requires cmux" in t and "p" in t for t in toasts)
-
-
-async def test_diff_key_survives_a_raising_subprocess(monkeypatch, tmp_path):
-    wt = _seed_diff_row(monkeypatch, tmp_path)
-
-    def _boom(args, **kwargs):
-        raise OSError("no cmux")
-
-    monkeypatch.setattr("subprocess.run", _boom)
-    toasts: list[str] = []
-    await _press_d(monkeypatch, wt, toasts)
-    assert any("failed" in t for t in toasts)  # a toast, not a traceback
-
-
-async def test_footer_gates_diff_on_pr_and_cmux():
-    from cockpit.tui.widgets.footer_bar import FooterBar
-
-    fb = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
-    fb._row_caps = frozenset()
-    assert fb._skip("open_diff")  # nothing to diff
-    fb._row_caps = frozenset({"pr"})
-    assert not fb._skip("open_diff")
-    for backend in ("limux", "none"):
-        fb2 = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend=backend)
-        fb2._row_caps = frozenset({"pr"})
-        assert fb2._skip("open_diff"), backend  # no viewer there; `p` instead
-
-
-# ── `a` on a repo header → repo-wide ─────────────────────────────────────────
 
 
 async def _press_a_on_header(monkeypatch, wt, text, toasts):
@@ -3529,26 +3238,6 @@ async def test_A_hint_hides_off_cmux(monkeypatch, tmp_path):
     assert fb._skip("ask_snoozed")
 
 
-async def test_footer_hides_diff_when_the_viewer_is_unavailable():
-    """`d` renders through cmux's browser-backed viewer. When that can't run,
-    the key hides rather than offering something that would error — preflight
-    has already said why at startup."""
-    from cockpit.tui.widgets.footer_bar import FooterBar
-
-    fb = FooterBar(
-        CockpitApp.BINDINGS, show_tickets=True, backend="cmux", diff_viewer=False
-    )
-    fb._row_caps = frozenset({"pr"})
-    assert fb._skip("open_diff")
-    assert not fb._skip("open_pr")  # `p` is the fallback and stays
-
-    fb2 = FooterBar(
-        CockpitApp.BINDINGS, show_tickets=True, backend="cmux", diff_viewer=True
-    )
-    fb2._row_caps = frozenset({"pr"})
-    assert not fb2._skip("open_diff")
-
-
 # ── retry narrowing + draft lifecycle ────────────────────────────────────────
 
 
@@ -3651,7 +3340,6 @@ async def test_header_advertises_the_menu_and_the_footer_no_longer_does():
     # the footer: without it, "Show config", "Edit config",
     # "Output" and the feature guide are reachable only by someone who already
     # knows `ctrl+p` is a convention.
-    from textual.widgets import Static
 
     from cockpit.tui.widgets.footer_bar import FooterBar
     from cockpit.tui.widgets.header_bar import HeaderBar
@@ -3676,7 +3364,6 @@ async def test_menu_is_not_row_gated():
     # Every footer hint can be gated off by row state (`h` hides on a worktree
     # row). The menu targets the app, so it must survive any row state — least
     # of all the empty table a first-time user actually sees.
-    from textual.widgets import Static
 
     from cockpit.tui.widgets.footer_bar import FooterBar
     from cockpit.tui.widgets.header_bar import HeaderBar
@@ -3827,7 +3514,6 @@ async def test_menu_is_not_clipped_at_a_narrow_terminal():
     # The menu is `width: auto` against a `1fr` status half, so every squeeze
     # lands on the countdowns instead. Pinned at 80 columns (the classic
     # floor); below ~55 the table itself is unusable.
-    from textual.widgets import Static
 
     from cockpit.tui.widgets.header_bar import HeaderBar
 

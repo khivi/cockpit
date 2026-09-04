@@ -1,20 +1,24 @@
-"""cmux diff-viewer review comments, collected so `a` can deliver them.
+"""cmux diff-viewer review comments, collected so they can actually be delivered.
 
-cmux's diff viewer (what `d` opens) lets you leave line-anchored comments, and
-its own composer folds them into the next message you submit — "Diff review
-comments are included when you submit". A cockpit-spawned workspace has no such
-composer: it is a `type: terminal` surface running Claude Code's own TUI, whose
-input belongs to Claude, not to cmux. So the comments were written and nothing
-ever read them. This module is the missing collector — `app._send_ask` asks for
-the row's pending comments and rides them along with the line you type.
+cmux's diff viewer (what `cockpit diff` opens) lets you leave line-anchored
+comments, and its own composer folds them into the next message you submit —
+"Diff review comments are included when you submit". A cockpit-spawned workspace
+has no such composer: it is a `type: terminal` surface running Claude Code's own
+TUI, whose input belongs to Claude, not to cmux. So the comments were written and
+nothing ever read them. This module is the missing collector.
+
+`cockpit diff --comments` prints them for the session standing in the worktree,
+and `cockpit diff --ack` retires them once they are addressed. Reading and
+retiring are separate calls on purpose: a turn that dies between the two leaves
+the notes pending rather than losing review feedback that exists nowhere else.
 
 **The store is keyed by repo root**, at
 `~/Library/Application Support/cmux/diff-comments/<sha256(repoRoot)[:24]>.json`,
-which is why `_open_diff` has to run `cmux diff` from the row's worktree: left
-to the daemon's inherited cwd, every comment from every row is filed under
-whatever repo `cockpit watch` happened to be launched in. Lookup here matches on
-each file's own `repoRoot` field rather than recomputing that digest, so the
-filename scheme is cmux's business and a change to it costs us nothing.
+which is why `cmux.render_diff` sets both `--cwd` and the subprocess cwd: left to
+an inherited cwd, comments are filed under whatever repo the caller happened to
+be launched in. Lookup here matches on each file's own `repoRoot` field rather
+than recomputing that digest, so the filename scheme is cmux's business and a
+change to it costs us nothing.
 
 **Read-only on cmux's store, and that is deliberate.** Consuming a delivered
 comment by rewriting cmux's file is the obvious alternative and it means racing
@@ -129,19 +133,6 @@ def pending(paths) -> list[Comment]:
     out = [c for bucket in pending_by_root(roots).values() for c in bucket]
     out.sort(key=lambda c: (c.file, c.line))
     return out
-
-
-def summarize(comments) -> str:
-    """Render comments as ONE line: `file:line — remark; file:line — remark`.
-
-    Deliberately built from the structured fields rather than the store's own
-    `submissionText`, which wraps each remark in a fenced diff excerpt. That
-    shape is right for a chat composer and wrong here twice over: `cmux send`
-    turns every newline into Enter (see `cmux.one_line`), so a fenced block
-    cannot survive the trip, and the agent is sitting in the worktree and can
-    read the file itself. The anchor is the part it cannot guess.
-    """
-    return "; ".join(f"{c.file}:{c.line} — {c.message}" for c in comments)
 
 
 def mark_delivered(ids) -> None:

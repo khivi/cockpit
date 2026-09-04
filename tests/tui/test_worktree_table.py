@@ -861,7 +861,10 @@ def test_row_tooltips_aligned_and_decode(cache_dir, monkeypatch):
     assert tip("Ticket") == "PE-1"  # full id, in case `_TICKET_MAX` clipped it
     assert tip(_STATUS_ICON) == "PE-1: In Review"  # 📍 decoded
     assert tip(_DIRTY_ICON) == "1 staged, 2 modified"  # ✎, zero segment dropped
-    assert tip(_DIFF_COMMENT_ICON) == "2 pending diff comments — press a to send"
+    assert tip(_DIFF_COMMENT_ICON) == (
+        "2 diff notes waiting for this session — the daemon hands them over; "
+        "`cockpit diff --comments` reads them in the worktree"
+    )
     assert tip("Title") is None
 
 

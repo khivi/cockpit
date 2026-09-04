@@ -12,7 +12,7 @@ having to remember.
 | | |
 |---|---|
 | [**The dashboard**](#the-dashboard) | One row per change, every repo. Bands by whose turn it is, indents stacked PRs, parks repos you're not on |
-| [**Keys**](#keys) | The whole keymap, the table's links, and the diff-and-ask loop for reviewing your agent's work |
+| [**Keys**](#keys) | The whole keymap, the table's links, and the `cockpit diff` review loop that hands your notes to the agent |
 | [**Starting work**](#starting-work-one-argument-any-source) | One argument — branch, PR, issue, ticket, Slack link, failed CI run — and the worktree, terminal, and context all exist |
 | [**The nudge**](#the-nudge) | Your PR goes red, the session gets told. Only when it's genuinely parked, only your own PRs, muteable and snoozeable |
 | [**Tickets**](#tickets) | Linear, Jira, GitHub Issues, Trello — live state in the row, a dev-done pill, and the ticket moved on merge |
@@ -117,8 +117,7 @@ terminal outside your registered repos shows no PR at all.
 | `f` | Focus this row's terminal — spawning one first if it doesn't have one yet |
 | `p` | Open the PR in a browser |
 | `t` | Open the linked ticket (Linear / Jira / GitHub / Trello) |
-| `d` | Open the PR's diff in cmux's viewer — comment on any line, `a` delivers the notes |
-| `a` | Ask — send a line to this row's session, carrying any diff notes; on a repo header, to every session in it |
+| `a` | Ask — send a line to this row's session; on a repo header, to every session in it |
 | `A` | Ask the snoozed — send a line to every session in this repo's snoozed pile, without unfolding it |
 | `c` | Close the worktree + terminal |
 | `C` | Force close — overrides the open-PR refusal, never the ones that would lose work |
@@ -148,17 +147,42 @@ This needs a terminal that supports hyperlinks: iTerm2, Ghostty, kitty and WezTe
 Apple's Terminal.app doesn't. `p` and `t` open the PR and the ticket from the keyboard
 either way.
 
-**`d` and `a` together are how you review your agent's work.** `d` opens the diff in a
-browser split beside that row's terminal; click a line and leave a note. A note you leave
-shows up back in the table as a count in the 📝 column, so switching back to the dashboard
-never loses track of what's waiting to go out. Those notes ride the next message you send
-with `a`, which opens with a line already written and tells you how many are going with
-it — so the loop is read, mark, switch back, `a`, enter — and sending notes drops you
-straight back into that row's terminal, so there's no separate switch to go watch it work.
-Edit that line to say more, or clear it to drop the message entirely. The notes stay local;
-nothing reaches the PR, so use `p` for that. Each is delivered once, and a message the
-session refuses (it was mid-turn) keeps its notes for the retry. A row whose terminal isn't
-open yet still gets the diff — press `f` first if you want to send anything.
+**`cockpit diff` is how you review your agent's work.** You read the diff where the work
+is — in the session's own terminal, not on the dashboard:
+
+```bash
+cockpit diff              # this worktree's PR diff — the branch diff if there's no PR yet
+cockpit diff --branch     # or ask for one directly: --branch, --staged,
+cockpit diff --staged     #   --unstaged, --last-turn (what changed since the agent's
+cockpit diff --last-turn  #   last turn), with --base to re-point --branch
+cockpit diff --comments   # read the notes left on this work
+cockpit diff --ack        # retire them, once they're addressed
+```
+
+That opens a browser split beside you, syntax-highlighted; click a line and leave a note.
+
+**Then the session picks them up on its own.** Within ~30 seconds the daemon notices notes
+waiting on that worktree and hands them to the agent sitting in it — you leave the notes,
+close the split, and the work starts. It reads them, addresses them, and runs `--ack` to
+retire them. Reading and acking are separate commands on purpose: a turn that ends early
+leaves the notes pending rather than losing review feedback that exists nowhere else, and
+a note the agent can't action stays unacked instead of being quietly cleared.
+
+That hand-over is the one automatic message cockpit sends that isn't about a PR, and it
+plays by the same rules: it goes only to a session genuinely parked at its prompt, never
+into one mid-turn. It ignores mute and snooze, though — those mean "stop telling me about
+this PR", and a note you just wrote is not cockpit nagging you, it's your own input. Each
+batch is handed over once; adding a note later sends again.
+
+The dashboard's 📝 column counts what's still unaddressed per worktree, so a glance tells
+you which session hasn't got to your notes yet.
+
+The notes stay local; nothing reaches the PR, so use `p` for that.
+
+**There is no diff key on the dashboard, and that's deliberate.** The daemon can only open
+a split beside *itself* — which is a dashboard, not a session — so the diff kept landing in
+the wrong place. Running the command where the work is fixes that by construction, and it
+needs no cockpit config: any git repo will do.
 
 ---
 
@@ -388,6 +412,11 @@ second.
 
 `/cockpit-new`, `/cockpit-close`, `/cockpit-broadcast` and `/cockpit-nudge` are installed
 into Claude Code by `cockpit setup`, so you can drive all four from inside a session.
+
+**`cockpit diff` ships as a skill rather than a command**, because it is the one of these a
+session should reach for on its own: a command has to be typed, a skill is matched from
+what you asked for. So "show me the diff" opens it, and the session checks for review notes
+left on its work without being told to.
 
 ---
 

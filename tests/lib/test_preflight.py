@@ -1411,10 +1411,11 @@ def _clear_probe_cache(monkeypatch):
         capabilities,
         "probe",
         lambda: BackendProbe(
-            # `diff` and `capabilities` are not in REQUIRED_VERBS — the first is
-            # gated through `has_diff_viewer`, the second is the too-old signal
-            # reported on its own — so both must be added by hand or preflight
-            # warns about them under an otherwise complete backend.
+            # `diff` and `capabilities` are not in REQUIRED_VERBS — the first
+            # gets its own warning (it degrades `cockpit diff`, not the
+            # dashboard), the second is the too-old signal reported on its own —
+            # so both must be added by hand or preflight warns about them under
+            # an otherwise complete backend.
             verbs=frozenset({*REQUIRED_VERBS, "diff", "capabilities"}),
             capabilities=frozenset(REQUIRED_CAPABILITIES),
             browser_enabled=True,

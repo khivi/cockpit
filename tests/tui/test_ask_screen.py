@@ -13,7 +13,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Static, TextArea
 
-from cockpit.tui.widgets.ask_screen import COMMENTS_LEAD, AskScreen
+from cockpit.tui.widgets.ask_screen import AskScreen
 
 pytestmark = pytest.mark.asyncio
 
@@ -116,21 +116,10 @@ async def test_escape_hands_back_what_was_typed():
     assert result == [("cancel", "half a thought")]
 
 
-async def test_pending_comments_offer_a_lead_in():
-    """Comments ride a message, so a pending set still needs a line to carry
-    it — and having to invent one is what leaves them undelivered."""
-    app = _Host()
-    result: list = []
-    async with app.run_test() as pilot:
-        await app.push_screen(AskScreen(comments=2), result.append)
-        await pilot.pause()
-        assert app.screen.query_one(Input).value == COMMENTS_LEAD
-        await pilot.press("enter")
-        await pilot.pause()
-    assert result == [("send", COMMENTS_LEAD)]
-
-
-async def test_no_comments_no_lead_in():
+async def test_the_box_opens_empty():
+    """`a` sends exactly what you type. It briefly offered a lead-in when diff
+    comments were pending; those are now read in the workspace by `cockpit diff
+    --comments`, so there is nothing for `a` to prefill."""
     app = _Host()
     async with app.run_test() as pilot:
         await app.push_screen(AskScreen())
@@ -138,48 +127,23 @@ async def test_no_comments_no_lead_in():
         assert app.screen.query_one(Input).value == ""
 
 
-async def test_a_restored_draft_beats_the_lead_in():
-    """The draft is what a previous send couldn't deliver — overwriting it
-    would cost exactly the text the stash exists to preserve."""
+async def test_a_restored_draft_is_offered():
+    """The draft is what a previous send couldn't deliver — the stash exists to
+    preserve exactly that text."""
     app = _Host()
     async with app.run_test() as pilot:
-        await app.push_screen(AskScreen(initial="rebase first", comments=3))
+        await app.push_screen(AskScreen(initial="rebase first"))
         await pilot.pause()
         assert app.screen.query_one(Input).value == "rebase first"
 
 
-async def test_escape_does_not_stash_an_untouched_lead_in():
-    """It isn't a thought the user had, and it would outlive the comments that
-    prompted it — restoring on a later `a` as a draft referring to nothing."""
+async def test_emptying_a_restored_draft_retracts_it():
+    """Clearing the box and pressing enter drops the draft rather than sending
+    it — the one way to retract one."""
     app = _Host()
     result: list = []
     async with app.run_test() as pilot:
-        await app.push_screen(AskScreen(comments=1), result.append)
-        await pilot.pause()
-        await pilot.press("escape")
-        await pilot.pause()
-    assert result == [("cancel", "")]
-
-
-async def test_escape_stashes_a_lead_in_that_was_edited():
-    app = _Host()
-    result: list = []
-    async with app.run_test() as pilot:
-        await app.push_screen(AskScreen(comments=1), result.append)
-        await pilot.pause()
-        app.screen.query_one(Input).value = f"{COMMENTS_LEAD}, carefully"
-        await pilot.press("escape")
-        await pilot.pause()
-    assert result == [("cancel", f"{COMMENTS_LEAD}, carefully")]
-
-
-async def test_emptying_the_lead_in_still_retracts():
-    """The one way to retract a draft must survive the prefill: clearing the
-    box and pressing enter drops it rather than sending the lead-in."""
-    app = _Host()
-    result: list = []
-    async with app.run_test() as pilot:
-        await app.push_screen(AskScreen(comments=2), result.append)
+        await app.push_screen(AskScreen(initial="stale draft"), result.append)
         await pilot.pause()
         app.screen.query_one(Input).value = ""
         await pilot.press("enter")

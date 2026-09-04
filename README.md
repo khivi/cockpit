@@ -43,7 +43,7 @@ pipx install cmux-cockpit   # or: uv tool install cmux-cockpit
 cockpit setup
 ```
 
-`cockpit setup` wires the idle hooks and the `/cockpit-new` / `/cockpit-close` / `/cockpit-broadcast` / `/cockpit-nudge` commands into `~/.claude/`, and on a TTY offers the optional statusline. It's idempotent — re-run it any time. Update with `brew upgrade cockpit`.
+`cockpit setup` wires the idle hooks, the `/cockpit-new` / `/cockpit-close` / `/cockpit-broadcast` / `/cockpit-nudge` commands and the `cockpit-diff` skill into `~/.claude/`, and on a TTY offers the optional statusline. It's idempotent — re-run it any time. Update with `brew upgrade cockpit`.
 
 Coming from the old Claude Code plugin? See [`MIGRATION.md`](MIGRATION.md), and remove the plugin *before* installing — otherwise both sets of hooks fire.
 
@@ -64,13 +64,15 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 |---|---|
 | `f` | Focus the row's workspace — spawns one if it has none |
 | `p` · `t` | Open the PR · the linked ticket |
-| `d` · `a` | Open the PR diff · send a line to the row's session (on a repo header, to every session in it) |
+| `a` | Send a line to the row's session (on a repo header, to every session in it) |
 | `c` · `C` | Close the worktree + workspace — [never discards work](FEATURES.md#closing-up) |
 | `m` · `z` | Mute indefinitely · [snooze until the PR changes](FEATURES.md#the-nudge) |
 | `n` · `h` | Start something new · park the row's repo, or reveal / un-park a parked one |
 | `s` · `q` | Reconcile every repo now · quit |
 
 Hover any footer key for a sentence on what it does. **≡ Menu**, top right, holds logs, config, theme, the [feature guide](FEATURES.md), and the [release notes](https://github.com/khivi/cockpit/releases) — click it, or press `ctrl+p`.
+
+Reading a diff is the one thing you do *inside* a session rather than on the dashboard — [`cockpit diff`](FEATURES.md#keys) opens it in a browser split beside you, and `cockpit diff --comments` collects the line notes left on it.
 
 ## Configuration
 
@@ -102,7 +104,7 @@ Set `use_cship: true` (or accept the prompt at `cockpit setup`); drop fields you
 ## Uninstall
 
 ```bash
-cockpit teardown          # remove the ~/.claude statusLine/hooks/commands (do this before uninstall)
+cockpit teardown          # remove the ~/.claude statusLine/hooks/commands/skills (do this before uninstall)
 rm -rf ~/.config/cockpit  # state only; your worktrees remain
 brew uninstall cockpit
 ```

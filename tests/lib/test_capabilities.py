@@ -79,11 +79,6 @@ def _fake_cmux(help_text: str = HELP, caps: str = ALL_CAPS, browser: str = "disa
 HELP_WITH_BROWSER = HELP.replace(
     "  capabilities\n", "  capabilities\n  browser-status\n"
 )
-HELP_WITHOUT_DIFF = HELP_WITH_BROWSER
-HELP_WITH_DIFF = HELP_WITH_BROWSER.replace(
-    "  capabilities\n",
-    "  capabilities\n  diff [patch-file|-] [--layout <split|unified>]\n",
-)
 
 
 def test_parse_verbs_reads_the_commands_section():
@@ -245,37 +240,3 @@ def test_probe_treats_anything_but_enabled_as_off():
             found = probe()
         expected = reply.strip().lower() == "enabled"
         assert found.browser_enabled is expected, reply
-
-
-def test_has_diff_viewer_needs_both_the_verb_and_a_live_browser():
-    from cockpit.lib.capabilities import BackendProbe
-
-    both = BackendProbe(frozenset({"diff"}), frozenset(), browser_enabled=True)
-    assert both.has_diff_viewer is True
-    assert BackendProbe(frozenset({"diff"}), frozenset()).has_diff_viewer is False
-    assert (
-        BackendProbe(frozenset(), frozenset(), browser_enabled=True).has_diff_viewer
-        is False
-    )
-
-
-def test_diff_viewer_available_reflects_the_probe():
-    from cockpit.lib.capabilities import diff_viewer_available
-
-    with (
-        patch("cockpit.lib.tool.is_cmux", return_value=True),
-        patch(
-            "cockpit.lib.cmux.cmux",
-            side_effect=_fake_cmux(HELP_WITH_DIFF, browser="enabled"),
-        ),
-    ):
-        assert diff_viewer_available() is True
-    probe.cache_clear()
-    with (
-        patch("cockpit.lib.tool.is_cmux", return_value=True),
-        patch(
-            "cockpit.lib.cmux.cmux",
-            side_effect=_fake_cmux(HELP_WITH_DIFF, browser="disabled"),
-        ),
-    ):
-        assert diff_viewer_available() is False

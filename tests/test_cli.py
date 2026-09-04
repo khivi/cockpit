@@ -182,3 +182,15 @@ def test_config_passes_rest(monkeypatch):
     monkeypatch.setattr("cockpit.config_cmd.main", fake)
     assert cli.main(["config", "inspect", "--repo", "svc-auth"]) == 0
     assert seen["argv"] == ["inspect", "--repo", "svc-auth"]
+
+
+def test_diff_passes_rest(monkeypatch):
+    seen = {}
+
+    def fake(argv):
+        seen["argv"] = argv
+        return 0
+
+    monkeypatch.setattr("cockpit.diff.main", fake)
+    assert cli.main(["diff", "--branch", "--base", "origin/main"]) == 0
+    assert seen["argv"] == ["--branch", "--base", "origin/main"]

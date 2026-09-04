@@ -46,7 +46,7 @@ from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.css.query import NoMatches
 
-from cockpit.lib import diff_comments, version
+from cockpit.lib import version
 from cockpit.lib.cache import (
     cost_reporting_available,
     cwd_cache,
@@ -54,7 +54,6 @@ from cockpit.lib.cache import (
     read_text,
     restamp_pref,
 )
-from cockpit.lib.capabilities import diff_viewer_available
 from cockpit.lib.cmux import (
     BLUE,
     LOOP_ICON,
@@ -223,7 +222,6 @@ class CockpitApp(App[None]):
         ("f", "focus_row", "Focus"),
         ("p", "open_pr", "Open PR"),
         ("t", "open_ticket", "Open ticket"),
-        ("d", "open_diff", "Diff"),
         ("a", "ask_row", "Ask"),
         ("A", "ask_snoozed", "Ask snoozed"),
         ("c", "close_row", "Close"),
@@ -332,10 +330,6 @@ class CockpitApp(App[None]):
             self.BINDINGS,
             show_tickets=show_tickets,
             backend=resolve_tool(),
-            # `d` renders through cmux's browser-backed diff viewer. Resolved
-            # ONCE here (the probe is process-cached) rather than per render —
-            # footer gating must stay a pure lookup, never a subprocess.
-            diff_viewer=diff_viewer_available(),
             id="footer",
         )
 
@@ -940,9 +934,6 @@ class CockpitApp(App[None]):
             return
         self._row_act(self._toggle_snooze)
 
-    def action_open_diff(self) -> None:
-        self._row_act(self._open_diff)
-
     def action_ask_row(self) -> None:
         """`a` — type a line and send it to this row's Claude session.
 
@@ -978,16 +969,7 @@ class CockpitApp(App[None]):
         # Restore a draft a previous send couldn't deliver. Keyed by row, not
         # global: a draft typed for one worktree must not surface when you press
         # `a` on a different one.
-        #
-        # The pending-comment count is read here rather than on the hint worker
-        # so the modal says what it will send the moment it opens: it is a
-        # couple of small local JSON reads, where the state hint costs a cmux
-        # subprocess. Announcing it matters — comments ride the message
-        # silently otherwise, and finding that out after the send is too late.
-        screen = AskScreen(
-            initial=self._ask_drafts.get(path, ""),
-            comments=len(diff_comments.pending([path])),
-        )
+        screen = AskScreen(initial=self._ask_drafts.get(path, ""))
         self.push_screen(screen, lambda text: self._on_ask(path, text))
         # Reading cmux costs a subprocess, so the modal is pushed first and the
         # state hint lands a moment later — `a` stays instant.
@@ -1858,18 +1840,14 @@ class CockpitApp(App[None]):
                 severity="warning",
             )
             return
-        # Comments left in `d`'s diff viewer ride this message — cmux's own
-        # semantics ("included when you submit"), delivered by us because a
-        # cockpit session is a terminal running Claude's TUI and has no cmux
-        # composer to fold them in. They follow the typed line rather than
-        # leading it: what you type is the instruction, the anchors are its
-        # context. The repo-header fan-out deliberately does NOT carry them — a
-        # comment names one file in one worktree, so copying it to every session
-        # in the repo would be N wrong deliveries for one right one.
-        pend = diff_comments.pending([wt.path, repo.get("path")])
-        body = (
-            f"{text} · diff comments: {diff_comments.summarize(pend)}" if pend else text
-        )
+        # `a` carries the typed line and nothing else. It used to append the
+        # worktree's pending diff-viewer comments, which made sense while `d`
+        # let you review from the dashboard; with the diff now opened by
+        # `cockpit diff` *inside* the workspace, whoever leaves a note is
+        # already in the session that has to act on it, and the round-trip out
+        # to a row and back was the whole cost. Reading and retiring them is
+        # `cockpit diff --comments` / `--ack`. **Do not** re-attach them here.
+        #
         # The gate's own verdict, so a refusal names its cause instead of
         # listing every cause it might have been — the same reasons the header
         # fan-out prints, and the same ones the modal's advisory hint showed.
@@ -1877,27 +1855,9 @@ class CockpitApp(App[None]):
         # responses, and only the first tells you the session needs a turn
         # completed by hand before `a` can ever reach it.
         skips: dict[str, str] = {}
-        if nudge_if_idle(ref, body, tag="ask", skips=skips):
+        if nudge_if_idle(ref, text, tag="ask", skips=skips):
             self._ask_drafts.pop(path_str, None)
-            # Only on a delivery the gate accepted: a refused send leaves the
-            # comments pending, exactly as it leaves the draft.
-            diff_comments.mark_delivered([c.id for c in pend])
-            extra = f" (+{len(pend)} diff comment(s))" if pend else ""
-            focused = ""
-            if pend:
-                # You were just in this workspace's diff viewer leaving these
-                # comments — jump back to it so watching the response doesn't
-                # cost a third manual switch. Scoped to the comment-carrying
-                # case only: a plain `a` (nudging someone, a batch of asks
-                # across rows) should leave you where you are, exactly as
-                # before. A focus failure must not read as the send failing —
-                # the message already landed.
-                try:
-                    select_workspace(ref)
-                    focused = " — focused"
-                except (CmuxUnavailable, RuntimeError, OSError):
-                    pass
-            self._notify(f"sent to {wt.label or wt.short}{extra}{focused}")
+            self._notify(f"sent to {wt.label or wt.short}")
         else:
             # Keep the text. The refusal is transient (a turn ends, a permission
             # is answered), so throwing away what the user typed would make them
@@ -1908,136 +1868,6 @@ class CockpitApp(App[None]):
                 f"ask skipped {wt.label or wt.short}: {why} — press a to retry",
                 severity="warning",
             )
-
-    @work(thread=True, group="read", exit_on_error=False)
-    def _open_diff(self, path_str: str) -> None:
-        # `d`: the row's PR diff in cmux's NATIVE viewer — `gh pr diff` piped to
-        # `cmux diff`, which renders it in a browser split with syntax
-        # highlighting, dual line numbers and collapsed unmodified regions.
-        # Cockpit deliberately does not reimplement any of that: a diff wants
-        # search and folding, a scrolling `Static` has neither, and the
-        # truncation cap that shape needed was the tell.
-        #
-        # Plain `gh pr diff`, NOT `--color always` — the viewer does its own
-        # highlighting and ANSI would only get in its way.
-        #
-        # `--layout unified` rather than split: the pane lands beside the
-        # dashboard and is therefore narrowish, where the split columns
-        # overprint each other (observed). Unified degrades gracefully.
-        #
-        # Writes no cell — a user-initiated navigation gesture, like `p`.
-        if not is_cmux():
-            self._notify("diff viewer requires cmux — press p", severity="warning")
-            return
-        resolved = self._resolve_worktree(path_str)
-        if resolved is None:
-            self._notify(f"diff: no worktree at {path_str}", severity="error")
-            return
-        repo, wt = resolved
-        payload = (
-            find_pr_payload(wt.branch, self._cache_repo_name(repo))
-            if wt.branch
-            else None
-        )
-        number = (payload or {}).get("number")
-        if not number:
-            self._notify("no PR for this row", severity="warning")
-            return
-        num = str(number)
-        # Open the split in the ROW's workspace, not cockpit's own. Defaulted,
-        # `cmux diff` targets `$CMUX_WORKSPACE_ID`, which for a daemon-spawned
-        # subprocess is the dashboard's own workspace — so the diff opened
-        # beside a Textual TUI instead of beside the session it describes. The
-        # comments you leave in the viewer never reach GitHub either way; `p` is
-        # still the route to the PR.
-        #
-        # Degrade rather than refuse: a row with no workspace (`f` spawns one,
-        # `d` deliberately does not) and a backend hiccup both fall back to the
-        # untargeted call, which renders exactly as before minus a place to send
-        # comments — a diff you can read beats no diff.
-        try:
-            ref = self._workspace_ref(wt)
-        except (CmuxUnavailable, RuntimeError, OSError):
-            ref = None
-        self._notify(f"opening diff for PR #{num}…")
-        try:
-            patch = subprocess.run(
-                ["gh", "pr", "diff", num],
-                cwd=wt.path,
-                capture_output=True,
-                text=True,
-                # A diff can carry a non-UTF-8 byte; decoding strictly would
-                # raise UnicodeDecodeError (a ValueError, not caught below) and
-                # the `exit_on_error=False` worker would swallow it, leaving the
-                # "opening diff…" toast and nothing else. Replace and render.
-                errors="replace",
-                timeout=60,
-            )
-        except (OSError, ValueError, subprocess.SubprocessError) as e:
-            self._notify(f"diff: gh failed: {e}", severity="error")
-            return
-        if patch.returncode != 0:
-            self._notify(
-                f"diff: gh failed: {patch.stderr.strip()[:80]}", severity="error"
-            )
-            return
-        # `--cwd` AND the subprocess's own cwd, because the comments you leave in
-        # the viewer are persisted per REPO ROOT
-        # (`lib.diff_comments`), and cmux derives that root here. Left to the
-        # daemon's inherited cwd it is whatever repo `cockpit watch` was
-        # launched in, so every row's comments pile up under one unrelated repo
-        # and `a` finds none for the row that made them. Which of the two inputs
-        # cmux actually reads for a piped patch is undocumented — the flag is
-        # written up for `--source`/git diffs only — and guessing wrong fails
-        # silently, so set both.
-        cmd = [
-            "cmux",
-            "diff",
-            "-",
-            "--title",
-            f"PR #{num} — {wt.label or wt.short}",
-            "--layout",
-            "unified",
-            "--cwd",
-            str(wt.path),
-        ]
-        if ref:
-            cmd += ["--workspace", ref]
-        # Drop the inherited `CMUX_SURFACE_ID`: it is `--surface`'s default, the
-        # surface the split is cut from, and the daemon carries whichever one
-        # launched it. A *stale* value is fatal (`not_found: Source surface not
-        # found`, observed), while an *absent* one is fine — cmux resolves a
-        # surface in the target workspace itself. Since `--workspace` already
-        # says where the split belongs, cockpit's own surface is never the
-        # answer, so unsetting it is both the fix and the correct default.
-        env = {k: v for k, v in os.environ.items() if k != "CMUX_SURFACE_ID"}
-        try:
-            proc = subprocess.run(
-                cmd,
-                input=patch.stdout,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                env=env,
-                cwd=wt.path,
-            )
-        except (OSError, ValueError, subprocess.SubprocessError) as e:
-            self._notify(f"diff: cmux failed: {e}", severity="error")
-            return
-        if proc.returncode != 0:
-            err = proc.stderr.strip()
-            # The one failure worth naming precisely: cmux's diff viewer is a
-            # browser surface, and the browser is a runtime toggle. Say the fix.
-            if "browser_disabled" in err:
-                self._notify(
-                    "diff viewer needs the cmux browser — "
-                    "`cmux enable-browser`, or press p",
-                    severity="warning",
-                )
-            else:
-                self._notify(f"diff failed: {err[:80]}", severity="error")
-            return
-        self._notify(f"diff open for PR #{num}")
 
     @work(thread=True, group="new", exit_on_error=False)
     def _launch_spawn(self, source: str, cwd: str | None) -> None:
@@ -2051,7 +1881,6 @@ class CockpitApp(App[None]):
         # spawn.py writes no cache cell (daemon stays sole writer); the worktree
         # surfaces on the slow tick we kick below. Detached output → spawn.log.
         import shlex
-        import subprocess
         import sys
         from typing import IO
 

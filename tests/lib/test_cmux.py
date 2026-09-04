@@ -1919,3 +1919,99 @@ def test_reassert_on_empty_fleet_makes_no_cmux_calls():
     with patch("cockpit.lib.cmux.cmux") as m:
         assert reassert_idle_pills([]) == []
     m.assert_not_called()
+
+
+# --- render_diff -----------------------------------------------------------
+#
+# The one `cmux diff` invocation, shared by the TUI's `d` and `cockpit diff`.
+# The two callers diverge on exactly two inputs and in opposite directions, so
+# that asymmetry is what these pin.
+
+
+def _render(**kw):
+    """Call `render_diff` against a stubbed cmux, returning `(argv, env, rc_msg)`."""
+    seen: dict = {}
+
+    class _Proc:
+        returncode = kw.pop("_rc", 0)
+        stderr = kw.pop("_stderr", "")
+
+    def fake_run(cmd, **rkw):
+        seen["cmd"] = cmd
+        seen["env"] = rkw.get("env")
+        seen["input"] = rkw.get("input")
+        seen["cwd"] = rkw.get("cwd")
+        return _Proc()
+
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.shutil.which", return_value="/usr/bin/cmux"),
+        patch("cockpit.lib.cmux.subprocess.run", fake_run),
+    ):
+        msg = cmux_mod.render_diff(**kw)
+    return seen, msg
+
+
+def test_render_diff_never_touches_the_environment(monkeypatch):
+    """It has one caller and that caller runs INSIDE the workspace it targets,
+    so cmux's own `$CMUX_WORKSPACE_ID` / `$CMUX_SURFACE_ID` defaults are already
+    right. The daemon-side `d` key needed the opposite of both — it had to name
+    a workspace and strip the stale surface — and was removed rather than
+    parameterised back in here."""
+    monkeypatch.setenv("CMUX_SURFACE_ID", "surface:mine")
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:mine")
+    seen, msg = _render(patch="diff", cwd="/repo", title="t")
+    assert msg == ""
+    assert seen["env"] is None, "the child must inherit, not be handed a copy"
+    assert "--workspace" not in seen["cmd"]
+    assert "--surface" not in seen["cmd"]
+
+
+def test_render_diff_pipes_a_patch_and_sets_both_cwd_inputs():
+    """`--cwd` AND the process cwd, because cmux keys the diff-comment store by
+    repo root and which of the two it reads for a piped patch is undocumented."""
+    seen, _ = _render(patch="the patch", cwd="/repo/wt", title="t")
+    assert seen["input"] == "the patch"
+    assert seen["cwd"] == "/repo/wt"
+    assert seen["cmd"][seen["cmd"].index("--cwd") + 1] == "/repo/wt"
+    assert "-" in seen["cmd"] and "--source" not in seen["cmd"]
+
+
+def test_render_diff_uses_a_source_instead_of_stdin():
+    seen, _ = _render(source="branch", base="origin/stage", cwd="/repo", title="t")
+    assert seen["input"] is None
+    assert seen["cmd"][seen["cmd"].index("--source") + 1] == "branch"
+    assert seen["cmd"][seen["cmd"].index("--base") + 1] == "origin/stage"
+
+
+def test_render_diff_is_always_unified():
+    """Split columns overprint each other in a pane cut beside the dashboard."""
+    seen, _ = _render(patch="d", cwd="/repo", title="t")
+    assert seen["cmd"][seen["cmd"].index("--layout") + 1] == "unified"
+
+
+def test_render_diff_needs_exactly_one_of_patch_or_source():
+    with pytest.raises(ValueError):
+        cmux_mod.render_diff(cwd="/repo", title="t")
+    with pytest.raises(ValueError):
+        cmux_mod.render_diff(patch="d", source="branch", cwd="/repo", title="t")
+
+
+def test_render_diff_names_the_browser_fix():
+    """The viewer is a browser surface and the browser is a runtime toggle, so
+    this failure gets named precisely rather than dumped as raw stderr."""
+    _, msg = _render(patch="d", cwd="/r", title="t", _rc=1, _stderr="browser_disabled")
+    assert "cmux enable-browser" in msg
+
+
+def test_render_diff_reports_other_failures_verbatim():
+    _, msg = _render(patch="d", cwd="/r", title="t", _rc=1, _stderr="kaboom")
+    assert "kaboom" in msg
+
+
+def test_render_diff_is_inert_without_cmux():
+    """`diff` is in `_CMUX_ONLY_VERBS`, so limux and `tool: none` degrade to a
+    message instead of shelling out — which is what makes `dev.sh` safe here."""
+    with patch("cockpit.lib.tool.resolve_tool", return_value="none"):
+        msg = cmux_mod.render_diff(patch="d", cwd="/r", title="t")
+    assert "requires cmux" in msg

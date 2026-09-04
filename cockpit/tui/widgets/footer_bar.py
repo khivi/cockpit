@@ -61,7 +61,6 @@ class FooterBar(Horizontal):
             "force_close_row",
             "mute_row",
             "snooze_row",
-            "open_diff",
             "ask_row",
             "ask_snoozed",
         }
@@ -78,8 +77,6 @@ class FooterBar(Horizontal):
         "mute_row": "pr",
         "snooze_row": "pr",
         "open_ticket": "ticket",
-        # `d` needs a PR to diff, same cached `pr-num` cell as `p`.
-        "open_diff": "pr",
         # `a` sends text to an *existing* session — it can't spawn one (that's
         # `f`), so advertise it only when one is live. On a repo header it
         # addresses the repo instead and this requirement is dropped.
@@ -112,7 +109,6 @@ class FooterBar(Horizontal):
         "force_close_row": "Force",
         "mute_row": "Mute",
         "snooze_row": "Snooze",
-        "open_diff": "Diff",
         "ask_row": "Ask",
         "ask_snoozed": "Ask snoozed",
         "new_workspace": "New",
@@ -144,10 +140,6 @@ class FooterBar(Horizontal):
         "open_ticket": (
             "Open the ticket this PR delivers — Linear, Jira, GitHub issue or "
             "Trello card, whichever the repo tracks — in your browser."
-        ),
-        "open_diff": (
-            "Show this PR's diff in cmux's viewer: syntax-highlighted, in a "
-            "browser split beside the dashboard."
         ),
         "ask_row": (
             "Send one line to this row's Claude session. A session that is "
@@ -222,9 +214,6 @@ class FooterBar(Horizontal):
         # `a` delivers through cmux's `send`, which limux has no equivalent for.
         "ask_row": frozenset({"cmux"}),
         "ask_snoozed": frozenset({"cmux"}),
-        # `d` pipes into `cmux diff`; limux/none have no such viewer, so the
-        # hint hides there and `p` is the answer instead.
-        "open_diff": frozenset({"cmux"}),
     }
 
     def __init__(
@@ -233,7 +222,6 @@ class FooterBar(Horizontal):
         *,
         show_tickets: bool = True,
         backend: str,
-        diff_viewer: bool = True,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -246,10 +234,6 @@ class FooterBar(Horizontal):
         ]
         self._show_tickets = show_tickets
         self._backend = backend
-        # Can `cmux diff` actually render (verb + live browser)? Resolved once
-        # by the caller; preflight warns at startup when it can't, so the key
-        # doesn't just silently vanish.
-        self._diff_viewer = diff_viewer
         # The highlighted row's capability tokens (e.g. {"pr", "ticket",
         # "muted"}), or None when no row is selected — drives per-row gating of
         # the row keys and the Mute/Unmute label.
@@ -407,8 +391,6 @@ class FooterBar(Horizontal):
         ):
             return True
         if action == "open_ticket" and not self._show_tickets:
-            return True
-        if action == "open_diff" and not self._diff_viewer:
             return True
         allowed = self.BACKEND_ACTIONS.get(action)
         if allowed is not None and self._backend not in allowed:

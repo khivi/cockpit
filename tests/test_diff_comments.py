@@ -179,19 +179,3 @@ def test_pending_delegates_to_pending_by_root_with_the_same_semantics(_store, tm
     diff_comments.mark_delivered(["c1"])
 
     assert [c.id for c in diff_comments.pending([wt, repo])] == ["c2"]
-
-
-def test_summarize_is_one_line_and_drops_the_fenced_excerpt(_store):
-    """`cmux send` turns every newline into Enter, so the store's own
-    multi-line `submissionText` cannot survive the trip — and the agent is in
-    the worktree and can read the file itself. The anchor is what it needs."""
-    line = diff_comments.summarize(
-        [
-            diff_comments.Comment("c1", "a.py", 3, "explain this"),
-            diff_comments.Comment("c2", "b.py", 9, "reduce comments"),
-        ]
-    )
-
-    assert "\n" not in line
-    assert "```" not in line
-    assert line == "a.py:3 — explain this; b.py:9 — reduce comments"

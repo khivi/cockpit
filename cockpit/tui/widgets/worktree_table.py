@@ -319,8 +319,8 @@ def column_labels(*, show_tickets: bool, show_cost: bool = False) -> tuple[str, 
     `✎` dirty then `📝` pending diff-viewer comments — sits right after `PR` #,
     then the GitHub cluster — the `🔀` review-state, `CI`, and `💬` comments.
     `📝` and `💬` look alike but are never the same thing: `💬` is GitHub review
-    threads, `📝` is comments left in cmux's local diff viewer that haven't been
-    sent anywhere yet (`a` sends them). The ticket cluster — `Ticket` id then
+    threads, `📝` is notes left in cmux's local diff viewer that the session has
+    not addressed yet. The ticket cluster — `Ticket` id then
     its `📍` workflow-state — follows, present only when some configured repo has a
     ticket provider (Linear or GitHub, `show_tickets`). Then `Author` (blank for
     self-authored, the coworker login on a review PR — rarely populated, so parked
@@ -644,9 +644,11 @@ def _dirty_cell(wt: Worktree) -> Text:
 def _diff_comments_cell(raw: str) -> Text:
     """The 📝 column: pending (undelivered) cmux diff-viewer comments, from the
     daemon-written `diff-comments` cell. Local only — never reaches GitHub, and
-    a different count than `💬`'s GitHub review threads. Blank at zero. `a`
-    delivers them and re-reads the store live at send time, so this is a cue
-    that something's waiting, not the authority on what will actually send."""
+    a different count than `💬`'s GitHub review threads. Blank at zero.
+
+    Purely a cue: the fast tick hands the notes to the session that owns them
+    and `cockpit diff --ack` is what retires them, so a count here means "not
+    addressed yet", not "not delivered". Nothing reads this cell back."""
     try:
         count = int(raw or 0)
     except ValueError:
@@ -1026,7 +1028,10 @@ def _diff_comments_tooltip(raw: str) -> str | None:
     if count <= 0:
         return None
     plural = "" if count == 1 else "s"
-    return f"{count} pending diff comment{plural} — press a to send"
+    return (
+        f"{count} diff note{plural} waiting for this session — the daemon hands "
+        "them over; `cockpit diff --comments` reads them in the worktree"
+    )
 
 
 def _ticket_status_tooltip(payload: dict | None, provider: str) -> str | None:
