@@ -2925,6 +2925,60 @@ async def test_ask_carries_the_rows_pending_diff_comments(monkeypatch, tmp_path)
     assert diff_comments.pending([wt.path]) == []
 
 
+async def test_ask_carrying_comments_focuses_the_workspace_on_delivery(
+    monkeypatch, tmp_path
+):
+    """You were just in this workspace's diff viewer leaving these notes — land
+    back in it once they're sent, so watching the response doesn't cost a third
+    manual switch on top of the two `d`/`a` already need."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    _seed_diff_comments(monkeypatch, tmp_path, wt.path, [_a_comment()])
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _accepting_gate([]))
+    refs: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
+    )
+    toasts: list[str] = []
+    await _press_a(monkeypatch, wt, "address these", toasts=toasts)
+
+    assert refs == ["ws1"]
+    assert any("focused" in t for t in toasts)
+
+
+async def test_a_plain_ask_does_not_focus(monkeypatch, tmp_path):
+    """A plain `a` (nudging someone, a batch across rows) must leave you where
+    you are — auto-focus is scoped to the comment-carrying case only."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _accepting_gate([]))
+    refs: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
+    )
+    toasts: list[str] = []
+    await _press_a(monkeypatch, wt, "rebase onto main", toasts=toasts)
+
+    assert refs == []
+    assert not any("focused" in t for t in toasts)
+
+
+async def test_a_refused_ask_with_comments_does_not_focus(monkeypatch, tmp_path):
+    """The send didn't happen — nothing to watch yet, and jumping to the
+    workspace would misreport a refusal as a delivery."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    _seed_diff_comments(monkeypatch, tmp_path, wt.path, [_a_comment()])
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", lambda *a, **k: False)
+    refs: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.select_workspace", lambda ref, **k: refs.append(ref)
+    )
+    await _press_a(monkeypatch, wt, "address these")
+
+    assert refs == []
+
+
 async def test_a_refused_ask_leaves_the_comments_pending(monkeypatch, tmp_path):
     """The gate refuses transiently — a turn ends, a permission is answered. It
     keeps the draft for exactly that reason, so it must keep the comments too,

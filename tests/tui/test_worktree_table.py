@@ -2,15 +2,16 @@
 
 `worktree_cells` is a pure function — no Textual. Seeds the same flat cache
 cells the daemon writes, then asserts the per-column Rich Text. Columns are
-grouped by domain: Workspace | PR | ✎ | 🔀 | CI | comments | (Ticket) |
-(Status) | Author | Title — Dirty (✎) sits right after PR, then the rest of the
-GitHub cluster (🔀/CI/comments), then the ticket cluster (Ticket/Status, present
-only when some repo has a ticket provider), then the rarely-populated Author
-(blank for self-authored PRs, the coworker login for a review PR), then Title. Tests index
+grouped by domain: Workspace | PR | ✎ | 📝 | 🔀 | CI | comments | (Ticket) |
+(Status) | Author | Title — the local cluster (Dirty ✎, then 📝 pending
+diff-viewer comments) sits right after PR, then the GitHub cluster
+(🔀/CI/comments), then the ticket cluster (Ticket/Status, present only when
+some repo has a ticket provider), then the rarely-populated Author (blank for
+self-authored PRs, the coworker login for a review PR), then Title. Tests index
 columns by label via `_col(...)` so a reorder doesn't touch every assertion. The
 repo is conveyed by a group-header row plus a tint on the workspace name (not a
-column). The Dirty column (icon header)
-reads the per-cwd `git-status` cell (`"<staged> <unstaged> <untracked>"`).
+column). The Dirty column (icon header) reads the per-cwd `git-status` cell
+(`"<staged> <unstaged> <untracked>"`); 📝 reads `diff-comments`.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import cockpit.lib.cache as cache_mod
 from cockpit.lib.git import Worktree
 from cockpit.tui.widgets.worktree_table import (
     _APPROVAL_ICON,
+    _DIFF_COMMENT_ICON,
     _DIRTY_ICON,
     _HEADER_TOOLTIPS,
     _LABEL_MAX,
@@ -107,13 +109,15 @@ def _col(label, *, show_tickets=False):
 
 def test_cell_count_matches_columns(cache_dir):
     cols = column_labels(show_tickets=False)
-    assert len(_plain(_wt())) == len(cols) == 8
-    # GitHub cluster (PR / state / CI / comments) sits next to Workspace; Author
-    # is parked near the end (rarely populated), just before Title.
+    assert len(_plain(_wt())) == len(cols) == 9
+    # Local cluster (dirty / pending diff comments) sits next to Workspace,
+    # then the GitHub cluster (PR / state / CI / comments); Author is parked
+    # near the end (rarely populated), just before Title.
     assert cols == (
         "Workspace",
         "PR",
         _DIRTY_ICON,
+        _DIFF_COMMENT_ICON,
         _APPROVAL_ICON,
         "CI",
         "💬",
@@ -123,11 +127,12 @@ def test_cell_count_matches_columns(cache_dir):
     # Ticket + Status columns added only when show_tickets, as one adjacent
     # cluster right after the GitHub cluster (Ticket then its Status icon).
     lin = column_labels(show_tickets=True)
-    assert len(_plain(_wt(), show_tickets=True)) == len(lin) == 10
+    assert len(_plain(_wt(), show_tickets=True)) == len(lin) == 11
     assert lin == (
         "Workspace",
         "PR",
         _DIRTY_ICON,
+        _DIFF_COMMENT_ICON,
         _APPROVAL_ICON,
         "CI",
         "💬",
@@ -410,10 +415,11 @@ def test_cell_links_to_what_it_names(cache_dir, monkeypatch, label, url):
     assert _links(cells[label]) == {url}
 
 
-@pytest.mark.parametrize("label", ["Workspace", _DIRTY_ICON])
+@pytest.mark.parametrize("label", ["Workspace", _DIRTY_ICON, _DIFF_COMMENT_ICON])
 def test_local_columns_carry_no_link(cache_dir, monkeypatch, label):
-    """Workspace's gesture is already double-click → focus, and the dirty count
-    names nothing outside this machine."""
+    """Workspace's gesture is already double-click → focus, the dirty count
+    names nothing outside this machine, and diff-viewer comments are local to
+    cmux — they never reach GitHub, so there's nothing to link to."""
     _, cells = _linked_row(monkeypatch, cache_dir)
     assert _links(cells[label]) == set()
 
@@ -559,7 +565,7 @@ def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
 
 def test_no_linear_columns_when_not_configured(cache_dir):
     # show_tickets False → no Ticket/Status cells
-    assert len(_plain(_wt(), provider="linear", show_tickets=False)) == 8
+    assert len(_plain(_wt(), provider="linear", show_tickets=False)) == 9
 
 
 def test_row_capabilities_pr_muted_ticket(cache_dir, monkeypatch):
@@ -833,6 +839,7 @@ def test_row_tooltips_aligned_and_decode(cache_dir, monkeypatch):
     cache_mod.cwd_cache("pr-comments-total", wt.path).write_text("5")
     cache_mod.cwd_cache("pr-muted", wt.path).write_text("muted")
     cache_mod.cwd_cache("git-status", wt.path).write_text("1 2 0")
+    cache_mod.cwd_cache("diff-comments", wt.path).write_text("2")
     monkeypatch.setattr(
         "cockpit.tui.widgets.worktree_table.find_pr_payload",
         lambda branch, repo: {
@@ -844,8 +851,8 @@ def test_row_tooltips_aligned_and_decode(cache_dir, monkeypatch):
     def tip(label):
         return tips[_col(label, show_tickets=True)]
 
-    # Aligned to column_labels order (10 with tickets on).
-    assert len(tips) == len(column_labels(show_tickets=True)) == 10
+    # Aligned to column_labels order (11 with tickets on).
+    assert len(tips) == len(column_labels(show_tickets=True)) == 11
     assert tip("Workspace") == "Nudges muted"  # workspace glyph
     assert tip("PR") is None and tip("Author") is None  # self-evident
     assert tip(_APPROVAL_ICON) == "Changes requested"  # 🔀 decoded
@@ -854,6 +861,7 @@ def test_row_tooltips_aligned_and_decode(cache_dir, monkeypatch):
     assert tip("Ticket") == "PE-1"  # full id, in case `_TICKET_MAX` clipped it
     assert tip(_STATUS_ICON) == "PE-1: In Review"  # 📍 decoded
     assert tip(_DIRTY_ICON) == "1 staged, 2 modified"  # ✎, zero segment dropped
+    assert tip(_DIFF_COMMENT_ICON) == "2 pending diff comments — press a to send"
     assert tip("Title") is None
 
 
@@ -880,7 +888,7 @@ def test_row_tooltips_blank_when_no_data(cache_dir, monkeypatch):
         "cockpit.tui.widgets.worktree_table.find_pr_payload", lambda branch, repo: None
     )
     tips = row_tooltips(_wt(), "r", "none", show_tickets=False)
-    assert len(tips) == 8 and all(t is None for t in tips)
+    assert len(tips) == 9 and all(t is None for t in tips)
 
 
 @pytest.mark.asyncio

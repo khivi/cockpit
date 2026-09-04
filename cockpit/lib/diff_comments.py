@@ -74,6 +74,48 @@ def _delivered() -> set[str]:
         return set()
 
 
+def pending_by_root(roots: set[str]) -> dict[str, list[Comment]]:
+    """Undelivered comments filed against any of `roots`, bucketed by their own
+    `repoRoot` and each bucket sorted oldest-first.
+
+    One glob of `STORE_DIR` regardless of how many roots are asked for — the
+    batch form `_fast_tick` uses to cost one directory scan per repo rather
+    than one per worktree, since every worktree of a repo shares the same
+    handful of candidate roots. `pending()` below is the single-root case,
+    kept as the thin wrapper every other caller already uses.
+    """
+    seen = _delivered()
+    if not roots or not STORE_DIR.is_dir():
+        return {}
+    out: dict[str, list[Comment]] = {}
+    for path in sorted(STORE_DIR.glob("*.json")):
+        try:
+            blob = json.loads(path.read_text())
+            root = str(Path(blob.get("repoRoot", "")).resolve())
+        except (OSError, ValueError, TypeError):
+            continue
+        if root not in roots:
+            continue
+        bucket = out.setdefault(root, [])
+        for c in blob.get("comments") or []:
+            cid, message = c.get("id"), (c.get("message") or "").strip()
+            # An id-less or empty comment is nothing to deliver and nothing we
+            # could record having delivered.
+            if not cid or not message or cid in seen:
+                continue
+            bucket.append(
+                Comment(
+                    id=cid,
+                    file=c.get("filePath") or "?",
+                    line=c.get("startLine") or 0,
+                    message=message,
+                )
+            )
+    for bucket in out.values():
+        bucket.sort(key=lambda c: (c.file, c.line))
+    return out
+
+
 def pending(paths) -> list[Comment]:
     """Undelivered comments filed against any of `paths`, oldest first.
 
@@ -83,32 +125,8 @@ def pending(paths) -> list[Comment]:
     are cheap to offer, and the cost of guessing wrong is a key that silently
     delivers nothing.
     """
-    roots, seen = _roots(paths), _delivered()
-    if not roots or not STORE_DIR.is_dir():
-        return []
-    out: list[Comment] = []
-    for path in sorted(STORE_DIR.glob("*.json")):
-        try:
-            blob = json.loads(path.read_text())
-            root = str(Path(blob.get("repoRoot", "")).resolve())
-        except (OSError, ValueError, TypeError):
-            continue
-        if root not in roots:
-            continue
-        for c in blob.get("comments") or []:
-            cid, message = c.get("id"), (c.get("message") or "").strip()
-            # An id-less or empty comment is nothing to deliver and nothing we
-            # could record having delivered.
-            if not cid or not message or cid in seen:
-                continue
-            out.append(
-                Comment(
-                    id=cid,
-                    file=c.get("filePath") or "?",
-                    line=c.get("startLine") or 0,
-                    message=message,
-                )
-            )
+    roots = _roots(paths)
+    out = [c for bucket in pending_by_root(roots).values() for c in bucket]
     out.sort(key=lambda c: (c.file, c.line))
     return out
 

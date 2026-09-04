@@ -210,6 +210,8 @@ def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _n: None)
+    monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
     monkeypatch.setattr(cockpit, "workspace_state", lambda: (names, cwds))
     monkeypatch.setattr(cockpit, "reassert_idle_pills", lambda _refs: [])
     monkeypatch.setattr(
@@ -249,6 +251,8 @@ def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _n: None)
+    monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
     monkeypatch.setattr(cockpit, "workspace_state", _boom)
     monkeypatch.setattr(
         cockpit,
@@ -291,6 +295,8 @@ def test_fast_tick_tints_spawned_workspace(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _n: None)
+    monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, cwds))
     monkeypatch.setattr(cockpit, "reassert_idle_pills", lambda _refs: [])
     monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda *a: None)
@@ -331,6 +337,8 @@ def test_fast_tick_skips_color_without_sidebar_color(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _n: None)
+    monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
     monkeypatch.setattr(
         cockpit, "workspace_state", lambda: ({}, {"workspace:1": repo / "feat"})
     )
@@ -562,6 +570,7 @@ def test_fast_tick_writes_a_cost_cell_per_worktree(tmp_path, monkeypatch):
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", costed.append)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
 
     cockpit._fast_tick({})
 
@@ -596,10 +605,102 @@ def test_fast_tick_writes_cells_for_every_repos_worktrees(tmp_path, monkeypatch)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
 
     cockpit._fast_tick({})
 
     assert set(written) == {r / "wt" for r in repos}
+
+
+def test_fast_tick_writes_a_diff_comments_cell_per_worktree(tmp_path, monkeypatch):
+    """`diff-comments` rides the fast tick too — entirely local, no `gh` needed,
+    so there's no reason to make it wait for the slow tick's 300s cadence."""
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
+
+    importlib.reload(cockpit)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wts = [
+        Worktree(path=repo / "feat", branch="khivi/feat"),
+        Worktree(path=repo / "other", branch="khivi/other"),
+    ]
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
+    )
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": wts
+    )
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+
+    feat_root = str((repo / "feat").resolve())
+    monkeypatch.setattr(
+        cockpit.diff_comments,
+        "pending_by_root",
+        lambda _roots: {feat_root: ["c1", "c2"]},
+    )
+    written: dict = {}
+    monkeypatch.setattr(
+        cockpit,
+        "write_diff_comments_cache",
+        lambda p, count: written.setdefault(p, count),
+    )
+
+    cockpit._fast_tick({})
+
+    assert written == {repo / "feat": 2, repo / "other": 0}
+
+
+def test_fast_tick_folds_a_root_shared_with_the_repo_checkout_into_every_worktree(
+    tmp_path, monkeypatch
+):
+    """Which root cmux records for a worktree is undocumented (its own toplevel
+    or the main checkout it was cut from), so a comment filed against the repo's
+    own main-checkout root is genuinely ambiguous — it must count for every
+    worktree of that repo, exactly matching what `_send_ask`'s own per-row
+    `pending([wt.path, repo.path])` lookup would independently find for each of
+    them. The primary-checkout worktree (whose own path IS the repo root) must
+    not double it by adding the same bucket to itself twice."""
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
+
+    importlib.reload(cockpit)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wts = [
+        Worktree(path=repo, branch="main"),
+        Worktree(path=repo / "other", branch="x"),
+    ]
+    monkeypatch.setattr(
+        cockpit, "load_config", lambda: {"repos": [{"path": str(repo)}]}
+    )
+    monkeypatch.setattr(
+        cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": wts
+    )
+    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+
+    repo_root = str(repo.resolve())
+    monkeypatch.setattr(
+        cockpit.diff_comments, "pending_by_root", lambda _roots: {repo_root: ["c1"]}
+    )
+    written: dict = {}
+    monkeypatch.setattr(
+        cockpit,
+        "write_diff_comments_cache",
+        lambda p, count: written.setdefault(p, count),
+    )
+
+    cockpit._fast_tick({})
+
+    assert written == {repo: 1, repo / "other": 1}
 
 
 def test_fast_tick_cell_writes_stay_bounded(monkeypatch):
@@ -667,6 +768,7 @@ def test_fast_tick_does_not_touch_cmux_under_dry(tmp_path, monkeypatch):
         lambda: {"repos": [{"path": str(tmp_path), "name": "r"}]},
     )
     monkeypatch.setattr(cockpit, "worktrees", lambda *_a: [])
+    monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
 
     cockpit._fast_tick(cockpit._build_state(True))
     assert touched == []
@@ -699,6 +801,7 @@ def test_fast_tick_restores_a_lost_trailing_fold(tmp_path, monkeypatch):
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
     monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda ps: seen.append(ps))
+    monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
 
     cockpit._fast_tick(state)
 
@@ -725,6 +828,7 @@ def test_fast_tick_does_not_restore_folds_under_dry(tmp_path, monkeypatch):
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
     monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda ps: seen.append(ps))
+    monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
 
     cockpit._fast_tick({"dry": True})
 
@@ -750,6 +854,8 @@ def _fast_tick_env(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
+    monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _n: None)
+    monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
     monkeypatch.setattr(
         cockpit, "workspace_state", lambda: ({}, {"workspace:1": repo / "feat"})
     )

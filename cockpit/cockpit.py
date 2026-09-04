@@ -34,8 +34,10 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from cockpit.lib import diff_comments
 from cockpit.lib.cache import (
     republish_pr_caches_from_disk,
+    write_diff_comments_cache,
     write_git_state_cache,
     write_worktree_cost_cache,
 )
@@ -139,6 +141,28 @@ def _tint_repo_workspaces(
         pill_state[f"color:{ref}"] = color
 
 
+def _write_diff_comment_cells(repo_path: Path, wts: list[Worktree]) -> None:
+    """Write the `diff-comments` cell for every worktree of one repo from a
+    single glob of cmux's local diff-comment store, via `pending_by_root`
+    batched at repo granularity — the two-candidate-root lookup `_send_ask`
+    makes per row (a worktree's own toplevel, or the main checkout it was cut
+    from), done once per repo instead of once per worktree.
+
+    Local disk only, like the git-state cells below — not gated on `--dry`.
+    Advisory: `a`'s send path re-reads the store live and never trusts this
+    cell, so a stale count here costs nothing but the visual cue.
+    """
+    repo_root = str(repo_path.resolve())
+    roots = {repo_root} | {str(wt.path.resolve()) for wt in wts}
+    by_root = diff_comments.pending_by_root(roots)
+    for wt in wts:
+        wt_root = str(wt.path.resolve())
+        count = len(by_root.get(wt_root, []))
+        if wt_root != repo_root:
+            count += len(by_root.get(repo_root, []))
+        write_diff_comments_cache(wt.path, count)
+
+
 def _write_worktree_cells(wts: Iterable[Worktree]) -> None:
     """Write the two per-worktree flat cells for every worktree, concurrently.
 
@@ -191,6 +215,8 @@ def _fast_tick(state: dict) -> None:
       • each worktree's total session spend (`wt-cost`) tracks the running
         agents' cost within ~30s — it only moves while a session is live, so
         the slow tick's cadence would lag visibly behind the work
+      • a pending cmux diff-viewer comment (`diff-comments`) shows up in the
+        table within ~30s of being written, entirely local — no `gh` needed
       • a session at rest gets its `idle=` pill recorded while cmux still
         reports native `Idle`, so it stays reachable to `a`/`A`/nudge after
         that native state goes away (see `reassert_idle_pills`)
@@ -225,6 +251,7 @@ def _fast_tick(state: dict) -> None:
         except (RuntimeError, OSError):
             continue
         pending.extend(wts)
+        _write_diff_comment_cells(repo_path, wts)
         # The disk-cache writes are local and always run; these two reach cmux
         # and *rename and recolour the user's live workspaces*, which `--dry`
         # promises not to do. The slow tick's equivalents are gated on

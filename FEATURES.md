@@ -140,21 +140,25 @@ terminal hyperlink — ⌘-click it (ctrl-click on Linux) and your browser opens
 its review state, the comment count and the title all go to the PR; **CI goes to the checks
 page**, because a red ✗ is the thing you want to open, not read; the ticket columns go to
 the ticket, in whichever tracker it lives; and an author's `@name` goes to their GitHub
-profile. The workspace name, the dirty count and `$` link nowhere — they're about this
-machine. Hover any of them and the tooltip tells you where it goes.
+profile. The workspace name, the dirty count, the pending diff-notes count and `$` link
+nowhere — they're about this machine. Hover any of them and the tooltip tells you where it
+goes.
 
 This needs a terminal that supports hyperlinks: iTerm2, Ghostty, kitty and WezTerm all do,
 Apple's Terminal.app doesn't. `p` and `t` open the PR and the ticket from the keyboard
 either way.
 
 **`d` and `a` together are how you review your agent's work.** `d` opens the diff in a
-browser split beside that row's terminal; click a line and leave a note. Those notes ride
-the next message you send with `a`, which opens with a line already written and tells you
-how many are going with it — so the loop is read, mark, `a`, enter. Edit that line to say
-more, or clear it to drop the message entirely. The notes stay local; nothing reaches the
-PR, so use `p` for that. Each is delivered once, and a message the session refuses (it was
-mid-turn) keeps its notes for the retry. A row whose terminal isn't open yet still gets the
-diff — press `f` first if you want to send anything.
+browser split beside that row's terminal; click a line and leave a note. A note you leave
+shows up back in the table as a count in the 📝 column, so switching back to the dashboard
+never loses track of what's waiting to go out. Those notes ride the next message you send
+with `a`, which opens with a line already written and tells you how many are going with
+it — so the loop is read, mark, switch back, `a`, enter — and sending notes drops you
+straight back into that row's terminal, so there's no separate switch to go watch it work.
+Edit that line to say more, or clear it to drop the message entirely. The notes stay local;
+nothing reaches the PR, so use `p` for that. Each is delivered once, and a message the
+session refuses (it was mid-turn) keeps its notes for the retry. A row whose terminal isn't
+open yet still gets the diff — press `f` first if you want to send anything.
 
 ---
 
