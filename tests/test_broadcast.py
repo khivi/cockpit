@@ -11,6 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import call
 
+import pytest
+
 import cockpit.broadcast as broadcast
 from cockpit.lib.cmux import CmuxUnavailable
 
@@ -179,7 +181,9 @@ def _repo_fixture(monkeypatch, tmp_path, *, name="svc-auth", worktree_dirs=("sco
 
     The sibling layout is the point: a path-prefix filter would drop every one
     of them, so a test using a nested layout would pass against the wrong
-    implementation.
+    implementation. That rule now lives in `git.repo_worktree_paths` and is
+    pinned against real git there; stubbed here so these tests stay about the
+    CLI's own scoping, name resolution and reporting.
     """
     repo_path = tmp_path / name
     repo_path.mkdir()
@@ -391,3 +395,120 @@ def test_nudge_called_with_broadcast_tag(monkeypatch):
     assert recorded == [
         call("workspace:a", "/compact", dry=False, tag="broadcast", skips={})
     ]
+
+
+def test_worktree_scopes_to_the_sessions_rooted_at_that_directory(
+    monkeypatch, tmp_path, capsys
+):
+    """The narrowest scope: one worktree, however many repos are open."""
+    target = tmp_path / "rac"
+    target.mkdir()
+    other = tmp_path / "icons"
+    other.mkdir()
+    monkeypatch.setattr(
+        broadcast,
+        "workspace_cwds",
+        lambda *, include_self=False: {
+            "workspace:rac": target,
+            "workspace:icons": other,
+        },
+    )
+    sent = []
+
+    def fake_nudge(ref, *a, **k):
+        sent.append(ref)
+        return True
+
+    monkeypatch.setattr(broadcast, "nudge_if_idle", fake_nudge)
+
+    assert broadcast.main(["/compact", "--worktree", str(target)]) == 0
+    assert sent == ["workspace:rac"]
+    assert "sent to 1/1" in capsys.readouterr().out
+
+
+def test_worktree_matches_the_cwd_exactly_never_by_prefix(
+    monkeypatch, tmp_path, capsys
+):
+    """A session rooted in a subdirectory is a different session's business,
+    and a prefix test would also claim a repo nested under the target."""
+    target = tmp_path / "rac"
+    (target / "sub").mkdir(parents=True)
+    monkeypatch.setattr(
+        broadcast,
+        "workspace_cwds",
+        lambda *, include_self=False: {"workspace:sub": target / "sub"},
+    )
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact", "--worktree", str(target)]) == 0
+    out = capsys.readouterr().out
+    assert "no other workspaces" in out
+    assert "sent to" not in out
+
+
+def test_worktree_reaches_every_session_at_one_cwd(monkeypatch, tmp_path, capsys):
+    """A `use_worktree: false` repo deliberately hosts several sessions at one
+    directory, so the narrowest scope is still a fan-out, not a single ref."""
+    target = tmp_path / "shared"
+    target.mkdir()
+    monkeypatch.setattr(
+        broadcast,
+        "workspace_cwds",
+        lambda *, include_self=False: {"workspace:a": target, "workspace:b": target},
+    )
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact", "--worktree", str(target)]) == 0
+    assert "sent to 2/2" in capsys.readouterr().out
+
+
+def test_unknown_worktree_exits_2_without_sending(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: _cwds("workspace:a")
+    )
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact", "--worktree", str(tmp_path / "typo")]) == 2
+    captured = capsys.readouterr()
+    assert "sent to" not in captured.out
+    assert "no such worktree" in captured.err
+
+
+def test_worktree_expands_a_tilde(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    target = tmp_path / "rac"
+    target.mkdir()
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: {"ws:rac": target}
+    )
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact", "--worktree", "~/rac"]) == 0
+    assert "sent to 1/1" in capsys.readouterr().out
+
+
+def test_repo_and_worktree_are_mutually_exclusive(monkeypatch, tmp_path):
+    """Two scopes at once has no honest reading — the narrower would silently
+    win, so argparse refuses it (exit 2) before anything is sent."""
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: _cwds("workspace:a")
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        broadcast.main(["/compact", "--repo", "svc-auth", "--worktree", str(tmp_path)])
+    assert excinfo.value.code == 2
+
+
+def test_worktree_scope_does_not_read_the_config(monkeypatch, tmp_path):
+    """`--worktree` is a cwd match — it has no reason to know a repo exists."""
+
+    def boom():
+        raise AssertionError("load_config must not be read for --worktree")
+
+    monkeypatch.setattr(broadcast, "load_config", boom)
+    monkeypatch.setattr(
+        broadcast, "workspace_cwds", lambda *, include_self=False: {"ws:a": tmp_path}
+    )
+    monkeypatch.setattr(broadcast, "nudge_if_idle", lambda *a, **k: True)
+
+    assert broadcast.main(["/compact", "--worktree", str(tmp_path)]) == 0
