@@ -13,6 +13,7 @@ Subcommands:
   close  [args]         queue a worktree + workspace teardown for the daemon
   nudge  [args]         manage nudge mutes
   broadcast <message>   send a line of text to every idle workspace
+  config inspect [args] print the effective (post-org-merge) config
 
 Config-invoked shims — dispatched exactly like the above, but never typed:
   statusline            Claude Code statusLine shim (reads stdin → renders)
@@ -32,6 +33,7 @@ _SUBCOMMANDS = (
     "close",
     "nudge",
     "broadcast",
+    "config",
 )
 
 # Named as literal command strings inside ~/.claude/settings.json and
@@ -125,6 +127,11 @@ def main(argv: list[str] | None = None) -> int:
         from cockpit.broadcast import main as broadcast_main
 
         return broadcast_main(rest)
+
+    if sub == "config":
+        from cockpit.config_cmd import main as config_main
+
+        return config_main(rest)
 
     if sub == "new":
         from cockpit.spawn import main as spawn_main

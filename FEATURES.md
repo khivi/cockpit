@@ -407,6 +407,12 @@ Mistyped settings hard-fail at startup with the valid options listed, rather tha
 doing nothing. So do settings renamed in past versions — an ignored setting is a feature
 that goes dark without telling you.
 
+With an `orgs` block in play, what a given repo actually resolved to isn't visible just by
+reading `config.json` — `cockpit config inspect` prints it: the effective config, merged and
+expanded, as JSON. `--repo NAME` narrows it to one repo and also shows which ticket provider
+it resolved to and which credential env var names it needs, each flagged set or unset —
+never the value itself.
+
 ---
 
 ## Design decisions you'll feel

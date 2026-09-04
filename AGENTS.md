@@ -129,6 +129,13 @@ Row caps are `{pr, ticket, muted, snoozed, workspace, primary}`: the first four 
 
 New cell → writer in `cache.py`, call site in the slow tick and/or fast tick. **Never** let a renderer read source state directly.
 
+**Cell text is externally authored, so it is neutralized on the way out — `cache.py::strip_control`, applied inside `read_text`.** A PR title, a ticket id and a footer URL are written by whoever opened the PR or the ticket, and `review_prs` pulls in coworkers' and (opt-in) fork contributors' PRs. Rich's `Text` strips BEL but **not ESC**, so an unfiltered title carrying its own OSC 8 sequence painted a second hyperlink *inside* the one `_apply_links` puts on the Title cell — the row pointed somewhere cockpit never named and read as entirely ordinary. Four rules:
+
+- **It lives in `read_text`, the one seam every flat-cell renderer shares** — the TUI's cells and tooltips, and starship's field printers, which write into the shell prompt. **Do not** re-implement it per renderer, and **do not** move it to the writers: that would leave cells written by an older cockpit raw until the next slow tick.
+- **Whitespace is stripped first**, or a trailing newline renders as a visible U+FFFD.
+- **Control characters are replaced, never dropped** — a tampered value must stay visibly tampered rather than render as a plausible title, and one codepoint in must stay one codepoint out, since `_ellipsize` and the table's `_STATUS_SLOT` both count them.
+- **Payload-derived text needs its own call**, since it never passes a flat cell: `_ticket_ids` and the ticket half of `_cell_links`, whose URL comes out of the PR body's delivery footer and is as author-controlled as the title.
+
 **Every flat cell is keyed by worktree path (`cache.py::cwd_cache`) or session id — never by branch.** A branch name is unique inside one repo and nowhere else, so a branch key silently merges every repo holding a worktree of that name: three `khivi/ci-gatekeeper` worktrees shared one `pr-num`, `pr-snoozed` and `base-distance`, so all three rows rendered whichever repo's daemon wrote last, and `z` on any of them wrote a `NudgePref` under *its own* repo and *another* repo's PR number — a pref no cycle ever reads, so the row never folded. Four rules:
 
 - **The key is the *worktree*, deliberately not the repo+branch pair.** Both are unique, but only the path is something all three renderers (TUI row, starship footer, `restamp_pref`) already hold: starship is a separate process with no `gh`, so it cannot resolve the nwo the PR snapshots are filed under, and `git-repo` carries the mutable config label instead.
