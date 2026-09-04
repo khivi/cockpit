@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.32.0](https://github.com/khivi/cockpit/compare/v2.31.0...v2.32.0) (2026-09-04)
+
+
+### Features
+
+* **diff:** review from inside the workspace, not the dashboard ([#486](https://github.com/khivi/cockpit/issues/486)) ([18df334](https://github.com/khivi/cockpit/commit/18df33405c56d55032d95faa5aaaa4ad9fd1020e))
+
 ## [2.31.0](https://github.com/khivi/cockpit/compare/v2.30.0...v2.31.0) (2026-09-04)
 
 
