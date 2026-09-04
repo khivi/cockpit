@@ -23,10 +23,16 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("cship") is None or shutil.which("starship") is None,
-    reason="cship or starship binary not installed",
-)
+pytestmark = [
+    # Execs the real binaries — that is this file's whole purpose. Opts out of
+    # the suite-wide `_no_live_backend` guard in `tests/conftest.py`. One list
+    # rather than a second `pytestmark =`, which silently replaces the first.
+    pytest.mark.real_backend,
+    pytest.mark.skipif(
+        shutil.which("cship") is None or shutil.which("starship") is None,
+        reason="cship or starship binary not installed",
+    ),
+]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "cockpit"

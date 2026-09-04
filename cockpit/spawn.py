@@ -109,7 +109,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 from cockpit.lib.cmux import (
-    cmux,
     deliver_followup,
     require_workspace_binary,
     spawn_workspace,
@@ -1214,8 +1213,12 @@ def main(argv: list[str] | None = None) -> int:
         # the workspace's terminal surface, then submit with Enter. Without
         # this, re-spawning onto an existing workspace silently drops the
         # PR-action / plan / `-- <text>` / context prompt.
-        cmux("send", "--workspace", existing_ref, prompt)
-        cmux("send-key", "--workspace", existing_ref, "enter")
+        # Through `deliver_followup`, not a raw send pair: it is the one place
+        # a non-gated delivery collapses the text to a single line, and without
+        # that a multi-line prompt submits its first fragment as a truncated
+        # instruction of its own. It also brings the readiness wait and the
+        # logged-not-raised send failure this call site had neither of.
+        deliver_followup(existing_ref, prompt)
         print(
             f"note: delivered prompt to existing workspace {ws_name}",
             file=sys.stderr,

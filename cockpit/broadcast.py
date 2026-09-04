@@ -4,9 +4,18 @@ A one-shot admin gesture (typically a slash command like `/compact`) fanned
 out to every workspace cmux/limux knows about, so one command reaches every
 open session instead of clicking through each one by hand.
 
-`--repo NAME` narrows that fan-out to one configured repo. The scope is a
-*filter over the same loop*, not a second delivery path: every ref that
-survives it still goes through `nudge_if_idle` unchanged.
+`--repo NAME` narrows that fan-out to one configured repo, and `--worktree
+PATH` to the sessions rooted at one worktree. Both are *filters over the same
+loop*, not a second delivery path: every ref that survives one still goes
+through `nudge_if_idle` unchanged.
+
+`--worktree` is the narrowest scope there is, and it exists so reaching one
+session is a *target* rather than a coincidence — without it the only way down
+to a single workspace was a `--repo` that happened to have exactly one open,
+which is a blast radius that silently widens the moment a second worktree
+opens. It matches the cwd exactly, never by prefix: a subdirectory of a
+worktree is a different session's business, and a `use_worktree: false` repo
+deliberately hosts several sessions at one cwd, all of which are in scope.
 
 Reuses the two existing primitives in `cockpit.lib.cmux` rather than building
 a parallel send path:
@@ -37,9 +46,15 @@ import os
 import sys
 from pathlib import Path
 
-from cockpit.lib.cmux import CmuxUnavailable, nudge_if_idle, workspace_cwds
+from cockpit.lib.cmux import (
+    CmuxUnavailable,
+    nudge_if_idle,
+    refs_at,
+    skip_summary,
+    workspace_cwds,
+)
 from cockpit.lib.config import load_config
-from cockpit.lib.git import worktrees
+from cockpit.lib.git import repo_worktree_paths, worktrees
 
 
 def _repo_label(repo: dict) -> str:
@@ -56,9 +71,8 @@ def _repo_label(repo: dict) -> str:
 def _repo_paths(name: str) -> set[Path]:
     """Every path a session in the configured repo `name` can be rooted at.
 
-    Matched by cwd against the repo's own `worktrees()`, never a path-prefix
-    test — a worktree usually lives in a *sibling* directory of the repo, and a
-    prefix would both miss those and claim an unrelated repo nested underneath.
+    The cwd-not-prefix matching rule is `git.repo_worktree_paths`'; this only
+    resolves the *name* to a repo entry.
 
     Raises `LookupError`, naming the configured repos, when nothing matches.
     """
@@ -69,8 +83,9 @@ def _repo_paths(name: str) -> set[Path]:
         # upside.
         if _repo_label(repo).casefold() == name.casefold():
             path = Path(os.path.expanduser(repo["path"]))
-            wts = worktrees(path, repo.get("branch_prefix", ""))
-            return {path.resolve(), *(wt.path.resolve() for wt in wts)}
+            return repo_worktree_paths(
+                path, worktrees(path, repo.get("branch_prefix", ""))
+            )
     known = ", ".join(sorted(_repo_label(r) for r in repos))
     raise LookupError(f"unknown repo {name!r}; configured: {known or '(none)'}")
 
@@ -90,11 +105,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Report which workspaces would receive the message without sending.",
     )
-    p.add_argument(
+    scope_group = p.add_mutually_exclusive_group()
+    scope_group.add_argument(
         "--repo",
         metavar="NAME",
         help="Only send to workspaces in this configured repo, named as the "
         "dashboard names it (case-insensitive). Default: every idle workspace.",
+    )
+    scope_group.add_argument(
+        "--worktree",
+        metavar="PATH",
+        help="Only send to the session(s) rooted at this worktree, matched by "
+        "exact directory. The narrowest scope there is.",
     )
     args = p.parse_args(argv)
 
@@ -104,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cockpit broadcast: workspace backend unavailable: {e}", file=sys.stderr)
         return 1
 
+    scope = ""
+    refs = sorted(cwds)
     if args.repo:
         try:
             paths = _repo_paths(args.repo)
@@ -116,28 +140,41 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        cwds = {ref: cwd for ref, cwd in cwds.items() if cwd.resolve() in paths}
-
-    scope = f" in {args.repo}" if args.repo else ""
-    if not cwds:
+        refs = refs_at(cwds, paths)
+        scope = f" in {args.repo}"
+    elif args.worktree:
+        target = Path(os.path.expanduser(args.worktree)).resolve()
+        # A path that isn't a directory is a typo, and the alternative — an
+        # empty filter reported as "no other workspaces there" — reads as a
+        # quiet success on a message that reached nobody.
+        if not target.is_dir():
+            print(
+                f"cockpit broadcast: no such worktree: {args.worktree}",
+                file=sys.stderr,
+            )
+            return 2
+        refs = refs_at(cwds, [target])
+        scope = f" in {target}"
+    if not refs:
         print(f"cockpit broadcast: no other workspaces{scope or ' found'}")
         return 0
 
-    sent: list[str] = []
     skips: dict[str, str] = {}
-    for ref in sorted(cwds):
-        if nudge_if_idle(ref, args.message, dry=args.dry, tag="broadcast", skips=skips):
-            sent.append(ref)
+    sent = sum(
+        1
+        for ref in refs
+        if nudge_if_idle(ref, args.message, dry=args.dry, tag="broadcast", skips=skips)
+    )
 
     if args.dry:
         # Under `dry` nothing is sent, so eligibility is the complement of the
         # skip set — not `sent`, which is empty by construction.
         print(
-            f"cockpit broadcast: dry-run — {len(cwds) - len(skips)}/{len(cwds)} "
+            f"cockpit broadcast: dry-run — {len(refs) - len(skips)}/{len(refs)} "
             f"workspace(s){scope} would receive it"
         )
     else:
-        print(f"cockpit broadcast: sent to {len(sent)}/{len(cwds)} workspace(s){scope}")
+        print(f"cockpit broadcast: sent to {sent}/{len(refs)} workspace(s){scope}")
     _print_skips(skips, retry=not args.dry)
     return 0
 
@@ -145,19 +182,15 @@ def main(argv: list[str] | None = None) -> int:
 def _print_skips(skips: dict[str, str], *, retry: bool) -> None:
     """One line per skip reason, biggest group first, with its refs.
 
-    A bare count invites the reader to guess at the cause, and the guess is
-    usually "they're all mid-turn" — in practice the big group is `Needs
-    input` without an `idle=` pill, which is a different (and more fixable)
-    thing. Naming the reason next to the count is the whole point.
+    The grouping and its order are `cmux.skip_summary`'s, shared with the TUI's
+    fan-out toast; only the wording here is broadcast's own — a terminal has
+    room to name the refs, a toast does not.
     """
     if not skips:
         return
-    groups: dict[str, list[str]] = {}
-    for ref, reason in skips.items():
-        groups.setdefault(reason, []).append(ref)
     print(f"  skipped {len(skips)}{' — re-run to retry' if retry else ''}:")
-    for reason, refs in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        print(f"    {reason} ({len(refs)}): {', '.join(sorted(refs))}")
+    for reason, refs in skip_summary(skips):
+        print(f"    {reason} ({len(refs)}): {', '.join(refs)}")
 
 
 if __name__ == "__main__":

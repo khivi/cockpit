@@ -356,6 +356,7 @@ with `statusline_hide`. Set `use_cship: true`, or accept the prompt during `cock
 ```bash
 cockpit broadcast /compact                    # --dry to preview
 cockpit broadcast --repo svc-auth /compact    # just that repo's sessions
+cockpit broadcast --worktree ~/src/fix /compact   # just that worktree's
 ```
 
 One line of text into every idle Claude session cockpit knows about. Same idle gate as the
@@ -368,6 +369,12 @@ the way the dashboard does, case-insensitively; a name it doesn't recognise list
 it has rather than broadcasting to everything. Scoping matches each session's directory
 against that repo's own worktrees, so a worktree parked in a sibling directory still counts
 and a different repo nested inside one never does.
+
+`--worktree` goes narrower still — the session sitting in exactly that directory, and
+nothing else. Reach for it when a message is meant for one session, or to smoke-test a
+slash command somewhere before sending it everywhere. A repo that happens to have one
+worktree open is not the same thing: it stops being one target as soon as you open a
+second.
 
 `/cockpit-new`, `/cockpit-close`, `/cockpit-broadcast` and `/cockpit-nudge` are installed
 into Claude Code by `cockpit setup`, so you can drive all four from inside a session.

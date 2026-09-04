@@ -17,7 +17,7 @@ import shutil
 import sys
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -605,7 +605,22 @@ def deliver_followup(ref: str, text: str) -> bool:
     not-yet-rendered TUI, then types the text and submits with Enter — the same
     primitive the attach path and `nudge_if_idle` use. Best-effort: a send
     failure is logged, never raised.
+
+    Collapsed to one line for the same reason `nudge_if_idle` does it: both
+    spellings of a newline arrive as **Enter**, which in a claude composer means
+    submit, so an un-normalized multi-line prompt submits its first fragment as
+    its own truncated instruction. This is the second funnel — every send that
+    does NOT go through the idle gate goes through here, so no call site has to
+    remember. **Do not** re-add a raw `cmux send` pair beside it.
+
+    Deliberately NOT idle-gated, unlike `nudge_if_idle`. Both callers are
+    delivering a prompt the user just asked for into a workspace cockpit is
+    spawning or re-using, and a refusal means the prompt is silently dropped —
+    the exact bug the existing-workspace call site was added to fix. The prefix
+    flow also *wants* mid-turn delivery: its first turn is the slash command
+    still running, and the body is meant to queue behind it.
     """
+    text = one_line(text)
     deadline = time.monotonic() + _FOLLOWUP_READY_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if _claude_ready(ref):
@@ -832,6 +847,51 @@ def nudge_if_idle(
 
         nudges.record_nudge(pref_key)
     return True
+
+
+def refs_at(
+    cwds: Mapping[str, Path],
+    paths: Iterable[Path],
+    *,
+    exclude: str | None = None,
+) -> list[str]:
+    """The refs in `cwds` rooted at one of `paths`, sorted.
+
+    The cmux half of `git.repo_worktree_paths`' rule: matched on the **resolved
+    cwd, exactly**, never by prefix. A session in a subdirectory belongs to
+    whoever opened it there, and a `use_worktree: false` repo deliberately hosts
+    several sessions at one cwd — so this returns a *list*, and a caller wanting
+    "the" workspace for a worktree takes the first.
+
+    Takes the listing rather than calling `workspace_cwds()` itself: every
+    caller already wraps that read in its own error handling and reports a
+    backend failure in its own voice ("ask: could not enumerate…", "park:
+    …", broadcast's exit 1), and a matching rule with no I/O in it can be
+    tested as the pure thing it is. Sorted so a fan-out delivers in a stable
+    order; `exclude` drops the caller's own ref.
+    """
+    targets = {p.resolve() for p in paths}
+    return sorted(
+        ref for ref, cwd in cwds.items() if cwd.resolve() in targets and ref != exclude
+    )
+
+
+def skip_summary(skips: dict[str, str]) -> list[tuple[str, list[str]]]:
+    """`{ref: reason}` regrouped as `[(reason, refs)]`, biggest group first.
+
+    A bare count invites the reader to guess the cause, and the guess is usually
+    "they're all mid-turn" — in practice the big group is `Needs input` without
+    an `idle=` pill, a different and more fixable thing. Ties break on the
+    reason so the order is stable rather than dict-insertion order, which is
+    ref order and therefore arbitrary. Formatting is the caller's.
+    """
+    groups: dict[str, list[str]] = {}
+    for ref, reason in skips.items():
+        groups.setdefault(reason, []).append(ref)
+    return sorted(
+        ((reason, sorted(refs)) for reason, refs in groups.items()),
+        key=lambda kv: (-len(kv[1]), kv[0]),
+    )
 
 
 def workspace_names() -> dict[str, str]:

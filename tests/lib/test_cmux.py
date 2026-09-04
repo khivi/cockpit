@@ -557,6 +557,33 @@ def test_deliver_followup_sends_text_then_enter_when_ready():
     assert any(c[0] == "send-key" and "enter" in c for c in calls)
 
 
+def test_deliver_followup_collapses_the_text_to_one_line():
+    """`cmux send` synthesizes keypresses, so a newline arrives as Enter — i.e.
+    submit. Un-normalized, "do X\ndo Y" submits "do X" as its own truncated
+    instruction and leaves "do Y" behind. `nudge_if_idle` collapses inside the
+    gate; this is the funnel for every send that does NOT go through it."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-status":
+            return "claude_code=Idle icon=x color=#fff\n"
+        return ""
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+    ):
+        assert deliver_followup("workspace:1", "rebase onto main\nthen force-push")
+
+    send = next(c for c in calls if c[0] == "send")
+    body = send[-1]
+    assert "\n" not in body
+    assert "rebase onto main" in body and "then force-push" in body
+    # One submission, not one per fragment.
+    assert sum(1 for c in calls if c[0] == "send-key") == 1
+
+
 def test_deliver_followup_polls_until_claude_boots():
     """Keystrokes wait for the TUI: poll `list-status` until claude registers a
     state, sleeping between polls, so the body isn't dropped mid-boot."""
