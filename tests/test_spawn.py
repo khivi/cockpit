@@ -377,18 +377,16 @@ def test_non_from_name_attaches_to_existing_remote_branch(cockpit_repo, push_bra
 def spawn_main(cockpit_repo, monkeypatch, capsys):
     """Returns `run(argv) -> (exit_code, stdout, stderr)`.
 
-    Captures call args on `spawn_main.cmux_calls`: direct `cmux(...)` calls
-    (send/send-key on attach) and `spawn_workspace(...)` calls (synthesized
-    into cmux-style new-workspace tuples so `_cmux_kwarg` works unchanged).
+    Captures call args on `spawn_main.cmux_calls`: `spawn_workspace(...)` and
+    `deliver_followup(...)`, both synthesized into cmux-style tuples so
+    `_cmux_kwarg` works unchanged. `spawn` itself no longer calls `cmux`
+    directly — the attach path goes through `deliver_followup`, which is the
+    one funnel for a send that skips the idle gate.
     """
     import cockpit.spawn as spawn
 
     cmux_calls: list[tuple] = []
     followup_calls: list[tuple[str, str]] = []
-
-    def fake_cmux(*args, **kwargs):
-        cmux_calls.append(args)
-        return None
 
     def fake_spawn_workspace(name, cwd, command):
         cmux_calls.append(
@@ -406,7 +404,6 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
         cmux_calls.append(("send-key", "--workspace", ref, "enter"))
         return True
 
-    monkeypatch.setattr(spawn, "cmux", fake_cmux)
     monkeypatch.setattr(spawn, "spawn_workspace", fake_spawn_workspace)
     monkeypatch.setattr(spawn, "deliver_followup", fake_deliver_followup)
     monkeypatch.setattr(spawn, "workspace_names", lambda: {})
