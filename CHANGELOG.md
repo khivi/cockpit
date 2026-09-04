@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.33.0](https://github.com/khivi/cockpit/compare/v2.32.0...v2.33.0) (2026-09-04)
+
+
+### Features
+
+* **diff:** ship cockpit diff as /cockpit-diff, replacing the skill ([#488](https://github.com/khivi/cockpit/issues/488)) ([7daafe0](https://github.com/khivi/cockpit/commit/7daafe04a546101aadb2afaffd8d70df17cd6ebc))
+
 ## [2.32.0](https://github.com/khivi/cockpit/compare/v2.31.0...v2.32.0) (2026-09-04)
 
 
