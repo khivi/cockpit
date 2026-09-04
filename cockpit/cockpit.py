@@ -53,6 +53,7 @@ from cockpit.lib.config import (
     ensure_state_dirs,
     install_claude_commands,
     install_claude_hooks,
+    install_claude_skills,
     install_cship_default_config,
     install_cship_statusline_if_configured,
     install_starship_default_config,
@@ -469,6 +470,7 @@ def main(argv: list[str] | None = None) -> int:
         install_cship_statusline_if_configured(_statusline_command())
         install_claude_hooks()
         install_claude_commands()
+        install_claude_skills()
         _report_backend()
         if not load_config().get("use_cship"):
             print(
@@ -487,6 +489,7 @@ def main(argv: list[str] | None = None) -> int:
         if claude_integration_present():
             install_claude_hooks()
             install_claude_commands()
+            install_claude_skills()
         else:
             print(
                 "tip: run `cockpit setup` to wire cockpit into Claude Code "

@@ -1311,6 +1311,73 @@ def uninstall_claude_commands(commands_dir: Path | None = None) -> bool:
     return removed
 
 
+# Package holding the bundled agent skills (`cockpit/claude_skills/<name>/SKILL.md`).
+# Unlike a command, a skill is a DIRECTORY named after the skill — Claude Code
+# reads `<skills-dir>/<name>/SKILL.md` — so the package mirrors that layout one
+# subdirectory per skill rather than going flat the way `_bundled_claude_commands`
+# does.
+_CLAUDE_SKILLS_PACKAGE = "cockpit.claude_skills"
+_SKILL_FILE = "SKILL.md"
+
+
+def _bundled_claude_skills() -> list[tuple[str, Any]]:
+    """`(skill name, SKILL.md resource)` for every bundled skill, name-sorted."""
+    out = []
+    for entry in files(_CLAUDE_SKILLS_PACKAGE).iterdir():
+        skill = entry / _SKILL_FILE
+        if entry.name.startswith("_") or not skill.is_file():
+            continue
+        out.append((entry.name, skill))
+    return sorted(out, key=lambda pair: pair[0])
+
+
+def install_claude_skills(skills_dir: Path | None = None) -> None:
+    """Install cockpit's bundled agent skills into `~/.claude/skills/<name>/`.
+
+    Same contract as `install_claude_commands` — idempotent, backs up before
+    overwriting different content, never touches unrelated user skills — with one
+    extra step: each skill owns a directory, so the directory is created and only
+    its `SKILL.md` is ever written. A user file sitting beside it in that
+    directory is left alone.
+    """
+    skills_dir = skills_dir or (Path.home() / ".claude" / "skills")
+    for name, resource in _bundled_claude_skills():
+        target_dir = skills_dir / name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / _SKILL_FILE
+        new_text = resource.read_text(encoding="utf-8")
+        original = target.read_text() if target.exists() else None
+        if original == new_text:
+            print(f"claude skill unchanged -> {target}")
+            continue
+        if original is not None:
+            _backup_settings(target, original)
+        target.write_text(new_text)
+        print(f"wrote claude skill -> {target}")
+
+
+def uninstall_claude_skills(skills_dir: Path | None = None) -> bool:
+    """Inverse of `install_claude_skills`. Returns True iff it removed anything.
+
+    Removes each bundled `SKILL.md` and then the directory, but **only when that
+    leaves it empty** — a user who dropped a reference file beside ours keeps it,
+    and keeps the directory holding it.
+    """
+    skills_dir = skills_dir or (Path.home() / ".claude" / "skills")
+    removed = False
+    for name, _ in _bundled_claude_skills():
+        target = skills_dir / name / _SKILL_FILE
+        if not target.exists():
+            continue
+        target.unlink()
+        removed = True
+        with contextlib.suppress(OSError):  # not empty → user files in there
+            target.parent.rmdir()
+    if removed:
+        print(f"removed cockpit skills -> {skills_dir}")
+    return removed
+
+
 def _backup_settings(settings_path: Path, original: str) -> None:
     settings_path.with_name(
         f"{settings_path.name}.bak.{datetime.now():%Y%m%d%H%M%S}"
@@ -1472,13 +1539,14 @@ def teardown_claude_integration() -> None:
     `brew uninstall cockpit` removes only the Cellar binary; the `~/.claude`
     entries setup wrote live outside the brew prefix and would otherwise dangle
     (hooks/statusLine invoking a missing `cockpit`). This drops those, plus the
-    bundled slash commands. It deliberately does **not** touch the
+    bundled slash commands and agent skills. It deliberately does **not** touch the
     `~/.config/{cship,starship}.toml` seeds (user-editable, inert without the
     binary) or `~/.config/cockpit` state — those are reported for manual removal.
     """
     changed = uninstall_claude_hooks()
     changed = clear_cockpit_statusline() or changed
     changed = uninstall_claude_commands() or changed
+    changed = uninstall_claude_skills() or changed
     if not changed:
         print("no cockpit claude integration found — nothing to remove")
     print(

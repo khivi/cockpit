@@ -2364,3 +2364,72 @@ def test_ensure_state_dirs_creates_the_runtime_dir(tmp_path, monkeypatch):
     finally:
         monkeypatch.undo()
         importlib.reload(config_mod)
+
+
+# --- bundled agent skills ---------------------------------------------------
+#
+# The sibling of `install_claude_commands`, differing in one thing that is easy
+# to get wrong: a skill is a DIRECTORY (`<name>/SKILL.md`), not a flat file.
+
+
+def test_install_claude_skills_writes_a_directory_per_skill(tmp_path):
+    skills_dir = tmp_path / "skills"
+    config_mod.install_claude_skills(skills_dir)
+    skill = skills_dir / "cockpit-diff" / "SKILL.md"
+    assert skill.is_file()
+    body = skill.read_text()
+    assert body.startswith("---"), "a skill needs YAML frontmatter to be loaded"
+    assert "name: cockpit-diff" in body
+    assert "cockpit diff" in body
+
+
+def test_install_claude_skills_is_idempotent(tmp_path):
+    skills_dir = tmp_path / "skills"
+    config_mod.install_claude_skills(skills_dir)
+    first = (skills_dir / "cockpit-diff" / "SKILL.md").read_text()
+    config_mod.install_claude_skills(skills_dir)
+    assert (skills_dir / "cockpit-diff" / "SKILL.md").read_text() == first
+    # A second run makes no change → no backup files.
+    assert not list(skills_dir.rglob("*.bak.*"))
+
+
+def test_install_claude_skills_backs_up_a_user_edit(tmp_path):
+    skills_dir = tmp_path / "skills"
+    target = skills_dir / "cockpit-diff"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("my own version")
+    config_mod.install_claude_skills(skills_dir)
+    assert "my own version" not in (target / "SKILL.md").read_text()
+    assert [p.read_text() for p in target.glob("SKILL.md.bak.*")] == ["my own version"]
+
+
+def test_uninstall_claude_skills_keeps_a_directory_the_user_still_uses(tmp_path):
+    """Removing our `SKILL.md` must not take a file the user put beside it — so
+    the directory goes only when emptying it left nothing behind."""
+    skills_dir = tmp_path / "skills"
+    config_mod.install_claude_skills(skills_dir)
+    theirs = skills_dir / "cockpit-diff" / "notes.md"
+    theirs.write_text("my notes")
+
+    assert config_mod.uninstall_claude_skills(skills_dir) is True
+    assert not (skills_dir / "cockpit-diff" / "SKILL.md").exists()
+    assert theirs.read_text() == "my notes"
+
+
+def test_uninstall_claude_skills_removes_the_empty_directory(tmp_path):
+    skills_dir = tmp_path / "skills"
+    config_mod.install_claude_skills(skills_dir)
+    assert config_mod.uninstall_claude_skills(skills_dir) is True
+    assert not (skills_dir / "cockpit-diff").exists()
+    # Nothing left to remove → reports no change, so teardown can't claim one.
+    assert config_mod.uninstall_claude_skills(skills_dir) is False
+
+
+def test_uninstall_claude_skills_leaves_an_unrelated_skill_alone(tmp_path):
+    skills_dir = tmp_path / "skills"
+    mine = skills_dir / "my-own-skill"
+    mine.mkdir(parents=True)
+    (mine / "SKILL.md").write_text("mine")
+    config_mod.install_claude_skills(skills_dir)
+    config_mod.uninstall_claude_skills(skills_dir)
+    assert (mine / "SKILL.md").read_text() == "mine"
