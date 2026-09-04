@@ -44,6 +44,15 @@ This file is the human reference; the authoritative default/resolution for each 
 its reader function in `cockpit/lib/config.py`. Keep all three in sync when a field
 changes: `config.py` (reader), `config.example.json` (sample), this file.
 
+**Seeing what actually resolved.** `cockpit config inspect` prints the effective
+config — post-org-merge, post-`{repo}`-expansion — as pretty JSON, exactly what a
+repo's entry looks like after inheriting from `orgs`. `--repo NAME` scopes to one
+repo (matched case-insensitively, same as `cockpit broadcast --repo`; an unknown
+name exits 2 listing the configured repos) and additionally shows that repo's
+resolved ticket provider and the *names* of the credential env vars it needs, each
+flagged set/unset — never a value. Read-only: it never writes `config.json` or
+touches the network.
+
 ## Per-repo fields (`repos[]`)
 
 Each entry in the `repos` array. Ticket fields live in the nested `tickets` object

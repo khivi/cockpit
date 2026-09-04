@@ -170,3 +170,15 @@ def test_broadcast_passes_rest(monkeypatch):
     monkeypatch.setattr("cockpit.broadcast.main", fake)
     assert cli.main(["broadcast", "/compact", "--dry"]) == 0
     assert seen["argv"] == ["/compact", "--dry"]
+
+
+def test_config_passes_rest(monkeypatch):
+    seen = {}
+
+    def fake(argv):
+        seen["argv"] = argv
+        return 0
+
+    monkeypatch.setattr("cockpit.config_cmd.main", fake)
+    assert cli.main(["config", "inspect", "--repo", "svc-auth"]) == 0
+    assert seen["argv"] == ["inspect", "--repo", "svc-auth"]
