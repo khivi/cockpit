@@ -196,6 +196,12 @@ only then, only on the ambiguity, at the cost of one fetch.
 propose, not to start editing — the agent waits for your approval. A blank new branch gets
 no seeded prompt at all, because there's nothing to study.
 
+**And the plan is left behind as a file.** The session also writes it to `plan.md` in the
+worktree, so a compact, a crash or a session you closed doesn't take the reasoning with it
+— you can read what it intended to do without focusing the workspace, and whoever picks the
+branch up next starts from the plan rather than from the diff. It stays untracked: a plan
+committed once already leaked into `main` and rode along on every branch cut from it.
+
 ---
 
 ## The nudge

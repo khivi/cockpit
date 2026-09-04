@@ -1,9 +1,12 @@
 You are starting a fresh task in a new worktree on branch `{branch}`.{source_block}
 
 **HARD RULE — PLAN ONLY, NO CODE THIS TURN**:
-- DO NOT edit files, write code, run tests, or commit anything.
+- DO NOT edit files, write code, run tests, or commit anything. The plan file
+  below is the one exception.
 - You MAY use Read, Grep, Glob for context (re-fetch the linked ticket/thread where relevant).
 - Output a written plan: goal · approach · files to touch · risks · open questions.
+- Write that same plan to `plan.md` in the worktree root, so it outlives a
+  compact or a lost session. Leave it untracked — never `git add` or commit it.
 - Ask clarifying questions if the task is ambiguous.
 - Wait for the user to approve or refine before implementing.
 
