@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.31.0](https://github.com/khivi/cockpit/compare/v2.30.0...v2.31.0) (2026-09-04)
+
+
+### Features
+
+* **cli:** add cockpit config inspect and sanitize externally-authored cell text ([#484](https://github.com/khivi/cockpit/issues/484)) ([16030dd](https://github.com/khivi/cockpit/commit/16030dd8f5218effd2f2920e08211efdd063ded5))
+
 ## [2.30.0](https://github.com/khivi/cockpit/compare/v2.29.0...v2.30.0) (2026-09-04)
 
 
