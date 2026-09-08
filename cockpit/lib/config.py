@@ -1492,8 +1492,10 @@ def install_cship_statusline_if_configured(statusline_command: str) -> None:
         raise CshipNotInstalledError(
             "use_cship=true but `cship` is not on PATH. "
             "Install it with `curl -fsSL https://cship.dev/install.sh | bash` "
-            "(macOS + Linux), or set "
-            f"use_cship=false in {CONFIG_PATH}."
+            "(macOS + Linux), or turn the footer off with "
+            "`cockpit setup --reset` — flipping use_cship in "
+            f"{CONFIG_PATH} by hand leaves the statusLine and starship.toml "
+            "still pointing at cockpit, and nothing later clears them."
         )
     settings_path = Path.home() / ".claude" / "settings.json"
     current = _read_current_statusline(settings_path)

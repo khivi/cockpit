@@ -769,7 +769,10 @@ def preflight(cfg: dict, *, for_setup: bool = False) -> None:
                 _die(
                     f"use_cship=true but `{binary}` is not on PATH. "
                     f"Install it — {_cship_install.get(binary, binary)} — "
-                    "or set use_cship=false in your config."
+                    "or turn the footer off with `cockpit setup --reset`, "
+                    "which clears the statusLine too (a hand-edit to "
+                    "use_cship=false leaves it wired to a shim that needs "
+                    "cship)."
                 )
 
     validate_config(cfg)
