@@ -74,7 +74,6 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `use_worktree` | bool | `true` | When `false`, the user works directly in the main checkout and cockpit never spawns PR/review/orphan worktrees for the repo (and `n` on its row creates a single named workspace on the checkout, no worktree). Absent = `true` = normal worktree-managed repo. Set to `false` by bare `cockpit new`. |
 | `update_stale_branches` | bool | `false` | Bring my own **approved or snoozed** PR branches up to date with their base when GitHub reports them `BEHIND` (i.e. the repo requires up-to-date branches before merging). Server-side via GitHub's "Update branch" — never a local rebase. Skips an approved PR whose base dismisses stale reviews, since updating it would discard the approval. Also a top-level default. |
 | `update_branch_method` | string | `"rebase"` | `rebase` or `merge` for the above. `rebase` keeps history linear but rewrites the head, so cockpit resyncs the local worktree (clean + unmodified only); `merge` adds a merge commit and the worktree fast-forwards on its own. Also a top-level default. |
-| `orphan_nudge_grace_hours` | number | `4` | Grace before a no-PR ("orphan") worktree draws the push-or-close nudge. `0` disables. Also a top-level default. |
 | `tickets` | object\|string | `{}` | Ticket-provider block (below). Bare string `"github"` == `{"provider": "github"}`. |
 | `org` | string | unset | Name of an entry in the top-level `orgs` object whose defaults this repo inherits (below). Must be defined there — a dangling reference hard-fails at start. |
 
@@ -208,10 +207,14 @@ watch` started elsewhere.
 Slash commands seeded as a spawned workspace's first turn. Fields resolve
 **per-field** repo-block → global-block → default (`config.py::_skills_field`).
 
+Every field is unset by default. Cockpit names no command it doesn't ship —
+including Claude Code's own built-ins — so an unset field falls back to prose
+bundled in the wheel, never to a command whose behaviour lives elsewhere.
+
 | Field | Default | Meaning |
 |---|---|---|
 | `session` | unset (no-op) | Slash command run as its own first turn in **every** spawn (e.g. `/session-coordination`). Global only — a per-repo `skills.session` is accepted but every spawn resolves the same global value in practice, since there's no per-repo caller. |
-| `review` | `/review` | Slash command seeded as the first turn of an auto-spawned `review_prs` worktree. No-op unless `review_prs`. Override per-repo (e.g. `/pr-review`) or globally. |
+| `review` | unset (built-in review prose) | Slash command seeded as the first turn of an auto-spawned `review_prs` worktree, followed by the PR context and the dry-run rule (report findings, ask before posting). Unset keeps cockpit's built-in `review_prose.txt`. No-op unless `review_prs`. Override per-repo (e.g. `/pr-review`) or globally. |
 | `plan` | unset (built-in plan-only prose) | Slash command seeded as the first turn of a plan-only spawn (a PR/branch worth studying before implementing), followed by the source/PR context and the shared no-code/wait-for-approval gate. Unset keeps cockpit's built-in `plan_only.txt` prose. Override per-repo (e.g. `/plan-pr`) or globally. |
 | `actions` | unset (built-in Actions prose) | Slash command seeded as the first turn of a GitHub-Actions-run-URL spawn, followed by the run/PR context (run URL, job id, linked PR) and the same no-code gate. Unset keeps cockpit's built-in `--log-failed` investigation prose. Override per-repo (e.g. `/actions-pr`) or globally. |
 
@@ -225,7 +228,6 @@ Slash commands seeded as a spawned workspace's first turn. Fields resolve
 | `slow_poll_interval_seconds` | number | `300` | Full reconcile cadence (gh fetch, PR JSON, pills). |
 | `fast_poll_interval_seconds` | number | `30` | Network-free republish cadence (git-state + PR flat cells from disk). |
 | `autoclose_age_days` | number | `14` | How far back to look for merged branches when deciding what to autoclose. Nothing is closed for being *old* — only a merged PR triggers autoclose — so this is the window past which a long-merged branch stops being noticed. |
-| `orphan_nudge_grace_hours` | number | `4` | Default orphan-nudge grace (per-repo key overrides). |
 | `linear_state_ttl_seconds` | number | `3 × slow` (900) | Backstop staleness for the cached Linear delivery block. |
 | `linear_identity_ttl_seconds` | number | `12 × slow` (3600) | Cache lifetime for Linear viewer id + team state maps. |
 | `skills` | object | `{}` | Slash-command overrides (above). |

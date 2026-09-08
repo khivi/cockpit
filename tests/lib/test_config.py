@@ -851,14 +851,16 @@ def test_find_repo_by_nwo_skips_missing_path(tmp_path, monkeypatch):
 # ── review_command (review_prs first-turn slash command, via skills.review) ─
 
 
-def test_review_command_defaults_to_plugin_command(tmp_path, monkeypatch):
+def test_review_command_defaults_to_unset(tmp_path, monkeypatch):
+    """Unset means cockpit's own `review_prose.txt`, never a command it doesn't
+    ship — not even Claude Code's built-in `/review`."""
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.review_command() == "/review"
+    assert cockpit_config.review_command() == ""
 
 
 def test_review_command_repo_override_wins(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
-        tmp_path, monkeypatch, {"repos": [], "skills": {"review": "/review"}}
+        tmp_path, monkeypatch, {"repos": [], "skills": {"review": "/global-review"}}
     )
     assert (
         cockpit_config.review_command(repo_entry={"skills": {"review": "/pr-review"}})
@@ -875,10 +877,7 @@ def test_review_command_falls_back_to_global(tmp_path, monkeypatch):
 
 def test_review_command_blank_falls_through_to_default(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert (
-        cockpit_config.review_command(repo_entry={"skills": {"review": "  "}})
-        == "/review"
-    )
+    assert cockpit_config.review_command(repo_entry={"skills": {"review": "  "}}) == ""
 
 
 # ── plan_command (plan-only first-turn slash command, via skills.plan) ──────
@@ -1311,65 +1310,6 @@ def test_ticket_close_on_merge_repo_without_key_falls_back_to_global():
 
     cfg = {"tickets": {"close_on_merge": True}}
     assert cockpit_config.ticket_close_on_merge(cfg, {"name": "r"}) is True
-
-
-# ── orphan_nudge_grace_seconds ──────────────────────────────────────────────
-
-
-def test_orphan_nudge_grace_defaults_to_four_hours():
-    from cockpit.lib import config as cockpit_config
-
-    assert cockpit_config.orphan_nudge_grace_seconds({"repos": []}) == 4 * 3600.0
-
-
-def test_orphan_nudge_grace_global_override():
-    from cockpit.lib import config as cockpit_config
-
-    assert (
-        cockpit_config.orphan_nudge_grace_seconds({"orphan_nudge_grace_hours": 2})
-        == 2 * 3600.0
-    )
-
-
-def test_orphan_nudge_grace_zero_disables():
-    from cockpit.lib import config as cockpit_config
-
-    assert (
-        cockpit_config.orphan_nudge_grace_seconds({"orphan_nudge_grace_hours": 0})
-        == 0.0
-    )
-
-
-def test_orphan_nudge_grace_repo_overrides_global():
-    from cockpit.lib import config as cockpit_config
-
-    cfg = {"orphan_nudge_grace_hours": 8}
-    # Per-repo 0 (disable) wins over a non-zero global.
-    assert (
-        cockpit_config.orphan_nudge_grace_seconds(cfg, {"orphan_nudge_grace_hours": 0})
-        == 0.0
-    )
-    # Per-repo value wins over an absent global.
-    assert (
-        cockpit_config.orphan_nudge_grace_seconds({}, {"orphan_nudge_grace_hours": 1})
-        == 3600.0
-    )
-
-
-def test_orphan_nudge_grace_repo_without_key_falls_back_to_global():
-    from cockpit.lib import config as cockpit_config
-
-    cfg = {"orphan_nudge_grace_hours": 3}
-    assert cockpit_config.orphan_nudge_grace_seconds(cfg, {"name": "r"}) == 3 * 3600.0
-
-
-def test_orphan_nudge_grace_negative_clamped_to_zero():
-    from cockpit.lib import config as cockpit_config
-
-    assert (
-        cockpit_config.orphan_nudge_grace_seconds({"orphan_nudge_grace_hours": -5})
-        == 0.0
-    )
 
 
 # ── find_repos_by_ticket_key ────────────────────────────────────────────────

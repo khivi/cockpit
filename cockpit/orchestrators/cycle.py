@@ -98,7 +98,6 @@ from cockpit.lib.config import (
     linear_api_key,
     linear_merge_done,
     linear_team_keys,
-    orphan_nudge_grace_seconds,
     review_command,
     review_external,
     ticket_close_on_merge,
@@ -198,6 +197,11 @@ _DEVDONE_TITLE_MAX = 15
 # Nudge text per actionable issue. Author-mode by construction ("rebase and
 # force-push") — `PR.nudge_issue` gates these to my own PRs, so a coworker's
 # review worktree is never told to rewrite their branch.
+#
+# Its keys MUST cover `gh.ACTIONABLE_ISSUES` — that set decides *whether* a nudge
+# fires and this dict decides what it says, so a member added there without an
+# entry here reaches `_nudge_text` for a category it can't describe.
+# `test_nudge_desc_covers_every_actionable_issue` pins the two together.
 _NUDGE_DESC = {
     "comments": lambda pr: (
         f"{pr.unaddressed} unresolved review thread(s) — reply or push fixes"
@@ -207,6 +211,19 @@ _NUDGE_DESC = {
     ),
     "conflicts": lambda _pr: "merge conflicts vs base — rebase and force-push",
 }
+
+
+def _nudge_text(pr: PR) -> str:
+    """The nudge line for `pr`'s actionable issue.
+
+    Falls back to naming the bare category rather than raising: a `_NUDGE_DESC`
+    miss means the two declarations drifted, and killing the slow tick mid-repo
+    over undescribed-but-real work is the worse failure. The test above is what
+    catches the drift.
+    """
+    desc = _NUDGE_DESC.get(pr.display_issue)
+    detail = desc(pr) if desc else f"needs attention ({pr.display_issue})"
+    return f"PR #{pr.number}: {detail}."
 
 
 def _cache_only(cfg: dict) -> bool:
@@ -2016,7 +2033,7 @@ def _refresh_tracked_pills(
             if actionable:
                 maybe_nudge(
                     ref,
-                    f"PR #{pr.number}: {_NUDGE_DESC[pr.display_issue](pr)}.",
+                    _nudge_text(pr),
                     ctx.dry,
                     label,
                     pref_key=pref_key(ctx.name, pr.number),
@@ -2042,14 +2059,13 @@ def _handle_orphans_and_close_stale(ctx: RepoCycle, keep_refs: set[str]) -> None
     """Apply orphan pills to every surviving workspace whose worktree branch has
     no open PR. Worktrees are never closed here — a merged PR is the only reaper
     (`_maybe_autoclose`), so a research/planning worktree survives until the user
-    closes it (TUI `c`). Mine-prefixed branches also get the "open a PR or close"
-    nudge; coworker branches (someone else's PR I'm reviewing locally) get the
-    pills only — nudging a coworker branch to open a PR makes no sense.
+    closes it (TUI `c`). Every orphan — mine or a coworker's branch I'm reviewing
+    locally — gets the pills and nothing else; see `_refresh_orphan` for why the
+    push-or-close nudge that used to single out mine-prefixed branches is gone.
     """
     wt_by_name = {wt.workspace_name: wt for wt in ctx.wts}
     wt_by_path = {wt.path.resolve(): wt for wt in ctx.wts}
     pr_branches = {pr.branch for pr in ctx.prs}
-    my_prefix = f"{ctx.self_user}/"
     for ref in keep_refs:
         ws_name = ctx.names.get(ref, "")
         wt_opt = _resolve_wt(ref, ws_name, ctx.cwds, wt_by_path, wt_by_name)
@@ -2060,13 +2076,22 @@ def _handle_orphans_and_close_stale(ctx: RepoCycle, keep_refs: set[str]) -> None
         ):
             continue
         wt = wt_opt
-        _refresh_orphan(ctx, ref, wt, ws_name, nudge=wt.branch.startswith(my_prefix))
+        _refresh_orphan(ctx, ref, wt, ws_name)
 
 
-def _refresh_orphan(
-    ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str, *, nudge: bool = True
-) -> None:
-    """Apply orphan/wip/stale pills; nudge to push-or-close when `nudge` is set."""
+def _refresh_orphan(ctx: RepoCycle, ref: str, wt: Worktree, ws_name: str) -> None:
+    """Apply the orphan/wip/stale pills to a worktree with no open PR.
+
+    Display only — deliberately no nudge. A "still has no open PR, push or close
+    it" message used to fire here every slow tick past a grace window, and it was
+    the one automatic send not derived from an actionable defect: having no PR
+    yet is the normal state of every branch between `cockpit new` and the first
+    push, so it fired on healthy new work by construction. It also addressed the
+    *session* rather than the user, asking an agent to choose between shipping
+    half-finished work and deleting a worktree — a call only the user can make.
+    The 🥚 pill says the same thing passively, and the row already shows it.
+    **Do not** re-add it; its orphan_nudge_grace_hours config key went too.
+    """
     if _is_post_merge_stale(wt, ctx.merged_branches):
         print(
             f"  {verb('orphan')} {dim(f'{ws_name} ({wt.branch}) merged — autoclose may handle')}",
@@ -2102,23 +2127,6 @@ def _refresh_orphan(
         )
     if changed and not ctx.dry:
         ctx.pill_state[ref] = orphan_snap
-    if nudge:
-        grace = orphan_nudge_grace_seconds(ctx.cfg, ctx.repo_entry)
-        age = worktree_age_seconds(wt.path)
-        if grace > 0 and age < grace:
-            reason = (
-                f"nudge {ws_name} ({wt.branch}) — worktree {age / 3600:.1f}h old "
-                f"< {grace / 3600:.0f}h grace"
-            )
-            print(f"  {verb('skip')} {dim(reason)}", flush=True)
-            return
-        maybe_nudge(
-            ref,
-            f"Worktree {wt.short} on {wt.branch} still has no open PR. "
-            f"Push commits and open a PR, or close the worktree if abandoned.",
-            ctx.dry,
-            ws_name,
-        )
 
 
 _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
@@ -2134,8 +2142,9 @@ def _bg_spawn_pr(
     """Fire `cockpit new --pr <n> [--repo <name>] [--review --review-command …]`
     detached so the slow tick never blocks on `git fetch` + worktree add.
 
-    Under `review=True` the per-repo `review_command` (default `/review`,
-    e.g. `/pr-review`) rides along so the worktree's first turn runs that review.
+    Under `review=True` the per-repo `review_command` (e.g. `/pr-review`) rides
+    along so the worktree's first turn runs that review; unset — the default —
+    the flag is omitted and the child seeds cockpit's own review prose.
 
     Invoked via module dispatch (`python -m cockpit.cli new …`), NOT `spawn.py`
     by path: a path invocation puts the package dir on `sys.path[0]`, where
@@ -2171,7 +2180,12 @@ def _bg_spawn_pr(
     if repo_name:
         cmd += ["--repo", repo_name]
     if review:
-        cmd += ["--review", "--review-command", review_command(ctx.cfg, ctx.repo_entry)]
+        cmd += ["--review"]
+        # Omitted when unset, rather than passed empty: the child's own default
+        # is the same fallback, and an empty argv entry reads as a broken flag in
+        # `spawn.log`.
+        if command := review_command(ctx.cfg, ctx.repo_entry):
+            cmd += ["--review-command", command]
     logfile: IO[bytes] | None = None
     try:
         # The detached child inherits this fd; the parent's own copy is closed in

@@ -724,7 +724,9 @@ def test_pr_author_falls_back_when_author_null_or_absent():
 # ── --review (per-repo review_prs) ─────────────────────────────────────────
 
 
-def test_review_prompt_leads_with_default_review_command():
+def test_review_prompt_leads_with_bundled_prose_by_default():
+    """No `--review-command`: the lead is cockpit's own `review_prose.txt`, never
+    a command it doesn't ship."""
     import cockpit.spawn as spawn
 
     p = spawn._review_prompt(
@@ -736,8 +738,18 @@ def test_review_prompt_leads_with_default_review_command():
             "url": "https://github.com/o/n/pull/7",
         },
     )
-    assert p.startswith("/review")  # the built-in default
+    assert p.startswith("Review the pull request checked out in this worktree.")
+    assert not p.startswith("/")
     assert "#7" in p and "coworker" in p and "fix the thing" in p
+    assert "Ask before posting" in p
+
+
+def test_review_prompt_leads_with_configured_command():
+    import cockpit.spawn as spawn
+
+    p = spawn._review_prompt("coworker/x", None, command="/pr-review")
+    assert p.startswith("/pr-review")
+    assert "Review the pull request checked out in this worktree." not in p
     assert "Ask before posting" in p
 
 
@@ -745,7 +757,7 @@ def test_review_prompt_without_pr_info_mentions_branch():
     import cockpit.spawn as spawn
 
     p = spawn._review_prompt("coworker/x", None)
-    assert p.startswith("/review")
+    assert p.startswith("Review the pull request checked out in this worktree.")
     assert "coworker/x" in p
 
 
@@ -851,7 +863,7 @@ def test_review_branch_mode_seeds_custom_review_command(
     assert "/pr-review" in cmd
 
 
-def test_review_branch_mode_seeds_default_review_command(
+def test_review_branch_mode_seeds_bundled_prose_by_default(
     spawn_main, push_branch, monkeypatch
 ):
     import cockpit.spawn as spawn
@@ -863,7 +875,8 @@ def test_review_branch_mode_seeds_default_review_command(
     )
     assert code == 0
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
-    assert "/review" in cmd  # --review-command omitted → built-in default
+    # --review-command omitted → cockpit's own prose, no slash command seeded.
+    assert "Review the pull request checked out in this worktree." in cmd
     assert "PLAN ONLY" not in cmd
 
 

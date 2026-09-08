@@ -18,7 +18,7 @@ import pytest
 
 import cockpit.orchestrators.cycle as cycle
 from cockpit.lib.cmux import REVIEW_GROUP_ICON, SNOOZE_GROUP_ICON, STACK_GROUP_ICON
-from cockpit.lib.gh import PR
+from cockpit.lib.gh import ACTIONABLE_ISSUES, PR
 from cockpit.lib.git import Worktree
 from cockpit.lib.hidden import toggle_hidden
 from cockpit.lib.nudges import NudgePref
@@ -2606,16 +2606,9 @@ def test_bg_spawn_pr_launches_records_and_guards(tmp_path, monkeypatch):
     argv = popen.call_args.args[0]
     assert "--auto" not in argv
     assert argv[1:4] == ["-m", "cockpit.cli", "new"]  # module dispatch, not spawn.py
-    # review=True rides the per-repo review_command (default /review).
-    assert argv[4:] == [
-        "--pr",
-        "9",
-        "--repo",
-        "n",
-        "--review",
-        "--review-command",
-        "/review",
-    ]
+    # review=True with `skills.review` unset sends no --review-command at all;
+    # the child falls back to the same bundled prose.
+    assert argv[4:] == ["--pr", "9", "--repo", "n", "--review"]
     assert ctx.pill_state["spawn:o/n:coworker/x"] == 100.0
 
 
@@ -2940,11 +2933,11 @@ def test_refresh_orphan_renames_drifted_workspace(tmp_path):
     rn.assert_called_once_with("workspace:7", "feat", "stale-name", dry=False)
 
 
-def test_handle_orphans_never_closes_and_gates_nudge(tmp_path):
+def test_handle_orphans_never_closes(tmp_path):
     """No-PR worktrees are never closed here — only a merged PR reaps (via
-    `_maybe_autoclose`). Mine-prefix branches are nudged; coworker branches get
-    orphan pills only (nudge=False — nudging a coworker branch to open a PR is
-    nonsense)."""
+    `_maybe_autoclose`). Mine and coworker branches alike get orphan pills and
+    nothing else; the push-or-close nudge that used to single out mine-prefixed
+    branches was removed."""
     mine_path = tmp_path / "repo-mine"
     mine_path.mkdir()
     cow_path = tmp_path / "repo-cow"
@@ -2965,92 +2958,34 @@ def test_handle_orphans_never_closes_and_gates_nudge(tmp_path):
         cycle._handle_orphans_and_close_stale(ctx, {"ws:mine", "ws:cow"})
 
     close_mock.assert_not_called()
-    nudge_by_ref = {c.args[1]: c.kwargs["nudge"] for c in refresh_mock.call_args_list}
-    assert nudge_by_ref == {"ws:mine": True, "ws:cow": False}
+    assert {c.args[1] for c in refresh_mock.call_args_list} == {"ws:mine", "ws:cow"}
 
 
-def test_refresh_orphan_skips_nudge_when_disabled(tmp_path):
-    """`nudge=False` suppresses the push-or-close nudge but still applies pills."""
-    wt_path = tmp_path / "repo-cow"
-    wt_path.mkdir()
-    wt = Worktree(path=wt_path, branch="coworker/feat", dirty_count=0)
-    ctx = _stub_repo_cycle(tmp_path)
-    ctx.base_distance = {}
-
-    with (
-        patch.object(cycle, "cmux"),
-        patch.object(cycle, "apply_wip_pill"),
-        patch.object(cycle, "apply_stale_pill"),
-        patch.object(cycle, "rename_workspace_if_needed", return_value=False),
-        patch.object(cycle, "maybe_nudge") as nudge_mock,
-    ):
-        cycle._refresh_orphan(ctx, "ws:cow", wt, "cow-feat", nudge=False)
-
-    nudge_mock.assert_not_called()
-
-
-def _orphan_grace_ctx(tmp_path, grace_hours):
+def test_refresh_orphan_applies_pills_and_sends_nothing(tmp_path):
+    """An orphan is display-only. The "push commits and open a PR" nudge used to
+    fire here every slow tick past a grace window; it was the one automatic send
+    not derived from an actionable defect, since having no PR yet is the normal
+    state of a fresh branch."""
     wt_path = tmp_path / "repo-feat"
     wt_path.mkdir()
     wt = Worktree(
         path=wt_path, branch="khivi/feat", dirty_count=0, branch_prefix="khivi/"
     )
     ctx = _stub_repo_cycle(tmp_path)
-    ctx.cfg = {"orphan_nudge_grace_hours": grace_hours}
     ctx.base_distance = {}
-    return ctx, wt
-
-
-def test_refresh_orphan_grace_suppresses_nudge_for_fresh_worktree(tmp_path, capsys):
-    """A mine-prefix orphan younger than the grace window gets pills but no nudge."""
-    ctx, wt = _orphan_grace_ctx(tmp_path, grace_hours=4)
 
     with (
         patch.object(cycle, "cmux"),
-        patch.object(cycle, "apply_wip_pill"),
-        patch.object(cycle, "apply_stale_pill"),
+        patch.object(cycle, "apply_wip_pill") as wip,
+        patch.object(cycle, "apply_stale_pill") as stale,
         patch.object(cycle, "rename_workspace_if_needed", return_value=False),
-        patch.object(cycle, "worktree_age_seconds", return_value=3600),  # 1h < 4h
         patch.object(cycle, "maybe_nudge") as nudge_mock,
     ):
         cycle._refresh_orphan(ctx, "ws:mine", wt, "feat")
 
+    wip.assert_called_once()
+    stale.assert_called_once()
     nudge_mock.assert_not_called()
-    assert "grace" in capsys.readouterr().out
-
-
-def test_refresh_orphan_nudges_after_grace_elapses(tmp_path):
-    """Once the worktree ages past the grace window the push-or-close nudge fires."""
-    ctx, wt = _orphan_grace_ctx(tmp_path, grace_hours=4)
-
-    with (
-        patch.object(cycle, "cmux"),
-        patch.object(cycle, "apply_wip_pill"),
-        patch.object(cycle, "apply_stale_pill"),
-        patch.object(cycle, "rename_workspace_if_needed", return_value=False),
-        patch.object(cycle, "worktree_age_seconds", return_value=5 * 3600),  # 5h > 4h
-        patch.object(cycle, "maybe_nudge") as nudge_mock,
-    ):
-        cycle._refresh_orphan(ctx, "ws:mine", wt, "feat")
-
-    nudge_mock.assert_called_once()
-
-
-def test_refresh_orphan_grace_zero_nudges_immediately(tmp_path):
-    """grace=0 disables the window — even a brand-new worktree is nudged."""
-    ctx, wt = _orphan_grace_ctx(tmp_path, grace_hours=0)
-
-    with (
-        patch.object(cycle, "cmux"),
-        patch.object(cycle, "apply_wip_pill"),
-        patch.object(cycle, "apply_stale_pill"),
-        patch.object(cycle, "rename_workspace_if_needed", return_value=False),
-        patch.object(cycle, "worktree_age_seconds", return_value=1),  # 1s, grace off
-        patch.object(cycle, "maybe_nudge") as nudge_mock,
-    ):
-        cycle._refresh_orphan(ctx, "ws:mine", wt, "feat")
-
-    nudge_mock.assert_called_once()
 
 
 def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
@@ -3590,6 +3525,21 @@ def test_refresh_nudges_open_pr_with_failing_ci(tmp_path):
 
     nudge_mock.assert_called_once()
     assert nudge_mock.call_args.kwargs["pref_key"] == "n__1"
+
+
+def test_nudge_desc_covers_every_actionable_issue():
+    """`gh.ACTIONABLE_ISSUES` decides whether a nudge fires; `_NUDGE_DESC`
+    decides what it says. A member added to one and not the other leaves the
+    slow tick describing a category it has no text for."""
+    assert set(cycle._NUDGE_DESC) == set(ACTIONABLE_ISSUES)
+
+
+def test_nudge_text_names_the_category_when_desc_is_missing(tmp_path):
+    """Drift degrades to a vaguer line, never a KeyError that kills the tick
+    part-way through a repo."""
+    pr = _stale_pr(ci="failed:2")
+    with patch.dict(cycle._NUDGE_DESC, {}, clear=True):
+        assert cycle._nudge_text(pr) == f"PR #{pr.number}: needs attention (ci)."
 
 
 # ── reused-branch merged-PR suppression ──────────────────────────────────────

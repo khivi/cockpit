@@ -267,7 +267,9 @@ That key is why this is the **one** fold with its own reconcile pass: a repo alo
 - **My PR, no worktree** → `cockpit new --pr <n> --repo <name>`. Always on.
 - **`review_prs` (per-repo, default false)** → every coworker open PR without a worktree. **Dependabot PRs are excluded by default** unless the repo sets `"dependabot": true` — the single gate, since the other paths are `author:self`-gated. **External (non-collaborator) PRs are also excluded by default** unless `"review_external": true`, because a fork contributor's PR body and diff are untrusted content and auto-spawning a Bash-capable agent on them is a prompt-injection risk on a public repo. The two gates are independent.
 
-The seeded first turn is the configurable `skills.review`, defaulting to the **built-in `/review`**, which resolves in every spawned workspace. The auto-review is **dry-run** — it reports findings and asks before posting. **Keep the spawn-layer default in sync with `REVIEW_COMMAND_DEFAULT`**; don't hardcode a command string in `spawn.py`. `skills.plan` and `skills.actions` are sibling seams, both default `""`, each followed by the shared `plan_tail.txt` gate.
+The seeded first turn is the configurable `skills.review`. The auto-review is **dry-run** — it reports findings and asks before posting. `skills.plan` and `skills.actions` are sibling seams, each followed by the shared `plan_tail.txt` gate.
+
+**All four `skills` fields default to unset, and an unset one falls back to prose cockpit ships.** `review` used to default to Claude Code's built-in `/review` on the reasoning that a built-in resolves in every install where a personal skill wouldn't. That is true and still the wrong default: it names a command whose *definition* lives outside the wheel, so what an auto-spawned review workspace actually does was set by whoever last edited `/review` — while cockpit's own dry-run rule ("report findings, ask before posting") sits in `review.txt` around it, silently arguing with a command that may not obey it. The fallback is `review_prose.txt`, rendered into `review.txt`'s `{lead}` slot by `prompts.py::review_lead`, which is the **one** resolver both call sites use (`spawn._review_prompt` and `build_pr_prompt`'s coworker branch) so the auto-spawn and a coworker's PR cannot seed different reviews. **Do not** re-add a default naming any command — built-in or otherwise — and **do not** duplicate the dry-run tail into `review_prose.txt`; it belongs to the wrapper, which a configured command must also get.
 
 `_bg_spawn_pr` guards in-flight launches in `pill_state` against a double-launch and logs to `$COCKPIT_HOME/spawn.log`.
 
@@ -341,7 +343,22 @@ Six rules:
 - **`--comments` reads and `--ack` retires, and the split is the point.** `--comments` prints `lib/diff_comments.py`'s pending notes and marks **nothing**; `--ack` calls `mark_delivered`. The reader is an agent, so acking on *print* loses a note to any turn that dies between reading it and acting on it — review feedback that exists nowhere else. **Do not** re-merge them into one call. Both offer **both** candidate roots (the worktree and `main_worktree_path`), since which one cmux files a worktree under is undocumented. Neither opens a diff.
 - **Writes nothing durable** — no cache cell, no pill, no `pill_state`, like `broadcast`.
 
-### The diff-comment hand-over is the daemon's one automatic send that isn't about a PR
+### Two destructive primitives, and only ONE of them removes a worktree
+
+Every close cockpit performs is one of exactly two calls, and reading them as a flat list of "things that delete stuff" is the mistake this rule exists to prevent:
+
+- **`cmux.py::cmux_close_workspace_best_effort(ref)`** closes a *session*. It touches nothing on disk — no worktree, no branch, no commit — so `f` gets it back. Reached directly for the reasons that aren't teardown: duplicate-workspace dedup, parking a repo (`h`), the group-anchor husk swap, and dissolving a trailing fold.
+- **`teardown.py::teardown(TeardownRequest)`** closes the workspace *then* removes the worktree, deletes the branch and drops the PR cache. It calls the first as its own opening step, which is why the self-close ledger sits there and not here.
+
+**What varies between "different" destructive actions is the request's fields, not the code path.** `TeardownRequest.worktree_path` is the whole difference: autoclose and an explicit `c`/`C`/`cockpit close` pass the worktree, while `_reap_workspace_orphans` passes `None` and gets a workspace-only close (plus a branch-ref delete, and only when the branch carried my `<login>/` prefix). So **exactly one code path can remove a worktree**, and it is guarded once — dirty tree and unlanded commits refuse both `c` and `C`, since force overrides only the *soft* open-PR block. Three rules:
+
+- **A new destructive trigger builds a `TeardownRequest`; it does not open a third path.** The guards, the self-close filtering and the queue-drain semantics all hang off these two functions.
+- **Never call `cmux("close-workspace", …)` raw.** An unfiltered close returns through `cmux events` as `workspace.closed`, indistinguishable from the user's sidebar ✕, which routes *into* teardown — so parking a repo would tear down every worktree in it.
+- **The stale-branch-ref reaper is the one destructive action outside both**, since it deletes a merged branch that has neither worktree nor workspace. It is the exception to look for when auditing, not a precedent to copy.
+
+### The daemon makes exactly TWO automatic sends, and the diff hand-over is the one that isn't about a PR
+
+The closed set is the point: **the PR nudge** (`cycle.py`, slow tick, `PR.nudge_issue` — my own OPEN PR whose issue is `ci`/`comments`/`conflicts`, silenced by `m`/`z` through `pref_key`) and **the diff-comment hand-over** below. Everything else that reaches a session is something the user typed — `a`, `A`, `cockpit broadcast` — and passes no `pref_key` for that reason. A third automatic send needs to clear the bar both of these meet: **derived from an actionable defect the session can actually fix**. The orphan nudge was deleted for failing exactly that (see the nudge-prefs section), so weigh a new one against that precedent, not against "it would be useful to be told".
 
 `cockpit.py::_nudge_diff_comments`, on the fast tick, sends `DIFF_COMMENTS_NUDGE` (`/cockpit-diff apply`, the bundled command) to the session sitting in a worktree that has pending notes. It rides `nudge_if_idle` like every other send — **do not** give it a second send path. Six rules:
 
@@ -369,6 +386,10 @@ Six rules:
 Keyed by number alone, two repos' PR #10 shared one file, so a mute silenced both and **each repo's cycle woke the other's snooze every tick**. **Do not** add a call site that invents a key without a repo, and **do not** default `repo_name` to `""`.
 
 `load_pref` falls back to a legacy bare-`<number>.json`, deliberately **never unlinked** since several repos may still read it.
+
+**A worktree with no PR gets no pref, because it gets no nudge.** `_refresh_orphan` applies the 🥚/wip/stale pills and sends nothing. It used to fire "still has no open PR — push and open one, or close it" every slow tick past an orphan_nudge_grace_hours window, and that was the one automatic send **not derived from an actionable defect**: having no PR yet is the normal state of every branch between `cockpit new` and the first push, so it fired on healthy new work by construction. It also addressed the *session* rather than the user, asking an agent to choose between shipping half-finished work and deleting a worktree — a call only the user can make. It was also unsilenceable: it carried no `pref_key`, so `m` and `z` did nothing, and orphan_nudge_grace_hours only ever *delayed* it (`0` meant nudge immediately; no value meant never).
+
+Removed along with that config key, its preflight validator, and the orphan_pref_key / write_orphan_muted_cell / mutable-cap machinery briefly added to mute it. The pill says the same thing passively and the row already shows it. **Do not** re-add it, and **do not** answer "an abandoned worktree should nag" with a send — a derived *cell* is the shape cockpit uses for state the user should notice.
 
 ### Backend capability gate — probed once at startup, warns and degrades, never dies
 

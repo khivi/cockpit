@@ -157,16 +157,12 @@ flowchart TD
 
   K -->|"MERGED / branch gone"| AC{"autoclose<br/>blockers?"}
   AC -->|"dirty · draft ·<br/>ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
-  AC -->|"clean & merged"| TD["teardown: workspace →<br/>worktree → branch → PR cache"]
+  AC -->|"clean & merged"| TD["teardown(worktree_path=…):<br/>workspace → worktree → branch → cache"]
 
-  K -->|"no open PR · mine"| OG{"worktree age ≥<br/>grace?"}
-  OG -->|"no (just created)"| OP["orphan: pills only<br/>(grace — no nudge yet)"]
-  OG -->|"yes"| OR["orphan: pills + nudge<br/>to push or close"]
-
-  K -->|"no open PR · coworker"| OC["orphan: pills only<br/>(no nudge, no close)"]
+  K -->|"no open PR"| OP["orphan: pills only<br/>(no nudge, no close)"]
 
   K -->|"workspace, no worktree"| RP{"idle?"}
-  RP -->|"yes (idle)"| EN["enqueue forced teardown<br/>(branch del only if mine-prefix)"]
+  RP -->|"yes (idle)"| EN["teardown(worktree_path=None):<br/>workspace close only<br/>(+ branch ref if mine-prefix)"]
   RP -->|"no (mid-turn)"| DF["defer to next cycle"]
 
   K -->|"local branch, no worktree"| BR{"_branch_reap_reason"}
@@ -199,6 +195,14 @@ Key gates (all from `cycle.py`):
   An absent `headRefOid` (old cached PR) never suppresses, so a real PR is never
   hidden. The persistent JSON snapshot is kept — autoclose/teardown still read
   it; only the *display* is suppressed.
+- **Two destructive primitives, one of which removes a worktree.**
+  `cmux_close_workspace_best_effort` closes a *session* and touches nothing on
+  disk; `teardown` calls it, then removes the worktree, deletes the branch and
+  drops the PR cache. Which one a trigger gets is decided by a single field —
+  `TeardownRequest.worktree_path` — so the two `teardown(...)` nodes above are
+  the same function with different requests, not two code paths. Everything else
+  that closes (dedup, `h` parking, anchor swap, fold dissolve) calls the first
+  directly and is recoverable with `f`. Rules in AGENTS.md.
 - **Autoclose hard blocker** (never overridden): uncommitted files.
 - **Autoclose smart-skip**: even when merged & clean, skip if draft, CI not green,
   or unaddressed review threads remain.
@@ -252,14 +256,13 @@ Key gates (all from `cycle.py`):
   branch reviewed locally) gets orphan pills and lives until the user closes it
   (TUI `c`). Only `_maybe_autoclose` (merged & clean) tears anything down. There
   is no `keep` flag — with non-merge closing gone, nothing needs protecting.
-- **Orphan-nudge grace** (`config.orphan_nudge_grace_seconds`, default 4h,
-  per-repo over global, `0` disables): a freshly-spawned worktree has the exact
-  no-commits / no-PR shape the orphan nudge targets, so `_refresh_orphan` skips
-  the "push or close" nudge until the worktree's filesystem age
-  (`git.worktree_age_seconds`, birthtime-based) clears the grace. Pills still
-  apply during grace; only the `send` is held. Age is the *worktree's*, not the
-  branch's or HEAD commit's — an empty branch sits at the old base tip, so commit
-  date would mis-read "just created" as ancient.
+- **An orphan is display-only**: `_refresh_orphan` applies the 🥚/wip/stale
+  pills and sends nothing. A "push or close" nudge with a grace window
+  (orphan_nudge_grace_hours) used to fire here every slow tick; it was the one
+  automatic send not derived from an actionable defect — no PR yet is the normal
+  state of a branch between `cockpit new` and the first push — and it asked the
+  *session* to choose between shipping half-done work and deleting a worktree.
+  Removed along with its config key; the pill says the same thing passively.
 - **In-flight spawn guard**: `_bg_spawn_pr` keys `spawn:<owner>/<name>:<branch>`
   in `pill_state` with a `time.monotonic()` stamp; a second spawn within
   `_SPAWN_INFLIGHT_TTL_SECONDS` (600s) is skipped, so a manual slow-tick kick
@@ -345,7 +348,7 @@ type into the confirmation. Do not "simplify" the gate to trust it.
 flowchart TD
   IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pref_key, skips)"] --> G1{"PR-attached &<br/>PR quiet?<br/>(muted OR snoozed)"}
   G1 -->|yes| F1["return False · skips: muted or snoozed<br/>(user mute/snooze,<br/>survives restart)"]
-  G1 -->|"no / orphan nudge"| G2{"native ==<br/>Running?"}
+  G1 -->|"no / no pref_key"| G2{"native ==<br/>Running?"}
 
   G2 -->|yes| F2["return False · skips: mid-turn<br/>(also catches a stale<br/>idle= on a live session)"]
   G2 -->|no| G3{"idle= pill present<br/>OR native == Idle?"}

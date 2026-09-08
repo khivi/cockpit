@@ -167,18 +167,28 @@ def test_pr_prompt_coworker_gets_review_mode_not_authority(display_issue, monkey
     """A coworker's PR worktree exists to review, not to author: no authority
     block, no "fix the CI"/"force-push" action — the same review seed the
     `review_prs` auto-spawn uses."""
-    monkeypatch.setattr(prompts, "review_command", lambda: "/review")
+    monkeypatch.setattr(prompts, "review_command", lambda: "/pr-review")
     p = build_pr_prompt(_pr(display_issue, mine=False))
     assert "Authority: commit and push" not in p
     assert "force-push" not in p
-    assert p.startswith("/review")
+    assert p.startswith("/pr-review")
     assert "Reviewing PR #42 by @alice — Fix the thing" in p
     assert "Ask before posting any review comments" in p
 
 
 def test_pr_prompt_coworker_uses_configured_review_command(monkeypatch):
-    monkeypatch.setattr(prompts, "review_command", lambda: "/pr-review")
-    assert build_pr_prompt(_pr("ci", mine=False)).startswith("/pr-review")
+    monkeypatch.setattr(prompts, "review_command", lambda: "/team-review")
+    assert build_pr_prompt(_pr("ci", mine=False)).startswith("/team-review")
+
+
+def test_pr_prompt_coworker_falls_back_to_bundled_review_prose(monkeypatch):
+    """With `skills.review` unset the coworker seed leads with cockpit's own
+    prose, not a command — the same lead `spawn._review_prompt` resolves."""
+    monkeypatch.setattr(prompts, "review_command", lambda: "")
+    p = build_pr_prompt(_pr("ci", mine=False))
+    assert p.startswith("Review the pull request checked out in this worktree.")
+    assert "Reviewing PR #42 by @alice — Fix the thing" in p
+    assert "Ask before posting any review comments" in p
 
 
 def test_pr_prompt_braced_title_is_not_reparsed():
