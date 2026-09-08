@@ -231,7 +231,7 @@ bundled in the wheel, never to a command whose behaviour lives elsewhere.
 | `linear_state_ttl_seconds` | number | `3 × slow` (900) | Backstop staleness for the cached Linear delivery block. |
 | `linear_identity_ttl_seconds` | number | `12 × slow` (3600) | Cache lifetime for Linear viewer id + team state maps. |
 | `skills` | object | `{}` | Slash-command overrides (above). |
-| `use_cship` | bool | `false` | Install/point the statusLine at cship; seed `cship.toml`/`starship.toml` (via `cockpit setup` only). |
+| `use_cship` | bool | `false` | Install/point the statusLine at cship; seed `cship.toml`/`starship.toml` (via `cockpit setup` only). Turn it back off with `cockpit setup --reset`: setting it false by hand leaves the statusLine and `starship.toml` pins on disk, and no later `cockpit setup` clears them. |
 | `use_slack` | bool | `false` | Enable the Slack-MCP fetch+rename prompt for Slack-thread spawn sources. |
 | `tool` | string | `auto` | Workspace backend: `auto` \| `cmux` \| `limux` \| `none`. |
 | `theme` | string | `dark` | `dark` \| `light` — tunes cmux pills + the cship/starship footer palette. |
