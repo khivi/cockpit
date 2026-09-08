@@ -419,3 +419,94 @@ def test_feature_headed_pr_branch_unchanged():
     pr = _pr_from_node(_node())  # headRefName "khivi/b"
     assert pr is not None
     assert pr.branch == "khivi/b"
+
+
+# ── reviewDecision fallback (rulesets return null on approved PRs) ──────────
+
+
+def _reviews_node(*states: tuple[str, str], author: str = "khivi") -> dict:
+    """`_node()` whose reviewDecision is null and whose reviews are `(login, state)`."""
+    node: dict = _node()
+    node["reviewDecision"] = None
+    node["reviews"] = {
+        "nodes": [
+            {"author": {"login": login, "__typename": "User"}, "state": state}
+            for login, state in states
+        ]
+    }
+    node["author"] = {"login": author, "__typename": "User"}
+    return node
+
+
+def test_null_review_decision_falls_back_to_an_approval():
+    """A PR approved under a ruleset reports reviewDecision=null; mapping that
+    to REVIEW_REQUIRED lost the approval and with it the `approved` pill."""
+    pr = _pr_from_node(_reviews_node(("alice", "APPROVED")))
+    assert pr is not None
+    assert pr.review_decision == "APPROVED"
+
+
+def test_null_review_decision_ignores_comment_reviews():
+    """COMMENTED is not a verdict — it leaves the PR awaiting review."""
+    pr = _pr_from_node(_reviews_node(("alice", "COMMENTED")))
+    assert pr is not None
+    assert pr.review_decision == "REVIEW_REQUIRED"
+
+
+def test_null_review_decision_keeps_approval_behind_later_comments():
+    """The live shape that surfaced this: six COMMENTED reviews then APPROVED,
+    and later COMMENTED reviews from other logins after it."""
+    pr = _pr_from_node(
+        _reviews_node(
+            ("alice", "COMMENTED"),
+            ("alice", "APPROVED"),
+            ("khivi", "COMMENTED"),
+        )
+    )
+    assert pr is not None
+    assert pr.review_decision == "APPROVED"
+
+
+def test_null_review_decision_changes_requested_wins():
+    pr = _pr_from_node(
+        _reviews_node(("alice", "APPROVED"), ("bob", "CHANGES_REQUESTED"))
+    )
+    assert pr is not None
+    assert pr.review_decision == "CHANGES_REQUESTED"
+
+
+def test_null_review_decision_dismissal_clears_the_approval():
+    pr = _pr_from_node(_reviews_node(("alice", "APPROVED"), ("alice", "DISMISSED")))
+    assert pr is not None
+    assert pr.review_decision == "REVIEW_REQUIRED"
+
+
+def test_null_review_decision_ignores_the_authors_own_review():
+    pr = _pr_from_node(_reviews_node(("khivi", "APPROVED")))
+    assert pr is not None
+    assert pr.review_decision == "REVIEW_REQUIRED"
+
+
+def test_null_review_decision_ignores_bot_approvals():
+    node = _reviews_node()
+    node["reviews"] = {
+        "nodes": [
+            {
+                "author": {"login": "copilot[bot]", "__typename": "Bot"},
+                "state": "APPROVED",
+            }
+        ]
+    }
+    pr = _pr_from_node(node)
+    assert pr is not None
+    assert pr.review_decision == "REVIEW_REQUIRED"
+
+
+def test_reported_review_decision_is_trusted_over_the_reviews():
+    """GitHub's own verdict accounts for required counts, code owners and
+    dismissals — none of which the review list can express, so it always wins."""
+    node = _reviews_node(("alice", "APPROVED"))
+    node["reviewDecision"] = "REVIEW_REQUIRED"
+    pr = _pr_from_node(node)
+    assert pr is not None
+    assert pr.review_decision == "REVIEW_REQUIRED"

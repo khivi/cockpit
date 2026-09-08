@@ -180,6 +180,8 @@ cmux resolves a branch to a PR **by branch name alone**, so a branch that carrie
 
 **Coverage is narrower than the row it replaces** — the pill only reaches tracked workspaces. Accepted cost; **do not** "fix" it by spawning pills for untracked workspaces.
 
+**A cmux card shows exactly three rows before "Show more", and that budget is not configurable** — there is no sidebar setting for it, so the only lever cockpit has is emitting fewer pills. Hence `wip` is **dropped while `rebase` or `merge` is in flight**: the in-flight operation is what made the tree dirty, so the count restates the pill directly above it, and the pair was spending two of the three rows on one event — which is what pushed `approved` under the fold on a PR that was approved, conflicted and mid-rebase at once. It is a **suppression, not a reorder**; `KIND_ORDER` is unchanged and the footer, which has a line per pill, loses only the same redundancy. **Do not** answer a buried pill by reordering `KIND_ORDER` — rank is how each surface reads urgency, and the cheaper fix is one fewer pill.
+
 ### `orgs` is a load-time defaults layer — nothing below `load_config` knows orgs exist
 
 `config.py::apply_org_defaults` merges an org block into each member inside `load_config()`, so the chain every reader walks (repo → global → default) gains an org rung with **zero** call-site changes. **Do not** add an org-aware reader, an `org_*` field, or a `repo_org(...)` helper. Four rules:
@@ -463,6 +465,15 @@ Opt-in via `tickets.close_on_merge`. `_transition_merged_tickets` dispatches on 
 - **Trello** moves the card to the list named `merge_done` (no default). Skip unless I'm a member.
 
 A falsy/failed identity fetch is never cached; a failed write clears the marker to retry. **Precedent for any future daemon tracker write:** opt-in, viewer-gated, idempotent, logged.
+
+### A null `reviewDecision` is not "no approval" — `gh.py::_review_decision` falls back to the reviews
+
+GitHub returns `reviewDecision: null` on a PR carrying a real APPROVED review, reproducibly where the requirement comes from a **ruleset** declaring scoped required reviewers — the same rulesets-are-invisible-to-GraphQL trap `dismissesStaleReviews` hits two sections down. `n.get("reviewDecision") or "REVIEW_REQUIRED"` therefore discarded the approval outright, and since `decide_pills` keys the `approved` pill on it, an approved PR silently never showed one. Four rules:
+
+- **A *reported* decision always wins** — it accounts for required counts, code owners and dismissals, none of which the review list can express. The fallback runs only on null.
+- **Only APPROVED / CHANGES_REQUESTED / DISMISSED are verdicts**, per reviewer, most-recent-wins; COMMENTED and PENDING leave the previous one standing. CHANGES_REQUESTED beats APPROVED across reviewers.
+- **The PR author's own reviews and every Bot review are excluded**, matching `_unaddressed`'s filtering — a self-review is a COMMENT in practice and a bot cannot satisfy a human approval requirement.
+- **It is derived at the one construction site**, so `primary_issue`, the `approved` pill, `update_branch_skip_reason` and `wake_signature` cannot disagree. **Do not** re-derive an approval at a renderer or gate.
 
 ### `update_stale_branches` — the daemon updates a PR head *server-side*, never by rebasing the worktree
 

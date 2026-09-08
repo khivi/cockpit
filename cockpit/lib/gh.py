@@ -779,6 +779,47 @@ def _unaddressed(pr_node: dict, pr_author: str) -> tuple[int, int]:
     return unresolved, total
 
 
+# Review states that constitute a verdict. COMMENTED and PENDING leave the
+# previous one standing, which is how GitHub's own reviewDecision reads them.
+_DECISION_STATES = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
+
+
+def _review_decision(pr_node: dict, pr_author: str) -> str:
+    """GitHub's `reviewDecision`, derived from the reviews when it reports none.
+
+    GitHub returns a **null** decision on PRs that carry a real approval —
+    reproducibly where the review requirement comes from a ruleset declaring
+    scoped required reviewers — the same rulesets-are-invisible-to-GraphQL trap
+    `dismissesStaleReviews` hits. Mapping null straight to REVIEW_REQUIRED threw
+    the approval away, so an approved PR never showed the `approved` pill.
+
+    Falls back to each non-author reviewer's most recent *decision* review, with
+    CHANGES_REQUESTED winning over APPROVED. A reported decision is trusted
+    as-is: it accounts for required counts, code owners and dismissals, none of
+    which the review list alone can express.
+    """
+    reported = pr_node.get("reviewDecision")
+    if reported:
+        return str(reported)
+    latest: dict[str, str] = {}
+    for r in pr_node["reviews"]["nodes"]:
+        a = r.get("author") or {}
+        if a.get("__typename") == "Bot":
+            continue
+        login = a.get("login")
+        if not login or login == pr_author:
+            continue
+        state = r.get("state")
+        if state in _DECISION_STATES:
+            latest[login] = state  # API order is chronological → last wins
+    verdicts = set(latest.values())
+    if "CHANGES_REQUESTED" in verdicts:
+        return "CHANGES_REQUESTED"
+    if "APPROVED" in verdicts:
+        return "APPROVED"
+    return "REVIEW_REQUIRED"
+
+
 def _pr_from_node(n: dict, self_user: str = "") -> PR | None:
     author = (n.get("author") or {}).get("login")
     if not author:
@@ -847,7 +888,7 @@ def _pr_from_node(n: dict, self_user: str = "") -> PR | None:
         url=n["url"],
         author=author,
         is_draft=n["isDraft"],
-        review_decision=n.get("reviewDecision") or "REVIEW_REQUIRED",
+        review_decision=_review_decision(n, author),
         mergeable=n.get("mergeable") or "UNKNOWN",
         ci=ci,
         unaddressed=unresolved,
