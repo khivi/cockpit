@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.2](https://github.com/khivi/cockpit/compare/v3.0.1...v3.0.2) (2026-09-08)
+
+
+### Documentation
+
+* point the use_cship off-switch at `cockpit setup --reset` ([#494](https://github.com/khivi/cockpit/issues/494)) ([5d9fc88](https://github.com/khivi/cockpit/commit/5d9fc88d85652f8432ae5ed2c7ece31e05fe433a))
+
 ## [3.0.1](https://github.com/khivi/cockpit/compare/v3.0.0...v3.0.1) (2026-09-08)
 
 
