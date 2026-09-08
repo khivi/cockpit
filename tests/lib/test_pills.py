@@ -109,13 +109,22 @@ def _wt(
         ),
         (
             {},
-            {"rebasing": True, "dirty": 4},
+            {"dirty": 4},
             [
-                {"kind": "rebase"},
                 {"kind": "wip", "count": 4},
                 {"kind": "ci_passed"},
                 OPEN_PR,
             ],
+        ),
+        (
+            {},
+            {"rebasing": True, "dirty": 4},
+            [{"kind": "rebase"}, {"kind": "ci_passed"}, OPEN_PR],
+        ),
+        (
+            {},
+            {"merging": True, "dirty": 4},
+            [{"kind": "merge"}, {"kind": "ci_passed"}, OPEN_PR],
         ),
     ],
     ids=[
@@ -130,6 +139,8 @@ def _wt(
         "conflict_pill",
         "ci_passed_coexists_with_merged_state",
         "worktree_pills_independent_of_pr",
+        "rebase_swallows_the_dirty_count",
+        "merge_swallows_the_dirty_count",
     ],
 )
 def test_decide_pills_equality(pr_overrides, wt_kwargs, expected):
@@ -240,6 +251,26 @@ def test_wip_dropped_when_no_worktree():
     assert "ci_failed" in kinds
 
 
+def test_wip_dropped_while_a_rebase_or_merge_is_in_flight():
+    """The in-flight operation is what made the tree dirty, so the count only
+    restates the pill above it — and a cmux card shows three rows before "Show
+    more", which the pair was spending on one event."""
+    for wt in (_wt(rebasing=True, dirty=7), _wt(merging=True, dirty=7)):
+        assert "wip" not in [p["kind"] for p in decide_pills(_pr(), wt)]
+    assert {"kind": "wip", "count": 7} in decide_pills(_pr(), _wt(dirty=7))
+
+
+def test_an_approved_pr_mid_rebase_fits_the_three_visible_rows():
+    """The reported shape: approved, conflicted, rebasing and dirty at once. The
+    approval has to clear cmux's fold, which it only does once `wip` steps
+    aside — the `pr` pill carries CI, so `ci_passed` is footer-only."""
+    pills = decide_pills(
+        _pr(review_decision="APPROVED", mergeable="CONFLICTING", ci="none"),
+        _wt(rebasing=True, dirty=7),
+    )
+    assert [p["kind"] for p in pills] == ["rebase", "conflict", "approved", "pr"]
+
+
 def test_full_house_canonical_order():
     pills = decide_pills(
         _pr(
@@ -250,11 +281,12 @@ def test_full_house_canonical_order():
             unaddressed=2,
             state="OPEN",
         ),
-        _wt(merging=True, dirty=3),
+        # `merge` and `wip` are now mutually exclusive, so the full house can
+        # only carry one — `wip`'s slot is pinned by the parametrized cases.
+        _wt(merging=True),
     )
     assert [p["kind"] for p in pills] == [
         "merge",
-        "wip",
         "ci_failed",
         "unaddressed",
         "conflict",

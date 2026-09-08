@@ -104,7 +104,10 @@ def decide_pills(
         pills.append({"kind": "rebase"})
     if wt is not None and wt.merging:
         pills.append({"kind": "merge"})
-    if wt is not None and wt.dirty_count > 0:
+    # A rebase or merge in flight is exactly what made the tree dirty, so the
+    # count restates the pill above it — and a cmux card has only three rows
+    # before "Show more", which the two together were spending on one event.
+    if wt is not None and wt.dirty_count > 0 and not (wt.rebasing or wt.merging):
         pills.append({"kind": "wip", "count": wt.dirty_count})
     if pr.ci.startswith("failed"):
         phase = pr.ci.split(":", 1)[1] if ":" in pr.ci else ""
