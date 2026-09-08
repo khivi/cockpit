@@ -157,12 +157,12 @@ flowchart TD
 
   K -->|"MERGED / branch gone"| AC{"autoclose<br/>blockers?"}
   AC -->|"dirty · draft ·<br/>ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
-  AC -->|"clean & merged"| TD["teardown: workspace →<br/>worktree → branch → PR cache"]
+  AC -->|"clean & merged"| TD["teardown(worktree_path=…):<br/>workspace → worktree → branch → cache"]
 
   K -->|"no open PR"| OP["orphan: pills only<br/>(no nudge, no close)"]
 
   K -->|"workspace, no worktree"| RP{"idle?"}
-  RP -->|"yes (idle)"| EN["enqueue forced teardown<br/>(branch del only if mine-prefix)"]
+  RP -->|"yes (idle)"| EN["teardown(worktree_path=None):<br/>workspace close only<br/>(+ branch ref if mine-prefix)"]
   RP -->|"no (mid-turn)"| DF["defer to next cycle"]
 
   K -->|"local branch, no worktree"| BR{"_branch_reap_reason"}
@@ -195,6 +195,14 @@ Key gates (all from `cycle.py`):
   An absent `headRefOid` (old cached PR) never suppresses, so a real PR is never
   hidden. The persistent JSON snapshot is kept — autoclose/teardown still read
   it; only the *display* is suppressed.
+- **Two destructive primitives, one of which removes a worktree.**
+  `cmux_close_workspace_best_effort` closes a *session* and touches nothing on
+  disk; `teardown` calls it, then removes the worktree, deletes the branch and
+  drops the PR cache. Which one a trigger gets is decided by a single field —
+  `TeardownRequest.worktree_path` — so the two `teardown(...)` nodes above are
+  the same function with different requests, not two code paths. Everything else
+  that closes (dedup, `h` parking, anchor swap, fold dissolve) calls the first
+  directly and is recoverable with `f`. Rules in AGENTS.md.
 - **Autoclose hard blocker** (never overridden): uncommitted files.
 - **Autoclose smart-skip**: even when merged & clean, skip if draft, CI not green,
   or unaddressed review threads remain.
@@ -340,7 +348,7 @@ type into the confirmation. Do not "simplify" the gate to trust it.
 flowchart TD
   IN["nudge_if_idle(ref, msg,<br/>*, dry, tag, pref_key, skips)"] --> G1{"PR-attached &<br/>PR quiet?<br/>(muted OR snoozed)"}
   G1 -->|yes| F1["return False · skips: muted or snoozed<br/>(user mute/snooze,<br/>survives restart)"]
-  G1 -->|"no / orphan nudge"| G2{"native ==<br/>Running?"}
+  G1 -->|"no / no pref_key"| G2{"native ==<br/>Running?"}
 
   G2 -->|yes| F2["return False · skips: mid-turn<br/>(also catches a stale<br/>idle= on a live session)"]
   G2 -->|no| G3{"idle= pill present<br/>OR native == Idle?"}

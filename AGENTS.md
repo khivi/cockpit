@@ -343,7 +343,22 @@ Six rules:
 - **`--comments` reads and `--ack` retires, and the split is the point.** `--comments` prints `lib/diff_comments.py`'s pending notes and marks **nothing**; `--ack` calls `mark_delivered`. The reader is an agent, so acking on *print* loses a note to any turn that dies between reading it and acting on it — review feedback that exists nowhere else. **Do not** re-merge them into one call. Both offer **both** candidate roots (the worktree and `main_worktree_path`), since which one cmux files a worktree under is undocumented. Neither opens a diff.
 - **Writes nothing durable** — no cache cell, no pill, no `pill_state`, like `broadcast`.
 
-### The diff-comment hand-over is the daemon's one automatic send that isn't about a PR
+### Two destructive primitives, and only ONE of them removes a worktree
+
+Every close cockpit performs is one of exactly two calls, and reading them as a flat list of "things that delete stuff" is the mistake this rule exists to prevent:
+
+- **`cmux.py::cmux_close_workspace_best_effort(ref)`** closes a *session*. It touches nothing on disk — no worktree, no branch, no commit — so `f` gets it back. Reached directly for the reasons that aren't teardown: duplicate-workspace dedup, parking a repo (`h`), the group-anchor husk swap, and dissolving a trailing fold.
+- **`teardown.py::teardown(TeardownRequest)`** closes the workspace *then* removes the worktree, deletes the branch and drops the PR cache. It calls the first as its own opening step, which is why the self-close ledger sits there and not here.
+
+**What varies between "different" destructive actions is the request's fields, not the code path.** `TeardownRequest.worktree_path` is the whole difference: autoclose and an explicit `c`/`C`/`cockpit close` pass the worktree, while `_reap_workspace_orphans` passes `None` and gets a workspace-only close (plus a branch-ref delete, and only when the branch carried my `<login>/` prefix). So **exactly one code path can remove a worktree**, and it is guarded once — dirty tree and unlanded commits refuse both `c` and `C`, since force overrides only the *soft* open-PR block. Three rules:
+
+- **A new destructive trigger builds a `TeardownRequest`; it does not open a third path.** The guards, the self-close filtering and the queue-drain semantics all hang off these two functions.
+- **Never call `cmux("close-workspace", …)` raw.** An unfiltered close returns through `cmux events` as `workspace.closed`, indistinguishable from the user's sidebar ✕, which routes *into* teardown — so parking a repo would tear down every worktree in it.
+- **The stale-branch-ref reaper is the one destructive action outside both**, since it deletes a merged branch that has neither worktree nor workspace. It is the exception to look for when auditing, not a precedent to copy.
+
+### The daemon makes exactly TWO automatic sends, and the diff hand-over is the one that isn't about a PR
+
+The closed set is the point: **the PR nudge** (`cycle.py`, slow tick, `PR.nudge_issue` — my own OPEN PR whose issue is `ci`/`comments`/`conflicts`, silenced by `m`/`z` through `pref_key`) and **the diff-comment hand-over** below. Everything else that reaches a session is something the user typed — `a`, `A`, `cockpit broadcast` — and passes no `pref_key` for that reason. A third automatic send needs to clear the bar both of these meet: **derived from an actionable defect the session can actually fix**. The orphan nudge was deleted for failing exactly that (see the nudge-prefs section), so weigh a new one against that precedent, not against "it would be useful to be told".
 
 `cockpit.py::_nudge_diff_comments`, on the fast tick, sends `DIFF_COMMENTS_NUDGE` (`/cockpit-diff apply`, the bundled command) to the session sitting in a worktree that has pending notes. It rides `nudge_if_idle` like every other send — **do not** give it a second send path. Six rules:
 

@@ -1377,8 +1377,14 @@ def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:
     Returns True if the workspace no longer appears in `cmux list-workspaces`.
 
     Every cockpit-initiated close funnels through here, which is why the
-    self-close ledger is recorded here too rather than at each of the five call
-    sites — a new close path gets the filtering for free.
+    self-close ledger is recorded here too rather than at each call site — a new
+    close path gets the filtering for free.
+
+    This is the *smaller* of cockpit's two destructive primitives, and the
+    distinction is the one people get wrong: this closes a session and touches
+    nothing on disk, so pressing `f` gets it back. Removing a worktree or a
+    branch is `teardown`, which calls this as its first step. See AGENTS.md's
+    "Two destructive primitives" rule.
     """
     _note_self_close(short_or_ref)
     cmux("close-workspace", "--workspace", short_or_ref, check=False)
