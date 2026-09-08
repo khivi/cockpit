@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/khivi/cockpit/compare/v2.33.0...v3.0.0) (2026-09-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* a config leaving skills.review unset previously seeded the built-in /review in every auto-spawned review worktree; it now seeds cockpit's own review prose. Set "skills": {"review": "/review"} to keep the old behaviour. orphan_nudge_grace_hours is no longer read; preflight ignores the leftover key rather than failing, so an existing config needs no edit.
+
+### Features
+
+* seed review spawns from bundled prose, and drop the orphan nudge ([#490](https://github.com/khivi/cockpit/issues/490)) ([9e6d9db](https://github.com/khivi/cockpit/commit/9e6d9db7bd4f8305791395f806002883c21d5617))
+
 ## [2.33.0](https://github.com/khivi/cockpit/compare/v2.32.0...v2.33.0) (2026-09-04)
 
 
