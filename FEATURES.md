@@ -256,9 +256,6 @@ What makes it safe to leave on:
   same from a shell — including snoozing, so a session can quiet its own PR without
   switching back to the TUI.
 
-There's a second nudge for a worktree that has no PR after a few hours: push it or close
-it. Grace period is `orphan_nudge_grace_hours`, or `0` to switch it off.
-
 ### Keeping stale branches mergeable
 
 If your repo requires branches to be up to date before merging, a PR that was ready an

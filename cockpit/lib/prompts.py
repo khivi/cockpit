@@ -75,6 +75,17 @@ _ISSUE_ACTIONS: dict[str | None, tuple[str, bool]] = {
 }
 
 
+def review_lead(command: str) -> str:
+    """The opening block of a review prompt: the configured `skills.review`
+    slash command, or cockpit's bundled review prose when none is set.
+
+    Both review call sites go through here — `spawn._review_prompt` for the
+    `review_prs` auto-spawn and `build_pr_prompt` for a coworker's PR — so the
+    two cannot disagree about what an unset `skills.review` seeds.
+    """
+    return command or render("review_prose")
+
+
 def build_pr_prompt(pr: PR) -> str:
     """Per-PR Claude prompt.
 
@@ -84,15 +95,16 @@ def build_pr_prompt(pr: PR) -> str:
 
     A **coworker's** PR gets the same review-mode seed the `review_prs`
     auto-spawn uses (`spawn._review_prompt`'s `review.txt`, led by
-    `skills.review`): its branch is not mine to rewrite, so no authority block
-    and no "fix the CI" action. Resolved global-level (`review_command()` with no
-    repo entry) — this helper is reached from `spawn_pr_workspace`, which carries
-    a PR and a worktree, not the repo config block.
+    `skills.review` or the bundled prose `review_lead` falls back to): its branch
+    is not mine to rewrite, so no authority block and no "fix the CI" action.
+    Resolved global-level (`review_command()` with no repo entry) — this helper
+    is reached from `spawn_pr_workspace`, which carries a PR and a worktree, not
+    the repo config block.
     """
     if not pr.mine:
         return render(
             "review",
-            command=review_command(),
+            lead=review_lead(review_command()),
             context=(
                 f"Reviewing PR #{pr.number} by @{pr.author} — {pr.title}"
                 f"\nbranch: {pr.branch}"

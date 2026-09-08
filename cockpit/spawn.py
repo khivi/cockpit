@@ -117,7 +117,6 @@ from cockpit.lib.cmux import (
 )
 from cockpit.lib.codename import codename
 from cockpit.lib.config import (
-    REVIEW_COMMAND_DEFAULT,
     actions_command,
     discover_repo,
     find_repo_by_name,
@@ -161,7 +160,7 @@ from cockpit.lib.linear import (
     LINEAR_ISSUE_URL_RE,
     LINEAR_RE_CI,
 )
-from cockpit.lib.prompts import claude_command, split_prompt_prefix
+from cockpit.lib.prompts import claude_command, review_lead, split_prompt_prefix
 from cockpit.lib.registry import register_cwd
 from cockpit.lib.slack import SLACK_URL_RE, slack_seed
 from cockpit.lib.templates import render
@@ -258,10 +257,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--review-command",
-        default=REVIEW_COMMAND_DEFAULT,
-        help="the review slash command seeded under --review (default "
-        f"`{REVIEW_COMMAND_DEFAULT}`); the daemon passes the per-repo "
-        "`review_command`, e.g. `/review` or `/pr-review`",
+        default="",
+        help="the review slash command seeded under --review (default unset — "
+        "cockpit's own review prose); the daemon passes the per-repo "
+        "`review_command`, e.g. `/pr-review`",
     )
     p.add_argument(
         "--context",
@@ -682,9 +681,7 @@ def _plan_only_prompt(
     return render("plan_only", branch=branch, source_block=source_block)
 
 
-def _review_prompt(
-    branch: str, pr_info: dict | None = None, command: str = REVIEW_COMMAND_DEFAULT
-) -> str:
+def _review_prompt(branch: str, pr_info: dict | None = None, command: str = "") -> str:
     """First-turn prompt for an auto-spawned review worktree (per-repo
     `review_prs`).
 
@@ -692,15 +689,17 @@ def _review_prompt(
     review against the PR checked out on this branch; the PR context block
     follows for the human reading the transcript. Mirrors the `--skill` path,
     which also delivers a bare slash command as the first turn. ``command``
-    defaults to Claude Code's built-in `/review`; the daemon passes the per-repo
-    `review_command` (e.g. `/pr-review`) via `--review-command`.
+    defaults to ``""``, which `review_lead` turns into cockpit's bundled review
+    prose; the daemon passes the per-repo `review_command` (e.g. `/pr-review`)
+    via `--review-command`.
 
     The closing line keeps the worktree dry-run: report findings, then stop
     before posting comments or submitting an approve / request-changes verdict —
     a human authorizes those, never the auto-spawn.
 
-    Prose lives in ``cockpit/prompts/review.txt``; ``command`` leads and the PR
-    (or bare-branch) line fills the ``{context}`` slot.
+    Prose lives in ``cockpit/prompts/review.txt``; the resolved lead (command or
+    ``review_prose.txt``) fills ``{lead}`` and the PR (or bare-branch) line fills
+    ``{context}``.
     """
     if pr_info:
         author, number, title = _pr_fields(pr_info)
@@ -711,7 +710,7 @@ def _review_prompt(
         )
     else:
         context = f"Reviewing the open PR on branch `{branch}`."
-    return render("review", command=command, context=context)
+    return render("review", lead=review_lead(command), context=context)
 
 
 def _actions_short_name(run_info: dict, job_id: str | None) -> str:

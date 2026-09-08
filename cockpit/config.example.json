@@ -110,12 +110,11 @@
   "slow_poll_interval_seconds": 300,
   "fast_poll_interval_seconds": 30,
   "autoclose_age_days": 14,
-  "orphan_nudge_grace_hours": 4,
   "linear_state_ttl_seconds": 900,
   "linear_identity_ttl_seconds": 3600,
   "skills": {
     "session": "/session-coordination",
-    "review": "/review",
+    "review": "/pr-review",
     "plan": "/plan-pr",
     "actions": "/actions-pr"
   },

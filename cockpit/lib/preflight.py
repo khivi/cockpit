@@ -189,13 +189,11 @@ def _validate_field(
     """Shared top-level-then-per-repo traversal for a scalar config field.
 
     Runs `check(value, where)` on `cfg[key]` if present, then on `repo[key]`
-    for every repo that sets it — the pattern `_validate_base_remote` /
-    `_validate_orphan_nudge_grace` both repeat.
+    for every repo that sets it — the pattern `_validate_base_remote` repeats.
     `check` owns the predicate and the `_die` message; `where` is the
     location prefix ("key" at top level, "repo {name!r}[: key]" per repo).
-    `per_repo_key_suffix=False` matches `_validate_orphan_nudge_grace`'s
-    existing per-repo `where` (its message already names the key, so the
-    `where` prefix omits it to avoid duplication).
+    `per_repo_key_suffix=False` is for a check whose message already names the
+    key, so the `where` prefix omits it to avoid duplication.
     """
     if key in cfg:
         check(cfg[key], key)
@@ -379,26 +377,6 @@ def _validate_tickets(cfg: dict) -> None:
             continue
         name = repo.get("name") or repo.get("path", "?")
         _check_block(repo["tickets"], f"repo {name!r}")
-
-
-def _validate_orphan_nudge_grace(cfg: dict) -> None:
-    """Hard-fail on an `orphan_nudge_grace_hours` (top-level *or* per-repo) that
-    isn't a non-negative number.
-
-    It sets how long a no-open-PR worktree is spared the "push or close" nudge
-    after creation (`config.orphan_nudge_grace_seconds`). A non-numeric value
-    would be silently clamped to the default, and a negative one is nonsensical
-    (it'd never grace), so both are rejected at start like `review_prs`. `0`
-    (disable grace) is allowed.
-    """
-
-    def _check(val: object, where: str) -> None:
-        if isinstance(val, bool) or not isinstance(val, int | float):
-            _die(f"{where}: orphan_nudge_grace_hours must be a number, got {val!r}.")
-        if val < 0:
-            _die(f"{where}: orphan_nudge_grace_hours must be >= 0, got {val!r}.")
-
-    _validate_field(cfg, "orphan_nudge_grace_hours", _check, per_repo_key_suffix=False)
 
 
 def _unset_credential_envs(cfg: dict, repos: list[dict | None]) -> list[str]:
@@ -768,7 +746,6 @@ def validate_config(cfg: dict) -> None:
     _validate_global_bool(cfg, "update_stale_branches")
     _validate_statusline_hide(cfg)
     _validate_tickets(cfg)
-    _validate_orphan_nudge_grace(cfg)
     _validate_ticket_credentials(cfg)
     _validate_ticket_close_on_merge(cfg)
 

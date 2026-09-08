@@ -525,20 +525,6 @@ GITHUB_DEV_DONE_DEFAULT = "ready for review"
 # terminal "Done" (the Jira analog of Linear's "Dev Done" default).
 JIRA_DEV_DONE_DEFAULT = "Dev Done"
 
-# Slash command seeded as the first turn of an auto-spawned `review_prs`
-# worktree. Defaults to Claude Code's built-in `/review`, which ships with every
-# Claude Code install so it resolves in every spawned review workspace (unlike a
-# personal global skill, which only resolves for its owner). Override per-repo
-# (or globally) with `skills.review` — e.g. a personal `/pr-review`.
-#
-# Why this defaults to a command while `skills.plan`/`skills.actions` default to
-# "" (built-in prose): the rule is the same for all three — "default to the
-# built-in slash command if one exists, else ship bundled prose." Only `/review`
-# has a universal Claude Code built-in to point at; there is no `/plan` or
-# `/actions` built-in, so those fall back to `plan_only.txt`/`actions.txt` rather
-# than dangle a command that resolves to nothing on an unconfigured install.
-REVIEW_COMMAND_DEFAULT = "/review"
-
 
 def _tickets_block(src: dict | None) -> dict:
     """Normalize a config source's `tickets` value to a dict: a bare string
@@ -688,14 +674,19 @@ def review_command(cfg: dict | None = None, repo_entry: dict | None = None) -> s
     """The slash command seeded as the first turn of an auto-spawned review
     worktree (per-repo `review_prs`).
 
-    Default ``"/review"`` — Claude Code's built-in review command, available in
-    every spawned review workspace (a personal global skill would only resolve
-    for its owner). Override with `skills.review` per-repo or globally — e.g. a
-    personal ``"/pr-review"``. Resolved `skills.review` repo → global → default;
-    a non-string/blank value falls through to the next level.
+    Default ``""`` — unset means cockpit seeds its own built-in review prose
+    (`cockpit/prompts/review_prose.txt`). Override with `skills.review` per-repo
+    or globally — e.g. a personal ``"/pr-review"``. Resolved `skills.review` repo
+    → global → default; a non-string/blank value falls through to the next level.
+
+    It deliberately does **not** default to Claude Code's built-in `/review`.
+    All four `skills` fields name a command cockpit cannot see the definition of;
+    the one thing cockpit can guarantee reaches a spawned workspace is prose it
+    ships itself, so an unset field always resolves to a bundled template rather
+    than a command whose behaviour belongs to someone else.
     """
     cfg = cfg if cfg is not None else load_config()
-    return _skills_field(cfg, repo_entry, "review") or REVIEW_COMMAND_DEFAULT
+    return _skills_field(cfg, repo_entry, "review") or ""
 
 
 def plan_command(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
@@ -1066,39 +1057,6 @@ def credential_env_names(cfg: dict | None = None) -> set[str]:
     return set(_DEFAULT_CREDENTIAL_ENVS) | {
         reader(cfg, src) for reader in _CREDENTIAL_ENV_READERS for src in sources
     }
-
-
-def orphan_nudge_grace_seconds(
-    cfg: dict | None = None, repo_entry: dict | None = None
-) -> float:
-    """Seconds a no-open-PR ("orphan") worktree is left un-nudged after creation
-    (default: 4 hours).
-
-    A freshly-spawned worktree (e.g. from `start-linear-ticket` / `cockpit new`)
-    has the exact shape the orphan nudge targets — branch created, no commits, no
-    PR — so without a grace window it draws the "push commits and open a PR, or
-    close the worktree if abandoned" nudge on the very next slow tick, every tick.
-    The grace measures *worktree age* (`git.worktree_age_seconds`), not branch or
-    commit age, so it answers "how long since I made this worktree" — the thing a
-    user means by "I just started it."
-
-    Resolved per-repo over global, matching `tickets.close_on_merge`: an
-    `orphan_nudge_grace_hours` on the repo entry wins, otherwise the top-level
-    key, otherwise 4. `0` disables the grace entirely (immediate nudging — the
-    pre-grace behaviour). Negative / out-of-range values are clamped to 0.
-    """
-    default_hours = 4.0
-    hours: Any = default_hours
-    if repo_entry is not None and "orphan_nudge_grace_hours" in repo_entry:
-        hours = repo_entry["orphan_nudge_grace_hours"]
-    else:
-        cfg = cfg if cfg is not None else load_config()
-        if "orphan_nudge_grace_hours" in cfg:
-            hours = cfg["orphan_nudge_grace_hours"]
-    try:
-        return max(0.0, float(hours) * 3600.0)
-    except (TypeError, ValueError):
-        return default_hours * 3600.0
 
 
 def _read_current_statusline(settings_path: Path) -> str | None:

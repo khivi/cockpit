@@ -1,0 +1,9 @@
+Review the pull request checked out in this worktree.
+
+- Read the diff against its base (`gh pr diff`), plus enough of the surrounding
+  code to judge each change in context rather than line by line.
+- Look for correctness bugs, security issues, missing or weakened tests, and
+  behaviour the PR description does not mention.
+- Say which findings block a merge and which are preferences — do not promote a
+  preference to fill out the list.
+- Cite every finding by `file:line`.
