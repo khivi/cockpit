@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.1](https://github.com/khivi/cockpit/compare/v3.0.0...v3.0.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **pills:** show the approved pill when GitHub reports no review decision ([#492](https://github.com/khivi/cockpit/issues/492)) ([e9777b3](https://github.com/khivi/cockpit/commit/e9777b334027d47c3c338e77d747d955f1f593b7))
+
 ## [3.0.0](https://github.com/khivi/cockpit/compare/v2.33.0...v3.0.0) (2026-09-08)
 
 
