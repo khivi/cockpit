@@ -34,7 +34,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from cockpit.lib import diff_comments
+from cockpit.lib import diff_comments, seed_queue
 from cockpit.lib.cache import (
     republish_pr_caches_from_disk,
     write_diff_comments_cache,
@@ -225,6 +225,43 @@ def _nudge_diff_comments(
     return sent
 
 
+def _drain_seed_queue(live_refs: set[str], *, dry: bool) -> list[str]:
+    """Re-deliver seed prompts a spawn could not hand to a booting composer.
+
+    The daemon's **third** automatic send, and the only one that is a *retry*
+    rather than a new message: the body was already requested by the user (they
+    spawned the workspace), `cmux.deliver_followup` proved it never landed, and
+    `lib/seed_queue.py` kept it. It clears the same bar as the other two — the
+    send is derived from state, not canned, and there is exactly one workspace
+    it could go to, the one named in the marker.
+
+    `nudge_if_idle` is the whole point of deferring it here rather than
+    retrying harder inside the spawn: it only fires at a moment the session
+    provably accepts input, which is the condition that was missing when the
+    body was first typed. No `pref_key` — mute and snooze mean "stop telling me
+    about this PR", and this is the user's own first-turn prompt, so suppressing
+    it would discard their input the way it would for `a` or a diff note.
+
+    A marker is retired only on a send the gate ACCEPTED. Under `dry` an
+    eligible workspace returns False from `nudge_if_idle` (it sent nothing), so
+    the queue survives a dry run for free — no second `dry` branch here.
+    """
+    for path in seed_queue.prune_stale():
+        print(f"  seed prompt expired unsent: {path.name}", flush=True)
+    sent = []
+    for path, req in seed_queue.iter_pending():
+        # A workspace closed before it ever came to rest takes its body with
+        # it; there is nothing left to deliver to and the ref may be reused.
+        if req.ref not in live_refs:
+            seed_queue.pop(path)
+            print(f"  seed prompt dropped, workspace gone: {req.ref}", flush=True)
+            continue
+        if nudge_if_idle(req.ref, req.text, dry=dry, tag="seed-retry"):
+            seed_queue.pop(path)
+            sent.append(req.ref)
+    return sent
+
+
 def _write_worktree_cells(wts: Iterable[Worktree]) -> None:
     """Write the two per-worktree flat cells for every worktree, concurrently.
 
@@ -348,6 +385,8 @@ def _fast_tick(state: dict) -> None:
         notes, cwds, pill_state, dry=state.get("dry", False)
     ):
         print(f"  diff comments handed to {ref}", flush=True)
+    for ref in _drain_seed_queue(set(cwds), dry=state.get("dry", False)):
+        print(f"  seed prompt re-delivered to {ref}", flush=True)
     _write_worktree_cells(pending)
     republish_pr_caches_from_disk()
 

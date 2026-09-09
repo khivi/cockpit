@@ -124,8 +124,8 @@ def _isolate_pidfile(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _isolate_runtime_dir(tmp_path):
-    """Point `$COCKPIT_RUNTIME_DIR` — the pidfile + close-request queue — at a
-    per-test tmp path.
+    """Point `$COCKPIT_RUNTIME_DIR` — the pidfile, close-request queue and
+    seed-retry queue — at a per-test tmp path.
 
     The runtime dir deliberately does NOT follow `$COCKPIT_HOME` (that is the
     whole point of the split: COCKPIT_HOME may be synced, this must not be), so
@@ -149,6 +149,7 @@ def _isolate_runtime_dir(tmp_path):
     """
     import cockpit.lib.config as config_mod
     import cockpit.lib.daemon_signal as signal_mod
+    import cockpit.lib.seed_queue as seed_mod
 
     runtime = tmp_path / "runtime"
     prev_env = os.environ.get("COCKPIT_RUNTIME_DIR")
@@ -158,6 +159,7 @@ def _isolate_runtime_dir(tmp_path):
         config_mod.PID_FILE,
         signal_mod.STATE_DIR,
         signal_mod.PID_FILE,
+        seed_mod.STATE_DIR,
     )
     config_mod.COCKPIT_RUNTIME_DIR = runtime
     config_mod.PID_FILE = runtime / "cockpit.pid"
@@ -166,12 +168,19 @@ def _isolate_runtime_dir(tmp_path):
     # import — so patching config's alone leaves `kick_running` reading (and
     # `os.kill`-ing, and unlinking) the developer's real pidfile.
     signal_mod.PID_FILE = runtime / "cockpit.pid"
+    # Same by-value binding, and a sharper edge: `deliver_followup` queues a
+    # retry on every failed delivery, and the suite's cmux stub fails them all —
+    # so without this line an unrelated test drops a marker in the developer's
+    # real queue and the next live fast tick types that body into whatever
+    # workspace now holds the ref.
+    seed_mod.STATE_DIR = runtime / "seed-requests"
     yield
     (
         config_mod.COCKPIT_RUNTIME_DIR,
         config_mod.PID_FILE,
         signal_mod.STATE_DIR,
         signal_mod.PID_FILE,
+        seed_mod.STATE_DIR,
     ) = prev
     if prev_env is None:
         os.environ.pop("COCKPIT_RUNTIME_DIR", None)
