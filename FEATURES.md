@@ -220,6 +220,14 @@ only then, only on the ambiguity, at the cost of one fetch.
 propose, not to start editing — the agent waits for your approval. A blank new branch gets
 no seeded prompt at all, because there's nothing to study.
 
+**The seed is confirmed, not assumed.** A first turn is typed into the new terminal, and a
+session still booting can drop it — which used to leave you looking at an agent that knew
+nothing about the ticket you spawned it for, with nothing anywhere saying so. cockpit now
+checks the prompt actually reached the session before submitting it, and hands anything
+that didn't land to the daemon, which re-delivers it the moment that session is genuinely
+at rest. If it can't be delivered while it's still a *first* turn, it's dropped rather than
+fired into work you've since started by hand.
+
 **And the plan is left behind as a file.** The session also writes it to `plan.md` in the
 worktree, so a compact, a crash or a session you closed doesn't take the reasoning with it
 — you can read what it intended to do without focusing the workspace, and whoever picks the

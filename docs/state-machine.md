@@ -62,6 +62,7 @@ flowchart LR
     CL["Claude session<br/>cmux native + statusline"]
     CM["cmux workspace<br/>pills + worktree-exists?"]
     LIN["Tickets (aux)<br/>Linear GraphQL / GitHub gh<br/>via tickets.py provider"]
+    SQ["Undelivered seed bodies<br/>$COCKPIT_RUNTIME_DIR/seed-requests/<br/>written by a spawn, not the daemon"]
   end
 
   subgraph DEC["Decision functions"]
@@ -86,6 +87,7 @@ flowchart LR
   GH --> DD
   CM --> MW & NI
   CL --> NI
+  SQ --> NI
   LIN --> DD
 
   MW --> SM
@@ -99,6 +101,14 @@ flowchart LR
 
 The renderer (`starship.py`) is **not** in this picture by design: it only reads
 cache cells and never consults source state. See diagram 4.
+
+The seed queue is the one source the daemon does not derive: a *spawn* writes it,
+on the failure path where `cmux.deliver_followup` proved a first-turn body never
+reached the composer. The daemon only drains it (`_drain_seed_queue`, fast tick),
+which is why it feeds `nudge_if_idle` and nothing else — the retry re-sends the
+user's own prompt rather than deciding anything. It is not stored inventory: a
+marker is retired on the first accepted send, dropped when its workspace is gone,
+and expired after `seed_queue.STALE_SECONDS`.
 
 ---
 

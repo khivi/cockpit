@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 
 import cockpit.lib.cmux as cmux_mod
+from cockpit.lib import seed_queue
 from cockpit.lib.cmux import (
     ACTIONABLE_KEYS,
     COCKPIT_KEY,
@@ -621,6 +622,206 @@ def test_deliver_followup_send_failure_returns_false():
         patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
     ):
         assert deliver_followup("workspace:1", "body") is False
+
+
+def test_a_body_that_never_landed_is_queued_for_the_daemon_to_retry():
+    """Detecting the drop only turns a silent loss into a warning in
+    `spawn.log`, which nobody reads. The body goes to the queue so the fast tick
+    can re-deliver it through `nudge_if_idle`, which fires only when the session
+    provably accepts input — the condition missing when it was first typed."""
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=_followup_cmux(["❯ \n"])),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.time.sleep"),
+    ):
+        assert deliver_followup("workspace:1", "do the thing") is False
+
+    pending = seed_queue.iter_pending()
+    assert [(r.ref, r.text) for _p, r in pending] == [("workspace:1", "do the thing")]
+
+
+def test_a_send_that_raised_is_queued_too():
+    """A dead socket is as undelivered as a dropped keystroke, and the workspace
+    usually outlives the blip."""
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return "claude_code=Idle\n"
+        if args[0] == "send":
+            raise RuntimeError("broken pipe")
+        return ""
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+    ):
+        assert deliver_followup("workspace:1", "body") is False
+
+    assert [r.ref for _p, r in seed_queue.iter_pending()] == ["workspace:1"]
+
+
+def test_a_failed_ENTER_is_not_queued_because_the_body_is_already_typed():
+    """The one failure that must NOT retry. The composer holds the body and only
+    the submit failed, so a re-delivery types a second copy in front of it and
+    submits both — the text is on screen where the user can press Enter."""
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return "claude_code=Idle\n"
+        if args[0] == "send-key":
+            raise RuntimeError("socket gone")
+        return ""
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+    ):
+        assert deliver_followup("workspace:1", "body") is False
+
+    assert seed_queue.iter_pending() == []
+
+
+def test_a_delivered_body_queues_nothing():
+    """The queue is a failure path only — a marker written on success would be
+    re-delivered as a duplicate on the next tick."""
+    with (
+        patch(
+            "cockpit.lib.cmux.cmux",
+            side_effect=_followup_cmux(["❯ \n", "❯ do the thing\n"]),
+        ),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.time.sleep"),
+    ):
+        assert deliver_followup("workspace:1", "do the thing") is True
+
+    assert seed_queue.iter_pending() == []
+
+
+def test_deliver_followup_enter_failure_returns_false():
+    """The submit is its own round-trip now that the body is confirmed between
+    the two, so a `send-key` that fails after a `send` that worked is its own
+    path — the text sits in the composer unsubmitted and the caller must hear
+    about it."""
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return "claude_code=Idle\n"
+        if args[0] == "send-key":
+            raise RuntimeError("socket gone")
+        return ""
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+    ):
+        assert deliver_followup("workspace:1", "body") is False
+
+
+def _followup_cmux(screens, calls=None):
+    """A `cmux` stub whose `read-screen` answers come from `screens`, an
+    iterable of successive screen dumps (the last one repeats)."""
+    remaining = list(screens)
+
+    def fake_cmux(*args, **_kwargs):
+        if calls is not None:
+            calls.append(args)
+        if args[0] == "list-status":
+            return "claude_code=Idle icon=x color=#fff\n"
+        if args[0] == "read-screen":
+            return remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        return ""
+
+    return fake_cmux
+
+
+def test_deliver_followup_submits_only_after_the_body_shows_in_the_composer():
+    """Enter is pressed against a composer confirmed to hold the body, never on
+    faith. `_claude_ready` is true seconds before Claude Code takes input, so a
+    send that exits 0 is not evidence of delivery."""
+    calls: list[tuple] = []
+    # Blank composer before the send, body echoed after it.
+    screens = ["❯ \n", "❯ do the thing\n"]
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=_followup_cmux(screens, calls)),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.time.sleep"),
+    ):
+        assert deliver_followup("workspace:1", "do the thing") is True
+
+    verbs = [c[0] for c in calls]
+    assert verbs.count("send") == 1
+    assert verbs.count("send-key") == 1
+    # The confirming read comes between the typing and the submit.
+    assert verbs.index("read-screen", verbs.index("send")) < verbs.index("send-key")
+
+
+def test_deliver_followup_retries_a_body_that_never_lands_then_refuses_to_submit():
+    """A body the composer never echoes is re-typed, and if it still never
+    appears the delivery is reported instead of submitted — pressing Enter on
+    an unconfirmed composer is what silently lost the prompt, and it would also
+    submit whatever the retry stacked up."""
+    calls: list[tuple] = []
+    printed: list[str] = []
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=_followup_cmux(["❯ \n"], calls)),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.time.sleep"),
+        patch("builtins.print", side_effect=lambda *a, **_k: printed.append(str(a[0]))),
+    ):
+        assert deliver_followup("workspace:1", "do the thing") is False
+
+    verbs = [c[0] for c in calls]
+    assert verbs.count("send") == 2  # _FOLLOWUP_SEND_ATTEMPTS
+    assert "send-key" not in verbs
+    assert any("never reached the composer" in p for p in printed)
+
+
+def test_deliver_followup_sends_unverified_when_the_screen_cannot_be_read():
+    """An unreadable screen is not evidence of a dropped send. limux has no
+    `read-screen` at all, so verification fails OPEN to the single send rather
+    than refusing every delivery on a backend that can never confirm one."""
+    calls: list[tuple] = []
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=_followup_cmux([""], calls)),
+        patch("cockpit.lib.tool.resolve_tool", return_value="limux"),
+        patch("cockpit.lib.tool.is_cmux", return_value=False),
+        patch("cockpit.lib.cmux.time.sleep"),
+    ):
+        assert deliver_followup("workspace:1", "do the thing") is True
+
+    verbs = [c[0] for c in calls]
+    assert verbs.count("send") == 1
+    assert verbs.count("send-key") == 1
+    assert "read-screen" not in verbs
+
+
+def test_deliver_followup_skips_verification_when_the_body_is_already_on_screen():
+    """Re-delivering a prompt a session already received leaves it in
+    scrollback, so an echo match would prove nothing about THIS send. The
+    ambiguity fails open to one unverified send, not to a retry loop."""
+    calls: list[tuple] = []
+    screens = ["❯ \n⏺ earlier: do the thing\n"]
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=_followup_cmux(screens, calls)),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.time.sleep"),
+    ):
+        assert deliver_followup("workspace:1", "do the thing") is True
+
+    verbs = [c[0] for c in calls]
+    assert verbs.count("send") == 1
+    assert verbs.count("send-key") == 1
+    # Only the pre-send probe — no post-send confirmation was attempted.
+    assert verbs.count("read-screen") == 1
 
 
 # ── rename_workspace_if_needed / reconcile_workspace_names ───────────────────

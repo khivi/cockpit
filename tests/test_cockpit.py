@@ -1025,3 +1025,93 @@ def test_the_nudge_is_dry_gated(tmp_path, monkeypatch):
 
     cockpit._fast_tick({"dry": True})
     assert sends and sends[0][2].get("dry") is True
+
+
+# ── seed-queue drain (the daemon's third automatic send) ─────────────────────
+
+
+def _drain_fixture(monkeypatch, *, accepted=True):
+    """Return (cockpit, sends) with `nudge_if_idle` recorded rather than sent.
+
+    Mirrors `nudge_if_idle`'s real contract: it returns "the nudge actually
+    fired", which is False under `dry` even for an eligible workspace. The drain
+    retires a marker only on True, so that contract is what keeps a dry run from
+    silently emptying the queue.
+    """
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+    sends: list[tuple] = []
+
+    def fake_nudge(ref, text, **kwargs):
+        sends.append((ref, text, kwargs))
+        return accepted and not kwargs.get("dry", False)
+
+    monkeypatch.setattr(cockpit, "nudge_if_idle", fake_nudge)
+    return cockpit, sends
+
+
+def test_a_queued_seed_is_redelivered_and_retired(monkeypatch):
+    """The whole point: a body the spawn could not hand over reaches the session
+    on a later tick, once `nudge_if_idle` finds it at rest."""
+    from cockpit.lib import seed_queue
+
+    cockpit, sends = _drain_fixture(monkeypatch)
+    seed_queue.enqueue(seed_queue.SeedRequest(ref="workspace:1", text="the body"))
+
+    out = cockpit._drain_seed_queue({"workspace:1"}, dry=False)
+
+    assert out == ["workspace:1"]
+    assert sends[0][0] == "workspace:1" and sends[0][1] == "the body"
+    # No `pref_key`: mute and snooze mean "stop telling me about this PR", and
+    # this is the user's own first-turn prompt.
+    assert "pref_key" not in sends[0][2]
+    assert seed_queue.iter_pending() == []
+
+
+def test_a_refused_send_keeps_the_marker_for_the_next_tick(monkeypatch):
+    """A mid-turn session is never interrupted, so the gate refuses and the body
+    must survive to try again — retiring on refusal would drop it for good."""
+    from cockpit.lib import seed_queue
+
+    cockpit, _sends = _drain_fixture(monkeypatch, accepted=False)
+    seed_queue.enqueue(seed_queue.SeedRequest(ref="workspace:1", text="the body"))
+
+    assert cockpit._drain_seed_queue({"workspace:1"}, dry=False) == []
+    assert [r.ref for _p, r in seed_queue.iter_pending()] == ["workspace:1"]
+
+
+def test_a_dry_run_delivers_nothing_and_keeps_the_queue(monkeypatch):
+    """`--dry` reaches the gate rather than skipping the drain, so the run still
+    reports what it would send. `nudge_if_idle` returns False under dry, which
+    is what leaves the marker in place without a second `dry` branch here."""
+    from cockpit.lib import seed_queue
+
+    cockpit, sends = _drain_fixture(monkeypatch)
+    seed_queue.enqueue(seed_queue.SeedRequest(ref="workspace:1", text="the body"))
+
+    assert cockpit._drain_seed_queue({"workspace:1"}, dry=True) == []
+    assert sends and sends[0][2].get("dry") is True
+    assert [r.ref for _p, r in seed_queue.iter_pending()] == ["workspace:1"]
+
+
+def test_a_marker_for_a_closed_workspace_is_dropped_unsent(monkeypatch):
+    """A workspace that went away before it came to rest takes its body with it,
+    and the ref can be reused — typing the body into whoever holds it next is
+    the failure this guard exists for."""
+    from cockpit.lib import seed_queue
+
+    cockpit, sends = _drain_fixture(monkeypatch)
+    seed_queue.enqueue(seed_queue.SeedRequest(ref="workspace:gone", text="the body"))
+
+    assert cockpit._drain_seed_queue({"workspace:1"}, dry=False) == []
+    assert sends == []
+    assert seed_queue.iter_pending() == []
+
+
+def test_the_drain_costs_nothing_when_the_queue_is_empty(monkeypatch):
+    """The ordinary tick. No directory, no reads, no gate calls."""
+    cockpit, sends = _drain_fixture(monkeypatch)
+
+    assert cockpit._drain_seed_queue({"workspace:1"}, dry=False) == []
+    assert sends == []
