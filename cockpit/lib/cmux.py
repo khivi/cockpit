@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from . import run, tool
+from . import run, seed_queue, tool
 from .colors import CMUX_COLOR_ANSI, bold, dim
 from .constants import MAIN_BRANCHES
 from .gh import PR
@@ -662,14 +662,64 @@ def spawn_workspace(name: str, cwd: Path, command: str) -> str | None:
 _FOLLOWUP_READY_TIMEOUT_SECONDS = 20.0
 _FOLLOWUP_POLL_INTERVAL_SECONDS = 0.5
 
+# Budget for confirming the body reached the composer. Measured on a cold
+# spawn, `claude_code=` registers ~2s in, while the composer takes longer on a
+# repo with hooks, MCP connectors and a large CLAUDE.md — so the first attempt
+# can land in a terminal that is up but not yet taking input.
+#
+# Most of the budget is spent WAITING for the echo rather than re-typing,
+# because a re-send whose predecessor did land (an echo check that reads the
+# screen wrong) stacks a second copy in the composer. Two attempts is the most
+# duplication a false negative can cause, and the wait is what actually covers
+# a slow boot.
+_FOLLOWUP_SEND_ATTEMPTS = 2
+_FOLLOWUP_ECHO_POLLS = 10
+_FOLLOWUP_ECHO_POLL_SECONDS = 1.0
+# Enough of the body to identify it on screen, short enough to survive the
+# composer's own wrapping and its `[Pasted text #N]` collapsing of a long line.
+_FOLLOWUP_ECHO_PREFIX_CHARS = 24
+
 
 def _claude_ready(ref: str) -> bool:
     """True once the workspace's claude has registered any `claude_code=` state
     — i.e. its TUI is up, so typed input queues instead of being dropped into a
     not-yet-rendered terminal.
+
+    Necessary but NOT sufficient, which is why `deliver_followup` verifies the
+    body landed rather than trusting this: cmux registers the state as soon as
+    it sees the wrapped process, seconds before Claude Code renders a composer
+    that accepts keystrokes.
     """
     lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
     return _native_claude_state(lines) is not None
+
+
+def _screen_shows(ref: str, needle: str) -> bool | None:
+    """Whether `needle` is on the workspace's screen — None when the question
+    can't be answered (limux has no `read-screen`, or the read came back empty).
+
+    None is the fail-open answer, deliberately distinct from False: a caller
+    that can't see the screen must fall back to an unverified send, never to
+    treating an unreadable screen as evidence of a dropped one.
+    """
+    if not tool.is_cmux():
+        return None
+    screen = cmux("read-screen", "--workspace", ref, "--lines", "40", check=False)
+    if not screen.strip():
+        return None
+    return needle in screen
+
+
+def _queue_retry(ref: str, text: str) -> bool:
+    """Hand an undelivered body to the daemon and return False regardless.
+
+    The return is always False because the caller's question is "did this land",
+    and it did not. Queuing changes who tries next, not the answer — and a
+    caller that treated a queued body as delivered would print "workspace
+    spawned" with no hint that its seed is still in flight.
+    """
+    seed_queue.enqueue(seed_queue.SeedRequest(ref=ref, text=text))
+    return False
 
 
 def deliver_followup(ref: str, text: str) -> bool:
@@ -678,10 +728,27 @@ def deliver_followup(ref: str, text: str) -> bool:
     (the prefix slash command rides in as the initial `--command`, the task body
     follows here).
 
-    Waits (bounded) for claude to boot so the keystrokes aren't lost into a
-    not-yet-rendered TUI, then types the text and submits with Enter — the same
-    primitive the attach path and `nudge_if_idle` use. Best-effort: a send
-    failure is logged, never raised.
+    Waits (bounded) for claude to boot, types the text, CONFIRMS it is sitting
+    in the composer, and only then submits with Enter — the same primitive the
+    attach path and `nudge_if_idle` use. Best-effort: a send failure is logged,
+    never raised.
+
+    The confirmation is the correctness half. `_claude_ready` alone was trusted
+    to mean "keystrokes will queue", and it does not: on a cold spawn cmux
+    reports `claude_code=` about two seconds in, well before Claude Code's
+    composer accepts input, so the body was typed into a terminal that dropped
+    it — `cmux send` still exited 0, so nothing warned and the session came up
+    knowing only its branch name. That shipped, and it cost a cold ticket spawn
+    its fetch prompt whenever a `prompt_prefix` was configured (with none, the
+    body rides in on `--command` and never takes this path at all, which is why
+    it read as working). So the send is retried until the body is visible, and
+    a body that never appears is reported instead of being submitted blind.
+
+    Verification FAILS OPEN, in both directions. An unreadable screen (limux,
+    or a `read-screen` that returns nothing) leaves the single unverified send
+    exactly as it was, and so does a needle already on screen *before* the
+    send, where a match would prove nothing — re-delivering the same prompt
+    into a session that still has it in scrollback is the ordinary case there.
 
     Collapsed to one line for the same reason `nudge_if_idle` does it: both
     spellings of a newline arrive as **Enter**, which in a claude composer means
@@ -703,12 +770,50 @@ def deliver_followup(ref: str, text: str) -> bool:
         if _claude_ready(ref):
             break
         time.sleep(_FOLLOWUP_POLL_INTERVAL_SECONDS)
+
+    needle = text[:_FOLLOWUP_ECHO_PREFIX_CHARS].strip()
+    verify = bool(needle) and _screen_shows(ref, needle) is False
+    attempts = _FOLLOWUP_SEND_ATTEMPTS if verify else 1
+    landed = not verify
+    for _ in range(attempts):
+        try:
+            cmux("send", "--workspace", ref, text, check=True)
+        except (RuntimeError, FileNotFoundError) as e:
+            print(
+                f"  warn: {tool.resolve_tool()} followup send failed for {ref}: {e}",
+                flush=True,
+            )
+            return _queue_retry(ref, text)
+        if not verify:
+            break
+        for _ in range(_FOLLOWUP_ECHO_POLLS):
+            time.sleep(_FOLLOWUP_ECHO_POLL_SECONDS)
+            if _screen_shows(ref, needle):
+                landed = True
+                break
+        if landed:
+            break
+
+    if not landed:
+        # Deliberately no Enter. Submitting an unconfirmed composer is how the
+        # body was lost in the first place, and here it would also submit
+        # whatever the retry stacked up.
+        print(
+            f"  warn: {tool.resolve_tool()} followup never reached the composer "
+            f"for {ref} after {attempts} attempts — not submitted: {needle}…",
+            flush=True,
+        )
+        return _queue_retry(ref, text)
+
     try:
-        cmux("send", "--workspace", ref, text, check=True)
         cmux("send-key", "--workspace", ref, "enter", check=True)
     except (RuntimeError, FileNotFoundError) as e:
+        # NOT queued. The body is sitting in the composer — only the submit
+        # failed — so a retry would type a second copy in front of it and
+        # submit both. The text is on screen where the user can press Enter.
         print(
-            f"  warn: {tool.resolve_tool()} followup send failed for {ref}: {e}",
+            f"  warn: {tool.resolve_tool()} followup typed but not submitted "
+            f"for {ref}: {e}",
             flush=True,
         )
         return False
