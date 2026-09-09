@@ -12,6 +12,14 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 
+# Coverage data. The `.coverage.*` glob is not redundant: `[tool.coverage.run]`
+# sets `parallel = true` for xdist, so each worker writes its own
+# `.coverage.<host>.<pid>.<rand>` before they are combined.
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
 # Deliberately not committed: a lockfile here would pin nothing a user gets.
 # brew installs resolve through the tap formula's own `resource` blocks, and
 # PyPI installs resolve `textual>=8.2.8` themselves — wheels don't carry a lock.

@@ -1,0 +1,76 @@
+name: coverage
+
+# Nightly line-coverage report over the whole suite, published to the run's job
+# summary so it is readable in the Actions UI without downloading an artifact.
+#
+# Deliberately NOT wired into ci.yml's pytest step: coverage is a trend you read,
+# not a gate every PR pays for, and `--cov` costs wall clock on a suite that is
+# otherwise 25s. The one thing it gates is drift — COVERAGE_FLOOR below.
+#
+# GitHub disables a scheduled workflow after 60 days with no repo activity and
+# emails the maintainer; re-enable it from the Actions tab. On a repo that ships
+# a release per merge this should never trigger, but a quiet stretch will.
+on:
+  schedule:
+    # 03:17 UTC. Off the hour deliberately — GitHub queues cron-triggered runs
+    # hardest at :00, and a nightly report has no deadline.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+env:
+  # A floor, not a target — measured is 91.14%. The point of slack is ~87
+  # statements, deliberate headroom for the thin I/O shims this suite doesn't
+  # cover on purpose (a `main()` reading stdin, an interactive `input()`, pidfile
+  # acquisition) so adding one more doesn't turn the nightly red. The cost is
+  # that untested code can accumulate up to that much before this says anything;
+  # the suite is deterministic, so nothing else moves the number. Raise it when
+  # the real number moves up; per AGENTS.md, never lower it to make a failing run
+  # pass — that is the config-edit form of `--no-verify`.
+  COVERAGE_FLOOR: "90"
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+          ignore-nothing-to-cache: true
+
+      # Mirrors ci.yml's install for the same reason: tests/e2e/test_cship_starship.py
+      # module-skips without both binaries. Skipping them here would not just lose
+      # 10 tests, it would silently understate `lib/starship.py` and `lib/cship.py`
+      # and make the nightly number incomparable to a local run.
+      - name: Install cship + starship (e2e statusline tests)
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL --retry 3 \
+            https://github.com/stephenleo/cship/releases/latest/download/cship-x86_64-unknown-linux-musl \
+            -o "$HOME/.local/bin/cship"
+          chmod +x "$HOME/.local/bin/cship"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          curl -sS https://starship.rs/install.sh | sh -s -- --yes
+          "$HOME/.local/bin/cship" --version
+          starship --version
+
+      - name: Run suite with coverage
+        run: |
+          uv run pytest -n auto -q \
+            --cov --cov-report=term-missing --cov-report="markdown:$GITHUB_STEP_SUMMARY" \
+            --cov-fail-under="$COVERAGE_FLOOR"
