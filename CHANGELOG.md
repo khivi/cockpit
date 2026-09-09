@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/khivi/cockpit/compare/v3.0.2...v3.1.0) (2026-09-09)
+
+
+### Features
+
+* **cmux:** confirm a seeded first turn lands, and re-deliver the ones that don't ([#497](https://github.com/khivi/cockpit/issues/497)) ([74bec06](https://github.com/khivi/cockpit/commit/74bec0677a6511124707b4ebad929aaa0df4f33d))
+
 ## [3.0.2](https://github.com/khivi/cockpit/compare/v3.0.1...v3.0.2) (2026-09-08)
 
 
