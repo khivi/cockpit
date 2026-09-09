@@ -513,6 +513,13 @@ pytest tests/test_spawn.py::test_linear_key_routes_to_matching_repo_without_repo
 # since worker boot costs ~2s and that is pure tax on the single-test line above:
 pytest -n auto
 
+# Coverage report — same reasoning as `-n auto`, so `--cov` is not in `addopts`
+
+# either. `coverage.yml` runs this nightly against a floor; locally it is a
+
+# report you go and ask for when you want to know what the suite never reaches:
+pytest -n auto --cov --cov-report=term-missing
+
 # Type-check:
 mypy cockpit/
 
