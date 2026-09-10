@@ -439,6 +439,37 @@ def _validate_ticket_credentials(cfg: dict) -> None:
         )
 
 
+def _validate_trello_boards(cfg: dict) -> None:
+    """Warn on a Trello repo that declares no `tickets.board`.
+
+    Unlike the other three providers, an undeclared scope switches Trello *off*
+    rather than widening it: an account spans every board its owner was ever
+    added to, so the ticket inbox asks for nothing instead of listing a client's
+    planning board (`tickets._trello_my_open`). Trello's ticket→repo routing is
+    off for the same repo, for the same reason. Both degrades are silent at the
+    point they happen, which is what earns the one line at start.
+
+    Not a config error — a repo may legitimately use only the `devdone=` pill,
+    which reads the card a PR footer delivers and needs no board.
+    """
+    from .config import trello_boards
+    from .tickets import provider_for
+
+    for repo in cfg.get("repos", []):
+        provider = provider_for(cfg, repo)
+        if provider is None or provider.name != "trello" or trello_boards(cfg, repo):
+            continue
+        name = repo.get("name") or repo.get("path", "?")
+        print(
+            f"{yellow('cockpit:')} repo {name!r} tracks Trello but declares no "
+            f"tickets.board — its cards stay out of the ticket inbox (`i`) and a "
+            f"card URL won't route to it. Set tickets.board to the board name, "
+            f"or a list of them.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _validate_ticket_close_on_merge(cfg: dict) -> None:
     """Warn when the merge transition is on but its credential env var isn't.
 
@@ -747,6 +778,7 @@ def validate_config(cfg: dict) -> None:
     _validate_statusline_hide(cfg)
     _validate_tickets(cfg)
     _validate_ticket_credentials(cfg)
+    _validate_trello_boards(cfg)
     _validate_ticket_close_on_merge(cfg)
 
 

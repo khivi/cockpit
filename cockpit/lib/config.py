@@ -962,24 +962,31 @@ def trello_merge_done(cfg: dict | None = None, repo_entry: dict | None = None) -
     return ""
 
 
-def trello_board(cfg: dict | None = None, repo_entry: dict | None = None) -> str | None:
-    """The Trello board this repo's cards live on (`tickets.board`), or None.
+def trello_boards(cfg: dict | None = None, repo_entry: dict | None = None) -> list[str]:
+    """The Trello boards this repo's cards live on (`tickets.board`), or [].
 
-    Routing-only, and the *whole* of Trello's ticket→repo routing: a card short
-    link (`trello.com/c/aB3xY`) carries no board, no project and no key prefix,
-    so unlike Linear/Jira there's no free identifier match to start from — the
-    board has to be fetched. Declaring it is therefore the opt-in: with no repo
+    Two jobs, and the list is for the second. **Routing**: a card short link
+    (`trello.com/c/aB3xY`) carries no board, no project and no key prefix, so
+    unlike Linear/Jira there's no free identifier match to start from — the board
+    has to be fetched. Declaring one is therefore the opt-in: with no repo
     declaring a board, `cockpit new <card-url>` makes zero network calls and
-    routes exactly as before. Matched by name, casefolded, like every other
-    provider state/list/status name.
+    routes exactly as before. **Scope**: it is also what the ticket inbox asks
+    for, and there it is required — see `tickets._trello_my_open`.
+
+    A bare string is one board; a list is several, which one repo genuinely has
+    (a team splits planning, engineering and ops across boards while every card
+    on them is the same repo's work). Matched by name, casefolded, like every
+    other provider state/list/status name.
 
     (The Linear analogue is `tickets.project`; there is deliberately no Trello
     `project` field — a board is the container a card's identity is missing.)
     """
     val = _tickets_field(cfg, repo_entry, "board")
-    if isinstance(val, str) and val.strip():
-        return val.strip()
-    return None
+    if isinstance(val, str):
+        return [val.strip()] if val.strip() else []
+    if isinstance(val, list):
+        return [b.strip() for b in val if isinstance(b, str) and b.strip()]
+    return []
 
 
 def trello_key_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:

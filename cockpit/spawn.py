@@ -126,7 +126,7 @@ from cockpit.lib.config import (
     load_config,
     plan_command,
     repo_tickets,
-    trello_board,
+    trello_boards,
 )
 from cockpit.lib.config import (
     use_slack as cfg_use_slack,
@@ -959,7 +959,7 @@ def main(argv: list[str] | None = None) -> int:
                 # and routes exactly as it did before the field existed.
                 spawn_cfg = load_config()
                 cands = [
-                    r for r in spawn_cfg.get("repos", []) if trello_board(spawn_cfg, r)
+                    r for r in spawn_cfg.get("repos", []) if trello_boards(spawn_cfg, r)
                 ]
                 args.repo = _route_by_ticket(value, cands, spawn_cfg) or args.repo
         elif mode == "gh-issue":
@@ -991,7 +991,7 @@ def main(argv: list[str] | None = None) -> int:
                 # shared `orgs` block) is invisible to a bare `provider_for(cfg)`,
                 # which switched routing off for exactly the configs that most
                 # need it. Trello's sibling gate is already per-repo
-                # (`trello_board`), and this is the same question.
+                # (`trello_boards`), and this is the same question.
                 spawn_cfg = load_config()
                 cands = find_repos_by_ticket_key(value)
                 if any(provider_for(spawn_cfg, r) is not None for r in cands):

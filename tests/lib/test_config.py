@@ -1147,25 +1147,33 @@ def test_trello_readers_fall_back_to_global(tmp_path, monkeypatch):
     assert cockpit_config.trello_merge_done(repo_entry={}) == "Global Done"
 
 
-def test_trello_board_defaults_to_none(tmp_path, monkeypatch):
+def test_trello_boards_defaults_to_empty(tmp_path, monkeypatch):
     # Unset (or blank) means "no repo opted in" — which is what keeps Trello
-    # routing at zero network calls for a config that never declares a board.
+    # routing at zero network calls for a config that never declares a board,
+    # and what keeps an unscoped account out of the ticket inbox.
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
-    assert cockpit_config.trello_board() is None
-    assert cockpit_config.trello_board(repo_entry={"tickets": {"board": "  "}}) is None
+    assert cockpit_config.trello_boards() == []
+    assert cockpit_config.trello_boards(repo_entry={"tickets": {"board": "  "}}) == []
 
 
-def test_trello_board_repo_over_global(tmp_path, monkeypatch):
+def test_trello_boards_repo_over_global(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,
         monkeypatch,
         {"repos": [], "tickets": {"provider": "trello", "board": "Global Board"}},
     )
-    assert cockpit_config.trello_board(repo_entry={}) == "Global Board"
-    assert (
-        cockpit_config.trello_board(repo_entry={"tickets": {"board": "Engineering"}})
-        == "Engineering"
-    )
+    assert cockpit_config.trello_boards(repo_entry={}) == ["Global Board"]
+    assert cockpit_config.trello_boards(
+        repo_entry={"tickets": {"board": "Engineering"}}
+    ) == ["Engineering"]
+
+
+def test_trello_board_takes_a_list_for_a_repo_spanning_several(tmp_path, monkeypatch):
+    """A team splits planning, engineering and ops across boards while every card
+    on them is the same repo's work."""
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    entry = {"tickets": {"board": ["Acme", " Acme: Eng ", "", 7]}}
+    assert cockpit_config.trello_boards(repo_entry=entry) == ["Acme", "Acme: Eng"]
 
 
 def test_ticket_close_on_merge_defaults_false(tmp_path, monkeypatch):

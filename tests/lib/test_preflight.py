@@ -871,6 +871,48 @@ def test_preflight_warns_on_both_halves_of_an_unset_trello_credential_pair(
     assert "TRELLO_API_KEY" not in err
 
 
+def test_preflight_warns_on_a_trello_repo_with_no_board(tmp_path, monkeypatch, capsys):
+    """Undeclared scope switches Trello OFF rather than widening it — the inbox
+    asks for nothing and a card URL routes nowhere — and both are silent."""
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("TRELLO_API_KEY", "k")
+    monkeypatch.setenv("TRELLO_API_TOKEN", "t")
+    preflight(
+        {"tool": "cmux", "repos": [{"name": "r", "tickets": {"provider": "trello"}}]}
+    )
+    err = capsys.readouterr().err
+    assert "tickets.board" in err
+    assert "'r'" in err
+
+
+def test_preflight_is_quiet_about_a_trello_repo_that_declares_boards(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("TRELLO_API_KEY", "k")
+    monkeypatch.setenv("TRELLO_API_TOKEN", "t")
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [
+                {"name": "r", "tickets": {"provider": "trello", "board": ["A", "B"]}}
+            ],
+        }
+    )
+    assert "tickets.board" not in capsys.readouterr().err
+
+
+def test_preflight_says_nothing_about_boards_for_another_provider(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    preflight(
+        {"tool": "cmux", "repos": [{"name": "r", "tickets": {"provider": "linear"}}]}
+    )
+    assert "tickets.board" not in capsys.readouterr().err
+
+
 def test_preflight_warns_naming_the_orgs_own_trello_credential(
     tmp_path, monkeypatch, capsys
 ):

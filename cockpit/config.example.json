@@ -61,7 +61,7 @@
       "default_base": "main",
       "tickets": {
         "provider": "trello",
-        "board": "Engineering",
+        "board": ["Engineering", "Engineering: Planning"],
         "dev_done": "Review",
         "merge_done": "Done",
         "close_on_merge": false,
