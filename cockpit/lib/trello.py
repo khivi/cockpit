@@ -242,6 +242,78 @@ def fetch_card_handles(
     return out
 
 
+def fetch_my_open(
+    boards: list[str] | None = None,
+    *,
+    key: str | None = None,
+    token: str | None = None,
+) -> list[dict[str, str]] | None:
+    """Every open card I'm a member of, newest activity first — the Trello half
+    of the ticket inbox.
+
+    One `GET /members/me/cards` per Trello *account*, not per board and not per
+    repo: the caller passes the union of `tickets.board` across the repos sharing
+    this credential pair, and cards on other boards are dropped client-side.
+    Trello has no board-scoped variant of this endpoint, so unlike the other
+    three providers the filter cannot ride the request. An empty/None `boards`
+    keeps every card, matching the unfiltered variants elsewhere.
+
+    Membership *is* the assignment signal here — the same gate
+    `cycle._transition_merged_trello` uses — since a Trello card has no assignee
+    field. "Open" is the card not being archived; the list name is its state.
+
+    Each item is `{"id", "team", "title", "state", "url", "updated_at"}`, all
+    strings (a missing field becomes ""), with `id` the card's short link — the
+    identifier everything else keys on — and `team` its board name.
+
+    `None` means the account could not be asked (API failure); `[]` means it
+    answered with nothing, which unset creds also yield since the feature is then
+    deterministically off rather than transiently unreachable. Never raises.
+    """
+    creds = _creds(key, token)
+    if not creds:
+        return []
+    k, tok = creds
+    data = _request(
+        "GET",
+        "/members/me/cards",
+        key=k,
+        token=tok,
+        params={
+            "filter": "open",
+            "fields": "name,shortLink,shortUrl,dateLastActivity",
+            "list": "true",
+            "board": "true",
+            "board_fields": "name",
+        },
+    )
+    if not isinstance(data, list):
+        return None
+    wanted = {b.casefold() for b in (boards or []) if b}
+    out: list[dict[str, str]] = []
+    for card in data:
+        if not isinstance(card, dict):
+            continue
+        short = str(card.get("shortLink") or "")
+        if not short:
+            continue
+        board = str((card.get("board") or {}).get("name") or "")
+        if wanted and board.casefold() not in wanted:
+            continue
+        out.append(
+            {
+                "id": short,
+                "team": board,
+                "title": str(card.get("name") or ""),
+                "state": str((card.get("list") or {}).get("name") or ""),
+                "url": str(card.get("shortUrl") or ""),
+                "updated_at": str(card.get("dateLastActivity") or ""),
+            }
+        )
+    out.sort(key=lambda c: c["updated_at"], reverse=True)
+    return out
+
+
 def fetch_card_board(
     short_link: str, *, key: str | None = None, token: str | None = None
 ) -> str | None:

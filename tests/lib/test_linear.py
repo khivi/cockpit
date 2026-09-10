@@ -17,6 +17,7 @@ from cockpit.lib.linear import (
     LINEAR_RE,
     LINEAR_RE_CI,
     extract_ticket,
+    fetch_my_open,
     fetch_team_states,
     fetch_ticket_meta,
     fetch_ticket_project,
@@ -517,4 +518,152 @@ def test_fetch_ticket_project_no_key_or_bad_id_skips_network():
         assert fetch_ticket_project("PE-1234") is None  # no key (env cleared)
         assert fetch_ticket_project("not-a-ticket", api_key="k") is None
         assert fetch_ticket_project("", api_key="k") is None
+    urlopen.assert_not_called()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# fetch_my_open — the ticket inbox's one query per Linear workspace
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _field(tickets: list[dict] | None, key: str = "id") -> list[str]:
+    """`key` off each ticket, asserting the fetch was answered — `None` is the
+    "couldn't ask" case and never what these cases exercise."""
+    assert tickets is not None
+    return [t[key] for t in tickets]
+
+
+def _issue_node(identifier: str, **over) -> dict:
+    node = {
+        "identifier": identifier,
+        "title": f"Work on {identifier}",
+        "url": f"https://linear.app/acme/issue/{identifier}",
+        "updatedAt": "2026-09-09T10:00:00.000Z",
+        "state": {"name": "Todo"},
+        "team": {"key": identifier.split("-")[0]},
+    }
+    node.update(over)
+    return node
+
+
+def test_fetch_my_open_normalizes_every_field():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_batch_resp([_issue_node("PE-412")]),
+    ):
+        out = fetch_my_open(["PE"], api_key="k")
+
+    assert out == [
+        {
+            "id": "PE-412",
+            "team": "PE",
+            "title": "Work on PE-412",
+            "state": "Todo",
+            "url": "https://linear.app/acme/issue/PE-412",
+            "updated_at": "2026-09-09T10:00:00.000Z",
+        }
+    ]
+
+
+def test_fetch_my_open_is_one_round_trip_for_many_teams():
+    """One query per *workspace*, not per team — the whole point of the union."""
+    captured: list[dict] = []
+
+    def fake_urlopen(req, timeout=None):
+        captured.append(json.loads(req.data.decode()))
+        return _batch_resp([_issue_node("PE-1"), _issue_node("ENG-9")])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_my_open(["pe", "eng"], api_key="k")
+
+    assert len(captured) == 1
+    assert captured[0]["variables"] == {"keys": ["PE", "ENG"]}  # upper-cased
+    assert _field(out) == ["PE-1", "ENG-9"]
+
+
+def test_fetch_my_open_without_keys_drops_the_team_filter():
+    """An empty union can't be `key:{in:[]}` — Linear would match nothing, which
+    is the opposite of "this credential declares no teams, show me all of mine"."""
+    captured: list[dict] = []
+
+    def fake_urlopen(req, timeout=None):
+        captured.append(json.loads(req.data.decode()))
+        return _batch_resp([_issue_node("PE-1")])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        assert _field(fetch_my_open([], api_key="k")) == ["PE-1"]
+        assert _field(fetch_my_open(None, api_key="k")) == ["PE-1"]
+
+    for body in captured:
+        assert body["variables"] == {}
+        assert "team:" not in body["query"]
+        assert "$keys" not in body["query"]
+
+
+def test_fetch_my_open_filters_on_state_type_not_name():
+    """State *names* are per-team and renameable; the six types are not."""
+    captured: list[dict] = []
+
+    def fake_urlopen(req, timeout=None):
+        captured.append(json.loads(req.data.decode()))
+        return _batch_resp([])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        fetch_my_open(["PE"], api_key="k")
+
+    query = captured[0]["query"]
+    assert 'state:{type:{in:["unstarted","started"]}}' in query
+    assert "assignee:{isMe:{eq:true}}" in query
+    for dropped in ("backlog", "triage", "completed", "canceled"):
+        assert dropped not in query
+
+
+def test_fetch_my_open_skips_a_node_with_no_identifier():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_batch_resp([_issue_node("PE-1"), {"title": "orphan"}]),
+    ):
+        out = fetch_my_open(["PE"], api_key="k")
+    assert _field(out) == ["PE-1"]
+
+
+def test_fetch_my_open_missing_fields_become_empty_strings():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        return_value=_batch_resp([{"identifier": "PE-1"}]),
+    ):
+        out = fetch_my_open(["PE"], api_key="k")
+    assert out == [
+        {
+            "id": "PE-1",
+            "team": "",
+            "title": "",
+            "state": "",
+            "url": "",
+            "updated_at": "",
+        }
+    ]
+
+
+def test_fetch_my_open_failure_is_none_not_empty():
+    """None is "couldn't ask"; [] is "asked, nothing assigned". A blip that read
+    as the latter would blank the inbox."""
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=TimeoutError()):
+        assert fetch_my_open(["PE"], api_key="k") is None
+
+
+def test_fetch_my_open_answered_with_nothing_is_empty_not_none():
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen", return_value=_batch_resp([])
+    ):
+        assert fetch_my_open(["PE"], api_key="k") == []
+
+
+def test_fetch_my_open_no_key_is_empty_and_skips_network():
+    """An unset key is the feature being off, not the API being unreachable."""
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_my_open(["PE"]) == []
     urlopen.assert_not_called()

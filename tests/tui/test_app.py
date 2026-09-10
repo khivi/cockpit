@@ -27,6 +27,7 @@ from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
 from cockpit.tui.widgets.config_screen import ConfigScreen
 from cockpit.tui.widgets.header_bar import HeaderBar
+from cockpit.tui.widgets.tickets_screen import TicketsScreen
 from cockpit.tui.widgets.worktree_table import WorktreeTable
 
 pytestmark = pytest.mark.asyncio
@@ -3528,3 +3529,190 @@ async def test_menu_is_not_clipped_at_a_narrow_terminal():
         assert region.right == 80
         assert str(menu.render()) == HeaderBar.MENU_LABEL
         assert "Menu" in app.export_screenshot()
+
+
+# ── `i` — the ticket inbox ──────────────────────────────────────────────────
+
+
+def _open_buckets(app) -> dict[str, list[dict]]:
+    """The buckets the pushed `TicketsScreen` is rendering."""
+    screen = app.screen
+    assert isinstance(screen, TicketsScreen)
+    return screen._buckets
+
+
+def _inbox_ticket(tid="PE-412", **over):
+    ticket = {
+        "id": tid,
+        "team": tid.split("-")[0],
+        "title": f"Work on {tid}",
+        "state": "Todo",
+        "url": f"https://linear.app/acme/issue/{tid}",
+        "updated_at": "2026-09-09T10:00:00Z",
+        "in_flight": False,
+    }
+    ticket.update(over)
+    return ticket
+
+
+async def test_ticket_inbox_drops_tickets_already_in_flight(monkeypatch):
+    """The inbox is the complement of the main table: a ticket with a worktree
+    is a row over there, and showing it here would offer to start it twice."""
+    app, _ = _make_app()
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_ticket_inboxes",
+        lambda: {
+            "acme": [_inbox_ticket("PE-1"), _inbox_ticket("PE-2", in_flight=True)]
+        },
+    )
+    async with app.run_test() as pilot:
+        app.action_ticket_inbox()
+        await pilot.pause()
+        assert [t["id"] for t in _open_buckets(app)["acme"]] == ["PE-1"]
+
+
+async def test_ticket_inbox_drops_an_org_with_nothing_left(monkeypatch):
+    """A header with no rows under it reads as a failed fetch — the one thing
+    the collector works hardest never to show."""
+    app, _ = _make_app()
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_ticket_inboxes",
+        lambda: {
+            "acme": [_inbox_ticket("PE-1", in_flight=True)],
+            "widgets-co": [_inbox_ticket("WID-2")],
+        },
+    )
+    async with app.run_test() as pilot:
+        app.action_ticket_inbox()
+        await pilot.pause()
+        assert list(_open_buckets(app)) == ["widgets-co"]
+
+
+async def test_starting_a_routable_ticket_shells_out_to_cockpit_new(monkeypatch):
+    app, _ = _make_app()
+    launched: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append((s, cwd))
+    )
+    monkeypatch.setattr(
+        "cockpit.lib.config.find_repos_by_ticket_key", lambda ref: [{"name": "widgets"}]
+    )
+    app._start_ticket("PE-412")
+    # No repo is named: routing is spawn's, and guessing one from the cursor row
+    # would land the worktree wherever the highlight happened to be.
+    assert launched == [("PE-412", None)]
+
+
+async def test_starting_an_unroutable_ticket_refuses_loudly(monkeypatch):
+    """With no repo named, an unroutable ticket would land its worktree in the
+    daemon's own cwd — silent and wrong."""
+    app, _ = _make_app()
+    launched: list = []
+    notified: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    monkeypatch.setattr(CockpitApp, "_notify", lambda self, m, **k: notified.append(m))
+    monkeypatch.setattr("cockpit.lib.config.find_repos_by_ticket_key", lambda ref: [])
+    app._start_ticket("PE-412")
+    assert launched == []
+    assert "PE-412" in notified[0] and "press n" in notified[0]
+
+
+async def test_a_github_issue_url_routes_on_its_own_repo(monkeypatch):
+    """It carries `owner/repo`, so it needs no `tickets.keys` match."""
+    app, _ = _make_app()
+    launched: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    monkeypatch.setattr("cockpit.lib.config.find_repos_by_ticket_key", lambda ref: [])
+    url = "https://github.com/acme/widgets/issues/77"
+    app._start_ticket(url)
+    assert launched == [url]
+
+
+async def test_a_trello_card_routes_on_its_board(monkeypatch):
+    """Its short link carries no key at all — the board discriminator is a fetch
+    spawn makes itself."""
+    app, _ = _make_app()
+    launched: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    monkeypatch.setattr("cockpit.lib.config.find_repos_by_ticket_key", lambda ref: [])
+    url = "https://trello.com/c/aB3dZ9"
+    app._start_ticket(url)
+    assert launched == [url]
+
+
+async def test_dismissing_the_inbox_starts_nothing(monkeypatch):
+    app, _ = _make_app()
+    launched: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    app._start_ticket(None)
+    app._start_ticket("")
+    assert launched == []
+
+
+async def test_starting_a_ticket_refuses_under_dry(monkeypatch):
+    app = CockpitApp(
+        slow_tick=lambda *a, **k: None,
+        fast_tick=lambda: None,
+        slow_secs=300,
+        fast_secs=30,
+        dry=True,
+    )
+    launched: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    monkeypatch.setattr(CockpitApp, "notify", lambda self, m, **k: None)
+    app._start_ticket("PE-412")
+    assert launched == []
+
+
+async def test_opening_the_inbox_is_not_dry_gated(monkeypatch):
+    """It reads payloads off disk and reaches nothing outside the process."""
+    app = CockpitApp(
+        slow_tick=lambda *a, **k: None,
+        fast_tick=lambda: None,
+        slow_secs=300,
+        fast_secs=30,
+        dry=True,
+    )
+    app._publish_inventory = lambda: None  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_ticket_inboxes", lambda: {"acme": [_inbox_ticket()]}
+    )
+    async with app.run_test() as pilot:
+        app.action_ticket_inbox()
+        await pilot.pause()
+        assert list(_open_buckets(app)) == ["acme"]
+
+
+async def test_footer_shows_the_ticket_inbox_key_only_with_a_tracker():
+    """`i` rides the same config gate as `t`: with no repo tracking tickets it
+    has nothing to list."""
+    from cockpit.tui.widgets.footer_bar import FooterBar
+    from cockpit.tui.widgets.worktree_table import HEADER_CAP
+
+    with_tracker = FooterBar(CockpitApp.BINDINGS, show_tickets=True, backend="cmux")
+    without = FooterBar(CockpitApp.BINDINGS, show_tickets=False, backend="cmux")
+    assert not with_tracker._skip("ticket_inbox")
+    assert without._skip("ticket_inbox")
+
+    # Global, not row-targeted: it survives a group header and an empty row, the
+    # way `n` and `s` do — the inbox isn't about the highlighted row.
+    for caps in (frozenset(), frozenset({HEADER_CAP})):
+        with_tracker._row_caps = caps
+        assert not with_tracker._skip("ticket_inbox")
+
+
+async def test_footer_lists_the_inbox_key_next_to_new():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    order = list(FooterBar.GLOBAL_ORDER)
+    assert order.index("ticket_inbox") == order.index("new_workspace") + 1

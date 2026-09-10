@@ -340,6 +340,17 @@ Key gates (all from `cycle.py`):
     (`_reap_workspace_orphans` — its idle-safety gate reads the cmux-only `idle=`
     pill, so on limux it could only ever defer).
 
+  The **ticket inbox** is the second repo-spanning pass, and it is backend-
+  agnostic (it writes a payload, never a workspace). `_collect_ticket_inbox`
+  records each repo's `(org bucket, provider, credential, scope, nwo)` and the
+  ids of the tickets it has already started; `ticket_inbox.publish` drains the
+  accumulator at the end of `cycle_all`, one fetch per
+  `(provider, credential, bucket)` triple, into one `<org>__tickets.json` per
+  bucket. Like `ReviewFolds` it is built only when `only_repo is None`, and its
+  `partial` flag suspends every write when the cycle didn't reach every repo —
+  a bucket is the union of its repos' contributions, so a repo that never
+  reported makes it shrink, which reads as tickets having been finished.
+
   So a limux daemon does everything except render pills/colors and nudge/focus.
   (Before, `cycle_repo`'s single `if ctx.headless: return` ran *before* all of
   this, so limux wrote only the statusline cache — every merged worktree, Linear
@@ -462,6 +473,11 @@ flowchart LR
   DISK -.republish.-> FAST
   KEY["TUI m / z keypress"] -.restamp_pref: mute+snooze only.-> DISK
 
+  TRK["ticket trackers<br/>Linear · Jira · GitHub · Trello"] --> SLOW
+  SLOW --> INBOX[("ticket inbox<br/>&lt;org&gt;__tickets.json")]
+  FAST -.re-stamp in_flight only.-> INBOX
+  INBOX --> IKEY["TUI i — TicketsScreen"]
+
   SLOW --> CELLS["daemon cells<br/>pr-state · git-state · base-dist · wt-cost"]
   FAST --> CELLS
 
@@ -503,6 +519,14 @@ session-scoped cell: `cost-<sid>` is keyed by Claude Code session while every
 TUI row is keyed by worktree path, so the fast tick folds the sessions rooted at
 each worktree into one `wt-cost` cell for the table's `$` column. It reads only
 — session cells stay the statusLine's to write.
+
+The **ticket inbox** is the one payload keyed by neither branch, cwd nor session:
+an unstarted ticket has no worktree, so there is no cell key to give it. It is
+written per *org bucket* by the cross-repo pass at the end of `cycle_all` and
+read only by the TUI's `i` screen. The fast tick touches it for exactly one
+thing — re-stamping each ticket's `in_flight` flag against the worktrees it just
+listed — which is what keeps the inbox the exact complement of the table without
+either surface reading the other.
 
 The cell-key detail (per-branch / per-cwd / per-sid suffixes) lives in the
 source; this view shows ownership. Everything the renderer reads passes through

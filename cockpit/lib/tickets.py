@@ -31,6 +31,7 @@ from .config import (
     linear_api_key,
     linear_dev_done,
     linear_project,
+    linear_team_keys,
     linear_token_env,
     repo_tickets,
     trello_api_key,
@@ -43,6 +44,7 @@ from .config import (
 from .gh import pr_body
 from .github_issues import CONFIG_FIELDS as _GITHUB_CONFIG_FIELDS
 from .github_issues import fetch_issues, issue_url, parse_github_issue_refs
+from .github_issues import fetch_my_open as _github_fetch_my_open
 from .jira import CONFIG_FIELDS as _JIRA_CONFIG_FIELDS
 from .jira import (
     fetch_issue_statuses,
@@ -50,7 +52,9 @@ from .jira import (
     parse_jira_footer_links,
     parse_jira_footers,
 )
+from .jira import fetch_my_open as _jira_fetch_my_open
 from .linear import CONFIG_FIELDS as _LINEAR_CONFIG_FIELDS
+from .linear import fetch_my_open as _linear_fetch_my_open
 from .linear import (
     fetch_ticket_project,
     fetch_ticket_states,
@@ -67,6 +71,7 @@ from .trello import (
     parse_trello_footer_links,
     parse_trello_footers,
 )
+from .trello import fetch_my_open as _trello_fetch_my_open
 
 # ── config-field schema (drives preflight validation) ───────────────────────
 #
@@ -174,6 +179,37 @@ class TicketProvider:
     # own. Passing it skips the fetch entirely; omitting it keeps the fetch, so a
     # caller that holds no body is unaffected.
     ticket_url: Callable[..., str | None]
+    # (cfg, repo_entry) → the strings that scope this repo's slice of the
+    # tracker: the Linear team keys / Jira project keys a repo declares in
+    # `tickets.keys`, or the Trello board in `tickets.board`. GitHub returns
+    # nothing — a GitHub issue's identifier carries its own repo, so its scope is
+    # the repo list itself.
+    #
+    # The ticket inbox unions these across the repos sharing one credential and
+    # hands the union to `fetch_my_open`, which is what lets the collector stay
+    # provider-neutral: without it, the caller would have to know that "the
+    # scoping field" is `keys` for two providers, `board` for a third and absent
+    # for the fourth — a provider-name branch in exactly the place this class
+    # exists to remove one from.
+    inbox_scopes: Callable[[dict, dict | None], list[str]]
+    # (scopes, nwos, cfg, repo_entry) → every ticket assigned to me that is in an
+    # active state, newest first, as `{"id", "team", "title", "state", "url",
+    # "updated_at"}` dicts of plain strings. The ticket inbox's fetch.
+    #
+    # ONE round-trip per call, and the call is per *credential group* rather than
+    # per repo — a team key is scoped to the workspace the credential opens, so
+    # asking one org's workspace about another's ticket answers about a different
+    # issue that merely shares an identifier (the same trap `_secret_fingerprint`
+    # and `_linear_narrow_repos`' grouping exist for). `scopes` is the union from
+    # `inbox_scopes` and `nwos` the group's `owner/repo` list; each provider reads
+    # the one it needs and ignores the other, like `ticket_url`'s kwargs.
+    #
+    # `None` means the tracker could NOT be asked; `[]` means it answered with
+    # nothing. Collapsing the two would make a network blip read as "you have
+    # nothing assigned" and blank a bucket, which is the failure
+    # `ReviewFolds.partial` was written for — so the distinction is carried all
+    # the way from each leaf's transport up to `TicketInbox.partial`.
+    fetch_my_open: Callable[..., list[dict[str, str]] | None]
     # (cfg, repo_entry) → the env var *names* this provider needs credentials in,
     # resolved for that repo (so a per-org `token_env` yields the org's name).
     # Names only — a value never reaches this seam. Empty for GitHub, which
@@ -439,6 +475,90 @@ def _trello_ticket_url(
     )
 
 
+def _keys_scope(cfg: dict, repo_entry: dict | None = None) -> list[str]:
+    """`inbox_scopes` for the two providers whose scope is the identifier prefix
+    a repo declares in `tickets.keys` — a Linear team, a Jira project."""
+    return [str(k) for k in linear_team_keys(cfg, repo_entry) if k]
+
+
+def _no_scope(cfg: dict, repo_entry: dict | None = None) -> list[str]:
+    """`inbox_scopes` for GitHub, whose issue identifiers carry their own repo —
+    the `nwos` list already scopes the fetch, so there is nothing to union."""
+    return []
+
+
+def _trello_scope(cfg: dict, repo_entry: dict | None = None) -> list[str]:
+    """`inbox_scopes` for Trello: the one board this repo's work lives on, if it
+    declares one. A repo with no `tickets.board` contributes no filter, which
+    widens its group's fetch to every board — the same open-by-default shape the
+    other providers' empty key union takes."""
+    board = trello_board(cfg, repo_entry)
+    return [board] if board else []
+
+
+def _linear_my_open(
+    scopes: list[str],
+    *,
+    nwos: list[str] | None = None,
+    cfg: dict,
+    repo_entry: dict | None = None,
+) -> list[dict[str, str]] | None:
+    """Assigned-to-me Linear tickets in an active state. `nwos` unused — Linear
+    scopes by team key, not by repo."""
+    return _linear_fetch_my_open(
+        scopes, api_key=linear_api_key(cfg, repo_entry) or None
+    )
+
+
+def _jira_my_open(
+    scopes: list[str],
+    *,
+    nwos: list[str] | None = None,
+    cfg: dict,
+    repo_entry: dict | None = None,
+) -> list[dict[str, str]] | None:
+    """Assigned-to-me Jira issues that aren't Done. Empty when the site or email
+    is unconfigured (feature off); `nwos` unused."""
+    site = jira_site_url(cfg, repo_entry)
+    email = jira_email(cfg, repo_entry)
+    if not site or not email:
+        return []
+    return _jira_fetch_my_open(
+        scopes,
+        site_url=site,
+        email=email,
+        token=jira_api_token(cfg, repo_entry) or None,
+    )
+
+
+def _github_my_open(
+    scopes: list[str],
+    *,
+    nwos: list[str] | None = None,
+    cfg: dict,
+    repo_entry: dict | None = None,
+) -> list[dict[str, str]] | None:
+    """Assigned-to-me open GitHub issues across the group's repos. `scopes` is
+    unused — GitHub's scope is `nwos`, which is why `inbox_scopes` is empty."""
+    return _github_fetch_my_open(nwos or [])
+
+
+def _trello_my_open(
+    scopes: list[str],
+    *,
+    nwos: list[str] | None = None,
+    cfg: dict,
+    repo_entry: dict | None = None,
+) -> list[dict[str, str]] | None:
+    """Open Trello cards I'm a member of, restricted to the group's boards.
+    `nwos` unused."""
+    return _trello_fetch_my_open(
+        scopes,
+        key=trello_api_key(cfg, repo_entry) or None,
+        token=trello_api_token(cfg, repo_entry) or None,
+    )
+
+
 def _no_narrow(ref: str, candidates: list[dict], cfg: dict) -> list[dict]:
     """`narrow_repos` for a provider whose identifier already resolves the repo as
     far as it can: GitHub (the issue ref carries `owner/repo`, so routing never
@@ -546,6 +666,8 @@ LINEAR = TicketProvider(
     fetch_states=_linear_fetch_states,
     fetch_titles=_linear_fetch_titles,
     narrow_repos=_linear_narrow_repos,
+    inbox_scopes=_keys_scope,
+    fetch_my_open=_linear_my_open,
     ticket_url=_linear_ticket_url,
     credential_envs=lambda cfg, repo: [linear_token_env(cfg, repo)],
 )
@@ -557,6 +679,8 @@ JIRA = TicketProvider(
     fetch_states=_jira_fetch_states,
     fetch_titles=_jira_fetch_titles,
     narrow_repos=_no_narrow,
+    inbox_scopes=_keys_scope,
+    fetch_my_open=_jira_my_open,
     ticket_url=_jira_ticket_url,
     credential_envs=lambda cfg, repo: [jira_token_env(cfg, repo)],
 )
@@ -568,6 +692,8 @@ GITHUB = TicketProvider(
     fetch_states=_github_fetch_states,
     fetch_titles=_github_fetch_titles,
     narrow_repos=_no_narrow,
+    inbox_scopes=_no_scope,
+    fetch_my_open=_github_my_open,
     ticket_url=_github_ticket_url,
     # `gh` owns the auth; there is no cockpit-read env var to warn about.
     credential_envs=lambda _cfg, _repo: [],
@@ -580,6 +706,8 @@ TRELLO = TicketProvider(
     fetch_states=_trello_fetch_states,
     fetch_titles=_trello_fetch_titles,
     narrow_repos=_trello_narrow_repos,
+    inbox_scopes=_trello_scope,
+    fetch_my_open=_trello_my_open,
     ticket_url=_trello_ticket_url,
     credential_envs=lambda cfg, repo: [
         trello_key_env(cfg, repo),

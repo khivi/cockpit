@@ -94,6 +94,9 @@ class FooterBar(Horizontal):
         # global keys.
         "hide_repo",
         "new_workspace",
+        # Beside `n` deliberately: both start work, and `i` is where you go when
+        # you don't yet know what to type into `n`.
+        "ticket_inbox",
         "sync",
         "quit",
     )
@@ -112,6 +115,7 @@ class FooterBar(Horizontal):
         "ask_row": "Ask",
         "ask_snoozed": "Ask snoozed",
         "new_workspace": "New",
+        "ticket_inbox": "Tickets",
         "hide_repo": "Hide",
         "sync": "Sync",
         "quit": "Quit",
@@ -172,6 +176,11 @@ class FooterBar(Horizontal):
         "new_workspace": (
             "Start new work. A branch name, PR number, ticket id, or Slack link "
             "becomes a worktree with a workspace on it."
+        ),
+        "ticket_inbox": (
+            "Tickets assigned to you that have no worktree yet, grouped by org.\n"
+            "Enter on one starts it: a worktree, a workspace and a session, the "
+            "same as typing its id into New."
         ),
         "sync": (
             "Reconcile every repo now instead of waiting for the tick — the "
@@ -390,7 +399,11 @@ class FooterBar(Horizontal):
             and HEADER_CAP not in self._row_caps
         ):
             return True
-        if action == "open_ticket" and not self._show_tickets:
+        # Both ticket keys ride the same gate: with no repo tracking tickets,
+        # `t` has nothing to open and `i` has nothing to list. It is a config
+        # fact, not a per-row one, so it is resolved once in `compose` rather
+        # than re-read on every cursor move.
+        if action in ("open_ticket", "ticket_inbox") and not self._show_tickets:
             return True
         allowed = self.BACKEND_ACTIONS.get(action)
         if allowed is not None and self._backend not in allowed:

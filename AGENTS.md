@@ -484,6 +484,74 @@ Opt-in via `tickets.close_on_merge`. `_transition_merged_tickets` dispatches on 
 
 A falsy/failed identity fetch is never cached; a failed write clears the marker to retry. **Precedent for any future daemon tracker write:** opt-in, viewer-gated, idempotent, logged.
 
+### The ticket inbox — the one surface NOT derived from `git worktree list`
+
+`i` opens `TicketsScreen`: tickets assigned to me, in an active state, with no worktree.
+Every row in the main table is work already started; this is the complement, and defining
+it *as* the complement is what stops the two surfaces restating each other. Collected per
+repo by `cycle.py::_collect_ticket_inbox`, drained once by
+`orchestrators/ticket_inbox.py::publish`, rendered by `cockpit/tui/widgets/tickets_screen.py`.
+
+- **Shaped like `ReviewFolds`, for its reason** — a repo alone can't tell whether its
+  tracker credential is shared with a sibling. The per-repo pass only records; the
+  cross-repo pass fetches. Built only when `only_repo is None`.
+- **Two axes cross, deliberately: the FETCH groups by resolved credential, the PAYLOAD
+  keys by org.** A Linear team key is scoped to the workspace its key opens, so asking one
+  org's workspace about another's ticket answers about a *different* issue that shares an
+  identifier — the trap `_secret_fingerprint` and `_linear_narrow_repos`' grouping already
+  exist for. Grouping on the triple `(provider, credential, bucket)` keeps both true with
+  no reconciliation step. **Do not** collapse them to one axis.
+- **The grouping key is the credential env-var NAME** (`TicketProvider.credential_envs`),
+  never the resolved secret. Over-splitting costs a round-trip; over-merging asks the wrong
+  workspace. Same key `_linear_narrow_repos` groups on.
+- **`fetch_my_open` returns `None` for "couldn't ask" and `[]` for "answered with
+  nothing"**, and the distinction is carried from each leaf's transport up to
+  `TicketInbox.partial`. Collapsing them makes a network blip read as "you have nothing
+  assigned" and blank a bucket. Two things suspend a write and both are the None case: an
+  incomplete cycle (all buckets) and a failed group (only the buckets it feeds). A
+  suspended bucket keeps the payload it had. **Do not** re-key this on the bucket being
+  empty.
+- **`inbox_scopes` is why the collector never branches on a provider name** — the scoping
+  field is `keys` for two providers, `board` for a third and absent for the fourth. It is a
+  `TicketProvider` field, per that class's own rule.
+- **A payload, never a flat cell** (`cache.py::write_ticket_inbox`, `<org>__tickets.json`).
+  Flat cells are keyed by worktree path or session id (`cwd_cache`) and an unstarted ticket
+  has neither. Same class as `<repo>__pr-<N>.json`: a cached network round-trip, not stored
+  inventory. **No TTL** — one call per credential group per slow tick is already the cost
+  of the per-repo `gh` fetch.
+- **`in_flight` is stamped on BOTH ticks and always written, including `False`** — by
+  `publish` on the slow tick and `cache.py::stamp_inbox_in_flight` on the fast one, off the
+  shared pure `ticket_inbox.py::active_ids`. A ticket's worktree can appear at any point
+  between two fetches, so a conditional write leaves a row offering to start work already
+  underway. The `_stamp_ticket_urls` rule. The two signals are a branch slug
+  (`extract_ticket`, covering Linear and Jira) and a PR delivery footer
+  (`cache.py::delivered_ticket_ids`, provider-neutral, covering Trello and GitHub).
+- **`active_ids` takes its inputs; it fetches neither** — the slow tick reads them off the
+  cycle context, the fast tick off `git worktree list` plus the PR snapshots. The extracted-
+  helper rule, and the reason there is one implementation rather than two that drift.
+- **The screen reads payloads and nothing else** — no fetch, no git, no `load_config` per
+  keypress, no cell written. Tracker text is externally authored, so it goes through
+  `strip_control` (`cache.py`), the payload-derived case flat cells' `read_text` can't
+  cover.
+- **Starting a ticket adds no spawn machinery.** `tickets_screen.py::ticket_source` hands
+  back the ticket's URL (falling back to its id), a string `detect_source` already
+  classifies for all four providers, and `app._start_ticket` shells out to `cockpit new`.
+  **The URL, not the id**, since `owner/repo#N` doesn't classify and a Trello short link
+  carries no board.
+- **`_start_ticket` refuses an unroutable ticket rather than guessing a repo.** No repo is
+  named, so an unroutable one would land its worktree in the *daemon's own cwd*. The gate
+  reuses spawn's two offline stages (`detect_source`, `find_repos_by_ticket_key`) rather
+  than re-deriving them, and refusing loudly is the whole answer to grouping by org: the
+  header names a team, routing picks the repo, and this is the one place that choice
+  surfaces. **Do not** replace it with a cursor-row default.
+- **Reading `org` as a bucket label is not the banned org-aware reader.** `_review_bucket_key`
+  already does it for the review fold; the ban is on an `org_*` field or a resolution
+  helper below `load_config`. `ticket_inbox.py` never reads it at all — the label is an
+  argument.
+- **Passive: no cell the daemon derives, no send, no config field.** It does not approach
+  the three-automatic-sends bar. `i` itself is not `--dry` gated (it reads payloads);
+  `_start_ticket` is, like every other outward key.
+
 ### A null `reviewDecision` is not "no approval" — `gh.py::_review_decision` falls back to the reviews
 
 GitHub returns `reviewDecision: null` on a PR carrying a real APPROVED review, reproducibly where the requirement comes from a **ruleset** declaring scoped required reviewers — the same rulesets-are-invisible-to-GraphQL trap `dismissesStaleReviews` hits two sections down. `n.get("reviewDecision") or "REVIEW_REQUIRED"` therefore discarded the approval outright, and since `decide_pills` keys the `approved` pill on it, an approved PR silently never showed one. Four rules:

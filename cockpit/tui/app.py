@@ -51,6 +51,7 @@ from cockpit.lib.cache import (
     cost_reporting_available,
     cwd_cache,
     find_pr_payload,
+    load_ticket_inboxes,
     read_text,
     restamp_pref,
 )
@@ -112,6 +113,7 @@ from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
+from cockpit.tui.widgets.tickets_screen import TicketsScreen
 from cockpit.tui.widgets.worktree_table import (
     HEADER_CAP,
     HIDDEN_CAP,
@@ -229,6 +231,7 @@ class CockpitApp(App[None]):
         ("m", "mute_row", "Mute"),
         ("z", "snooze_row", "Snooze"),
         ("n", "new_workspace", "New"),
+        ("i", "ticket_inbox", "Tickets"),
         ("h", "hide_repo", "Hide repo"),
         ("s", "sync", "Sync"),
         ("q", "quit", "Quit"),
@@ -1301,6 +1304,64 @@ class CockpitApp(App[None]):
     ) -> None:
         """Click on the `▸ N repos hidden` disclosure row → same as `h` there."""
         self._toggle_hidden_section()
+
+    def action_ticket_inbox(self) -> None:
+        """`i` — the ticket inbox: what to start, as opposed to how work is going.
+
+        Reads the payloads the slow tick wrote and nothing else: no fetch, no
+        `git worktree list`, no config walk. A ticket already in flight
+        (`in_flight`, re-stamped every fast tick) is dropped here rather than at
+        write time, so the list stays the exact complement of the main table
+        without either surface knowing the other exists.
+
+        An org whose tickets are all in flight drops out entirely — a header with
+        nothing under it reads as a failed fetch, which is the one thing the
+        collector works hardest never to show.
+
+        Not `--dry` gated on the way in: opening a read-only list reaches nothing
+        outside the process. The spawn it can lead to is, in `_start_ticket`.
+        """
+        buckets: dict[str, list[dict]] = {}
+        for bucket, tickets in sorted(load_ticket_inboxes().items()):
+            live = [t for t in tickets if not t.get("in_flight")]
+            if live:
+                buckets[bucket] = live
+        self.push_screen(TicketsScreen(buckets), self._start_ticket)
+
+    def _start_ticket(self, source: str | None) -> None:
+        """Modal callback (UI thread): spawn a worktree for the chosen ticket.
+
+        The source is a ticket URL or id — a string `cockpit new` already routes,
+        so this adds no spawn machinery of its own. What it does add is a refusal:
+        with no repo named, an unroutable ticket would land its worktree in
+        whatever repo the *daemon's own cwd* happens to sit in, which is silent
+        and wrong. `detect_source` + `find_repos_by_ticket_key` are spawn's own
+        two offline stages, reused rather than re-derived; a URL carrying its repo
+        (a GitHub issue) and a Trello card (routed by board, which needs a fetch
+        spawn makes itself) are routable without them.
+
+        Refusing loudly here is the whole answer to grouping by org: the header
+        names a team, routing picks the repo, and this is the one place that
+        choice can surface. `n` is the way out — its picker names the repo.
+        """
+        if not source:
+            return
+        if self._blocked_by_dry("start a ticket"):
+            return
+        # Local imports: the TUI shells out to `cockpit new` rather than calling
+        # into spawn, and a module-level edge here would make that look otherwise.
+        from cockpit.lib.config import find_repos_by_ticket_key
+        from cockpit.spawn import detect_source
+
+        mode, value, nwo_hint = detect_source(source)
+        if nwo_hint or mode == "trello" or find_repos_by_ticket_key(value):
+            self._launch_spawn(source, None)
+            return
+        self._notify(
+            f"{value}: no configured repo declares that key — "
+            "press n to start it and pick a repo",
+            severity="warning",
+        )
 
     def action_new_workspace(self) -> None:
         if self._blocked_by_dry("new workspace"):

@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import ANY, patch
 
 import pytest
@@ -6086,3 +6087,139 @@ def test_restore_dry_noops():
     with patch.object(cycle, "read_workspace_groups") as read:
         cycle.restore_trailing_folds(pill_state, dry=True)
     read.assert_not_called()
+
+
+# ── ticket inbox wiring ─────────────────────────────────────────────────────
+
+
+def _run_cycle_all_for_inbox(cfg, *, cycle_repo=None, **kw):
+    """Run `cycle_all` with the cross-repo passes stubbed; return the drained
+    `TicketInbox`es (one per run, or none when the pass was skipped)."""
+    seen: list = []
+    patches = _patch_cycle_all_collaborators()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patch.object(cycle, "cycle_repo", cycle_repo or (lambda *_a, **_k: None)),
+        patch.object(cycle, "_cache_only", lambda _cfg: False),
+        patch.object(cycle, "_reconcile_review_groups", lambda *_a, **_k: None),
+        patch.object(
+            cycle,
+            "publish_ticket_inbox",
+            lambda inbox, _cfg, **kwargs: seen.append((inbox, kwargs)),
+        ),
+    ):
+        cycle.cycle_all(cfg, "khivi", dry=False, pr_cache={}, pill_state={}, **kw)
+    return seen
+
+
+def test_cycle_all_drains_the_ticket_inbox_once():
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
+    seen = _run_cycle_all_for_inbox(cfg)
+    assert len(seen) == 1
+    assert seen[0][0].partial is False
+
+
+def test_cycle_all_marks_the_inbox_partial_when_a_repo_raises():
+    # A bucket is the union of its repos' contributions, so a repo that never
+    # reported makes it *shrink* — which reads as tickets having been finished.
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
+
+    def _boom(repo_entry, *_a, **_k):
+        if repo_entry["name"] == "a":
+            raise RuntimeError("repo a blew up")
+
+    seen = _run_cycle_all_for_inbox(cfg, cycle_repo=_boom)
+    assert [inbox.partial for inbox, _kw in seen] == [True]
+
+
+def test_cycle_all_scoped_to_one_repo_skips_the_inbox():
+    # Same rule as the review fold: an org-keyed pass can't be built from one
+    # repo's slice, and a row keypress isn't waiting on it.
+    cfg = {"repos": [{"name": "a", "path": "/a"}]}
+    assert _run_cycle_all_for_inbox(cfg, only_repo="/a") == []
+
+
+def test_cycle_all_passes_dry_through_to_the_inbox():
+    cfg = {"repos": [{"name": "a", "path": "/a"}]}
+    seen = _run_cycle_all_for_inbox(cfg)
+    assert seen[0][1] == {"dry": False}
+
+
+def test_collect_ticket_inbox_records_the_repos_scope_and_credential():
+    from cockpit.orchestrators.ticket_inbox import TicketInbox
+
+    repo_entry = {
+        "name": "widgets",
+        "org": "acme",
+        "tickets": {"provider": "linear", "keys": ["PE"]},
+    }
+    ctx = SimpleNamespace(
+        cfg={"repos": [repo_entry]},
+        owner="acme",
+        name="widgets",
+        wts=[],
+        linear_blocks={},
+    )
+    inbox = TicketInbox()
+    cycle._collect_ticket_inbox(ctx, repo_entry, inbox)  # type: ignore[arg-type]
+
+    assert len(inbox.repos) == 1
+    recorded = inbox.repos[0]
+    assert recorded.bucket == "acme"  # the org, not the repo name
+    assert recorded.provider_name == "linear"
+    assert recorded.scopes == ("PE",)
+    assert recorded.nwo == "acme/widgets"
+    assert recorded.cred == ("LINEAR_API_KEY",)
+
+
+def test_collect_ticket_inbox_falls_back_to_the_repo_name_without_an_org():
+    from cockpit.orchestrators.ticket_inbox import TicketInbox
+
+    repo_entry = {"name": "widgets", "tickets": {"provider": "linear", "keys": ["PE"]}}
+    ctx = SimpleNamespace(
+        cfg={"repos": [repo_entry]},
+        owner="acme",
+        name="widgets",
+        wts=[],
+        linear_blocks={},
+    )
+    inbox = TicketInbox()
+    cycle._collect_ticket_inbox(ctx, repo_entry, inbox)  # type: ignore[arg-type]
+    assert inbox.repos[0].bucket == "widgets"
+
+
+def test_collect_ticket_inbox_skips_a_repo_that_tracks_no_tickets():
+    from cockpit.orchestrators.ticket_inbox import TicketInbox
+
+    repo_entry = {"name": "widgets", "tickets": {"provider": "none"}}
+    ctx = SimpleNamespace(
+        cfg={"repos": [repo_entry]},
+        owner="acme",
+        name="widgets",
+        wts=[],
+        linear_blocks={},
+    )
+    inbox = TicketInbox()
+    cycle._collect_ticket_inbox(ctx, repo_entry, inbox)  # type: ignore[arg-type]
+    assert inbox.repos == []
+
+
+def test_collect_ticket_inbox_marks_started_tickets_active():
+    from cockpit.orchestrators.ticket_inbox import TicketInbox
+
+    repo_entry = {"name": "widgets", "tickets": {"provider": "linear", "keys": ["PE"]}}
+    ctx = SimpleNamespace(
+        cfg={"repos": [repo_entry]},
+        owner="acme",
+        name="widgets",
+        wts=[_wt_stub(Path("/wt/pe-412"), "khivi/pe-412-fix-login")],
+        # A Trello short link never appears in a branch name; the delivery footer
+        # is the provider-neutral half that catches it.
+        linear_blocks={"khivi/other": {"tickets": [{"id": "aB3dZ9"}]}},
+    )
+    inbox = TicketInbox()
+    cycle._collect_ticket_inbox(ctx, repo_entry, inbox)  # type: ignore[arg-type]
+    assert inbox.active == {"pe-412", "ab3dz9"}

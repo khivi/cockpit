@@ -124,6 +124,7 @@ terminal outside your registered repos shows no PR at all.
 | `m` | Mute / unmute this PR's nudges, indefinitely |
 | `z` | Snooze / wake — quiet until the PR actually changes |
 | `n` | Start something new |
+| `i` | The ticket inbox — what's assigned to you that you haven't started |
 | `h` | Park / reveal / un-park a repo |
 | `s` | Reconcile every repo now |
 | `q` | Quit |
@@ -318,6 +319,51 @@ From that link you get:
 Credentials are env vars, always — config stores the *name* of the variable, never a
 value. And spawned agents don't get them: an agent reads its tracker through the MCP
 connector, so the REST keys are stripped from every spawn's environment.
+
+### The ticket inbox — press `i`
+
+Every row on the dashboard is work you've **started**. `i` opens the other half: tickets
+assigned to you, in an active state, that have no worktree yet — grouped by org, newest
+first.
+
+```text
+┌─ Tickets ─────────────────────────────────────┐
+│ 3 assigned to you, with no worktree yet       │
+│ acme                                          │
+│   PE-412   Fix retry backoff       Todo    2d │
+│   PE-430   Docs pass on the api    Progress 6h│
+│ widgets-co                                    │
+│   WID-88   Flaky e2e suite         Todo    1d │
+│                                               │
+│ enter to start work · t opens it · esc        │
+└───────────────────────────────────────────────┘
+```
+
+**Enter starts it** — the same worktree, workspace and seeded session you'd get by typing
+the ticket id into `n`. So the inbox isn't a second way to work; it's the list you reach
+for when you don't yet know what to type.
+
+Four things make it stay useful rather than becoming a second tracker tab:
+
+- **It's the exact complement of the dashboard.** The moment a ticket has a worktree it
+  leaves the inbox and becomes a row — within about 30 seconds, whether the worktree came
+  from `i`, from `n`, or from you running `git worktree add` by hand.
+- **Only what you'd plausibly start today.** Assigned to you and in an active state — Todo
+  or In Progress. Backlog and triage are excluded, and so is anything finished. That's a
+  state *category* in each tracker's own vocabulary, so renaming your columns doesn't
+  break it.
+- **One round-trip per workspace, not per repo.** Ten repos sharing one Linear workspace
+  cost one query. Two orgs on separate workspaces cost two, and neither is ever asked
+  about the other's tickets.
+- **A blip never empties it.** If a tracker can't be reached, that org keeps the list it
+  had rather than flashing empty and refilling a cycle later. Nothing you see is ever the
+  shape of a failed fetch.
+
+`t` opens the highlighted ticket in the browser. There's nothing else: no close, no mute,
+no nudge — the inbox is a list and a way in, not a second place to manage work.
+
+It needs no config beyond the `tickets` block you already set up, and it appears only if
+some repo has a tracker.
 
 ---
 

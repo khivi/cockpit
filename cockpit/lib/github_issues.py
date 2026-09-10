@@ -234,6 +234,60 @@ def fetch_issues(
     return out
 
 
+def fetch_my_open(
+    nwos: list[str] | None = None, *, repo_dir: str | None = None
+) -> list[dict[str, str]] | None:
+    """Every open issue assigned to the `gh` user across `nwos`, newest first —
+    the GitHub half of the ticket inbox.
+
+    One `gh search issues` for the whole set rather than one per repo, which is
+    what makes this the same single-round-trip shape as the Linear and Jira
+    halves. `nwos` is the `owner/repo` of every repo sharing this credential —
+    and `gh` auth is process-wide, so "this credential" is simply "all of them".
+
+    Unlike the other three providers this takes no key union: a GitHub issue's
+    identifier carries its own repo, so the repo list *is* the scope. An empty
+    `nwos` returns nothing rather than searching every repo the user can see.
+
+    Each item is `{"id", "team", "title", "state", "url", "updated_at"}`, all
+    strings, normalized to the shape every provider's `fetch_my_open` returns —
+    `id` is the cross-repo `owner/repo#N` ref and `team` the `owner/repo`, so the
+    two carry the scoping the other providers put in a key prefix.
+
+    `None` means `gh` could not be asked (missing binary, non-zero exit,
+    unparsable output); `[]` means it answered with nothing, which an empty
+    `nwos` also yields since there is then deterministically nothing in scope.
+    Never raises.
+    """
+    wanted = [n for n in (nwos or []) if n]
+    if not wanted:
+        return []
+    args = ["search", "issues", "--assignee=@me", "--state=open", "--limit", "100"]
+    for nwo in wanted:
+        args += ["--repo", nwo]
+    args += ["--json", "number,title,repository,url,updatedAt"]
+    data = _gh_json(args, repo_dir=repo_dir)
+    if not isinstance(data, list):
+        return None
+    out: list[dict[str, str]] = []
+    for issue in data:
+        number = issue.get("number")
+        nwo = str((issue.get("repository") or {}).get("nameWithOwner") or "")
+        if number is None or not nwo:
+            continue
+        out.append(
+            {
+                "id": f"{nwo}#{number}",
+                "team": nwo,
+                "title": str(issue.get("title") or ""),
+                "state": "open",
+                "url": str(issue.get("url") or ""),
+                "updated_at": str(issue.get("updatedAt") or ""),
+            }
+        )
+    return out
+
+
 def viewer_login(*, repo_dir: str | None = None) -> str | None:
     """Return the authenticated `gh` user's login, or None — the GitHub analog
     of `linear.fetch_viewer_id`. The "only close my own issues" gate: a merged
