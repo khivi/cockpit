@@ -49,12 +49,14 @@ TRELLO_API_TOKEN_ENV = "TRELLO_API_TOKEN"  # noqa: S105
 # `dev_done_list` leaves the pill off, an unset `merge_done_list` leaves the
 # merge-move off (Trello list names are arbitrary, so there's nothing safe to
 # guess). Keep in sync with the readers in `config.py` (`trello_dev_done`,
-# `trello_merge_done`, `trello_board`, `trello_key_env`, `trello_token_env`).
-# `board` is routing-only (`tickets._trello_narrow_repos`) — the Trello analogue
-# of Linear's `project`, except it is the *whole* route rather than a tiebreaker,
-# since a card short link carries no container at all.
+# `trello_merge_done`, `trello_boards`, `trello_key_env`, `trello_token_env`).
+# `board` routes (`tickets._trello_narrow_repos`) — the Trello analogue of
+# Linear's `project`, except it is the *whole* route rather than a tiebreaker,
+# since a card short link carries no container at all — and scopes the ticket
+# inbox, where it is required rather than optional (`tickets._trello_my_open`).
+# A string is one board; a list is several, since one repo's work can span them.
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
-    ("board", "str"),
+    ("board", "str_or_str_list"),
     ("dev_done", "str"),
     ("merge_done", "str"),
     ("key_env", "str"),
@@ -242,6 +244,53 @@ def fetch_card_handles(
     return out
 
 
+def _board_and_list_names(
+    key: str, token: str
+) -> tuple[dict[str, tuple[str, bool]], dict[str, str]] | None:
+    """`({board_id: (name, closed)}, {list_id: name})` for every board I'm on, or
+    None.
+
+    `/members/me/cards` carries only `idBoard`/`idList`: its `board=true` /
+    `list=true` expansions are accepted and then silently ignored, which is why
+    the inbox's board and state columns were blank for every card. One
+    `GET /members/me/boards` resolves the whole card set's names instead of a GET
+    per card.
+
+    Both filters are deliberately `all` rather than `open`: a card I'm still a
+    member of can sit on a closed board or in an archived list, and an unresolved
+    name is indistinguishable from a card with no state at all. `closed` rides
+    along because that same `filter=all` is what puts an archived board in reach
+    — the caller drops its cards rather than this dropping the board, so the
+    board is still *named* for anything that wants to say so.
+    """
+    data = _request(
+        "GET",
+        "/members/me/boards",
+        key=key,
+        token=token,
+        params={
+            "filter": "all",
+            "fields": "name,closed",
+            "lists": "all",
+            "list_fields": "name",
+        },
+    )
+    if not isinstance(data, list):
+        return None
+    boards: dict[str, tuple[str, bool]] = {}
+    lists: dict[str, str] = {}
+    for board in data:
+        if not isinstance(board, dict):
+            continue
+        bid = str(board.get("id") or "")
+        if bid:
+            boards[bid] = (str(board.get("name") or ""), bool(board.get("closed")))
+        for entry in board.get("lists") or []:
+            if isinstance(entry, dict) and entry.get("id"):
+                lists[str(entry["id"])] = str(entry.get("name") or "")
+    return boards, lists
+
+
 def fetch_my_open(
     boards: list[str] | None = None,
     *,
@@ -251,20 +300,30 @@ def fetch_my_open(
     """Every open card I'm a member of, newest activity first — the Trello half
     of the ticket inbox.
 
-    One `GET /members/me/cards` per Trello *account*, not per board and not per
-    repo: the caller passes the union of `tickets.board` across the repos sharing
-    this credential pair, and cards on other boards are dropped client-side.
-    Trello has no board-scoped variant of this endpoint, so unlike the other
-    three providers the filter cannot ride the request. An empty/None `boards`
-    keeps every card, matching the unfiltered variants elsewhere.
+    Two `GET`s per Trello *account*, not per board and not per repo: the cards,
+    then `_board_and_list_names` to resolve the board and list ids they carry.
+    The caller passes the union of `tickets.board` across the repos sharing this
+    credential pair, and cards on other boards are dropped client-side — Trello
+    has no board-scoped variant of this endpoint, so unlike the other three
+    providers the filter cannot ride the request. An empty/None `boards` keeps
+    every card, matching the unfiltered variants elsewhere.
 
     Membership *is* the assignment signal here — the same gate
     `cycle._transition_merged_trello` uses — since a Trello card has no assignee
-    field. "Open" is the card not being archived; the list name is its state.
+    field. "Open" is the card not being archived; the list name is its state,
+    which is what lets `ticket_inbox.publish` drop a card sitting in `dev_done`
+    or `merge_done` the way it drops a finished Linear or Jira ticket.
 
-    Each item is `{"id", "team", "title", "state", "url", "updated_at"}`, all
-    strings (a missing field becomes ""), with `id` the card's short link — the
-    identifier everything else keys on — and `team` its board name.
+    A card on an **archived board** is dropped whatever list it sits in:
+    archiving a board leaves every card on it open, so one retired board arrives
+    as dozens of live-looking cards (a board last touched 19 months ago
+    contributed 67).
+
+    Each item is `{"id", "team", "title", "state", "url", "updated_at",
+    "handle"}`, all strings (a missing field becomes ""), with `id` the card's
+    short link — the identifier everything else keys on — `team` its board name
+    and `handle` its `#<idShort>` card number, the only human-readable handle a
+    card has (`ticket_display`'s reasoning, without that path's GET per card).
 
     `None` means the account could not be asked (API failure); `[]` means it
     answered with nothing, which unset creds also yield since the feature is then
@@ -281,14 +340,18 @@ def fetch_my_open(
         token=tok,
         params={
             "filter": "open",
-            "fields": "name,shortLink,shortUrl,dateLastActivity",
-            "list": "true",
-            "board": "true",
-            "board_fields": "name",
+            "fields": "name,idShort,shortLink,shortUrl,dateLastActivity,idList,idBoard",
         },
     )
     if not isinstance(data, list):
         return None
+    names = _board_and_list_names(k, tok)
+    if names is None:
+        # Half an answer is not an answer: without the names every card would
+        # read as boardless and stateless, which the board filter below would
+        # then drop wholesale and the done-state filter would never fire on.
+        return None
+    board_names, list_names = names
     wanted = {b.casefold() for b in (boards or []) if b}
     out: list[dict[str, str]] = []
     for card in data:
@@ -297,17 +360,25 @@ def fetch_my_open(
         short = str(card.get("shortLink") or "")
         if not short:
             continue
-        board = str((card.get("board") or {}).get("name") or "")
+        board, closed = board_names.get(str(card.get("idBoard") or ""), ("", False))
+        # An archived board is finished work whatever its cards' lists say — and
+        # one holds them by the dozen, since archiving a board leaves every card
+        # on it open. A board this lookup didn't return isn't treated as closed:
+        # unknown is not archived.
+        if closed:
+            continue
         if wanted and board.casefold() not in wanted:
             continue
+        number = card.get("idShort")
         out.append(
             {
                 "id": short,
                 "team": board,
                 "title": str(card.get("name") or ""),
-                "state": str((card.get("list") or {}).get("name") or ""),
+                "state": list_names.get(str(card.get("idList") or ""), ""),
                 "url": str(card.get("shortUrl") or ""),
                 "updated_at": str(card.get("dateLastActivity") or ""),
+                "handle": f"#{number}" if number else "",
             }
         )
     out.sort(key=lambda c: c["updated_at"], reverse=True)

@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 from cockpit.lib.cache import write_ticket_inbox
 from cockpit.lib.linear import extract_ticket
-from cockpit.lib.tickets import provider_for
+from cockpit.lib.tickets import TicketProvider, provider_for
 
 
 def active_ids(branches: Iterable[str], delivered: Iterable[str]) -> set[str]:
@@ -136,6 +136,28 @@ def _groups(
     return out
 
 
+def _drop_done(
+    tickets: list[dict], provider: TicketProvider, cfg: dict, repo_entry: dict
+) -> list[dict]:
+    """Drop the tickets sitting in a state that means the work is finished —
+    `TicketProvider.done_values`, which is the repo's `dev_done` and `merge_done`.
+
+    The inbox is "what should I start", and a tracker's own active/open filter
+    does not answer that: a workspace whose review and shipped columns are typed
+    `started` reports a merged ticket as assigned and active forever, and a
+    Trello card has no state at all beyond the list it sits in. The two states
+    cockpit already asks the user to name are exactly the ones that mean *not
+    this*, so this needs no config field of its own.
+
+    Matched casefold against `state`, so a provider that returns no state (or a
+    repo that configures neither field) filters nothing.
+    """
+    done = {v.casefold() for v in provider.done_values(cfg, repo_entry) if v}
+    if not done:
+        return tickets
+    return [t for t in tickets if str(t.get("state") or "").casefold() not in done]
+
+
 def _dedup(tickets: list[dict]) -> list[dict]:
     """Drop repeats by casefolded id, newest `updated_at` first.
 
@@ -197,7 +219,7 @@ def publish(
         if tickets is None:
             failed.add(bucket)
             continue
-        fetched.setdefault(bucket, []).extend(tickets)
+        fetched.setdefault(bucket, []).extend(_drop_done(tickets, provider, cfg, rep))
     if inbox.partial:
         return {}
     written: dict[str, list[dict]] = {}

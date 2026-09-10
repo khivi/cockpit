@@ -26,19 +26,22 @@ from .config import (
     jira_api_token,
     jira_dev_done,
     jira_email,
+    jira_merge_done,
     jira_site_url,
     jira_token_env,
     linear_api_key,
     linear_dev_done,
+    linear_merge_done,
     linear_project,
     linear_team_keys,
     linear_token_env,
     repo_tickets,
     trello_api_key,
     trello_api_token,
-    trello_board,
+    trello_boards,
     trello_dev_done,
     trello_key_env,
+    trello_merge_done,
     trello_token_env,
 )
 from .gh import pr_body
@@ -87,6 +90,11 @@ _FIELD_KINDS: dict[str, tuple[Callable[[object], bool], str]] = {
         "a list of strings",
     ),
     "bool": (lambda v: isinstance(v, bool), "true or false"),
+    "str_or_str_list": (
+        lambda v: isinstance(v, str)
+        or (isinstance(v, list) and all(isinstance(x, str) for x in v)),
+        "a string or a list of strings",
+    ),
 }
 
 # Fields valid for every provider (in addition to `provider` itself).
@@ -192,6 +200,18 @@ class TicketProvider:
     # for the fourth — a provider-name branch in exactly the place this class
     # exists to remove one from.
     inbox_scopes: Callable[[dict, dict | None], list[str]]
+    # (cfg, repo_entry) → the state names that mean "this is no longer work to
+    # start": `dev_done` and `merge_done`, the two the `devdone=` pill and the
+    # merge writer already key off. The ticket inbox drops a ticket sitting in
+    # one of them, casefold-matched against the `state` `fetch_my_open` returns.
+    #
+    # A tracker's own "active" filter can't answer this: a workspace that names
+    # its review and shipped columns as started/unstarted types (or, on Trello,
+    # has no state vocabulary at all beyond the list a card sits in) reports a
+    # merged ticket as assigned and open forever. Empty for GitHub, whose
+    # `dev_done` is a *label* rather than a state — its fetch is already
+    # `--state=open`, so there is nothing here to compare against.
+    done_values: Callable[[dict, dict | None], list[str]]
     # (scopes, nwos, cfg, repo_entry) → every ticket assigned to me that is in an
     # active state, newest first, as `{"id", "team", "title", "state", "url",
     # "updated_at"}` dicts of plain strings. The ticket inbox's fetch.
@@ -487,13 +507,29 @@ def _no_scope(cfg: dict, repo_entry: dict | None = None) -> list[str]:
     return []
 
 
+def _done_values(
+    dev: Callable[[dict, dict | None], str],
+    merge: Callable[[dict, dict | None], str],
+) -> Callable[[dict, dict | None], list[str]]:
+    """`done_values` for the three providers whose ticket carries a named state:
+    its configured `dev_done` and `merge_done`, minus the unset ones."""
+
+    def resolve(cfg: dict, repo_entry: dict | None = None) -> list[str]:
+        return [v for v in (dev(cfg, repo_entry), merge(cfg, repo_entry)) if v]
+
+    return resolve
+
+
+def _no_done(cfg: dict, repo_entry: dict | None = None) -> list[str]:
+    """`done_values` for GitHub: an issue is open or closed, and `fetch_my_open`
+    already asks only for the open ones."""
+    return []
+
+
 def _trello_scope(cfg: dict, repo_entry: dict | None = None) -> list[str]:
-    """`inbox_scopes` for Trello: the one board this repo's work lives on, if it
-    declares one. A repo with no `tickets.board` contributes no filter, which
-    widens its group's fetch to every board — the same open-by-default shape the
-    other providers' empty key union takes."""
-    board = trello_board(cfg, repo_entry)
-    return [board] if board else []
+    """`inbox_scopes` for Trello: the boards this repo's work lives on, from
+    `tickets.board` (a name or a list of them)."""
+    return trello_boards(cfg, repo_entry)
 
 
 def _linear_my_open(
@@ -551,7 +587,21 @@ def _trello_my_open(
     repo_entry: dict | None = None,
 ) -> list[dict[str, str]] | None:
     """Open Trello cards I'm a member of, restricted to the group's boards.
-    `nwos` unused."""
+    `nwos` unused.
+
+    **A group declaring no board contributes nothing**, and this is the one
+    provider where an empty scope is not "ask about everything". A Linear API key
+    opens exactly one workspace and a `gh` search is bounded by `nwos`, so an
+    unscoped fetch there still only reaches an org cockpit is configured for. A
+    Trello *account* spans every board the user was ever added to — clients, side
+    projects, someone else's planning board — none of which any repo in the
+    config names. Unscoped, the inbox filled with a personal Trello account
+    instead of the work cockpit tracks.
+
+    `[]` rather than None: with no board declared the feature is deterministically
+    off, not transiently unreachable — the same shape unset credentials take."""
+    if not scopes:
+        return []
     return _trello_fetch_my_open(
         scopes,
         key=trello_api_key(cfg, repo_entry) or None,
@@ -641,7 +691,7 @@ def _trello_narrow_repos(ref: str, candidates: list[dict], cfg: dict) -> list[di
     short = card_short_link(ref) or ref
     by_creds: dict[tuple[str, str], list[dict]] = {}
     for repo in candidates:
-        if trello_board(cfg, repo):
+        if trello_boards(cfg, repo):
             creds = (trello_key_env(cfg, repo), trello_token_env(cfg, repo))
             by_creds.setdefault(creds, []).append(repo)
     for group in by_creds.values():
@@ -653,7 +703,9 @@ def _trello_narrow_repos(ref: str, candidates: list[dict], cfg: dict) -> list[di
         if not board:
             continue
         wanted = board.casefold()
-        hit = [r for r in group if (trello_board(cfg, r) or "").casefold() == wanted]
+        hit = [
+            r for r in group if wanted in {b.casefold() for b in trello_boards(cfg, r)}
+        ]
         if hit:
             return hit
     return candidates
@@ -667,6 +719,7 @@ LINEAR = TicketProvider(
     fetch_titles=_linear_fetch_titles,
     narrow_repos=_linear_narrow_repos,
     inbox_scopes=_keys_scope,
+    done_values=_done_values(linear_dev_done, linear_merge_done),
     fetch_my_open=_linear_my_open,
     ticket_url=_linear_ticket_url,
     credential_envs=lambda cfg, repo: [linear_token_env(cfg, repo)],
@@ -680,6 +733,7 @@ JIRA = TicketProvider(
     fetch_titles=_jira_fetch_titles,
     narrow_repos=_no_narrow,
     inbox_scopes=_keys_scope,
+    done_values=_done_values(jira_dev_done, jira_merge_done),
     fetch_my_open=_jira_my_open,
     ticket_url=_jira_ticket_url,
     credential_envs=lambda cfg, repo: [jira_token_env(cfg, repo)],
@@ -693,6 +747,7 @@ GITHUB = TicketProvider(
     fetch_titles=_github_fetch_titles,
     narrow_repos=_no_narrow,
     inbox_scopes=_no_scope,
+    done_values=_no_done,
     fetch_my_open=_github_my_open,
     ticket_url=_github_ticket_url,
     # `gh` owns the auth; there is no cockpit-read env var to warn about.
@@ -707,6 +762,7 @@ TRELLO = TicketProvider(
     fetch_titles=_trello_fetch_titles,
     narrow_repos=_trello_narrow_repos,
     inbox_scopes=_trello_scope,
+    done_values=_done_values(trello_dev_done, trello_merge_done),
     fetch_my_open=_trello_my_open,
     ticket_url=_trello_ticket_url,
     credential_envs=lambda cfg, repo: [

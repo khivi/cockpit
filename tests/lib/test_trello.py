@@ -212,9 +212,10 @@ def test_fetch_card_lists_http_error_is_none():
 
 
 def test_config_fields_declare_board_for_routing():
-    # `tickets.board` is the whole of Trello's ticket→repo route; the provider
-    # owns its config schema, so preflight only accepts the field if it's here.
-    assert ("board", "str") in CONFIG_FIELDS
+    # `tickets.board` is the whole of Trello's ticket→repo route and the ticket
+    # inbox's scope; the provider owns its config schema, so preflight only
+    # accepts the field if it's here. A list is one repo spanning several boards.
+    assert ("board", "str_or_str_list") in CONFIG_FIELDS
 
 
 def test_fetch_card_board_returns_the_board_name():
@@ -354,23 +355,64 @@ def _field(tickets: list[dict] | None, key: str = "id") -> list[str]:
     return [t[key] for t in tickets]
 
 
-def _card(short: str, board: str = "Engineering", **over) -> dict:
+# The card endpoint returns ids, never names: `/members/me/cards` accepts
+# `board=true` / `list=true` and silently ignores both, which is why a second
+# call resolves them and why every case here routes on the URL.
+_BOARD_IDS = {"Engineering": "bE", "Marketing": "bM", "Engineering (2024)": "bOld"}
+_BOARDS: list[dict] = [
+    {
+        "id": "bE",
+        "name": "Engineering",
+        "closed": False,
+        "lists": [{"id": "lDoing", "name": "Doing"}, {"id": "lDone", "name": "Done"}],
+    },
+    {
+        "id": "bM",
+        "name": "Marketing",
+        "closed": False,
+        "lists": [{"id": "lNext", "name": "Next"}],
+    },
+    {
+        "id": "bOld",
+        "name": "Engineering (2024)",
+        "closed": True,
+        "lists": [{"id": "lOld", "name": "Doing"}],
+    },
+]
+
+
+def _card(short: str, board: str = "Engineering", list_id="lDoing", **over) -> dict:
     card = {
         "shortLink": short,
         "name": f"Card {short}",
+        "idShort": 122,
         "shortUrl": f"https://trello.com/c/{short}",
         "dateLastActivity": "2026-09-09T10:00:00.000Z",
-        "list": {"name": "Doing"},
-        "board": {"name": board},
+        "idList": list_id,
+        "idBoard": _BOARD_IDS[board],
     }
     card.update(over)
     return card
 
 
+def _routed(cards: object, boards: object = None, *, urls: list | None = None):
+    """A urlopen side-effect that answers the cards call and the boards call."""
+    payload = _BOARDS if boards is None else boards
+
+    def fake_urlopen(req, timeout=None):
+        if urls is not None:
+            urls.append(req.full_url)
+        if "/members/me/boards" in req.full_url:
+            return _FakeResp(payload)
+        return _FakeResp(cards)
+
+    return fake_urlopen
+
+
 def test_fetch_my_open_normalizes_every_field():
     with patch(
         "cockpit.lib.trello.urllib.request.urlopen",
-        return_value=_FakeResp([_card("aB3dZ9")]),
+        side_effect=_routed([_card("aB3dZ9")]),
     ):
         out = fetch_my_open(["Engineering"], key=KEY, token=TOKEN)
 
@@ -382,23 +424,60 @@ def test_fetch_my_open_normalizes_every_field():
             "state": "Doing",
             "url": "https://trello.com/c/aB3dZ9",
             "updated_at": "2026-09-09T10:00:00.000Z",
+            "handle": "#122",
         }
     ]
 
 
-def test_fetch_my_open_is_one_call_and_asks_only_for_open_cards():
-    captured: dict = {}
+def test_fetch_my_open_resolves_the_board_and_list_names():
+    """The bug this pair of calls exists for: with the ids unresolved, every
+    card came back with a blank board and a blank state, so the inbox could
+    neither group them nor tell a done card from a fresh one."""
+    cards = [_card("a"), _card("b", board="Marketing", list_id="lNext")]
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=_routed(cards)):
+        out = fetch_my_open(None, key=KEY, token=TOKEN)
+    assert [(t["team"], t["state"]) for t in out or []] == [
+        ("Engineering", "Doing"),
+        ("Marketing", "Next"),
+    ]
 
-    def fake_urlopen(req, timeout=None):
-        captured.setdefault("urls", []).append(req.full_url)
-        return _FakeResp([_card("a"), _card("b")])
 
-    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=fake_urlopen):
+def test_fetch_my_open_carries_the_card_number_as_the_handle():
+    """`#122` is the only human-readable handle a card has — its id is an opaque
+    short link, which stays the key everything else joins on."""
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen",
+        side_effect=_routed([_card("aB3dZ9", idShort=7)]),
+    ):
+        out = fetch_my_open(None, key=KEY, token=TOKEN)
+    assert _field(out, "handle") == ["#7"]
+    assert _field(out) == ["aB3dZ9"]
+
+
+def test_fetch_my_open_handle_is_blank_when_the_number_is_missing():
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen",
+        side_effect=_routed([_card("a", idShort=None)]),
+    ):
+        assert _field(fetch_my_open(None, key=KEY, token=TOKEN), "handle") == [""]
+
+
+def test_fetch_my_open_asks_only_for_open_cards_and_every_board():
+    urls: list[str] = []
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen",
+        side_effect=_routed([_card("a"), _card("b")], urls=urls),
+    ):
         out = fetch_my_open(None, key=KEY, token=TOKEN)
 
-    assert len(captured["urls"]) == 1
-    assert "/members/me/cards" in captured["urls"][0]
-    assert "filter=open" in captured["urls"][0]
+    assert len(urls) == 2
+    cards_url = next(u for u in urls if "/members/me/cards" in u)
+    boards_url = next(u for u in urls if "/members/me/boards" in u)
+    assert "filter=open" in cards_url
+    # A card I'm a member of can sit on a closed board or in an archived list;
+    # an unresolved name is indistinguishable from having no state at all.
+    assert "filter=all" in boards_url
+    assert "lists=all" in boards_url
     assert _field(out) == ["a", "b"]
 
 
@@ -406,18 +485,14 @@ def test_fetch_my_open_filters_boards_client_side():
     """Trello has no board-scoped variant of this endpoint, so the filter can't
     ride the request."""
     cards = [_card("a", board="Engineering"), _card("b", board="Marketing")]
-    with patch(
-        "cockpit.lib.trello.urllib.request.urlopen", return_value=_FakeResp(cards)
-    ):
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=_routed(cards)):
         out = fetch_my_open(["engineering"], key=KEY, token=TOKEN)  # casefolded
     assert _field(out) == ["a"]
 
 
 def test_fetch_my_open_without_boards_keeps_every_card():
     cards = [_card("a", board="Engineering"), _card("b", board="Marketing")]
-    with patch(
-        "cockpit.lib.trello.urllib.request.urlopen", return_value=_FakeResp(cards)
-    ):
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=_routed(cards)):
         assert _field(fetch_my_open([], key=KEY, token=TOKEN)) == ["a", "b"]
 
 
@@ -426,18 +501,38 @@ def test_fetch_my_open_sorts_newest_first():
         _card("old", dateLastActivity="2026-09-01T00:00:00.000Z"),
         _card("new", dateLastActivity="2026-09-09T00:00:00.000Z"),
     ]
-    with patch(
-        "cockpit.lib.trello.urllib.request.urlopen", return_value=_FakeResp(cards)
-    ):
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=_routed(cards)):
         out = fetch_my_open(None, key=KEY, token=TOKEN)
     assert _field(out) == ["new", "old"]
 
 
 def test_fetch_my_open_skips_a_card_with_no_short_link():
-    with patch(
-        "cockpit.lib.trello.urllib.request.urlopen",
-        return_value=_FakeResp([_card("a"), {"name": "orphan"}, "not-a-dict"]),
-    ):
+    cards = [_card("a"), {"name": "orphan"}, "not-a-dict"]
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=_routed(cards)):
+        assert _field(fetch_my_open(None, key=KEY, token=TOKEN)) == ["a"]
+
+
+def test_fetch_my_open_unknown_board_or_list_leaves_the_name_blank():
+    """A card on a board the boards call didn't return — never a dropped row."""
+    cards = [{**_card("a"), "idBoard": "gone", "idList": "gone"}]
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=_routed(cards)):
+        out = fetch_my_open(None, key=KEY, token=TOKEN)
+    assert [(t["team"], t["state"]) for t in out or []] == [("", "")]
+
+
+def test_fetch_my_open_drops_cards_on_an_archived_board():
+    """Archiving a board leaves every card on it open, so one retired board
+    arrives as dozens of live-looking cards — whatever list they sit in."""
+    cards = [_card("a"), _card("old", board="Engineering (2024)", list_id="lOld")]
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=_routed(cards)):
+        assert _field(fetch_my_open(None, key=KEY, token=TOKEN)) == ["a"]
+
+
+def test_fetch_my_open_keeps_a_card_whose_board_is_unknown():
+    """Unknown is not archived — a board the lookup didn't return keeps its
+    card, with a blank name, exactly as before."""
+    cards = [{**_card("a"), "idBoard": "gone"}]
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=_routed(cards)):
         assert _field(fetch_my_open(None, key=KEY, token=TOKEN)) == ["a"]
 
 
@@ -446,8 +541,18 @@ def test_fetch_my_open_failure_is_none_not_empty():
         assert fetch_my_open(None, key=KEY, token=TOKEN) is None
 
 
+def test_fetch_my_open_is_none_when_only_the_names_fail():
+    """Half an answer is not an answer: unresolved names would read as a set of
+    boardless, stateless cards rather than as a failed fetch."""
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen",
+        side_effect=_routed([_card("a")], boards="not-a-list"),
+    ):
+        assert fetch_my_open(None, key=KEY, token=TOKEN) is None
+
+
 def test_fetch_my_open_answered_with_nothing_is_empty_not_none():
-    with patch("cockpit.lib.trello.urllib.request.urlopen", return_value=_FakeResp([])):
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=_routed([])):
         assert fetch_my_open(None, key=KEY, token=TOKEN) == []
 
 

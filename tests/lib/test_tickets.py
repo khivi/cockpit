@@ -694,3 +694,35 @@ def test_trello_declares_both_halves_of_its_credential_pair():
         "TRELLO_API_KEY",
         "TRELLO_API_TOKEN",
     ]
+
+
+# ── inbox scope: only the boards/teams/repos the config names ───────────────
+
+
+def test_board_accepts_a_list_so_one_repo_can_span_several():
+    assert tickets.tickets_field_errors({"board": "Acme"}, "trello") == []
+    assert (
+        tickets.tickets_field_errors({"board": ["Acme", "Acme: Eng"]}, "trello") == []
+    )
+    assert tickets.tickets_field_errors({"board": 7}, "trello") != []
+
+
+def test_trello_inbox_asks_for_nothing_when_no_board_is_declared():
+    """The one provider where an empty scope is not "ask about everything": a
+    Linear key opens one workspace and a `gh` search is bounded by `nwos`, but a
+    Trello *account* spans every board the user was ever added to, none of which
+    the config names."""
+    with patch.object(tickets, "_trello_fetch_my_open") as fetch:
+        assert tickets.TRELLO.fetch_my_open([], nwos=[], cfg={}, repo_entry={}) == []
+    fetch.assert_not_called()
+
+
+def test_trello_inbox_passes_the_declared_boards_through():
+    with patch.object(tickets, "_trello_fetch_my_open", return_value=[]) as fetch:
+        tickets.TRELLO.fetch_my_open(["Acme"], nwos=[], cfg={}, repo_entry={})
+    assert fetch.call_args.args[0] == ["Acme"]
+
+
+def test_trello_inbox_scope_is_every_board_the_repo_declares():
+    entry = {"tickets": {"provider": "trello", "board": ["Acme", "Acme: Eng"]}}
+    assert tickets.TRELLO.inbox_scopes({}, entry) == ["Acme", "Acme: Eng"]

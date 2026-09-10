@@ -15,6 +15,12 @@ never writes a cell. Ticket text comes from whoever filed the ticket, so it goes
 through `cache.strip_control` on the way in — the payload-derived case the flat
 cells' own `read_text` can't cover.
 
+Each org is a fold. Its header row carries a `▸`/`▾` marker and the count, and
+`enter` on it opens or closes that org — the one gesture a header has, the way
+`z` and `h` toggle the main table's own fold rows. Every org starts closed unless
+it is the only one, since a tracker with a hundred cards assigned to you
+otherwise buries the org that has three.
+
 Dismisses with the selected ticket's spawn *source* (its URL, falling back to its
 id), which is a string `spawn.detect_source` already classifies for all four
 providers: a Linear or Jira URL carries its key, a Trello card URL its short
@@ -24,6 +30,7 @@ no spawn machinery of its own.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 from typing import ClassVar
 
@@ -123,6 +130,11 @@ class TicketsScreen(ModalScreen["str | None"]):
         # newest-first, which is the order `ticket_inbox._dedup` established.
         self._buckets = {k: list(v) for k, v in (buckets or {}).items()}
         self._by_key: dict[str, dict] = {}
+        # Every org starts folded, like the sidebar's two trailing piles: a
+        # tracker with a hundred cards assigned to you would otherwise bury the
+        # org that has three. A lone org is expanded, since folding the only
+        # thing on screen leaves a list with nothing in it.
+        self._open: set[str] = set(self._buckets) if len(self._buckets) == 1 else set()
 
     def _count(self) -> int:
         return sum(len(v) for v in self._buckets.values())
@@ -133,7 +145,8 @@ class TicketsScreen(ModalScreen["str | None"]):
             yield Static(self._subtitle(), classes="tk-hint", id="tk-subtitle")
             yield DataTable(id="tk-table", cursor_type="row", zebra_stripes=False)
             yield Static(
-                "enter to start work · t opens it in the browser · esc to close",
+                "enter opens an org, or starts the highlighted ticket · "
+                "t opens it in the browser · esc to close",
                 classes="tk-hint",
             )
 
@@ -149,17 +162,43 @@ class TicketsScreen(ModalScreen["str | None"]):
     def on_mount(self) -> None:
         table = self.query_one("#tk-table", DataTable)
         table.add_columns("Ticket", "Title", "State", "Age")
+        self._rebuild()
+        table.focus()
+
+    def _rebuild(self, *, cursor_key: str | None = None) -> None:
+        """Repaint every row for the current fold state.
+
+        `DataTable` has no per-row visibility, so a fold is a rebuild. Cheap
+        enough: the inbox is a list of tickets assigned to one person, and it is
+        only ever repainted on a keypress.
+        """
+        table = self.query_one("#tk-table", DataTable)
+        table.clear()
+        self._by_key.clear()
         for bucket, tickets in self._buckets.items():
+            marker = "▾" if bucket in self._open else "▸"
             table.add_row(
-                Text(strip_control(bucket), style="bold"),
+                Text(
+                    f"{marker} {strip_control(bucket)} ({len(tickets)})", style="bold"
+                ),
                 Text(""),
                 Text(""),
                 Text(""),
                 key=f"{HEADER_KEY_PREFIX}{bucket}",
             )
+            if bucket not in self._open:
+                continue
             for ticket in tickets:
                 self._add_ticket(table, bucket, ticket)
-        table.focus()
+        if cursor_key is not None:
+            self._move_cursor_to(table, cursor_key)
+
+    def _move_cursor_to(self, table: DataTable, key: str) -> None:
+        """Park the cursor back on `key` after a rebuild — the row the user just
+        toggled, which has moved by however many rows the fold added or removed.
+        """
+        with contextlib.suppress(CellDoesNotExist, KeyError):
+            table.move_cursor(row=table.get_row_index(key))
 
     def _add_ticket(self, table: DataTable, bucket: str, ticket: dict) -> None:
         tid = strip_control(str(ticket.get("id") or ""))
@@ -170,8 +209,12 @@ class TicketsScreen(ModalScreen["str | None"]):
         # the second one silently replace the first.
         key = f"{bucket}\x00{tid}"
         self._by_key[key] = ticket
+        # A Trello id is an opaque short link (`6rm3JJPY`); the number on the
+        # card (`#122`) is what a human reads off it, so the provider carries it
+        # as `handle` and the id stays the key everything else joins on.
+        handle = strip_control(str(ticket.get("handle") or "")) or tid
         table.add_row(
-            Text(f"{ROW_INDENT}{tid}"),
+            Text(f"{ROW_INDENT}{handle}"),
             Text(_ellipsize(strip_control(str(ticket.get("title") or "")), _TITLE_MAX)),
             Text(
                 _ellipsize(strip_control(str(ticket.get("state") or "")), _STATE_MAX),
@@ -181,8 +224,8 @@ class TicketsScreen(ModalScreen["str | None"]):
             key=key,
         )
 
-    def _selected(self) -> dict | None:
-        """The cursor row's ticket, or None on a header (or an empty table)."""
+    def _cursor_key(self) -> str | None:
+        """The cursor row's key, or None when the table is empty."""
         table = self.query_one("#tk-table", DataTable)
         if not table.row_count:
             return None
@@ -190,11 +233,26 @@ class TicketsScreen(ModalScreen["str | None"]):
             key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
         except (CellDoesNotExist, IndexError):
             return None
-        return self._by_key.get(str(key)) if key else None
+        return str(key) if key else None
+
+    def _selected(self) -> dict | None:
+        """The cursor row's ticket, or None on a header (or an empty table)."""
+        key = self._cursor_key()
+        return self._by_key.get(key) if key else None
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        # Enter on a ticket starts it; on an org header it does nothing, the way
-        # every row action in the main table no-ops on a group header.
+        # Enter on a ticket starts it; on an org header it opens or folds that
+        # org, the one gesture the header row has — as `z` and `h` do on the
+        # main table's own fold rows.
+        key = self._cursor_key() or ""
+        if key.startswith(HEADER_KEY_PREFIX):
+            bucket = key.removeprefix(HEADER_KEY_PREFIX)
+            if bucket in self._open:
+                self._open.discard(bucket)
+            else:
+                self._open.add(bucket)
+            self._rebuild(cursor_key=key)
+            return
         ticket = self._selected()
         if ticket is not None:
             self.dismiss(ticket_source(ticket))

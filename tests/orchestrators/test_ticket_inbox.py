@@ -19,11 +19,15 @@ from cockpit.orchestrators.ticket_inbox import TicketInbox, publish
 class _Provider:
     """A `TicketProvider` stand-in recording every `fetch_my_open` call."""
 
-    def __init__(self, name="linear", result=None, results=None):
+    def __init__(self, name="linear", result=None, results=None, done=()):
         self.name = name
         self._result = result if result is not None else []
         self._results = list(results) if results is not None else None
+        self._done = list(done)
         self.calls: list[dict] = []
+
+    def done_values(self, cfg, repo_entry):
+        return list(self._done)
 
     def fetch_my_open(self, scopes, *, nwos, cfg, repo_entry):
         self.calls.append(
@@ -257,3 +261,50 @@ def test_active_ids_ignores_branches_with_no_ticket_and_empty_ids():
     from cockpit.orchestrators.ticket_inbox import active_ids
 
     assert active_ids(["main", "khivi/no-ticket", ""], ["", ""]) == set()
+
+
+# ── the done-state filter ───────────────────────────────────────────────────
+
+
+def test_a_ticket_in_a_done_state_is_dropped(written):
+    """`dev_done` and `merge_done` are the two states the user has already named
+    as "not work to start" — a tracker's own active filter doesn't answer that,
+    since a workspace whose review column is typed `started` reports a merged
+    ticket as assigned and active forever."""
+    prov = _Provider(
+        result=[
+            _ticket("PE-1"),
+            {**_ticket("PE-2"), "state": "In Review"},
+            {**_ticket("PE-3"), "state": "merged"},  # casefolded
+        ],
+        done=["In Review", "Merged"],
+    )
+    with patch("cockpit.orchestrators.ticket_inbox.provider_for", return_value=prov):
+        out = publish(_inbox(_entry()), {})
+    assert [t["id"] for t in out["acme"]] == ["PE-1"]
+
+
+def test_no_configured_done_states_filters_nothing(written):
+    """GitHub's `done_values` is empty — an issue is open or closed, and the
+    fetch already asked only for the open ones."""
+    prov = _Provider(result=[_ticket("PE-1"), {**_ticket("PE-2"), "state": "Done"}])
+    with patch("cockpit.orchestrators.ticket_inbox.provider_for", return_value=prov):
+        out = publish(_inbox(_entry()), {})
+    assert [t["id"] for t in out["acme"]] == ["PE-1", "PE-2"]
+
+
+def test_a_ticket_with_no_state_survives_the_filter(written):
+    prov = _Provider(result=[{**_ticket("PE-1"), "state": ""}], done=["Done"])
+    with patch("cockpit.orchestrators.ticket_inbox.provider_for", return_value=prov):
+        out = publish(_inbox(_entry()), {})
+    assert [t["id"] for t in out["acme"]] == ["PE-1"]
+
+
+def test_a_bucket_emptied_by_the_filter_is_still_written(written):
+    """Distinct from a failed fetch: the tracker answered, and the answer is that
+    everything assigned to me is finished."""
+    prov = _Provider(result=[{**_ticket("PE-1"), "state": "Done"}], done=["Done"])
+    with patch("cockpit.orchestrators.ticket_inbox.provider_for", return_value=prov):
+        out = publish(_inbox(_entry()), {})
+    assert out == {"acme": []}
+    written.assert_called_once_with("acme", [])
