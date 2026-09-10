@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.0](https://github.com/khivi/cockpit/compare/v3.2.1...v3.3.0) (2026-09-10)
+
+
+### Features
+
+* **tickets:** inbox_states names the ticket inbox's own filter ([#503](https://github.com/khivi/cockpit/issues/503)) ([675b012](https://github.com/khivi/cockpit/commit/675b012c49417cb17e23c79caa64680c77950e1f))
+
 ## [3.2.1](https://github.com/khivi/cockpit/compare/v3.2.0...v3.2.1) (2026-09-10)
 
 
