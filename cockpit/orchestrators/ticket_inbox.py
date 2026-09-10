@@ -37,6 +37,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from cockpit.lib.cache import write_ticket_inbox
+from cockpit.lib.config import ticket_inbox_states
 from cockpit.lib.linear import extract_ticket
 from cockpit.lib.tickets import TicketProvider, provider_for
 
@@ -151,6 +152,10 @@ def _drop_done(
 
     Matched casefold against `state`, so a provider that returns no state (or a
     repo that configures neither field) filters nothing.
+
+    Skipped entirely when the group resolves a `tickets.inbox_states` — an
+    explicitly listed state is wanted even when it equals `dev_done`, and the
+    provider fetch has already applied the whole filter.
     """
     done = {v.casefold() for v in provider.done_values(cfg, repo_entry) if v}
     if not done:
@@ -190,6 +195,11 @@ def publish(
     written payload is correct immediately rather than 30s later when the fast
     tick's `stamp_inbox_in_flight` next runs.
 
+    `tickets.inbox_states` is resolved per repo and unioned across the group —
+    the fetch is shared, so a repo override can only widen what the shared call
+    asks for, mirroring how `scopes` unions. A group with any states set skips
+    `_drop_done`; the fetch already applied the whole filter.
+
     Two things suspend a bucket, and both are the "couldn't ask" case rather than
     an "answered with nothing" one:
 
@@ -215,11 +225,18 @@ def publish(
             continue
         scopes = sorted({s for repo in group for s in repo.scopes})
         nwos = sorted({repo.nwo for repo in group if repo.nwo})
-        tickets = provider.fetch_my_open(scopes, nwos=nwos, cfg=cfg, repo_entry=rep)
+        states = sorted(
+            {s for repo in group for s in ticket_inbox_states(cfg, repo.repo_entry)}
+        )
+        tickets = provider.fetch_my_open(
+            scopes, nwos=nwos, cfg=cfg, repo_entry=rep, states=states or None
+        )
         if tickets is None:
             failed.add(bucket)
             continue
-        fetched.setdefault(bucket, []).extend(_drop_done(tickets, provider, cfg, rep))
+        if not states:
+            tickets = _drop_done(tickets, provider, cfg, rep)
+        fetched.setdefault(bucket, []).extend(tickets)
     if inbox.partial:
         return {}
     written: dict[str, list[dict]] = {}

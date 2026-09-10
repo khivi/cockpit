@@ -356,6 +356,14 @@ Six things make it stay useful rather than becoming a second tracker tab:
   dropped: a workspace that files "In Review" and "Merged" as active states would otherwise
   keep offering to start work that's already shipped. Trello cards show the number on the
   card (`#122`) rather than their short link.
+
+  And when that default reads your workflow wrong — a team that assigns work straight from
+  Backlog would see an empty inbox — name the columns yourself: `tickets.inbox_states`
+  (a state name or a list of them, on a repo or a whole org) replaces the filter outright.
+  Only tickets in a listed state appear, including one that matches `dev_done` — an
+  explicitly listed state is one you asked for. Linear names must match your workspace's
+  spelling exactly; Jira and Trello match case-insensitively. GitHub issues have no named
+  states, so there the setting is ignored (cockpit says so at startup).
 - **Nothing from an archived Trello board.** Archiving a board leaves every card on it
   open, so a retired board otherwise arrives as dozens of live-looking cards.
 - **Only the boards, teams and repos your config names.** Linear and Jira are scoped by

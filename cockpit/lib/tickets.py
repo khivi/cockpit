@@ -98,7 +98,13 @@ _FIELD_KINDS: dict[str, tuple[Callable[[object], bool], str]] = {
 }
 
 # Fields valid for every provider (in addition to `provider` itself).
-_COMMON_CONFIG_FIELDS: tuple[tuple[str, str], ...] = (("close_on_merge", "bool"),)
+# `inbox_states` is common because its meaning is provider-neutral (the state or
+# list names the ticket inbox shows); GitHub accepts it here and warns at
+# preflight instead (`_validate_inbox_states`) — issues are only open/closed.
+_COMMON_CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
+    ("close_on_merge", "bool"),
+    ("inbox_states", "str_or_str_list"),
+)
 
 _PROVIDER_CONFIG_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
     "linear": _LINEAR_CONFIG_FIELDS,
@@ -222,7 +228,10 @@ class TicketProvider:
     # issue that merely shares an identifier (the same trap `_secret_fingerprint`
     # and `_linear_narrow_repos`' grouping exist for). `scopes` is the union from
     # `inbox_scopes` and `nwos` the group's `owner/repo` list; each provider reads
-    # the one it needs and ignores the other, like `ticket_url`'s kwargs.
+    # the one it needs and ignores the other, like `ticket_url`'s kwargs. `states`
+    # is the group's union of `tickets.inbox_states` (None when unset); set, it
+    # replaces the provider's built-in active filter outright — the done drop is
+    # the caller's to skip.
     #
     # `None` means the tracker could NOT be asked; `[]` means it answered with
     # nothing. Collapsing the two would make a network blip read as "you have
@@ -538,11 +547,13 @@ def _linear_my_open(
     nwos: list[str] | None = None,
     cfg: dict,
     repo_entry: dict | None = None,
+    states: list[str] | None = None,
 ) -> list[dict[str, str]] | None:
-    """Assigned-to-me Linear tickets in an active state. `nwos` unused — Linear
-    scopes by team key, not by repo."""
+    """Assigned-to-me Linear tickets in an active state — or, with `states`, in
+    exactly those states (`tickets.inbox_states`, case-exact). `nwos` unused —
+    Linear scopes by team key, not by repo."""
     return _linear_fetch_my_open(
-        scopes, api_key=linear_api_key(cfg, repo_entry) or None
+        scopes, api_key=linear_api_key(cfg, repo_entry) or None, states=states
     )
 
 
@@ -552,9 +563,11 @@ def _jira_my_open(
     nwos: list[str] | None = None,
     cfg: dict,
     repo_entry: dict | None = None,
+    states: list[str] | None = None,
 ) -> list[dict[str, str]] | None:
-    """Assigned-to-me Jira issues that aren't Done. Empty when the site or email
-    is unconfigured (feature off); `nwos` unused."""
+    """Assigned-to-me Jira issues that aren't Done — or, with `states`, in
+    exactly those statuses (`tickets.inbox_states`, casefolded). Empty when the
+    site or email is unconfigured (feature off); `nwos` unused."""
     site = jira_site_url(cfg, repo_entry)
     email = jira_email(cfg, repo_entry)
     if not site or not email:
@@ -564,6 +577,7 @@ def _jira_my_open(
         site_url=site,
         email=email,
         token=jira_api_token(cfg, repo_entry) or None,
+        states=states,
     )
 
 
@@ -573,9 +587,13 @@ def _github_my_open(
     nwos: list[str] | None = None,
     cfg: dict,
     repo_entry: dict | None = None,
+    states: list[str] | None = None,
 ) -> list[dict[str, str]] | None:
     """Assigned-to-me open GitHub issues across the group's repos. `scopes` is
-    unused — GitHub's scope is `nwos`, which is why `inbox_scopes` is empty."""
+    unused — GitHub's scope is `nwos`, which is why `inbox_scopes` is empty.
+    `states` is unused too (issues are only open/closed) — accepted so the
+    uniform call site holds; `preflight._validate_inbox_states` warns when a
+    GitHub repo sets it."""
     return _github_fetch_my_open(nwos or [])
 
 
@@ -585,6 +603,7 @@ def _trello_my_open(
     nwos: list[str] | None = None,
     cfg: dict,
     repo_entry: dict | None = None,
+    states: list[str] | None = None,
 ) -> list[dict[str, str]] | None:
     """Open Trello cards I'm a member of, restricted to the group's boards.
     `nwos` unused.
@@ -599,14 +618,22 @@ def _trello_my_open(
     instead of the work cockpit tracks.
 
     `[]` rather than None: with no board declared the feature is deterministically
-    off, not transiently unreachable — the same shape unset credentials take."""
+    off, not transiently unreachable — the same shape unset credentials take.
+
+    `states` (`tickets.inbox_states`) filters the cards to the listed *list*
+    names, casefolded, client-side — a card's only state is the list it sits in,
+    and Trello's REST list call can't filter by name."""
     if not scopes:
         return []
-    return _trello_fetch_my_open(
+    cards = _trello_fetch_my_open(
         scopes,
         key=trello_api_key(cfg, repo_entry) or None,
         token=trello_api_token(cfg, repo_entry) or None,
     )
+    if cards is None or not states:
+        return cards
+    wanted = {s.casefold() for s in states}
+    return [c for c in cards if str(c.get("state") or "").casefold() in wanted]
 
 
 def _no_narrow(ref: str, candidates: list[dict], cfg: dict) -> list[dict]:

@@ -21,6 +21,7 @@
         "project": "My Project",
         "close_on_merge": false,
         "merge_done": "Done",
+        "inbox_states": ["Backlog", "Todo", "In Progress"],
         "token_env": "LINEAR_API_KEY"
       }
     },

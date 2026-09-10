@@ -670,6 +670,35 @@ def ticket_close_on_merge(
     return bool(_tickets_field(cfg, repo_entry, "close_on_merge"))
 
 
+def ticket_inbox_states(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> list[str]:
+    """The state/list names the ticket inbox shows (`tickets.inbox_states`), or
+    [] when unset.
+
+    Unset keeps the provider's built-in active filter (Linear's unstarted/started
+    types, Jira's `statusCategory != Done`, every Trello list) plus the
+    dev_done/merge_done drop. Set, it **is** the whole filter: only tickets in a
+    listed state appear, and the done drop is skipped — an explicitly listed
+    state is wanted even when it equals `dev_done`.
+
+    Matched by name: casefolded for Jira statuses and Trello lists, but
+    **case-exact for Linear**, whose filter rides the GraphQL query and cannot
+    casefold server-side. Ignored under `tickets: github` (issues are only
+    open/closed) — `preflight._validate_inbox_states` warns rather than letting
+    it silently do nothing.
+
+    Declared on an org block it reaches every member through the ordinary
+    per-field merge; a repo's own value wins outright.
+    """
+    val = _tickets_field(cfg, repo_entry, "inbox_states")
+    if isinstance(val, str):
+        return [val.strip()] if val.strip() else []
+    if isinstance(val, list):
+        return [s.strip() for s in val if isinstance(s, str) and s.strip()]
+    return []
+
+
 def review_command(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """The slash command seeded as the first turn of an auto-spawned review
     worktree (per-repo `review_prs`).

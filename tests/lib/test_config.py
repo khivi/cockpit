@@ -1176,6 +1176,54 @@ def test_trello_board_takes_a_list_for_a_repo_spanning_several(tmp_path, monkeyp
     assert cockpit_config.trello_boards(repo_entry=entry) == ["Acme", "Acme: Eng"]
 
 
+def test_ticket_inbox_states_defaults_to_empty(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.ticket_inbox_states() == []
+    assert (
+        cockpit_config.ticket_inbox_states(
+            repo_entry={"tickets": {"inbox_states": "  "}}
+        )
+        == []
+    )
+
+
+def test_ticket_inbox_states_string_or_list(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.ticket_inbox_states(
+        repo_entry={"tickets": {"inbox_states": "Backlog"}}
+    ) == ["Backlog"]
+    entry = {"tickets": {"inbox_states": ["Backlog", " Todo ", "", 7]}}
+    assert cockpit_config.ticket_inbox_states(repo_entry=entry) == ["Backlog", "Todo"]
+
+
+def test_ticket_inbox_states_org_declares_repo_overrides(tmp_path, monkeypatch):
+    """The user-facing contract: declared once on the org, overridable per repo —
+    through the ordinary `apply_org_defaults` per-field merge, no org-aware
+    reader."""
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repos": [
+                {"name": "a", "path": "/a", "org": "acme"},
+                {
+                    "name": "b",
+                    "path": "/b",
+                    "org": "acme",
+                    "tickets": {"inbox_states": ["Todo"]},
+                },
+            ],
+            "orgs": {
+                "acme": {"tickets": {"provider": "linear", "inbox_states": ["Backlog"]}}
+            },
+        },
+    )
+    cfg = cockpit_config.load_config()
+    by_name = {r["name"]: r for r in cfg["repos"]}
+    assert cockpit_config.ticket_inbox_states(cfg, by_name["a"]) == ["Backlog"]
+    assert cockpit_config.ticket_inbox_states(cfg, by_name["b"]) == ["Todo"]
+
+
 def test_ticket_close_on_merge_defaults_false(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
     assert cockpit_config.ticket_close_on_merge() is False

@@ -470,6 +470,37 @@ def _validate_trello_boards(cfg: dict) -> None:
         )
 
 
+def _validate_inbox_states(cfg: dict) -> None:
+    """Warn on a GitHub repo that sets `tickets.inbox_states`.
+
+    The field is common to every provider, but GitHub issues have no named
+    workflow states — only open/closed — so the GitHub fetch ignores it. The
+    degrade is silent at the point it happens (the inbox simply keeps showing
+    every open assigned issue), which is what earns the one line at start, same
+    shape as `_validate_trello_boards`. Not a config error: the field may come
+    from an org block shared with Linear/Jira/Trello siblings, where it works.
+    """
+    from .config import ticket_inbox_states
+    from .tickets import provider_for
+
+    for repo in cfg.get("repos", []):
+        provider = provider_for(cfg, repo)
+        if (
+            provider is None
+            or provider.name != "github"
+            or not ticket_inbox_states(cfg, repo)
+        ):
+            continue
+        name = repo.get("name") or repo.get("path", "?")
+        print(
+            f"{yellow('cockpit:')} repo {name!r} tracks GitHub issues, which "
+            f"have no named states — tickets.inbox_states is ignored there; the "
+            f"ticket inbox (`i`) keeps showing every open assigned issue.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _validate_ticket_close_on_merge(cfg: dict) -> None:
     """Warn when the merge transition is on but its credential env var isn't.
 
@@ -779,6 +810,7 @@ def validate_config(cfg: dict) -> None:
     _validate_tickets(cfg)
     _validate_ticket_credentials(cfg)
     _validate_trello_boards(cfg)
+    _validate_inbox_states(cfg)
     _validate_ticket_close_on_merge(cfg)
 
 

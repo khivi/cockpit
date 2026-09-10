@@ -232,7 +232,7 @@ def fetch_issue_summaries(
     return out
 
 
-def _my_open_jql(keys: list[str] | None) -> str:
+def _my_open_jql(keys: list[str] | None, *, only_states: bool = False) -> str:
     """The JQL for "assigned to me, not finished", optionally scoped to `keys`.
 
     `statusCategory != Done` is the Jira analogue of Linear's state-*type* filter
@@ -244,8 +244,16 @@ def _my_open_jql(keys: list[str] | None) -> str:
     An empty/None `keys` drops the project clause — the analogue of Linear's
     unfiltered variant, since `project in ()` is a JQL syntax error rather than a
     match-everything.
+
+    An `only_states` caller (`tickets.inbox_states`) drops the statusCategory
+    clause — an explicitly listed status is wanted even in the Done category —
+    and the name match itself happens client-side, casefolded, in
+    `fetch_my_open`; JQL string comparison can't promise casefold, and unlike
+    Linear the rows still arrive to filter.
     """
-    clauses = ["assignee = currentUser()", "statusCategory != Done"]
+    clauses = ["assignee = currentUser()"]
+    if not only_states:
+        clauses.append("statusCategory != Done")
     wanted = [k.upper() for k in (keys or []) if k]
     if wanted:
         clauses.append("project in ({})".format(", ".join(sorted(wanted))))
@@ -258,12 +266,17 @@ def fetch_my_open(
     site_url: str,
     email: str,
     token: str | None = None,
+    states: list[str] | None = None,
 ) -> list[dict[str, str]] | None:
     """Every issue assigned to the authenticated user that isn't Done, newest
     first — the Jira half of the ticket inbox.
 
     One JQL search per Jira *site*, not per project and not per repo: the caller
     passes the union of `tickets.keys` across the repos sharing this credential.
+
+    A non-empty `states` (`tickets.inbox_states`) replaces the not-Done filter:
+    the JQL keeps only the assignee and project clauses and the returned issues
+    are narrowed to the listed status names, casefolded, client-side.
 
     Each item is `{"id", "team", "title", "state", "url", "updated_at"}`, all
     strings (a missing field becomes ""), normalized to the shape every
@@ -278,9 +291,10 @@ def fetch_my_open(
         return []
     em, tok = creds
     base = _base(site_url)
+    named = {s.casefold() for s in (states or []) if s}
     query = urllib.parse.urlencode(
         {
-            "jql": _my_open_jql(keys),
+            "jql": _my_open_jql(keys, only_states=bool(named)),
             "fields": "summary,status,updated",
             "maxResults": "100",
         }
@@ -294,12 +308,15 @@ def fetch_my_open(
         if not key:
             continue
         fields = issue.get("fields") or {}
+        state = (fields.get("status") or {}).get("name") or ""
+        if named and state.casefold() not in named:
+            continue
         out.append(
             {
                 "id": key,
                 "team": key.partition("-")[0],
                 "title": fields.get("summary") or "",
-                "state": (fields.get("status") or {}).get("name") or "",
+                "state": state,
                 "url": f"{base}/browse/{key}",
                 "updated_at": fields.get("updated") or "",
             }
