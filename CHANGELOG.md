@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.1](https://github.com/khivi/cockpit/compare/v3.2.0...v3.2.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **tickets:** show the tickets that are actually work to start ([#501](https://github.com/khivi/cockpit/issues/501)) ([5e0c74c](https://github.com/khivi/cockpit/commit/5e0c74c8acb7a75cdc234c6b4db7cd38a454a299))
+
 ## [3.2.0](https://github.com/khivi/cockpit/compare/v3.1.0...v3.2.0) (2026-09-10)
 
 
