@@ -144,6 +144,33 @@ _TICKET_META_QUERY = (
     "nodes{id identifier state{name type} assignee{id} team{id}}}}"
 )
 
+# Every ticket assigned to the API key's owner that is in an *active* state —
+# the ticket inbox's one query per Linear workspace. `isMe` needs no viewer
+# fetch: a personal key authenticates as its owner, the same property
+# `_VIEWER_QUERY` relies on.
+#
+# The state filter is on `type`, not on a state *name*: names are per-team and
+# freely renamed ("Todo", "Up next", "Ready"), while the six types are Linear's
+# own fixed vocabulary. `unstarted` + `started` is Todo + In Progress — it drops
+# `backlog` and `triage` (not work you'd start today) as well as the two final
+# types. A workspace whose teams rename every column still filters correctly.
+#
+# `$keys` is the union of `tickets.keys` across the repos sharing one credential.
+# An empty union can't be expressed as `key:{in:[]}` (Linear matches nothing, not
+# everything), so the caller picks the unfiltered query variant instead.
+_MY_OPEN_FIELDS = "nodes{identifier title url updatedAt state{name} team{key}}"
+_MY_OPEN_FILTER = 'assignee:{isMe:{eq:true}},state:{type:{in:["unstarted","started"]}}'
+_MY_OPEN_BY_TEAM_QUERY = (
+    "query($keys:[String!]!){"
+    f"issues(filter:{{{_MY_OPEN_FILTER},team:{{key:{{in:$keys}}}}}},"
+    f"first:100,orderBy:updatedAt){{{_MY_OPEN_FIELDS}}}}}"
+)
+_MY_OPEN_ALL_TEAMS_QUERY = (
+    "query{"
+    f"issues(filter:{{{_MY_OPEN_FILTER}}},first:100,orderBy:updatedAt)"
+    f"{{{_MY_OPEN_FIELDS}}}}}"
+)
+
 # The ticket's Linear *project* — the routing tiebreaker (see `CONFIG_FIELDS`).
 # Same team-key + number filter as `_TICKET_META_QUERY`, pulling only the project
 # name. `Issue.project` is nullable: an issue filed outside any project resolves
@@ -333,6 +360,59 @@ def fetch_ticket_titles(
             orig = id_by_upper.get((node.get("identifier") or "").upper())
             if orig is not None:
                 out[orig] = node.get("title") or None
+    return out
+
+
+def fetch_my_open(
+    keys: list[str] | None = None, *, api_key: str | None = None
+) -> list[dict[str, str]] | None:
+    """Every ticket assigned to the key's owner in an active state, newest first.
+
+    One round-trip per Linear *workspace* — not per team and not per repo. The
+    caller passes the union of `tickets.keys` across the repos sharing this
+    credential; an empty/None union drops the team filter and returns the
+    workspace's whole assigned-to-me set.
+
+    Each item is `{"id", "team", "title", "state", "url", "updated_at"}`, all
+    strings (a missing field becomes ""), the shape every provider's
+    `fetch_my_open` normalizes to.
+
+    **`None` means the workspace could not be asked** (API failure) and `[]`
+    means it answered with nothing. Collapsing the two is the bug
+    `ReviewFolds.partial` exists to prevent — a network blip would read as "you
+    have nothing assigned" and blank the inbox. An unset key is `[]`, not None:
+    the feature is deterministically off, not transiently unreachable. Never
+    raises.
+    """
+    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    if not key:
+        return []
+    wanted = [k.upper() for k in (keys or []) if k]
+    if wanted:
+        query, variables = _MY_OPEN_BY_TEAM_QUERY, {"keys": wanted}
+    else:
+        query, variables = _MY_OPEN_ALL_TEAMS_QUERY, {}
+    data = _post_graphql(
+        query, variables, api_key=key, timeout=_TICKET_STATE_TIMEOUT_SECONDS
+    )
+    if data is None:
+        return None
+    nodes = (data.get("issues") or {}).get("nodes") or []
+    out: list[dict[str, str]] = []
+    for node in nodes:
+        identifier = node.get("identifier") or ""
+        if not identifier:
+            continue
+        out.append(
+            {
+                "id": identifier,
+                "team": (node.get("team") or {}).get("key") or "",
+                "title": node.get("title") or "",
+                "state": (node.get("state") or {}).get("name") or "",
+                "url": node.get("url") or "",
+                "updated_at": node.get("updatedAt") or "",
+            }
+        )
     return out
 
 

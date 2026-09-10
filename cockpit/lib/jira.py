@@ -28,6 +28,7 @@ import json
 import os
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # An env var *name*, not a secret value - config carries names only.
@@ -228,6 +229,81 @@ def fetch_issue_summaries(
         )
         summary = ((data or {}).get("fields") or {}).get("summary")
         out[key] = summary or None
+    return out
+
+
+def _my_open_jql(keys: list[str] | None) -> str:
+    """The JQL for "assigned to me, not finished", optionally scoped to `keys`.
+
+    `statusCategory != Done` is the Jira analogue of Linear's state-*type* filter
+    and is chosen for the same reason: a site renames its statuses freely, but the
+    three status *categories* are Jira's own fixed vocabulary. It keeps To Do and
+    In Progress and drops Done. Jira has no backlog category, so unlike Linear
+    there is nothing further to exclude.
+
+    An empty/None `keys` drops the project clause — the analogue of Linear's
+    unfiltered variant, since `project in ()` is a JQL syntax error rather than a
+    match-everything.
+    """
+    clauses = ["assignee = currentUser()", "statusCategory != Done"]
+    wanted = [k.upper() for k in (keys or []) if k]
+    if wanted:
+        clauses.append("project in ({})".format(", ".join(sorted(wanted))))
+    return " AND ".join(clauses) + " ORDER BY updated DESC"
+
+
+def fetch_my_open(
+    keys: list[str] | None = None,
+    *,
+    site_url: str,
+    email: str,
+    token: str | None = None,
+) -> list[dict[str, str]] | None:
+    """Every issue assigned to the authenticated user that isn't Done, newest
+    first — the Jira half of the ticket inbox.
+
+    One JQL search per Jira *site*, not per project and not per repo: the caller
+    passes the union of `tickets.keys` across the repos sharing this credential.
+
+    Each item is `{"id", "team", "title", "state", "url", "updated_at"}`, all
+    strings (a missing field becomes ""), normalized to the shape every
+    provider's `fetch_my_open` returns.
+
+    `None` means the site could not be asked (API failure); `[]` means it
+    answered with nothing, which unset creds/site also yield since the feature is
+    then deterministically off rather than transiently unreachable. Never raises.
+    """
+    creds = _creds(email, token)
+    if not creds or not site_url:
+        return []
+    em, tok = creds
+    base = _base(site_url)
+    query = urllib.parse.urlencode(
+        {
+            "jql": _my_open_jql(keys),
+            "fields": "summary,status,updated",
+            "maxResults": "100",
+        }
+    )
+    data = _request("GET", f"{base}/rest/api/3/search/jql?{query}", email=em, token=tok)
+    if data is None:
+        return None
+    out: list[dict[str, str]] = []
+    for issue in data.get("issues") or []:
+        key = issue.get("key") or ""
+        if not key:
+            continue
+        fields = issue.get("fields") or {}
+        out.append(
+            {
+                "id": key,
+                "team": key.partition("-")[0],
+                "title": fields.get("summary") or "",
+                "state": (fields.get("status") or {}).get("name") or "",
+                "url": f"{base}/browse/{key}",
+                "updated_at": fields.get("updated") or "",
+            }
+        )
     return out
 
 

@@ -32,6 +32,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -360,6 +361,100 @@ def prune_superseded_pr_caches(repo_name: str) -> list[Path]:
 
 
 FLAT_CACHE_DIR = Path(tempfile.gettempdir()) / "cockpit-cache"
+
+
+# ── ticket inbox payloads (one per org bucket) ─────────────────────────────
+#
+# The tickets assigned to me that have no worktree yet — the one thing cockpit
+# shows that is NOT derived from `git worktree list`. Stored as a payload rather
+# than a flat cell because every flat cell is keyed by worktree path or session
+# id (`cwd_cache`) and an unstarted ticket has neither. Same class as
+# `<repo>__pr-<N>.json`: a cached network round-trip, not stored inventory.
+
+
+def _inbox_path(bucket: str) -> Path:
+    return CACHE_DIR / f"{_repo_slug(bucket)}__tickets.json"
+
+
+def write_ticket_inbox(bucket: str, tickets: list[dict]) -> None:
+    """Persist `bucket`'s ticket inbox — the whole list, replacing what was there.
+
+    `bucket` is the org label (a repo's `orgs` name, or its own `name` when it
+    declares none), the same key the trailing review fold uses. Each ticket is a
+    `fetch_my_open` dict plus the `in_flight` flag `stamp_inbox_in_flight` owns.
+
+    The caller must not reach here with an empty list it can't distinguish from
+    a failed fetch — see `TicketInbox.partial`.
+    """
+    ensure_state_dirs()
+    _atomic_write_json(
+        _inbox_path(bucket),
+        {"bucket": bucket, "tickets": tickets, "fetched_at": time.time()},
+    )
+
+
+def read_ticket_inbox(bucket: str) -> list[dict]:
+    """`bucket`'s cached tickets, or [] when the payload is missing/unreadable."""
+    try:
+        payload = json.loads(_inbox_path(bucket).read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    tickets = payload.get("tickets")
+    return tickets if isinstance(tickets, list) else []
+
+
+def load_ticket_inboxes() -> dict[str, list[dict]]:
+    """`{bucket: tickets}` across every cached inbox — the TUI screen's one read.
+
+    Buckets come back in filename order, which the caller re-sorts; a payload
+    that fails to parse is skipped rather than taking the screen down.
+    """
+    out: dict[str, list[dict]] = {}
+    for path, payload in _iter_cache("*__tickets.json"):
+        bucket = payload.get("bucket") or path.name.removesuffix("__tickets.json")
+        tickets = payload.get("tickets")
+        if isinstance(tickets, list):
+            out[str(bucket)] = tickets
+    return out
+
+
+def delivered_ticket_ids() -> list[str]:
+    """Every ticket id named in a cached PR snapshot's `ticket` block.
+
+    The provider-neutral half of the inbox's in-flight signal, read off disk so
+    the fast tick can re-stamp without a network call or a `gh` round-trip.
+    Duplicates are left in — the caller casefolds into a set anyway.
+    """
+    return [
+        str(ticket.get("id") or "")
+        for _path, payload in _iter_cache("*__pr-*.json")
+        for ticket in (payload.get("ticket") or {}).get("tickets") or []
+    ]
+
+
+def stamp_inbox_in_flight(active_ids: set[str]) -> None:
+    """Re-stamp every cached inbox's `in_flight` flags against `active_ids` — the
+    casefolded ticket ids that already have a worktree or a PR delivering them.
+
+    Runs on BOTH ticks and always writes the flag, including `False`. It is pure
+    local work over inventory the caller already holds, and a ticket's worktree
+    can appear at any point between two fetches — so a conditional write would
+    leave the row advertising work you have already started. Same reasoning as
+    `cycle._stamp_ticket_urls`.
+
+    Deliberately not a filter at fetch time: the fetch is the expensive half and
+    runs on the slow tick, while this is free and runs every 30s.
+    """
+    for path, payload in _iter_cache("*__tickets.json"):
+        tickets = payload.get("tickets")
+        if not isinstance(tickets, list):
+            continue
+        for ticket in tickets:
+            if isinstance(ticket, dict):
+                ticket["in_flight"] = str(ticket.get("id") or "").casefold() in (
+                    active_ids
+                )
+        _atomic_write_json(path, payload)
 
 
 def _ensure_flat_cache_dir() -> Path:

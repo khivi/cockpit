@@ -19,9 +19,11 @@ from unittest.mock import patch
 from cockpit.lib.jira import (
     CONFIG_FIELDS,
     JIRA_ISSUE_URL_RE,
+    _my_open_jql,
     fetch_issue_meta,
     fetch_issue_statuses,
     fetch_issue_summaries,
+    fetch_my_open,
     fetch_myself,
     parse_jira_footer_links,
     parse_jira_footers,
@@ -325,4 +327,112 @@ def test_transition_issue_no_creds_is_false():
         patch.dict("os.environ", {}, clear=True),
     ):
         assert transition_issue("P-1", "Done", site_url=SITE, email=EMAIL) is False
+    urlopen.assert_not_called()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# fetch_my_open — the ticket inbox's one JQL search per Jira site
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _field(tickets: list[dict] | None, key: str = "id") -> list[str]:
+    """`key` off each ticket, asserting the fetch was answered — `None` is the
+    "couldn't ask" case and never what these cases exercise."""
+    assert tickets is not None
+    return [t[key] for t in tickets]
+
+
+def _issue(key: str, **over) -> dict:
+    issue = {
+        "key": key,
+        "fields": {
+            "summary": f"Work on {key}",
+            "status": {"name": "In Progress"},
+            "updated": "2026-09-09T10:00:00.000+0000",
+        },
+    }
+    issue.update(over)
+    return issue
+
+
+def test_fetch_my_open_normalizes_every_field():
+    with patch(
+        "cockpit.lib.jira.urllib.request.urlopen",
+        return_value=_FakeResp({"issues": [_issue("PROJ-7")]}),
+    ):
+        out = fetch_my_open(["PROJ"], site_url=SITE, email=EMAIL, token=TOKEN)
+
+    assert out == [
+        {
+            "id": "PROJ-7",
+            "team": "PROJ",
+            "title": "Work on PROJ-7",
+            "state": "In Progress",
+            "url": f"{SITE}/browse/PROJ-7",
+            "updated_at": "2026-09-09T10:00:00.000+0000",
+        }
+    ]
+
+
+def test_fetch_my_open_is_one_search_for_many_projects():
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured.setdefault("urls", []).append(req.full_url)
+        return _FakeResp({"issues": [_issue("PROJ-1"), _issue("OTHER-2")]})
+
+    with patch("cockpit.lib.jira.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_my_open(["proj", "other"], site_url=SITE, email=EMAIL, token=TOKEN)
+
+    assert len(captured["urls"]) == 1
+    assert _field(out) == ["PROJ-1", "OTHER-2"]
+    assert _field(out, "team") == ["PROJ", "OTHER"]
+
+
+def test_fetch_my_open_jql_filters_on_status_category():
+    """Statuses get renamed per project; the three categories do not."""
+    jql = _my_open_jql(["PROJ", "other"])
+    assert "assignee = currentUser()" in jql
+    assert "statusCategory != Done" in jql
+    assert "project in (OTHER, PROJ)" in jql
+    assert jql.endswith("ORDER BY updated DESC")
+
+
+def test_fetch_my_open_without_keys_drops_the_project_clause():
+    """`project in ()` is a JQL syntax error, not a match-everything."""
+    jql = _my_open_jql([])
+    assert "project in" not in jql
+    assert _my_open_jql(None) == jql
+
+
+def test_fetch_my_open_skips_an_issue_with_no_key():
+    with patch(
+        "cockpit.lib.jira.urllib.request.urlopen",
+        return_value=_FakeResp({"issues": [_issue("PROJ-1"), {"fields": {}}]}),
+    ):
+        out = fetch_my_open(["PROJ"], site_url=SITE, email=EMAIL, token=TOKEN)
+    assert _field(out) == ["PROJ-1"]
+
+
+def test_fetch_my_open_failure_is_none_not_empty():
+    with patch("cockpit.lib.jira.urllib.request.urlopen", side_effect=TimeoutError()):
+        assert fetch_my_open(["PROJ"], site_url=SITE, email=EMAIL, token=TOKEN) is None
+
+
+def test_fetch_my_open_answered_with_nothing_is_empty_not_none():
+    with patch(
+        "cockpit.lib.jira.urllib.request.urlopen",
+        return_value=_FakeResp({"issues": []}),
+    ):
+        assert fetch_my_open(["PROJ"], site_url=SITE, email=EMAIL, token=TOKEN) == []
+
+
+def test_fetch_my_open_unset_creds_is_empty_and_skips_network():
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.jira.urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_my_open(["PROJ"], site_url=SITE, email=EMAIL) == []
+        assert fetch_my_open(["PROJ"], site_url="", email=EMAIL, token=TOKEN) == []
+        assert fetch_my_open(["PROJ"], site_url=SITE, email="", token=TOKEN) == []
     urlopen.assert_not_called()

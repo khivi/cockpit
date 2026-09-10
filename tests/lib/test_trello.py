@@ -22,6 +22,7 @@ from cockpit.lib.trello import (
     fetch_card_handles,
     fetch_card_lists,
     fetch_card_meta,
+    fetch_my_open,
     fetch_myself,
     move_card,
     parse_trello_footer_links,
@@ -338,4 +339,122 @@ def test_move_card_no_creds_is_false():
         patch.dict("os.environ", {}, clear=True),
     ):
         assert move_card("aB3dZ9", "Done") is False
+    urlopen.assert_not_called()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# fetch_my_open — the ticket inbox's one call per Trello account
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _field(tickets: list[dict] | None, key: str = "id") -> list[str]:
+    """`key` off each ticket, asserting the fetch was answered — `None` is the
+    "couldn't ask" case and never what these cases exercise."""
+    assert tickets is not None
+    return [t[key] for t in tickets]
+
+
+def _card(short: str, board: str = "Engineering", **over) -> dict:
+    card = {
+        "shortLink": short,
+        "name": f"Card {short}",
+        "shortUrl": f"https://trello.com/c/{short}",
+        "dateLastActivity": "2026-09-09T10:00:00.000Z",
+        "list": {"name": "Doing"},
+        "board": {"name": board},
+    }
+    card.update(over)
+    return card
+
+
+def test_fetch_my_open_normalizes_every_field():
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen",
+        return_value=_FakeResp([_card("aB3dZ9")]),
+    ):
+        out = fetch_my_open(["Engineering"], key=KEY, token=TOKEN)
+
+    assert out == [
+        {
+            "id": "aB3dZ9",
+            "team": "Engineering",
+            "title": "Card aB3dZ9",
+            "state": "Doing",
+            "url": "https://trello.com/c/aB3dZ9",
+            "updated_at": "2026-09-09T10:00:00.000Z",
+        }
+    ]
+
+
+def test_fetch_my_open_is_one_call_and_asks_only_for_open_cards():
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured.setdefault("urls", []).append(req.full_url)
+        return _FakeResp([_card("a"), _card("b")])
+
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_my_open(None, key=KEY, token=TOKEN)
+
+    assert len(captured["urls"]) == 1
+    assert "/members/me/cards" in captured["urls"][0]
+    assert "filter=open" in captured["urls"][0]
+    assert _field(out) == ["a", "b"]
+
+
+def test_fetch_my_open_filters_boards_client_side():
+    """Trello has no board-scoped variant of this endpoint, so the filter can't
+    ride the request."""
+    cards = [_card("a", board="Engineering"), _card("b", board="Marketing")]
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen", return_value=_FakeResp(cards)
+    ):
+        out = fetch_my_open(["engineering"], key=KEY, token=TOKEN)  # casefolded
+    assert _field(out) == ["a"]
+
+
+def test_fetch_my_open_without_boards_keeps_every_card():
+    cards = [_card("a", board="Engineering"), _card("b", board="Marketing")]
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen", return_value=_FakeResp(cards)
+    ):
+        assert _field(fetch_my_open([], key=KEY, token=TOKEN)) == ["a", "b"]
+
+
+def test_fetch_my_open_sorts_newest_first():
+    cards = [
+        _card("old", dateLastActivity="2026-09-01T00:00:00.000Z"),
+        _card("new", dateLastActivity="2026-09-09T00:00:00.000Z"),
+    ]
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen", return_value=_FakeResp(cards)
+    ):
+        out = fetch_my_open(None, key=KEY, token=TOKEN)
+    assert _field(out) == ["new", "old"]
+
+
+def test_fetch_my_open_skips_a_card_with_no_short_link():
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen",
+        return_value=_FakeResp([_card("a"), {"name": "orphan"}, "not-a-dict"]),
+    ):
+        assert _field(fetch_my_open(None, key=KEY, token=TOKEN)) == ["a"]
+
+
+def test_fetch_my_open_failure_is_none_not_empty():
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=TimeoutError()):
+        assert fetch_my_open(None, key=KEY, token=TOKEN) is None
+
+
+def test_fetch_my_open_answered_with_nothing_is_empty_not_none():
+    with patch("cockpit.lib.trello.urllib.request.urlopen", return_value=_FakeResp([])):
+        assert fetch_my_open(None, key=KEY, token=TOKEN) == []
+
+
+def test_fetch_my_open_unset_creds_is_empty_and_skips_network():
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.trello.urllib.request.urlopen") as urlopen,
+    ):
+        assert fetch_my_open(None) == []
     urlopen.assert_not_called()

@@ -36,7 +36,9 @@ from pathlib import Path
 
 from cockpit.lib import diff_comments, seed_queue
 from cockpit.lib.cache import (
+    delivered_ticket_ids,
     republish_pr_caches_from_disk,
+    stamp_inbox_in_flight,
     write_diff_comments_cache,
     write_git_state_cache,
     write_worktree_cost_cache,
@@ -67,6 +69,7 @@ from cockpit.lib.gh import gh_self_user, require_gh
 from cockpit.lib.git import Worktree, require_git, worktrees
 from cockpit.lib.preflight import preflight
 from cockpit.orchestrators.cycle import cycle_all, restore_trailing_folds
+from cockpit.orchestrators.ticket_inbox import active_ids as active_ticket_ids
 
 DEFAULT_SLOW_POLL_SECS = 300
 DEFAULT_FAST_POLL_SECS = 30
@@ -389,6 +392,15 @@ def _fast_tick(state: dict) -> None:
         print(f"  seed prompt re-delivered to {ref}", flush=True)
     _write_worktree_cells(pending)
     republish_pr_caches_from_disk()
+    # The inbox's `in_flight` flags, re-derived from the worktrees this tick just
+    # listed plus the PR snapshots on disk. Local and free — the *fetch* that
+    # fills the inbox is the slow tick's, but a ticket's worktree can appear at
+    # any point in between, and until this runs the row still offers to start
+    # work that is already underway. Not `dry`-gated: it writes only under
+    # `$COCKPIT_HOME`, like the rest of the disk republish above.
+    stamp_inbox_in_flight(
+        active_ticket_ids((wt.branch for wt in pending), delivered_ticket_ids())
+    )
 
 
 def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:

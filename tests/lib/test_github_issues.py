@@ -7,6 +7,7 @@ mocks `urlopen`. The pure parsers (footer/URL/shorthand regexes) need no mocks.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from unittest.mock import patch
 
@@ -226,3 +227,86 @@ def test_issue_url_cross_repo_keeps_own_nwo():
 def test_issue_url_none_without_nwo_or_number():
     assert gh.issue_url("#5", None) is None
     assert gh.issue_url("nope", "o/r") is None
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# fetch_my_open — the ticket inbox's one `gh search issues` per credential
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _field(tickets: list[dict] | None, key: str = "id") -> list[str]:
+    """`key` off each ticket, asserting the fetch was answered — `None` is the
+    "couldn't ask" case and never what these cases exercise."""
+    assert tickets is not None
+    return [t[key] for t in tickets]
+
+
+_SEARCH_JSON = json.dumps(
+    [
+        {
+            "number": 77,
+            "title": "Flaky e2e suite",
+            "repository": {"nameWithOwner": "acme/widgets"},
+            "url": "https://github.com/acme/widgets/issues/77",
+            "updatedAt": "2026-09-09T10:00:00Z",
+        }
+    ]
+)
+
+
+def test_fetch_my_open_normalizes_and_searches_once():
+    with patch.object(gh.subprocess, "run", return_value=_run(_SEARCH_JSON)) as run:
+        out = gh.fetch_my_open(["acme/widgets", "acme/tools"])
+
+    assert out == [
+        {
+            "id": "acme/widgets#77",
+            "team": "acme/widgets",
+            "title": "Flaky e2e suite",
+            "state": "open",
+            "url": "https://github.com/acme/widgets/issues/77",
+            "updated_at": "2026-09-09T10:00:00Z",
+        }
+    ]
+    assert run.call_count == 1  # one search for the whole repo set
+    args = run.call_args[0][0]
+    assert args[:4] == ["gh", "search", "issues", "--assignee=@me"]
+    assert "--state=open" in args
+    # every repo rides the one query rather than costing a call each
+    assert args.count("--repo") == 2
+    assert "acme/widgets" in args and "acme/tools" in args
+
+
+def test_fetch_my_open_without_repos_searches_nothing():
+    """An unscoped `gh search issues` would sweep every repo the user can see."""
+    with patch.object(gh.subprocess, "run") as run:
+        assert gh.fetch_my_open([]) == []
+        assert gh.fetch_my_open(None) == []
+    run.assert_not_called()
+
+
+def test_fetch_my_open_skips_rows_missing_number_or_repo():
+    payload = json.dumps(
+        [
+            {"number": 1, "repository": {"nameWithOwner": "acme/a"}},
+            {"number": 2},  # no repo → unroutable
+            {"repository": {"nameWithOwner": "acme/a"}},  # no number
+        ]
+    )
+    with patch.object(gh.subprocess, "run", return_value=_run(payload)):
+        assert _field(gh.fetch_my_open(["acme/a"])) == ["acme/a#1"]
+
+
+def test_fetch_my_open_failure_is_none_not_empty():
+    """None is "couldn't ask"; [] is "asked, nothing assigned"."""
+    with patch.object(gh.subprocess, "run", return_value=_run("", returncode=1)):
+        assert gh.fetch_my_open(["acme/a"]) is None
+    with patch.object(gh.subprocess, "run", return_value=_run("not json {")):
+        assert gh.fetch_my_open(["acme/a"]) is None
+    with patch.object(gh.subprocess, "run", side_effect=FileNotFoundError()):
+        assert gh.fetch_my_open(["acme/a"]) is None
+
+
+def test_fetch_my_open_answered_with_nothing_is_empty_not_none():
+    with patch.object(gh.subprocess, "run", return_value=_run("[]")):
+        assert gh.fetch_my_open(["acme/a"]) == []

@@ -1374,3 +1374,104 @@ def test_read_text_strips_whitespace_before_sanitizing(cache_dir, tmp_path):
     cell = cache_mod.cwd_cache("pr-title", tmp_path)
     cell.write_text("Hello\n")
     assert cache_mod.read_text(cell) == "Hello"
+
+
+# ── ticket inbox payloads ───────────────────────────────────────────────────
+#
+# One payload per org bucket, beside the PR snapshots — not a flat cell, since
+# every flat cell is keyed by worktree path and an unstarted ticket has none.
+
+
+def _inbox_ticket(tid="PE-412", **over) -> dict:
+    ticket = {
+        "id": tid,
+        "team": tid.split("-")[0],
+        "title": f"Work on {tid}",
+        "state": "Todo",
+        "url": f"https://linear.app/acme/issue/{tid}",
+        "updated_at": "2026-09-09T10:00:00Z",
+    }
+    ticket.update(over)
+    return ticket
+
+
+def test_ticket_inbox_round_trips(json_cache):
+    cache_mod.write_ticket_inbox("acme", [_inbox_ticket()])
+    assert [t["id"] for t in cache_mod.read_ticket_inbox("acme")] == ["PE-412"]
+
+
+def test_ticket_inbox_write_replaces_rather_than_appends(json_cache):
+    cache_mod.write_ticket_inbox("acme", [_inbox_ticket("PE-1")])
+    cache_mod.write_ticket_inbox("acme", [_inbox_ticket("PE-2")])
+    assert [t["id"] for t in cache_mod.read_ticket_inbox("acme")] == ["PE-2"]
+
+
+def test_reading_a_missing_inbox_is_empty(json_cache):
+    assert cache_mod.read_ticket_inbox("nobody") == []
+
+
+def test_reading_a_corrupt_inbox_is_empty_not_a_crash(json_cache):
+    (json_cache / "acme__tickets.json").write_text("{not json")
+    assert cache_mod.read_ticket_inbox("acme") == []
+    assert cache_mod.load_ticket_inboxes() == {}
+
+
+def test_load_ticket_inboxes_returns_every_bucket(json_cache):
+    cache_mod.write_ticket_inbox("acme", [_inbox_ticket("PE-1")])
+    cache_mod.write_ticket_inbox("widgets-co", [_inbox_ticket("WID-2")])
+    out = cache_mod.load_ticket_inboxes()
+    assert sorted(out) == ["acme", "widgets-co"]
+    assert [t["id"] for t in out["acme"]] == ["PE-1"]
+
+
+def test_an_org_with_a_slash_gets_a_safe_filename(json_cache):
+    """A bucket falls back to the repo `name`, which is an `owner/repo` nwo."""
+    cache_mod.write_ticket_inbox("acme/widgets", [_inbox_ticket()])
+    assert (json_cache / "acme_widgets__tickets.json").is_file()
+    assert list(cache_mod.load_ticket_inboxes()) == ["acme/widgets"]
+
+
+def test_stamp_in_flight_writes_both_values(json_cache):
+    """Always written, including False — a conditional stamp would leave a row
+    advertising work already underway."""
+    cache_mod.write_ticket_inbox("acme", [_inbox_ticket("PE-1"), _inbox_ticket("PE-2")])
+    cache_mod.stamp_inbox_in_flight({"pe-1"})
+    got = {t["id"]: t["in_flight"] for t in cache_mod.read_ticket_inbox("acme")}
+    assert got == {"PE-1": True, "PE-2": False}
+
+
+def test_stamp_in_flight_clears_a_stale_true(json_cache):
+    cache_mod.write_ticket_inbox("acme", [_inbox_ticket("PE-1", in_flight=True)])
+    cache_mod.stamp_inbox_in_flight(set())
+    assert cache_mod.read_ticket_inbox("acme")[0]["in_flight"] is False
+
+
+def test_stamp_in_flight_spans_every_bucket(json_cache):
+    cache_mod.write_ticket_inbox("acme", [_inbox_ticket("PE-1")])
+    cache_mod.write_ticket_inbox("widgets-co", [_inbox_ticket("WID-2")])
+    cache_mod.stamp_inbox_in_flight({"pe-1", "wid-2"})
+    for bucket in ("acme", "widgets-co"):
+        assert cache_mod.read_ticket_inbox(bucket)[0]["in_flight"] is True
+
+
+def test_stamp_in_flight_survives_a_corrupt_payload(json_cache):
+    (json_cache / "broken__tickets.json").write_text("{not json")
+    cache_mod.write_ticket_inbox("acme", [_inbox_ticket("PE-1")])
+    cache_mod.stamp_inbox_in_flight({"pe-1"})
+    assert cache_mod.read_ticket_inbox("acme")[0]["in_flight"] is True
+
+
+def test_delivered_ticket_ids_reads_the_pr_snapshots(json_cache):
+    _snapshot(
+        json_cache,
+        "acme_widgets",
+        7,
+        "khivi/feature",
+        ticket={"tickets": [{"id": "PE-9"}, {"id": "PE-10"}]},
+    )
+    assert sorted(cache_mod.delivered_ticket_ids()) == ["PE-10", "PE-9"]
+
+
+def test_delivered_ticket_ids_ignores_a_snapshot_with_no_ticket_block(json_cache):
+    _snapshot(json_cache, "acme_widgets", 7, "khivi/feature")
+    assert cache_mod.delivered_ticket_ids() == []

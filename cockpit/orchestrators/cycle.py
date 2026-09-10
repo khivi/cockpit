@@ -181,6 +181,9 @@ from cockpit.lib.trello import (
     move_card as trello_move_card,
 )
 from cockpit.orchestrators.teardown import TeardownRequest, teardown
+from cockpit.orchestrators.ticket_inbox import TicketInbox
+from cockpit.orchestrators.ticket_inbox import active_ids as active_ticket_ids
+from cockpit.orchestrators.ticket_inbox import publish as publish_ticket_inbox
 
 # Cutoff for the *deep* merged-branches fetch that feeds the branch-ref reaper.
 # Effectively unbounded (≈100 years) so a branch whose worktree was removed long
@@ -3034,6 +3037,41 @@ def _reconcile_worktree_lifecycle(ctx: RepoCycle, *, dry: bool) -> None:
     _reap_branch_refs(ctx)
 
 
+def _delivered_ticket_ids(ctx: RepoCycle) -> list[str]:
+    """Ids named in this cycle's PR delivery footers, from the `ticket` blocks
+    `_write_pr_caches` just resolved — fresher than `ctx.pr_payloads`, whose
+    pre-write snapshot lags a cycle."""
+    return [
+        str(ticket.get("id") or "")
+        for block in ctx.linear_blocks.values()
+        for ticket in (block or {}).get("tickets") or []
+    ]
+
+
+def _collect_ticket_inbox(ctx: RepoCycle, repo_entry: dict, inbox: TicketInbox) -> None:
+    """Record this repo's contribution to the ticket inbox — no network.
+
+    The fetch itself is the cross-repo `publish` pass's, because a repo alone
+    can't tell whether its tracker credential is shared with a sibling. All this
+    does is name the bucket, the credential and the scope, exactly as
+    `_reconcile_sidebar_groups` only *collects* into `ReviewFolds`.
+    """
+    provider = provider_for(ctx.cfg, repo_entry)
+    if provider is None:
+        return  # `tickets: none` — the repo tracks nothing to put in an inbox
+    inbox.add(
+        bucket=_review_bucket_key(repo_entry),
+        provider_name=provider.name,
+        cred=tuple(provider.credential_envs(ctx.cfg, repo_entry)),
+        scopes=tuple(provider.inbox_scopes(ctx.cfg, repo_entry)),
+        nwo=f"{ctx.owner}/{ctx.name}",
+        repo_entry=repo_entry,
+    )
+    inbox.active |= active_ticket_ids(
+        (wt.branch for wt in ctx.wts), _delivered_ticket_ids(ctx)
+    )
+
+
 def cycle_repo(
     repo_entry: dict,
     self_user: str,
@@ -3043,6 +3081,7 @@ def cycle_repo(
     pill_state: dict,
     cfg: dict,
     folds: ReviewFolds | None = None,
+    inbox: TicketInbox | None = None,
 ) -> None:
     ctx = _prepare_cycle(
         repo_entry,
@@ -3059,8 +3098,14 @@ def cycle_repo(
         # must not read as "no reviews left"; see `ReviewFolds.partial`.
         if folds is not None:
             folds.partial = True
+        if inbox is not None:
+            inbox.partial = True
         return
     _write_pr_caches(ctx)
+    # After `_write_pr_caches`, which is what resolves the `ticket` blocks the
+    # in-flight half reads.
+    if inbox is not None:
+        _collect_ticket_inbox(ctx, repo_entry, inbox)
 
     # Per-step backend gating in one fixed order (identical to pre-limux cmux
     # behaviour; non-cmux backends just skip tiers they can't run). Three tiers —
@@ -3277,6 +3322,10 @@ def cycle_all(
     # The reviews pile is keyed by org, so it can only be folded once every repo
     # has contributed. Scoped runs skip the fold along with the other sweeps.
     folds = ReviewFolds() if only_repo is None else None
+    # The ticket inbox is keyed by org too, and its fetch groups by credential
+    # across repos — so like the fold it can only be drained after every repo has
+    # reported, and a scoped run skips it.
+    inbox = TicketInbox() if only_repo is None else None
     for repo_entry in repos:
         try:
             cycle_repo(
@@ -3287,6 +3336,7 @@ def cycle_all(
                 pill_state=pill_state,
                 cfg=cfg,
                 folds=folds,
+                inbox=inbox,
             )
         except (RuntimeError, subprocess.SubprocessError, OSError) as e:
             # The repo may have raised before folding, so its buckets can't be
@@ -3294,6 +3344,8 @@ def cycle_all(
             # contributing — that costs one deferred reap, never a closed fold.
             if folds is not None:
                 folds.partial = True
+            if inbox is not None:
+                inbox.partial = True
             ts = datetime.now().isoformat(timespec="seconds")
             print(
                 f"[{ts}] cycle error for {repo_entry.get('name')}: {e}\n"
@@ -3315,6 +3367,19 @@ def cycle_all(
                     file=sys.stderr,
                     flush=True,
                 )
+    if inbox is not None:
+        # Network, but bounded: one round-trip per (provider, credential, org),
+        # not per repo. Its own failures are already isolated per bucket — this
+        # guard is for an unexpected raise, which must not cost the sweeps below.
+        try:
+            publish_ticket_inbox(inbox, cfg, dry=dry)
+        except (RuntimeError, subprocess.SubprocessError, OSError) as e:
+            ts = datetime.now().isoformat(timespec="seconds")
+            print(
+                f"[{ts}] {yellow('skip')} ticket inbox: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
     if folds is not None and not _cache_only(cfg):
         try:
             _reconcile_review_groups(folds, dry=dry, pill_state=pill_state)
