@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/khivi/cockpit/compare/v3.1.0...v3.2.0) (2026-09-10)
+
+
+### Features
+
+* **tui:** a ticket inbox for work with no worktree yet ([#499](https://github.com/khivi/cockpit/issues/499)) ([cae94d8](https://github.com/khivi/cockpit/commit/cae94d892efefd441f73461147ef96016c1d6937))
+
 ## [3.1.0](https://github.com/khivi/cockpit/compare/v3.0.2...v3.1.0) (2026-09-09)
 
 
