@@ -459,7 +459,7 @@ Removed along with that config key, its preflight validator, and the orphan_pref
 
 **Ticket→repo routing is two-stage: a free match, then a paid tiebreak.** `find_repos_by_ticket_key` over `tickets.keys` is offline and enough when one repo owns the team; in the many-repos-one-team shape every member declares the same keys, and the old fallback silently landed the worktree in whichever repo you were standing in. The discriminator is `tickets.project`, which costs a fetch, so `TicketProvider.narrow_repos` is called **only when the free match returned >1**. Three rules: it **never narrows to zero**; it groups candidates by **resolved credential**, since a team key is workspace-scoped and asking one org's workspace about another's ticket answers about a **different issue that merely shares an identifier**; and it is **routing-only**. **Do not** collapse this back to one key read off `candidates[0]`.
 
-**Both stages are provider-shaped, and `spawn.py` must not branch on a provider name.** `_route_by_ticket` is the shared tail. **Linear** free-matches `keys`, tiebreaks on `project`. **Jira** free-matches `keys` — the **same field and reader**, since a Jira project key IS the identifier prefix, the analogue of a Linear *team* — and stays `_no_narrow`; **do not** give it a `project` field or duplicate `find_repos_by_ticket_key`. **The shape gate stays `LINEAR_RE_CI`**, since widening it only in the lookup is a no-op and widening it for real reclassifies branch names like `feature2-1` as tickets. **Trello** has **no free match at all**, so the `tickets.board` opt-in *is* the discriminator, and with none declared the spawn makes **zero** network calls. **GitHub** needs neither stage.
+**Both stages are provider-shaped, and `spawn.py` must not branch on a provider name.** `_route_by_ticket` is the shared tail. **Linear** free-matches `keys`, tiebreaks on `project`. **Jira** free-matches `keys` — the **same field and reader**, since a Jira project key IS the identifier prefix, the analogue of a Linear *team* — and stays `_no_narrow`; **do not** give it a `project` field or duplicate `find_repos_by_ticket_key`. **The shape gate stays `LINEAR_RE_CI`**, since widening it only in the lookup is a no-op and widening it for real reclassifies branch names like `feature2-1` as tickets. **Trello** has **no free match at all**, so the `tickets.board` opt-in *is* the discriminator, and with none declared the spawn makes **zero** network calls; a repo declaring several boards matches on any of them. **GitHub** needs neither stage.
 
 **A ticket URL is a first-class source, for every provider.** Linear and Jira URLs now match into the **same mode as the bare id**, extracting the identifier so everything downstream is byte-identical; previously they fell through to `branch` mode and `git worktree add -b <the whole URL>` died. **Do not** pass them through verbatim the way `slack`/`trello` mode does.
 
@@ -514,6 +514,16 @@ repo by `cycle.py::_collect_ticket_inbox`, drained once by
 - **`inbox_scopes` is why the collector never branches on a provider name** — the scoping
   field is `keys` for two providers, `board` for a third and absent for the fourth. It is a
   `TicketProvider` field, per that class's own rule.
+- **An empty scope means "ask about everything" for three providers and "ask about
+  nothing" for Trello** (`tickets._trello_my_open`). The asymmetry is blast radius: a
+  Linear API key opens exactly one workspace and a `gh` search is bounded by `nwos`, so an
+  unscoped fetch still reaches only something the config named — while a Trello *account*
+  spans every board its owner was ever added to, clients and side projects included, and
+  the inbox filled with a personal Trello instead of the work cockpit tracks.
+  `tickets.board` is therefore **required** here though it stays optional for routing, and
+  it takes a **list** as well as a name (`config.py::trello_boards`), since one repo's work
+  genuinely spans several boards. `[]`, not None: undeclared is deterministically off, not
+  transiently unreachable.
 - **A payload, never a flat cell** (`cache.py::write_ticket_inbox`, `<org>__tickets.json`).
   Flat cells are keyed by worktree path or session id (`cwd_cache`) and an unstarted ticket
   has neither. Same class as `<repo>__pr-<N>.json`: a cached network round-trip, not stored
@@ -529,10 +539,42 @@ repo by `cycle.py::_collect_ticket_inbox`, drained once by
 - **`active_ids` takes its inputs; it fetches neither** — the slow tick reads them off the
   cycle context, the fast tick off `git worktree list` plus the PR snapshots. The extracted-
   helper rule, and the reason there is one implementation rather than two that drift.
+- **A tracker's own active filter does not answer "what should I start" —
+  `TicketProvider.done_values`, dropped in `ticket_inbox.py::_drop_done`.** A Linear
+  workspace that types its review and shipped columns `started` reports a merged ticket as
+  assigned and active forever, and a Trello card has no state at all beyond the list it
+  sits in — which is how a "Done" pile of 73 cards reached the screen. The two states the
+  user has *already* named, `dev_done` and `merge_done`, are exactly the ones meaning "not
+  this", so this takes **no config field of its own**. Empty for GitHub, whose `dev_done`
+  is a label and whose fetch is already `--state=open`. Matched casefold against `state`,
+  so an unset field or a stateless provider filters nothing. A bucket the filter empties is
+  still **written** — the tracker answered, and `[]` here is a fact, not a failed fetch.
+- **`/members/me/cards` returns ids, never names — `trello.py::_board_and_list_names`.**
+  It accepts `board=true` / `list=true` and silently ignores both, so every Trello row
+  rendered with a blank board and a blank state and nothing could group or filter them.
+  One `GET /members/me/boards` resolves the whole card set instead of a GET per card; both
+  its filters are `all`, since a card I'm still a member of sits on closed boards and in
+  archived lists. A failed *names* call returns **None**, not partial cards: unresolved
+  names would read as a boardless, stateless set the board filter then drops wholesale.
+  That same `filter=all` is what puts an **archived board** in reach, so its cards are
+  dropped whatever list they sit in: archiving a board leaves every card on it open, and
+  one board last touched 19 months ago arrived as 67 live-looking cards. The lookup carries
+  `closed` rather than hiding the board, and an **unknown** board id is not treated as
+  archived — unknown is not closed.
+- **A Trello row is labelled by its card number, and the short link stays the key** —
+  `fetch_my_open` carries `#<idShort>` as `handle` (free in the list call, unlike
+  `fetch_card_handles`' GET per card) and the screen renders `handle or id`. `id` remains
+  the opaque short link every join, dedup and `in_flight` match keys on.
 - **The screen reads payloads and nothing else** — no fetch, no git, no `load_config` per
   keypress, no cell written. Tracker text is externally authored, so it goes through
   `strip_control` (`cache.py`), the payload-derived case flat cells' `read_text` can't
   cover.
+- **Each org is a fold, and `enter` on a header is its one gesture** — the same shape `z`
+  and `h` give the main table's fold rows, and the reason a header needs no second key.
+  `DataTable` has no row visibility, so a toggle is a `_rebuild()` and the cursor is parked
+  back on the row that was toggled. Every org is **born folded except a lone one**, since a
+  tracker with a hundred cards assigned to you buries the org that has three, and folding
+  the only thing on screen leaves an empty list. Session-only, like every other fold.
 - **Starting a ticket adds no spawn machinery.** `tickets_screen.py::ticket_source` hands
   back the ticket's URL (falling back to its id), a string `detect_source` already
   classifies for all four providers, and `app._start_ticket` shells out to `cockpit new`.

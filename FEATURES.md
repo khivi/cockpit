@@ -329,21 +329,22 @@ first.
 ```text
 ┌─ Tickets ─────────────────────────────────────┐
 │ 3 assigned to you, with no worktree yet       │
-│ acme                                          │
+│ ▾ acme (2)                                    │
 │   PE-412   Fix retry backoff       Todo    2d │
 │   PE-430   Docs pass on the api    Progress 6h│
-│ widgets-co                                    │
-│   WID-88   Flaky e2e suite         Todo    1d │
+│ ▸ widgets-co (1)                              │
 │                                               │
-│ enter to start work · t opens it · esc        │
+│ enter opens an org, or starts a ticket · esc  │
 └───────────────────────────────────────────────┘
 ```
 
-**Enter starts it** — the same worktree, workspace and seeded session you'd get by typing
-the ticket id into `n`. So the inbox isn't a second way to work; it's the list you reach
-for when you don't yet know what to type.
+**Each org folds.** `enter` on an org header opens or closes it; `enter` on a ticket
+starts it — the same worktree, workspace and seeded session you'd get by typing the ticket
+id into `n`. So the inbox isn't a second way to work; it's the list you reach for when you
+don't yet know what to type. Orgs start folded (unless there's only one), because one
+tracker with a hundred cards assigned to you shouldn't bury the org that has three.
 
-Four things make it stay useful rather than becoming a second tracker tab:
+Six things make it stay useful rather than becoming a second tracker tab:
 
 - **It's the exact complement of the dashboard.** The moment a ticket has a worktree it
   leaves the inbox and becomes a row — within about 30 seconds, whether the worktree came
@@ -351,7 +352,17 @@ Four things make it stay useful rather than becoming a second tracker tab:
 - **Only what you'd plausibly start today.** Assigned to you and in an active state — Todo
   or In Progress. Backlog and triage are excluded, and so is anything finished. That's a
   state *category* in each tracker's own vocabulary, so renaming your columns doesn't
-  break it.
+  break it. On top of that, anything sitting in your `dev_done` or `merge_done` column is
+  dropped: a workspace that files "In Review" and "Merged" as active states would otherwise
+  keep offering to start work that's already shipped. Trello cards show the number on the
+  card (`#122`) rather than their short link.
+- **Nothing from an archived Trello board.** Archiving a board leaves every card on it
+  open, so a retired board otherwise arrives as dozens of live-looking cards.
+- **Only the boards, teams and repos your config names.** Linear and Jira are scoped by
+  `keys`, GitHub by your repo list, and Trello by `board` — which can be a list, since one
+  repo's work often spans several. Trello is the one that *requires* it: an account spans
+  every board you were ever added to, so with none declared the inbox asks for nothing
+  rather than showing you a client's planning board.
 - **One round-trip per workspace, not per repo.** Ten repos sharing one Linear workspace
   cost one query. Two orgs on separate workspaces cost two, and neither is ever asked
   about the other's tickets.

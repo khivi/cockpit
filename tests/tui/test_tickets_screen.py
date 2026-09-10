@@ -84,17 +84,20 @@ async def test_enter_dismisses_with_the_source():
 
 
 @pytest.mark.asyncio
-async def test_enter_on_an_org_header_does_nothing():
-    """Same no-op every row action takes on the main table's group headers."""
+async def test_enter_on_an_org_header_folds_it_rather_than_dismissing():
+    """A header's one gesture is its fold — as `z` and `h` on the main table."""
     app: _Host = _Host()
     result: list = []
     async with app.run_test() as pilot:
         await _open(app, {"acme": [_ticket()]}, result)
         await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        assert table.row_count == 2  # a lone org opens expanded
         await pilot.press("enter")  # cursor starts on the header
         await pilot.pause()
         assert result == []
         assert isinstance(app.screen, TicketsScreen)
+        assert table.row_count == 1
 
 
 @pytest.mark.asyncio
@@ -113,19 +116,42 @@ async def test_escape_dismisses_with_none():
 
 
 @pytest.mark.asyncio
-async def test_each_org_gets_a_header_above_its_tickets():
+async def test_several_orgs_start_folded_to_their_headers():
+    """One tracker with a hundred cards assigned to you would otherwise bury the
+    org that has three."""
     app = _Host()
     async with app.run_test() as pilot:
         await _open(app, {"acme": [_ticket("PE-1")], "widgets-co": [_ticket("WID-2")]})
         await pilot.pause()
         table = app.screen.query_one(DataTable)
         keys = [str(k.value) for k in table.rows]
+        headers = [table.get_cell_at(Coordinate(0, 0)).plain]
     assert keys == [
         f"{HEADER_KEY_PREFIX}acme",
-        "acme\x00PE-1",
+        f"{HEADER_KEY_PREFIX}widgets-co",
+    ]
+    assert headers == ["\u25b8 acme (1)"]  # folded, and its count is on the row
+
+
+@pytest.mark.asyncio
+async def test_opening_one_org_leaves_the_others_folded():
+    app = _Host()
+    async with app.run_test() as pilot:
+        await _open(app, {"acme": [_ticket("PE-1")], "widgets-co": [_ticket("WID-2")]})
+        await pilot.pause()
+        await pilot.press("down")  # onto the second org's header
+        await pilot.press("enter")
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        keys = [str(k.value) for k in table.rows]
+        # The cursor stays on the row that was toggled, which has not moved.
+        cursor = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+    assert keys == [
+        f"{HEADER_KEY_PREFIX}acme",
         f"{HEADER_KEY_PREFIX}widgets-co",
         "widgets-co\x00WID-2",
     ]
+    assert str(cursor) == f"{HEADER_KEY_PREFIX}widgets-co"
 
 
 @pytest.mark.asyncio
@@ -135,6 +161,11 @@ async def test_one_ticket_under_two_orgs_keeps_both_rows():
     app = _Host()
     async with app.run_test() as pilot:
         await _open(app, {"acme": [_ticket("PE-1")], "other": [_ticket("PE-1")]})
+        await pilot.pause()
+        await pilot.press("enter")  # open the first org
+        await pilot.press("down")
+        await pilot.press("down")  # onto the second org's header
+        await pilot.press("enter")
         await pilot.pause()
         table = app.screen.query_one(DataTable)
         assert table.row_count == 4  # two headers, two tickets
@@ -148,6 +179,34 @@ async def test_a_ticket_with_no_id_is_skipped():
         await pilot.pause()
         table = app.screen.query_one(DataTable)
         assert table.row_count == 2  # header + the one real ticket
+
+
+@pytest.mark.asyncio
+async def test_a_trello_card_shows_its_number_not_its_short_link():
+    """`6rm3JJPY` names nothing a human recognizes; `#122` is what's on the card.
+    The id stays the key everything else joins on."""
+    app = _Host()
+    card = _ticket("6rm3JJPY", handle="#122", url="https://trello.com/c/6rm3JJPY")
+    result: list = []
+    async with app.run_test() as pilot:
+        await _open(app, {"acme": [card]}, result)
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        assert table.get_cell_at(Coordinate(1, 0)).plain.strip() == "#122"
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+    assert result == ["https://trello.com/c/6rm3JJPY"]
+
+
+@pytest.mark.asyncio
+async def test_a_ticket_with_no_handle_shows_its_id():
+    app = _Host()
+    async with app.run_test() as pilot:
+        await _open(app, {"acme": [_ticket("PE-412")]})
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        assert table.get_cell_at(Coordinate(1, 0)).plain.strip() == "PE-412"
 
 
 @pytest.mark.asyncio
