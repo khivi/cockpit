@@ -726,3 +726,74 @@ def test_trello_inbox_passes_the_declared_boards_through():
 def test_trello_inbox_scope_is_every_board_the_repo_declares():
     entry = {"tickets": {"provider": "trello", "board": ["Acme", "Acme: Eng"]}}
     assert tickets.TRELLO.inbox_scopes({}, entry) == ["Acme", "Acme: Eng"]
+
+
+# ── inbox_states: the whole filter, when set ────────────────────────────────
+
+
+def test_inbox_states_validates_under_every_provider():
+    for provider in ("linear", "github", "jira", "trello"):
+        assert (
+            tickets.tickets_field_errors({"inbox_states": ["Backlog"]}, provider) == []
+        )
+        assert tickets.tickets_field_errors({"inbox_states": "Backlog"}, provider) == []
+    assert tickets.tickets_field_errors({"inbox_states": 7}, "linear") != []
+
+
+def test_linear_inbox_passes_states_to_the_fetch():
+    with patch.object(tickets, "_linear_fetch_my_open", return_value=[]) as fetch:
+        tickets.LINEAR.fetch_my_open(
+            ["PE"], nwos=[], cfg={}, repo_entry={}, states=["Backlog"]
+        )
+    assert fetch.call_args.kwargs["states"] == ["Backlog"]
+
+
+def test_jira_inbox_passes_states_to_the_fetch():
+    entry = {
+        "tickets": {
+            "provider": "jira",
+            "site_url": "https://acme.atlassian.net",
+            "email": "me@acme.dev",
+        }
+    }
+    with patch.object(tickets, "_jira_fetch_my_open", return_value=[]) as fetch:
+        tickets.JIRA.fetch_my_open(
+            ["PROJ"], nwos=[], cfg={}, repo_entry=entry, states=["In Review"]
+        )
+    assert fetch.call_args.kwargs["states"] == ["In Review"]
+
+
+def test_trello_inbox_states_filter_the_cards_by_list_name_casefolded():
+    """A card's only state is the list it sits in, and Trello's REST list call
+    can't filter by name — so the match is client-side, like `_drop_done`'s."""
+    cards = [
+        {"id": "c1", "state": "In Review"},
+        {"id": "c2", "state": "Doing"},
+        {"id": "c3", "state": "in review"},
+    ]
+    with patch.object(tickets, "_trello_fetch_my_open", return_value=cards):
+        out = tickets.TRELLO.fetch_my_open(
+            ["Acme"], nwos=[], cfg={}, repo_entry={}, states=["IN REVIEW"]
+        )
+    assert out is not None
+    assert [c["id"] for c in out] == ["c1", "c3"]
+
+
+def test_trello_inbox_states_leave_a_failed_fetch_as_none():
+    with patch.object(tickets, "_trello_fetch_my_open", return_value=None):
+        assert (
+            tickets.TRELLO.fetch_my_open(
+                ["Acme"], nwos=[], cfg={}, repo_entry={}, states=["Doing"]
+            )
+            is None
+        )
+
+
+def test_github_inbox_accepts_and_ignores_states():
+    """Issues are only open/closed; `preflight._validate_inbox_states` warns.
+    The kwarg is accepted so the uniform call site holds."""
+    with patch.object(tickets, "_github_fetch_my_open", return_value=[]) as fetch:
+        tickets.GITHUB.fetch_my_open(
+            [], nwos=["acme/svc"], cfg={}, repo_entry={}, states=["Backlog"]
+        )
+    fetch.assert_called_once_with(["acme/svc"])

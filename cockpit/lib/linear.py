@@ -171,6 +171,25 @@ _MY_OPEN_ALL_TEAMS_QUERY = (
     f"{{{_MY_OPEN_FIELDS}}}}}"
 )
 
+# The `tickets.inbox_states` variants: the state filter is on *name*, replacing
+# the type filter above outright — an explicitly listed state is wanted whatever
+# its type, which is what lets a Backlog-typed column ("Todo next sprint") reach
+# the inbox at all. Name matching is CASE-EXACT: GraphQL `in` on a string has no
+# casefold, and the rows a wrong-cased name misses never arrive, so there is
+# deliberately no client-side casefold pretending otherwise — `docs/config.md`
+# tells the user to match their workspace's spelling exactly.
+_MY_OPEN_STATES_FILTER = "assignee:{isMe:{eq:true}},state:{name:{in:$states}}"
+_MY_OPEN_STATES_BY_TEAM_QUERY = (
+    "query($keys:[String!]!,$states:[String!]!){"
+    f"issues(filter:{{{_MY_OPEN_STATES_FILTER},team:{{key:{{in:$keys}}}}}},"
+    f"first:100,orderBy:updatedAt){{{_MY_OPEN_FIELDS}}}}}"
+)
+_MY_OPEN_STATES_ALL_TEAMS_QUERY = (
+    "query($states:[String!]!){"
+    f"issues(filter:{{{_MY_OPEN_STATES_FILTER}}},first:100,orderBy:updatedAt)"
+    f"{{{_MY_OPEN_FIELDS}}}}}"
+)
+
 # The ticket's Linear *project* — the routing tiebreaker (see `CONFIG_FIELDS`).
 # Same team-key + number filter as `_TICKET_META_QUERY`, pulling only the project
 # name. `Issue.project` is nullable: an issue filed outside any project resolves
@@ -364,7 +383,10 @@ def fetch_ticket_titles(
 
 
 def fetch_my_open(
-    keys: list[str] | None = None, *, api_key: str | None = None
+    keys: list[str] | None = None,
+    *,
+    api_key: str | None = None,
+    states: list[str] | None = None,
 ) -> list[dict[str, str]] | None:
     """Every ticket assigned to the key's owner in an active state, newest first.
 
@@ -372,6 +394,10 @@ def fetch_my_open(
     caller passes the union of `tickets.keys` across the repos sharing this
     credential; an empty/None union drops the team filter and returns the
     workspace's whole assigned-to-me set.
+
+    A non-empty `states` (`tickets.inbox_states`) replaces the active-type
+    filter with a state-*name* filter, matched case-exact server-side — see the
+    `_MY_OPEN_STATES_FILTER` comment for why there is no casefold.
 
     Each item is `{"id", "team", "title", "state", "url", "updated_at"}`, all
     strings (a missing field becomes ""), the shape every provider's
@@ -388,7 +414,16 @@ def fetch_my_open(
     if not key:
         return []
     wanted = [k.upper() for k in (keys or []) if k]
-    if wanted:
+    named = [s for s in (states or []) if s]
+    variables: dict[str, object]
+    if wanted and named:
+        query, variables = (
+            _MY_OPEN_STATES_BY_TEAM_QUERY,
+            {"keys": wanted, "states": named},
+        )
+    elif named:
+        query, variables = _MY_OPEN_STATES_ALL_TEAMS_QUERY, {"states": named}
+    elif wanted:
         query, variables = _MY_OPEN_BY_TEAM_QUERY, {"keys": wanted}
     else:
         query, variables = _MY_OPEN_ALL_TEAMS_QUERY, {}

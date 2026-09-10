@@ -29,9 +29,14 @@ class _Provider:
     def done_values(self, cfg, repo_entry):
         return list(self._done)
 
-    def fetch_my_open(self, scopes, *, nwos, cfg, repo_entry):
+    def fetch_my_open(self, scopes, *, nwos, cfg, repo_entry, states=None):
         self.calls.append(
-            {"scopes": list(scopes), "nwos": list(nwos), "repo": repo_entry}
+            {
+                "scopes": list(scopes),
+                "nwos": list(nwos),
+                "repo": repo_entry,
+                "states": states,
+            }
         )
         if self._results is not None:
             return self._results.pop(0)
@@ -308,3 +313,54 @@ def test_a_bucket_emptied_by_the_filter_is_still_written(written):
         out = publish(_inbox(_entry()), {})
     assert out == {"acme": []}
     written.assert_called_once_with("acme", [])
+
+
+# ── tickets.inbox_states: the whole filter, when set ────────────────────────
+
+
+def _states_entry(name: str, states, **over):
+    entry = _entry(name=name, **over)
+    entry["repo_entry"] = {
+        "name": name,
+        "path": f"/repos/{name}",
+        "tickets": {"inbox_states": states},
+    }
+    return entry
+
+
+def test_inbox_states_reach_the_fetch_as_the_group_union(provider, written):
+    """Resolved per repo, unioned across the group like `scopes` — the fetch is
+    shared, so an override can only widen what the shared call asks for."""
+    inbox = _inbox(
+        _states_entry("widgets", ["Backlog"]),
+        _states_entry("tools", ["Backlog", "In Review"]),
+    )
+    publish(inbox, {})
+    assert provider.calls[0]["states"] == ["Backlog", "In Review"]
+
+
+def test_unset_inbox_states_pass_none_to_the_fetch(provider, written):
+    publish(_inbox(_entry()), {})
+    assert provider.calls[0]["states"] is None
+
+
+def test_inbox_states_skip_the_done_drop(written):
+    """An explicitly listed state is wanted even when it equals `dev_done` — the
+    filter the fetch applied IS the whole filter."""
+    prov = _Provider(
+        result=[{**_ticket("PE-1"), "state": "In Review"}],
+        done=["In Review"],
+    )
+    with patch("cockpit.orchestrators.ticket_inbox.provider_for", return_value=prov):
+        out = publish(_inbox(_states_entry("widgets", ["In Review"])), {})
+    assert [t["id"] for t in out["acme"]] == ["PE-1"]
+
+
+def test_unset_inbox_states_keep_the_done_drop(written):
+    prov = _Provider(
+        result=[{**_ticket("PE-1"), "state": "In Review"}],
+        done=["In Review"],
+    )
+    with patch("cockpit.orchestrators.ticket_inbox.provider_for", return_value=prov):
+        out = publish(_inbox(_entry()), {})
+    assert out == {"acme": []}

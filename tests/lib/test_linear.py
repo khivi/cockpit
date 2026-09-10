@@ -667,3 +667,74 @@ def test_fetch_my_open_no_key_is_empty_and_skips_network():
     ):
         assert fetch_my_open(["PE"]) == []
     urlopen.assert_not_called()
+
+
+def test_fetch_my_open_states_replace_the_type_filter():
+    """`tickets.inbox_states` is the whole filter: the state-*name* clause rides
+    the query and the unstarted/started type clause is gone, so a Backlog-typed
+    column can reach the inbox at all."""
+    captured: list[dict] = []
+
+    def fake_urlopen(req, timeout=None):
+        captured.append(json.loads(req.data.decode()))
+        return _batch_resp([_issue_node("PE-1")])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = fetch_my_open(["pe"], api_key="k", states=["Backlog", "In Review"])
+
+    query = captured[0]["query"]
+    assert "state:{name:{in:$states}}" in query
+    assert "state:{type:" not in query
+    assert "assignee:{isMe:{eq:true}}" in query
+    assert captured[0]["variables"] == {
+        "keys": ["PE"],
+        "states": ["Backlog", "In Review"],
+    }
+    assert _field(out) == ["PE-1"]
+
+
+def test_fetch_my_open_states_without_keys_drops_the_team_filter():
+    captured: list[dict] = []
+
+    def fake_urlopen(req, timeout=None):
+        captured.append(json.loads(req.data.decode()))
+        return _batch_resp([])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        fetch_my_open([], api_key="k", states=["Backlog"])
+
+    assert "team:" not in captured[0]["query"]
+    assert captured[0]["variables"] == {"states": ["Backlog"]}
+
+
+def test_fetch_my_open_state_names_are_sent_verbatim():
+    """Case-exact by design: GraphQL `in` on a name has no casefold, and the
+    rows a wrong-cased name misses never arrive — so nothing here pretends to
+    normalize."""
+    captured: list[dict] = []
+
+    def fake_urlopen(req, timeout=None):
+        captured.append(json.loads(req.data.decode()))
+        return _batch_resp([])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        fetch_my_open(["PE"], api_key="k", states=["backlog"])
+
+    assert captured[0]["variables"]["states"] == ["backlog"]
+
+
+def test_fetch_my_open_empty_states_keep_the_active_type_filter():
+    """None and [] both mean "unset" — byte-identical prior behavior."""
+    captured: list[dict] = []
+
+    def fake_urlopen(req, timeout=None):
+        captured.append(json.loads(req.data.decode()))
+        return _batch_resp([])
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        fetch_my_open(["PE"], api_key="k", states=None)
+        fetch_my_open(["PE"], api_key="k", states=[])
+
+    for body in captured:
+        assert 'state:{type:{in:["unstarted","started"]}}' in body["query"]
+        assert "$states" not in body["query"]

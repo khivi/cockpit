@@ -549,6 +549,19 @@ repo by `cycle.py::_collect_ticket_inbox`, drained once by
   is a label and whose fetch is already `--state=open`. Matched casefold against `state`,
   so an unset field or a stateless provider filters nothing. A bucket the filter empties is
   still **written** — the tracker answered, and `[]` here is a fact, not a failed fetch.
+- **`tickets.inbox_states`, when set, IS the whole filter — and skips `_drop_done`.** The
+  default active filter reads a Backlog-assigned workflow as an empty inbox (Linear's
+  `backlog` type is excluded by construction), so a repo or org can name the states it
+  starts work from instead. It replaces the provider's built-in filter *and* the done drop
+  in one move: an explicitly listed state is wanted even when it equals `dev_done` —
+  half-replacing would re-hide the state the user just asked for. Resolved per repo
+  (`config.ticket_inbox_states`, org-declarable through the ordinary per-field merge) and
+  **unioned across a fetch group** like `scopes`, since the round-trip is shared. Linear
+  takes it server-side, `state:{name:{in:$states}}`, **case-exact** — GraphQL has no
+  casefold and rows a wrong-cased name misses never arrive, so there is deliberately no
+  client-side casefold pretending otherwise; Jira and Trello filter client-side,
+  casefolded. GitHub ignores it (issues are only open/closed) and
+  `preflight._validate_inbox_states` warns rather than letting the silence read as set.
 - **`/members/me/cards` returns ids, never names — `trello.py::_board_and_list_names`.**
   It accepts `board=true` / `list=true` and silently ignores both, so every Trello row
   rendered with a blank board and a blank state and nothing could group or filter them.

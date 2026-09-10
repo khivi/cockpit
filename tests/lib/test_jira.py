@@ -436,3 +436,35 @@ def test_fetch_my_open_unset_creds_is_empty_and_skips_network():
         assert fetch_my_open(["PROJ"], site_url="", email=EMAIL, token=TOKEN) == []
         assert fetch_my_open(["PROJ"], site_url=SITE, email="", token=TOKEN) == []
     urlopen.assert_not_called()
+
+
+def test_my_open_jql_only_states_drops_the_status_category_clause():
+    """`tickets.inbox_states` is the whole filter — an explicitly listed status
+    is wanted even in the Done category, which `statusCategory != Done` would
+    exclude before the client-side name match ever saw it."""
+    jql = _my_open_jql(["PROJ"], only_states=True)
+    assert "statusCategory" not in jql
+    assert "assignee = currentUser()" in jql
+    assert "project in (PROJ)" in jql
+
+
+def test_fetch_my_open_states_filter_client_side_casefolded():
+    def issue_in(key: str, status: str) -> dict:
+        return _issue(key, fields={"summary": key, "status": {"name": status}})
+
+    with patch(
+        "cockpit.lib.jira.urllib.request.urlopen",
+        return_value=_FakeResp(
+            {
+                "issues": [
+                    issue_in("PROJ-1", "In Review"),
+                    issue_in("PROJ-2", "In Progress"),
+                    issue_in("PROJ-3", "in review"),
+                ]
+            }
+        ),
+    ):
+        out = fetch_my_open(
+            ["PROJ"], site_url=SITE, email=EMAIL, token=TOKEN, states=["IN REVIEW"]
+        )
+    assert _field(out) == ["PROJ-1", "PROJ-3"]

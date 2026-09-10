@@ -913,6 +913,58 @@ def test_preflight_says_nothing_about_boards_for_another_provider(
     assert "tickets.board" not in capsys.readouterr().err
 
 
+def test_preflight_warns_on_a_github_repo_with_inbox_states(
+    tmp_path, monkeypatch, capsys
+):
+    """GitHub issues have no named states, so the field is silently ignored
+    there — the one line at start is what stops a config that reads as set from
+    doing nothing."""
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [
+                {
+                    "name": "r",
+                    "tickets": {"provider": "github", "inbox_states": ["Backlog"]},
+                }
+            ],
+        }
+    )
+    err = capsys.readouterr().err
+    assert "tickets.inbox_states" in err
+    assert "'r'" in err
+
+
+def test_preflight_is_quiet_about_inbox_states_under_a_stateful_provider(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    monkeypatch.setenv("LINEAR_API_KEY", "k")
+    preflight(
+        {
+            "tool": "cmux",
+            "repos": [
+                {
+                    "name": "r",
+                    "tickets": {"provider": "linear", "inbox_states": ["Backlog"]},
+                }
+            ],
+        }
+    )
+    assert "inbox_states" not in capsys.readouterr().err
+
+
+def test_preflight_is_quiet_about_a_github_repo_without_inbox_states(
+    tmp_path, monkeypatch, capsys
+):
+    _all_required(tmp_path, monkeypatch)
+    preflight(
+        {"tool": "cmux", "repos": [{"name": "r", "tickets": {"provider": "github"}}]}
+    )
+    assert "inbox_states" not in capsys.readouterr().err
+
+
 def test_preflight_warns_naming_the_orgs_own_trello_credential(
     tmp_path, monkeypatch, capsys
 ):
