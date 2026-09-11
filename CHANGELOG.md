@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.1](https://github.com/khivi/cockpit/compare/v3.3.0...v3.3.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **tui:** size the ticket inbox's columns explicitly ([#505](https://github.com/khivi/cockpit/issues/505)) ([70c6553](https://github.com/khivi/cockpit/commit/70c65535fcfbba15df075c8d84d97df4f7b3a2f9))
+
 ## [3.3.0](https://github.com/khivi/cockpit/compare/v3.2.1...v3.3.0) (2026-09-10)
 
 
