@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.2](https://github.com/khivi/cockpit/compare/v3.3.1...v3.3.2) (2026-09-11)
+
+
+### Bug Fixes
+
+* **diff:** focus the diff pane cockpit opens ([#507](https://github.com/khivi/cockpit/issues/507)) ([67a075e](https://github.com/khivi/cockpit/commit/67a075e4d5ce69e0a590e9238102cfdfbe598c83))
+
 ## [3.3.1](https://github.com/khivi/cockpit/compare/v3.3.0...v3.3.1) (2026-09-11)
 
 
