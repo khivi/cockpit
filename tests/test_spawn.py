@@ -1978,6 +1978,32 @@ def test_trello_card_routing_inconclusive_fetch_warns_and_falls_back(
     assert "testrepo" in err and "second" in err
 
 
+# ── route_ticket_repo: the cwd-less half of the route ──────────────────────
+#
+# The TUI's ticket inbox names no repo and its cwd is the *daemon's*, so where
+# `cockpit new` may fall back to cwd discovery, the inbox must refuse. Both ask
+# through this one function so they cannot disagree about what "routable" means.
+
+
+def test_route_ticket_repo_names_the_lone_board_declarer(cockpit_repo):
+    from cockpit.spawn import route_ticket_repo
+
+    _set_config_key(cockpit_repo, "tickets", "trello")
+    _set_repo_tickets(cockpit_repo, {"board": "Engineering"})
+    with patch("cockpit.lib.tickets.fetch_card_board") as fetch:
+        assert route_ticket_repo(_TRELLO_URL) == "testrepo"
+    fetch.assert_not_called()
+
+
+def test_route_ticket_repo_returns_none_when_no_repo_declares_a_board(cockpit_repo):
+    """The shape that cut two worktrees off `dotfiles`: with nothing to route on,
+    spawn silently used the daemon's cwd. None is what lets the caller refuse."""
+    from cockpit.spawn import route_ticket_repo
+
+    _set_config_key(cockpit_repo, "tickets", "trello")
+    assert route_ticket_repo(_TRELLO_URL) is None
+
+
 # ── per-repo / per-org provider gate ───────────────────────────────────────
 #
 # The fetch+rename prompt is gated on the provider resolved for the repo the

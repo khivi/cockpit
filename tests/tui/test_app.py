@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import shlex
 import subprocess
 import sys
 import threading
@@ -3588,24 +3589,47 @@ async def test_ticket_inbox_drops_an_org_with_nothing_left(monkeypatch):
         assert list(_open_buckets(app)) == ["widgets-co"]
 
 
-async def test_starting_a_routable_ticket_shells_out_to_cockpit_new(monkeypatch):
+def _drive_ticket_route(monkeypatch, repo):
+    """Run the routing worker inline, with `route_ticket_repo` stubbed to `repo`.
+
+    The worker is `@work(thread=True)`, so the test unwraps it and makes
+    `call_from_thread` a direct call — the app isn't running.
+    """
+    monkeypatch.setattr("cockpit.spawn.route_ticket_repo", lambda source: repo)
+    monkeypatch.setattr(
+        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+
+
+async def test_starting_a_routable_ticket_names_its_repo(monkeypatch):
+    """The resolved repo travels as an explicit `--repo`: `cockpit new` would
+    otherwise fall back to cwd discovery, and this caller's cwd is the daemon's."""
     app, _ = _make_app()
     launched: list = []
     monkeypatch.setattr(
         CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append((s, cwd))
     )
+    _drive_ticket_route(monkeypatch, "widgets")
+    CockpitApp._route_ticket.__wrapped__(app, "PE-412", "PE-412")  # type: ignore[attr-defined]
+    assert launched == [("PE-412 --repo widgets", None)]
+
+
+async def test_a_repo_name_with_a_space_survives_the_relaunch(monkeypatch):
+    """`_launch_spawn` re-splits with `shlex`, and real configs carry names like
+    `Acme Infra` — the shape an ambiguous Trello card matched."""
+    app, _ = _make_app()
+    launched: list = []
     monkeypatch.setattr(
-        "cockpit.lib.config.find_repos_by_ticket_key", lambda ref: [{"name": "widgets"}]
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
     )
-    app._start_ticket("PE-412")
-    # No repo is named: routing is spawn's, and guessing one from the cursor row
-    # would land the worktree wherever the highlight happened to be.
-    assert launched == [("PE-412", None)]
+    _drive_ticket_route(monkeypatch, "Acme Infra")
+    CockpitApp._route_ticket.__wrapped__(app, "PE-412", "PE-412")  # type: ignore[attr-defined]
+    assert shlex.split(launched[0])[-2:] == ["--repo", "Acme Infra"]
 
 
-async def test_starting_an_unroutable_ticket_refuses_loudly(monkeypatch):
-    """With no repo named, an unroutable ticket would land its worktree in the
-    daemon's own cwd — silent and wrong."""
+async def test_an_unroutable_ticket_refuses_loudly(monkeypatch):
+    """Routing returning None used to fall through to the daemon's cwd, which cut
+    two worktrees off `dotfiles` from an ambiguous Trello card."""
     app, _ = _make_app()
     launched: list = []
     notified: list = []
@@ -3613,37 +3637,56 @@ async def test_starting_an_unroutable_ticket_refuses_loudly(monkeypatch):
         CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
     )
     monkeypatch.setattr(CockpitApp, "_notify", lambda self, m, **k: notified.append(m))
-    monkeypatch.setattr("cockpit.lib.config.find_repos_by_ticket_key", lambda ref: [])
-    app._start_ticket("PE-412")
+    _drive_ticket_route(monkeypatch, None)
+    CockpitApp._route_ticket.__wrapped__(app, "PE-412", "PE-412")  # type: ignore[attr-defined]
     assert launched == []
     assert "PE-412" in notified[0] and "press n" in notified[0]
 
 
-async def test_a_github_issue_url_routes_on_its_own_repo(monkeypatch):
-    """It carries `owner/repo`, so it needs no `tickets.keys` match."""
+async def test_an_ambiguous_trello_card_never_reaches_the_spawn(monkeypatch):
+    """Its short link carries no key, so the board is the only discriminator —
+    and with more than one repo declaring one, routing can't name a repo."""
     app, _ = _make_app()
     launched: list = []
+    notified: list = []
     monkeypatch.setattr(
         CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
     )
-    monkeypatch.setattr("cockpit.lib.config.find_repos_by_ticket_key", lambda ref: [])
-    url = "https://github.com/acme/widgets/issues/77"
-    app._start_ticket(url)
-    assert launched == [url]
-
-
-async def test_a_trello_card_routes_on_its_board(monkeypatch):
-    """Its short link carries no key at all — the board discriminator is a fetch
-    spawn makes itself."""
-    app, _ = _make_app()
-    launched: list = []
-    monkeypatch.setattr(
-        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
-    )
-    monkeypatch.setattr("cockpit.lib.config.find_repos_by_ticket_key", lambda ref: [])
+    monkeypatch.setattr(CockpitApp, "_notify", lambda self, m, **k: notified.append(m))
+    _drive_ticket_route(monkeypatch, None)
     url = "https://trello.com/c/aB3dZ9"
-    app._start_ticket(url)
-    assert launched == [url]
+    CockpitApp._route_ticket.__wrapped__(app, url, url)  # type: ignore[attr-defined]
+    assert launched == []
+    assert "press n" in notified[0]
+
+
+async def test_a_github_issue_url_routes_on_its_own_repo(monkeypatch):
+    """It carries `owner/repo`, so it skips the two-stage route entirely — but is
+    still checked against the config, since spawn falls back to the cwd there too."""
+    app, _ = _make_app()
+    launched: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    monkeypatch.setattr(
+        "cockpit.lib.config.find_repo_by_nwo", lambda nwo: {"name": "widgets"}
+    )
+    app._start_ticket("https://github.com/acme/widgets/issues/77")
+    assert launched == ["https://github.com/acme/widgets/issues/77 --repo widgets"]
+
+
+async def test_a_github_issue_url_for_an_unconfigured_repo_refuses(monkeypatch):
+    app, _ = _make_app()
+    launched: list = []
+    notified: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    monkeypatch.setattr(CockpitApp, "_notify", lambda self, m, **k: notified.append(m))
+    monkeypatch.setattr("cockpit.lib.config.find_repo_by_nwo", lambda nwo: None)
+    app._start_ticket("https://github.com/acme/widgets/issues/77")
+    assert launched == []
+    assert "acme/widgets" in notified[0] and "press n" in notified[0]
 
 
 async def test_dismissing_the_inbox_starts_nothing(monkeypatch):
