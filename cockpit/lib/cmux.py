@@ -524,6 +524,13 @@ def render_diff(
     that root here. Which of the two inputs it actually reads for a piped patch
     is undocumented — the flag is written up for `--source`/git diffs only —
     and guessing wrong fails silently, so set both.
+
+    `--focus true` because cmux defaults it to false, which opens the pane
+    without the keyboard: you have to click into it before you can scroll the
+    thing you just asked to read. Taking focus is safe here in a way it would
+    not be from the daemon — `cockpit diff` is typed by the user at their own
+    prompt, so the session is at rest by construction and there is no live turn
+    to interrupt.
     """
     if (patch is None) == (source is None):
         raise ValueError("render_diff needs exactly one of patch= or source=")
@@ -537,6 +544,7 @@ def render_diff(
     cmd = ["cmux", "diff"]
     cmd += ["--source", source] if source else ["-"]
     cmd += ["--title", title, "--layout", "unified", "--cwd", str(cwd)]
+    cmd += ["--focus", "true"]
     if base:
         cmd += ["--base", base]
     try:

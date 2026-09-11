@@ -2191,6 +2191,14 @@ def test_render_diff_is_always_unified():
     assert seen["cmd"][seen["cmd"].index("--layout") + 1] == "unified"
 
 
+def test_render_diff_takes_focus():
+    """cmux defaults `--focus` to false, which opens the pane without the
+    keyboard — a click before you can scroll what you asked to read. The one
+    caller is a user-typed command, so no live turn is interrupted by it."""
+    seen, _ = _render(patch="d", cwd="/repo", title="t")
+    assert seen["cmd"][seen["cmd"].index("--focus") + 1] == "true"
+
+
 def test_render_diff_needs_exactly_one_of_patch_or_source():
     with pytest.raises(ValueError):
         cmux_mod.render_diff(cwd="/repo", title="t")
