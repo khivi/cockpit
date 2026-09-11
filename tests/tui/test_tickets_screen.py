@@ -210,6 +210,47 @@ async def test_a_ticket_with_no_handle_shows_its_id():
 
 
 @pytest.mark.asyncio
+async def test_a_revealed_title_is_not_clipped_to_its_column_label():
+    """Opening a fold must not paint the new rows at the pre-fold width.
+
+    `DataTable` widens an auto column from its cells in `_update_dimensions`,
+    which runs on idle — so a paint that beats it caches every Title clipped to
+    the width of `Title` itself, and only the row under the mouse re-renders,
+    hover being part of the cell cache key. Hence the explicit widths: the
+    rebuild below deliberately never yields.
+    """
+    app = _Host()
+    title = "Drop spatie/laravel-sitemap for a DB"
+    async with app.run_test() as pilot:
+        await _open(app, {"a": [_ticket(title=title)], "b": [_ticket("W-1")]})
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        screen = app.screen
+        assert isinstance(screen, TicketsScreen)
+        screen._open.add("a")
+        screen._rebuild()
+        widths = [c.get_render_width(table) for c in table.ordered_columns]
+        cell = table.get_cell_at(Coordinate(1, 1)).plain
+    assert cell == title
+    assert widths[1] >= len(title)
+
+
+@pytest.mark.asyncio
+async def test_a_long_org_name_keeps_its_count():
+    """The count is what makes a folded header worth reading, so the name is
+    ellipsized around it."""
+    app = _Host()
+    async with app.run_test() as pilot:
+        await _open(app, {"an-extravagantly-long-org-name": [_ticket("PE-1")]})
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        header = table.get_cell_at(Coordinate(0, 0)).plain
+    assert header.endswith(" (1)")
+    assert header.startswith("▾ an-extravagantly")
+    assert len(header) <= 27
+
+
+@pytest.mark.asyncio
 async def test_tracker_text_is_neutralized():
     """A title is written by whoever filed the ticket — an ESC in it would paint
     a second hyperlink over a row cockpit never named."""
