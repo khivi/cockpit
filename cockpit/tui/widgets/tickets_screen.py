@@ -53,8 +53,10 @@ HEADER_KEY_PREFIX = "\x00org:"
 #: by rendering alone — as in the main table.
 ROW_INDENT = "  "
 
+_TICKET_MAX = 26
 _TITLE_MAX = 46
 _STATE_MAX = 14
+_AGE_MAX = 4
 
 
 def _ellipsize(text: str, limit: int) -> str:
@@ -161,7 +163,21 @@ class TicketsScreen(ModalScreen["str | None"]):
 
     def on_mount(self) -> None:
         table = self.query_one("#tk-table", DataTable)
-        table.add_columns("Ticket", "Title", "State", "Age")
+        # Explicit widths, not `DataTable`'s auto-sizing. An auto column is
+        # widened from the cells in `_update_dimensions`, which runs on idle —
+        # so a fold that adds the first long title paints at the *old* width and
+        # the narrow render is cached per cell. Only the row under the mouse
+        # re-rendered (hover is part of the cache key), which is exactly how it
+        # showed up: every Title clipped to `Title`'s own label, one full row
+        # following the pointer. Each cell is ellipsized to the same cap, +1
+        # since `_ellipsize` leaves a string one over the limit alone.
+        for label, cap in (
+            ("Ticket", _TICKET_MAX),
+            ("Title", _TITLE_MAX),
+            ("State", _STATE_MAX),
+            ("Age", _AGE_MAX),
+        ):
+            table.add_column(label, width=cap + 1, key=label)
         self._rebuild()
         table.focus()
 
@@ -177,10 +193,12 @@ class TicketsScreen(ModalScreen["str | None"]):
         self._by_key.clear()
         for bucket, tickets in self._buckets.items():
             marker = "▾" if bucket in self._open else "▸"
+            # The count is ellipsized around rather than off: it is the whole
+            # reason a folded header is readable at all.
+            count = f" ({len(tickets)})"
+            name = _ellipsize(strip_control(bucket), _TICKET_MAX - 2 - len(count))
             table.add_row(
-                Text(
-                    f"{marker} {strip_control(bucket)} ({len(tickets)})", style="bold"
-                ),
+                Text(f"{marker} {name}{count}", style="bold"),
                 Text(""),
                 Text(""),
                 Text(""),
@@ -214,7 +232,7 @@ class TicketsScreen(ModalScreen["str | None"]):
         # as `handle` and the id stays the key everything else joins on.
         handle = strip_control(str(ticket.get("handle") or "")) or tid
         table.add_row(
-            Text(f"{ROW_INDENT}{handle}"),
+            Text(f"{ROW_INDENT}{_ellipsize(handle, _TICKET_MAX - len(ROW_INDENT))}"),
             Text(_ellipsize(strip_control(str(ticket.get("title") or "")), _TITLE_MAX)),
             Text(
                 _ellipsize(strip_control(str(ticket.get("state") or "")), _STATE_MAX),

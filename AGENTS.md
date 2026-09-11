@@ -582,6 +582,14 @@ repo by `cycle.py::_collect_ticket_inbox`, drained once by
   keypress, no cell written. Tracker text is externally authored, so it goes through
   `strip_control` (`cache.py`), the payload-derived case flat cells' `read_text` can't
   cover.
+- **Its columns take explicit widths, never `DataTable`'s auto-sizing.** An auto column is
+  widened from its cells in `_update_dimensions`, which runs on **idle**, while the cell
+  render cache is keyed without the width — so a paint that beats the recompute caches
+  every row at the old width, and the one row under the mouse re-renders correct because
+  hover *is* in that key. That is how it shipped: opening a fold clipped every Title to the
+  width of the word `Title`, with one full-width row following the pointer. Each cell is
+  ellipsized to the same cap the column is sized from, `+1` since `_ellipsize` leaves a
+  string one over the limit alone. **Do not** go back to `add_columns`.
 - **Each org is a fold, and `enter` on a header is its one gesture** — the same shape `z`
   and `h` give the main table's fold rows, and the reason a header needs no second key.
   `DataTable` has no row visibility, so a toggle is a `_rebuild()` and the cursor is parked
