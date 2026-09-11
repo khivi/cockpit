@@ -461,6 +461,15 @@ Removed along with that config key, its preflight validator, and the orphan_pref
 
 **Both stages are provider-shaped, and `spawn.py` must not branch on a provider name.** `_route_by_ticket` is the shared tail. **Linear** free-matches `keys`, tiebreaks on `project`. **Jira** free-matches `keys` — the **same field and reader**, since a Jira project key IS the identifier prefix, the analogue of a Linear *team* — and stays `_no_narrow`; **do not** give it a `project` field or duplicate `find_repos_by_ticket_key`. **The shape gate stays `LINEAR_RE_CI`**, since widening it only in the lookup is a no-op and widening it for real reclassifies branch names like `feature2-1` as tickets. **Trello** has **no free match at all**, so the `tickets.board` opt-in *is* the discriminator, and with none declared the spawn makes **zero** network calls; a repo declaring several boards matches on any of them. **GitHub** needs neither stage.
 
+**Trello alone has a third stage, `tickets.label` (`tickets::_narrow_by_label`), because a board is the outermost container and two repos genuinely share one.** Nothing below the board is in a card's identity, so a board tie was irreducible and refused. Routing on the card's **list** was the obvious answer and is the wrong one: the list name is already `state` — it feeds `inbox_states`, `dev_done` and `merge_done` — so a list that says *which repo* is a list that can no longer say *how far along*. A label is orthogonal to the list, so the card keeps its stage flow and carries its owner throughout. Six rules:
+
+- **It runs only on a board tie where some repo claims a label**, so every config that predates the field pays nothing. The board stage is unchanged and still answers alone wherever it can.
+- **A repo declaring NO label is the board's default** and takes every card no label claims — that asymmetry is what keeps the common case automatic, one repo marking its work while its sibling declares nothing. A claimed label **wins over** that default, or the two tie on every marked card.
+- **It never narrows to zero**, like every sibling stage: an inconclusive fetch, or a card whose labels match nobody while every candidate claims one, leaves the board match standing and the caller refuses.
+- **`fetch_card_labels` returns `None` for "couldn't ask" and `[]` for "carries no labels"**, and the two must not collapse — `[]` routes to the default repo, so reading an API blip as `[]` hands the card away silently.
+- **It is its own `GET`, deliberately not a field on `fetch_card_board`**, which has one caller and a body of tests pinning that the board costs exactly one fetch. The second round-trip is paid only in the ambiguous case, which already pays for one.
+- **Routing only** — nothing downstream reads `label`, and it never reaches the inbox scope (`board` is still the only scope, and still required there).
+
 **A ticket URL is a first-class source, for every provider.** Linear and Jira URLs now match into the **same mode as the bare id**, extracting the identifier so everything downstream is byte-identical; previously they fell through to `branch` mode and `git worktree add -b <the whole URL>` died. **Do not** pass them through verbatim the way `slack`/`trello` mode does.
 
 **Per-org credentials come free from the env-*name* indirection** — the name reader is another `_tickets_field` call, so an org block covers every member with **no** org-aware machinery. Two rules:
@@ -601,12 +610,22 @@ repo by `cycle.py::_collect_ticket_inbox`, drained once by
   classifies for all four providers, and `app._start_ticket` shells out to `cockpit new`.
   **The URL, not the id**, since `owner/repo#N` doesn't classify and a Trello short link
   carries no board.
-- **`_start_ticket` refuses an unroutable ticket rather than guessing a repo.** No repo is
-  named, so an unroutable one would land its worktree in the *daemon's own cwd*. The gate
-  reuses spawn's two offline stages (`detect_source`, `find_repos_by_ticket_key`) rather
-  than re-deriving them, and refusing loudly is the whole answer to grouping by org: the
-  header names a team, routing picks the repo, and this is the one place that choice
-  surfaces. **Do not** replace it with a cursor-row default.
+- **`_start_ticket` names the repo explicitly, and refuses when routing can't.** No repo is
+  named by the caller and its cwd is the *daemon's own*, so `cockpit new`'s documented
+  fallback to cwd discovery lands the worktree in whatever repo the daemon happens to be
+  standing in — an ambiguous Trello card matching two board-declaring repos cut two
+  worktrees off `dotfiles`, silently and on the wrong branch prefix. The resolved repo
+  therefore travels as an explicit `--repo` (`_with_repo`, shell-quoted since repo names
+  carry spaces), never as an inherited cwd. Routing is `spawn.route_ticket_repo`, the
+  cwd-less half of `cockpit new`'s own two-stage route sharing its stage one
+  (`ticket_repo_candidates`) so the two cannot disagree about what "routable" means; it is
+  called from a `@work(thread=True)` worker since stage two reaches the tracker. A URL
+  carrying its own nwo skips the route but is **still** checked against the config, since
+  spawn falls back to the cwd there too. **Do not** re-add a per-provider waiver — Trello
+  had one, on the reasoning that its board route needs a fetch spawn makes itself, and that
+  route returning nothing is exactly the case that got here. Refusing loudly is the whole
+  answer to grouping by org: the header names a team, routing picks the repo, and this is
+  the one place that choice surfaces. **Do not** replace it with a cursor-row default.
 - **Reading `org` as a bucket label is not the banned org-aware reader.** `_review_bucket_key`
   already does it for the review fold; the ban is on an `org_*` field or a resolution
   helper below `load_config`. `ticket_inbox.py` never reads it at all — the label is an

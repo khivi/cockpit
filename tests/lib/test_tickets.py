@@ -526,10 +526,17 @@ _TRELLO_CFG = {"tickets": {"provider": "trello"}}
 _CARD_URL = "https://trello.com/c/aB3dZ9/7-fix-oauth"
 
 
-def _trello_repo(name: str, board: str | None = None, **envs: str) -> dict:
+def _trello_repo(
+    name: str,
+    board: str | None = None,
+    label: str | list[str] | None = None,
+    **envs: str,
+) -> dict:
     entry: dict = {"name": name, "tickets": dict(envs)}
     if board is not None:
         entry["tickets"]["board"] = board
+    if label is not None:
+        entry["tickets"]["label"] = label
     return entry
 
 
@@ -595,6 +602,133 @@ def test_trello_narrow_keeps_every_repo_sharing_one_board(trello_creds):
     with patch("cockpit.lib.tickets.fetch_card_board", return_value="Engineering"):
         got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
     assert [r["name"] for r in got] == ["api", "web"]
+
+
+# ── stage three: `tickets.label`, for several repos on one board ───────────
+#
+# The board is Trello's outermost container and two repos genuinely share one, so
+# the board stage ties. A label is orthogonal to the *list*, so unlike routing on
+# the list name it never competes with `inbox_states` / `dev_done` / `merge_done`
+# for the field that says how far along a card is.
+
+
+def _one_board(*repos: dict) -> list[dict]:
+    return list(repos)
+
+
+def test_a_label_breaks_a_board_tie(trello_creds):
+    cands = _one_board(
+        _trello_repo("app", "Acme"),
+        _trello_repo("infra", "Acme", label="infra"),
+    )
+    with (
+        patch("cockpit.lib.tickets.fetch_card_board", return_value="Acme"),
+        patch("cockpit.lib.tickets.fetch_card_labels", return_value=["infra"]) as fetch,
+    ):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["infra"]
+    fetch.assert_called_once_with("aB3dZ9", key="k", token="t")
+
+
+def test_an_unlabelled_card_goes_to_the_repo_claiming_no_label(trello_creds):
+    """The default that keeps the common case automatic: one repo marks its work,
+    its sibling declares nothing and takes everything else."""
+    cands = _one_board(
+        _trello_repo("app", "Acme"),
+        _trello_repo("infra", "Acme", label="infra"),
+    )
+    with (
+        patch("cockpit.lib.tickets.fetch_card_board", return_value="Acme"),
+        patch("cockpit.lib.tickets.fetch_card_labels", return_value=[]),
+    ):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["app"]
+
+
+def test_a_card_carrying_an_unrelated_label_still_takes_the_default(trello_creds):
+    cands = _one_board(
+        _trello_repo("app", "Acme"),
+        _trello_repo("infra", "Acme", label="infra"),
+    )
+    with (
+        patch("cockpit.lib.tickets.fetch_card_board", return_value="Acme"),
+        patch("cockpit.lib.tickets.fetch_card_labels", return_value=["urgent"]),
+    ):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["app"]
+
+
+def test_a_label_matches_casefolded_and_accepts_a_list(trello_creds):
+    cands = _one_board(
+        _trello_repo("app", "Acme"),
+        _trello_repo("infra", "Acme", label=["ops", "Infra"]),
+    )
+    with (
+        patch("cockpit.lib.tickets.fetch_card_board", return_value="Acme"),
+        patch("cockpit.lib.tickets.fetch_card_labels", return_value=["INFRA"]),
+    ):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["infra"]
+
+
+def test_no_label_declared_skips_the_label_fetch(trello_creds):
+    """The opt-in gate, mirroring the board stage's: a config with no labels pays
+    for nothing, which is every config that existed before the field."""
+    cands = _one_board(
+        _trello_repo("api", "Engineering"), _trello_repo("web", "Engineering")
+    )
+    with (
+        patch("cockpit.lib.tickets.fetch_card_board", return_value="Engineering"),
+        patch("cockpit.lib.tickets.fetch_card_labels") as fetch,
+    ):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["api", "web"]
+    fetch.assert_not_called()
+
+
+def test_a_lone_board_match_never_pays_for_a_label_fetch(trello_creds):
+    """The board already answered, so stage three has nothing to decide."""
+    cands = _one_board(
+        _trello_repo("app", "Acme", label="infra"),
+        _trello_repo("other", "Marketing"),
+    )
+    with (
+        patch("cockpit.lib.tickets.fetch_card_board", return_value="Acme"),
+        patch("cockpit.lib.tickets.fetch_card_labels") as fetch,
+    ):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["app"]
+    fetch.assert_not_called()
+
+
+def test_an_inconclusive_label_fetch_leaves_the_board_match_unchanged(trello_creds):
+    """None is "couldn't ask" and must not be read as "carries no labels", which
+    would hand the card to the default repo on any API blip."""
+    cands = _one_board(
+        _trello_repo("app", "Acme"),
+        _trello_repo("infra", "Acme", label="infra"),
+    )
+    with (
+        patch("cockpit.lib.tickets.fetch_card_board", return_value="Acme"),
+        patch("cockpit.lib.tickets.fetch_card_labels", return_value=None),
+    ):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["app", "infra"]
+
+
+def test_every_repo_claiming_a_label_none_matching_never_narrows_to_zero(trello_creds):
+    """With no default repo to fall to, the caller's ambiguity path must still
+    run — the rule every narrowing stage in this module obeys."""
+    cands = _one_board(
+        _trello_repo("app", "Acme", label="app"),
+        _trello_repo("infra", "Acme", label="infra"),
+    )
+    with (
+        patch("cockpit.lib.tickets.fetch_card_board", return_value="Acme"),
+        patch("cockpit.lib.tickets.fetch_card_labels", return_value=["urgent"]),
+    ):
+        got = tickets.TRELLO.narrow_repos(_CARD_URL, cands, _TRELLO_CFG)
+    assert [r["name"] for r in got] == ["app", "infra"]
 
 
 def test_trello_narrow_asks_each_account_with_its_own_credential_pair(monkeypatch):

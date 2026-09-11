@@ -1018,6 +1018,28 @@ def trello_boards(cfg: dict | None = None, repo_entry: dict | None = None) -> li
     return []
 
 
+def trello_labels(cfg: dict | None = None, repo_entry: dict | None = None) -> list[str]:
+    """The Trello labels marking a card as this repo's work (`tickets.label`), or [].
+
+    Routing only, and only below the board: `tickets._trello_narrow_repos` reaches
+    it when several repos share one board, the shape `board` cannot express. A
+    label is orthogonal to the list, so unlike routing on the list name it does
+    not compete with `inbox_states` / `dev_done` / `merge_done` for the one field
+    that says how far along a card is — the card keeps its stage flow and carries
+    its owner throughout.
+
+    A repo declaring none is the board's default, taking every card no label
+    claims. A bare string is one label, a list several; matched by name,
+    casefolded, like every other provider state/list/board name.
+    """
+    val = _tickets_field(cfg, repo_entry, "label")
+    if isinstance(val, str):
+        return [val.strip()] if val.strip() else []
+    if isinstance(val, list):
+        return [lb.strip() for lb in val if isinstance(lb, str) and lb.strip()]
+    return []
+
+
 def trello_key_env(cfg: dict | None = None, repo_entry: dict | None = None) -> str:
     """Name of the env var holding this repo's Trello API key (`tickets.key_env`,
     default ``TRELLO_API_KEY``). Trello needs a key *and* a token, so it has two

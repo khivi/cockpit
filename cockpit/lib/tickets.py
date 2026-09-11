@@ -41,6 +41,7 @@ from .config import (
     trello_boards,
     trello_dev_done,
     trello_key_env,
+    trello_labels,
     trello_merge_done,
     trello_token_env,
 )
@@ -70,6 +71,7 @@ from .trello import (
     card_short_link,
     fetch_card_board,
     fetch_card_handles,
+    fetch_card_labels,
     fetch_card_lists,
     parse_trello_footer_links,
     parse_trello_footers,
@@ -734,8 +736,40 @@ def _trello_narrow_repos(ref: str, candidates: list[dict], cfg: dict) -> list[di
             r for r in group if wanted in {b.casefold() for b in trello_boards(cfg, r)}
         ]
         if hit:
-            return hit
+            return _narrow_by_label(short, hit, cfg, key=key, token=token)
     return candidates
+
+
+def _narrow_by_label(
+    short: str, hit: list[dict], cfg: dict, *, key: str, token: str
+) -> list[dict]:
+    """Narrow board-matched repos by `tickets.label` — stage three, for the
+    several-repos-one-board shape the board alone cannot resolve.
+
+    Runs only on a still-ambiguous set where some repo claims a label, so the
+    ordinary one-repo-per-board config never pays its round-trip. Like every other
+    narrowing pass it **never narrows to zero**: an inconclusive fetch, or a card
+    whose labels match nobody while every candidate claims one, returns `hit`
+    untouched so the caller's ambiguity path still runs.
+
+    A repo declaring **no** label is the board's default and takes every card no
+    label claims — which is what keeps the common case automatic: one repo marks
+    its work (`label: "infra"`), its sibling declares nothing, and an unlabelled
+    card routes to the sibling rather than refusing. A claimed label wins over
+    that default, or the two would tie on every marked card.
+    """
+    if len(hit) < 2 or not any(trello_labels(cfg, r) for r in hit):
+        return hit
+    labels = fetch_card_labels(short, key=key, token=token)
+    if labels is None:
+        return hit
+    carried = {lb.casefold() for lb in labels}
+    claimed = [
+        r for r in hit if carried & {lb.casefold() for lb in trello_labels(cfg, r)}
+    ]
+    if claimed:
+        return claimed
+    return [r for r in hit if not trello_labels(cfg, r)] or hit
 
 
 LINEAR = TicketProvider(
