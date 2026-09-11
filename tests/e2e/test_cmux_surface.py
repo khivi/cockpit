@@ -67,7 +67,7 @@ NOT_A_VERB = frozenset({"--help"})
 UNUSED_VERBS: dict[str, frozenset[str]] = {
     "actionable": frozenset(
         """browser clear-log clear-notifications clear-progress current-workspace
-        dismiss-notification identify jump-to-unread list-log
+        dismiss-notification feed identify jump-to-unread list-log
         list-notifications log mark-notification-read markdown memory notify open
         open-notification reorder-workspace reorder-workspaces
         right-sidebar set-progress sidebar sidebar-state surface-health todo top
@@ -93,7 +93,7 @@ UNUSED_VERBS: dict[str, frozenset[str]] = {
         ssh-session-list ssh-tmux vm""".split()
     ),
     "agent-lifecycle": frozenset(
-        """agent-hibernation claude-teams codex-teams feed hooks omc omo omx
+        """agent-hibernation claude-teams codex-teams hooks omc omo omx
         restore restore-session""".split()
     ),
     "chrome": frozenset(

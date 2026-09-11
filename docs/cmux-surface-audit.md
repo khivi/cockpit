@@ -7,6 +7,10 @@ here are written down; the counts are not — `tests/e2e/test_cmux_surface.py` h
 those against whatever cmux is installed, and fails when this classification falls
 behind it.
 
+Re-measured 2026-09-11 against the same build, so the CLI half was unchanged and the
+live test passed untouched. The RPC half was examined for the first time; see
+*Probed 2026-09-11* below, which is also why `feed` moved buckets.
+
 This is a **map, not a backlog**. An unused verb costs nothing: the daemon's cost is
 what it calls, and "cmux can do it" has never been a reason to. The point of writing
 it down is that nobody had ever compared the two surfaces deliberately, so there was
@@ -96,6 +100,12 @@ surface — `cmux rpc <method> [json-params]` takes an arbitrary method name, an
 dispatcher behind it exposes several hundred of them. cockpit reaches into it exactly
 twice, for one method. Whole families sit there unexamined — `browser.*` alone is a
 full Playwright-shaped automation surface.
+
+**And a family's CLI face does not predict its size.** `feed.*` advertises two
+subcommands and hides six methods that read and answer pending agent prompts;
+`workspace.group.*` is the inverse, a documented-by-`--help` verb with no entry in
+`Commands:` at all. Bucketing by the CLI is what filed `feed` under "not applicable"
+for a whole audit pass. The RPC list is the surface; the CLI is a view of it.
 
 ## What cockpit uses
 
@@ -228,12 +238,89 @@ the unused set is bucketed below.
 | `tree` / `top` / `memory` | Process tree, CPU/memory per workspace, memory grouping. | A resource column beside `$`; catching a runaway agent. | `top` supports `--all` and `--format tsv`, so unlike most of this list it is **one** call for every workspace. The cheapest unexplored thing here. |
 | `browser` | 43 subcommands — navigate, click, fill, screenshot, snapshot, eval, network routing, cookies, storage, tracing. A Playwright-shaped automation surface, mirrored by ~100 `browser.*` RPC methods. | Nothing in cockpit's current scope. Listed because `diff` and `open` both render into a browser pane, so anything built on either inherits `enable-browser` as a prerequisite. | Needs the browser enabled. By far the largest single family, and entirely unexamined. |
 | `markdown` | `markdown [open] <path>` — formatted viewer panel with live reload. | Rendering a PR body, a plan file, or `AGENTS.md` in-app rather than in the pager. | Its own panel, so it competes with the TUI for screen rather than composing with it. Unprobed. |
+| `feed` | CLI is only `feed tui\|clear`, but the RPC family behind it is six methods: `feed.list`, `feed.push`, `feed.jump`, and the three replies (`feed.permission.reply`, `feed.question.reply`, `feed.exit_plan.reply`). `feed.list` returns a cross-workspace event log keyed by `cwd` **and** `workstream_id` — the Claude session id. | Two things nothing else on this surface offers. (1) **A structural answer to the `Needs input` ambiguity**: a pending choice is an item with `kind: question`, `status: pending`, a `request_id` and a null `resolved_at`, where the idle gate's fallback is `_screen_signals_idle` scraping terminal chrome. (2) **Answering that choice without synthesizing a keystroke**, via the reply methods. It also carries `kind: stop`, the same Claude Code Stop event cockpit installs its own `~/.claude` hook to capture. | **Probed working 2026-09-11** — see below. Undocumented, unbounded, and it would be a second at-rest authority, which the nudge-gate invariant currently forbids. |
 
 **The standing cost argument.** `cmux list-status` has **no bulk mode** — `--help`
 accepts `--workspace`/`--window` only, and a bare invocation returns a single
 workspace. Any per-row cmux state therefore costs one subprocess per row per refresh.
 That is what makes most of this table expensive on a tick, and why `top --all` stands
-out.
+out. **Re-checked against the RPC surface 2026-09-11 and it is cmux's shape, not a CLI
+limitation**: there is no `workspace.status.*` family and no bulk status method under
+any name, so this cannot be bought back by dropping to `rpc`.
+
+## Probed 2026-09-11 — the `feed` RPC family
+
+Re-measured against the same build this audit was first written against, so **no verb
+had landed in between** and `tests/e2e/test_cmux_surface.py` passed untouched. The
+findings below all come from the RPC surface, which the audit flagged as unexamined
+and which no test covers.
+
+Two negative results first, because they close questions rather than open them:
+
+- **There is no git surface.** Across every advertised method, `git` matches only
+  `surface.report_git_branch` and `surface.clear_git_branch` — both *report-in* hooks
+  a shell calls to tell cmux where it is. `diff` and `worktree` match **nothing**.
+  cmux's own git story is an external TUI in a pane, so there is no native diff,
+  branch or worktree API cockpit is failing to use, and `cmux diff` remains the whole
+  of it.
+- **`workspace.prompt_submit` is not a structured composer submit, and it lies about
+  it.** It looked like the answer to `deliver_followup`'s confirm-on-screen machinery,
+  which exists only because `send` + `send-key enter` is keystroke synthesis with no
+  delivery confirmation. Probed against a live session it returned
+  `{"message_recorded": true}` alongside `message_preview`, `index` and
+  `i_message_mode_enabled` — cmux-side workspace *message* state — and **the session
+  never saw it**: composer empty, no turn started, status still `Idle`. A
+  success-shaped payload for an effect that did not happen is precisely the trap the
+  test-style rule about verifying the outcome rather than the proxy was written for.
+  **Do not** reach for this to replace the keystroke path.
+
+What does work: `feed.list` needs no arguments, spans every workspace in one call,
+and keys each item by `cwd` **and** `workstream_id` — the worktree path and the Claude
+session id, the two keys cockpit's flat cells already use. Observed item kinds are
+`sessionStart`, `userPrompt`, `toolUse`, `toolResult`, `stop`, `sessionEnd` and
+`question`. Everything telemetry-shaped carries `status: telemetry`; a `question`
+carries the lifecycle `pending` → `resolved`, plus `expired` for one that timed out,
+with `resolved_at` null while pending and a `request_id` that embeds the session id.
+
+`feed.question.reply` was then driven end to end against a throwaway workspace: given
+`{request_id, selections: [<option label>]}` it returned `{"delivered": true}`, the
+session recorded the answer as `Allowed by PermissionRequest hook`, and the item
+flipped to `resolved`. **No keystroke was synthesized and the session was never
+focused.** `feed.permission.reply` and `feed.exit_plan.reply` take the same
+`request_id` and were not exercised (see the gap below).
+
+Five caveats, each of which is a blocker in its own right:
+
+- **It is entirely undocumented.** `cmux docs api` ships no schema and upstream's
+  `cli-contract.md` has no hit for any of these names, so the parameters above were
+  recovered by reading validation errors back off deliberately malformed calls. This
+  is the same shape as defect 1 — the most load-bearing thing on the surface is the
+  thing with no contract — except `workspace-group` at least has `--help`.
+- **The only gate available is `notification.feed.v1`**, the capability this audit
+  *removed* from `REQUIRED_CAPABILITIES` as requiring a feature that does not exist.
+  Anything built here re-adds it, and would have to say so.
+- **`feed.list` is unbounded.** A `limit` parameter is accepted and ignored: the call
+  returned its full rolling buffer, two thousand items and ~200KB of JSON, regardless.
+  Nothing on a 30s tick can afford that as written, and there is no observed parameter
+  that narrows it.
+- **`cwd` is the resolved path, not the one cockpit holds.** A workspace created at
+  `/tmp/…` comes back as `/private/tmp/…`. Every flat cell is keyed by worktree path,
+  so any join here needs `resolve()` on both sides or it silently matches nothing.
+- **The `permission` kind was never observed.** This machine's config auto-allows
+  through a classifier and hook-denies the rest, so no tool-permission prompt could be
+  produced to look at — only `question`. That the question's own `request_id` reads
+  `…-PermissionRequest-AskUserQuestion-…` suggests questions ride the permission
+  plumbing and the shape is shared, but that is an **inference, not a measurement**.
+
+**What this does and does not settle.** It does not make a feature. The nudge gate's
+`Needs input` ambiguity now has a structural answer where it previously had only a
+terminal scrape that the invariant itself admits can drift — but adopting it means
+taking `kind: stop` as a second at-rest authority, which that same invariant forbids
+in as many words, and it means a tick-time reader of an unbounded undocumented
+endpoint. It also reopens the row-key gesture dropped 2026-08-20, honestly: that
+decision rejected a `send-key` synthesis design, and a `request_id` reply is a
+different mechanism, not a retry of the rejected one. All three are decisions for
+whoever picks this up, and none of them is "cmux can do it".
 
 ## The rest, bucketed
 
@@ -267,9 +354,17 @@ new product decision, not an unused capability.
 
 **Agent launchers and session lifecycle.** `claude-teams`,
 `codex-teams`, `omo`/`omx`/`omc`, `hooks`, `agent-hibernation`, `restore`,
-`restore-session`, `feed`. cockpit spawns agents through `new-workspace --command`
+`restore-session`. cockpit spawns agents through `new-workspace --command`
 with its own seeded prompt, which is the seam the whole `prompts/` template layer
 hangs off; the launcher verbs would replace that seam rather than extend it.
+
+`feed` **used to be bucketed here, and that was wrong** — it is not a launcher.
+Its CLI face (`feed tui|clear`) is a viewer, and the RPC family behind it reads
+and answers pending agent prompts. It moved to the table above; this note stays
+because the mistake is instructive. Bucketing by the *verb's* CLI surface put the
+one family bearing on cockpit's least-solved problem into the bucket whose prose
+says "not applicable", and it sat there unexamined through a full audit pass.
+**A verb whose CLI is thin is not evidence its RPC family is.**
 `hooks` overlaps cockpit's own `~/.claude` hook install (`config.install_claude_hooks`)
 and is the one here worth a second look if the idle-pill mechanism ever needs
 rebuilding.
