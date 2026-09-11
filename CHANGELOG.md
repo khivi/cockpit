@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.3](https://github.com/khivi/cockpit/compare/v3.3.2...v3.3.3) (2026-09-11)
+
+
+### Documentation
+
+* **cmux-surface-audit:** probe the RPC surface and re-bucket feed ([#509](https://github.com/khivi/cockpit/issues/509)) ([a52ac9a](https://github.com/khivi/cockpit/commit/a52ac9a8a7444d3e5cfc6e98a83c5349338a9b94))
+
 ## [3.3.2](https://github.com/khivi/cockpit/compare/v3.3.1...v3.3.2) (2026-09-11)
 
 
