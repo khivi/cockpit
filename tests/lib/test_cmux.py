@@ -2224,3 +2224,559 @@ def test_render_diff_is_inert_without_cmux():
     with patch("cockpit.lib.tool.resolve_tool", return_value="none"):
         msg = cmux_mod.render_diff(patch="d", cwd="/r", title="t")
     assert "requires cmux" in msg
+
+
+# ── spawn_pr_workspace / spawn_orphan_workspace ─────────────────────────────
+#
+# These patch every collaborator in the `cockpit.lib.cmux` namespace (not
+# `cockpit.lib.prompts` or elsewhere) — per AGENTS.md, patching a name in one
+# module never rebinds another module's copy. Per AGENTS.md's "cmux is the one
+# leaf the first rule cannot reach" rule, none of this asserts that cmux
+# received a working send or that a workspace came up ready — only the
+# function's OWN ordering and gating: whether it calls its collaborators at
+# all, in what order, and with what arguments.
+
+
+def test_spawn_pr_workspace_dry_run_prints_pills_and_calls_nothing():
+    calls: list[tuple] = []
+
+    with (
+        patch("cockpit.lib.cmux.status_pills", return_value=[("wip", "1", "#fff")]),
+        patch(
+            "cockpit.lib.cmux.split_prompt_prefix",
+            side_effect=lambda *a, **k: calls.append(("split_prompt_prefix", a, k)),
+        ),
+        patch(
+            "cockpit.lib.cmux.spawn_workspace",
+            side_effect=lambda *a, **k: calls.append(("spawn_workspace", a, k)),
+        ),
+        patch(
+            "cockpit.lib.cmux.deliver_followup",
+            side_effect=lambda *a, **k: calls.append(("deliver_followup", a, k)),
+        ),
+        patch(
+            "cockpit.lib.cmux.apply_pills",
+            side_effect=lambda *a, **k: calls.append(("apply_pills", a, k)),
+        ),
+    ):
+        result = cmux_mod.spawn_pr_workspace(_pr(), _wt(), dry=True)
+
+    assert result is None
+    assert calls == []
+
+
+def test_spawn_pr_workspace_dry_run_prints_one_pill_line_per_pill(capsys):
+    pills = [("wip", "1 dirty", "#ff9500"), ("pr", "PR #1", "#16a34a")]
+    with patch("cockpit.lib.cmux.status_pills", return_value=pills):
+        result = cmux_mod.spawn_pr_workspace(_pr(), _wt(), dry=True)
+
+    assert result is None
+    out = capsys.readouterr().out
+    assert "[dry] spawn" in out
+    assert "[dry]   pill wip=1 dirty" in out
+    assert "[dry]   pill pr=PR #1" in out
+
+
+def test_spawn_orphan_workspace_dry_run_prints_line_and_calls_nothing():
+    calls: list[tuple] = []
+    with (
+        patch(
+            "cockpit.lib.cmux.split_prompt_prefix",
+            side_effect=lambda *a, **k: calls.append(("split_prompt_prefix", a, k)),
+        ),
+        patch(
+            "cockpit.lib.cmux.spawn_workspace",
+            side_effect=lambda *a, **k: calls.append(("spawn_workspace", a, k)),
+        ),
+        patch(
+            "cockpit.lib.cmux.deliver_followup",
+            side_effect=lambda *a, **k: calls.append(("deliver_followup", a, k)),
+        ),
+        patch(
+            "cockpit.lib.cmux._set_status",
+            side_effect=lambda *a, **k: calls.append(("_set_status", a, k)),
+        ),
+        patch(
+            "cockpit.lib.cmux.apply_wip_pill",
+            side_effect=lambda *a, **k: calls.append(("apply_wip_pill", a, k)),
+        ),
+    ):
+        result = cmux_mod.spawn_orphan_workspace(_wt(), dry=True)
+
+    assert result is None
+    assert calls == []
+
+
+def _patched_pr_spawn(
+    *,
+    followup: str | None,
+    spawned_ref: str | None = "workspace:new",
+):
+    """Common patch set for `spawn_pr_workspace`'s non-dry path. Returns the
+    context manager plus a shared `calls` list recording every collaborator
+    invocation in call order, so tests can assert both gating and ordering."""
+    calls: list[tuple] = []
+
+    def _deliver(ref, text):
+        calls.append(("deliver_followup", ref, text))
+        return True
+
+    def _apply(*a, **k):
+        calls.append(("apply_pills", a, k))
+        return frozenset()
+
+    ctx = (
+        patch("cockpit.lib.cmux.build_pr_prompt", return_value="built-prompt"),
+        patch(
+            "cockpit.lib.cmux.split_prompt_prefix",
+            return_value=("initial", followup),
+        ),
+        patch("cockpit.lib.cmux.claude_command", return_value="claude initial"),
+        patch("cockpit.lib.cmux.spawn_workspace", return_value=spawned_ref),
+        patch("cockpit.lib.cmux.deliver_followup", side_effect=_deliver),
+        patch("cockpit.lib.cmux.apply_pills", side_effect=_apply),
+    )
+    return ctx, calls
+
+
+def test_spawn_pr_workspace_delivers_followup_when_prompt_splits_in_two():
+    ctx, calls = _patched_pr_spawn(followup="do the task")
+    with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        result = cmux_mod.spawn_pr_workspace(_pr(), _wt())
+
+    assert result == "workspace:new"
+    delivered = [c for c in calls if c[0] == "deliver_followup"]
+    assert delivered == [("deliver_followup", "workspace:new", "do the task")]
+
+
+def test_spawn_pr_workspace_skips_delivery_when_followup_is_empty():
+    ctx, calls = _patched_pr_spawn(followup=None)
+    with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        result = cmux_mod.spawn_pr_workspace(_pr(), _wt())
+
+    assert result == "workspace:new"
+    assert [c for c in calls if c[0] == "deliver_followup"] == []
+
+
+def test_spawn_pr_workspace_followup_delivered_before_pills_are_applied():
+    ctx, calls = _patched_pr_spawn(followup="do the task")
+    with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        cmux_mod.spawn_pr_workspace(_pr(), _wt())
+
+    kinds = [c[0] for c in calls]
+    assert kinds == ["deliver_followup", "apply_pills"]
+
+
+def test_spawn_pr_workspace_none_ref_warns_and_skips_pills_and_followup(capsys):
+    ctx, calls = _patched_pr_spawn(followup="do the task", spawned_ref=None)
+    with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        result = cmux_mod.spawn_pr_workspace(_pr(), _wt())
+
+    assert result is None
+    assert calls == []
+    err = capsys.readouterr().err
+    assert "warn:" in err
+    assert "could not resolve new workspace ref" in err
+
+
+def _patched_orphan_spawn(
+    *,
+    followup: str | None,
+    spawned_ref: str | None = "workspace:orphan",
+):
+    calls: list[tuple] = []
+
+    def _deliver(ref, text):
+        calls.append(("deliver_followup", ref, text))
+        return True
+
+    def _set_status(*a, **k):
+        calls.append(("_set_status", a, k))
+
+    def _apply_wip(*a, **k):
+        calls.append(("apply_wip_pill", a, k))
+
+    ctx = (
+        patch("cockpit.lib.cmux.build_orphan_prompt", return_value="built-prompt"),
+        patch(
+            "cockpit.lib.cmux.split_prompt_prefix",
+            return_value=("initial", followup),
+        ),
+        patch("cockpit.lib.cmux.claude_command", return_value="claude initial"),
+        patch("cockpit.lib.cmux.spawn_workspace", return_value=spawned_ref),
+        patch("cockpit.lib.cmux.deliver_followup", side_effect=_deliver),
+        patch("cockpit.lib.cmux._set_status", side_effect=_set_status),
+        patch("cockpit.lib.cmux.apply_wip_pill", side_effect=_apply_wip),
+    )
+    return ctx, calls
+
+
+def test_spawn_orphan_workspace_delivers_followup_when_prompt_splits_in_two():
+    ctx, calls = _patched_orphan_spawn(followup="fresh worktree, no PR yet")
+    with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
+        result = cmux_mod.spawn_orphan_workspace(_wt())
+
+    assert result == "workspace:orphan"
+    delivered = [c for c in calls if c[0] == "deliver_followup"]
+    assert delivered == [
+        ("deliver_followup", "workspace:orphan", "fresh worktree, no PR yet")
+    ]
+
+
+def test_spawn_orphan_workspace_skips_delivery_when_followup_is_empty():
+    ctx, calls = _patched_orphan_spawn(followup=None)
+    with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
+        result = cmux_mod.spawn_orphan_workspace(_wt())
+
+    assert result == "workspace:orphan"
+    assert [c for c in calls if c[0] == "deliver_followup"] == []
+
+
+def test_spawn_orphan_workspace_sets_orphan_status_and_wip_pill_from_dirty_count():
+    ctx, calls = _patched_orphan_spawn(followup=None)
+    wt = _wt(dirty=3)
+    with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
+        result = cmux_mod.spawn_orphan_workspace(wt)
+
+    assert result == "workspace:orphan"
+    status_calls = [c for c in calls if c[0] == "_set_status"]
+    assert status_calls == [
+        (
+            "_set_status",
+            (
+                "workspace:orphan",
+                cmux_mod.ORPHAN_KEY,
+                cmux_mod.ORPHAN_ICON,
+                cmux_mod.ORANGE,
+            ),
+            {},
+        )
+    ]
+    wip_calls = [c for c in calls if c[0] == "apply_wip_pill"]
+    assert wip_calls == [("apply_wip_pill", ("workspace:orphan", 3), {})]
+
+
+def test_spawn_orphan_workspace_none_ref_warns_and_skips_everything(capsys):
+    ctx, calls = _patched_orphan_spawn(
+        followup="fresh worktree, no PR yet", spawned_ref=None
+    )
+    with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
+        result = cmux_mod.spawn_orphan_workspace(_wt())
+
+    assert result is None
+    assert calls == []
+    err = capsys.readouterr().err
+    assert "warn:" in err
+    assert "could not resolve orphan workspace ref" in err
+
+
+def _patched_close_gone(*, names: dict[str, str], cwds: dict[str, Path]):
+    """Patch `workspace_state`/`cmux_close_workspace_best_effort` in the
+    `cockpit.lib.cmux` namespace, since patching either name anywhere else
+    never rebinds this module's copy (AGENTS.md's paid-for regression)."""
+    calls: list[str] = []
+
+    def _close(ref):
+        calls.append(ref)
+        return True
+
+    ctx = (
+        patch("cockpit.lib.cmux.workspace_state", return_value=(names, cwds)),
+        patch("cockpit.lib.cmux.cmux_close_workspace_best_effort", side_effect=_close),
+    )
+    return ctx, calls
+
+
+def test_close_gone_cwd_workspaces_leaves_existing_cwd_alone(tmp_path):
+    ctx, calls = _patched_close_gone(names={}, cwds={"workspace:1": tmp_path})
+    with ctx[0], ctx[1]:
+        result = cmux_mod.close_gone_cwd_workspaces()
+
+    assert result == []
+    assert calls == []
+
+
+def test_close_gone_cwd_workspaces_closes_missing_cwd_via_best_effort(tmp_path):
+    missing = tmp_path / "gone"
+    ctx, calls = _patched_close_gone(names={}, cwds={"workspace:1": missing})
+    with ctx[0], ctx[1]:
+        result = cmux_mod.close_gone_cwd_workspaces()
+
+    assert result == ["workspace:1"]
+    assert calls == ["workspace:1"]
+
+
+def test_close_gone_cwd_workspaces_uses_best_effort_not_raw_cmux(tmp_path):
+    """Pin the AGENTS.md invariant: a close must go through
+    `cmux_close_workspace_best_effort`, the funnel that records the
+    self-close so `cmux events` doesn't route it into teardown as the
+    user's sidebar X. A raw `cmux("close-workspace", ...)` call here would
+    be a regression this test must catch."""
+    missing = tmp_path / "gone"
+    with (
+        patch(
+            "cockpit.lib.cmux.workspace_state",
+            return_value=({}, {"workspace:1": missing}),
+        ),
+        patch("cockpit.lib.cmux.cmux_close_workspace_best_effort") as mock_close,
+        patch("cockpit.lib.cmux.cmux") as mock_cmux,
+    ):
+        result = cmux_mod.close_gone_cwd_workspaces()
+
+    mock_close.assert_called_once_with("workspace:1")
+    mock_cmux.assert_not_called()
+    assert result == ["workspace:1"]
+
+
+def test_close_gone_cwd_workspaces_dry_run_prints_and_closes_nothing(capsys):
+    missing = Path("/nonexistent/definitely-gone")
+    ctx, calls = _patched_close_gone(names={}, cwds={"workspace:1": missing})
+    with ctx[0], ctx[1]:
+        result = cmux_mod.close_gone_cwd_workspaces(dry=True)
+
+    assert result == []
+    assert calls == []
+    out = capsys.readouterr().out
+    assert "[dry] autoclose" in out
+    assert "workspace:1" in out
+
+
+def test_close_gone_cwd_workspaces_prints_name_when_known(capsys):
+    missing = Path("/nonexistent/definitely-gone")
+    ctx, calls = _patched_close_gone(
+        names={"workspace:1": "my-workspace"}, cwds={"workspace:1": missing}
+    )
+    with ctx[0], ctx[1]:
+        result = cmux_mod.close_gone_cwd_workspaces()
+
+    assert result == ["workspace:1"]
+    out = capsys.readouterr().out
+    assert "my-workspace" in out
+    assert "closing workspace my-workspace (workspace:1)" in out
+
+
+def test_close_gone_cwd_workspaces_prints_bare_ref_when_name_unknown(capsys):
+    missing = Path("/nonexistent/definitely-gone")
+    ctx, calls = _patched_close_gone(names={}, cwds={"workspace:1": missing})
+    with ctx[0], ctx[1]:
+        result = cmux_mod.close_gone_cwd_workspaces()
+
+    assert result == ["workspace:1"]
+    out = capsys.readouterr().out
+    assert "closing workspace workspace:1 (workspace:1)" in out
+
+
+def test_close_gone_cwd_workspaces_mixed_closes_only_missing_in_order(tmp_path):
+    live = tmp_path
+    gone_a = tmp_path / "gone-a"
+    gone_b = tmp_path / "gone-b"
+    cwds = {
+        "workspace:live": live,
+        "workspace:gone-a": gone_a,
+        "workspace:gone-b": gone_b,
+    }
+    ctx, calls = _patched_close_gone(names={}, cwds=cwds)
+    with ctx[0], ctx[1]:
+        result = cmux_mod.close_gone_cwd_workspaces()
+
+    assert result == ["workspace:gone-a", "workspace:gone-b"]
+    assert calls == ["workspace:gone-a", "workspace:gone-b"]
+
+
+# ── find_cockpit_workspaces ──────────────────────────────────────────────────
+
+
+def _wt_at(path: Path, branch: str, *, branch_prefix: str = "khivi/") -> Worktree:
+    """A worktree whose `workspace_name` derives from the branch label, not
+    the directory basename (AGENTS.md's `Workspace names track repo +
+    branch` rule) — `path.name` is deliberately kept distinct from the
+    branch-derived label in every fixture below."""
+    return Worktree(path=path, branch=branch, branch_prefix=branch_prefix)
+
+
+def test_find_cockpit_workspaces_cwd_match_wins_over_name_match(tmp_path):
+    # Ticket-named workspaces rooted in a feature worktree: the workspace's
+    # `cwd` is worktree A, but cmux's own name happens to collide with
+    # worktree B's workspace_name. cwd must win.
+    wt_a = _wt_at(tmp_path / "dir-a", "khivi/feature-a")
+    wt_b = _wt_at(tmp_path / "dir-b", "khivi/feature-b")
+    wt_a.path.mkdir()
+    wt_b.path.mkdir()
+    assert wt_a.workspace_name == "feature-a"
+    assert wt_b.workspace_name == "feature-b"
+
+    pr_a = _pr(number=1, branch="khivi/feature-a")
+    pr_b = _pr(number=2, branch="khivi/feature-b")
+
+    ref = "workspace:1"
+    cwds = {ref: wt_a.path}
+    names = {ref: wt_b.workspace_name}  # deliberately points at the OTHER wt
+
+    result = cmux_mod.find_cockpit_workspaces(
+        [pr_a, pr_b], [wt_a, wt_b], names=names, cwds=cwds
+    )
+
+    assert result == {ref: (pr_a, wt_a)}
+
+
+def test_find_cockpit_workspaces_falls_back_to_name_when_ref_has_no_cwd(tmp_path):
+    wt = _wt_at(tmp_path / "dir-x", "khivi/feature-x")
+    wt.path.mkdir()
+    pr = _pr(number=1, branch="khivi/feature-x")
+
+    ref = "workspace:2"
+    names = {ref: wt.workspace_name}
+
+    result = cmux_mod.find_cockpit_workspaces([pr], [wt], names=names, cwds={})
+
+    assert result == {ref: (pr, wt)}
+
+
+def test_find_cockpit_workspaces_falls_back_to_name_when_cwd_matches_nothing(
+    tmp_path,
+):
+    wt = _wt_at(tmp_path / "dir-x", "khivi/feature-x")
+    wt.path.mkdir()
+    pr = _pr(number=1, branch="khivi/feature-x")
+
+    ref = "workspace:2"
+    unrelated = tmp_path / "not-a-worktree"
+    cwds = {ref: unrelated}
+    names = {ref: wt.workspace_name}
+
+    result = cmux_mod.find_cockpit_workspaces([pr], [wt], names=names, cwds=cwds)
+
+    assert result == {ref: (pr, wt)}
+
+
+def test_find_cockpit_workspaces_matches_symlinked_cwd_via_resolve(tmp_path):
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    link_dir = tmp_path / "link"
+    link_dir.symlink_to(real_dir, target_is_directory=True)
+
+    wt = _wt_at(real_dir, "khivi/feature-y")
+    pr = _pr(number=1, branch="khivi/feature-y")
+
+    ref = "workspace:3"
+    result = cmux_mod.find_cockpit_workspaces(
+        [pr], [wt], names={}, cwds={ref: link_dir}
+    )
+
+    assert result == {ref: (pr, wt)}
+
+
+def test_find_cockpit_workspaces_matches_non_normalized_cwd_via_resolve(tmp_path):
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    non_normalized = tmp_path / "sub" / ".." / "real"
+
+    wt = _wt_at(real_dir, "khivi/feature-z")
+    pr = _pr(number=1, branch="khivi/feature-z")
+
+    ref = "workspace:4"
+    result = cmux_mod.find_cockpit_workspaces(
+        [pr], [wt], names={}, cwds={ref: non_normalized}
+    )
+
+    assert result == {ref: (pr, wt)}
+
+
+def test_find_cockpit_workspaces_skips_ref_matching_no_worktree(tmp_path):
+    wt = _wt_at(tmp_path / "dir-a", "khivi/feature-a")
+    wt.path.mkdir()
+    pr = _pr(number=1, branch="khivi/feature-a")
+
+    ref = "workspace:5"
+    unrelated = tmp_path / "unrelated"
+    result = cmux_mod.find_cockpit_workspaces(
+        [pr], [wt], names={}, cwds={ref: unrelated}
+    )
+
+    assert result == {}
+
+
+def test_find_cockpit_workspaces_skips_worktree_whose_branch_has_no_pr(tmp_path):
+    wt = _wt_at(tmp_path / "dir-a", "khivi/no-pr-branch")
+    wt.path.mkdir()
+    other_pr = _pr(number=1, branch="khivi/some-other-branch")
+
+    ref = "workspace:6"
+    result = cmux_mod.find_cockpit_workspaces(
+        [other_pr], [wt], names={}, cwds={ref: wt.path}
+    )
+
+    assert result == {}
+
+
+def test_find_cockpit_workspaces_iterates_union_of_cwd_and_name_refs(tmp_path):
+    # A ref present only in `cwds` and a ref present only in `names` must
+    # BOTH be considered (the function iterates `set(cwds) | set(names)`).
+    wt_cwd_only = _wt_at(tmp_path / "dir-a", "khivi/feature-a")
+    wt_name_only = _wt_at(tmp_path / "dir-b", "khivi/feature-b")
+    wt_cwd_only.path.mkdir()
+    wt_name_only.path.mkdir()
+
+    pr_a = _pr(number=1, branch="khivi/feature-a")
+    pr_b = _pr(number=2, branch="khivi/feature-b")
+
+    ref_cwd_only = "workspace:cwd-only"
+    ref_name_only = "workspace:name-only"
+
+    cwds = {ref_cwd_only: wt_cwd_only.path}
+    names = {ref_name_only: wt_name_only.workspace_name}
+
+    result = cmux_mod.find_cockpit_workspaces(
+        [pr_a, pr_b], [wt_cwd_only, wt_name_only], names=names, cwds=cwds
+    )
+
+    assert result == {
+        ref_cwd_only: (pr_a, wt_cwd_only),
+        ref_name_only: (pr_b, wt_name_only),
+    }
+
+
+def test_find_cockpit_workspaces_defaults_to_live_workspace_lookups_when_omitted(
+    tmp_path,
+):
+    """`cwds=None`/`names=None` must fall back to calling `workspace_cwds()`
+    and `workspace_names()` — patched in the `cockpit.lib.cmux` namespace,
+    since patching either name anywhere else never rebinds this module's
+    copy (AGENTS.md's paid-for regression)."""
+    wt = _wt_at(tmp_path / "dir-a", "khivi/feature-a")
+    wt.path.mkdir()
+    pr = _pr(number=1, branch="khivi/feature-a")
+    ref = "workspace:1"
+
+    with (
+        patch(
+            "cockpit.lib.cmux.workspace_cwds", return_value={ref: wt.path}
+        ) as mock_cwds,
+        patch("cockpit.lib.cmux.workspace_names", return_value={}) as mock_names,
+    ):
+        result = cmux_mod.find_cockpit_workspaces([pr], [wt])
+
+    mock_cwds.assert_called_once_with()
+    mock_names.assert_called_once_with()
+    assert result == {ref: (pr, wt)}
+
+
+def test_find_cockpit_workspaces_pr_by_branch_is_last_wins_on_duplicate_branch(
+    tmp_path,
+):
+    """Pins the CURRENT (ambiguous) behavior of the `pr_by_branch` last-wins
+    comprehension — this is the exact join-side collision
+    `gh.list_relevant_prs`'s `_one_pr_per_branch` is meant to collapse
+    upstream; this test does not assert it is correct, only what happens
+    here when two PRs share a head branch."""
+    wt = _wt_at(tmp_path / "dir-a", "khivi/feature-a")
+    wt.path.mkdir()
+    pr_first = _pr(number=1, branch="khivi/feature-a")
+    pr_second = _pr(number=2, branch="khivi/feature-a")
+
+    ref = "workspace:1"
+    result = cmux_mod.find_cockpit_workspaces(
+        [pr_first, pr_second], [wt], names={}, cwds={ref: wt.path}
+    )
+
+    assert result == {ref: (pr_second, wt)}

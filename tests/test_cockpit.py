@@ -1115,3 +1115,173 @@ def test_the_drain_costs_nothing_when_the_queue_is_empty(monkeypatch):
 
     assert cockpit._drain_seed_queue({"workspace:1"}, dry=False) == []
     assert sends == []
+
+
+# ---- --watch poll-interval validation ---------------------------------------
+
+
+def _prep_watch_cli(tmp_path, monkeypatch, cfg: dict):
+    """Get past the same require_git/require_gh/preflight preconditions the
+    other `main(["--watch", ...])` tests do, then hand back the reloaded module
+    with `load_config` pinned to `cfg`."""
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    import cockpit.cockpit as cockpit
+
+    importlib.reload(cockpit)
+    monkeypatch.setattr(cockpit, "load_config", lambda: cfg)
+    return cockpit
+
+
+def test_watch_rejects_slow_poll_below_minimum(tmp_path, monkeypatch, capsys):
+    """A slow interval under MIN_POLL_SECS exits 2 before anything is built or
+    watched — a config that fires the daemon in a tight loop must never reach
+    `_watch`."""
+    cockpit = _prep_watch_cli(
+        tmp_path,
+        monkeypatch,
+        {"repos": [], "slow_poll_interval_seconds": 4},
+    )
+    assert cockpit.MIN_POLL_SECS > 4
+    built: list = []
+    watched: list = []
+    monkeypatch.setattr(cockpit, "_build_state", lambda *_a, **_kw: built.append(True))
+    monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: watched.append(True))
+
+    assert cockpit.main(["--watch"]) == 2
+
+    assert built == []
+    assert watched == []
+    err = capsys.readouterr().err
+    assert f"slow_poll_interval_seconds must be >= {cockpit.MIN_POLL_SECS}" in err
+
+
+def test_watch_rejects_negative_fast_poll(tmp_path, monkeypatch, capsys):
+    """A negative fast interval is nonsensical (not the "disable" value) and
+    exits 2 without building state or launching `_watch`."""
+    cockpit = _prep_watch_cli(
+        tmp_path, monkeypatch, {"repos": [], "fast_poll_interval_seconds": -1}
+    )
+    built: list = []
+    watched: list = []
+    monkeypatch.setattr(cockpit, "_build_state", lambda *_a, **_kw: built.append(True))
+    monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: watched.append(True))
+
+    assert cockpit.main(["--watch"]) == 2
+
+    assert built == []
+    assert watched == []
+    err = capsys.readouterr().err
+    assert (
+        f"fast_poll_interval_seconds must be 0 (disable) or >= {cockpit.MIN_POLL_SECS}"
+        in err
+    )
+
+
+def test_watch_rejects_fast_poll_strictly_between_zero_and_minimum(
+    tmp_path, monkeypatch, capsys
+):
+    """A fast interval that is positive but under MIN_POLL_SECS is neither a
+    legal cadence nor the `0` disable sentinel, so it is rejected too — the
+    message documents that `0` (not this range) is how you turn the fast tick
+    off."""
+    cockpit = _prep_watch_cli(
+        tmp_path,
+        monkeypatch,
+        {"repos": [], "fast_poll_interval_seconds": 1},
+    )
+    assert 0 < 1 < cockpit.MIN_POLL_SECS
+    built: list = []
+    watched: list = []
+    monkeypatch.setattr(cockpit, "_build_state", lambda *_a, **_kw: built.append(True))
+    monkeypatch.setattr(cockpit, "_watch", lambda *_a, **_kw: watched.append(True))
+
+    assert cockpit.main(["--watch"]) == 2
+
+    assert built == []
+    assert watched == []
+    err = capsys.readouterr().err
+    assert (
+        f"fast_poll_interval_seconds must be 0 (disable) or >= {cockpit.MIN_POLL_SECS}"
+        in err
+    )
+
+
+def test_watch_accepts_fast_poll_zero_as_disable(tmp_path, monkeypatch):
+    """`0` is the documented "disable the fast tick" sentinel, the exact
+    boundary the `0 < fast_secs < MIN_POLL_SECS` condition exists to carve out
+    — it must reach `_watch`, not be rejected alongside the range just below
+    `MIN_POLL_SECS`."""
+    cockpit = _prep_watch_cli(
+        tmp_path,
+        monkeypatch,
+        {"repos": [], "fast_poll_interval_seconds": 0},
+    )
+    monkeypatch.setattr(cockpit, "_build_state", lambda dry=False: {"dry": dry})
+    watch_calls: list = []
+    monkeypatch.setattr(
+        cockpit,
+        "_watch",
+        lambda state, slow, fast: watch_calls.append((state, slow, fast)) or 0,
+    )
+
+    assert cockpit.main(["--watch"]) == 0
+
+    assert watch_calls == [({"dry": False}, cockpit.DEFAULT_SLOW_POLL_SECS, 0)]
+
+
+def test_watch_reaches_watch_with_parsed_secs_and_dry_flag_verbatim(
+    tmp_path, monkeypatch
+):
+    """A valid config reaches `_watch(state, slow_secs, fast_secs)` with the
+    parsed ints, and `_build_state` receives `args.dry` verbatim — this call
+    site was once hardcoded `dry=False` (AGENTS.md), so pin the actual value
+    flowing through rather than just the parsed CLI arg."""
+    cockpit = _prep_watch_cli(
+        tmp_path,
+        monkeypatch,
+        {
+            "repos": [],
+            "slow_poll_interval_seconds": 600,
+            "fast_poll_interval_seconds": 45,
+        },
+    )
+    built_dry: list = []
+
+    def _record(dry: bool = False) -> dict:
+        built_dry.append(dry)
+        return {"marker": "state", "dry": dry}
+
+    monkeypatch.setattr(cockpit, "_build_state", _record)
+    watch_calls: list = []
+    monkeypatch.setattr(
+        cockpit,
+        "_watch",
+        lambda state, slow, fast: watch_calls.append((state, slow, fast)) or 0,
+    )
+
+    assert cockpit.main(["--watch", "--dry"]) == 0
+
+    assert built_dry == [True]
+    assert watch_calls == [({"marker": "state", "dry": True}, 600, 45)]
+
+
+def test_watch_applies_default_poll_secs_when_config_omits_them(tmp_path, monkeypatch):
+    """With neither key configured, the daemon falls back to
+    DEFAULT_SLOW_POLL_SECS / DEFAULT_FAST_POLL_SECS."""
+    cockpit = _prep_watch_cli(tmp_path, monkeypatch, {"repos": []})
+    monkeypatch.setattr(cockpit, "_build_state", lambda dry=False: {})
+    watch_calls: list = []
+    monkeypatch.setattr(
+        cockpit,
+        "_watch",
+        lambda state, slow, fast: watch_calls.append((slow, fast)) or 0,
+    )
+
+    assert cockpit.main(["--watch"]) == 0
+
+    assert watch_calls == [
+        (cockpit.DEFAULT_SLOW_POLL_SECS, cockpit.DEFAULT_FAST_POLL_SECS)
+    ]

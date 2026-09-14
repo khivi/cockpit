@@ -20,7 +20,9 @@ from cockpit.lib.gh import (
     _PR_LIGHT_FIELDS,
     OpenPRHead,
     _collect_nodes,
+    _fetch_light_phase,
     _graphql,
+    _hydrate_stale,
     _identify_stale,
     _one_pr_per_branch,
     _relevant_pr_query,
@@ -29,8 +31,10 @@ from cockpit.lib.gh import (
     list_open_pr_heads,
     list_relevant_prs,
     pr_worktree_branch,
+    repo_nwo,
     require_gh,
     resolve_pr_branch,
+    update_pull_request_branch,
 )
 from cockpit.lib.git import branch_label
 
@@ -682,3 +686,334 @@ def test_resolve_pr_branch_synthesizes_trunk_head():
 
     with patch("cockpit.lib.gh.subprocess.run", side_effect=fake_run):
         assert resolve_pr_branch("280") == "pr-280-new-onboarding"
+
+
+# ── update_pull_request_branch: server-side "Update branch", never runs gh ──
+# without both halves of the compare-and-swap, and treats a 200-OK GraphQL
+# `errors` payload as the real refusal signal (see gh.py::update_pull_request_branch).
+
+
+def _completed_std(stdout="", stderr="", returncode=0):
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=stderr
+    )
+
+
+def test_update_branch_missing_node_id_short_circuits():
+    with patch("cockpit.lib.gh.subprocess.run") as run:
+        ok, detail = update_pull_request_branch("", "sha-a")
+    assert (ok, detail) == (False, "missing node id or head oid")
+    run.assert_not_called()
+
+
+def test_update_branch_missing_expected_head_oid_short_circuits():
+    with patch("cockpit.lib.gh.subprocess.run") as run:
+        ok, detail = update_pull_request_branch("PR_node", "")
+    assert (ok, detail) == (False, "missing node id or head oid")
+    run.assert_not_called()
+
+
+def test_update_branch_graphql_errors_payload_is_the_refusal():
+    """`gh api graphql` exits 0 even when the mutation itself was refused (a
+    stale `expectedHeadOid`), so the `errors` array — not the returncode — is
+    the real verdict. Regressing this reports success on a refused update,
+    and the caller's head-oid-keyed marker sticks forever.
+    """
+    payload = json.dumps({"errors": [{"message": "Head ref oid has changed"}]})
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        return_value=_completed_std(stdout=payload, returncode=0),
+    ):
+        ok, detail = update_pull_request_branch("PR_node", "sha-a")
+    assert (ok, detail) == (False, "Head ref oid has changed")
+
+
+def test_update_branch_graphql_errors_payload_falls_back_when_no_message():
+    payload = json.dumps({"errors": [{}]})
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        return_value=_completed_std(stdout=payload, returncode=0),
+    ):
+        ok, detail = update_pull_request_branch("PR_node", "sha-a")
+    assert (ok, detail) == (False, "graphql error")
+
+
+def test_update_branch_nonzero_returncode_uses_last_stderr_line():
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        return_value=_completed_std(
+            stderr="warning: ignore me\nerror: bad credentials", returncode=1
+        ),
+    ):
+        ok, detail = update_pull_request_branch("PR_node", "sha-a")
+    assert (ok, detail) == (False, "error: bad credentials")
+
+
+def test_update_branch_nonzero_returncode_falls_back_to_stdout():
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        return_value=_completed_std(stdout="stdout tail line", returncode=1),
+    ):
+        ok, detail = update_pull_request_branch("PR_node", "sha-a")
+    assert (ok, detail) == (False, "stdout tail line")
+
+
+def test_update_branch_nonzero_returncode_empty_output_reports_gh_failed():
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        return_value=_completed_std(returncode=1),
+    ):
+        ok, detail = update_pull_request_branch("PR_node", "sha-a")
+    assert (ok, detail) == (False, "gh failed")
+
+
+def test_update_branch_unparsable_json_response():
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        return_value=_completed_std(stdout="not json", returncode=0),
+    ):
+        ok, detail = update_pull_request_branch("PR_node", "sha-a")
+    assert (ok, detail) == (False, "unparsable response")
+
+
+def test_update_branch_success_returns_new_head_oid():
+    payload = json.dumps(
+        {"data": {"updatePullRequestBranch": {"pullRequest": {"headRefOid": "sha-b"}}}}
+    )
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        return_value=_completed_std(stdout=payload, returncode=0),
+    ):
+        ok, detail = update_pull_request_branch("PR_node", "sha-a")
+    assert (ok, detail) == (True, "sha-b")
+
+
+def test_update_branch_success_with_missing_nested_fields_yields_empty_oid():
+    # The defensive `or {}` chain at each level of the response means a
+    # success payload missing the nested fields still reports success, just
+    # with no new oid to show for it.
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        return_value=_completed_std(stdout=json.dumps({"data": {}}), returncode=0),
+    ):
+        ok, detail = update_pull_request_branch("PR_node", "sha-a")
+    assert (ok, detail) == (True, "")
+
+
+def test_update_branch_subprocess_missing_binary_never_raises():
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        side_effect=FileNotFoundError("no gh on PATH"),
+    ):
+        ok, detail = update_pull_request_branch("PR_node", "sha-a")
+    assert ok is False
+    assert detail == "no gh on PATH"
+
+
+def test_update_branch_subprocess_os_error_never_raises():
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        side_effect=OSError("permission denied"),
+    ):
+        ok, detail = update_pull_request_branch("PR_node", "sha-a")
+    assert ok is False
+    assert detail == "permission denied"
+
+
+def test_update_branch_passes_method_through_verbatim():
+    """The caller (the daemon) owns REBASE-vs-MERGE policy; this function must
+    not second-guess it.
+    """
+    payload = json.dumps(
+        {"data": {"updatePullRequestBranch": {"pullRequest": {"headRefOid": "sha-b"}}}}
+    )
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        return_value=_completed_std(stdout=payload, returncode=0),
+    ) as run:
+        update_pull_request_branch("PR_node", "sha-a", method="MERGE")
+    args = run.call_args[0][0]
+    assert "method=MERGE" in args
+    assert "method=REBASE" not in args
+
+
+# ── _fetch_light_phase — cheap phase, {number: updatedAt} only ─────────────
+
+
+def test_fetch_light_phase_queries_with_light_fields_not_heavy():
+    """Must build its query via `_relevant_pr_query` with `_PR_LIGHT_FIELDS` —
+    the whole point of the light phase is staying cheap."""
+    expected_query, expected_vars = _relevant_pr_query(
+        "o", "n", "u", ["khivi/feat"], _PR_LIGHT_FIELDS
+    )
+    with patch(
+        "cockpit.lib.gh._graphql",
+        return_value={"data": {"mine": {"nodes": []}}},
+    ) as m:
+        _fetch_light_phase("o", "n", "u", ["khivi/feat"])
+    assert m.call_args.args[0] == expected_query
+    assert m.call_args.args[1] == expected_vars
+
+
+def test_fetch_light_phase_maps_number_to_updated_at():
+    data = {"data": {"mine": {"nodes": [{"number": 1, "updatedAt": "2025-01-01"}]}}}
+    with patch("cockpit.lib.gh._graphql", return_value=data):
+        result = _fetch_light_phase("o", "n", "u", [])
+    assert result == {1: "2025-01-01"}
+
+
+def test_fetch_light_phase_drops_nodes_with_no_number():
+    data = {
+        "data": {
+            "mine": {
+                "nodes": [
+                    {"number": None, "updatedAt": "2025-01-01"},
+                    {"number": 2, "updatedAt": "2025-02-02"},
+                ]
+            }
+        }
+    }
+    with patch("cockpit.lib.gh._graphql", return_value=data):
+        result = _fetch_light_phase("o", "n", "u", [])
+    assert result == {2: "2025-02-02"}
+
+
+def test_fetch_light_phase_missing_updated_at_becomes_empty_string():
+    """A node lacking `updatedAt` must map to "" — not None, which would make
+    `_identify_stale`'s `prev[1] != updated` comparison behave differently on
+    a re-fetch than on the initial cache miss."""
+    data = {"data": {"mine": {"nodes": [{"number": 3}]}}}
+    with patch("cockpit.lib.gh._graphql", return_value=data):
+        result = _fetch_light_phase("o", "n", "u", [])
+    assert result == {3: ""}
+
+
+def test_fetch_light_phase_duplicate_number_first_node_wins():
+    """`setdefault` means the first node for a given number sticks — a later
+    duplicate (e.g. the same PR surfacing again via a per-branch alias) must
+    not overwrite it."""
+    data = {
+        "data": {
+            "mine": {
+                "nodes": [
+                    {"number": 4, "updatedAt": "first"},
+                    {"number": 4, "updatedAt": "second"},
+                ]
+            }
+        }
+    }
+    with patch("cockpit.lib.gh._graphql", return_value=data):
+        result = _fetch_light_phase("o", "n", "u", [])
+    assert result == {4: "first"}
+
+
+# ── _hydrate_stale — one aliased heavy query over the stale numbers ────────
+
+
+def test_hydrate_stale_builds_one_aliased_query_per_stale_number():
+    with patch(
+        "cockpit.lib.gh._graphql",
+        return_value={"data": {"repository": {}}},
+    ) as m:
+        _hydrate_stale("o", "n", "u", [10, 20], {}, {})
+    query = m.call_args.args[0]
+    assert "pr0: pullRequest(number: 10)" in query
+    assert "pr1: pullRequest(number: 20)" in query
+    assert m.call_args.args[1] == {"owner": "o", "name": "n"}
+
+
+def test_hydrate_stale_writes_pr_and_light_updated_at_into_cache():
+    node10 = _full_pr_node(number=10)
+    node20 = _full_pr_node(number=20, headRefName="khivi/other")
+    data = {"data": {"repository": {"pr0": node10, "pr1": node20}}}
+    light_by_number = {10: "2025-01-01", 20: "2025-02-02"}
+    cache: dict = {}
+    with patch("cockpit.lib.gh._graphql", return_value=data):
+        _hydrate_stale("o", "n", "u", [10, 20], light_by_number, cache)
+    assert cache[10][0].number == 10
+    assert cache[10][1] == "2025-01-01"
+    assert cache[20][0].number == 20
+    assert cache[20][1] == "2025-02-02"
+
+
+def test_hydrate_stale_missing_light_entry_defaults_to_empty_string():
+    node = _full_pr_node(number=9)
+    data = {"data": {"repository": {"pr0": node}}}
+    cache: dict = {}
+    with patch("cockpit.lib.gh._graphql", return_value=data):
+        _hydrate_stale("o", "n", "u", [9], {}, cache)
+    assert cache[9][1] == ""
+
+
+def test_hydrate_stale_alias_index_lines_up_with_stale_list_order():
+    """An off-by-one between the alias built for `stale[i]` and the node read
+    back for that same `i` would silently file one PR's data under another's
+    number — pin that pr0's node lands under stale[0] and pr1's under
+    stale[1], not swapped."""
+    node_a = _full_pr_node(number=100, title="PR A", headRefName="khivi/a")
+    node_b = _full_pr_node(number=200, title="PR B", headRefName="khivi/b")
+    data = {"data": {"repository": {"pr0": node_a, "pr1": node_b}}}
+    cache: dict = {}
+    with patch("cockpit.lib.gh._graphql", return_value=data):
+        _hydrate_stale("o", "n", "u", [100, 200], {}, cache)
+    assert cache[100][0].title == "PR A"
+    assert cache[200][0].title == "PR B"
+
+
+def test_hydrate_stale_missing_alias_leaves_cache_entry_alone():
+    """A stale number whose alias comes back absent from the response (e.g.
+    the PR was deleted mid-cycle) must not clobber whatever the cache already
+    held for it."""
+    from cockpit.lib.gh import _pr_from_node
+
+    prior_pr = _pr_from_node(_full_pr_node(number=5))
+    cache = {5: (prior_pr, "stale-timestamp")}
+    data = {"data": {"repository": {}}}  # pr0 key entirely absent
+    with patch("cockpit.lib.gh._graphql", return_value=data):
+        _hydrate_stale("o", "n", "u", [5], {}, cache)
+    assert cache[5] == (prior_pr, "stale-timestamp")
+
+
+def test_hydrate_stale_null_alias_leaves_cache_entry_alone():
+    prior = ("sentinel-pr", "sentinel-ts")
+    cache = {5: prior}
+    data = {"data": {"repository": {"pr0": None}}}
+    with patch("cockpit.lib.gh._graphql", return_value=data):
+        _hydrate_stale("o", "n", "u", [5], {}, cache)
+    assert cache[5] == prior
+
+
+def test_hydrate_stale_node_that_fails_pr_from_node_leaves_cache_entry_alone():
+    """A node missing `author` makes `_pr_from_node` return None (e.g. a
+    since-deleted account) — the stale cache entry must survive rather than
+    being overwritten with nothing."""
+    prior = ("sentinel-pr", "sentinel-ts")
+    cache = {5: prior}
+    bad_node = _full_pr_node(number=5, author=None)
+    data = {"data": {"repository": {"pr0": bad_node}}}
+    with patch("cockpit.lib.gh._graphql", return_value=data):
+        _hydrate_stale("o", "n", "u", [5], {}, cache)
+    assert cache[5] == prior
+
+
+# ── repo_nwo ─────────────────────────────────────────────────────────────
+
+
+def test_repo_nwo_returns_owner_and_name_on_success():
+    payload = json.dumps({"owner": {"login": "khivi"}, "name": "cockpit"})
+    with patch(
+        "cockpit.lib.gh.subprocess.run",
+        return_value=_completed_std(stdout=payload, returncode=0),
+    ):
+        assert repo_nwo(Path("/some/repo")) == ("khivi", "cockpit")
+
+
+def test_repo_nwo_raises_runtime_error_naming_repo_dir_on_failure():
+    with (
+        patch(
+            "cockpit.lib.gh.subprocess.run",
+            return_value=_completed_std(stderr="not a repo", returncode=1),
+        ),
+        pytest.raises(RuntimeError, match=r"/some/repo"),
+    ):
+        repo_nwo(Path("/some/repo"))

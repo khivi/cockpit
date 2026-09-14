@@ -20,23 +20,28 @@ from cockpit.lib.git import (
     _fetch_remote_branch,
     _has_local_branch,
     ahead_of_base,
+    ahead_of_origin,
     behind_of_base,
+    behind_of_origin,
     branch_commits_ahead,
     branch_exists,
     branch_label,
     checkout_branch,
+    collision_free,
     create_worktree,
     current_branch,
     delete_local_branch,
     has_remote_branch,
     is_ancestor,
     list_local_branches,
+    main_worktree_path,
     origin_base_resolves,
     prune_worktrees,
     require_git,
     slugify,
     tag_workspace_name,
     worktree_age_seconds,
+    worktree_root,
     worktrees,
     worktrees_basic,
 )
@@ -1270,3 +1275,199 @@ def test_ff_is_a_no_op_when_origin_head_is_unresolvable(cockpit_repo):
     wt = Worktree(path=cockpit_repo.repo, branch="main")
 
     assert gitlib.ff_default_branch_worktrees(cockpit_repo.repo, [wt]) == []
+
+
+# ── create_worktree: pr_num path (resolution order 1 of 5) ───────────────────
+#
+# The only one of the five resolution paths with no prior coverage. It fetches
+# `+refs/pull/{N}/head:refs/heads/{branch}` and hands off to `git worktree
+# add`, returning `branch` verbatim — the fetch a synthesized trunk-headed PR
+# branch (`pr_worktree_branch` turning a `main`/`master` head into
+# `pr-<N>-<base-slug>`) depends on to materialise locally.
+
+
+def _push_as_pr_head(repo, pr_num: str, filename: str, body: str) -> str:
+    """Commit `body` to `filename` on a throwaway branch cut from `main`, push
+    it to `origin` as `refs/pull/{pr_num}/head` (a plain bare repo accepts a
+    push to any ref path), then clean the throwaway branch off `repo` so it
+    never contaminates local branch resolution. Returns the commit sha."""
+    _run(repo, "checkout", "-q", "-b", f"pr-source-{pr_num}")
+    _commit(repo, filename, body)
+    sha = _run(repo, "rev-parse", "HEAD")
+    _run(repo, "push", "-q", "origin", f"HEAD:refs/pull/{pr_num}/head")
+    _run(repo, "checkout", "-q", "main")
+    _run(repo, "branch", "-D", f"pr-source-{pr_num}")
+    return sha
+
+
+def test_create_worktree_pr_num_fetches_pr_head_into_named_branch(
+    cockpit_repo, tmp_path
+) -> None:
+    """With `pr_num` set, the PR head ref is fetched into a *local* branch
+    named `branch` and a worktree is added at `wt_path` — the function
+    returns `branch` verbatim."""
+    repo = cockpit_repo.repo
+    pr_sha = _push_as_pr_head(repo, "13", "pr-change.txt", "pr content\n")
+
+    wt_path = tmp_path / "wt"
+    branch = create_worktree(repo, "feature-13", wt_path, base="main", pr_num="13")
+
+    assert branch == "feature-13"
+    assert _run(repo, "rev-parse", "feature-13") == pr_sha
+    assert _run(wt_path, "rev-parse", "HEAD") == pr_sha
+    assert (wt_path / "pr-change.txt").read_text() == "pr content\n"
+
+
+def test_create_worktree_pr_num_trunk_headed_branch_never_resolves_to_main(
+    cockpit_repo, tmp_path
+) -> None:
+    """The trunk-headed case: `pr_worktree_branch` upstream synthesizes a
+    `pr-<N>-<base-slug>` name so a PR whose GitHub head is literally `main`
+    never becomes the worktree branch. `create_worktree` must materialise
+    that synthesized name pointing at the PR's own head commit — never at
+    local `main`, which is the whole point of the synthesis — and return the
+    name unchanged."""
+    repo = cockpit_repo.repo
+    pr_sha = _push_as_pr_head(repo, "21", "pr-change.txt", "pr content\n")
+
+    # Advance main independently so a worktree that wrongly fell back to it
+    # would be unmistakably distinguishable from the PR head.
+    _commit(repo, "main-advance.txt", "main content\n")
+    _run(repo, "push", "-q", "origin", "main")
+    main_sha = _run(repo, "rev-parse", "main")
+    assert pr_sha != main_sha  # sanity: the two heads are unrelated commits
+
+    wt_path = tmp_path / "wt"
+    synthesized = "pr-21-main"
+    branch = create_worktree(repo, synthesized, wt_path, base="main", pr_num="21")
+
+    assert branch == synthesized
+    assert _run(repo, "rev-parse", synthesized) == pr_sha
+    assert _run(repo, "rev-parse", synthesized) != main_sha
+    assert _run(wt_path, "rev-parse", "HEAD") == pr_sha
+    assert not (wt_path / "main-advance.txt").exists()
+
+
+def test_create_worktree_pr_num_short_circuits_the_other_four_paths(
+    cockpit_repo, monkeypatch, tmp_path
+) -> None:
+    """`pr_num` must short-circuit before any of the local / remote /
+    local-prefixed / new-branch resolution paths run. Pinned by spying on the
+    module-level `_git` helper: every one of those four paths opens with
+    `_git(repo, "fetch", "origin", base)`, while the `pr_num` branch calls
+    only `run` and returns immediately — so a real short-circuit means `_git`
+    is never invoked at all. `base` also names a branch absent from both
+    local and origin, so if the fetch ever ran it could not silently resolve
+    to something real."""
+    repo = cockpit_repo.repo
+    pr_sha = _push_as_pr_head(repo, "34", "pr-change.txt", "pr content\n")
+
+    calls: list[tuple[object, ...]] = []
+    real_git = gitlib._git
+
+    def _spy(*args, **kwargs):
+        calls.append(args)
+        return real_git(*args, **kwargs)
+
+    monkeypatch.setattr(gitlib, "_git", _spy)
+
+    wt_path = tmp_path / "wt"
+    branch = create_worktree(
+        repo, "feature-34", wt_path, base="nonexistent-base", pr_num="34"
+    )
+
+    assert branch == "feature-34"
+    assert calls == []
+    assert _run(repo, "rev-parse", branch) == pr_sha
+
+
+# ── worktree_root: sibling of main_worktree_path ─────────────────────────────
+
+
+def test_worktree_root_from_worktree_root_itself(cockpit_repo):
+    """From a worktree's own root, returns that root, resolved."""
+    repo = cockpit_repo.repo
+    assert worktree_root(repo) == repo.resolve()
+
+
+def test_worktree_root_from_subdirectory_returns_the_root_not_the_subdir(
+    cockpit_repo,
+):
+    """The distinction the docstring exists for: cmux keys the diff-comment
+    store by repo root, so a subdirectory must resolve UP to the worktree
+    root rather than being returned verbatim."""
+    repo = cockpit_repo.repo
+    subdir = repo / "subdir"
+    subdir.mkdir()
+    assert worktree_root(subdir) == repo.resolve()
+
+
+def test_worktree_root_from_linked_worktree_differs_from_main_worktree_path(
+    cockpit_repo,
+):
+    """From a LINKED worktree (not the main checkout), `worktree_root` returns
+    that linked worktree's own root, while `main_worktree_path` on the same
+    cwd still returns the main checkout — the whole point of the pair."""
+    repo = cockpit_repo.repo
+    wt_path = repo.parent / "linked-feat"
+    create_worktree(repo, "linked-feat", wt_path, base="main")
+
+    assert worktree_root(wt_path) == wt_path.resolve()
+    assert main_worktree_path(wt_path) == repo.resolve()
+    assert worktree_root(wt_path) != main_worktree_path(wt_path)
+
+
+def test_worktree_root_outside_any_repo_is_none(tmp_path):
+    outside = tmp_path / "not-a-repo"
+    outside.mkdir()
+    assert worktree_root(outside) is None
+
+
+def test_worktree_root_defaults_cwd_to_dot(cockpit_repo, monkeypatch):
+    repo = cockpit_repo.repo
+    monkeypatch.chdir(repo)
+    assert worktree_root(None) == repo.resolve()
+
+
+# ── collision_free: -2/-3 escalation ────────────────────────────────────────
+
+
+def test_collision_free_returns_unchanged_when_path_is_free(tmp_path):
+    candidate = tmp_path / "foo"
+    assert collision_free(candidate) == candidate
+
+
+def test_collision_free_appends_dash_2_when_occupied(tmp_path):
+    candidate = tmp_path / "foo"
+    candidate.mkdir()
+    assert collision_free(candidate) == tmp_path / "foo-2"
+
+
+def test_collision_free_escalates_to_dash_3_when_both_occupied(tmp_path):
+    candidate = tmp_path / "foo"
+    candidate.mkdir()
+    (tmp_path / "foo-2").mkdir()
+    assert collision_free(candidate) == tmp_path / "foo-3"
+
+
+# ── ahead_of_origin / behind_of_origin: empty-branch guard ──────────────────
+
+
+def test_ahead_of_origin_returns_zero_for_empty_branch_without_a_git_call(
+    cockpit_repo, monkeypatch
+):
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("git should not be invoked for an empty branch")
+
+    monkeypatch.setattr(gitlib, "_rev_list_count", _fail_if_called)
+    assert ahead_of_origin(cockpit_repo.repo, "") == 0
+
+
+def test_behind_of_origin_returns_zero_for_empty_branch_without_a_git_call(
+    cockpit_repo, monkeypatch
+):
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("git should not be invoked for an empty branch")
+
+    monkeypatch.setattr(gitlib, "_rev_list_count", _fail_if_called)
+    assert behind_of_origin(cockpit_repo.repo, "") == 0
