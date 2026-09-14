@@ -72,5 +72,17 @@ jobs:
       - name: Run suite with coverage
         run: |
           uv run pytest -n auto -q \
-            --cov --cov-report=term-missing --cov-report="markdown:$GITHUB_STEP_SUMMARY" \
+            --cov --cov-report=term-missing --cov-report=xml \
+            --cov-report="markdown:$GITHUB_STEP_SUMMARY" \
             --cov-fail-under="$COVERAGE_FLOOR"
+
+      # `!cancelled()` rather than the default, because the step above exits
+      # non-zero when COVERAGE_FLOOR trips — which is exactly the run whose
+      # numbers you want on the trend graph.
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          fail_ci_if_error: true
