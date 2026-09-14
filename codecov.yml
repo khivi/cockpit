@@ -1,0 +1,9 @@
+# Codecov config. Uploads come from coverage.yml's nightly run only — coverage
+# is a trend here, not a per-PR gate, so nothing on a PR produces a report.
+#
+# coverage.py writes <source> as the runner's absolute checkout path with every
+# filename relative to it, so a module arrives as `lib/cache.py` rather than
+# `cockpit/lib/cache.py` and Codecov can't match it against the repo tree. The
+# empty `before` prepends the package directory back on.
+fixes:
+  - "::cockpit/"
