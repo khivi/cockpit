@@ -701,6 +701,15 @@ pre-commit run zizmor --all-files
 
 `dev.sh` **refuses `cockpit setup`** (exit 2), which writes `sys.executable` *outside* the sandbox and from a worktree bakes in a `.venv/bin/python` that dies on cleanup. Guards are covered by `tests/test_dev_script.py`; the happy path is deliberately untested.
 
+### `.claude/skills/` is repo-local dev tooling — never an install target
+
+A skill here loads for whoever is working *in this repo* and reaches no user: the wheel ships `packages = ["cockpit"]`, so the directory is outside it, and `cockpit setup` installs from `cockpit/claude_commands/`, never from here. **That is why it does not contradict "cockpit ships no agent skill"** — that rule governs cockpit's `~/.claude` footprint, where every install target owes a teardown inverse. Nothing here is installed, so nothing owes one. **Do not** read the two as being about the same directory. Four rules:
+
+- **Each one wraps a command rather than reimplementing it**, exactly as a template in `cockpit/claude_commands/` does: `cockpit-dev` wraps `./dev.sh`, `coverage-audit` reads the nightly `coverage.yml` run. A skill that re-derives what the CLI already does is the thing that goes stale.
+- **The `description` is loaded into EVERY session; the body is not.** Keep it under 250 bytes and push the procedure into the body — a long one charges its bytes in every session in every repo, whether or not the skill ever fires.
+- **`allowed-tools` is required, and least-privilege is the point.** `coverage-audit` proposes tests and is given no write tools; `Bash` plus write access on one skill is a smell worth justifying.
+- **A skill is the right home only for a judgment nothing else can enforce.** `coverage-audit` earns its place because a `PreToolUse` hook blocks a skip literal under `tests/` but cannot block an edit to `COVERAGE_FLOOR` in `.github/workflows/coverage.yml`. **Do not** put a rule here that a hook, a test, or a line in this file would hold better.
+
 ### `.github/workflows/tag.yml`'s checkout must keep its credentials
 
 Workflow *safety* is zizmor's, workflow *correctness* is actionlint's; the policy lives in `.github/zizmor.yml` and the hook enforces it, so only the one rule it deliberately waives is written down here.
