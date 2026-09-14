@@ -56,7 +56,9 @@ def _dispatch_arms() -> list[tuple[str, str]]:
     `cmd == "..."` compare) and the `warm` arm (two statements, not one
     `return`) — neither has this shape.
     """
-    source = Path(inspect.getsourcefile(starship_cli)).read_text()
+    src_file = inspect.getsourcefile(starship_cli)
+    assert src_file is not None
+    source = Path(src_file).read_text()
     tree = ast.parse(source)
     main_func = next(
         node
@@ -77,7 +79,10 @@ def _dispatch_arms() -> list[tuple[str, str]]:
             and isinstance(test.ops[0], ast.Eq)
         ):
             continue  # the statusline_hidden guard: `cmd != "warm" and ...`
-        field = test.comparators[0].value
+        rhs = test.comparators[0]
+        if not isinstance(rhs, ast.Constant) or not isinstance(rhs.value, str):
+            continue
+        field = rhs.value
         if len(stmt.body) != 1 or not isinstance(stmt.body[0], ast.Return):
             continue  # the `warm` arm: `warm_all(); return 0`
         call = stmt.body[0].value

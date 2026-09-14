@@ -1297,7 +1297,7 @@ def _push_as_pr_head(repo, pr_num: str, filename: str, body: str) -> str:
     _run(repo, "push", "-q", "origin", f"HEAD:refs/pull/{pr_num}/head")
     _run(repo, "checkout", "-q", "main")
     _run(repo, "branch", "-D", f"pr-source-{pr_num}")
-    return sha
+    return str(sha)
 
 
 def test_create_worktree_pr_num_fetches_pr_head_into_named_branch(

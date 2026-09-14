@@ -11,6 +11,7 @@ import json as _json
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from tests.asserts import expected_starship as _expected_starship
@@ -1135,6 +1136,16 @@ def _prep_watch_cli(tmp_path, monkeypatch, cfg: dict):
     return cockpit
 
 
+def _recording_watch(calls: list, *, full: bool = True) -> Callable[..., int]:
+    """A `_watch` stub recording its call and returning the success code."""
+
+    def _record(state, slow, fast) -> int:
+        calls.append((state, slow, fast) if full else (slow, fast))
+        return 0
+
+    return _record
+
+
 def test_watch_rejects_slow_poll_below_minimum(tmp_path, monkeypatch, capsys):
     """A slow interval under MIN_POLL_SECS exits 2 before anything is built or
     watched — a config that fires the daemon in a tight loop must never reach
@@ -1221,11 +1232,7 @@ def test_watch_accepts_fast_poll_zero_as_disable(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cockpit, "_build_state", lambda dry=False: {"dry": dry})
     watch_calls: list = []
-    monkeypatch.setattr(
-        cockpit,
-        "_watch",
-        lambda state, slow, fast: watch_calls.append((state, slow, fast)) or 0,
-    )
+    monkeypatch.setattr(cockpit, "_watch", _recording_watch(watch_calls))
 
     assert cockpit.main(["--watch"]) == 0
 
@@ -1256,11 +1263,7 @@ def test_watch_reaches_watch_with_parsed_secs_and_dry_flag_verbatim(
 
     monkeypatch.setattr(cockpit, "_build_state", _record)
     watch_calls: list = []
-    monkeypatch.setattr(
-        cockpit,
-        "_watch",
-        lambda state, slow, fast: watch_calls.append((state, slow, fast)) or 0,
-    )
+    monkeypatch.setattr(cockpit, "_watch", _recording_watch(watch_calls))
 
     assert cockpit.main(["--watch", "--dry"]) == 0
 
@@ -1274,11 +1277,7 @@ def test_watch_applies_default_poll_secs_when_config_omits_them(tmp_path, monkey
     cockpit = _prep_watch_cli(tmp_path, monkeypatch, {"repos": []})
     monkeypatch.setattr(cockpit, "_build_state", lambda dry=False: {})
     watch_calls: list = []
-    monkeypatch.setattr(
-        cockpit,
-        "_watch",
-        lambda state, slow, fast: watch_calls.append((slow, fast)) or 0,
-    )
+    monkeypatch.setattr(cockpit, "_watch", _recording_watch(watch_calls, full=False))
 
     assert cockpit.main(["--watch"]) == 0
 

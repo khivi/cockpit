@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -2834,11 +2835,19 @@ def test_require_workspace_binary_exits_when_backend_not_on_path(capsys):
 # ── _apply_count_pill / apply_wip_pill / apply_stale_pill ────────────────────
 
 
+def _recording_cmux(calls: list[tuple]) -> Callable[..., str]:
+    """A `cmux` stub recording each call's positional args, returning no output."""
+
+    def _record(*a, **k) -> str:
+        calls.append(a)
+        return ""
+
+    return _record
+
+
 def test_apply_count_pill_sets_status_when_positive():
     calls: list[tuple] = []
-    with patch(
-        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
-    ):
+    with patch("cockpit.lib.cmux.cmux", side_effect=_recording_cmux(calls)):
         cmux_mod._apply_count_pill("workspace:1", "k", "🔔", 3)
 
     assert calls == [
@@ -2856,9 +2865,7 @@ def test_apply_count_pill_sets_status_when_positive():
 
 def test_apply_count_pill_clears_status_when_zero():
     calls: list[tuple] = []
-    with patch(
-        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
-    ):
+    with patch("cockpit.lib.cmux.cmux", side_effect=_recording_cmux(calls)):
         cmux_mod._apply_count_pill("workspace:1", "k", "🔔", 0)
 
     assert calls == [("clear-status", "k", "--workspace", "workspace:1")]
@@ -2866,9 +2873,7 @@ def test_apply_count_pill_clears_status_when_zero():
 
 def test_apply_wip_pill_passes_its_own_key_and_icon():
     calls: list[tuple] = []
-    with patch(
-        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
-    ):
+    with patch("cockpit.lib.cmux.cmux", side_effect=_recording_cmux(calls)):
         cmux_mod.apply_wip_pill("workspace:1", 2)
 
     assert calls[0][0] == "set-status"
@@ -2878,9 +2883,7 @@ def test_apply_wip_pill_passes_its_own_key_and_icon():
 
 def test_apply_stale_pill_passes_its_own_key_and_icon():
     calls: list[tuple] = []
-    with patch(
-        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
-    ):
+    with patch("cockpit.lib.cmux.cmux", side_effect=_recording_cmux(calls)):
         cmux_mod.apply_stale_pill("workspace:1", 5)
 
     assert calls[0][0] == "set-status"
@@ -2890,9 +2893,7 @@ def test_apply_stale_pill_passes_its_own_key_and_icon():
 
 def test_apply_stale_pill_clears_when_not_behind():
     calls: list[tuple] = []
-    with patch(
-        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
-    ):
+    with patch("cockpit.lib.cmux.cmux", side_effect=_recording_cmux(calls)):
         cmux_mod.apply_stale_pill("workspace:1", 0)
 
     assert calls == [("clear-status", cmux_mod.STALE_KEY, "--workspace", "workspace:1")]
@@ -3044,9 +3045,7 @@ def test_clear_pr_pills_clears_every_pr_pill_key():
     """Same key set `apply_pills` clears, with nothing re-set — used when a
     merged/closed PR's branch is reused for new local work."""
     calls: list[tuple] = []
-    with patch(
-        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
-    ):
+    with patch("cockpit.lib.cmux.cmux", side_effect=_recording_cmux(calls)):
         cmux_mod.clear_pr_pills("workspace:1")
 
     cleared_keys = {a[1] for a in calls if a[0] == "clear-status"}

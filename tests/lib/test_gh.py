@@ -967,8 +967,8 @@ def test_hydrate_stale_missing_alias_leaves_cache_entry_alone():
     from cockpit.lib.gh import _pr_from_node
 
     prior_pr = _pr_from_node(_full_pr_node(number=5))
-    cache = {5: (prior_pr, "stale-timestamp")}
-    data = {"data": {"repository": {}}}  # pr0 key entirely absent
+    cache: dict = {5: (prior_pr, "stale-timestamp")}
+    data: dict = {"data": {"repository": {}}}  # pr0 key entirely absent
     with patch("cockpit.lib.gh._graphql", return_value=data):
         _hydrate_stale("o", "n", "u", [5], {}, cache)
     assert cache[5] == (prior_pr, "stale-timestamp")
@@ -976,7 +976,7 @@ def test_hydrate_stale_missing_alias_leaves_cache_entry_alone():
 
 def test_hydrate_stale_null_alias_leaves_cache_entry_alone():
     prior = ("sentinel-pr", "sentinel-ts")
-    cache = {5: prior}
+    cache: dict = {5: prior}
     data = {"data": {"repository": {"pr0": None}}}
     with patch("cockpit.lib.gh._graphql", return_value=data):
         _hydrate_stale("o", "n", "u", [5], {}, cache)
@@ -988,7 +988,7 @@ def test_hydrate_stale_node_that_fails_pr_from_node_leaves_cache_entry_alone():
     since-deleted account) — the stale cache entry must survive rather than
     being overwritten with nothing."""
     prior = ("sentinel-pr", "sentinel-ts")
-    cache = {5: prior}
+    cache: dict = {5: prior}
     bad_node = _full_pr_node(number=5, author=None)
     data = {"data": {"repository": {"pr0": bad_node}}}
     with patch("cockpit.lib.gh._graphql", return_value=data):
