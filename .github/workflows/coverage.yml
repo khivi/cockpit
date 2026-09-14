@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # A floor, not a target — measured is 91.14%. The point of slack is ~87
+  # A floor, not a target — measured is 93.32%. The point of slack is ~120
   # statements, deliberate headroom for the thin I/O shims this suite doesn't
   # cover on purpose (a `main()` reading stdin, an interactive `input()`, pidfile
   # acquisition) so adding one more doesn't turn the nightly red. The cost is
@@ -33,7 +33,7 @@ env:
   # the suite is deterministic, so nothing else moves the number. Raise it when
   # the real number moves up; per AGENTS.md, never lower it to make a failing run
   # pass — that is the config-edit form of `--no-verify`.
-  COVERAGE_FLOOR: "90"
+  COVERAGE_FLOOR: "92"
 
 jobs:
   coverage:
