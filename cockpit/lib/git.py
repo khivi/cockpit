@@ -470,18 +470,6 @@ def current_branch(cwd: str | os.PathLike) -> str:
     return _rebase_head_name(gitdir) or "" if gitdir else ""
 
 
-def repo_state(cwd: str | os.PathLike) -> str:
-    """`'rebase'`, `'merge'`, or `''` for the working tree at `cwd`."""
-    gitdir = _gitdir(Path(cwd))
-    if gitdir is None:
-        return ""
-    if (gitdir / "rebase-merge").exists() or (gitdir / "rebase-apply").exists():
-        return "rebase"
-    if (gitdir / "MERGE_HEAD").exists():
-        return "merge"
-    return ""
-
-
 def slugify(s: str, max_len: int = 30) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
     # rstrip again after truncation: the cap can land mid-separator and leave a

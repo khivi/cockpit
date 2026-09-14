@@ -300,20 +300,6 @@ def load_pr_payloads_by_branch(repo_name: str) -> dict[str, dict]:
     return best
 
 
-def find_pr_payload_by_number(pr_num: str, repo_name: str | None = None) -> dict | None:
-    """Return the cached PR snapshot whose `number` matches `pr_num`, or None."""
-    pattern = (
-        f"{_repo_slug(repo_name)}__pr-{pr_num}.json"
-        if repo_name
-        else f"*__pr-{pr_num}.json"
-    )
-    for _, payload in _iter_cache(pattern):
-        data: dict = payload
-        if str(data.get("number")) == str(pr_num):
-            return data
-    return None
-
-
 def delete_pr_caches_for_branch(repo_name: str, branch: str) -> None:
     """Remove cached PR snapshots for `repo_name` whose payload `branch` matches."""
     prefix = _repo_slug(repo_name)
