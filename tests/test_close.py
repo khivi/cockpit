@@ -8,6 +8,8 @@ asserted without a network round-trip or a live daemon.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import cockpit.close as close_mod
@@ -172,3 +174,122 @@ def test_marker_ref_falls_back_to_branch_when_no_workspace(
     _no_blockers(monkeypatch)
     assert close_mod.main(["khivi/foo"]) == 0
     assert captured[0].ref == "khivi/foo"
+
+
+# --- _resolve_target: a repo whose worktrees() call raises is skipped ------
+
+
+def test_resolve_target_skips_repos_whose_worktrees_call_raises(tmp_path, monkeypatch):
+    """A `worktrees()` blowup on one configured repo (OSError or RuntimeError)
+    must not abort resolution — later repos still get a chance to match."""
+    oserror_repo = tmp_path / "oserror-repo"
+    runtimeerror_repo = tmp_path / "runtimeerror-repo"
+    good_repo = tmp_path / "good-repo"
+    for d in (oserror_repo, runtimeerror_repo, good_repo):
+        d.mkdir()
+
+    setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "repos": [
+                {"path": str(oserror_repo), "name": "oserror-repo"},
+                {"path": str(runtimeerror_repo), "name": "runtimeerror-repo"},
+                {"path": str(good_repo), "name": "good-repo"},
+            ]
+        },
+    )
+    import cockpit.lib.config as cfg
+
+    monkeypatch.setattr(close_mod, "load_config", cfg.load_config)
+
+    good_wt = close_mod.Worktree(path=good_repo / "wt", branch="feature")
+
+    def fake_worktrees(rp, prefix):
+        if rp == oserror_repo:
+            raise OSError("disk went away")
+        if rp == runtimeerror_repo:
+            raise RuntimeError("git worktree list failed")
+        assert rp == good_repo
+        return [good_wt]
+
+    monkeypatch.setattr(close_mod, "worktrees", fake_worktrees)
+
+    resolved = close_mod._resolve_target("feature")
+    assert resolved is not None
+    repo, wt = resolved
+    assert repo["name"] == "good-repo"
+    assert wt is good_wt
+
+
+# --- _workspace_ref -------------------------------------------------------
+
+
+def test_workspace_ref_returns_ref_matching_worktree_cwd(monkeypatch):
+    wt = close_mod.Worktree(path=Path("/tmp/cockpit-test-wt-match"), branch="b")
+    monkeypatch.setattr(
+        close_mod,
+        "workspace_cwds",
+        lambda *, include_self=False: {
+            "workspace:1": Path("/tmp/cockpit-test-other"),
+            "workspace:2": wt.path,
+        },
+    )
+    assert close_mod._workspace_ref(wt) == "workspace:2"
+
+
+def test_workspace_ref_returns_none_when_no_workspace_matches(monkeypatch):
+    wt = close_mod.Worktree(path=Path("/tmp/cockpit-test-wt-nomatch"), branch="b")
+    monkeypatch.setattr(
+        close_mod,
+        "workspace_cwds",
+        lambda *, include_self=False: {"workspace:1": Path("/tmp/cockpit-test-other")},
+    )
+    assert close_mod._workspace_ref(wt) is None
+
+
+def test_workspace_ref_falls_back_to_none_on_cmux_unavailable(monkeypatch):
+    wt = close_mod.Worktree(path=Path("/tmp/cockpit-test-wt-unavail"), branch="b")
+
+    def boom(*, include_self=False):
+        raise close_mod.CmuxUnavailable("backend hiccup")
+
+    monkeypatch.setattr(close_mod, "workspace_cwds", boom)
+    assert close_mod._workspace_ref(wt) is None
+
+
+def test_workspace_ref_queries_with_include_self_true(monkeypatch):
+    # `cockpit close` is typically run from inside the worktree it's tearing
+    # down, so the workspace to close IS the caller's own — the default
+    # self-exclusion (`include_self=False`) would drop it.
+    calls: list[bool] = []
+
+    def fake(*, include_self=False):
+        calls.append(include_self)
+        return {}
+
+    monkeypatch.setattr(close_mod, "workspace_cwds", fake)
+    close_mod._workspace_ref(close_mod.Worktree(path=Path("/tmp/whatever"), branch="b"))
+    assert calls == [True]
+
+
+# --- _workspace_name -------------------------------------------------------
+
+
+def test_workspace_name_empty_when_ref_is_none():
+    assert close_mod._workspace_name(None) == ""
+
+
+def test_workspace_name_returns_looked_up_name(monkeypatch):
+    monkeypatch.setattr(
+        close_mod, "workspace_names", lambda: {"workspace:1": "my-session"}
+    )
+    assert close_mod._workspace_name("workspace:1") == "my-session"
+
+
+def test_workspace_name_empty_on_cmux_unavailable(monkeypatch):
+    def boom():
+        raise close_mod.CmuxUnavailable("backend hiccup")
+
+    monkeypatch.setattr(close_mod, "workspace_names", boom)
+    assert close_mod._workspace_name("workspace:1") == ""
