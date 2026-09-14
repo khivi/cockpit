@@ -968,7 +968,8 @@ def ff_default_branch_worktrees(
 
     Returns the (worktree, behind_count) entries that were fast-forwarded — or
     would be, when `dry=True`. Skips dirty worktrees and non-default branches.
-    Uses `--ff-only` so non-fast-forward histories no-op silently.
+    Uses `--ff-only`, so a diverged history is refused rather than merged; a
+    refused worktree never moved and is left out of the returned entries.
 
     `default` lets a caller that already resolved `origin/HEAD` (the slow cycle)
     pass it in to avoid a redundant `symbolic-ref`; left None it resolves here.
@@ -986,10 +987,11 @@ def ff_default_branch_worktrees(
         behind = _rev_list_count(wt.path, f"HEAD..origin/{wt.branch}", fail=-1)
         if behind <= 0:
             continue
+        if not dry:
+            r = _git(wt.path, "merge", "--ff-only", f"origin/{wt.branch}")
+            if r.returncode != 0:
+                continue
         advanced.append((wt, behind))
-        if dry:
-            continue
-        _git(wt.path, "merge", "--ff-only", f"origin/{wt.branch}")
     return advanced
 
 

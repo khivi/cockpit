@@ -1187,3 +1187,86 @@ def test_commits_only_local_still_blocks_our_local_review_fixup(cockpit_repo) ->
     _commit(repo, "fixup.txt", "review note\n")
 
     assert gitlib.commits_only_local(repo, "alice/feat") == 1
+
+
+# ── ff_default_branch_worktrees ──────────────────────────────────────────────
+
+
+def _behind_main(cockpit_repo):
+    """Leave `cockpit_repo.repo` on `main`, one commit behind `origin/main`."""
+    repo = cockpit_repo.repo
+    _commit(repo, "ahead.txt")
+    _run(repo, "push", "-q", "origin", "main")
+    _run(repo, "reset", "-q", "--hard", "HEAD~1")
+    return Worktree(path=repo, branch="main")
+
+
+def test_ff_advances_a_clean_default_branch_worktree(cockpit_repo):
+    wt = _behind_main(cockpit_repo)
+
+    assert gitlib.ff_default_branch_worktrees(
+        cockpit_repo.repo, [wt], default="main"
+    ) == [(wt, 1)]
+    assert (cockpit_repo.repo / "ahead.txt").exists()
+
+
+def test_ff_dry_reports_without_moving_the_worktree(cockpit_repo):
+    wt = _behind_main(cockpit_repo)
+
+    assert gitlib.ff_default_branch_worktrees(
+        cockpit_repo.repo, [wt], default="main", dry=True
+    ) == [(wt, 1)]
+    assert not (cockpit_repo.repo / "ahead.txt").exists()
+
+
+def test_ff_skips_a_dirty_or_off_default_worktree(cockpit_repo):
+    repo = cockpit_repo.repo
+    dirty = Worktree(path=repo, branch="main", dirty_count=1)
+    other = Worktree(path=repo, branch="khivi/feat")
+
+    assert (
+        gitlib.ff_default_branch_worktrees(repo, [dirty, other], default="main") == []
+    )
+
+
+def test_a_diverged_worktree_is_not_reported_as_advanced(cockpit_repo):
+    """`--ff-only` refuses a diverged history, so the worktree never moves —
+    reporting it would make `log_ff_advances` claim an advance that didn't
+    happen."""
+    wt = _behind_main(cockpit_repo)
+    _commit(cockpit_repo.repo, "local.txt")
+
+    assert (
+        gitlib.ff_default_branch_worktrees(cockpit_repo.repo, [wt], default="main")
+        == []
+    )
+
+
+def test_a_failed_fetch_skips_the_worktree(cockpit_repo, monkeypatch, tmp_path):
+    """An unreachable origin must not fall through to the behind-count, which
+    would read a stale `origin/main` and fast-forward on outdated information."""
+    wt = _behind_main(cockpit_repo)
+    _run(cockpit_repo.repo, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+
+    def _never(*args, **kwargs):
+        raise AssertionError("behind-count reached despite a failed fetch")
+
+    monkeypatch.setattr(gitlib, "_rev_list_count", _never)
+
+    assert (
+        gitlib.ff_default_branch_worktrees(cockpit_repo.repo, [wt], default="main")
+        == []
+    )
+
+
+def test_ff_resolves_origin_head_when_no_default_is_passed(cockpit_repo):
+    _run(cockpit_repo.repo, "remote", "set-head", "origin", "main")
+    wt = _behind_main(cockpit_repo)
+
+    assert gitlib.ff_default_branch_worktrees(cockpit_repo.repo, [wt]) == [(wt, 1)]
+
+
+def test_ff_is_a_no_op_when_origin_head_is_unresolvable(cockpit_repo):
+    wt = Worktree(path=cockpit_repo.repo, branch="main")
+
+    assert gitlib.ff_default_branch_worktrees(cockpit_repo.repo, [wt]) == []
