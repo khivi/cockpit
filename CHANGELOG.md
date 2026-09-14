@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.5](https://github.com/khivi/cockpit/compare/v3.3.4...v3.3.5) (2026-09-14)
+
+
+### Bug Fixes
+
+* never report a refused ff-only merge as an advance ([#515](https://github.com/khivi/cockpit/issues/515)) ([845dfec](https://github.com/khivi/cockpit/commit/845dfec05068db6395fa200baf787142518c41b8))
+
 ## [3.3.4](https://github.com/khivi/cockpit/compare/v3.3.3...v3.3.4) (2026-09-14)
 
 
