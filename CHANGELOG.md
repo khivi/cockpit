@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.4](https://github.com/khivi/cockpit/compare/v3.3.3...v3.3.4) (2026-09-14)
+
+
+### Documentation
+
+* document .claude/skills/ as repo-local, never an install target ([#513](https://github.com/khivi/cockpit/issues/513)) ([821e5d5](https://github.com/khivi/cockpit/commit/821e5d56448633520806a883cdd7909b7c1893ee))
+
 ## [3.3.3](https://github.com/khivi/cockpit/compare/v3.3.2...v3.3.3) (2026-09-11)
 
 
