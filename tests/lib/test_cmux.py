@@ -2780,3 +2780,275 @@ def test_find_cockpit_workspaces_pr_by_branch_is_last_wins_on_duplicate_branch(
     )
 
     assert result == {ref: (pr_second, wt)}
+
+
+# ── require_workspace_binary ─────────────────────────────────────────────────
+#
+# Exits cleanly with a one-liner instead of a traceback, so a slash-command
+# entry script gets a useful message. Three outcomes, and the whole point is
+# that the message names the actual cause — a test pinning only SystemExit(2)
+# would pass with the two messages swapped.
+
+
+def test_require_workspace_binary_returns_when_backend_is_available(capsys):
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.shutil.which", return_value="/usr/bin/cmux"),
+    ):
+        cmux_mod.require_workspace_binary()  # must not raise
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_require_workspace_binary_exits_on_tool_none(capsys):
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="none"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        cmux_mod.require_workspace_binary()
+
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "tool=none in config" in err
+    assert "workspace commands disabled" in err
+    assert "not found on PATH" not in err
+
+
+def test_require_workspace_binary_exits_when_backend_not_on_path(capsys):
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.shutil.which", return_value=None),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        cmux_mod.require_workspace_binary()
+
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "'cmux' not found on PATH" in err
+    assert "install cmux" in err
+    assert "tool=none in config" not in err
+
+
+# ── _apply_count_pill / apply_wip_pill / apply_stale_pill ────────────────────
+
+
+def test_apply_count_pill_sets_status_when_positive():
+    calls: list[tuple] = []
+    with patch(
+        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
+    ):
+        cmux_mod._apply_count_pill("workspace:1", "k", "🔔", 3)
+
+    assert calls == [
+        (
+            "set-status",
+            "k",
+            "🔔 3",
+            "--workspace",
+            "workspace:1",
+            "--color",
+            cmux_mod.ORANGE,
+        )
+    ]
+
+
+def test_apply_count_pill_clears_status_when_zero():
+    calls: list[tuple] = []
+    with patch(
+        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
+    ):
+        cmux_mod._apply_count_pill("workspace:1", "k", "🔔", 0)
+
+    assert calls == [("clear-status", "k", "--workspace", "workspace:1")]
+
+
+def test_apply_wip_pill_passes_its_own_key_and_icon():
+    calls: list[tuple] = []
+    with patch(
+        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
+    ):
+        cmux_mod.apply_wip_pill("workspace:1", 2)
+
+    assert calls[0][0] == "set-status"
+    assert calls[0][1] == cmux_mod.WIP_KEY
+    assert calls[0][2] == f"{cmux_mod.WIP_ICON} 2"
+
+
+def test_apply_stale_pill_passes_its_own_key_and_icon():
+    calls: list[tuple] = []
+    with patch(
+        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
+    ):
+        cmux_mod.apply_stale_pill("workspace:1", 5)
+
+    assert calls[0][0] == "set-status"
+    assert calls[0][1] == cmux_mod.STALE_KEY
+    assert calls[0][2] == f"{cmux_mod.STALE_ICON} 5"
+
+
+def test_apply_stale_pill_clears_when_not_behind():
+    calls: list[tuple] = []
+    with patch(
+        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
+    ):
+        cmux_mod.apply_stale_pill("workspace:1", 0)
+
+    assert calls == [("clear-status", cmux_mod.STALE_KEY, "--workspace", "workspace:1")]
+
+
+# ── workspace_is_idle ─────────────────────────────────────────────────────────
+
+
+def test_workspace_is_idle_true_when_idle_pill_present():
+    with patch("cockpit.lib.cmux.cmux", return_value=_idle_status_lines()):
+        assert cmux_mod.workspace_is_idle("workspace:1") is True
+
+
+def test_workspace_is_idle_false_when_no_idle_pill():
+    with patch("cockpit.lib.cmux.cmux", return_value=""):
+        assert cmux_mod.workspace_is_idle("workspace:1") is False
+
+
+def test_workspace_is_idle_false_on_ambiguous_needs_input_without_pill():
+    """AGENTS.md's nudge idle-gate rule: trust the `idle=` pill, never cmux's
+    native `Needs input`, which is ambiguous between at-rest and a pending
+    permission prompt. No `idle=` pill here, so this must read as NOT idle."""
+    with patch("cockpit.lib.cmux.cmux", return_value=_native_line("Needs input")):
+        assert cmux_mod.workspace_is_idle("workspace:1") is False
+
+
+# ── _group_from_json / create_workspace_group's None-group guard ────────────
+
+
+def test_group_from_json_returns_none_without_a_ref():
+    assert cmux_mod._group_from_json({"name": "no ref here"}) is None
+
+
+def test_create_workspace_group_returns_none_when_group_key_is_missing():
+    """The created blob parses as valid JSON but carries no usable `group`
+    object (e.g. `{"group": {}}`) — `_group_from_json` returns None for the
+    empty dict (no `ref`), and `create_workspace_group` must give up rather
+    than proceed to icon-set/anchor calls on a None group."""
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[:2] == ("workspace-group", "create"):
+            return json.dumps({"group": {}})
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        result = cmux_mod.create_workspace_group("auth (2)", ["workspace:1"])
+
+    assert result is None
+    # No icon-set or anchor-spawn calls should follow a None group.
+    assert not any(a[:2] == ("workspace-group", "set-icon") for a in calls)
+
+
+# ── render_diff: the subprocess exception guard ──────────────────────────────
+
+
+def test_render_diff_reports_subprocess_exception():
+    """A launch-time failure (missing binary mid-race, bad args, timeout) must
+    be caught and reported as text, never propagate past render_diff."""
+
+    def fake_run(*_a, **_k):
+        raise OSError("no such file or directory")
+
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.shutil.which", return_value="/usr/bin/cmux"),
+        patch("cockpit.lib.cmux.subprocess.run", side_effect=fake_run),
+    ):
+        msg = cmux_mod.render_diff(patch="d", cwd="/repo", title="t")
+
+    assert msg == "cmux failed: no such file or directory"
+
+
+# ── spawn_workspace (limux): unparsable ref ─────────────────────────────────
+
+
+def test_spawn_workspace_limux_returns_none_when_ref_unparsable():
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="limux"),
+        patch("cockpit.lib.cmux.shutil.which", return_value="/usr/bin/limux"),
+        patch("cockpit.lib.cmux.cmux", return_value="no ref here at all"),
+    ):
+        ref = cmux_mod.spawn_workspace("feat", Path("/tmp/wt"), "claude")
+
+    assert ref is None
+
+
+# ── workspace_cwds (limux): RuntimeError converted to CmuxUnavailable ────────
+
+
+def test_workspace_cwds_limux_run_failure_raises_cmux_unavailable():
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="limux"),
+        patch("cockpit.lib.cmux.shutil.which", return_value="/usr/bin/limux"),
+        patch("cockpit.lib.cmux.run", side_effect=RuntimeError("boom")),
+        pytest.raises(CmuxUnavailable, match="list-workspaces failed"),
+    ):
+        workspace_cwds()
+
+
+# ── nudge_if_idle: muted/snoozed pref records the skip reason ───────────────
+
+
+def test_nudge_if_idle_muted_pref_records_reason_in_skips():
+    """A muted/snoozed `pref_key` must record why in `skips` and return False
+    — `a`/`A`/`broadcast` deliberately pass no `pref_key`, so only the
+    automatic PR nudge takes this path."""
+    skips: dict[str, str] = {}
+    calls: list[tuple] = []
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return _idle_status_lines()
+
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.nudges.should_nudge", return_value=False),
+    ):
+        result = nudge_if_idle(
+            "workspace:1", "fix CI", tag="t", pref_key="acme__42", skips=skips
+        )
+
+    assert result is False
+    assert skips == {"workspace:1": "muted or snoozed"}
+    assert calls == []  # short-circuits before any cmux round-trip
+
+
+# ── status_pills: renderer-less kind is skipped ──────────────────────────────
+
+
+def test_status_pills_skips_kinds_with_no_renderer():
+    """`decide_pills` can emit a kind that `_CMUX_RENDERERS` has no entry for
+    at all (as opposed to an entry mapping to None) — status_pills must skip
+    it rather than raise a KeyError."""
+    with patch(
+        "cockpit.lib.cmux.decide_pills",
+        return_value=[{"kind": "some_unmapped_future_kind"}],
+    ):
+        out = status_pills(_pr(), _wt())
+
+    assert out == []
+
+
+# ── clear_pr_pills ────────────────────────────────────────────────────────────
+
+
+def test_clear_pr_pills_clears_every_pr_pill_key():
+    """Same key set `apply_pills` clears, with nothing re-set — used when a
+    merged/closed PR's branch is reused for new local work."""
+    calls: list[tuple] = []
+    with patch(
+        "cockpit.lib.cmux.cmux", side_effect=lambda *a, **k: calls.append(a) or ""
+    ):
+        cmux_mod.clear_pr_pills("workspace:1")
+
+    cleared_keys = {a[1] for a in calls if a[0] == "clear-status"}
+    assert cleared_keys == set(cmux_mod._PR_PILL_CLEAR_KEYS)
+    assert all(a[0] == "clear-status" for a in calls)
