@@ -1,6 +1,9 @@
 ---
 name: cockpit-dev
-description: Run this worktree's cockpit build against a throwaway sandbox, so a dev build can't fight the installed daemon or touch real worktrees. TRIGGER when you want to see a cockpit change actually running, or the user says "run cockpit", "try it in the TUI", "does this render right". DO NOT TRIGGER for running the test suite (use pytest) or for `cockpit setup` (never run that from a worktree).
+# model: sonnet
+effort: low
+description: Run this worktree's cockpit build against a throwaway sandbox, so it can't fight the installed daemon or touch real worktrees. TRIGGER on "run cockpit", "try it in the TUI", "does this render right". Not for pytest or `cockpit setup`.
+allowed-tools: Bash, Read, Grep
 ---
 
 # cockpit-dev
