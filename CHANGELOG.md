@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.5.0](https://github.com/khivi/cockpit/compare/v3.4.0...v3.5.0) (2026-09-15)
+
+
+### Features
+
+* **tickets:** show where an inbox ticket will land, and ask when it's ambiguous ([#520](https://github.com/khivi/cockpit/issues/520)) ([ca39e03](https://github.com/khivi/cockpit/commit/ca39e0372c62b7e84ccfac4be2da312a4c9a8d36))
+
 ## [3.4.0](https://github.com/khivi/cockpit/compare/v3.3.5...v3.4.0) (2026-09-15)
 
 
