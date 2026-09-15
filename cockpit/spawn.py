@@ -196,11 +196,51 @@ def _route_by_ticket(ref: str, candidates: list[dict], cfg: dict) -> str | None:
         print(
             f"note: ticket {ref!r} matches multiple repos ({names}); falling back "
             f"to cwd-based discovery. Set the per-repo routing discriminator "
-            f"(Linear `tickets.project`, Trello `tickets.board`), or pass "
+            f"(Linear `tickets.project`, Trello `tickets.board` — or "
+            f"`tickets.label` where repos share a board), or pass "
             f"--repo <name>, to disambiguate.",
             file=sys.stderr,
         )
     return None
+
+
+def ticket_repo_candidates(mode: str, value: str, cfg: dict) -> list[dict]:
+    """The repos a ticket in `mode` could route to — stage one of the two-stage
+    route, free and offline, per provider.
+
+    One function because two callers must ask the identical question: `cockpit
+    new`, which may fall back to cwd discovery when the set can't be reduced,
+    and the TUI's ticket inbox, which may not — it names no repo, so its cwd is
+    the *daemon's* and a fallback lands the worktree in whatever repo the daemon
+    happens to be standing in. `route_ticket_repo` is the inbox's entry point.
+    """
+    if mode == "trello":
+        # A card short link carries no board, project or key prefix, so there is
+        # no free match to gate the fetch on — declaring `tickets.board` IS the
+        # opt-in, and with none declared the set is empty and no network is used.
+        return [r for r in cfg.get("repos", []) if trello_boards(cfg, r)]
+    if mode == "linear":
+        # `tickets.keys` serves Linear *and* Jira. Gated on a provider being
+        # configured on the **candidates**, not globally: a provider declared per
+        # repo or on a shared `orgs` block is invisible to a bare
+        # `provider_for(cfg)`, which switched routing off for exactly the configs
+        # that most need it.
+        cands = find_repos_by_ticket_key(value)
+        if any(provider_for(cfg, r) is not None for r in cands):
+            return cands
+    return []
+
+
+def route_ticket_repo(source: str) -> str | None:
+    """The repo a ticket `source` routes to, or None when routing can't name one.
+
+    The whole of `cockpit new`'s ticket routing, minus the cwd fallback, exposed
+    for the one caller that has no meaningful cwd to fall back to. May pay one
+    provider `narrow_repos` round-trip, so call it off the UI thread.
+    """
+    cfg = load_config()
+    mode, value, _nwo_hint = detect_source(source)
+    return _route_by_ticket(value, ticket_repo_candidates(mode, value, cfg), cfg)
 
 
 def _repo_names() -> list[str]:
@@ -952,15 +992,8 @@ def main(argv: list[str] | None = None) -> int:
             is_trello = True
             ticket_source = (mode, value, None)
             if not args.repo:
-                # A card short link carries no board, project or key prefix, so
-                # there is no free first-stage match to gate the fetch on —
-                # declaring `tickets.board` IS the opt-in. With no repo declaring
-                # one the candidate set is empty, so this costs zero network calls
-                # and routes exactly as it did before the field existed.
                 spawn_cfg = load_config()
-                cands = [
-                    r for r in spawn_cfg.get("repos", []) if trello_boards(spawn_cfg, r)
-                ]
+                cands = ticket_repo_candidates(mode, value, spawn_cfg)
                 args.repo = _route_by_ticket(value, cands, spawn_cfg) or args.repo
         elif mode == "gh-issue":
             # `value` is the issue number; the worktree lands on `issue-<N>` and
@@ -981,21 +1014,9 @@ def main(argv: list[str] | None = None) -> int:
             from_name = True
             is_linear = True
             if not args.repo:
-                # `tickets.keys` is the free, offline first stage, and it serves
-                # Linear *and* Jira: a Linear team key and a Jira project key are
-                # the same prefix-baked-into-the-identifier shape (which is also
-                # why `detect_source` classifies both as `linear` mode). Gated on
-                # a ticket provider being configured at all, so `tickets: none`
-                # keeps routing off entirely — but asked of the **candidates**,
-                # not of the global block: a provider declared per repo (or on a
-                # shared `orgs` block) is invisible to a bare `provider_for(cfg)`,
-                # which switched routing off for exactly the configs that most
-                # need it. Trello's sibling gate is already per-repo
-                # (`trello_boards`), and this is the same question.
                 spawn_cfg = load_config()
-                cands = find_repos_by_ticket_key(value)
-                if any(provider_for(spawn_cfg, r) is not None for r in cands):
-                    args.repo = _route_by_ticket(value, cands, spawn_cfg) or args.repo
+                cands = ticket_repo_candidates(mode, value, spawn_cfg)
+                args.repo = _route_by_ticket(value, cands, spawn_cfg) or args.repo
             # Seeded below — the resolved provider picks Linear's prompt or
             # Jira's, since both share the `[A-Z]{2,6}-N` identifier shape and so
             # land in this one mode. No `claude mcp list` pre-flight for either:

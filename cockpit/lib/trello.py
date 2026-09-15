@@ -55,8 +55,14 @@ TRELLO_API_TOKEN_ENV = "TRELLO_API_TOKEN"  # noqa: S105
 # since a card short link carries no container at all — and scopes the ticket
 # inbox, where it is required rather than optional (`tickets._trello_my_open`).
 # A string is one board; a list is several, since one repo's work can span them.
+# `label` routes *below* the board, for the several-repos-one-board shape a board
+# alone cannot express: a label is orthogonal to the list, so a card keeps its
+# normal stage flow while carrying which repo owns it the whole way. Optional and
+# routing-only — nothing downstream reads it, and with none declared the label
+# stage costs zero network calls. Keep in sync with `config.trello_labels`.
 CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("board", "str_or_str_list"),
+    ("label", "str_or_str_list"),
     ("dev_done", "str"),
     ("merge_done", "str"),
     ("key_env", "str"),
@@ -409,6 +415,45 @@ def fetch_card_board(
     if isinstance(data, dict):
         return ((data.get("board") or {}).get("name")) or None
     return None
+
+
+def fetch_card_labels(
+    short_link: str, *, key: str | None = None, token: str | None = None
+) -> list[str] | None:
+    """The names of the labels on card `short_link`, or None — the second-stage
+    discriminator `tickets._trello_narrow_repos` routes by once the board leaves
+    more than one candidate.
+
+    One `GET /cards/{id}?labels=true`. Its own call rather than a field on
+    `fetch_card_board`, which has one caller and twenty tests pinning that it
+    costs exactly one fetch; this one runs only in the several-repos-one-board
+    case, which already pays for a round-trip.
+
+    `None` and `[]` are different answers and the caller reads them as such:
+    None is "couldn't ask" (unset creds, missing card, any API failure) and leaves
+    the candidates unnarrowed, while `[]` is a real, unlabelled card — which is
+    what routes to the repo claiming no label. A label with an empty name (Trello
+    allows a colour with no text) is dropped, since it can never be configured.
+    """
+    creds = _creds(key, token)
+    if not creds or not short_link:
+        return None
+    k, tok = creds
+    data = _request(
+        "GET",
+        f"/cards/{short_link}",
+        key=k,
+        token=tok,
+        params={"fields": "id", "labels": "true"},
+    )
+    if not isinstance(data, dict) or not data:
+        return None
+    labels = data.get("labels")
+    if not isinstance(labels, list):
+        return None
+    return [
+        name for lb in labels if (name := str((lb or {}).get("name") or "").strip())
+    ]
 
 
 def fetch_myself(*, key: str | None = None, token: str | None = None) -> str | None:

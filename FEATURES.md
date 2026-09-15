@@ -217,6 +217,15 @@ declaring that team prefix — free and offline. If several repos share the team
 many-small-services shape), cockpit resolves the ticket's *project* to break the tie, and
 only then, only on the ambiguity, at the cost of one fetch.
 
+A Trello card link carries no key at all, so there the **board** is the route: declare
+`tickets.board` and a card routes to the repo that owns its board. When two repos genuinely
+share one board — an app and its infrastructure, say — mark one repo's cards with a
+**label** (`tickets.label`) and leave its sibling declaring none. The labelled card goes to
+the repo claiming that label, everything else to the sibling. A label is worth using here
+rather than a dedicated list, because it rides alongside the card's normal column: the card
+still moves Accepted → Ongoing → Done and still lights the dev-done pill, while carrying
+which repo owns it the whole way.
+
 **Seeded work is plan-first.** Spawns that inherit real context come up told to study and
 propose, not to start editing — the agent waits for your approval. A blank new branch gets
 no seeded prompt at all, because there's nothing to study.
@@ -344,7 +353,14 @@ id into `n`. So the inbox isn't a second way to work; it's the list you reach fo
 don't yet know what to type. Orgs start folded (unless there's only one), because one
 tracker with a hundred cards assigned to you shouldn't bury the org that has three.
 
-Six things make it stay useful rather than becoming a second tracker tab:
+Seven things make it stay useful rather than becoming a second tracker tab:
+
+- **It says so when it can't tell which repo a ticket belongs to.** Starting a ticket from
+  the inbox names no repo, so cockpit routes it the same way `cockpit new` does — and where
+  that comes up ambiguous it refuses and points you at `n`, whose picker names the repo,
+  rather than guessing. Guessing is worse than it sounds: with nothing to route on, the
+  worktree lands in whatever repo the dashboard itself happens to be running from, which
+  can be one that has nothing to do with the ticket.
 
 - **It's the exact complement of the dashboard.** The moment a ticket has a worktree it
   leaves the inbox and becomes a row — within about 30 seconds, whether the worktree came

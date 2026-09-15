@@ -1156,6 +1156,54 @@ def test_trello_boards_defaults_to_empty(tmp_path, monkeypatch):
     assert cockpit_config.trello_boards(repo_entry={"tickets": {"board": "  "}}) == []
 
 
+def test_trello_labels_default_to_empty_which_is_the_boards_default_repo(
+    tmp_path, monkeypatch
+):
+    """Declaring none is meaningful, not merely absent: that repo takes every card
+    no sibling's label claims."""
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.trello_labels() == []
+    assert cockpit_config.trello_labels(repo_entry={"tickets": {"label": " "}}) == []
+
+
+def test_trello_labels_take_a_string_or_a_list(tmp_path, monkeypatch):
+    cockpit_config = _setup_cockpit_config(tmp_path, monkeypatch, {"repos": []})
+    assert cockpit_config.trello_labels(repo_entry={"tickets": {"label": "infra"}}) == [
+        "infra"
+    ]
+    assert cockpit_config.trello_labels(
+        repo_entry={"tickets": {"label": [" ops ", "infra", 7, ""]}}
+    ) == ["ops", "infra"]
+
+
+def test_trello_label_resolves_per_field_through_the_org(tmp_path, monkeypatch):
+    """The point of the field: the org declares the shared board, one member
+    declares the label that separates it from its sibling."""
+    cockpit_config = _setup_cockpit_config(
+        tmp_path,
+        monkeypatch,
+        {
+            "orgs": {"acme": {"tickets": {"provider": "trello", "board": "Acme"}}},
+            "repos": [
+                {"name": "app", "path": str(tmp_path / "app"), "org": "acme"},
+                {
+                    "name": "infra",
+                    "path": str(tmp_path / "infra"),
+                    "org": "acme",
+                    "tickets": {"label": "infra"},
+                },
+            ],
+        },
+    )
+    cfg = cockpit_config.load_config()
+    app, infra = cfg["repos"]
+    # The org's board reaches both; only the sibling that asked for it gets a label.
+    assert cockpit_config.trello_boards(cfg, app) == ["Acme"]
+    assert cockpit_config.trello_boards(cfg, infra) == ["Acme"]
+    assert cockpit_config.trello_labels(cfg, app) == []
+    assert cockpit_config.trello_labels(cfg, infra) == ["infra"]
+
+
 def test_trello_boards_repo_over_global(tmp_path, monkeypatch):
     cockpit_config = _setup_cockpit_config(
         tmp_path,

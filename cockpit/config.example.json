@@ -63,6 +63,7 @@
       "tickets": {
         "provider": "trello",
         "board": ["Engineering", "Engineering: Planning"],
+        "label": "infra",
         "dev_done": "Review",
         "merge_done": "Done",
         "close_on_merge": false,

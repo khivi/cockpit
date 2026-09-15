@@ -186,6 +186,14 @@ def _nwo_from_pr_url(url: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+def _with_repo(source: str, repo: str) -> str:
+    """`source` plus an explicit `--repo`, quoted — repo names carry spaces, and
+    `_launch_spawn` re-splits the string with `shlex`."""
+    import shlex
+
+    return f"{source} --repo {shlex.quote(repo)}"
+
+
 class _QueueWriter(io.TextIOBase):
     """A thread-safe stdout/stderr stand-in: every written line goes to a queue.
 
@@ -1332,13 +1340,17 @@ class CockpitApp(App[None]):
         """Modal callback (UI thread): spawn a worktree for the chosen ticket.
 
         The source is a ticket URL or id — a string `cockpit new` already routes,
-        so this adds no spawn machinery of its own. What it does add is a refusal:
-        with no repo named, an unroutable ticket would land its worktree in
-        whatever repo the *daemon's own cwd* happens to sit in, which is silent
-        and wrong. `detect_source` + `find_repos_by_ticket_key` are spawn's own
-        two offline stages, reused rather than re-derived; a URL carrying its repo
-        (a GitHub issue) and a Trello card (routed by board, which needs a fetch
-        spawn makes itself) are routable without them.
+        so this adds no spawn machinery of its own. What it does add is a repo:
+        `cockpit new` falls back to cwd discovery when routing can't name one,
+        and this caller's cwd is the *daemon's own*, so that fallback cut two
+        worktrees off whichever repo the daemon happened to be standing in — an
+        ambiguous Trello card landed on `dotfiles`. The resolved repo therefore
+        travels as an explicit `--repo`, and an unresolvable one refuses.
+
+        Routing is spawn's own `route_ticket_repo`, reused rather than
+        re-derived. A URL carrying its repo (a GitHub issue) skips it — the nwo
+        *is* the answer — but is still checked against the config, since spawn
+        falls back to the cwd there too.
 
         Refusing loudly here is the whole answer to grouping by org: the header
         names a team, routing picks the repo, and this is the one place that
@@ -1350,15 +1362,41 @@ class CockpitApp(App[None]):
             return
         # Local imports: the TUI shells out to `cockpit new` rather than calling
         # into spawn, and a module-level edge here would make that look otherwise.
-        from cockpit.lib.config import find_repos_by_ticket_key
+        from cockpit.lib.config import find_repo_by_nwo
         from cockpit.spawn import detect_source
 
-        mode, value, nwo_hint = detect_source(source)
-        if nwo_hint or mode == "trello" or find_repos_by_ticket_key(value):
-            self._launch_spawn(source, None)
+        _mode, value, nwo_hint = detect_source(source)
+        if nwo_hint:
+            match = find_repo_by_nwo(nwo_hint)
+            if match is None:
+                self._refuse_ticket(nwo_hint)
+                return
+            self._launch_spawn(_with_repo(source, str(match["name"])), None)
             return
+        self._route_ticket(source, value)
+
+    @work(thread=True, group="ticket", exit_on_error=False)
+    def _route_ticket(self, source: str, ref: str) -> None:
+        """Resolve the ticket's repo off the UI thread, then spawn or refuse.
+
+        Threaded because stage two of the route is a provider `narrow_repos`
+        call, which reaches the tracker. Stage one is free, so the common
+        single-candidate ticket never waits on anything."""
+        from cockpit.spawn import route_ticket_repo
+
+        try:
+            repo = route_ticket_repo(source)
+        except (OSError, RuntimeError) as e:
+            print(f"start ticket: could not route {ref}: {e}")
+            repo = None
+        if repo is None:
+            self.call_from_thread(self._refuse_ticket, ref)
+            return
+        self.call_from_thread(self._launch_spawn, _with_repo(source, repo), None)
+
+    def _refuse_ticket(self, ref: str) -> None:
         self._notify(
-            f"{value}: no configured repo declares that key — "
+            f"{ref}: no configured repo routes that ticket — "
             "press n to start it and pick a repo",
             severity="warning",
         )

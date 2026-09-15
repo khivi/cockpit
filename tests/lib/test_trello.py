@@ -20,6 +20,7 @@ from cockpit.lib.trello import (
     card_short_link,
     fetch_card_board,
     fetch_card_handles,
+    fetch_card_labels,
     fetch_card_lists,
     fetch_card_meta,
     fetch_my_open,
@@ -261,6 +262,71 @@ def test_fetch_card_board_degrades_to_none_on_every_failure():
         kwargs = {"side_effect": side} if side is not None else {"return_value": ret}
         with patch("cockpit.lib.trello.urllib.request.urlopen", **kwargs):
             assert fetch_card_board("aB3dZ9", key=KEY, token=TOKEN) is None
+
+
+def test_label_is_a_declared_config_field():
+    # Routes below the board, for the several-repos-one-board shape. Same
+    # str-or-list shape as `board`: one repo can mark its work several ways.
+    assert ("label", "str_or_str_list") in CONFIG_FIELDS
+
+
+def test_fetch_card_labels_returns_the_label_names():
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        return _FakeResp({"labels": [{"name": "infra"}, {"name": "urgent"}]})
+
+    with patch("cockpit.lib.trello.urllib.request.urlopen", side_effect=fake_urlopen):
+        got = fetch_card_labels("aB3dZ9", key=KEY, token=TOKEN)
+    assert got == ["infra", "urgent"]
+    assert "labels=true" in captured["url"]
+    assert captured["url"].startswith("https://api.trello.com/1/cards/aB3dZ9?")
+
+
+def test_fetch_card_labels_drops_colour_only_labels():
+    # Trello allows a label with a colour and no text; it can never be named in
+    # config, so it is not a routing signal.
+    resp = _FakeResp({"labels": [{"name": ""}, {"name": "  "}, {"name": " infra "}]})
+    with patch("cockpit.lib.trello.urllib.request.urlopen", return_value=resp):
+        assert fetch_card_labels("aB3dZ9", key=KEY, token=TOKEN) == ["infra"]
+
+
+def test_fetch_card_labels_distinguishes_unlabelled_from_unaskable():
+    """`[]` is a real answer (route to the default repo) and None is "couldn't
+    ask" (narrow nothing) — collapsing them hands cards away on an API blip."""
+    resp = _FakeResp({"labels": []})
+    with patch("cockpit.lib.trello.urllib.request.urlopen", return_value=resp):
+        assert fetch_card_labels("aB3dZ9", key=KEY, token=TOKEN) == []
+
+
+def test_fetch_card_labels_no_creds_skips_network():
+    with (
+        patch("cockpit.lib.trello.urllib.request.urlopen") as urlopen,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        assert fetch_card_labels("aB3dZ9") is None
+    urlopen.assert_not_called()
+
+
+def test_fetch_card_labels_blank_short_link_skips_network():
+    with patch("cockpit.lib.trello.urllib.request.urlopen") as urlopen:
+        assert fetch_card_labels("", key=KEY, token=TOKEN) is None
+    urlopen.assert_not_called()
+
+
+def test_fetch_card_labels_degrades_to_none_on_every_failure():
+    err = urllib.error.HTTPError("u", 404, "not found", {}, BytesIO(b""))  # type: ignore[arg-type]
+    for side, ret in (
+        (err, None),
+        (TimeoutError(), None),
+        (None, _FakeResp(raw=b"not json {")),
+        (None, _FakeResp({})),
+        (None, _FakeResp({"labels": "nope"})),
+    ):
+        kwargs = {"side_effect": side} if side is not None else {"return_value": ret}
+        with patch("cockpit.lib.trello.urllib.request.urlopen", **kwargs):
+            assert fetch_card_labels("aB3dZ9", key=KEY, token=TOKEN) is None
 
 
 def test_fetch_myself_returns_member_id():
