@@ -3634,9 +3634,12 @@ def test_ticket_routes_reads_config_once_for_the_whole_modal(monkeypatch):
     from cockpit.tui.app import _ticket_routes
 
     reads: list = []
-    monkeypatch.setattr(
-        "cockpit.tui.app.load_config", lambda: reads.append(1) or {"repos": []}
-    )
+
+    def _counted_load_config() -> dict:
+        reads.append(1)
+        return {"repos": []}
+
+    monkeypatch.setattr("cockpit.tui.app.load_config", _counted_load_config)
     monkeypatch.setattr(
         "cockpit.spawn.ticket_repo_candidates", lambda mode, value, cfg: []
     )

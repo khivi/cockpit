@@ -73,5 +73,7 @@ async def test_the_ticket_and_every_candidate_are_named():
         await _open(app, result, repos=("infra", "cluster", "os"))
         await pilot.pause()
         assert "PLAT-77" in app.export_screenshot()
+        screen = app.screen
+        assert isinstance(screen, RepoPickScreen)
         # Config order, the order every other repo list in the TUI uses.
-        assert app.screen._repos == ["infra", "cluster", "os"]
+        assert screen._repos == ["infra", "cluster", "os"]
