@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.0](https://github.com/khivi/cockpit/compare/v3.3.5...v3.4.0) (2026-09-15)
+
+
+### Features
+
+* **tickets:** route a ticket to exactly one repo, or refuse ([#518](https://github.com/khivi/cockpit/issues/518)) ([eb51b02](https://github.com/khivi/cockpit/commit/eb51b02c1b0a8f7abb60e34bfaffe9997d5f5a58))
+
 ## [3.3.5](https://github.com/khivi/cockpit/compare/v3.3.4...v3.3.5) (2026-09-14)
 
 
