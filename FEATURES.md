@@ -340,10 +340,11 @@ first.
 │ 3 assigned to you, with no worktree yet       │
 │ ▾ acme (2)                                    │
 │   PE-412   Fix retry backoff       Todo    2d │
-│   PE-430   Docs pass on the api    Progress 6h│
+│ ? PE-430   Docs pass on the api    Progress 6h│
 │ ▸ widgets-co (1)                              │
 │                                               │
 │ enter opens an org, or starts a ticket · esc  │
+│ ? several repos claim it — enter picks one    │
 └───────────────────────────────────────────────┘
 ```
 
@@ -355,12 +356,19 @@ tracker with a hundred cards assigned to you shouldn't bury the org that has thr
 
 Seven things make it stay useful rather than becoming a second tracker tab:
 
-- **It says so when it can't tell which repo a ticket belongs to.** Starting a ticket from
-  the inbox names no repo, so cockpit routes it the same way `cockpit new` does — and where
-  that comes up ambiguous it refuses and points you at `n`, whose picker names the repo,
-  rather than guessing. Guessing is worse than it sounds: with nothing to route on, the
-  worktree lands in whatever repo the dashboard itself happens to be running from, which
-  can be one that has nothing to do with the ticket.
+- **It tells you where a ticket will land before you press enter.** Starting a ticket from
+  the inbox names no repo, so cockpit routes it the same way `cockpit new` does. Most
+  tickets route to exactly one repo and the row says nothing. The two that don't are marked
+  in the Ticket column: `?` when several repos claim the ticket's key, and `!` when none
+  does. Neither guesses — with nothing to route on, the worktree would land in whatever repo
+  the dashboard itself happens to be running from, which can be one that has nothing to do
+  with the ticket.
+
+  On a `?` row, `enter` asks: a short list of the repos that claim it, and the one you pick
+  is the one the worktree is cut in. That's the shape where one team owns several repos —
+  each declaring the same `tickets.keys`, and a ticket genuinely spanning two of them, so
+  there's nothing left for cockpit to work out. On a `!` row it still refuses and points you
+  at `n`, because there's no candidate to offer.
 
 - **It's the exact complement of the dashboard.** The moment a ticket has a worktree it
   leaves the inbox and becomes a row — within about 30 seconds, whether the worktree came

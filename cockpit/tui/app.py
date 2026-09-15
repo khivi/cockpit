@@ -113,6 +113,7 @@ from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
+from cockpit.tui.widgets.repo_pick_screen import RepoPickScreen
 from cockpit.tui.widgets.tickets_screen import TicketsScreen
 from cockpit.tui.widgets.worktree_table import (
     HEADER_CAP,
@@ -192,6 +193,43 @@ def _with_repo(source: str, repo: str) -> str:
     import shlex
 
     return f"{source} --repo {shlex.quote(repo)}"
+
+
+def _ticket_routes(buckets: dict[str, list[dict]]) -> dict[str, list[str]]:
+    """Ticket id → the repo names stage one of the route matches.
+
+    What the inbox's routing markers are drawn from. Stage one only: it is the
+    free, offline half (`spawn.ticket_repo_candidates`), so opening the modal
+    still reaches no network however many tickets are in it — the paid
+    `narrow_repos` tiebreak happens once, on the ticket actually chosen.
+
+    A ticket stage one does not apply to is left *out* of the map rather than
+    mapped to `[]`: a Trello short link carries nothing to match on (its board
+    declaration is the discriminator, which costs a fetch) and a GitHub issue
+    URL carries its own `owner/repo`, so for neither does "matched no repo" mean
+    what it means for a Linear or Jira key. The screen marks an absent id with
+    nothing, which is the honest answer.
+
+    One `load_config()` for the whole modal, since `find_repos_by_ticket_key`
+    reads config on every call.
+    """
+    from cockpit.spawn import detect_source, ticket_repo_candidates
+
+    cfg = load_config()
+    routes: dict[str, list[str]] = {}
+    for tickets in buckets.values():
+        for ticket in tickets:
+            source = str(ticket.get("url") or "") or str(ticket.get("id") or "")
+            tid = str(ticket.get("id") or "")
+            if not source or not tid or tid in routes:
+                continue
+            mode, value, nwo_hint = detect_source(source)
+            # `linear` covers Jira too — the keys share a shape and a reader.
+            if nwo_hint or mode != "linear":
+                continue
+            cands = ticket_repo_candidates(mode, value, cfg)
+            routes[tid] = [str(c["name"]) for c in cands if c.get("name")]
+    return routes
 
 
 class _QueueWriter(io.TextIOBase):
@@ -1326,6 +1364,11 @@ class CockpitApp(App[None]):
         nothing under it reads as a failed fetch, which is the one thing the
         collector works hardest never to show.
 
+        The one config read is `_ticket_routes`, which resolves each ticket's
+        candidate repos so a row can say where enter will land. It is stage one
+        of the route only — offline, no fetch — and it happens once here rather
+        than per row per repaint inside the screen.
+
         Not `--dry` gated on the way in: opening a read-only list reaches nothing
         outside the process. The spawn it can lead to is, in `_start_ticket`.
         """
@@ -1334,7 +1377,9 @@ class CockpitApp(App[None]):
             live = [t for t in tickets if not t.get("in_flight")]
             if live:
                 buckets[bucket] = live
-        self.push_screen(TicketsScreen(buckets), self._start_ticket)
+        self.push_screen(
+            TicketsScreen(buckets, _ticket_routes(buckets)), self._start_ticket
+        )
 
     def _start_ticket(self, source: str | None) -> None:
         """Modal callback (UI thread): spawn a worktree for the chosen ticket.
@@ -1344,17 +1389,21 @@ class CockpitApp(App[None]):
         `cockpit new` falls back to cwd discovery when routing can't name one,
         and this caller's cwd is the *daemon's own*, so that fallback cut two
         worktrees off whichever repo the daemon happened to be standing in — an
-        ambiguous Trello card landed on `dotfiles`. The resolved repo therefore
-        travels as an explicit `--repo`, and an unresolvable one refuses.
+        ambiguous Trello card landed on `dotfiles`. The repo therefore always
+        travels as an explicit `--repo`, whether routing resolved it or the user
+        picked it.
 
-        Routing is spawn's own `route_ticket_repo`, reused rather than
+        Routing is spawn's own `route_ticket_repos`, reused rather than
         re-derived. A URL carrying its repo (a GitHub issue) skips it — the nwo
         *is* the answer — but is still checked against the config, since spawn
         falls back to the cwd there too.
 
-        Refusing loudly here is the whole answer to grouping by org: the header
-        names a team, routing picks the repo, and this is the one place that
-        choice can surface. `n` is the way out — its picker names the repo.
+        The header names a team and routing picks the repo, so this is the one
+        place that choice can surface, and it surfaces two ways. No candidate
+        survives both stages — nothing claims the ticket — and it refuses
+        loudly, since there is nothing to offer. Several survive and it *asks*
+        (`RepoPickScreen`): the many-repos-one-team config is legitimate and so
+        is a ticket spanning two of them, so there is nothing left to derive.
         """
         if not source:
             return
@@ -1381,18 +1430,40 @@ class CockpitApp(App[None]):
 
         Threaded because stage two of the route is a provider `narrow_repos`
         call, which reaches the tracker. Stage one is free, so the common
-        single-candidate ticket never waits on anything."""
-        from cockpit.spawn import route_ticket_repo
+        single-candidate ticket never waits on anything.
+
+        A failed route is treated as no candidates rather than as an ambiguity:
+        offering a picker built from an exception would be offering a guess.
+        """
+        from cockpit.spawn import route_ticket_repos
 
         try:
-            repo = route_ticket_repo(source)
+            repos = route_ticket_repos(source)
         except (OSError, RuntimeError) as e:
             print(f"start ticket: could not route {ref}: {e}")
-            repo = None
-        if repo is None:
+            repos = []
+        if len(repos) == 1:
+            self.call_from_thread(
+                self._launch_spawn, _with_repo(source, repos[0]), None
+            )
+        elif repos:
+            self.call_from_thread(self._pick_ticket_repo, source, ref, repos)
+        else:
             self.call_from_thread(self._refuse_ticket, ref)
-            return
-        self.call_from_thread(self._launch_spawn, _with_repo(source, repo), None)
+
+    def _pick_ticket_repo(self, source: str, ref: str, repos: list[str]) -> None:
+        """Ask which of `repos` the ticket belongs in, then spawn there.
+
+        Pushed from the inbox's own dismiss callback, so this is push-after-pop
+        rather than a modal over a modal. Cancelling starts nothing — the ticket
+        keeps its row and `i` offers it again.
+        """
+
+        def _chosen(repo: str | None) -> None:
+            if repo:
+                self._launch_spawn(_with_repo(source, repo), None)
+
+        self.push_screen(RepoPickScreen(ref, repos), _chosen)
 
     def _refuse_ticket(self, ref: str) -> None:
         self._notify(

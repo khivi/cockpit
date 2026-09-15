@@ -26,6 +26,21 @@ id), which is a string `spawn.detect_source` already classifies for all four
 providers: a Linear or Jira URL carries its key, a Trello card URL its short
 link, a GitHub issue URL its repo and number. That is why starting a ticket needs
 no spawn machinery of its own.
+
+A row whose routing is not a foregone conclusion says so *before* enter, via a
+marker in the Ticket cell: `?` when several repos claim the key (enter opens a
+picker) and `!` when none does (enter refuses). Nothing is drawn for the
+ordinary single-candidate row — the marker is for the exception, which is also
+why this is not a Repo column: the four columns already fill the modal, and
+key→repo is 1:1 for most configs, so a column would repeat one constant string
+down each fold.
+
+The candidate names are computed by the app and handed in as `routes`, so this
+screen still reads no config: `find_repos_by_ticket_key` walks `load_config()`,
+and doing that per row per repaint is the disk hit `#header-repo` is careful to
+keep off the arrow keys. `routes` carries stage *one* only — free and offline —
+so a marked row is a prediction the app re-checks against the paid tiebreak
+before it acts.
 """
 
 from __future__ import annotations
@@ -57,6 +72,16 @@ _TICKET_MAX = 26
 _TITLE_MAX = 46
 _STATE_MAX = 14
 _AGE_MAX = 4
+
+#: Routing markers, ASCII and single-cell by construction. The main table pays
+#: for a fixed-width `_STATUS_SLOT` because emoji ink width varies per font;
+#: these sidestep that rather than re-import the problem into a second table.
+AMBIGUOUS_MARK = "?"
+UNROUTABLE_MARK = "!"
+
+#: Width every ticket row reserves for a marker, paid in blanks by the rows that
+#: carry none — so the handles line up whatever a fold happens to contain.
+_MARK_SLOT = 2
 
 
 def _ellipsize(text: str, limit: int) -> str:
@@ -126,11 +151,20 @@ class TicketsScreen(ModalScreen["str | None"]):
         Binding("t", "open_ticket", "Open in browser"),
     ]
 
-    def __init__(self, buckets: dict[str, list[dict]] | None = None) -> None:
+    def __init__(
+        self,
+        buckets: dict[str, list[dict]] | None = None,
+        routes: dict[str, list[str]] | None = None,
+    ) -> None:
         super().__init__()
         # Bucket order is the caller's; inside a bucket the payload is already
         # newest-first, which is the order `ticket_inbox._dedup` established.
         self._buckets = {k: list(v) for k, v in (buckets or {}).items()}
+        # Ticket id → the repo names stage one matched. A ticket *absent* from
+        # the map is one stage one does not apply to (a Trello card carries no
+        # key to match, a GitHub issue URL carries its own repo), which is not
+        # the same as matching nothing — so it is marked with nothing at all.
+        self._routes = dict(routes or {})
         self._by_key: dict[str, dict] = {}
         # Every org starts folded, like the sidebar's two trailing piles: a
         # tracker with a hundred cards assigned to you would otherwise bury the
@@ -151,6 +185,23 @@ class TicketsScreen(ModalScreen["str | None"]):
                 "t opens it in the browser · esc to close",
                 classes="tk-hint",
             )
+            legend = self._legend()
+            if legend:
+                yield Static(legend, classes="tk-hint", id="tk-legend")
+
+    def _legend(self) -> str:
+        """The marker legend, or "" when no row carries one.
+
+        Spelling out glyphs nothing on screen uses is how a hint line stops
+        being read, so this names only the markers actually in play.
+        """
+        marks = {self._marker(tid).strip() for tid in self._routes}
+        parts = []
+        if AMBIGUOUS_MARK in marks:
+            parts.append(f"{AMBIGUOUS_MARK} several repos claim it — enter picks one")
+        if UNROUTABLE_MARK in marks:
+            parts.append(f"{UNROUTABLE_MARK} no configured repo routes it")
+        return " · ".join(parts)
 
     def _subtitle(self) -> str:
         count = self._count()
@@ -218,6 +269,19 @@ class TicketsScreen(ModalScreen["str | None"]):
         with contextlib.suppress(CellDoesNotExist, KeyError):
             table.move_cursor(row=table.get_row_index(key))
 
+    def _marker(self, tid: str) -> str:
+        """`?`, `!` or blank for ticket `tid`, padded to `_MARK_SLOT`."""
+        names = self._routes.get(tid)
+        if names is None:
+            mark = ""
+        elif not names:
+            mark = UNROUTABLE_MARK
+        elif len(names) > 1:
+            mark = AMBIGUOUS_MARK
+        else:
+            mark = ""
+        return mark.ljust(_MARK_SLOT)
+
     def _add_ticket(self, table: DataTable, bucket: str, ticket: dict) -> None:
         tid = strip_control(str(ticket.get("id") or ""))
         if not tid:
@@ -231,8 +295,13 @@ class TicketsScreen(ModalScreen["str | None"]):
         # card (`#122`) is what a human reads off it, so the provider carries it
         # as `handle` and the id stays the key everything else joins on.
         handle = strip_control(str(ticket.get("handle") or "")) or tid
+        mark = self._marker(tid)
+        # The marker comes out of the handle's budget rather than widening the
+        # column: the widths are explicit for a paid-for reason (auto-sizing
+        # caches the wrong width on a fold), so nothing here may grow one.
+        room = _TICKET_MAX - len(ROW_INDENT) - len(mark)
         table.add_row(
-            Text(f"{ROW_INDENT}{_ellipsize(handle, _TICKET_MAX - len(ROW_INDENT))}"),
+            Text(f"{ROW_INDENT}{mark}{_ellipsize(handle, room)}"),
             Text(_ellipsize(strip_control(str(ticket.get("title") or "")), _TITLE_MAX)),
             Text(
                 _ellipsize(strip_control(str(ticket.get("state") or "")), _STATE_MAX),

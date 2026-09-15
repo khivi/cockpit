@@ -21,7 +21,10 @@ from textual.coordinate import Coordinate
 from textual.widgets import DataTable, Static
 
 from cockpit.tui.widgets.tickets_screen import (
+    _TICKET_MAX,
+    AMBIGUOUS_MARK,
     HEADER_KEY_PREFIX,
+    UNROUTABLE_MARK,
     TicketsScreen,
     _age,
     ticket_source,
@@ -46,9 +49,17 @@ def _ticket(tid="PE-412", **over) -> dict:
     return ticket
 
 
-async def _open(app, buckets, result=None):
+async def _open(app, buckets, result=None, routes=None):
     callback = result.append if result is not None else None
-    await app.push_screen(TicketsScreen(buckets), callback)
+    await app.push_screen(TicketsScreen(buckets, routes), callback)
+
+
+def _ticket_cells(app) -> list[str]:
+    """Every Ticket-column cell, as painted."""
+    table = app.screen.query_one(DataTable)
+    return [
+        str(table.get_cell_at(Coordinate(row, 0))) for row in range(table.row_count)
+    ]
 
 
 # ── the spawn source ────────────────────────────────────────────────────────
@@ -311,3 +322,100 @@ def test_age_of_a_future_stamp_is_blank():
 def test_age_assumes_utc_for_a_naive_stamp():
     now = datetime(2026, 9, 10, 12, 0, tzinfo=UTC)
     assert _age("2026-09-10T11:00:00", now=now) == "1h"
+
+
+# ── routing markers ─────────────────────────────────────────────────────────
+#
+# The screen is *handed* the candidate names — it reads no config, so a marker
+# costs nothing per repaint. Stage one only, which is why a marked row is a
+# prediction the app re-checks before it acts.
+
+
+@pytest.mark.asyncio
+async def test_a_cleanly_routed_ticket_carries_no_marker():
+    """The common row. A marker on every row would be a Repo column by another
+    name, which is the thing this deliberately is not."""
+    app: _Host = _Host()
+    async with app.run_test() as pilot:
+        await _open(app, {"acme": [_ticket("PE-1")]}, routes={"PE-1": ["widgets"]})
+        await pilot.pause()
+        assert AMBIGUOUS_MARK not in _ticket_cells(app)[1]
+        assert UNROUTABLE_MARK not in _ticket_cells(app)[1]
+
+
+@pytest.mark.asyncio
+async def test_several_candidates_mark_the_row_ambiguous():
+    app: _Host = _Host()
+    async with app.run_test() as pilot:
+        await _open(
+            app,
+            {"platform": [_ticket("PLAT-77")]},
+            routes={"PLAT-77": ["infra", "cluster"]},
+        )
+        await pilot.pause()
+        assert AMBIGUOUS_MARK in _ticket_cells(app)[1]
+
+
+@pytest.mark.asyncio
+async def test_no_candidate_marks_the_row_unroutable():
+    """`publish` unions scopes across a credential group, so a bucket can hold a
+    ticket no repo in it claims. Those rows spawn nowhere, and used to say so
+    only after enter."""
+    app: _Host = _Host()
+    async with app.run_test() as pilot:
+        await _open(app, {"acme": [_ticket("OTHER-9")]}, routes={"OTHER-9": []})
+        await pilot.pause()
+        assert UNROUTABLE_MARK in _ticket_cells(app)[1]
+
+
+@pytest.mark.asyncio
+async def test_a_ticket_outside_stage_one_is_marked_with_nothing():
+    """Absent from the map is not the same as matching nothing: a Trello card
+    carries no key to match on, so `!` there would be a lie."""
+    app: _Host = _Host()
+    async with app.run_test() as pilot:
+        await _open(app, {"acme": [_ticket("6rm3JJPY")]}, routes={})
+        await pilot.pause()
+        cell = _ticket_cells(app)[1]
+        assert AMBIGUOUS_MARK not in cell and UNROUTABLE_MARK not in cell
+
+
+@pytest.mark.asyncio
+async def test_a_marker_never_widens_the_ticket_column():
+    """The widths are explicit for a paid-for reason — auto-sizing caches the
+    wrong width on a fold — so the marker comes out of the handle's budget."""
+    app: _Host = _Host()
+    long_id = "PLAT-" + "9" * 40
+    async with app.run_test() as pilot:
+        await _open(
+            app,
+            {"platform": [_ticket(long_id)]},
+            routes={long_id: ["infra", "cluster"]},
+        )
+        await pilot.pause()
+        assert len(_ticket_cells(app)[1]) <= _TICKET_MAX + 1
+
+
+@pytest.mark.asyncio
+async def test_the_legend_names_only_the_markers_on_screen():
+    """Spelling out glyphs nothing uses is how a hint line stops being read."""
+    app: _Host = _Host()
+    async with app.run_test() as pilot:
+        await _open(
+            app,
+            {"platform": [_ticket("PLAT-77")]},
+            routes={"PLAT-77": ["infra", "cluster"]},
+        )
+        await pilot.pause()
+        legend = str(app.screen.query_one("#tk-legend", Static).render())
+        assert AMBIGUOUS_MARK in legend
+        assert "no configured repo" not in legend
+
+
+@pytest.mark.asyncio
+async def test_a_cleanly_routed_inbox_shows_no_legend_at_all():
+    app: _Host = _Host()
+    async with app.run_test() as pilot:
+        await _open(app, {"acme": [_ticket("PE-1")]}, routes={"PE-1": ["widgets"]})
+        await pilot.pause()
+        assert not app.screen.query("#tk-legend")

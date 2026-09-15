@@ -1978,30 +1978,58 @@ def test_trello_card_routing_inconclusive_fetch_warns_and_falls_back(
     assert "testrepo" in err and "second" in err
 
 
-# ── route_ticket_repo: the cwd-less half of the route ──────────────────────
+# ── route_ticket_repos: the cwd-less half of the route ─────────────────────
 #
 # The TUI's ticket inbox names no repo and its cwd is the *daemon's*, so where
-# `cockpit new` may fall back to cwd discovery, the inbox must refuse. Both ask
-# through this one function so they cannot disagree about what "routable" means.
+# `cockpit new` may fall back to cwd discovery, the inbox must refuse or ask.
+# Both ask through this one function so they cannot disagree about what
+# "routable" means — and it returns the surviving *set*, since "nobody claims
+# this" and "several do" are different answers with different handling.
 
 
-def test_route_ticket_repo_names_the_lone_board_declarer(cockpit_repo):
-    from cockpit.spawn import route_ticket_repo
+def test_route_ticket_repos_names_the_lone_board_declarer(cockpit_repo):
+    from cockpit.spawn import route_ticket_repos
 
     _set_config_key(cockpit_repo, "tickets", "trello")
     _set_repo_tickets(cockpit_repo, {"board": "Engineering"})
     with patch("cockpit.lib.tickets.fetch_card_board") as fetch:
-        assert route_ticket_repo(_TRELLO_URL) == "testrepo"
+        assert route_ticket_repos(_TRELLO_URL) == ["testrepo"]
     fetch.assert_not_called()
 
 
-def test_route_ticket_repo_returns_none_when_no_repo_declares_a_board(cockpit_repo):
+def test_route_ticket_repos_is_empty_when_no_repo_declares_a_board(cockpit_repo):
     """The shape that cut two worktrees off `dotfiles`: with nothing to route on,
-    spawn silently used the daemon's cwd. None is what lets the caller refuse."""
-    from cockpit.spawn import route_ticket_repo
+    spawn silently used the daemon's cwd. Empty is what lets the caller refuse."""
+    from cockpit.spawn import route_ticket_repos
 
     _set_config_key(cockpit_repo, "tickets", "trello")
-    assert route_ticket_repo(_TRELLO_URL) is None
+    assert route_ticket_repos(_TRELLO_URL) == []
+
+
+def test_route_ticket_repos_reports_every_survivor_of_an_ambiguity(
+    cockpit_repo, tmp_path
+):
+    """The many-repos-one-team shape: both declare the same `tickets.keys` and
+    neither declares a `tickets.project`, so the tiebreak returns them untouched.
+    The caller offers these as a picker, so the names must survive the route
+    rather than collapse into a bare "unroutable"."""
+    from cockpit.spawn import route_ticket_repos
+
+    _set_config_key(cockpit_repo, "tickets", "linear")
+    _set_repo_tickets(cockpit_repo, {"keys": ["PLAT"]})
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data["repos"].append(
+        {
+            "name": "second",
+            "path": str(tmp_path / "second"),
+            "branch_prefix": "khivi/",
+            "default_base": "main",
+            "tickets": {"keys": ["PLAT"]},
+        }
+    )
+    cfg_path.write_text(json.dumps(data))
+    assert sorted(route_ticket_repos("PLAT-77")) == ["second", "testrepo"]
 
 
 # ── per-repo / per-org provider gate ───────────────────────────────────────

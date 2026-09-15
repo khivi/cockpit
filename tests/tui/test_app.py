@@ -28,6 +28,7 @@ from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
 from cockpit.tui.widgets.config_screen import ConfigScreen
 from cockpit.tui.widgets.header_bar import HeaderBar
+from cockpit.tui.widgets.repo_pick_screen import RepoPickScreen
 from cockpit.tui.widgets.tickets_screen import TicketsScreen
 from cockpit.tui.widgets.worktree_table import WorktreeTable
 
@@ -3589,13 +3590,70 @@ async def test_ticket_inbox_drops_an_org_with_nothing_left(monkeypatch):
         assert list(_open_buckets(app)) == ["widgets-co"]
 
 
-def _drive_ticket_route(monkeypatch, repo):
-    """Run the routing worker inline, with `route_ticket_repo` stubbed to `repo`.
+# ── the routing markers' input ──────────────────────────────────────────────
+
+
+def test_ticket_routes_maps_each_key_to_its_candidate_repos(monkeypatch):
+    """Stage one only — free and offline, so opening the modal reaches no network
+    however many tickets are in it."""
+    from cockpit.tui.app import _ticket_routes
+
+    monkeypatch.setattr("cockpit.tui.app.load_config", lambda: {"repos": []})
+    monkeypatch.setattr(
+        "cockpit.spawn.ticket_repo_candidates",
+        lambda mode, value, cfg: [{"name": "infra"}, {"name": "cluster"}],
+    )
+    routes = _ticket_routes({"platform": [_inbox_ticket("PLAT-77")]})
+    assert routes == {"PLAT-77": ["infra", "cluster"]}
+
+
+def test_ticket_routes_omits_a_ticket_stage_one_cannot_answer_for(monkeypatch):
+    """Absent is not `[]`: a Trello short link carries no key to match on and a
+    GitHub issue URL carries its own repo, so "matched nothing" would be a lie
+    for both. The screen marks an absent id with nothing."""
+    from cockpit.tui.app import _ticket_routes
+
+    monkeypatch.setattr("cockpit.tui.app.load_config", lambda: {"repos": []})
+    monkeypatch.setattr(
+        "cockpit.spawn.ticket_repo_candidates", lambda mode, value, cfg: []
+    )
+    buckets = {
+        "acme": [
+            _inbox_ticket("6rm3JJPY", url="https://trello.com/c/6rm3JJPY"),
+            _inbox_ticket(
+                "acme/widgets#77", url="https://github.com/acme/widgets/issues/77"
+            ),
+        ]
+    }
+    assert _ticket_routes(buckets) == {}
+
+
+def test_ticket_routes_reads_config_once_for_the_whole_modal(monkeypatch):
+    """`find_repos_by_ticket_key` walks `load_config()` on every call, and a disk
+    hit per row per repaint is what `#header-repo` is careful to avoid."""
+    from cockpit.tui.app import _ticket_routes
+
+    reads: list = []
+
+    def _counted_load_config() -> dict:
+        reads.append(1)
+        return {"repos": []}
+
+    monkeypatch.setattr("cockpit.tui.app.load_config", _counted_load_config)
+    monkeypatch.setattr(
+        "cockpit.spawn.ticket_repo_candidates", lambda mode, value, cfg: []
+    )
+    _ticket_routes({"a": [_inbox_ticket(f"PE-{n}") for n in range(5)]})
+    assert len(reads) == 1
+
+
+def _drive_ticket_route(monkeypatch, repos):
+    """Run the routing worker inline, with `route_ticket_repos` stubbed to `repos`.
 
     The worker is `@work(thread=True)`, so the test unwraps it and makes
     `call_from_thread` a direct call — the app isn't running.
     """
-    monkeypatch.setattr("cockpit.spawn.route_ticket_repo", lambda source: repo)
+    monkeypatch.setattr("cockpit.spawn.route_ticket_repos", lambda source: repos)
     monkeypatch.setattr(
         CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
     )
@@ -3609,7 +3667,7 @@ async def test_starting_a_routable_ticket_names_its_repo(monkeypatch):
     monkeypatch.setattr(
         CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append((s, cwd))
     )
-    _drive_ticket_route(monkeypatch, "widgets")
+    _drive_ticket_route(monkeypatch, ["widgets"])
     CockpitApp._route_ticket.__wrapped__(app, "PE-412", "PE-412")  # type: ignore[attr-defined]
     assert launched == [("PE-412 --repo widgets", None)]
 
@@ -3622,14 +3680,15 @@ async def test_a_repo_name_with_a_space_survives_the_relaunch(monkeypatch):
     monkeypatch.setattr(
         CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
     )
-    _drive_ticket_route(monkeypatch, "Acme Infra")
+    _drive_ticket_route(monkeypatch, ["Acme Infra"])
     CockpitApp._route_ticket.__wrapped__(app, "PE-412", "PE-412")  # type: ignore[attr-defined]
     assert shlex.split(launched[0])[-2:] == ["--repo", "Acme Infra"]
 
 
 async def test_an_unroutable_ticket_refuses_loudly(monkeypatch):
-    """Routing returning None used to fall through to the daemon's cwd, which cut
-    two worktrees off `dotfiles` from an ambiguous Trello card."""
+    """No candidate survives either stage, so there is nothing to offer and
+    nothing to derive. Falling through to the daemon's cwd here is what cut two
+    worktrees off `dotfiles` from an ambiguous Trello card."""
     app, _ = _make_app()
     launched: list = []
     notified: list = []
@@ -3637,7 +3696,7 @@ async def test_an_unroutable_ticket_refuses_loudly(monkeypatch):
         CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
     )
     monkeypatch.setattr(CockpitApp, "_notify", lambda self, m, **k: notified.append(m))
-    _drive_ticket_route(monkeypatch, None)
+    _drive_ticket_route(monkeypatch, [])
     CockpitApp._route_ticket.__wrapped__(app, "PE-412", "PE-412")  # type: ignore[attr-defined]
     assert launched == []
     assert "PE-412" in notified[0] and "press n" in notified[0]
@@ -3653,10 +3712,85 @@ async def test_an_ambiguous_trello_card_never_reaches_the_spawn(monkeypatch):
         CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
     )
     monkeypatch.setattr(CockpitApp, "_notify", lambda self, m, **k: notified.append(m))
-    _drive_ticket_route(monkeypatch, None)
+    _drive_ticket_route(monkeypatch, [])
     url = "https://trello.com/c/aB3dZ9"
     CockpitApp._route_ticket.__wrapped__(app, url, url)  # type: ignore[attr-defined]
     assert launched == []
+    assert "press n" in notified[0]
+
+
+async def test_an_ambiguous_ticket_asks_instead_of_refusing(monkeypatch):
+    """Several repos surviving both stages is a legitimate config (one team, many
+    repos) and there is nothing left to derive — so this is the one place cockpit
+    asks. Refusing here meant reading the ref off the list and retyping it into
+    `n`."""
+    app, _ = _make_app()
+    launched: list = []
+    notified: list = []
+    pushed: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    monkeypatch.setattr(CockpitApp, "_notify", lambda self, m, **k: notified.append(m))
+    monkeypatch.setattr(
+        CockpitApp, "push_screen", lambda self, screen, cb=None: pushed.append(screen)
+    )
+    _drive_ticket_route(monkeypatch, ["infra", "cluster"])
+    CockpitApp._route_ticket.__wrapped__(app, "PLAT-77", "PLAT-77")  # type: ignore[attr-defined]
+    assert launched == [] and notified == []
+    assert isinstance(pushed[0], RepoPickScreen)
+    assert pushed[0]._repos == ["infra", "cluster"]
+
+
+async def test_picking_a_repo_starts_the_ticket_there(monkeypatch):
+    """The picked name travels as an explicit `--repo`, exactly as a routed one
+    does — the picker replaces the derivation, not the naming."""
+    app, _ = _make_app()
+    launched: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    monkeypatch.setattr(
+        CockpitApp, "push_screen", lambda self, screen, cb=None: cb("Acme Infra")
+    )
+    app._pick_ticket_repo("PLAT-77", "PLAT-77", ["Acme Infra", "cluster"])
+    assert shlex.split(launched[0])[-2:] == ["--repo", "Acme Infra"]
+
+
+async def test_cancelling_the_repo_picker_starts_nothing(monkeypatch):
+    app, _ = _make_app()
+    launched: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    monkeypatch.setattr(
+        CockpitApp, "push_screen", lambda self, screen, cb=None: cb(None)
+    )
+    app._pick_ticket_repo("PLAT-77", "PLAT-77", ["infra", "cluster"])
+    assert launched == []
+
+
+async def test_a_failed_route_refuses_rather_than_offering_a_guess(monkeypatch):
+    """A `narrow_repos` round-trip that raised tells us nothing about the
+    candidates, so a picker built from it would be offering a guess."""
+    app, _ = _make_app()
+    notified: list = []
+    pushed: list = []
+    monkeypatch.setattr(CockpitApp, "_launch_spawn", lambda self, s, cwd: None)
+    monkeypatch.setattr(CockpitApp, "_notify", lambda self, m, **k: notified.append(m))
+    monkeypatch.setattr(
+        CockpitApp, "push_screen", lambda self, screen, cb=None: pushed.append(screen)
+    )
+    monkeypatch.setattr(
+        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+
+    def _boom(source):
+        raise OSError("linear unreachable")
+
+    monkeypatch.setattr("cockpit.spawn.route_ticket_repos", _boom)
+    CockpitApp._route_ticket.__wrapped__(app, "PLAT-77", "PLAT-77")  # type: ignore[attr-defined]
+    assert pushed == []
     assert "press n" in notified[0]
 
 
