@@ -590,7 +590,12 @@ repo by `cycle.py::_collect_ticket_inbox`, drained once by
 - **The screen reads payloads and nothing else** — no fetch, no git, no `load_config` per
   keypress, no cell written. Tracker text is externally authored, so it goes through
   `strip_control` (`cache.py`), the payload-derived case flat cells' `read_text` can't
-  cover.
+  cover. **The routing markers do not weaken this: the candidate names are computed by the
+  app (`app._ticket_routes`) and handed in as `routes`.** `find_repos_by_ticket_key` walks
+  `load_config()` on every call, so deriving a marker in the screen would put a disk read on
+  every row of every repaint — the hit `#header-repo` exists to keep off the arrow keys.
+  **Do not** call `narrow_repos` for a marker either: that is the paid stage, per row per
+  repaint.
 - **Its columns take explicit widths, never `DataTable`'s auto-sizing.** An auto column is
   widened from its cells in `_update_dimensions`, which runs on **idle**, while the cell
   render cache is keyed without the width — so a paint that beats the recompute caches
@@ -616,16 +621,43 @@ repo by `cycle.py::_collect_ticket_inbox`, drained once by
   standing in — an ambiguous Trello card matching two board-declaring repos cut two
   worktrees off `dotfiles`, silently and on the wrong branch prefix. The resolved repo
   therefore travels as an explicit `--repo` (`_with_repo`, shell-quoted since repo names
-  carry spaces), never as an inherited cwd. Routing is `spawn.route_ticket_repo`, the
+  carry spaces), never as an inherited cwd. Routing is `spawn.route_ticket_repos`, the
   cwd-less half of `cockpit new`'s own two-stage route sharing its stage one
   (`ticket_repo_candidates`) so the two cannot disagree about what "routable" means; it is
   called from a `@work(thread=True)` worker since stage two reaches the tracker. A URL
   carrying its own nwo skips the route but is **still** checked against the config, since
   spawn falls back to the cwd there too. **Do not** re-add a per-provider waiver — Trello
   had one, on the reasoning that its board route needs a fetch spawn makes itself, and that
-  route returning nothing is exactly the case that got here. Refusing loudly is the whole
-  answer to grouping by org: the header names a team, routing picks the repo, and this is
-  the one place that choice surfaces. **Do not** replace it with a cursor-row default.
+  route returning nothing is exactly the case that got here. **Do not** replace any of this
+  with a cursor-row default, which is the cwd fallback wearing a different hat.
+- **It returns the surviving *set*, because "nobody claims this" and "several do" take
+  different answers.** `route_ticket_repos` reports every candidate left after both stages,
+  and `_route_ticket` branches three ways: one name spawns, none **refuses loudly**
+  (`_refuse_ticket` — there is nothing to offer), and several **ask** (`_pick_ticket_repo` →
+  `RepoPickScreen`). The ask is not a softening of the refusal: the many-repos-one-team
+  config is legitimate, `narrow_repos` has already been paid and failed to separate them,
+  and a ticket spanning two of them is real work — so there is nothing left to derive and
+  the user is the only remaining authority. Four rules: the set comes **from the route**,
+  never re-derived, or the offer and the route can disagree about who the candidates are; a
+  **raised** route is treated as *no* candidates, since a picker built from an exception is
+  a guess; the picker **pre-selects nothing** (a seeded `Select` posts `Changed` as it
+  mounts, and the obvious default — the daemon's cwd repo — is the original bug); and it
+  dismisses a repo **name**, not `NewWorkspaceScreen`'s path, since the answer travels as
+  `--repo`. `Select.NULL` is the unselected sentinel — **`Select.BLANK` is a plain `False`
+  in Textual 8.x** and an `is not` against it passes for the blank case too.
+- **The markers are the same three-way answer, painted before the keypress** — `?`
+  (ambiguous) and `!` (nothing claims it) in the Ticket column, nothing at all on a clean
+  row. They are **stage one only**, so opening the modal still reaches no network however
+  many tickets it holds, and a marked row is a prediction `_route_ticket` re-checks against
+  the paid tiebreak before acting. A ticket stage one cannot answer for is **absent from
+  `routes`**, deliberately not mapped to `[]`: a Trello short link carries no key and a
+  GitHub issue URL carries its own repo, so `!` on either would be a lie. ASCII, single-cell
+  by construction — the main table pays for `_STATUS_SLOT` because emoji ink width varies,
+  and this does not re-import that problem. The marker comes out of the handle's ellipsis
+  budget (`_MARK_SLOT`) and **must never widen a column**, per the explicit-widths rule
+  above. **Do not** answer this with a Repo column: key→repo is 1:1 for most configs, so it
+  would repeat one constant string down each fold in a modal whose four columns already fill
+  it.
 - **Reading `org` as a bucket label is not the banned org-aware reader.** `_review_bucket_key`
   already does it for the review fold; the ban is on an `org_*` field or a resolution
   helper below `load_config`. `ticket_inbox.py` never reads it at all — the label is an

@@ -173,22 +173,34 @@ def _die(msg: str, code: int = 1) -> int:
     return code
 
 
-def _route_by_ticket(ref: str, candidates: list[dict], cfg: dict) -> str | None:
-    """The name of the repo ticket `ref` routes to, or None when the candidate set
-    can't be reduced to exactly one (caller falls back to cwd discovery).
+def _narrow_candidates(ref: str, candidates: list[dict], cfg: dict) -> list[dict]:
+    """Stage two of the two-stage route: the paid tiebreak, applied only to a
+    still-ambiguous set.
 
-    Stage two of the two-stage route. The caller supplies whatever its free,
-    offline first stage matched — `find_repos_by_ticket_key` for a Linear team /
-    Jira project key, the repos declaring a `tickets.board` for a Trello card
-    (whose short link carries nothing to match on). Only a still-ambiguous set
-    reaches the provider's `narrow_repos`, so a single match never pays a fetch,
-    and `narrow_repos` never narrows to zero, so >1 survivors print the ambiguity
-    note exactly as an un-narrowed set would.
+    Split out from `_route_by_ticket` so a caller can have the surviving *set*
+    rather than only the verdict — the ticket inbox offers those survivors as a
+    picker, and re-deriving them would let the offer disagree with the route.
+    A single match still never pays a fetch, and `narrow_repos` never narrows to
+    zero.
     """
     if len(candidates) > 1:
         provider = provider_for(cfg, candidates[0])
         if provider is not None:
-            candidates = provider.narrow_repos(ref, candidates, cfg)
+            return provider.narrow_repos(ref, candidates, cfg)
+    return candidates
+
+
+def _route_by_ticket(ref: str, candidates: list[dict], cfg: dict) -> str | None:
+    """The name of the repo ticket `ref` routes to, or None when the candidate set
+    can't be reduced to exactly one (caller falls back to cwd discovery).
+
+    The caller supplies whatever its free, offline first stage matched —
+    `find_repos_by_ticket_key` for a Linear team / Jira project key, the repos
+    declaring a `tickets.board` for a Trello card (whose short link carries
+    nothing to match on). >1 survivors print the ambiguity note exactly as an
+    un-narrowed set would.
+    """
+    candidates = _narrow_candidates(ref, candidates, cfg)
     if len(candidates) == 1:
         return str(candidates[0]["name"])
     if len(candidates) > 1:
@@ -208,11 +220,13 @@ def ticket_repo_candidates(mode: str, value: str, cfg: dict) -> list[dict]:
     """The repos a ticket in `mode` could route to — stage one of the two-stage
     route, free and offline, per provider.
 
-    One function because two callers must ask the identical question: `cockpit
-    new`, which may fall back to cwd discovery when the set can't be reduced,
-    and the TUI's ticket inbox, which may not — it names no repo, so its cwd is
-    the *daemon's* and a fallback lands the worktree in whatever repo the daemon
-    happens to be standing in. `route_ticket_repo` is the inbox's entry point.
+    One function because three callers must ask the identical question: `cockpit
+    new`, which may fall back to cwd discovery when the set can't be reduced;
+    the TUI's ticket inbox, which may not — it names no repo, so its cwd is the
+    *daemon's* and a fallback lands the worktree in whatever repo the daemon
+    happens to be standing in; and that inbox's routing markers, which paint the
+    same verdict a row ahead of the keypress. `route_ticket_repos` is the
+    inbox's entry point, `app._ticket_routes` the markers'.
     """
     if mode == "trello":
         # A card short link carries no board, project or key prefix, so there is
@@ -231,16 +245,24 @@ def ticket_repo_candidates(mode: str, value: str, cfg: dict) -> list[dict]:
     return []
 
 
-def route_ticket_repo(source: str) -> str | None:
-    """The repo a ticket `source` routes to, or None when routing can't name one.
+def route_ticket_repos(source: str) -> list[str]:
+    """Every repo name ticket `source` could route to, after both stages.
 
     The whole of `cockpit new`'s ticket routing, minus the cwd fallback, exposed
     for the one caller that has no meaningful cwd to fall back to. May pay one
     provider `narrow_repos` round-trip, so call it off the UI thread.
+
+    The *set*, not the verdict, because the two ends of an ambiguity read
+    differently: one name routes, none means nothing claims the ticket and the
+    caller must refuse, and several is the case the ticket inbox answers with a
+    picker. Collapsing those last two to None (as this returned before) left the
+    picker re-deriving candidates the route had already narrowed, which is how
+    an offer and a route come to disagree.
     """
     cfg = load_config()
     mode, value, _nwo_hint = detect_source(source)
-    return _route_by_ticket(value, ticket_repo_candidates(mode, value, cfg), cfg)
+    cands = _narrow_candidates(value, ticket_repo_candidates(mode, value, cfg), cfg)
+    return [str(c["name"]) for c in cands if c.get("name")]
 
 
 def _repo_names() -> list[str]:
