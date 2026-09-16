@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.5.1](https://github.com/khivi/cockpit/compare/v3.5.0...v3.5.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* **gh:** stop the deep merged-branch fetch asking for a pre-epoch date ([#522](https://github.com/khivi/cockpit/issues/522)) ([87cc5bb](https://github.com/khivi/cockpit/commit/87cc5bb27a664849424e5c46ff3fa59d0b9cc16e))
+
 ## [3.5.0](https://github.com/khivi/cockpit/compare/v3.4.0...v3.5.0) (2026-09-15)
 
 
