@@ -188,9 +188,8 @@ from cockpit.orchestrators.ticket_inbox import publish as publish_ticket_inbox
 # Cutoff for the *deep* merged-branches fetch that feeds the branch-ref reaper.
 # Effectively unbounded so a branch whose worktree was removed long ago is still
 # recognized as merged — the reaper has no 14-day autoclose window to lean on.
-# `fetch_merged_branches` clamps the resulting date to `gh._SEARCH_EPOCH`, since
-# GitHub search silently matches nothing before it. The page cap (1 000 PRs)
-# still bounds the query; older merges simply reap on a later tick.
+# `fetch_merged_branches` clamps the resulting date to `gh._SEARCH_EPOCH`. The
+# page cap (1 000 PRs) still bounds the query; older merges reap on a later tick.
 _DEEP_MERGED_CUTOFF_DAYS = 36500
 
 # Max visible width of the single-ticket `devdone=` pill title, so a long ticket
