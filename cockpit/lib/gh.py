@@ -98,6 +98,13 @@ def gh_self_user() -> str:
     return run(["gh", "api", "user", "--jq", ".login"]).strip()
 
 
+# GitHub's search API matches NOTHING for a `merged:>=<date>` older than the
+# Unix epoch, and reports it as an ordinary zero-result page rather than an
+# error — indistinguishable from "this repo has no merged PRs". Expressing "all
+# time" as a large `cutoff_days` therefore silently disabled the whole
+# branch-ref reaper; every caller's window is clamped to this floor instead.
+_SEARCH_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
 _MERGED_BRANCHES_QUERY = (
     "query ($search: String!, $cursor: String) {\n"
     "  search(query: $search, type: ISSUE, first: 100, after: $cursor) {\n"
@@ -129,12 +136,16 @@ def fetch_merged_branches(
     `max_pages` cap (10 × 100 = 1 000 PRs) keeps a runaway repo from
     monopolizing the tick.
 
+    A `cutoff_days` large enough to mean "all time" is clamped to the epoch, see
+    `_SEARCH_EPOCH`.
+
     When a branch has been reused across multiple merged PRs (e.g. a branch was
     deleted post-merge then re-created for follow-up work), keep the highest PR
     number — that is the most recent merge, and its headRefOid is the only one
     that should gate autoclose.
     """
-    cutoff = (datetime.now(UTC) - timedelta(days=cutoff_days)).strftime("%Y-%m-%d")
+    window_start = datetime.now(UTC) - timedelta(days=cutoff_days)
+    cutoff = max(window_start, _SEARCH_EPOCH).strftime("%Y-%m-%d")
     search = f"repo:{owner}/{name} is:pr is:merged merged:>={cutoff}"
     latest: dict[str, tuple[int, str]] = {}
     cursor: str | None = None
