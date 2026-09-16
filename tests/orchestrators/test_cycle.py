@@ -3813,6 +3813,29 @@ def _run_reap(
     return dele
 
 
+def test_deep_cutoff_produces_a_date_github_search_accepts():
+    """Every test below hands `merged_branches_deep` in already populated, so
+    none of them can see the constant that fills it in production.
+
+    `_DEEP_MERGED_CUTOFF_DAYS` spelled "all time" as ≈100 years, which resolved
+    to 1926 — a date GitHub search answers with an empty page, not an error. The
+    deep map was therefore empty on every repo and the merged-PR arm of
+    `_branch_reap_reason` never fired once.
+    """
+    captured: dict[str, str] = {}
+
+    def _capture(_query: str, variables: dict[str, str]) -> dict:
+        captured.update(variables)
+        return {"data": {"search": {"nodes": [], "pageInfo": {"hasNextPage": False}}}}
+
+    with patch("cockpit.lib.gh._graphql", side_effect=_capture):
+        cycle.fetch_merged_branches(
+            "o", "n", cutoff_days=cycle._DEEP_MERGED_CUTOFF_DAYS
+        )
+    date = captured["search"].split("merged:>=")[1]
+    assert date >= "1970-01-01"
+
+
 def test_reap_deletes_merged_branch_with_no_post_merge_commits(tmp_path):
     ctx = _reap_ctx(tmp_path, merged_deep={"khivi/done": "abc123"})
     dele = _run_reap(ctx, local_branches=["khivi/done"], ahead=0)

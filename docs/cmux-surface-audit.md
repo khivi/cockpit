@@ -81,10 +81,15 @@ run the command above, or:
 pytest tests/e2e/test_cmux_surface.py -q     # skips silently without cmux
 ```
 
-That module is the live half of this audit. It holds the bucket membership as
-data, asserts every advertised verb is either invoked by cockpit or classified,
-and fails by name when a cmux upgrade ships something new — so the classification
-below cannot quietly come to describe an older cmux.
+That module is the live half of this audit, and it checks only what cmux takes
+away: every verb cockpit invokes still exists, everything declared required is
+still offered, the parser still returns verbs. It used to hold bucket membership
+as data and fail by name whenever a release shipped a verb in no bucket — a
+tripwire against exactly the staleness this document is prone to. It was removed
+in favour of the classification below going stale honestly, because the tripwire
+sits in the pre-push suite and a cmux release adding twelve irrelevant verbs
+cannot be allowed to block a push. Re-derive the classification with the command
+above when you want it; nothing enforces it now.
 
 One measurement artifact worth knowing, since two readings of "how many verbs"
 disagree: `capabilities.parse_verbs` returns a **superset** of the true
@@ -94,6 +99,11 @@ for the `browser <subcommand>` lines, where `goto|navigate` and
 `back|forward|reload` are subcommands. Over-collection can only ever cause a
 **false pass** — the gate asks "is required verb X present", and no required
 verb is a leaked token — so it is recorded, not fixed.
+
+One shape is excluded rather than tolerated: an alternative that is not
+verb-shaped. cmux spells a verb's flag form beside it (`guide | --skill`), and
+`--skill` is a spelling of `guide`, not a verb. The live-binary test catches
+this class because it asserts no parsed verb starts with `-`, `<` or `[`.
 
 The RPC surface is what reframes this. The advertised CLI is not the real
 surface — `cmux rpc <method> [json-params]` takes an arbitrary method name, and the
@@ -226,6 +236,7 @@ the unused set is bucketed below.
 | `diff` | Native diff viewer. Reads a patch on stdin, `--source unstaged\|staged\|branch\|last-turn`, `--layout split\|unified`. Renders in a browser split. | A real PR/branch diff view — syntax highlighting, dual line numbers, collapsed unmodified regions. Strictly better than a Textual overlay. | **Used by `cockpit diff`** (`cmux.render_diff`), which pipes `gh pr diff` in for the PR case and forwards `--source` otherwise. Deliberately a CLI and not a TUI key: run from the daemon, `--workspace`/`--surface` both default to the dashboard's own. Needs `cmux enable-browser`; preflight warns when it is off. Split layout overprints at narrow width, so cockpit sends `--layout unified`. |
 | `open` | Opens a URL or path in a cmux browser pane. | `p` could open the PR in-app instead of the system browser. cmux settings already carry `openPullRequestLinksInCmuxBrowser`. | Browser must be enabled. Changes `p`'s behaviour, so it wants a config opt-out. |
 | `read-screen` | Reads a session's terminal, `--scrollback`, `--lines <n>`. | Peek at why a session stopped without focusing it. | **Now used** — `cmux.py::_screen_signals_idle`, the fast tick's fallback self-heal for a workspace reporting no `claude_code=` state at all (see the Nudge idle-gate section of `AGENTS.md`). **Probed working 2026-08-20**: returns real scrollback past one viewport from a full-screen TUI on the alternate screen, as plain text — zero ESC bytes across 40 lines. |
+| `comments` | `comments list [--repo <path>] [--all] [--json]` — the diff-viewer comment store, read out of cmux rather than off disk. | cockpit already reads these notes (`lib/diff_comments.py`) by locating cmux's own files, which is why it has to offer **two** candidate repo roots: which one a worktree is filed under is undocumented. A `--repo` flag answers that question directly. | Unprobed. Would replace a file read with a subprocess per worktree per fast tick, so it wants measuring before it is worth it — the current read is free. |
 | `notify` | Native notification, `--title/--subtitle/--body`. | A passive signal that, unlike the nudge, **does not type into a session** — so no idle gate, no permission-prompt hazard. The one obvious hole in the current nudge design. | None known. Unprobed. |
 | notification family (`list-notifications`, `mark-notification-read`, `dismiss-notification`, `open-notification`, `jump-to-unread`, `clear-notifications`) | Read and manage the cmux notification feed. | Surfacing cmux's own notifications in the TUI; `jump-to-unread` as a row-less "take me to what wants me" key. | cockpit currently requires `notification.feed.v1` while calling none of these (defect 4). Ten RPC methods behind them, all unexamined. |
 | `right-sidebar` | `files\|find\|vault\|sessions\|feed\|dock` — native file browser and finder. | A file browser per worktree, free, instead of anything hand-built. | Cosmetic; changes the user's sidebar state, which cockpit does not otherwise own. |
@@ -324,8 +335,10 @@ whoever picks this up, and none of them is "cmux can do it".
 
 ## The rest, bucketed
 
-Five buckets, membership in `tests/e2e/test_cmux_surface.py::UNUSED_VERBS`.
-Nothing here is a gap; each is a family cockpit has no business in.
+Five buckets. Nothing here is a gap; each is a family cockpit has no business
+in. Membership is prose, and was briefly data no longer held anywhere — so a
+verb named below may have been retired, and a verb cmux has shipped since is
+simply missing. Re-measure before trusting a list, per the section above.
 
 **tmux compatibility.** `bind-key`, `unbind-key`, `capture-pane`,
 `break-pane`, `join-pane`, `swap-pane`, `resize-pane`, `respawn-pane`,

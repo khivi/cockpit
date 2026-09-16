@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -322,6 +323,39 @@ def test_fetch_merged_branches_search_includes_date_window():
     assert "repo:acme/widgets is:pr is:merged merged:>=" in captured["search"]
     # No cursor on the first page request.
     assert "cursor" not in captured
+
+
+def test_fetch_merged_branches_clamps_an_all_time_cutoff_to_the_epoch():
+    """A `cutoff_days` meaning "all time" must not produce a pre-epoch date.
+
+    GitHub search answers `merged:>=1926-10-11` with a zero-result page rather
+    than an error, so the map came back empty and read as "no merged PRs" —
+    which left `_reap_branch_refs` with no reason to delete any merged branch,
+    on every repo, permanently.
+    """
+    captured: dict[str, str] = {}
+
+    def _capture(_query: str, variables: dict[str, str]) -> dict:
+        captured.update(variables)
+        return _page([])
+
+    with patch("cockpit.lib.gh._graphql", side_effect=_capture):
+        fetch_merged_branches("acme", "widgets", cutoff_days=36500)
+    assert "merged:>=1970-01-01" in captured["search"]
+
+
+def test_fetch_merged_branches_keeps_a_normal_cutoff_unclamped():
+    """The clamp is a floor, not a rewrite — an ordinary window is unchanged."""
+    captured: dict[str, str] = {}
+    expected = (datetime.now(UTC) - timedelta(days=14)).strftime("%Y-%m-%d")
+
+    def _capture(_query: str, variables: dict[str, str]) -> dict:
+        captured.update(variables)
+        return _page([])
+
+    with patch("cockpit.lib.gh._graphql", side_effect=_capture):
+        fetch_merged_branches("acme", "widgets", cutoff_days=14)
+    assert f"merged:>={expected}" in captured["search"]
 
 
 def test_require_gh_exits_when_missing(monkeypatch, capsys):
