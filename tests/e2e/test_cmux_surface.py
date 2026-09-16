@@ -17,6 +17,18 @@ Module-level skip means CI (no cmux) passes cleanly; the laptop hosts the
 signal. Every assertion is a subset test against the live binary — deliberately
 no counts, no pinned version, nothing that turns a cmux release into a red
 suite.
+
+**Every check here fires on cmux REMOVING something, never on it adding.** A
+census of advertised-but-unused verbs used to live here, bucketed by why
+cockpit ignores each one, and it failed by name whenever a release shipped a
+new verb. That is a documentation-freshness tripwire, not a correctness gate:
+it fired on twelve additions that cost cockpit nothing, in the pre-push suite,
+where the only way past it is to classify them. Nothing machine-readable would
+have helped — `cmux capabilities` names neither `list-status` nor
+`list-workspaces`, so the audit had no choice but to read `--help`. The two
+invariants above are the ones worth blocking a push for, and both are immune to
+additions. **Do not** re-add a test that enumerates cmux's surface; keep the
+prose audit in `docs/cmux-surface-audit.md` and re-derive it when you want it.
 """
 
 from __future__ import annotations
@@ -57,52 +69,6 @@ UNDOCUMENTED_VERBS = frozenset({"workspace-group"})
 # Not a cmux verb — `probe` passes it to the same helper to read `--help` itself.
 NOT_A_VERB = frozenset({"--help"})
 
-# Every advertised verb cockpit does NOT call, bucketed by why. This is the one
-# place bucket membership lives; `docs/cmux-surface-audit.md` carries the prose
-# rationale per bucket and deliberately carries no verb lists or counts.
-#
-# `test_every_advertised_verb_is_accounted_for` fails when cmux ships a verb that
-# is in no bucket — so a new cmux release lands here as one failing test naming
-# the newcomers, instead of as an audit that quietly describes an older cmux.
-UNUSED_VERBS: dict[str, frozenset[str]] = {
-    "actionable": frozenset(
-        """browser clear-log clear-notifications clear-progress comments
-        current-workspace dismiss-notification feed identify jump-to-unread
-        list-log list-notifications log mark-notification-read markdown memory
-        notify open open-notification read-selection reorder-workspace
-        reorder-workspaces right-sidebar set-progress sidebar sidebar-state
-        surface-health todo top tree trigger-flash""".split()
-    ),
-    "tmux-compat": frozenset(
-        """bind-key break-pane capture-pane clear-history display-message
-        find-window join-pane last-pane list-buffers local-tmux next-window
-        paste-buffer pipe-pane popup resize-pane respawn-pane set-buffer set-hook
-        swap-pane tmux wait-for""".split()
-    ),
-    "layout": frozenset(
-        """close-surface close-window current-window drag-surface-to-split
-        focus-pane focus-panel focus-window list-pane-surfaces list-panels
-        list-panes list-windows move-surface move-tab-to-new-workspace
-        move-workspace-to-window new-pane new-split new-surface new-window
-        refresh-surfaces rename-tab rename-window reorder-surface send-key-panel
-        send-panel split-off surface tab-action workspace""".split()
-    ),
-    "remote": frozenset(
-        """ai-accounts auth coderouter cr iroh-diag login mosh mosh-tmux ping
-        remote-daemon-status remotes ssh ssh-session-attach ssh-session-cleanup
-        ssh-session-list ssh-tmux vm""".split()
-    ),
-    "agent-lifecycle": frozenset(
-        """agent-hibernation automation claude-teams codex-teams fork hooks omc
-        omo omx restore restore-session sessions vault""".split()
-    ),
-    "chrome": frozenset(
-        """config debug-terminals disable-browser docs feedback guide help ios
-        reload-config set-app-focus settings shortcuts simulate-app-active
-        simulate-sidebar-drag simulator sudo themes version welcome""".split()
-    ),
-}
-
 
 def _invoked_verbs() -> set[str]:
     """Every cmux verb reachable from `cockpit/`, by AST rather than grep.
@@ -134,44 +100,6 @@ def _invoked_verbs() -> set[str]:
             ):
                 verbs.add(node.elts[1].value)
     return verbs - NOT_A_VERB
-
-
-def _advertised_top_level() -> set[str]:
-    """First token of every command line in `cmux --help`'s `Commands:` section.
-
-    Deliberately NOT `parse_verbs`, which additionally splits alternations. That
-    is right for `disable-browser | enable-browser | browser-status` (three real
-    verbs) and wrong for the `browser <subcommand>` lines, where `goto|navigate`
-    and `back|forward|reload` are subcommands of `browser` — so `parse_verbs`
-    returns a superset containing tokens that were never top-level. Over-collection
-    can only cause a false pass in the gate, so it is not a bug there; but a
-    "which verbs exist" question needs the stricter reading.
-
-    The section runs to the next unindented header, **not** to the first blank
-    line: it holds four blank-line-separated groups (main, tmux compatibility,
-    markdown, browser), and stopping at the first blank line is what made the
-    original audit miss 22 verbs.
-
-    The *first* token is split on `|` even though alternations are otherwise
-    left alone: cmux spells an aliased verb `coderouter|cr`, unspaced, so a
-    whole-token reading invents a verb no shell could ever run. In second-token
-    position the same shape is a subcommand (`browser goto|navigate`), which is
-    why the split stops at the head.
-    """
-    from cockpit.lib.cmux import cmux
-
-    verbs: set[str] = set()
-    in_section = False
-    for line in cmux("--help", check=False).splitlines():
-        if not line.startswith((" ", "\t")):
-            if line.strip():
-                in_section = line.strip() == "Commands:"
-            continue
-        if in_section:
-            head = line.strip().split()
-            if head and head[0][0].isalpha():
-                verbs.update(a for a in head[0].split("|") if a[:1].isalpha())
-    return verbs
 
 
 @pytest.fixture(scope="module")
@@ -236,32 +164,6 @@ def test_every_verb_cockpit_invokes_exists(live):
     """
     unknown = _invoked_verbs() - live.verbs - UNDOCUMENTED_VERBS
     assert not unknown, f"cockpit invokes verbs this cmux doesn't advertise: {unknown}"
-
-
-def test_the_buckets_do_not_overlap_and_do_not_claim_used_verbs():
-    """Bookkeeping on `UNUSED_VERBS`: no bucket overlaps another or a used verb."""
-    seen: set[str] = set()
-    for name, bucket in UNUSED_VERBS.items():
-        clash = seen & bucket
-        assert not clash, f"{name} re-buckets {sorted(clash)}"
-        seen |= bucket
-    assert not (seen & _invoked_verbs()), "a bucketed verb is actually invoked"
-
-
-def test_every_advertised_verb_is_accounted_for(live):
-    """Each advertised verb is either invoked by cockpit or in exactly one bucket.
-
-    An audit that silently comes to describe an older cmux is worse than no audit.
-    A cmux upgrade adding verbs fails here, naming them — the intended signal, not
-    a breakage. Classify them in `UNUSED_VERBS`, and write up anything interesting
-    in `docs/cmux-surface-audit.md`.
-    """
-    bucketed = frozenset().union(*UNUSED_VERBS.values())
-    unclassified = _advertised_top_level() - _invoked_verbs() - bucketed
-    assert not unclassified, (
-        f"cmux advertises verbs in no bucket: {sorted(unclassified)} — "
-        "classify them in UNUSED_VERBS"
-    )
 
 
 def test_undocumented_verbs_are_still_undocumented(live):

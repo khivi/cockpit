@@ -81,10 +81,15 @@ run the command above, or:
 pytest tests/e2e/test_cmux_surface.py -q     # skips silently without cmux
 ```
 
-That module is the live half of this audit. It holds the bucket membership as
-data, asserts every advertised verb is either invoked by cockpit or classified,
-and fails by name when a cmux upgrade ships something new — so the classification
-below cannot quietly come to describe an older cmux.
+That module is the live half of this audit, and it checks only what cmux takes
+away: every verb cockpit invokes still exists, everything declared required is
+still offered, the parser still returns verbs. It used to hold bucket membership
+as data and fail by name whenever a release shipped a verb in no bucket — a
+tripwire against exactly the staleness this document is prone to. It was removed
+in favour of the classification below going stale honestly, because the tripwire
+sits in the pre-push suite and a cmux release adding twelve irrelevant verbs
+cannot be allowed to block a push. Re-derive the classification with the command
+above when you want it; nothing enforces it now.
 
 One measurement artifact worth knowing, since two readings of "how many verbs"
 disagree: `capabilities.parse_verbs` returns a **superset** of the true
@@ -98,9 +103,7 @@ verb is a leaked token — so it is recorded, not fixed.
 One shape is excluded rather than tolerated: an alternative that is not
 verb-shaped. cmux spells a verb's flag form beside it (`guide | --skill`), and
 `--skill` is a spelling of `guide`, not a verb. The live-binary test catches
-this class because it asserts no parsed verb starts with `-`, `<` or `[`; the
-aliased-verb shape `coderouter|cr` is the mirror image, unspaced in head
-position, and the stricter top-level reading splits it.
+this class because it asserts no parsed verb starts with `-`, `<` or `[`.
 
 The RPC surface is what reframes this. The advertised CLI is not the real
 surface — `cmux rpc <method> [json-params]` takes an arbitrary method name, and the
@@ -332,8 +335,10 @@ whoever picks this up, and none of them is "cmux can do it".
 
 ## The rest, bucketed
 
-Five buckets, membership in `tests/e2e/test_cmux_surface.py::UNUSED_VERBS`.
-Nothing here is a gap; each is a family cockpit has no business in.
+Five buckets. Nothing here is a gap; each is a family cockpit has no business
+in. Membership is prose, and was briefly data no longer held anywhere — so a
+verb named below may have been retired, and a verb cmux has shipped since is
+simply missing. Re-measure before trusting a list, per the section above.
 
 **tmux compatibility.** `bind-key`, `unbind-key`, `capture-pane`,
 `break-pane`, `join-pane`, `swap-pane`, `resize-pane`, `respawn-pane`,
