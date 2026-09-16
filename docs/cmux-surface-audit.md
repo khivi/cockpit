@@ -95,6 +95,13 @@ for the `browser <subcommand>` lines, where `goto|navigate` and
 **false pass** — the gate asks "is required verb X present", and no required
 verb is a leaked token — so it is recorded, not fixed.
 
+One shape is excluded rather than tolerated: an alternative that is not
+verb-shaped. cmux spells a verb's flag form beside it (`guide | --skill`), and
+`--skill` is a spelling of `guide`, not a verb. The live-binary test catches
+this class because it asserts no parsed verb starts with `-`, `<` or `[`; the
+aliased-verb shape `coderouter|cr` is the mirror image, unspaced in head
+position, and the stricter top-level reading splits it.
+
 The RPC surface is what reframes this. The advertised CLI is not the real
 surface — `cmux rpc <method> [json-params]` takes an arbitrary method name, and the
 dispatcher behind it exposes several hundred of them. cockpit reaches into it exactly
@@ -226,6 +233,7 @@ the unused set is bucketed below.
 | `diff` | Native diff viewer. Reads a patch on stdin, `--source unstaged\|staged\|branch\|last-turn`, `--layout split\|unified`. Renders in a browser split. | A real PR/branch diff view — syntax highlighting, dual line numbers, collapsed unmodified regions. Strictly better than a Textual overlay. | **Used by `cockpit diff`** (`cmux.render_diff`), which pipes `gh pr diff` in for the PR case and forwards `--source` otherwise. Deliberately a CLI and not a TUI key: run from the daemon, `--workspace`/`--surface` both default to the dashboard's own. Needs `cmux enable-browser`; preflight warns when it is off. Split layout overprints at narrow width, so cockpit sends `--layout unified`. |
 | `open` | Opens a URL or path in a cmux browser pane. | `p` could open the PR in-app instead of the system browser. cmux settings already carry `openPullRequestLinksInCmuxBrowser`. | Browser must be enabled. Changes `p`'s behaviour, so it wants a config opt-out. |
 | `read-screen` | Reads a session's terminal, `--scrollback`, `--lines <n>`. | Peek at why a session stopped without focusing it. | **Now used** — `cmux.py::_screen_signals_idle`, the fast tick's fallback self-heal for a workspace reporting no `claude_code=` state at all (see the Nudge idle-gate section of `AGENTS.md`). **Probed working 2026-08-20**: returns real scrollback past one viewport from a full-screen TUI on the alternate screen, as plain text — zero ESC bytes across 40 lines. |
+| `comments` | `comments list [--repo <path>] [--all] [--json]` — the diff-viewer comment store, read out of cmux rather than off disk. | cockpit already reads these notes (`lib/diff_comments.py`) by locating cmux's own files, which is why it has to offer **two** candidate repo roots: which one a worktree is filed under is undocumented. A `--repo` flag answers that question directly. | Unprobed. Would replace a file read with a subprocess per worktree per fast tick, so it wants measuring before it is worth it — the current read is free. |
 | `notify` | Native notification, `--title/--subtitle/--body`. | A passive signal that, unlike the nudge, **does not type into a session** — so no idle gate, no permission-prompt hazard. The one obvious hole in the current nudge design. | None known. Unprobed. |
 | notification family (`list-notifications`, `mark-notification-read`, `dismiss-notification`, `open-notification`, `jump-to-unread`, `clear-notifications`) | Read and manage the cmux notification feed. | Surfacing cmux's own notifications in the TUI; `jump-to-unread` as a row-less "take me to what wants me" key. | cockpit currently requires `notification.feed.v1` while calling none of these (defect 4). Ten RPC methods behind them, all unexamined. |
 | `right-sidebar` | `files\|find\|vault\|sessions\|feed\|dock` — native file browser and finder. | A file browser per worktree, free, instead of anything hand-built. | Cosmetic; changes the user's sidebar state, which cockpit does not otherwise own. |

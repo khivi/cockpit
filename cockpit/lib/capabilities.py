@@ -99,6 +99,10 @@ def parse_verbs(help_text: str) -> frozenset[str]:
     (`Environment:`). A line may list alternatives (`next-window |
     previous-window`) and always trails into `[flags]` / `<args>` / `(prose)`.
 
+    An alternative that isn't verb-shaped is dropped: cmux documents a verb's
+    flag form alongside it (`guide | --skill`), and `--skill` is a spelling of
+    `guide`, not a verb the gate could ever ask for.
+
     ponytail: parses help text because cmux ships no machine-readable list of
     *verbs*. It does ship one of RPC *methods* — `cmux capabilities` returns a
     303-entry `methods` array that `parse_capabilities` currently discards — so
@@ -122,7 +126,7 @@ def parse_verbs(help_text: str) -> frozenset[str]:
                 head = head[:idx]
         for alternative in head.split("|"):
             token = alternative.split()
-            if token:
+            if token and token[0][:1].isalpha():
                 verbs.add(token[0])
     return frozenset(verbs)
 

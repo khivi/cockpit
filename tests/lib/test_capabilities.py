@@ -96,6 +96,18 @@ def test_parse_verbs_splits_alternations_and_stops_at_the_next_section():
     assert not {"open", "<path>", "[--workspace", "CMUX_WORKSPACE_ID"} & verbs
 
 
+def test_parse_verbs_drops_a_flag_spelled_as_an_alternative():
+    """cmux documents `guide | --skill` — one verb and its flag form, not two.
+
+    The alternation split took `--skill` for a verb, which the live-binary test
+    caught only because it asserts no parsed verb starts with a dash. Over-
+    collection can never fail the gate (nothing required is dash-shaped), so
+    this is about the parse staying honest about what a verb is.
+    """
+    verbs = parse_verbs("Commands:\n  guide | --skill\n  welcome\n")
+    assert verbs == {"guide", "welcome"}
+
+
 def test_parse_capabilities_tolerates_junk():
     assert parse_capabilities(ALL_CAPS) == frozenset(REQUIRED_CAPABILITIES)
     assert parse_capabilities("") == frozenset()

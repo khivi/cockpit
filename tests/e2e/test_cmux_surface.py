@@ -66,18 +66,18 @@ NOT_A_VERB = frozenset({"--help"})
 # the newcomers, instead of as an audit that quietly describes an older cmux.
 UNUSED_VERBS: dict[str, frozenset[str]] = {
     "actionable": frozenset(
-        """browser clear-log clear-notifications clear-progress current-workspace
-        dismiss-notification feed identify jump-to-unread list-log
-        list-notifications log mark-notification-read markdown memory notify open
-        open-notification reorder-workspace reorder-workspaces
-        right-sidebar set-progress sidebar sidebar-state surface-health todo top
-        tree trigger-flash""".split()
+        """browser clear-log clear-notifications clear-progress comments
+        current-workspace dismiss-notification feed identify jump-to-unread
+        list-log list-notifications log mark-notification-read markdown memory
+        notify open open-notification read-selection reorder-workspace
+        reorder-workspaces right-sidebar set-progress sidebar sidebar-state
+        surface-health todo top tree trigger-flash""".split()
     ),
     "tmux-compat": frozenset(
         """bind-key break-pane capture-pane clear-history display-message
-        find-window join-pane last-pane list-buffers next-window paste-buffer
-        pipe-pane popup resize-pane respawn-pane set-buffer set-hook swap-pane
-        wait-for""".split()
+        find-window join-pane last-pane list-buffers local-tmux next-window
+        paste-buffer pipe-pane popup resize-pane respawn-pane set-buffer set-hook
+        swap-pane tmux wait-for""".split()
     ),
     "layout": frozenset(
         """close-surface close-window current-window drag-surface-to-split
@@ -88,18 +88,18 @@ UNUSED_VERBS: dict[str, frozenset[str]] = {
         send-panel split-off surface tab-action workspace""".split()
     ),
     "remote": frozenset(
-        """ai-accounts auth iroh-diag login mosh mosh-tmux ping
+        """ai-accounts auth coderouter cr iroh-diag login mosh mosh-tmux ping
         remote-daemon-status remotes ssh ssh-session-attach ssh-session-cleanup
         ssh-session-list ssh-tmux vm""".split()
     ),
     "agent-lifecycle": frozenset(
-        """agent-hibernation claude-teams codex-teams hooks omc omo omx
-        restore restore-session""".split()
+        """agent-hibernation automation claude-teams codex-teams fork hooks omc
+        omo omx restore restore-session sessions vault""".split()
     ),
     "chrome": frozenset(
-        """config debug-terminals disable-browser docs feedback help ios
+        """config debug-terminals disable-browser docs feedback guide help ios
         reload-config set-app-focus settings shortcuts simulate-app-active
-        simulate-sidebar-drag simulator themes version welcome""".split()
+        simulate-sidebar-drag simulator sudo themes version welcome""".split()
     ),
 }
 
@@ -151,10 +151,17 @@ def _advertised_top_level() -> set[str]:
     line: it holds four blank-line-separated groups (main, tmux compatibility,
     markdown, browser), and stopping at the first blank line is what made the
     original audit miss 22 verbs.
+
+    The *first* token is split on `|` even though alternations are otherwise
+    left alone: cmux spells an aliased verb `coderouter|cr`, unspaced, so a
+    whole-token reading invents a verb no shell could ever run. In second-token
+    position the same shape is a subcommand (`browser goto|navigate`), which is
+    why the split stops at the head.
     """
     from cockpit.lib.cmux import cmux
 
-    verbs, in_section = set(), False
+    verbs: set[str] = set()
+    in_section = False
     for line in cmux("--help", check=False).splitlines():
         if not line.startswith((" ", "\t")):
             if line.strip():
@@ -163,7 +170,7 @@ def _advertised_top_level() -> set[str]:
         if in_section:
             head = line.strip().split()
             if head and head[0][0].isalpha():
-                verbs.add(head[0])
+                verbs.update(a for a in head[0].split("|") if a[:1].isalpha())
     return verbs
 
 
