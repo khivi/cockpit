@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.5.2](https://github.com/khivi/cockpit/compare/v3.5.1...v3.5.2) (2026-09-18)
+
+
+### Bug Fixes
+
+* **deps:** cap textual below 9 ([#524](https://github.com/khivi/cockpit/issues/524)) ([2294d84](https://github.com/khivi/cockpit/commit/2294d8444d8251da284eb0fa29881aced7061ba4))
+
 ## [3.5.1](https://github.com/khivi/cockpit/compare/v3.5.0...v3.5.1) (2026-09-16)
 
 
