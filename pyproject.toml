@@ -10,7 +10,7 @@ description = "One terminal UI joining each change's git worktree, workspace, Gi
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
-    "textual>=8.2.8",
+    "textual>=8.2.8,<9",
 ]
 
 [project.scripts]
