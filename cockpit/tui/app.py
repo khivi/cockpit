@@ -976,12 +976,19 @@ class CockpitApp(App[None]):
         - anywhere else → toggle the row PR's snooze.
 
         One key for both because they're one concept: `z` is where the snoozed
-        rows go and `z` is how you get them back."""
+        rows go and `z` is how you get them back.
+
+        A stacked row snoozes its whole chain, so the chain membership is read
+        here (`chain_paths`, the render's own record) and handed to the worker,
+        the way `A` hands it the fold's paths — re-reading the table off a
+        worker thread would race the render."""
         table = self.query_one(WorktreeTable)
         if SNOOZED_CAP in (table.current_capabilities() or frozenset()):
             self._toggle_snoozed_section(table.current_repo_name())
             return
-        self._row_act(self._toggle_snooze)
+        path = table.current_path()
+        if path:
+            self._toggle_snooze(path, table.chain_paths(path))
 
     def action_ask_row(self) -> None:
         """`a` — type a line and send it to this row's Claude session.
@@ -1846,28 +1853,35 @@ class CockpitApp(App[None]):
         self.call_from_thread(self._kick_slow, str(repo_dir))
 
     def _resolve_row_pref(
-        self, path_str: str, verb: str
+        self, path_str: str, verb: str, *, quiet: bool = False
     ) -> tuple[dict, Worktree, int, str, NudgePref] | None:
         # Shared prologue for the two per-PR pref keys (`m` mute, `z` snooze):
         # resolve the row's worktree, read its PR number off the daemon-written
         # `pr-num` cell, and load the pref. `verb` only names the action in the
         # failure toasts. None when the row has no worktree or no PR.
         #
+        # `quiet` drops those toasts, for `z` resolving the *other* members of a
+        # stacked chain: the user pressed one row, so a member that has gone
+        # away between the render and the keypress is one fewer PR to write, not
+        # a failure to report.
+        #
         # Returns the `pref_key` alongside the number so the caller saves under
         # the same repo-scoped key this loaded — a bare number is shared with
         # every other repo's PR of that number.
         resolved = self._resolve_worktree(path_str)
         if resolved is None:
-            self._notify(f"{verb}: no worktree at {path_str}", severity="error")
+            if not quiet:
+                self._notify(f"{verb}: no worktree at {path_str}", severity="error")
             return None
         repo, wt = resolved
         raw = read_text(cwd_cache("pr-num", wt.path)) if wt.branch else ""
         try:
             pr = int(raw)
         except ValueError:
-            self._notify(
-                f"{verb}: no PR for {wt.label or wt.short}", severity="warning"
-            )
+            if not quiet:
+                self._notify(
+                    f"{verb}: no PR for {wt.label or wt.short}", severity="warning"
+                )
             return None
         key = pref_key(self._cache_repo_name(repo), pr)
         return repo, wt, pr, key, load_pref(key)
@@ -1905,25 +1919,13 @@ class CockpitApp(App[None]):
             self._kick_slow, str(Path(os.path.expanduser(repo["path"])))
         )
 
-    @work(thread=True, group="mute", exit_on_error=False)
-    def _toggle_snooze(self, path_str: str) -> None:
-        # Toggle the row PR's snooze: "I've read this, it's someone else's turn".
-        # Silences the nudge like a mute AND sinks the row into the sidebar's
-        # trailing `snoozed` fold — but expires on an *event*, not a clock. Both
-        # wake snapshots (review activity + the PR's current actionable issue)
-        # are read from the daemon's cached PR payload (no `gh` here), and the
-        # slow tick clears the snooze as soon as the live PR disagrees with
-        # either (`cycle._resolve_prefs`).
-        got = self._resolve_row_pref(path_str, "snooze")
-        if got is None:
-            return
-        repo, wt, pr, key, pref = got
-        if pref.snoozed:
-            pref.snoozed = False
-            pref.wake_on = ""
-            pref.wake_nudge = ""
-            self._notify(f"woke {wt.label or wt.short} (#{pr})")
-        else:
+    def _apply_snooze(
+        self, repo: dict, wt: Worktree, pr: int, key: str, pref: NudgePref, *, on: bool
+    ) -> None:
+        # Write one PR's snooze, in the direction the pressed row decided, and
+        # re-stamp its cells. No toast and no publish: `_toggle_snooze` says it
+        # once for the chain and renders once at the end.
+        if on:
             # nwo name, not the config label — the daemon wrote the payload under
             # the nwo (`_cache_repo_name`). Keying by the label misses every file,
             # so `wake_on` would be built from an empty payload ("0|") and the very
@@ -1941,13 +1943,51 @@ class CockpitApp(App[None]):
             pref.muted = False
             pref.until = None
             pref.reason = ""
-            self._notify(
-                f"snoozed {wt.label or wt.short} (#{pr}) — wakes on a new "
-                f"comment, review, or CI/conflict issue"
-            )
+        else:
+            pref.snoozed = False
+            pref.wake_on = ""
+            pref.wake_nudge = ""
         save_pref(key, pref)
-        self._repaint_pref(repo, wt, pr, pref)
-        # Follow the row. `_repaint_pref` has just re-rendered, and a snooze can
+        restamp_pref(self._cache_repo_name(repo), pr, wt.path, pref)
+
+    @work(thread=True, group="mute", exit_on_error=False)
+    def _toggle_snooze(self, path_str: str, chain: list[str] | None = None) -> None:
+        # Toggle the row PR's snooze: "I've read this, it's someone else's turn".
+        # Silences the nudge like a mute AND sinks the row into the sidebar's
+        # trailing `snoozed` fold — but expires on an *event*, not a clock. Both
+        # wake snapshots (review activity + the PR's current actionable issue)
+        # are read from the daemon's cached PR payload (no `gh` here), and the
+        # slow tick clears the snooze as soon as the live PR disagrees with
+        # either (`cycle._resolve_prefs`).
+        #
+        # `chain` is every row in the pressed row's stacked-PR chain (the table's
+        # own `chain_paths`), and the whole chain takes the direction the pressed
+        # row decided — a stack is one unit of attention on screen, so it has to
+        # be one in the pref store too. A mixed chain therefore converges rather
+        # than staying half-snoozed.
+        got = self._resolve_row_pref(path_str, "snooze")
+        if got is None:
+            return
+        repo, wt, pr, key, pref = got
+        on = not pref.snoozed
+        self._apply_snooze(repo, wt, pr, key, pref, on=on)
+        others = 0
+        for member in chain or []:
+            if member == path_str:
+                continue
+            got_member = self._resolve_row_pref(member, "snooze", quiet=True)
+            if got_member is not None:
+                self._apply_snooze(*got_member, on=on)
+                others += 1
+        stacked = f" +{others} stacked" if others else ""
+        row = f"{wt.label or wt.short} (#{pr}){stacked}"
+        self._notify(
+            f"snoozed {row} — wakes on a new comment, review, or CI/conflict issue"
+            if on
+            else f"woke {row}"
+        )
+        self._publish_inventory()
+        # Follow the row. The publish above has just re-rendered, and a snooze can
         # fold the row away — `update_inventory` restores the cursor by *index*,
         # so it would come to rest on whichever unrelated worktree slid up into
         # that slot, reading as a dropped keypress. Land on the row while it's

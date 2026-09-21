@@ -1604,6 +1604,7 @@ def _resolve_prefs(repo_name: str, prs: list[PR]) -> dict[int, NudgePref]:
     same-numbered snooze on every tick (its `wake_on` describes a different PR).
     """
     prefs: dict[int, NudgePref] = {}
+    woke: set[int] = set()
     for pr in prs:
         key = pref_key(repo_name, pr.number)
         pref = _load_nudge_pref(key)
@@ -1614,13 +1615,49 @@ def _resolve_prefs(repo_name: str, prs: list[PR]) -> dict[int, NudgePref]:
             elif pr.nudge_issue and pr.nudge_issue != pref.wake_nudge:
                 reason = pr.nudge_issue
         if reason:
-            pref.snoozed = False
-            pref.wake_on = ""
-            pref.wake_nudge = ""
-            save_pref(key, pref)
-            print(f"  {verb('woke')} #{pr.number} {dim(f'({reason})')}", flush=True)
+            _wake(repo_name, pr.number, pref, reason)
+            woke.add(pr.number)
         prefs[pr.number] = pref
+    _wake_chains(repo_name, prs, prefs, woke)
     return prefs
+
+
+def _wake(repo_name: str, number: int, pref: NudgePref, reason: str) -> None:
+    """Clear one snooze and say why. Mutates the caller's pref in place, so the
+    rest of the cycle reads the woken value from the same object."""
+    pref.snoozed = False
+    pref.wake_on = ""
+    pref.wake_nudge = ""
+    save_pref(pref_key(repo_name, number), pref)
+    print(f"  {verb('woke')} #{number} {dim(f'({reason})')}", flush=True)
+
+
+def _wake_chains(
+    repo_name: str, prs: list[PR], prefs: dict[int, NudgePref], woke: set[int]
+) -> None:
+    """Wake the rest of a stacked chain once any member of it has woken.
+
+    A stack is one unit of attention: the TUI's `z` snoozes every member at once
+    and both fold surfaces take the chain whole, banding it by its **tip**
+    (`worktree_table._split_snoozed`, `_reconcile_sidebar_groups`). So a member
+    that wakes on its own moves nothing — its row stays inside the shut fold
+    while the tip is still snoozed, which is precisely how the comment that woke
+    it goes unseen. Waking the chain is what keeps the pref store and the fold
+    saying the same thing.
+
+    The chain is `find_stacks`' derivation, the same one the sidebar folds on —
+    nothing stored, and no extra round-trip: the PRs are the ones this cycle
+    already fetched."""
+    if not woke:
+        return
+    for chain in find_stacks(prs):
+        numbers = [pr.number for pr in chain]
+        if woke.isdisjoint(numbers):
+            continue
+        for number in numbers:
+            pref = prefs.get(number)
+            if pref is not None and pref.snoozed:
+                _wake(repo_name, number, pref, "stacked on a woken PR")
 
 
 def _prepare_cycle(

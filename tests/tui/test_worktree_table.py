@@ -1220,6 +1220,44 @@ def test_a_snooze_below_the_tip_folds_nothing(cache_dir):
     assert snoozed == []
 
 
+@pytest.mark.asyncio
+async def test_chain_paths_reports_the_rendered_chain(cache_dir):
+    # `z` snoozes a stack as one unit, and it reads the membership off the
+    # render rather than re-deriving it from `pr-base` — a second derivation
+    # would fold rows the write missed.
+    root = _wt(path="root", branch="khivi/root")
+    tip = _wt(path="tip", branch="khivi/tip")
+    loner = _wt(path="loner", branch="khivi/loner")
+    cache_mod.cwd_cache("pr-base", tip.path).write_text(root.branch)
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [root, tip, loner])])
+        await pilot.pause()
+        chain = [str(tip.path), str(root.path)]  # tip first, as rendered
+        assert table.chain_paths(str(tip.path)) == chain
+        assert table.chain_paths(str(root.path)) == chain
+        # An unstacked row is a chain of one, and so is a path off the table.
+        assert table.chain_paths(str(loner.path)) == [str(loner.path)]
+        assert table.chain_paths("/gone") == ["/gone"]
+
+
+@pytest.mark.asyncio
+async def test_chain_paths_covers_a_folded_stack(cache_dir):
+    # The fold takes the chain whole, so `z` inside an open fold has to reach
+    # every member of it too.
+    root = _wt(path="root", branch="khivi/root")
+    tip = _wt(path="tip", branch="khivi/tip")
+    cache_mod.cwd_cache("pr-base", tip.path).write_text(root.branch)
+    _snooze(tip)
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [root, tip])])
+        await pilot.pause()
+        assert table.chain_paths(str(root.path)) == [str(tip.path), str(root.path)]
+
+
 def test_stack_rows_still_returns_every_row_in_band_order(cache_dir):
     # `_stack_rows` is the un-folded view (the band order the fold builds on) —
     # splitting it must not drop the snoozed half.

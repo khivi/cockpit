@@ -82,6 +82,7 @@ ragged one.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
 from typing import ClassVar
@@ -425,6 +426,27 @@ def _split_snoozed(
         into = snoozed if _row_band(wts[chain[0][0]]) == _BAND_SNOOZED else live
         into.extend((wts[i], depth) for i, depth in chain)
     return live, snoozed
+
+
+def _chain_groups(rows: Sequence[tuple[Worktree, int]]) -> list[list[str]]:
+    """One half of `_split_snoozed`'s output regrouped into chains, each a list
+    of worktree paths headed by its tip.
+
+    Read back off the rendered order — a depth-0 row plus the depth-1 rows under
+    it — rather than re-deriving the chain from `pr-base`, for the reason
+    `snoozed_paths` exists: `z` acts on the whole chain, and a second derivation
+    would sooner or later disagree with the rows the table drew. An unstacked
+    row is a chain of one, so every path has an entry.
+
+    A chain never straddles the two halves (`_split_snoozed` partitions at chain
+    granularity), so the caller groups each half on its own."""
+    groups: list[list[str]] = []
+    for wt, depth in rows:
+        if depth == 0 or not groups:
+            groups.append([str(wt.path)])
+        else:
+            groups[-1].append(str(wt.path))
+    return groups
 
 
 def _stack_rows(wts: list[Worktree]) -> list[tuple[Worktree, int]]:
@@ -1194,6 +1216,12 @@ class WorktreeTable(DataTable):
         # would be a second authority on fold membership, disagreeing with what
         # is on screen the moment `_split_snoozed`'s tip rule changes.
         self._snoozed_paths: dict[str, list[str]] = {}
+        # worktree path → every path in its stacked-PR chain, tip first, for the
+        # chain-wide `z`. Recorded off the render (`_chain_groups`) for the same
+        # reason `_snoozed_paths` is: the fold takes a chain whole, so a snooze
+        # that covered only some of its members would fold rows that still ring
+        # and still nudge. Unstacked rows map to themselves.
+        self._chain_paths: dict[str, list[str]] = {}
 
     def on_mount(self) -> None:
         self.cursor_type = "row"
@@ -1257,6 +1285,17 @@ class WorktreeTable(DataTable):
         if repo_name is None:
             return []
         return list(self._snoozed_paths.get(repo_name, ()))
+
+    def chain_paths(self, path: str) -> list[str]:
+        """Every worktree path in `path`'s stacked-PR chain, tip first — `path`
+        alone when it heads nothing and is stacked on nothing.
+
+        `z` snoozes and wakes a chain as one unit, since the fold already hides
+        or shows it as one: a per-row snooze on a member below the tip moved
+        nothing on screen (and paints no glyph — `_status_glyph`), while a
+        snooze on the tip hid members whose own pref was untouched, so they kept
+        their 🔔 and kept being nudged from inside the fold."""
+        return list(self._chain_paths.get(path, (path,)))
 
     def current_capabilities(self) -> frozenset[str] | None:
         """The highlighted row's capability tokens (for footer row-key gating),
@@ -1425,6 +1464,7 @@ class WorktreeTable(DataTable):
         self._repo_color = {}
         self._cell_tooltips = {}
         self._snoozed_paths = {}
+        self._chain_paths = {}
         columns = column_labels(
             show_tickets=self._show_tickets, show_cost=self._show_cost
         )
@@ -1450,6 +1490,9 @@ class WorktreeTable(DataTable):
                 workspace_paths=ws,
             )
             live, snoozed = _split_snoozed(wts)
+            for group in _chain_groups(live) + _chain_groups(snoozed):
+                for member in group:
+                    self._chain_paths[member] = group
             for wt, depth in live:
                 add_worktree_row(wt, depth)
             if snoozed:
