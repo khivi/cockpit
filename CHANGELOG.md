@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.5.3](https://github.com/khivi/cockpit/compare/v3.5.2...v3.5.3) (2026-09-21)
+
+
+### Bug Fixes
+
+* **tui:** snooze a stacked PR chain as one unit ([#526](https://github.com/khivi/cockpit/issues/526)) ([33a8a46](https://github.com/khivi/cockpit/commit/33a8a46d7c92bd5dce244eadb549037740374488))
+
 ## [3.5.2](https://github.com/khivi/cockpit/compare/v3.5.1...v3.5.2) (2026-09-18)
 
 
