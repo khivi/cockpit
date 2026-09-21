@@ -50,7 +50,10 @@ make that happen; it's derived from the same data the row already shows.
 **Stacked PRs indent themselves.** GitHub exposes no stack id — the only signal is that
 each PR's base branch is the previous PR's head. Cockpit reads that and renders the chain
 contiguously under its tip with a `└`, and groups the same chain in your cmux sidebar. No
-`gh stack` state in the worktree needed, and it works on a coworker's stack too.
+`gh stack` state in the worktree needed, and it works on a coworker's stack too. A stack
+is one thing to attend to, so it snoozes as one: `z` on any row of a chain quiets the
+whole chain, and anything that wakes one member — a comment on the PR at the bottom —
+brings the whole chain back.
 
 **Park a repo you're not touching this week.** `h` drops it into a `▸ N repos hidden` row: it
 stops being polled entirely — no GitHub round-trip, no spawning, no nudges — and its idle

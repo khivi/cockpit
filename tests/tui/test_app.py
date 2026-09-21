@@ -2517,6 +2517,73 @@ async def test_snooze_reads_the_wake_payload_under_the_nwo_key(monkeypatch, tmp_
     assert saved["beta__269"].wake_on == "3|APPROVED"  # not the empty-payload "0|"
 
 
+def _stacked_snooze_app(monkeypatch, tmp_path):
+    # An app whose `z` seam is stubbed down to two rows of one stacked chain,
+    # returning the prefs it saved.
+    from cockpit.lib.nudges import NudgePref
+
+    app, _ = _make_app()
+    repo_path = tmp_path / "beta"
+    repo_path.mkdir()
+    repo = {"name": "beta", "path": str(repo_path)}
+    tip = Worktree(path=repo_path / "tip", branch="khivi/tip")
+    root = Worktree(path=repo_path / "root", branch="khivi/root")
+    prefs = {"beta__2": NudgePref(), "beta__1": NudgePref()}
+    rows = {
+        str(tip.path): (repo, tip, 2, "beta__2", prefs["beta__2"]),
+        str(root.path): (repo, root, 1, "beta__1", prefs["beta__1"]),
+    }
+    saved: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.tui.app.find_pr_payload",
+        lambda *a, **k: {"total": 0, "review": "REVIEW_REQUIRED"},
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app.save_pref", lambda key, pref: saved.append(key)
+    )
+    monkeypatch.setattr("cockpit.tui.app.restamp_pref", lambda *a, **k: None)
+    monkeypatch.setattr(
+        app, "_resolve_row_pref", lambda p, verb, quiet=False: rows.get(p)
+    )
+    monkeypatch.setattr(app, "_notify", lambda *a, **k: None)
+    monkeypatch.setattr(app, "_publish_inventory", lambda: None)
+    monkeypatch.setattr(app, "call_from_thread", lambda fn, *a, **k: None)
+    return app, tip, root, prefs, saved
+
+
+async def test_snooze_takes_the_whole_stack(monkeypatch, tmp_path):
+    # Pressed on a member *below* the tip, which used to be a total no-op on
+    # screen: the fold bands a chain by its tip, and a snoozed row paints no
+    # glyph, so the keypress left no trace at all.
+    app, tip, root, prefs, saved = _stacked_snooze_app(monkeypatch, tmp_path)
+
+    CockpitApp._toggle_snooze.__wrapped__(  # type: ignore[attr-defined]
+        app, str(root.path), [str(tip.path), str(root.path)]
+    )
+
+    assert prefs["beta__1"].snoozed and prefs["beta__2"].snoozed
+    # The wake snapshot is written for every member, not just the pressed row —
+    # an empty one would have the next slow tick wake what `z` just set.
+    assert prefs["beta__2"].wake_on == "0|REVIEW_REQUIRED"
+    assert sorted(saved) == ["beta__1", "beta__2"]
+
+
+async def test_waking_takes_the_whole_stack_too(monkeypatch, tmp_path):
+    # The direction is the *pressed* row's, applied to the chain — so a chain
+    # left half-snoozed by `cockpit nudge` converges instead of staying split.
+    app, tip, root, prefs, _saved = _stacked_snooze_app(monkeypatch, tmp_path)
+    prefs["beta__2"].snoozed = True  # the pressed row
+    prefs["beta__2"].wake_on = "0|"
+
+    CockpitApp._toggle_snooze.__wrapped__(  # type: ignore[attr-defined]
+        app, str(tip.path), [str(tip.path), str(root.path)]
+    )
+
+    assert not prefs["beta__2"].snoozed
+    assert prefs["beta__2"].wake_on == ""
+    assert not prefs["beta__1"].snoozed
+
+
 async def test_snooze_kicks_full_cycle_so_the_sidebar_fold_lands(monkeypatch, tmp_path):
     # `z` is the one row key that changes sidebar *fold* membership, and
     # `cycle_all` builds `folds` only when `only_repo is None`. A repo-scoped

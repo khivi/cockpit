@@ -5652,6 +5652,73 @@ def test_resolve_prefs_keeps_a_snooze_when_the_issue_resolves(tmp_path):
     save.assert_not_called()
 
 
+def test_resolve_prefs_wakes_the_whole_stack_when_one_member_wakes(tmp_path):
+    # Both fold surfaces band a chain by its *tip*, so a member that wakes on
+    # its own moves nothing: its row stays inside the shut fold and the comment
+    # that woke it goes unseen. The chain is one unit of attention, so it wakes
+    # as one.
+    root = _stack_pr(1, "khivi/root", "main")
+    tip = _stack_pr(2, "khivi/tip", "khivi/root")
+    root.total_from_others = 3  # someone commented on the bottom of the stack
+    prefs = {
+        1: NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, "")),
+        2: NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, "")),
+    }
+    with (
+        patch.object(
+            cycle, "_load_nudge_pref", side_effect=lambda key: prefs[int(key[-1])]
+        ),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        got = cycle._resolve_prefs("acme", [root, tip])
+    assert got[1].snoozed is False
+    assert got[2].snoozed is False  # the tip, which nothing happened to
+    assert got[2].wake_on == ""
+    assert {call.args[0] for call in save.call_args_list} == {"acme__1", "acme__2"}
+
+
+def test_resolve_prefs_leaves_an_untouched_stack_snoozed(tmp_path):
+    # The propagation fires on a wake, never on the chain existing.
+    root = _stack_pr(1, "khivi/root", "main")
+    tip = _stack_pr(2, "khivi/tip", "khivi/root")
+    prefs = {
+        1: NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, "")),
+        2: NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, "")),
+    }
+    with (
+        patch.object(
+            cycle, "_load_nudge_pref", side_effect=lambda key: prefs[int(key[-1])]
+        ),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        got = cycle._resolve_prefs("acme", [root, tip])
+    assert got[1].snoozed is True
+    assert got[2].snoozed is True
+    save.assert_not_called()
+
+
+def test_resolve_prefs_wakes_no_further_than_the_chain(tmp_path):
+    # An unrelated PR's snooze is not collateral — the propagation walks
+    # `find_stacks`, not the repo.
+    root = _stack_pr(1, "khivi/root", "main")
+    tip = _stack_pr(2, "khivi/tip", "khivi/root")
+    other = _stack_pr(3, "khivi/other", "main")
+    root.total_from_others = 3
+    prefs = {
+        1: NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, "")),
+        2: NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, "")),
+        3: NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, "")),
+    }
+    with (
+        patch.object(
+            cycle, "_load_nudge_pref", side_effect=lambda key: prefs[int(key[-1])]
+        ),
+        patch.object(cycle, "save_pref"),
+    ):
+        got = cycle._resolve_prefs("acme", [root, tip, other])
+    assert got[3].snoozed is True
+
+
 def test_resolve_prefs_leaves_a_mute_alone(tmp_path):
     # A mute is indefinite — review activity must not clear it.
     pr = _snooze_pr()

@@ -432,7 +432,10 @@ how they end: a mute is indefinite (cleared by `m` / `cockpit nudge unmute`), a
 snooze auto-clears the moment the PR's review activity changes or a *new*
 actionable issue appears (`cycle._resolve_prefs` vs. `nudges.wake_signature` +
 `NudgePref.wake_nudge`). Setting a snooze clears any mute, so the two never
-coexist for long. Both look identical here.
+coexist for long. Both look identical here. A snooze set from the TUI covers
+every member of the row's stacked chain, and `cycle._wake_chains` wakes the rest
+of a chain as soon as any member of it wakes — the folds band a chain by its tip,
+so a half-snoozed chain hides rows that still nudge.
 
 | native | `idle=` | `parked=` | quiet | result |
 |---|---|---|---|---|
