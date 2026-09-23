@@ -2,56 +2,24 @@
 open: it checks that a rule's backticked names still resolve, not that any test
 guards the rule.
 
-A rule opts in with a trailing `[some.rule.id]`; a test claims it with a
-`covers` marker naming that id. AGENTS.md's "Invariant ids" section holds the
-semantics — what fails hard, what only warns, what may be waived.
+`tests/invariant_ids.py` registers the ids; a test claims one with a `covers`
+marker. AGENTS.md's "Invariant ids" section holds the semantics — what fails
+hard, what only warns, what may be waived.
 """
 
 from __future__ import annotations
 
 import ast
-import re
 import warnings
 from collections import defaultdict
 from pathlib import Path
 
 import pytest
 
+from tests.invariant_ids import INVARIANTS, JUDGMENT_ONLY
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-AGENTS_MD = REPO_ROOT / "AGENTS.md"
 TESTS_DIR = REPO_ROOT / "tests"
-
-# Trailing id on a rule: at least one dot, so a prose aside in square brackets
-# and a markdown link label can never read as a declaration.
-_DECL_RE = re.compile(r"\[([a-z0-9]+(?:[.-][a-z0-9]+)+)\]\s*$", re.MULTILINE)
-
-# A rule nothing could ever assert against; not one that merely lacks a test yet.
-_JUDGMENT_ONLY = frozenset(
-    {
-        # Both constrain the shape of code a future change would add; a test
-        # can only run code that exists.
-        "tests.helpers.take-input-dont-fetch",
-        "tests.gates.verify-outcome-not-proxy",
-    }
-)
-
-
-def _declared() -> dict[str, int]:
-    """Every id declared in AGENTS.md, mapped to its 1-indexed line."""
-    text = AGENTS_MD.read_text(encoding="utf-8")
-    out: dict[str, int] = {}
-    for match in _DECL_RE.finditer(text):
-        line = text.count("\n", 0, match.start()) + 1
-        out.setdefault(match.group(1), line)
-    return out
-
-
-def _declared_duplicates() -> dict[str, list[int]]:
-    text = AGENTS_MD.read_text(encoding="utf-8")
-    seen: dict[str, list[int]] = defaultdict(list)
-    for match in _DECL_RE.finditer(text):
-        seen[match.group(1)].append(text.count("\n", 0, match.start()) + 1)
-    return {k: v for k, v in seen.items() if len(v) > 1}
 
 
 def _covers_calls(tree: ast.AST) -> list[ast.Call]:
@@ -82,42 +50,38 @@ def _claimed() -> dict[str, list[str]]:
     return dict(out)
 
 
-def test_every_covers_marker_names_a_declared_rule():
+def test_every_covers_marker_names_a_registered_id():
     """The rot direction that fails loud: a marker outliving its rule — the
     half of the link a reader would never re-derive."""
-    unknown = {
-        rule_id: sites
-        for rule_id, sites in _claimed().items()
-        if rule_id not in _declared()
-    }
-    assert not unknown, (
-        "covers() ids with no matching rule in AGENTS.md — the rule was "
-        f"renamed or deleted: {unknown}"
+    unknown = {r: sites for r, sites in _claimed().items() if r not in INVARIANTS}
+    assert not unknown, f"covers() ids missing from tests/invariant_ids.py: {unknown}"
+
+
+def test_every_registered_id_names_a_findable_rule():
+    """The registry is the only route from an id back to its rule, so the
+    phrase must still appear in AGENTS.md verbatim. Without this the two drift
+    silently and the id stops meaning anything."""
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    lost = sorted(r for r, phrase in INVARIANTS.items() if phrase not in agents)
+    assert not lost, (
+        "registered ids whose AGENTS.md phrase no longer appears — the rule was "
+        f"reworded or deleted: {lost}"
     )
 
 
-def test_no_rule_id_is_declared_twice():
-    """Two rules under one id make the gap list lie in both directions."""
-    assert not _declared_duplicates()
-
-
-def test_judgment_only_rules_are_declared_and_unclaimed():
-    """The waiver list must stay honest: every entry a real rule, none of them
+def test_judgment_only_ids_are_registered_and_unclaimed():
+    """The waiver list must stay honest: every entry a real id, none of them
     also carrying a test that would have made the waiver unnecessary."""
-    declared, claimed = _declared(), _claimed()
-    assert not (_JUDGMENT_ONLY - set(declared)), "waiver names an undeclared rule"
-    assert not (
-        _JUDGMENT_ONLY & set(claimed)
-    ), "waived rule has a test; drop the waiver"
+    assert not (JUDGMENT_ONLY - set(INVARIANTS)), "waiver names an unregistered id"
+    assert not (JUDGMENT_ONLY & set(_claimed())), "waived rule has a test"
 
 
 def test_report_uncovered_rules():
-    """Report-only: an unlabelled rule must not break an unrelated run."""
-    declared = _declared()
-    uncovered = sorted(set(declared) - set(_claimed()) - _JUDGMENT_ONLY)
+    """Report-only: an unregistered rule must not break an unrelated run."""
+    uncovered = sorted(set(INVARIANTS) - set(_claimed()) - JUDGMENT_ONLY)
     if uncovered:
-        listing = "\n".join(f"  AGENTS.md:{declared[r]}  {r}" for r in uncovered)
+        listing = "\n".join(f"  {r}  ({INVARIANTS[r]})" for r in uncovered)
         warnings.warn(
-            f"{len(uncovered)} declared invariant(s) with no covers() marker:\n{listing}",
+            f"{len(uncovered)} registered invariant(s) with no covers() marker:\n{listing}",
             stacklevel=1,
         )
