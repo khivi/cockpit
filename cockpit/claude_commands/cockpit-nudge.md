@@ -22,8 +22,9 @@ Reference (see `cockpit nudge --help` for the full list):
   PR. Without `--until` the mute is indefinite.
 - `unmute [pr]` — resume nudges.
 - `snooze [pr]` — silence nudges until the PR changes (new comment, review, or
-  actionable issue). Clears any mute. A no-op if already snoozed.
-- `wake [pr]` — clear a snooze early. A no-op if not snoozed.
+  actionable issue). Clears any mute. Running it again re-arms the wake
+  snapshots and repaints the row.
+- `wake [pr]` — clear a snooze early.
 - `list` — show currently muted PRs.
 - `status [pr]` — show mute / snooze / last-nudge state for one PR.
 - `forget [pr]` — delete the PR's nudge file, clearing the rate-limit timer
@@ -34,3 +35,7 @@ number. The TUI's `m` (mute) and `z` (snooze) cover the same prefs on the
 cursor row — this is the shell route, and the only one offering `list`,
 `status` and `forget`. Run it from inside the PR's worktree: `snooze`/`wake`
 read the cached PR snapshot for the cwd to build the wake signature.
+
+Unlike `z`, these are per-PR: on a stacked PR they write only the number you
+named and then name the chain's tip, whose snooze is what actually folds the
+row on both surfaces.

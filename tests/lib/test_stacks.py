@@ -6,7 +6,7 @@ Pure function over `PR.base` — no network, no git, no cmux.
 from __future__ import annotations
 
 from cockpit.lib.gh import PR
-from cockpit.lib.stacks import find_stacks, stack_order
+from cockpit.lib.stacks import chain_tip, find_stacks, stack_order
 
 
 def _pr(number: int, branch: str, base: str, *, state: str = "OPEN") -> PR:
@@ -187,3 +187,38 @@ def test_stack_order_base_cycle_falls_back_to_flat_rows():
 
 def test_stack_order_self_base_is_a_root():
     assert _order(["khivi/a"], {"khivi/a": "khivi/a"}) == [("khivi/a", 0)]
+
+
+# ── chain_tip — the payload-level reading, for `cockpit nudge` ─────────────
+
+
+def test_chain_tip_walks_up_to_the_deepest_member():
+    bases = {"a": "main", "b": "a", "c": "b"}
+    assert chain_tip(bases, "a") == "c"
+    assert chain_tip(bases, "b") == "c"
+
+
+def test_chain_tip_of_the_tip_is_itself():
+    assert chain_tip({"a": "main", "b": "a"}, "b") == "b"
+
+
+def test_chain_tip_of_an_unstacked_branch_is_itself():
+    assert chain_tip({"a": "main", "b": "main"}, "a") == "a"
+
+
+def test_chain_tip_of_a_branch_with_no_payload_is_itself():
+    # `cockpit nudge` can run before the daemon has ever cached this PR.
+    assert chain_tip({}, "a") == "a"
+
+
+def test_chain_tip_forked_stack_picks_the_deepest_branch():
+    # Same rule `stack_order` applies: one member has to head the group.
+    assert chain_tip({"b": "a", "c": "b", "d": "a"}, "a") == "c"
+
+
+def test_chain_tip_base_cycle_terminates():
+    assert chain_tip({"a": "b", "b": "a"}, "a") in {"a", "b"}
+
+
+def test_chain_tip_ignores_a_self_based_branch():
+    assert chain_tip({"a": "a"}, "a") == "a"

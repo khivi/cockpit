@@ -126,6 +126,9 @@ def _patched_snooze_collaborators(**overrides):
             "nudge": "ci",
             "headRefOid": "cafe",
         },
+        # Unstacked by default: `_warn_split_chain` reads the repo's cached
+        # payloads, and every snooze/wake test would otherwise depend on them.
+        "load_pr_payloads_by_branch": lambda repo: {},
     }
     defaults.update(overrides)
     return defaults
@@ -168,12 +171,15 @@ def test_snooze_clears_an_existing_mute():
     assert saved_pref.reason == ""
 
 
-def test_snooze_already_snoozed_is_a_noop(capsys):
+def test_snooze_again_re_stamps_and_kicks(capsys):
+    # The re-stamp + kick pair is the only thing that converges a pref and a
+    # screen that disagree, so a second snooze must not short-circuit into a
+    # no-op — that left `already snoozed` as a dead end.
     with (
         patch.multiple(
             nudge_cli,
             **_patched_snooze_collaborators(
-                load_pref=lambda key: NudgePref(snoozed=True)
+                load_pref=lambda key: NudgePref(snoozed=True, wake_on="1|")
             ),
         ),
         patch.object(nudge_cli, "save_pref") as save_pref,
@@ -182,10 +188,33 @@ def test_snooze_already_snoozed_is_a_noop(capsys):
     ):
         rc = nudge_cli._cmd_snooze(Namespace(pr=None))
     assert rc == 0
-    assert "already snoozed" in capsys.readouterr().out
-    save_pref.assert_not_called()
-    restamp_pref.assert_not_called()
-    kick_running.assert_not_called()
+    assert "re-snoozed PR #7" in capsys.readouterr().out
+    assert save_pref.call_args[0][1].wake_on == "3|APPROVED"
+    restamp_pref.assert_called_once()
+    kick_running.assert_called_once_with(quiet=True)
+
+
+def test_re_snooze_keeps_its_wake_snapshots_when_no_payload_is_cached():
+    # Blanking a live `wake_on` to "0|" would wake the snooze on the next tick —
+    # the opposite of what a re-snooze was asked for.
+    with (
+        patch.multiple(
+            nudge_cli,
+            **_patched_snooze_collaborators(
+                load_pref=lambda key: NudgePref(
+                    snoozed=True, wake_on="3|APPROVED", wake_nudge="ci"
+                ),
+                find_pr_payload_for_cwd=lambda cwd, branch: None,
+            ),
+        ),
+        patch.object(nudge_cli, "save_pref") as save_pref,
+        patch.object(nudge_cli, "restamp_pref"),
+        patch.object(nudge_cli, "kick_running"),
+    ):
+        nudge_cli._cmd_snooze(Namespace(pr=None))
+    saved_pref = save_pref.call_args[0][1]
+    assert saved_pref.wake_on == "3|APPROVED"
+    assert saved_pref.wake_nudge == "ci"
 
 
 def test_wake_clears_snooze_fields():
@@ -216,7 +245,9 @@ def test_wake_clears_snooze_fields():
     kick_running.assert_called_once_with(quiet=True)
 
 
-def test_wake_when_not_snoozed_is_a_noop(capsys):
+def test_wake_when_already_awake_still_re_stamps(capsys):
+    # Same convergence argument as the re-snooze above, in the other direction:
+    # a row stuck folded is exactly when someone runs `wake` a second time.
     with (
         patch.multiple(nudge_cli, **_patched_snooze_collaborators()),
         patch.object(nudge_cli, "save_pref") as save_pref,
@@ -225,10 +256,121 @@ def test_wake_when_not_snoozed_is_a_noop(capsys):
     ):
         rc = nudge_cli._cmd_wake(Namespace(pr=None))
     assert rc == 0
-    assert "not snoozed" in capsys.readouterr().out
-    save_pref.assert_not_called()
-    restamp_pref.assert_not_called()
-    kick_running.assert_not_called()
+    assert "already awake" in capsys.readouterr().out
+    assert save_pref.call_args[0][1].snoozed is False
+    restamp_pref.assert_called_once()
+    kick_running.assert_called_once_with(quiet=True)
+
+
+# ── the stacked-chain warning — a per-PR snooze below the tip moves nothing ──
+
+
+def _stacked_payloads(_repo: str) -> dict:
+    # `feature` is the root; #8's `tip` branch is stacked on top of it.
+    return {
+        "feature": {"number": 7, "base": "main", "state": "OPEN"},
+        "tip": {"number": 8, "base": "feature", "state": "OPEN"},
+    }
+
+
+def _prefs(**snoozed_by_key):
+    return lambda key: NudgePref(snoozed=snoozed_by_key.get(key, False))
+
+
+def test_snooze_below_an_unsnoozed_tip_names_the_pr_that_has_to_agree(capsys):
+    with (
+        patch.multiple(
+            nudge_cli,
+            **_patched_snooze_collaborators(
+                load_pr_payloads_by_branch=_stacked_payloads,
+                load_pref=_prefs(),
+            ),
+        ),
+        patch.object(nudge_cli, "save_pref"),
+        patch.object(nudge_cli, "restamp_pref"),
+        patch.object(nudge_cli, "kick_running"),
+    ):
+        nudge_cli._cmd_snooze(Namespace(pr=None))
+    out = capsys.readouterr().out
+    assert "stacked under #8 (tip), which is not snoozed" in out
+    assert "cockpit nudge snooze 8" in out
+
+
+def test_no_warning_when_the_tip_already_agrees(capsys):
+    with (
+        patch.multiple(
+            nudge_cli,
+            **_patched_snooze_collaborators(
+                load_pr_payloads_by_branch=_stacked_payloads,
+                load_pref=_prefs(acme__8=True),
+            ),
+        ),
+        patch.object(nudge_cli, "save_pref"),
+        patch.object(nudge_cli, "restamp_pref"),
+        patch.object(nudge_cli, "kick_running"),
+    ):
+        nudge_cli._cmd_snooze(Namespace(pr=None))
+    assert "stacked under" not in capsys.readouterr().out
+
+
+def test_no_warning_on_the_tip_itself(capsys):
+    with (
+        patch.multiple(
+            nudge_cli,
+            **_patched_snooze_collaborators(
+                _resolve_pr=lambda arg: (8, "acme", "acme__8"),
+                current_branch=lambda cwd: "tip",
+                load_pr_payloads_by_branch=_stacked_payloads,
+                load_pref=_prefs(),
+            ),
+        ),
+        patch.object(nudge_cli, "save_pref"),
+        patch.object(nudge_cli, "restamp_pref"),
+        patch.object(nudge_cli, "kick_running"),
+    ):
+        nudge_cli._cmd_snooze(Namespace(pr=None))
+    assert "stacked under" not in capsys.readouterr().out
+
+
+def test_wake_below_a_still_snoozed_tip_warns_the_row_stays_folded(capsys):
+    with (
+        patch.multiple(
+            nudge_cli,
+            **_patched_snooze_collaborators(
+                load_pr_payloads_by_branch=_stacked_payloads,
+                load_pref=_prefs(acme__7=True, acme__8=True),
+            ),
+        ),
+        patch.object(nudge_cli, "save_pref"),
+        patch.object(nudge_cli, "restamp_pref"),
+        patch.object(nudge_cli, "kick_running"),
+    ):
+        nudge_cli._cmd_wake(Namespace(pr=None))
+    out = capsys.readouterr().out
+    assert "stacked under #8 (tip), which is still snoozed" in out
+    assert "cockpit nudge wake 8" in out
+
+
+def test_a_merged_parent_is_not_a_chain(capsys):
+    # `find_stacks` excludes non-OPEN PRs for the same reason: once the bottom
+    # lands, what was stacked on it is just a PR on the trunk.
+    with (
+        patch.multiple(
+            nudge_cli,
+            **_patched_snooze_collaborators(
+                load_pr_payloads_by_branch=lambda repo: {
+                    "feature": {"number": 7, "base": "main", "state": "OPEN"},
+                    "tip": {"number": 8, "base": "feature", "state": "MERGED"},
+                },
+                load_pref=_prefs(),
+            ),
+        ),
+        patch.object(nudge_cli, "save_pref"),
+        patch.object(nudge_cli, "restamp_pref"),
+        patch.object(nudge_cli, "kick_running"),
+    ):
+        nudge_cli._cmd_snooze(Namespace(pr=None))
+    assert "stacked under" not in capsys.readouterr().out
 
 
 # ── argparse routing smoke test — every subcommand parses and dispatches ───
