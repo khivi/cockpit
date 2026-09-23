@@ -584,6 +584,95 @@ def test_spawn_leaves_other_repos_parked(spawn_main, tmp_path):
     assert "un-hid" not in out
 
 
+# The bare `--cwd` test above is the one mode where the spawned target IS the
+# main worktree itself. Every mode below lands in a SIBLING directory of
+# `cockpit_repo.repo` (a fresh branch's own worktree), so together they pin
+# the other half of the rule: `_unhide_spawn_target` keys off
+# `main_worktree_path(wt)` — the repo's resolved root, the same path
+# `hidden.py` stores — never the freshly created worktree's own path.
+
+
+def _spawn_named_branch(spawn_main, cockpit_repo, monkeypatch, push_branch):
+    return spawn_main(["--name", "foo", "--repo", "testrepo"])
+
+
+def _spawn_existing_branch(spawn_main, cockpit_repo, monkeypatch, push_branch):
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    push_branch("khivi/parked-target")
+    return spawn_main(["--branch", "khivi/parked-target", "--repo", "testrepo"])
+
+
+def _spawn_pr(spawn_main, cockpit_repo, monkeypatch, push_branch):
+    import cockpit.spawn as spawn
+    from cockpit.lib.git import create_new_branch_worktree
+
+    # `resolve_pr_branch` and the PR-fetch half of `create_worktree` both talk
+    # to a real GitHub remote, which the tmp `origin.git` bare repo isn't —
+    # stub both so `--pr` reaches the worktree-creation + unhide tail without
+    # a live `gh`/`git fetch refs/pull/...` round-trip.
+    monkeypatch.setattr(spawn, "resolve_pr_branch", lambda *_a, **_kw: "pr-99-branch")
+    monkeypatch.setattr(
+        spawn,
+        "create_worktree",
+        lambda repo, branch, wt_path, *, base, pr_num=None, branch_prefix="": (
+            create_new_branch_worktree(repo, branch, wt_path, base=base)
+        ),
+    )
+    monkeypatch.setattr(
+        spawn,
+        "fetch_pr_info",
+        lambda *_a, **_kw: {
+            "number": 99,
+            "title": "t",
+            "author": {"login": "x"},
+            "url": "https://example.invalid/pull/99",
+        },
+    )
+    return spawn_main(["--pr", "99", "--repo", "testrepo"])
+
+
+def _spawn_ticket_ref(spawn_main, cockpit_repo, monkeypatch, push_branch):
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    return spawn_main(["PE-1234", "--repo", "testrepo"])
+
+
+_PARKED_SPAWN_MODES = [
+    pytest.param(_spawn_named_branch, id="name"),
+    pytest.param(_spawn_existing_branch, id="branch"),
+    pytest.param(_spawn_pr, id="pr"),
+    pytest.param(_spawn_ticket_ref, id="ticket"),
+]
+
+
+@pytest.mark.covers("spawn.unhide.single-gate-every-mode")
+@pytest.mark.parametrize("spawn_fn", _PARKED_SPAWN_MODES)
+def test_spawn_modes_into_parked_repo_all_unhide(
+    spawn_fn, spawn_main, cockpit_repo, monkeypatch, push_branch
+):
+    """`--pr`, an existing `--branch`, a `--name`d branch, and a ticket ref
+    (`PE-1234`, Linear/Jira-shaped) all reach the SAME `_unhide_spawn_target`
+    gate rather than a per-mode branch. A per-mode regression (the gate
+    wired into only one dispatch arm) fails exactly the parametrizations it
+    doesn't cover; a keying regression (matching on the spawned worktree's
+    own path instead of the resolved repo root) fails every one of them,
+    since each mode here creates its worktree in a sibling directory of
+    `cockpit_repo.repo`.
+    """
+    from cockpit.lib.hidden import is_hidden, toggle_hidden
+
+    toggle_hidden(cockpit_repo.repo)
+    assert is_hidden(cockpit_repo.repo)
+
+    code, out, _err = spawn_fn(spawn_main, cockpit_repo, monkeypatch, push_branch)
+    assert code == 0
+    assert not is_hidden(cockpit_repo.repo)
+    assert "un-hid parked repo" in out
+
+
 def test_bare_outside_git_repo_errors(spawn_main, tmp_path, monkeypatch):
     plain = tmp_path / "not-a-repo"
     plain.mkdir()
@@ -799,6 +888,22 @@ def test_plan_only_prompt_uses_custom_command():
     assert p.startswith("/plan-pr")
     assert "#7" in p and "fix the thing" in p
     assert "PLAN ONLY" in p  # the shared no-code gate always rides along
+
+
+@pytest.mark.covers("spawn.plan-fallback.keeps-source-slot")
+def test_plan_only_prompt_forwards_source_into_source_block():
+    """Every OTHER `_plan_only_prompt(...)` call in this file omits `source=`,
+    so this is the one direct exercise of the slot: when no `(mode,
+    provider)` pair matches, `main()` hands the fallback the ticket/thread
+    ref via this argument rather than seeding a bare branch name — see
+    `test_gh_issue_without_provider_seeds_ref_in_plan_only` below for the
+    end-to-end version of the same rule."""
+    import cockpit.spawn as spawn
+
+    p = spawn._plan_only_prompt(
+        "khivi/feature", None, source="https://trello.com/c/aB3dZ9"
+    )
+    assert "**Source**: https://trello.com/c/aB3dZ9" in p
 
 
 @pytest.mark.covers("prompts.plan-gate.never-commit")
@@ -2178,9 +2283,13 @@ def test_linear_key_without_provider_seeds_ref_in_plan_only(spawn_main, cockpit_
     assert "PE-1234" in cmd
 
 
+@pytest.mark.covers("spawn.plan-fallback.keeps-source-slot")
 def test_gh_issue_without_provider_seeds_ref_in_plan_only(spawn_main, cockpit_repo):
     """The URL form's ref keeps its repo (`o/r#42`), so the session can look the
-    issue up without guessing which repo it belongs to."""
+    issue up without guessing which repo it belongs to. End-to-end version of
+    `test_plan_only_prompt_forwards_source_into_source_block`: `main()`'s
+    fallback dispatch (no `(mode, provider)` pair matches `gh-issue` with no
+    ticket provider configured) reaches `_plan_only_prompt`'s `source=` slot."""
     code, _out, _err = spawn_main(
         ["https://github.com/o/r/issues/42", "--repo", "testrepo"]
     )

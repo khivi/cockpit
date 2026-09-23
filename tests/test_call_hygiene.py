@@ -476,3 +476,57 @@ def test_fast_tick_never_reaches_reconcile_review_groups() -> None:
     reachable = _reachable(combined, "_fast_tick")
     assert "_reconcile_review_groups" not in reachable
     assert "restore_trailing_folds" in reachable  # sanity: the graph isn't empty/broken
+
+
+# ── update-stale.mechanism.no-local-rebase ────────────────────────────────
+
+
+@pytest.mark.covers("update-stale.mechanism.no-local-rebase")
+def test_update_stale_branches_never_shells_a_local_rebase_or_force_push() -> None:
+    """`cycle.py::_update_stale_branches` brings a PR's head up to date via
+    GitHub's server-side `updatePullRequestBranch` mutation, never a local
+    `git rebase` + force-push (see AGENTS.md's update-stale-branches
+    section): a conflicted local rebase could strand a `rebase-merge` state
+    that reads as dirty and wedges teardown, and no force-push may originate
+    from an unattended process.
+
+    Scoped to what actually RUNS the update — the call graph reachable from
+    `_update_stale_branches` across cycle.py, git.py, gh.py and config.py —
+    rather than a tree-wide ban on the word "rebase": `git.py::
+    resync_to_origin` legitimately runs a plain `reset --hard` after a
+    REBASE-method update (local reconciliation of an already server-rewritten
+    ref, not the banned mechanism), and `git.py` separately carries unrelated
+    rebase-*state* helpers (`_rebase_head_name` reads `rebase-merge/head-name`
+    off disk; it shells no git subcommand and isn't reachable from this path
+    at all) that a bare `"rebase" not in referenced_names` sweep would trip
+    on for no reason.
+    """
+    files = {
+        "cycle": COCKPIT_ROOT / "orchestrators" / "cycle.py",
+        "git": COCKPIT_ROOT / "lib" / "git.py",
+        "gh": COCKPIT_ROOT / "lib" / "gh.py",
+        "config": COCKPIT_ROOT / "lib" / "config.py",
+    }
+    trees = {name: _parse(path) for name, path in files.items()}
+    combined = _merge_graphs(*(_call_graph(tree) for tree in trees.values()))
+    reachable = _reachable(combined, "_update_stale_branches")
+    assert "resync_to_origin" in reachable  # sanity: the graph isn't empty/broken
+
+    offenders: list[str] = []
+    for name, tree in trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            if node.name not in reachable:
+                continue
+            for phrase in _call_argument_phrases(node):
+                tokens = phrase.split()
+                shells_rebase = "rebase" in tokens
+                shells_force_push = "push" in tokens and (
+                    "--force" in tokens or "-f" in tokens
+                )
+                if shells_rebase or shells_force_push:
+                    offenders.append(f"{name}::{node.name}: {phrase!r}")
+    assert (
+        not offenders
+    ), f"update-stale path shells a local rebase or force-push: {offenders}"

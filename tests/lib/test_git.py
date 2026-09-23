@@ -218,6 +218,24 @@ def test_tag_workspace_name_leaves_an_empty_name_alone():
     assert tag_workspace_name("", "infra") == ""
 
 
+@pytest.mark.covers("sidebar-tag.token.resolved-string-only")
+def test_tag_workspace_name_does_not_expand_the_repo_token():
+    """`{repo}` is expanded exactly once, at load time, by
+    `config.expand_sidebar_tags` — never by `tag_workspace_name` itself. This
+    is what lets the token be declared on an org block: `apply_org_defaults`
+    copies a scalar verbatim, so an org-level `sidebar_tag` of `"{repo}"`
+    would label the whole org rather than each member unless something
+    resolves it to the member's own repo name before it reaches this
+    function. `tag_workspace_name` must stay dumb about the token and treat
+    it as ordinary text.
+
+    `{repo}` ends in `}`, a non-alnum character, so the last-char separator
+    rule (`sidebar-tag.separator.last-char`) applies here too: the prefix
+    takes a plain space, not `SIDEBAR_TAG_SEP`.
+    """
+    assert tag_workspace_name("fix-retry", "{repo}") == "{repo} fix-retry"
+
+
 def test_workspace_name_applies_the_repos_sidebar_tag(tmp_path):
     wt = Worktree(
         path=tmp_path / "pe-4516",

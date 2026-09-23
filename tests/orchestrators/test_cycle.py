@@ -5498,6 +5498,37 @@ def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
     assert moved == ["wg:reviews", "wg:snoozed"]
 
 
+@pytest.mark.covers("folds.trailing.pass-order-not-rank")
+def test_reconcile_review_groups_order_follows_the_tuples_walk_order(tmp_path):
+    # `_TRAILING_FOLDS` carries no priority/rank field for "reviews above
+    # snoozed" — the pass just walks the tuple in order and re-parks each pile
+    # with `--to-index 9999`, so whichever entry is walked *last* ends up
+    # lowest. If a rank field were doing the sorting, reversing the tuple
+    # would leave the emitted order alone; instead it flips it, which is the
+    # observable proof that pass order is the only thing deciding it.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "khivi/b", "main")],
+        coworkers=("workspace:1",),
+        snoozed=("workspace:2",),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+
+    def _icons_in_walk_order():
+        with (
+            patch.object(cycle, "list_workspace_groups", return_value=[]),
+            patch.object(cycle, "create_workspace_group", return_value=None) as create,
+        ):
+            cycle._reconcile_review_groups(folds, dry=False)
+        return [c.kwargs["icon"] for c in create.call_args_list]
+
+    assert _icons_in_walk_order() == [REVIEW_GROUP_ICON, SNOOZE_GROUP_ICON]
+
+    with patch.object(cycle, "_TRAILING_FOLDS", tuple(reversed(cycle._TRAILING_FOLDS))):
+        assert _icons_in_walk_order() == [SNOOZE_GROUP_ICON, REVIEW_GROUP_ICON]
+
+
 def test_a_snoozed_chain_folds_with_the_rest_of_the_pile(tmp_path):
     # End to end across both passes: the chain's members are ordinary snoozed
     # refs by the time the cross-repo pass runs, so they land in the one

@@ -8,6 +8,7 @@ tests are hermetic.
 from __future__ import annotations
 
 import importlib
+import inspect
 import time
 
 import pytest
@@ -293,6 +294,36 @@ def test_wake_signature_changes_with_comments_or_decision(nudges):
     assert nudges.wake_signature(0, "") == base
     assert nudges.wake_signature(1, "") != base
     assert nudges.wake_signature(0, "APPROVED") != base
+
+
+@pytest.mark.covers("nudge.wake-signature.excludes-head-oid")
+def test_wake_signature_is_blind_to_a_push_head_oid_change(nudges):
+    # wake_signature's parameters are (total_from_others, review_decision) --
+    # a head oid never reaches it, and that is deliberate: this signature
+    # backs the *review-activity* wake arm in `cycle._resolve_prefs`
+    # (`pref.wake_on != wake_signature(pr.total_from_others,
+    # pr.review_decision)`), which is shared code for a PR that is mine as
+    # well as one I'm reviewing. A push to a coworker's PR is instead woken
+    # by the separate `wake_head` comparison, gated on `not PR.mine` — if a
+    # push also perturbed this signature, my own push to my own PR (mine=True,
+    # no `wake_head` check) would wake my own snooze, the exact thing that
+    # gate exists to prevent.
+    #
+    # Simulate the two PR snapshots `_resolve_prefs` would see around a push:
+    # identical review activity, different head commit. The review-activity
+    # signature must not tell them apart.
+    # A head oid cannot reach the signature unless it becomes a parameter,
+    # so that is what this pins; `_resolve_prefs` passes exactly these two.
+    assert list(inspect.signature(nudges.wake_signature).parameters) == [
+        "total_from_others",
+        "review_decision",
+    ]
+
+    # Sensitive to both of those, so "blind to a head oid" is a real exclusion
+    # rather than a function that happens to ignore its inputs.
+    base = nudges.wake_signature(2, "APPROVED")
+    assert nudges.wake_signature(3, "APPROVED") != base
+    assert nudges.wake_signature(2, "CHANGES_REQUESTED") != base
 
 
 @pytest.mark.covers("nudge.snooze.no-time-based-until")
