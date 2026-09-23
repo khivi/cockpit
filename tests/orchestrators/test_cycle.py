@@ -5652,6 +5652,87 @@ def test_resolve_prefs_keeps_a_snooze_when_the_issue_resolves(tmp_path):
     save.assert_not_called()
 
 
+def test_resolve_prefs_wakes_a_review_snooze_when_the_author_pushes(tmp_path):
+    # The one event a review snooze waits on that nothing else reports: new
+    # commits open no review thread and move no `reviewDecision`, and a
+    # coworker's PR has no `nudge_issue` at all.
+    pr = _snooze_pr(mine=False)
+    pr.head_oid = "beef"
+    pref = NudgePref(
+        snoozed=True, wake_on=cycle.wake_signature(0, ""), wake_head="cafe"
+    )
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs("acme", [pr])
+    assert prefs[7].snoozed is False
+    assert prefs[7].wake_head == ""
+    save.assert_called_once()
+
+
+def test_resolve_prefs_keeps_a_review_snooze_when_the_head_is_unchanged(tmp_path):
+    pr = _snooze_pr(mine=False)
+    pr.head_oid = "cafe"
+    pref = NudgePref(
+        snoozed=True, wake_on=cycle.wake_signature(0, ""), wake_head="cafe"
+    )
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs("acme", [pr])
+    assert prefs[7].snoozed is True
+    save.assert_not_called()
+
+
+def test_resolve_prefs_keeps_my_own_snooze_when_i_push(tmp_path):
+    # `total_from_others`' rule in the other dimension — my own work is not
+    # someone else's turn arriving.
+    pr = _snooze_pr(mine=True)
+    pr.head_oid = "beef"
+    pref = NudgePref(
+        snoozed=True, wake_on=cycle.wake_signature(0, ""), wake_head="cafe"
+    )
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs("acme", [pr])
+    assert prefs[7].snoozed is True
+    save.assert_not_called()
+
+
+def test_resolve_prefs_keeps_a_review_snooze_with_no_head_snapshot(tmp_path):
+    # A pref written before `wake_head` existed has no baseline, so it must not
+    # read as "the head changed" and wake every standing snooze at once.
+    pr = _snooze_pr(mine=False)
+    pr.head_oid = "beef"
+    pref = NudgePref(snoozed=True, wake_on=cycle.wake_signature(0, ""), wake_head="")
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs("acme", [pr])
+    assert prefs[7].snoozed is True
+    save.assert_not_called()
+
+
+def test_resolve_prefs_keeps_a_review_snooze_when_the_live_head_is_unknown(tmp_path):
+    pr = _snooze_pr(mine=False)
+    pr.head_oid = None
+    pref = NudgePref(
+        snoozed=True, wake_on=cycle.wake_signature(0, ""), wake_head="cafe"
+    )
+    with (
+        patch.object(cycle, "_load_nudge_pref", return_value=pref),
+        patch.object(cycle, "save_pref") as save,
+    ):
+        prefs = cycle._resolve_prefs("acme", [pr])
+    assert prefs[7].snoozed is True
+    save.assert_not_called()
+
+
 def test_resolve_prefs_wakes_the_whole_stack_when_one_member_wakes(tmp_path):
     # Both fold surfaces band a chain by its *tip*, so a member that wakes on
     # its own moves nothing: its row stays inside the shut fold and the comment

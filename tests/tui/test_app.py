@@ -910,7 +910,12 @@ async def test_snooze_key_clears_a_mute_and_snapshots_the_wake_state(
     )
     monkeypatch.setattr(
         "cockpit.tui.app.find_pr_payload",
-        lambda branch, repo: {"total": 2, "review": "APPROVED", "nudge": "ci"},
+        lambda branch, repo: {
+            "total": 2,
+            "review": "APPROVED",
+            "nudge": "ci",
+            "headRefOid": "cafe",
+        },
     )
     saved: list = []
     monkeypatch.setattr(
@@ -930,6 +935,7 @@ async def test_snooze_key_clears_a_mute_and_snapshots_the_wake_state(
     assert not pref.muted and pref.until is None
     assert pref.wake_on == "2|APPROVED"
     assert pref.wake_nudge == "ci"  # already failing → this issue won't re-wake it
+    assert pref.wake_head == "cafe"  # a push by the author re-wakes a review snooze
 
 
 @pytest.mark.parametrize("key,snoozed", [("m", False), ("z", True)])

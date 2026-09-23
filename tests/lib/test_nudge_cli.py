@@ -124,6 +124,7 @@ def _patched_snooze_collaborators(**overrides):
             "total": 3,
             "review": "APPROVED",
             "nudge": "ci",
+            "headRefOid": "cafe",
         },
     }
     defaults.update(overrides)
@@ -144,6 +145,7 @@ def test_snooze_stamps_wake_signature_and_kicks_daemon():
     assert saved_pref.snoozed is True
     assert saved_pref.wake_on == "3|APPROVED"
     assert saved_pref.wake_nudge == "ci"
+    assert saved_pref.wake_head == "cafe"
     restamp_pref.assert_called_once()
     kick_running.assert_called_once_with(quiet=True)
 
@@ -192,7 +194,10 @@ def test_wake_clears_snooze_fields():
             nudge_cli,
             **_patched_snooze_collaborators(
                 load_pref=lambda key: NudgePref(
-                    snoozed=True, wake_on="3|APPROVED", wake_nudge="ci"
+                    snoozed=True,
+                    wake_on="3|APPROVED",
+                    wake_nudge="ci",
+                    wake_head="cafe",
                 ),
             ),
         ),
@@ -206,6 +211,7 @@ def test_wake_clears_snooze_fields():
     assert saved_pref.snoozed is False
     assert saved_pref.wake_on == ""
     assert saved_pref.wake_nudge == ""
+    assert saved_pref.wake_head == ""
     restamp_pref.assert_called_once()
     kick_running.assert_called_once_with(quiet=True)
 
