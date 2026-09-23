@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.7.0](https://github.com/khivi/cockpit/compare/v3.6.1...v3.7.0) (2026-09-23)
+
+
+### Features
+
+* **tickets:** keep the inbox open when enter starts a ticket ([#533](https://github.com/khivi/cockpit/issues/533)) ([6530574](https://github.com/khivi/cockpit/commit/653057406a23fec252e6890de74c041cd644b64d))
+
 ## [3.6.1](https://github.com/khivi/cockpit/compare/v3.6.0...v3.6.1) (2026-09-23)
 
 
