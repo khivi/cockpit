@@ -437,7 +437,7 @@ Removed along with that config key, its preflight validator, and the orphan_pref
 
 ### `$COCKPIT_HOME` may be inside a file-sync folder — write pid-scoped, warn on conflicts
 
-- **The temp file in `config.py::_atomic_write_text` carries `os.getpid()`.** `os.replace` is atomic, so a fixed `<name>.tmp` never yields a *torn* file — it yields a **wrong** one, since several cockpit processes write these concurrently and the loser's whole content lands under the winner's name. **Do not** go back to a fixed suffix, and **do not** re-inline the write.
+- **The temp file in `config.py::_atomic_write_text` carries `os.getpid()`.** `os.replace` is atomic, so a fixed `<name>.tmp` never yields a *torn* file — it yields a **wrong** one, since several cockpit processes write these concurrently and the loser's whole content lands under the winner's name. **Do not** go back to a fixed suffix, and **do not** re-inline the write at a `config.py` call site — `_atomic_write_text` is the one writer there. A *sibling* module owning its own state dir may repeat the pattern (`seed_queue.enqueue` does, citing this rule), so the guard is the literal `os.replace`, which nothing else in the tree calls.
 - **`preflight._warn_sync_conflicts` surfaces a conflicted copy and cannot do more** — the conflict is resolved outside the process, so the edit is silently gone and the only symptom is a setting that "didn't take". It matches **only** `conflicted copy` and `.sync-conflict-`; iCloud's, Drive's and OneDrive's spellings are indistinguishable from ordinary filenames, and a false alarm trains the user to ignore a warning that means real data loss.
 
 ### Machine-local runtime state lives in `$COCKPIT_RUNTIME_DIR`, never `$COCKPIT_HOME`

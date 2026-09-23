@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -2656,16 +2657,20 @@ async def test_mute_still_kicks_repo_scoped(monkeypatch, tmp_path):
     assert kicks == [(app._kick_slow, (str(repo_path),))]
 
 
+@pytest.mark.covers("events.doorbell.trigger-only")
 async def test_workspace_event_kicks_the_fast_tick():
     # The `cmux events` doorbell: a workspace created/closed out from under us
-    # republishes now instead of at the next 30s fast tick.
+    # republishes now instead of at the next 30s fast tick. It must never feed
+    # the slow tick — an event is a trigger only, never a decision.
     app, calls = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause(0.8)
-        before = calls["fast"]
+        before_fast = calls["fast"]
+        before_slow = calls["slow"]
         app._on_workspace_event()
         await pilot.pause(0.5)
-        assert calls["fast"] == before + 1
+        assert calls["fast"] == before_fast + 1
+        assert calls["slow"] == before_slow
 
 
 async def test_event_during_a_running_fast_tick_is_not_lost():
@@ -3539,6 +3544,19 @@ async def test_feature_guide_action_opens_the_docs_url(monkeypatch):
         await pilot.pause()
     assert opened == [app_mod.FEATURE_GUIDE_URL]
     assert opened[0].startswith("https://")
+
+
+@pytest.mark.covers("docs.feature-guide-url.unpinned")
+def test_feature_guide_url_constant_is_unpinned():
+    # A pinned URL 404s for the whole release-PR window: the version bump lands
+    # before tag.yml pushes the tag. The sibling test compares the constant to
+    # itself, so it is the literal that has to be pinned here.
+    from cockpit.tui import app as app_mod
+
+    url = app_mod.FEATURE_GUIDE_URL
+    assert "/tag/" not in url and "/tags/" not in url
+    assert not re.search(r"/v?\d+\.\d+(\.\d+)?(/|$)", url)
+    assert "main" in url
 
 
 async def test_release_notes_action_opens_the_unpinned_releases_index(monkeypatch):

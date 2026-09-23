@@ -68,7 +68,9 @@ INVARIANTS: dict[str, str] = {
     "wt-cost.slug.one-way-only": "**Do not** try to recover a path from a slug.",
     "wt-cost.gate.data-not-plan": "**Do not** add a config field, and **do not** try to detect the plan.",
     "config.atomic-write.pid-scoped-suffix": "**Do not** go back to a fixed suffix",
-    "config.atomic-write.no-reinline": "and **do not** re-inline the write.",
+    "config.atomic-write.no-reinline": (
+        "**do not** re-inline the write at a `config.py` call site"
+    ),
     # cmux events, pills and sidebar naming.
     "events.cursor-file.not-cache-cell": "**Do not** grow it into stored inventory or route it through",
     "events.doorbell.trigger-only": "**Do not** feed an event into a decision, a cell, or the slow tick.",
@@ -219,5 +221,12 @@ JUDGMENT_ONLY: frozenset[str] = frozenset(
         "e2e.followup-delivery.not-a-regression-test",
         "invariant-registry.covered-not-tested",
         "invariant-registry.no-bulk-register",
+        # These five name a rejected design alternative — a test would pin the
+        # current shape, not the reasoning that chose it.
+        "header.announce-upgrade.no-version-check-widen",
+        "header.menu.label-not-the-key",
+        "hidden.h.single-key-three-meanings",
+        "pills.pr-pill.coverage-narrower-accepted",
+        "ticket-inbox.markers.no-repo-column",
     }
 )

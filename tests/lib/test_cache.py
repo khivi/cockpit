@@ -1229,6 +1229,75 @@ def test_restamp_pref_without_a_snapshot_is_a_noop(json_cache):
     assert not (cache_mod.FLAT_CACHE_DIR / f"pr-snoozed-{_KEY}").exists()
 
 
+def _read_tree(**labeled_dirs: Path) -> dict[str, bytes]:
+    """Flat `{label}/{filename} -> bytes` snapshot of every file directly under
+    each given directory, so two directories' cells can't collide in the map."""
+    out: dict[str, bytes] = {}
+    for label, d in labeled_dirs.items():
+        for p in sorted(d.iterdir()):
+            if p.is_file():
+                out[f"{label}/{p.name}"] = p.read_bytes()
+    return out
+
+
+@pytest.mark.covers("nudge.restamp-pref.scope-frozen")
+def test_restamp_pref_touches_only_its_own_cells(json_cache):
+    """`restamp_pref` may touch PR #7's snapshot and that snapshot's own `pr-*`
+    cells for one cwd, nothing else. A sibling PR, a second worktree, and
+    `pr-checks`/`diff-comments` on the same cwd come out byte-identical."""
+    cache_dir = json_cache
+    flat = cache_mod.FLAT_CACHE_DIR
+    other_wt = Path("/tmp/wt-other")
+    other_key = cache_mod._cwd_key(other_wt)
+
+    _snapshot(cache_dir, "cockpit", 7, "khivi/nap", cwd=str(_WT_PATH))
+    # A sibling PR in the same repo, backed by a different worktree — must
+    # survive untouched, including its own pr-* cells below.
+    _snapshot(cache_dir, "cockpit", 8, "khivi/other", cwd=str(other_wt))
+
+    # Daemon-derived cells: the ordinary republish (writes pr-* + pr-checks for
+    # every cached snapshot's cwd) plus a diff-comments write for PR #7's own
+    # worktree — a cell restamp_pref's cwd-scoped write path never reaches.
+    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.write_diff_comments_cache(_WT_PATH, 3)
+
+    before = _read_tree(cache=cache_dir, flat=flat)
+    assert before, "fixture seeded nothing — this assertion would be vacuous"
+
+    cache_mod.restamp_pref("cockpit", 7, _WT_PATH, NudgePref(snoozed=True))
+
+    after = _read_tree(cache=cache_dir, flat=flat)
+    changed = {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)}
+
+    owned_flat_stems = {
+        "pr-state",
+        "pr-num",
+        "pr-title",
+        "pr-muted",
+        "pr-comments",
+        "pr-comments-total",
+        "pr-author",
+        "pr-nudge",
+        "pr-ticket",
+        "pr-base",
+        "pr-snoozed",
+    }
+    allowed = {"cache/cockpit__pr-7.json"} | {
+        f"flat/{stem}-{_KEY}" for stem in owned_flat_stems
+    }
+    assert changed <= allowed
+    # And the row-action actually did something — this isn't vacuously true.
+    assert "cache/cockpit__pr-7.json" in changed
+    assert f"flat/pr-snoozed-{_KEY}" in changed
+
+    # Spell out the files most at risk of a future "just one more cell" edit.
+    assert after["cache/cockpit__pr-8.json"] == before["cache/cockpit__pr-8.json"]
+    assert after[f"flat/pr-checks-{_KEY}"] == before[f"flat/pr-checks-{_KEY}"]
+    assert after[f"flat/diff-comments-{_KEY}"] == before[f"flat/diff-comments-{_KEY}"]
+    assert after[f"flat/pr-num-{other_key}"] == before[f"flat/pr-num-{other_key}"]
+    assert after[f"flat/pr-checks-{other_key}"] == before[f"flat/pr-checks-{other_key}"]
+
+
 # ── Per-worktree session cost ───────────────────────────────────────────────
 
 

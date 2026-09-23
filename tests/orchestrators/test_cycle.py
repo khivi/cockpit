@@ -4123,6 +4123,44 @@ def test_cycle_all_only_repo_reconciles_just_that_repo():
     assert swept == []
 
 
+@pytest.mark.covers("rowaction.z-full-cycle.no-folds-under-only-repo")
+def test_cycle_all_only_repo_never_builds_or_reconciles_folds():
+    # A scoped run builds no ReviewFolds and never reaches the cross-repo
+    # reconcile: a bucket holding no ref from the scoped repo is dissolved,
+    # taking every other org's fold with it.
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
+    folds_seen: list[cycle.ReviewFolds | None] = []
+    reconciled: list[cycle.ReviewFolds] = []
+    with (
+        patch.object(cycle, "ensure_state_dirs", lambda: None),
+        patch.object(cycle, "_cache_only", lambda cfg: False),
+        patch.object(cycle, "_drain_close_requests", lambda *, dry: None),
+        patch.object(cycle, "close_gone_cwd_workspaces", lambda *, dry: None),
+        patch.object(cycle, "_reap_workspace_orphans", lambda *_a, **_k: None),
+        patch.object(
+            cycle,
+            "cycle_repo",
+            lambda repo_entry, *_a, **kw: folds_seen.append(kw.get("folds")),
+        ),
+        patch.object(
+            cycle,
+            "_reconcile_review_groups",
+            lambda folds, **kw: reconciled.append(folds),
+        ),
+    ):
+        cycle.cycle_all(
+            cfg,
+            "khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            only_repo="/b",
+        )
+    assert reconciled == []
+    # Not merely short-circuited elsewhere: `cycle_repo` was handed no folds.
+    assert folds_seen == [None]
+
+
 def test_cycle_all_only_repo_unknown_path_reconciles_nothing():
     cfg = {"repos": [{"name": "a", "path": "/a"}]}
     seen: list[str] = []
