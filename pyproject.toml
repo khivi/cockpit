@@ -28,6 +28,10 @@ dev = [
     "pytest-xdist==3.8.0",
     "pytest-cov==7.0.0",
     "mypy==2.3.1",
+    # tests/test_release_workflows.py parses .github/workflows; hand-scanning
+    # YAML to attribute a key to the right step is the fragility it guards.
+    "pyyaml==6.0.3",
+    "types-PyYAML==6.0.12.20250915",
 ]
 
 [tool.pytest.ini_options]
