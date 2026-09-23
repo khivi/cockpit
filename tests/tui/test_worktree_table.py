@@ -1504,6 +1504,7 @@ def test_a_snoozed_row_still_shows_its_mute(cache_dir):
     assert cell.plain == _ws("both", glyph=ICON_PR_MUTED)
 
 
+@pytest.mark.covers("table.status-slot.pad-even-when-blank")
 def test_every_glyph_takes_the_same_slot_so_labels_align(cache_dir):
     """The whole point of the fixed slot: a belled row, a muted row and a quiet
     one all start their label at the same column. The glyphs differ in ink width

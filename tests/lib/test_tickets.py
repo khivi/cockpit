@@ -29,6 +29,7 @@ def test_provider_for_none():
     assert tickets.provider_for({"tickets": "none"}, {}) is None
 
 
+@pytest.mark.covers("tickets.provider.no-sibling-field-guess")
 def test_provider_for_needs_an_explicit_provider():
     # `tickets.keys` alone doesn't name a provider — Jira declares the same
     # field, so the block has to say which one it is.
@@ -269,6 +270,7 @@ def test_every_credential_provider_accepts_token_env():
         assert tickets.tickets_field_errors({"token_env": "X"}, provider) == []
 
 
+@pytest.mark.covers("tickets.schema.one-field-per-concept")
 def test_canonical_workflow_fields_are_accepted_by_every_provider():
     # `dev_done` / `merge_done` replaced four provider-specific spellings, so
     # each must validate wherever its predecessor did.
@@ -298,6 +300,7 @@ def test_superseded_workflow_spellings_are_no_longer_in_the_schema():
         assert tickets.tickets_field_errors({field: "X"}, provider) != [], field
 
 
+@pytest.mark.covers("tickets.schema.per-provider-not-flattened")
 def test_credential_env_fields_are_per_provider():
     assert tickets.tickets_field_errors({"token_env": "LIN"}, "linear") == []
     assert tickets.tickets_field_errors({"key_env": "K"}, "trello") == []
@@ -509,6 +512,7 @@ def test_narrow_repos_skips_a_group_whose_credential_is_unset(monkeypatch):
     fetch.assert_called_once_with("PE-1", api_key="beta-key")
 
 
+@pytest.mark.covers("tickets.jira.no-narrow-duplicate")
 def test_narrow_repos_is_a_passthrough_for_github_and_jira():
     # GitHub's ref carries `owner/repo`; Jira's "project" *is* the key prefix the
     # free match already used. Neither has a container left to discriminate on.

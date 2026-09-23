@@ -113,6 +113,7 @@ def test_list_prefs_keys_by_stem_and_skips_garbage_files(nudges, tmp_path):
     assert set(prefs.keys()) == {"acme__1", "acme__2"}
 
 
+@pytest.mark.covers("nudge-prefs.key.requires-repo")
 def test_delete_pref_only_touches_its_own_repos_file(nudges):
     # The whole point of the per-repo key: same number, two repos, two files.
     nudges.save_pref(K(nudges, 10), nudges.NudgePref(muted=True))
@@ -294,6 +295,7 @@ def test_wake_signature_changes_with_comments_or_decision(nudges):
     assert nudges.wake_signature(0, "APPROVED") != base
 
 
+@pytest.mark.covers("nudge.snooze.no-time-based-until")
 def test_snooze_does_not_expire_on_the_clock(nudges):
     # `until` is the mute's expiry; a snooze waits on an event, so a far-past
     # `until` must not silently wake it (only the daemon's signature check does).

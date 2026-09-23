@@ -73,6 +73,19 @@ def test_every_registered_id_names_a_findable_rule():
     )
 
 
+def test_no_two_ids_share_a_phrase():
+    """Two ids on one phrase are two names for one rule, and the gap list then
+    reports the same rule twice — or reports it uncovered while its twin is
+    marked covered. It happens where a rule packs two clauses into one
+    sentence, or where the same bullet is read from either side.
+    """
+    by_phrase: dict[str, list[str]] = defaultdict(list)
+    for rule_id, phrase in INVARIANTS.items():
+        by_phrase[phrase].append(rule_id)
+    shared = {p: ids for p, ids in by_phrase.items() if len(ids) > 1}
+    assert not shared, f"one phrase, several ids — split the rule or merge: {shared}"
+
+
 def test_judgment_only_ids_are_registered_and_unclaimed():
     """The waiver list must stay honest: every entry a real id, none of them
     also carrying a test that would have made the waiver unnecessary."""

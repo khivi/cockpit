@@ -1044,6 +1044,7 @@ def test_worktree_age_seconds_never_negative(tmp_path):
     assert worktree_age_seconds(wt, now=0) == 0.0
 
 
+@pytest.mark.covers("spawn.adopt-grace.fails-open")
 def test_worktree_age_seconds_missing_path_fails_open(tmp_path):
     """An un-stat-able path returns inf so the orphan nudge isn't silently muted."""
     assert worktree_age_seconds(tmp_path / "nope") == float("inf")

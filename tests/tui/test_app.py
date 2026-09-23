@@ -1152,6 +1152,7 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
     assert launched["cwd"] == str(repo_b)  # chosen repo, not the cursor row's
 
 
+@pytest.mark.covers("spawn.picker.parked-repos-selectable-and-not-deduped-away")
 async def test_new_box_sinks_parked_repos_and_unhides_on_spawn(monkeypatch, tmp_path):
     # A parked repo stays offered in the modal's picker, but sorts below the live
     # ones and is labelled `(hidden)`. Picking it is a deliberate un-park: the
@@ -1521,6 +1522,7 @@ async def test_z_opens_and_shuts_a_repos_snoozed_fold(monkeypatch, tmp_path):
         assert table.row_count == 3
 
 
+@pytest.mark.covers("folds.snoozed-toggle.z-key-only")
 async def test_the_fold_row_advertises_only_the_two_fold_keys(monkeypatch, tmp_path):
     # It carries no workspace, so every workspace-targeted row key would no-op
     # there. The two that stay both act on the FOLD itself: `z` opens and shuts
@@ -2557,6 +2559,7 @@ def _stacked_snooze_app(monkeypatch, tmp_path):
     return app, tip, root, prefs, saved
 
 
+@pytest.mark.covers("nudge.chain-snooze.converge-not-glyph")
 async def test_snooze_takes_the_whole_stack(monkeypatch, tmp_path):
     # Pressed on a member *below* the tip, which used to be a total no-op on
     # screen: the fold bands a chain by its tip, and a snoozed row paints no
@@ -2716,6 +2719,7 @@ async def test_sidebar_x_closes_the_worktree(monkeypatch):
     assert closed == [("/tmp/repo/feat", {"quiet": True})]
 
 
+@pytest.mark.covers("events.sidebar-x.routes-to-refuse-not-force")
 async def test_sidebar_x_never_forces(monkeypatch):
     """`C`'s open-PR override is a deliberate second keystroke. The X is one
     click with no modifier, so it must land on the refusing gate, not force."""
@@ -3453,6 +3457,7 @@ async def test_menu_is_not_row_gated():
         assert str(menu.render()) == HeaderBar.MENU_LABEL
 
 
+@pytest.mark.covers("footer.tooltips.single-widget-not-per-key")
 async def test_footer_key_hover_explains_that_key():
     # The footer's one-word labels say what a key is called, never what it
     # does. Hovering a segment — key or label — sets the bar's tooltip to that
@@ -3521,6 +3526,7 @@ async def test_every_advertised_footer_key_has_a_tooltip():
         assert rendered <= set(FooterBar.TOOLTIPS), rendered - set(FooterBar.TOOLTIPS)
 
 
+@pytest.mark.covers("header.feature-guide.no-local-path")
 async def test_feature_guide_action_opens_the_docs_url(monkeypatch):
     from cockpit.tui import app as app_mod
 
@@ -3758,6 +3764,7 @@ async def test_a_repo_name_with_a_space_survives_the_relaunch(monkeypatch):
     assert shlex.split(launched[0])[-2:] == ["--repo", "Acme Infra"]
 
 
+@pytest.mark.covers("ticket-routing.start-ticket.no-cursor-row-default")
 async def test_an_unroutable_ticket_refuses_loudly(monkeypatch):
     """No candidate survives either stage, so there is nothing to offer and
     nothing to derive. Falling through to the daemon's cwd here is what cut two
@@ -3775,6 +3782,7 @@ async def test_an_unroutable_ticket_refuses_loudly(monkeypatch):
     assert "PE-412" in notified[0] and "press n" in notified[0]
 
 
+@pytest.mark.covers("ticket-routing.start-ticket.no-per-provider-waiver")
 async def test_an_ambiguous_trello_card_never_reaches_the_spawn(monkeypatch):
     """Its short link carries no key, so the board is the only discriminator —
     and with more than one repo declaring one, routing can't name a repo."""

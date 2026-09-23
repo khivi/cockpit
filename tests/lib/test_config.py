@@ -2147,6 +2147,7 @@ def test_apply_org_defaults_tolerates_missing_and_malformed_orgs():
     assert config_mod.apply_org_defaults({"repos": [{"name": "a", "org": "x"}]})
 
 
+@pytest.mark.covers("orgs.merge.never-persisted")
 def test_load_config_merges_org_defaults(tmp_path, monkeypatch):
     path = tmp_path / "config.json"
     path.write_text(json.dumps(_acme_cfg()))
@@ -2307,6 +2308,7 @@ def test_credential_env_names_tolerates_a_malformed_config():
     assert "LINEAR_API_KEY" in names
 
 
+@pytest.mark.covers("config.atomic-write.pid-scoped-suffix")
 def test_atomic_write_uses_a_pid_scoped_temp(tmp_path, monkeypatch):
     """A fixed `<name>.tmp` is shared scratch. Several cockpit processes write
     these files concurrently (daemon, `cockpit close`, a detached `cockpit

@@ -488,6 +488,50 @@ def test_cwd_key_slug_shape():
     assert cache_mod._cwd_key(_P("/tmp/foo/repo")) == a
 
 
+@pytest.mark.covers("cache.key.flat-cells-by-worktree-path")
+def test_flat_cells_keyed_by_worktree_not_branch(cache_dir, tmp_path):
+    """Two worktrees in different repos sharing one branch label must not
+    share a cell. Fails if a cell is ever keyed off the branch (or anything
+    else that collapses to the branch), which merges unrelated repos' rows —
+    the `khivi/ci-gatekeeper` regression AGENTS.md documents."""
+    repo_a = tmp_path / "repoA" / "khivi-ci-gatekeeper"
+    repo_b = tmp_path / "repoB" / "khivi-ci-gatekeeper"
+    repo_a.mkdir(parents=True)
+    repo_b.mkdir(parents=True)
+
+    cache_mod.write_worktree_pr_cache(
+        repo_a,
+        state="OPEN",
+        is_draft=False,
+        review_decision="REVIEW_REQUIRED",
+        number=11,
+        title="A's PR",
+        snoozed="snoozed",
+    )
+    cache_mod.write_worktree_pr_cache(
+        repo_b,
+        state="OPEN",
+        is_draft=False,
+        review_decision="REVIEW_REQUIRED",
+        number=22,
+        title="B's PR",
+        snoozed="",
+    )
+    cache_mod.write_base_distance(repo_a, 3)
+    cache_mod.write_base_distance(repo_b, 7)
+
+    assert cache_mod.read_text(cache_mod.cwd_cache("pr-num", repo_a)) == "11"
+    assert cache_mod.read_text(cache_mod.cwd_cache("pr-num", repo_b)) == "22"
+    assert cache_mod.read_text(cache_mod.cwd_cache("pr-snoozed", repo_a)) == "snoozed"
+    assert cache_mod.read_text(cache_mod.cwd_cache("pr-snoozed", repo_b)) == ""
+    assert cache_mod.read_text(cache_mod.cwd_cache("base-distance", repo_a)) == "3"
+    assert cache_mod.read_text(cache_mod.cwd_cache("base-distance", repo_b)) == "7"
+
+    # Last, so a collapsed key fails on the merged cell above rather than here:
+    # this line duplicates test_cwd_key_slug_shape, the reads are the invariant.
+    assert cache_mod._cwd_key(repo_a) != cache_mod._cwd_key(repo_b)
+
+
 def test_write_git_state_cache_in_real_repo(_clean_git_env, cache_dir, tmp_path):
     from tests.fixtures import make_git_repo
 
@@ -1321,6 +1365,7 @@ def test_cost_reporting_available_is_false_with_no_cells(cache_dir):
     assert cache_mod.cost_reporting_available() is False
 
 
+@pytest.mark.covers("wt-cost.gate.data-not-plan")
 def test_cost_reporting_available_is_false_when_every_session_reports_zero(cache_dir):
     """The gate for a plan/build that writes `total_cost_usd: 0` — the `$`
     column must not appear just because the cells exist."""
@@ -1345,6 +1390,7 @@ def test_cost_reporting_available_ignores_worktree_totals(cache_dir, tmp_path):
 # ── terminal-control sanitization (`strip_control` / `read_text`) ────────────
 
 
+@pytest.mark.covers("cache.strip-control.single-seam-in-read-text")
 def test_read_text_neutralizes_an_escape_sequence_in_a_cell(cache_dir, tmp_path):
     """Cell values are authored by whoever opened the PR. `read_text` is the one
     seam every renderer reads them through, so the escape must not survive it."""

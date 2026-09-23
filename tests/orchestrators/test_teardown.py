@@ -6,6 +6,8 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from cockpit.orchestrators import teardown as teardown_mod
 from cockpit.orchestrators.teardown import (
     TeardownRequest,
@@ -372,6 +374,7 @@ def test_state_blockers_others_local_commits_still_block(tmp_path):
     assert blockers == ["2 unlanded commit(s)"]
 
 
+@pytest.mark.covers("teardown.unlanded.ownership-split-not-collapsed")
 def test_state_blockers_mine_uses_unlanded_count(tmp_path):
     """Our own pushed-but-unmerged branch still blocks.
 
