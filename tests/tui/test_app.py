@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import re
 import shlex
 import subprocess
 import sys
@@ -265,21 +264,15 @@ async def test_slow_tick_gets_per_repo_publish_callback(monkeypatch, tmp_path):
 
 @pytest.mark.covers("tui.on-repo-done.daemon-only-cell-writes")
 async def test_on_repo_done_writes_no_cache_cells(monkeypatch, tmp_path):
-    # AGENTS.md, "Per-repo table republish": the slow tick's `on_repo_done`
-    # hook republishes the table after each repo — but "**Never** let it write
-    # a cell — only the daemon writes." Drive the real callback (`_publish_inventory`)
-    # against the real cache module, wired to tmp dirs, with real cells seeded
-    # beforehand, and assert the cache tree is byte-identical before and after.
+    # AGENTS.md, "Per-repo table republish": the slow tick's `on_repo_done` hook
+    # republishes the table after each repo — but "**Never** let it write a cell
+    # — only the daemon writes." `cache.atomic_write` is the one funnel every
+    # cell and snapshot goes through, so recording it catches any writer the
+    # real callback (`_publish_inventory`) reaches.
     import cockpit.lib.cache as cache_mod
-    from cockpit.lib.gh import PR
-    from cockpit.lib.nudges import NudgePref
 
-    flat_dir = tmp_path / "flat-cache"
-    flat_dir.mkdir()
-    json_dir = tmp_path / "json-cache"
-    json_dir.mkdir()
-    monkeypatch.setattr(cache_mod, "FLAT_CACHE_DIR", flat_dir)
-    monkeypatch.setattr(cache_mod, "CACHE_DIR", json_dir)
+    writes: list[Path] = []
+    monkeypatch.setattr(cache_mod, "atomic_write", lambda p, _payload: writes.append(p))
 
     wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
     monkeypatch.setattr(
@@ -291,44 +284,9 @@ async def test_on_repo_done_writes_no_cache_cells(monkeypatch, tmp_path):
         lambda p, prefix="", repo_name="", sidebar_tag="": [wt],
     )
 
-    # Seed real cells the way a daemon cycle would: a per-PR JSON snapshot
-    # plus every flat cell it derives (pr-num, pr-state, pr-title, pr-muted,
-    # pr-snoozed, pr-comments, pr-author, pr-nudge, pr-base, ...), keyed off
-    # `wt`'s cwd — exactly what the table this test drives would read.
-    pr = PR(
-        number=42,
-        title="t",
-        branch="khivi/feat-a",
-        url="https://example/pr/42",
-        author="khivi",
-        is_draft=False,
-        review_decision="REVIEW_REQUIRED",
-        mergeable="MERGEABLE",
-        ci="passed",
-        unaddressed=0,
-        total_from_others=0,
-        state="OPEN",
-        updated_at="",
-    )
-    cache_mod.write_pr_cache("repo", pr, wt, NudgePref())
-    cache_mod.republish_pr_caches_from_disk()
-
-    def _tree() -> dict[str, bytes]:
-        out: dict[str, bytes] = {}
-        for label, d in (("flat", flat_dir), ("json", json_dir)):
-            for p in sorted(d.iterdir()):
-                if p.is_file():
-                    out[f"{label}/{p.name}"] = p.read_bytes()
-        return out
-
-    before = _tree()
-    assert before, "fixture seeded nothing — this assertion would be vacuous"
-
-    captured: dict = {}
     published = threading.Event()
 
     def slow(on_repo_done=None, only_repo=None):
-        captured["cb"] = on_repo_done
         on_repo_done()  # exercise the real per-repo republish hook
         published.set()
 
@@ -336,21 +294,14 @@ async def test_on_repo_done_writes_no_cache_cells(monkeypatch, tmp_path):
         slow_tick=slow, fast_tick=lambda: None, slow_secs=300, fast_secs=30
     )
     async with app.run_test() as pilot:
-        await pilot.pause()
         for _ in range(20):
             if published.is_set():
                 break
             await pilot.pause(0.1)
-        assert callable(captured.get("cb"))
-        table = app.query_one(WorktreeTable)
-        for _ in range(20):
-            if table.row_count >= 1:
-                break
-            await pilot.pause(0.1)
-        await pilot.pause(0.2)  # let the UI-thread render fully settle
+        assert published.is_set()
+        assert app.query_one(WorktreeTable).row_count  # the hook really rendered
 
-    after = _tree()
-    assert after == before
+    assert writes == []
 
 
 async def test_fast_starts_only_after_first_slow():
@@ -3643,10 +3594,9 @@ def test_feature_guide_url_constant_is_unpinned():
     # itself, so it is the literal that has to be pinned here.
     from cockpit.tui import app as app_mod
 
-    url = app_mod.FEATURE_GUIDE_URL
-    assert "/tag/" not in url and "/tags/" not in url
-    assert not re.search(r"/v?\d+\.\d+(\.\d+)?(/|$)", url)
-    assert "main" in url
+    # The tree-ish is the whole question, so pin it exactly: any tag-pinned
+    # spelling (`/blob/v3.6.1/`, `/releases/tag/...`) fails this one line.
+    assert "/blob/main/" in app_mod.FEATURE_GUIDE_URL
 
 
 async def test_release_notes_action_opens_the_unpinned_releases_index(monkeypatch):

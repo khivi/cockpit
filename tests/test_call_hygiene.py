@@ -95,19 +95,6 @@ def _imported_module_paths(tree: ast.AST) -> set[str]:
     return paths
 
 
-def _imported_bound_names(tree: ast.AST) -> set[str]:
-    """Every name an import statement binds into this module's namespace."""
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                names.add(alias.asname or alias.name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                names.add(alias.asname or alias.name)
-    return names
-
-
 def _call_qualname(node: ast.Call) -> str | None:
     """`os.replace(...)` -> "os.replace"; `replace(...)` -> "replace"; a call
     through anything deeper than one attribute hop (`a.b.c()`) -> None,
@@ -125,14 +112,6 @@ def _dotted_calls(tree: ast.AST) -> set[str]:
         q
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and (q := _call_qualname(node)) is not None
-    }
-
-
-def _string_constants(tree: ast.AST) -> set[str]:
-    return {
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
 
 
@@ -257,19 +236,18 @@ def test_no_tui_module_references_render_diff() -> None:
 
 
 @pytest.mark.covers("prompts.plan-gate.never-daemon-read")
-def test_no_code_outside_prompts_names_plan_md() -> None:
+def test_no_python_source_names_plan_md() -> None:
     """`plan.md` is a session-written artifact the daemon must never depend
     on — no tick, renderer or teardown may read or even name it, since a
-    session might not have written one. Only the prompt templates that tell
-    a session to write it may say its name."""
-    prompts_dir = COCKPIT_ROOT / "prompts"
+    session might not have written one. Only the prompt templates that tell a
+    session to write it may say its name, and those are `.txt`, so no `.py`
+    file under `cockpit/` may contain the string at all."""
     offenders = [
         str(path.relative_to(REPO_ROOT))
         for path in _iter_python_files(COCKPIT_ROOT)
-        if prompts_dir not in path.parents
-        and any("plan.md" in s for s in _string_constants(_parse(path)))
+        if "plan.md" in path.read_text()
     ]
-    assert not offenders, f"plan.md named outside cockpit/prompts/: {offenders}"
+    assert not offenders, f"plan.md named in Python source: {offenders}"
 
 
 # ── stdout.queue-writer.no-per-tick-redirect ─────────────────────────────
@@ -348,10 +326,9 @@ def test_diff_py_imports_neither_load_config_nor_resolve_target() -> None:
     must work in any git repo, registered or not — routing it through
     `close.py::_resolve_target` (which requires a configured repo) or
     reading config directly would break that for an unregistered repo."""
-    tree = _parse(COCKPIT_ROOT / "diff.py")
-    bound = _imported_bound_names(tree)
-    assert "load_config" not in bound
-    assert "_resolve_target" not in bound
+    referenced = _referenced_names(_parse(COCKPIT_ROOT / "diff.py"))
+    assert "load_config" not in referenced
+    assert "_resolve_target" not in referenced
 
 
 # ── events.cursor-file.not-cache-cell ─────────────────────────────────────

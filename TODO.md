@@ -2,24 +2,8 @@
 
 ## Open
 
-- **`SPEC.md`, generated — a human-readable render of the invariant registry.**
-  `tests/invariant_ids.py` already holds every registered rule's id, its verbatim
-  phrase, and (through the `covers()` markers) the tests that guard it. That is a
-  traceability matrix in all but presentation; nothing renders it.
-  - **Generate it, never hand-write it.** A second hand-maintained copy of the rules
-    is the cross-altitude duplication `AGENTS.md` bans, and it would drift the moment
-    a rule was reworded. The generator reads the registry plus an `ast` walk for the
-    markers — `tests/test_invariant_coverage.py::_claimed` is that walk already.
-  - **It is a render, not a relocation.** The rules stay in `AGENTS.md` next to the
-    regression that paid for each one; `SPEC.md` is the index — rule, guard, status
-    (covered / unguarded / judgment-only) — for a reader who wants the shape of the
-    contract without 148KB of rationale.
-  - **Check it in or build it on demand, not both.** A checked-in generated file needs
-    a CI check that it is current, which is a fifth thing to keep in sync. A
-    `cockpit spec` subcommand, or a test that writes it, avoids that — decide before
-    building.
-  - Worth doing only once the gap list is near zero: a matrix that is mostly
-    "unguarded" documents an intention rather than a contract.
+- **A generated `SPEC.md`** — `tests/invariant_ids.py` plus the `covers()` markers is
+  a traceability matrix in all but presentation. Generate it, never hand-write it.
 
 - **Per-row context headroom** (branch `khivi/stale` on origin, no local worktree,
   nothing committed) — show, per table row, how close that agent is to needing a

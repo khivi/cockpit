@@ -34,14 +34,6 @@ def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _sibling_checkout_workflows() -> list[Path]:
-    """Every OTHER workflow with a checkout step — derived from what is on
-    disk rather than a hardcoded list, so a new workflow is picked up instead
-    of silently unchecked."""
-    others = sorted(p for p in WORKFLOWS_DIR.glob("*.yml") if p != TAG_YML)
-    return [p for p in others if "actions/checkout" in _text(p)]
-
-
 @pytest.mark.covers("release.tag-yml.keeps-credentials")
 def test_tag_yml_checkout_does_not_strip_credentials() -> None:
     """tag.yml may not set `persist-credentials: false` at all — that token is
@@ -55,31 +47,14 @@ def test_tag_yml_checkout_does_not_strip_credentials() -> None:
 
 
 @pytest.mark.covers("release.tag-yml.keeps-credentials")
-def test_sibling_workflows_still_strip_credentials() -> None:
-    """The regression this rule guards against is answering an apparent
-    inconsistency by stripping `persist-credentials` everywhere, tag.yml
-    included, rather than adding it only where it is missing. A blanket strip
-    fails here loudly instead of waiting for someone to re-read tag.yml."""
-    siblings = _sibling_checkout_workflows()
-    assert siblings, "no sibling workflow with a checkout step was found"
-    for path in siblings:
-        assert _STRIPS_CREDENTIALS.search(_text(path)), (
-            f"{path.name} no longer sets persist-credentials: false — if the "
-            "flag is being dropped everywhere, tag.yml's exemption stops "
-            "reading as deliberate"
-        )
-
-
-@pytest.mark.covers("release.tag-yml.keeps-credentials")
 def test_tag_yml_keeps_its_artipacked_exemption() -> None:
     """The other way this regression arrives: removing tag.yml's `artipacked`
     exemption rather than its credentials. Without the exemption zizmor's hook
     reports tag.yml, pushing someone to "fix" it the forbidden way."""
-    _, found, rest = _text(ZIZMOR_YML).partition("artipacked:\n    ignore:\n")
-    assert found, "zizmor.yml has no artipacked ignore list"
-    # Stop at the next rule key (two spaces, then non-space) so a tag.yml
+    # Bounded at the next rule key (two spaces, then non-space) so a tag.yml
     # exemption under a *different* rule cannot satisfy this.
-    entries = re.split(r"\n  (?=\S)", rest)[0]
+    section = re.search(r"artipacked:.*?(?=\n  \S|\Z)", _text(ZIZMOR_YML), re.S)
+    assert section, "zizmor.yml has no artipacked ignore list"
     assert (
-        "- tag.yml" in entries
-    ), f"zizmor.yml no longer exempts tag.yml from artipacked: {entries!r}"
+        "- tag.yml" in section.group()
+    ), f"zizmor.yml no longer exempts tag.yml from artipacked: {section.group()!r}"

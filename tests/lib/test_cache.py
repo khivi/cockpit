@@ -520,16 +520,18 @@ def test_flat_cells_keyed_by_worktree_not_branch(cache_dir, tmp_path):
     cache_mod.write_base_distance(repo_a, 3)
     cache_mod.write_base_distance(repo_b, 7)
 
-    assert cache_mod.read_text(cache_mod.cwd_cache("pr-num", repo_a)) == "11"
-    assert cache_mod.read_text(cache_mod.cwd_cache("pr-num", repo_b)) == "22"
-    assert cache_mod.read_text(cache_mod.cwd_cache("pr-snoozed", repo_a)) == "snoozed"
-    assert cache_mod.read_text(cache_mod.cwd_cache("pr-snoozed", repo_b)) == ""
-    assert cache_mod.read_text(cache_mod.cwd_cache("base-distance", repo_a)) == "3"
-    assert cache_mod.read_text(cache_mod.cwd_cache("base-distance", repo_b)) == "7"
+    def _cells(wt):
+        stems = ("pr-num", "pr-snoozed", "base-distance")
+        return {s: cache_mod.read_text(cache_mod.cwd_cache(s, wt)) for s in stems}
 
-    # Last, so a collapsed key fails on the merged cell above rather than here:
-    # this line duplicates test_cwd_key_slug_shape, the reads are the invariant.
-    assert cache_mod._cwd_key(repo_a) != cache_mod._cwd_key(repo_b)
+    # Both sides in one comparison, so a collapsed key prints which repo's
+    # values won rather than failing on whichever stem is asserted first.
+    assert _cells(repo_a) == {
+        "pr-num": "11",
+        "pr-snoozed": "snoozed",
+        "base-distance": "3",
+    }
+    assert _cells(repo_b) == {"pr-num": "22", "pr-snoozed": "", "base-distance": "7"}
 
 
 def test_write_git_state_cache_in_real_repo(_clean_git_env, cache_dir, tmp_path):
@@ -1290,12 +1292,15 @@ def test_restamp_pref_touches_only_its_own_cells(json_cache):
     assert "cache/cockpit__pr-7.json" in changed
     assert f"flat/pr-snoozed-{_KEY}" in changed
 
-    # Spell out the files most at risk of a future "just one more cell" edit.
-    assert after["cache/cockpit__pr-8.json"] == before["cache/cockpit__pr-8.json"]
-    assert after[f"flat/pr-checks-{_KEY}"] == before[f"flat/pr-checks-{_KEY}"]
-    assert after[f"flat/diff-comments-{_KEY}"] == before[f"flat/diff-comments-{_KEY}"]
-    assert after[f"flat/pr-num-{other_key}"] == before[f"flat/pr-num-{other_key}"]
-    assert after[f"flat/pr-checks-{other_key}"] == before[f"flat/pr-checks-{other_key}"]
+    # Name the files most at risk of a future "just one more cell" edit, so a
+    # widened allowlist fails here too rather than only in `changed <= allowed`.
+    assert not changed & {
+        "cache/cockpit__pr-8.json",
+        f"flat/pr-checks-{_KEY}",
+        f"flat/diff-comments-{_KEY}",
+        f"flat/pr-num-{other_key}",
+        f"flat/pr-checks-{other_key}",
+    }
 
 
 # ── Per-worktree session cost ───────────────────────────────────────────────
