@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.6.1](https://github.com/khivi/cockpit/compare/v3.6.0...v3.6.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **nudge:** warn when a CLI snooze lands below a stack's tip ([#530](https://github.com/khivi/cockpit/issues/530)) ([6ee1b1c](https://github.com/khivi/cockpit/commit/6ee1b1c8a66a83befbc9e9ddfdf50530353b5502))
+
 ## [3.6.0](https://github.com/khivi/cockpit/compare/v3.5.3...v3.6.0) (2026-09-23)
 
 
