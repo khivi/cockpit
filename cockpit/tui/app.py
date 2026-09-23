@@ -1936,6 +1936,7 @@ class CockpitApp(App[None]):
                 int(payload.get("total") or 0), str(payload.get("review") or "")
             )
             pref.wake_nudge = str(payload.get("nudge") or "")
+            pref.wake_head = str(payload.get("headRefOid") or "")
             # A snooze supersedes a mute: mute wins everywhere it's read (glyph,
             # sidebar fold, `quiet`), so leaving it set would silently swallow
             # both the fold and its wake. Snooze is the narrower ask, so it takes
@@ -1947,6 +1948,7 @@ class CockpitApp(App[None]):
             pref.snoozed = False
             pref.wake_on = ""
             pref.wake_nudge = ""
+            pref.wake_head = ""
         save_pref(key, pref)
         restamp_pref(self._cache_repo_name(repo), pr, wt.path, pref)
 

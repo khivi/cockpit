@@ -429,9 +429,10 @@ share one pref file (see the "Nudge prefs are keyed per repo" invariant).
 Truth table (native × `idle=` × `parked=` × quiet → result), where **quiet** is
 `NudgePref.muted or .snoozed` — the two user-set silences. They differ only in
 how they end: a mute is indefinite (cleared by `m` / `cockpit nudge unmute`), a
-snooze auto-clears the moment the PR's review activity changes or a *new*
-actionable issue appears (`cycle._resolve_prefs` vs. `nudges.wake_signature` +
-`NudgePref.wake_nudge`). Setting a snooze clears any mute, so the two never
+snooze auto-clears the moment the PR's review activity changes, a *new*
+actionable issue appears, or — on a coworker's PR only — its head moves
+(`cycle._resolve_prefs` vs. `nudges.wake_signature` + `NudgePref.wake_nudge` +
+`NudgePref.wake_head`). Setting a snooze clears any mute, so the two never
 coexist for long. Both look identical here. A snooze set from the TUI covers
 every member of the row's stacked chain, and `cycle._wake_chains` wakes the rest
 of a chain as soon as any member of it wakes — the folds band a chain by its tip,

@@ -165,6 +165,7 @@ def _cmd_snooze(args: argparse.Namespace) -> int:
         int(payload.get("total") or 0), str(payload.get("review") or "")
     )
     pref.wake_nudge = str(payload.get("nudge") or "")
+    pref.wake_head = str(payload.get("headRefOid") or "")
     # A snooze supersedes a mute — see `nudges.NudgePref` docstring.
     pref.muted = False
     pref.until = None
@@ -172,7 +173,10 @@ def _cmd_snooze(args: argparse.Namespace) -> int:
     save_pref(key, pref)
     restamp_pref(repo, pr, cwd, pref)
     kick_running(quiet=True)
-    print(f"snoozed PR #{pr} — wakes on a new comment, review, or CI/conflict issue")
+    print(
+        f"snoozed PR #{pr} — wakes on a new comment, review, CI/conflict issue, "
+        "or a push to a PR you're reviewing"
+    )
     return 0
 
 
@@ -185,6 +189,7 @@ def _cmd_wake(args: argparse.Namespace) -> int:
     pref.snoozed = False
     pref.wake_on = ""
     pref.wake_nudge = ""
+    pref.wake_head = ""
     save_pref(key, pref)
     restamp_pref(repo, pr, Path.cwd(), pref)
     kick_running(quiet=True)

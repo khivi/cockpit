@@ -1580,8 +1580,8 @@ def _resolve_prefs(repo_name: str, prs: list[PR]) -> dict[int, NudgePref]:
     """Load every PR's nudge pref for this cycle, waking any expired snooze.
 
     A snooze (TUI `z`) says "I've read this — come back when it's my turn
-    again", so unlike a mute it expires on an *event*, not a clock. Two events
-    end it, both riding the PR fetch the cycle already made (waking costs no
+    again", so unlike a mute it expires on an *event*, not a clock. Three events
+    end it, all riding the PR fetch the cycle already made (waking costs no
     extra round-trip):
 
     - **review activity** — the pref records
@@ -1592,6 +1592,16 @@ def _resolve_prefs(repo_name: str, prs: list[PR]) -> dict[int, NudgePref]:
       snoozed is my turn again, whereas an issue I snoozed *on top of* (or one
       that resolves itself) must not wake anything — else snoozing a red-CI PR
       would wake on the very next tick, and a CI fix would wake me to nothing.
+    - **a push to a PR I'm reviewing** — `PR.head_oid` differs from the
+      `wake_head` snapshot, on a `not PR.mine` PR only. Snoozing a review is
+      "I've left my notes, it's the author's turn"; them pushing is the answer
+      to those notes, and nothing else reports it — new commits open no review
+      thread, move no `reviewDecision`, and a coworker's PR has no
+      `nudge_issue` at all (that field requires `mine`), so a review snooze was
+      otherwise deaf to the one event it was waiting for. The `mine` gate is
+      `total_from_others`' rule in the other dimension: my own pushes must not
+      wake my own snooze. An empty snapshot on either side wakes nothing —
+      absent is no baseline, not a change.
 
     It happens here, at the one point mute/snooze state is read per cycle, so
     every downstream consumer (`write_pr_cache`, `write_worktree_pr_cache`, the
@@ -1614,6 +1624,13 @@ def _resolve_prefs(repo_name: str, prs: list[PR]) -> dict[int, NudgePref]:
                 reason = "review activity"
             elif pr.nudge_issue and pr.nudge_issue != pref.wake_nudge:
                 reason = pr.nudge_issue
+            elif (
+                not pr.mine
+                and pref.wake_head
+                and pr.head_oid
+                and pr.head_oid != pref.wake_head
+            ):
+                reason = "new commits"
         if reason:
             _wake(repo_name, pr.number, pref, reason)
             woke.add(pr.number)
@@ -1628,6 +1645,7 @@ def _wake(repo_name: str, number: int, pref: NudgePref, reason: str) -> None:
     pref.snoozed = False
     pref.wake_on = ""
     pref.wake_nudge = ""
+    pref.wake_head = ""
     save_pref(pref_key(repo_name, number), pref)
     print(f"  {verb('woke')} #{number} {dim(f'({reason})')}", flush=True)
 

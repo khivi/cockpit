@@ -268,7 +268,8 @@ What makes it safe to leave on:
 - **Rate-limited, and quiet on request.** `m` mutes indefinitely. `z` snoozes until the PR
   *actually changes* — new review activity from someone else, or new work appearing — so
   "I've read this, it's their turn" doesn't need a timer you'd have to guess at. Your own
-  replies can't wake your own snooze.
+  replies can't wake your own snooze. On a coworker's PR you're reviewing, a push wakes it
+  too: you left notes, they answered, and nothing else about the PR would have said so.
 - **Quiet stops the nudge, not you.** Muting and snoozing silence what cockpit decides to
   say on its own; a message you type always goes through. `A` on the snoozed fold — or on
   the repo's header — sends one line to every session in it without unfolding first, which

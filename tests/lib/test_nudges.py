@@ -256,11 +256,13 @@ def test_cli_mute_rejects_bad_duration(nudge_cli, capsys):
 
 def test_snooze_round_trips_through_json(nudges):
     nudges.save_pref(
-        K(nudges, 80), nudges.NudgePref(snoozed=True, wake_on="2|APPROVED")
+        K(nudges, 80),
+        nudges.NudgePref(snoozed=True, wake_on="2|APPROVED", wake_head="cafe"),
     )
     pref = nudges.load_pref(K(nudges, 80))
     assert pref.snoozed is True
     assert pref.wake_on == "2|APPROVED"
+    assert pref.wake_head == "cafe"
 
 
 def test_pref_without_snooze_keys_loads_as_awake(nudges):
@@ -271,6 +273,7 @@ def test_pref_without_snooze_keys_loads_as_awake(nudges):
     assert pref.muted is True
     assert pref.snoozed is False
     assert pref.wake_on == ""
+    assert pref.wake_head == ""
 
 
 def test_snooze_blocks_nudging(nudges):
