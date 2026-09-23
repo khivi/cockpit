@@ -35,7 +35,7 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
     "real_backend: test may exec the real cmux/limux/cockpit binaries (e2e only)",
-    "covers(rule_id): test guards the AGENTS.md rule carrying that trailing [id]",
+    "covers(rule_id): test guards the AGENTS.md rule registered under that id",
 ]
 
 # `--cov` is deliberately NOT in addopts, for the same reason `-n auto` isn't:
