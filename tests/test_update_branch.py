@@ -85,6 +85,7 @@ def test_skip_reasons(kwargs, expected):
     assert _pr(**kwargs).update_branch_skip_reason() == expected
 
 
+@pytest.mark.covers("update-branch.dismisses-stale.two-sources")
 def test_approved_pr_is_skipped_when_the_base_dismisses_stale_reviews():
     """The load-bearing gate. Updating an approved PR under
     `dismissesStaleReviews` discards the approval, turning a mergeable PR into

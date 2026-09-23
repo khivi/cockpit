@@ -1754,6 +1754,7 @@ def test_linear_key_routing_disabled_without_a_provider(
     assert "cannot determine repo" in err
 
 
+@pytest.mark.covers("spawn.ticket-prompt.reads-repo-block")
 def test_linear_key_routing_reads_the_candidates_not_the_global_block(
     spawn_main, cockpit_repo, monkeypatch
 ):

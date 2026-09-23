@@ -315,6 +315,7 @@ async def test_brand_half_repaints_when_the_version_arrives():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers("header.bar.countdowns-anchored-right")
 async def test_the_countdowns_do_not_move_when_the_cursor_changes_repo():
     # The anchoring invariant: the repo is the only segment whose width changes
     # while the app runs, so it owns the flexible slot and everything right of

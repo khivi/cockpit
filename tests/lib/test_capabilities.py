@@ -198,6 +198,7 @@ def test_has_capability_gates_on_the_negotiated_list():
         assert not has_capability("workspace.groups.v1")
 
 
+@pytest.mark.covers("capabilities.tiers.must-exist")
 def test_required_capabilities_only_name_tiers_cockpit_actually_has():
     """Both were required for features cockpit never built — see capabilities.py."""
     assert "terminal.replay.v1" not in REQUIRED_CAPABILITIES

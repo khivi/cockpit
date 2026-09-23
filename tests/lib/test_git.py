@@ -195,6 +195,7 @@ def test_tag_workspace_name_prefixes_the_tag():
     )
 
 
+@pytest.mark.covers("sidebar-tag.separator.last-char")
 def test_an_emoji_tag_takes_a_space_not_the_separator():
     """`🎛️·dot` reads as a bare leading dot, because the sidebar renders the
     glyph as an icon rather than as a run of text for the separator to part."""
@@ -202,6 +203,7 @@ def test_an_emoji_tag_takes_a_space_not_the_separator():
     assert tag_workspace_name("stale", "🏢") == "🏢 stale"
 
 
+@pytest.mark.covers("sidebar-tag.separator.last-char")
 def test_a_tag_ending_in_text_keeps_the_separator():
     """The `{repo}`-expanded form ends in the repo name, so it stays parted —
     dropping the separator there would run two words together."""

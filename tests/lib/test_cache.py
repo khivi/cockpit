@@ -959,6 +959,7 @@ def test_prune_superseded_keeps_lone_snapshot(json_cache):
     assert only.exists()
 
 
+@pytest.mark.covers("pr-list.one-per-head-branch")
 def test_prune_superseded_scoped_to_repo(json_cache):
     # Two repos with the same branch name must not cross-prune.
     a = _snapshot(json_cache, "repoA", 1, "khivi/side", state="MERGED")

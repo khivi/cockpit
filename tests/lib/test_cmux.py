@@ -560,6 +560,7 @@ def test_deliver_followup_sends_text_then_enter_when_ready():
     assert any(c[0] == "send-key" and "enter" in c for c in calls)
 
 
+@pytest.mark.covers("send.one-line.inside-the-funnel")
 def test_deliver_followup_collapses_the_text_to_one_line():
     """`cmux send` synthesizes keypresses, so a newline arrives as Enter — i.e.
     submit. Un-normalized, "do X\ndo Y" submits "do X" as its own truncated
@@ -761,6 +762,7 @@ def test_deliver_followup_submits_only_after_the_body_shows_in_the_composer():
     assert verbs.index("read-screen", verbs.index("send")) < verbs.index("send-key")
 
 
+@pytest.mark.covers("spawn.seed.no-enter-on-unconfirmed")
 def test_deliver_followup_retries_a_body_that_never_lands_then_refuses_to_submit():
     """A body the composer never echoes is re-typed, and if it still never
     appears the delivery is reported instead of submitted — pressing Enter on
@@ -1677,6 +1679,7 @@ def test_create_workspace_group_spawns_the_anchor_outside_every_repo():
     assert create[create.index("--cwd") + 1] == str(Path.home())
 
 
+@pytest.mark.covers("folds.anchor.owns-a-live-shell")
 def test_create_workspace_group_reanchors_onto_a_workspace_with_a_live_shell():
     # `workspace-group create` spawns its anchor with no command, and a
     # command-less cmux workspace has no terminal surface at all — so cmux
@@ -1703,6 +1706,7 @@ def test_create_workspace_group_reanchors_onto_a_workspace_with_a_live_shell():
     assert spawn[spawn.index("--cwd") + 1] == str(Path.home())
 
 
+@pytest.mark.covers("folds.anchor.owns-a-live-shell")
 def test_create_workspace_group_closes_the_husk_anchor_through_the_self_close_funnel():
     # A raw `close-workspace` would leave the resulting `workspace.closed` event
     # looking like the user clicking cmux's ✕, which routes into teardown.
@@ -1858,11 +1862,13 @@ def test_group_verbs_noop_on_limux():
 # ── send-text normalization (every newline is an Enter) ──────────────────────
 
 
+@pytest.mark.covers("send.one-line.inside-the-funnel")
 def test_one_line_collapses_real_newlines():
     assert one_line("first\nsecond") == "first second"
     assert one_line("a\r\nb") == "a b"
 
 
+@pytest.mark.covers("send.one-line.inside-the-funnel")
 def test_one_line_collapses_literal_backslash_escapes():
     r"""The two-character `\n` is what `cmux send` documents as Enter, so it is
     just as dangerous as a real newline — and far likelier, since it survives

@@ -803,6 +803,7 @@ def test_trello_narrow_skips_a_group_missing_half_its_credential_pair(monkeypatc
     fetch.assert_called_once_with("aB3dZ9", key="beta-k", token="beta-t")
 
 
+@pytest.mark.covers("tickets.credentials.envs-in-step-with-stripper")
 def test_every_provider_declares_credential_envs_the_stripper_knows_about():
     """`credential_envs` (what preflight warns about) and
     `config.credential_env_names` (what `_bg_spawn_pr` strips from a spawned

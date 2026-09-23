@@ -184,6 +184,7 @@ async def test_discovered_entries_invoke_their_app_action():
     assert called == ["output", "show", "edit", "news", "guide"]
 
 
+@pytest.mark.covers("palette.commands.order-is-the-menu")
 async def test_palette_order_runs_in_app_before_it_leaves():
     # `discover` yields in COMMANDS order, so the tuple IS the empty palette.
     # Ordered by distance from the dashboard: overlays, then $EDITOR, then the

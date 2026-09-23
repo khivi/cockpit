@@ -981,6 +981,7 @@ async def test_update_inventory_keys_cache_by_nwo_not_label(cache_dir, monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers("table.links.escape-reaches-terminal")
 async def test_links_survive_all_the_way_into_terminal_output(cache_dir, monkeypatch):
     """The one assertion that isn't about cockpit: a `link` span has to come out
     of a rendered DataTable line as an OSC 8 escape.
@@ -1456,6 +1457,7 @@ def test_a_snoozed_row_carries_no_glyph(cache_dir):
     assert cell.plain == _ws("dozing")
 
 
+@pytest.mark.covers("bands.snoozed.no-glyph-still-suppresses-bell")
 def test_a_snoozed_row_shows_no_bell(cache_dir):
     """Dropping the 💤 glyph must not drop snooze's *suppression* of the bell.
     `pr-nudge` is never blanked for a snoozed PR, so a snooze that later goes

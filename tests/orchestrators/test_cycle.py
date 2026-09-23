@@ -6219,6 +6219,7 @@ def test_restore_rebuilds_around_only_the_members_still_live():
     assert create.call_args.args[1] == ["ws:2"]
 
 
+@pytest.mark.covers("folds.restore.create-only")
 def test_restore_can_only_create():
     # The property that makes a 30s network-free fold pass safe at all: every
     # failure mode costs a missing fold for one more interval, never a closed
