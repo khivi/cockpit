@@ -3,8 +3,7 @@ open: it checks that a rule's backticked names still resolve, not that any test
 guards the rule.
 
 `tests/invariant_ids.py` registers the ids; a test claims one with a `covers`
-marker. AGENTS.md's "Invariant ids" section holds the semantics — what fails
-hard, what only warns, what may be waived.
+marker. Each test below states what it fails on and why.
 """
 
 from __future__ import annotations

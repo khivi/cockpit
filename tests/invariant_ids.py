@@ -4,9 +4,8 @@ The value is a distinctive phrase from the rule itself, so `rg "<phrase>"
 AGENTS.md` lands on it. Keep it that way — a paraphrase makes the rule
 unfindable from here, which is the only navigation this file offers.
 
-Registering an id is how a rule enters the gap list. An unregistered rule is
-invisible to `tests/test_invariant_coverage.py`, so add the entry when you
-decide a rule is worth guarding, not when you get round to writing the test.
+Registering an id is how a rule enters the gap list — do it when you decide a
+rule is worth guarding, not when you write the test.
 """
 
 from __future__ import annotations
@@ -63,8 +62,7 @@ INVARIANTS: dict[str, str] = {
 }
 
 # A rule no test could ever assert against; not one that merely lacks a test
-# yet. Both below constrain the shape of code a future change would add, and a
-# test can only run code that exists.
+# yet. Both constrain the shape of code a future change would add.
 JUDGMENT_ONLY: frozenset[str] = frozenset(
     {
         "tests.helpers.take-input-dont-fetch",
