@@ -1,8 +1,9 @@
 r"""Headless tests for the ticket-inbox overlay (cockpit/tui/widgets/tickets_screen.py).
 
-The screen is handed already-filtered payloads and dismisses with a spawn source
-— a string `cockpit new` routes. These pin that contract plus the properties that
-are load-bearing rather than cosmetic: the URL-over-id source rule (the only form
+The screen is handed already-filtered payloads and posts a `Start` carrying a
+spawn source — a string `cockpit new` routes — without closing, since the inbox
+is a list you work down. These pin that contract plus the properties that are
+load-bearing rather than cosmetic: the URL-over-id source rule (the only form
 that routes a GitHub issue or a Trello card), the org-qualified row key (one
 ticket can legitimately sit under two orgs), and the `strip_control` pass over
 tracker text (a title is written by whoever filed the ticket).
@@ -24,6 +25,7 @@ from cockpit.tui.widgets.tickets_screen import (
     _TICKET_MAX,
     AMBIGUOUS_MARK,
     HEADER_KEY_PREFIX,
+    STARTED_STATE,
     UNROUTABLE_MARK,
     TicketsScreen,
     _age,
@@ -32,8 +34,15 @@ from cockpit.tui.widgets.tickets_screen import (
 
 
 class _Host(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started: list[str] = []
+
     def compose(self) -> ComposeResult:
         yield Static("host", id="host")
+
+    def on_tickets_screen_start(self, event: TicketsScreen.Start) -> None:
+        self.started.append(event.source)
 
 
 def _ticket(tid="PE-412", **over) -> dict:
@@ -82,7 +91,9 @@ def test_source_of_an_empty_ticket_is_empty():
 
 
 @pytest.mark.asyncio
-async def test_enter_dismisses_with_the_source():
+async def test_enter_starts_the_ticket_without_closing_the_inbox():
+    """The inbox is a list you work down: popping it on the first enter made
+    starting a second ticket a re-open and a re-fold."""
     app: _Host = _Host()
     result: list = []
     async with app.run_test() as pilot:
@@ -91,7 +102,67 @@ async def test_enter_dismisses_with_the_source():
         await pilot.press("down")  # off the org header, onto the ticket
         await pilot.press("enter")
         await pilot.pause()
-    assert result == ["https://linear.app/acme/issue/PE-412"]
+        assert app.started == ["https://linear.app/acme/issue/PE-412"]
+        assert isinstance(app.screen, TicketsScreen)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_a_started_row_says_so_and_a_second_enter_does_nothing():
+    """`cockpit new` attaches to an existing worktree, but it runs detached — so
+    a double-tap has both children find none and the loser cuts a `-2`."""
+    app: _Host = _Host()
+    async with app.run_test() as pilot:
+        await _open(app, {"acme": [_ticket()]})
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        assert str(table.get_cell_at(Coordinate(1, 2))) == STARTED_STATE
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(app.started) == 1
+
+
+@pytest.mark.asyncio
+async def test_releasing_a_ticket_gives_the_row_its_state_back():
+    """The mark is optimistic — an unroutable ticket and a cancelled repo picker
+    both decline after the keypress, and would otherwise read as started."""
+    app: _Host = _Host()
+    async with app.run_test() as pilot:
+        await _open(app, {"acme": [_ticket()]})
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, TicketsScreen)
+        screen.release("https://linear.app/acme/issue/PE-412")
+        await pilot.pause()
+        table = screen.query_one(DataTable)
+        assert str(table.get_cell_at(Coordinate(1, 2))) == "Todo"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(app.started) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_started_row_keeps_its_mark_across_a_fold():
+    """`_started` is keyed by source, not by a row key a rebuild reissues."""
+    app: _Host = _Host()
+    async with app.run_test() as pilot:
+        await _open(app, {"acme": [_ticket()]})
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.press("enter")  # fold the org
+        await pilot.press("enter")  # and open it again
+        await pilot.pause()
+        table = app.screen.query_one(DataTable)
+        assert str(table.get_cell_at(Coordinate(1, 2))) == STARTED_STATE
 
 
 @pytest.mark.asyncio
@@ -198,16 +269,15 @@ async def test_a_trello_card_shows_its_number_not_its_short_link():
     The id stays the key everything else joins on."""
     app = _Host()
     card = _ticket("6rm3JJPY", handle="#122", url="https://trello.com/c/6rm3JJPY")
-    result: list = []
     async with app.run_test() as pilot:
-        await _open(app, {"acme": [card]}, result)
+        await _open(app, {"acme": [card]})
         await pilot.pause()
         table = app.screen.query_one(DataTable)
         assert table.get_cell_at(Coordinate(1, 0)).plain.strip() == "#122"
         await pilot.press("down")
         await pilot.press("enter")
         await pilot.pause()
-    assert result == ["https://trello.com/c/6rm3JJPY"]
+        assert app.started == ["https://trello.com/c/6rm3JJPY"]
 
 
 @pytest.mark.asyncio

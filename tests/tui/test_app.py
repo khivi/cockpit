@@ -3896,6 +3896,91 @@ async def test_a_github_issue_url_for_an_unconfigured_repo_refuses(monkeypatch):
     assert "acme/widgets" in notified[0] and "press n" in notified[0]
 
 
+async def test_enter_in_the_inbox_spawns_and_leaves_the_inbox_open(monkeypatch):
+    """The `Start` message replaced the dismiss value so the list survives the
+    spawn — you work an inbox down, rather than re-opening it per ticket."""
+    app, _ = _make_app()
+    launched: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
+    )
+    monkeypatch.setattr("cockpit.spawn.route_ticket_repos", lambda source: ["repo"])
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_ticket_inboxes", lambda: {"acme": [_inbox_ticket()]}
+    )
+    monkeypatch.setattr(
+        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    async with app.run_test() as pilot:
+        app.action_ticket_inbox()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert shlex.split(launched[0])[-2:] == ["--repo", "repo"]
+        assert isinstance(app.screen, TicketsScreen)
+
+
+async def test_a_refused_ticket_gives_its_row_back(monkeypatch):
+    """The inbox marks the row `starting…` on the keypress, before the paid
+    tiebreak has said whether the ticket goes anywhere."""
+    app, _ = _make_app()
+    monkeypatch.setattr(CockpitApp, "_launch_spawn", lambda self, s, cwd: None)
+    monkeypatch.setattr(CockpitApp, "_notify", lambda self, m, **k: None)
+    monkeypatch.setattr("cockpit.spawn.route_ticket_repos", lambda source: [])
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_ticket_inboxes", lambda: {"acme": [_inbox_ticket()]}
+    )
+    monkeypatch.setattr(
+        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    async with app.run_test() as pilot:
+        app.action_ticket_inbox()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, TicketsScreen)
+        assert screen._started == set()
+
+
+async def test_cancelling_the_repo_picker_gives_the_row_back(monkeypatch):
+    app, _ = _make_app()
+    released: list = []
+    monkeypatch.setattr(CockpitApp, "_launch_spawn", lambda self, s, cwd: None)
+    monkeypatch.setattr(
+        CockpitApp, "_release_ticket", lambda self, source: released.append(source)
+    )
+    monkeypatch.setattr(
+        CockpitApp, "push_screen", lambda self, screen, cb=None: cb(None)
+    )
+    app._pick_ticket_repo("PLAT-77", "PLAT-77", ["infra", "cluster"])
+    assert released == ["PLAT-77"]
+
+
+async def test_a_dry_run_gives_the_row_back(monkeypatch):
+    """`--dry` refuses the spawn, so the row must not keep reading as started."""
+    app = CockpitApp(
+        slow_tick=lambda *a, **k: None,
+        fast_tick=lambda: None,
+        slow_secs=300,
+        fast_secs=30,
+        dry=True,
+    )
+    released: list = []
+    monkeypatch.setattr(CockpitApp, "notify", lambda self, m, **k: None)
+    monkeypatch.setattr(
+        CockpitApp, "_release_ticket", lambda self, source: released.append(source)
+    )
+    app._start_ticket("PE-412")
+    assert released == ["PE-412"]
+
+
 async def test_dismissing_the_inbox_starts_nothing(monkeypatch):
     app, _ = _make_app()
     launched: list = []
