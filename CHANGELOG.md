@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.6.0](https://github.com/khivi/cockpit/compare/v3.5.3...v3.6.0) (2026-09-23)
+
+
+### Features
+
+* **nudge:** wake a snoozed review when the author pushes ([#528](https://github.com/khivi/cockpit/issues/528)) ([c2156a0](https://github.com/khivi/cockpit/commit/c2156a02b03869e5de74d6bb38be66acb733540c))
+
 ## [3.5.3](https://github.com/khivi/cockpit/compare/v3.5.2...v3.5.3) (2026-09-21)
 
 
