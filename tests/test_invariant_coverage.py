@@ -59,8 +59,13 @@ def test_every_covers_marker_names_a_registered_id():
 
 def test_every_registered_id_names_a_findable_rule():
     """The registry is the only route from an id back to its rule, so the
-    phrase must still appear in AGENTS.md verbatim. Without this the two drift
-    silently and the id stops meaning anything."""
+    phrase must still appear in AGENTS.md verbatim, or the two drift silently
+    and the id stops meaning anything.
+
+    It is also the only thing that notices a rule being DELETED. A registry
+    outlives the prose it names: without this, a removed rule would keep its
+    entry and its tests would stay green, guarding something gone.
+    """
     agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
     lost = sorted(r for r, phrase in INVARIANTS.items() if phrase not in agents)
     assert not lost, (
