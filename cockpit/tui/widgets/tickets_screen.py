@@ -21,11 +21,19 @@ Each org is a fold. Its header row carries a `▸`/`▾` marker and the count, a
 it is the only one, since a tracker with a hundred cards assigned to you
 otherwise buries the org that has three.
 
-Dismisses with the selected ticket's spawn *source* (its URL, falling back to its
-id), which is a string `spawn.detect_source` already classifies for all four
-providers: a Linear or Jira URL carries its key, a Trello card URL its short
-link, a GitHub issue URL its repo and number. That is why starting a ticket needs
-no spawn machinery of its own.
+`enter` on a ticket posts a `Start` carrying its spawn *source* (its URL, falling
+back to its id), which is a string `spawn.detect_source` already classifies for
+all four providers: a Linear or Jira URL carries its key, a Trello card URL its
+short link, a GitHub issue URL its repo and number. That is why starting a ticket
+needs no spawn machinery of its own.
+
+**Starting a ticket does not close the inbox** — it is a list you work down, and
+popping the screen on the first `enter` made the common case (start two or three,
+then get on with it) four keypresses of re-opening and re-folding per ticket. A
+started row is marked `starting…` in its State cell and a second `enter` on it
+does nothing, since the payload that would drop it (`in_flight`) is only
+re-stamped on the next fast tick and the screen never refetches. Only `escape`
+dismisses.
 
 A row whose routing is not a foregone conclusion says so *before* enter, via a
 marker in the Ticket cell: `?` when several repos claim the key (enter opens a
@@ -53,6 +61,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Static
 from textual.widgets.data_table import CellDoesNotExist
@@ -82,6 +91,10 @@ UNROUTABLE_MARK = "!"
 #: Width every ticket row reserves for a marker, paid in blanks by the rows that
 #: carry none — so the handles line up whatever a fold happens to contain.
 _MARK_SLOT = 2
+
+#: What a started row's State cell reads until the daemon's own `in_flight` stamp
+#: drops it from the payload. Within `_STATE_MAX`, so it widens no column.
+STARTED_STATE = "starting…"
 
 
 def _ellipsize(text: str, limit: int) -> str:
@@ -128,8 +141,15 @@ def ticket_source(ticket: dict) -> str:
     return str(ticket.get("url") or "") or str(ticket.get("id") or "")
 
 
-class TicketsScreen(ModalScreen["str | None"]):
-    """Ticket inbox overlay. Dismisses with a spawn source, or None."""
+class TicketsScreen(ModalScreen[None]):
+    """Ticket inbox overlay. Posts `Start` per ticket; dismisses on escape only."""
+
+    class Start(Message):
+        """`enter` on a ticket row — `source` is what `cockpit new` is handed."""
+
+        def __init__(self, source: str) -> None:
+            super().__init__()
+            self.source = source
 
     DEFAULT_CSS = """
     TicketsScreen { align: center middle; }
@@ -166,6 +186,10 @@ class TicketsScreen(ModalScreen["str | None"]):
         # the same as matching nothing — so it is marked with nothing at all.
         self._routes = dict(routes or {})
         self._by_key: dict[str, dict] = {}
+        # Spawn sources already handed to the app, keyed by source rather than
+        # row key so a ticket sitting under two orgs marks in both, and so
+        # `release` can find it with the fold it was started from since closed.
+        self._started: set[str] = set()
         # Every org starts folded, like the sidebar's two trailing piles: a
         # tracker with a hundred cards assigned to you would otherwise bury the
         # org that has three. A lone org is expanded, since folding the only
@@ -300,13 +324,15 @@ class TicketsScreen(ModalScreen["str | None"]):
         # column: the widths are explicit for a paid-for reason (auto-sizing
         # caches the wrong width on a fold), so nothing here may grow one.
         room = _TICKET_MAX - len(ROW_INDENT) - len(mark)
+        state = (
+            STARTED_STATE
+            if ticket_source(ticket) in self._started
+            else _ellipsize(strip_control(str(ticket.get("state") or "")), _STATE_MAX)
+        )
         table.add_row(
             Text(f"{ROW_INDENT}{mark}{_ellipsize(handle, room)}"),
             Text(_ellipsize(strip_control(str(ticket.get("title") or "")), _TITLE_MAX)),
-            Text(
-                _ellipsize(strip_control(str(ticket.get("state") or "")), _STATE_MAX),
-                style="grey62",
-            ),
+            Text(state, style="grey62"),
             Text(_age(str(ticket.get("updated_at") or "")), style="grey62"),
             key=key,
         )
@@ -341,8 +367,30 @@ class TicketsScreen(ModalScreen["str | None"]):
             self._rebuild(cursor_key=key)
             return
         ticket = self._selected()
-        if ticket is not None:
-            self.dismiss(ticket_source(ticket))
+        if ticket is None:
+            return
+        source = ticket_source(ticket)
+        # A second enter on a row already handed over would spawn a *second*
+        # worktree: `cockpit new` attaches to an existing one, but it runs
+        # detached, so a double-tap has both children resolving "no worktree
+        # yet" and the loser lands on the `-2` path.
+        if not source or source in self._started:
+            return
+        self._started.add(source)
+        self._rebuild(cursor_key=key)
+        self.post_message(self.Start(source))
+
+    def release(self, source: str) -> None:
+        """Undo `source`'s `starting…` mark — the app started nothing after all.
+
+        The mark is optimistic: the app only learns a ticket is unroutable after
+        the paid tiebreak, and the repo picker can be cancelled. Left standing,
+        those rows would read as started for the life of the overlay.
+        """
+        if source not in self._started:
+            return
+        self._started.discard(source)
+        self._rebuild(cursor_key=self._cursor_key())
 
     def action_open_ticket(self) -> None:
         ticket = self._selected()

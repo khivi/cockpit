@@ -1384,12 +1384,19 @@ class CockpitApp(App[None]):
             live = [t for t in tickets if not t.get("in_flight")]
             if live:
                 buckets[bucket] = live
-        self.push_screen(
-            TicketsScreen(buckets, _ticket_routes(buckets)), self._start_ticket
-        )
+        self.push_screen(TicketsScreen(buckets, _ticket_routes(buckets)))
+
+    def on_tickets_screen_start(self, event: TicketsScreen.Start) -> None:
+        """`enter` on a ticket row — the inbox stays open behind the spawn.
+
+        A message rather than the screen's dismiss value, because the inbox is a
+        list you work down: popping it on the first `enter` meant re-opening and
+        re-folding it per ticket.
+        """
+        self._start_ticket(event.source)
 
     def _start_ticket(self, source: str | None) -> None:
-        """Modal callback (UI thread): spawn a worktree for the chosen ticket.
+        """Spawn a worktree for the chosen ticket (UI thread).
 
         The source is a ticket URL or id — a string `cockpit new` already routes,
         so this adds no spawn machinery of its own. What it does add is a repo:
@@ -1415,6 +1422,7 @@ class CockpitApp(App[None]):
         if not source:
             return
         if self._blocked_by_dry("start a ticket"):
+            self._release_ticket(source)
             return
         # Local imports: the TUI shells out to `cockpit new` rather than calling
         # into spawn, and a module-level edge here would make that look otherwise.
@@ -1425,7 +1433,7 @@ class CockpitApp(App[None]):
         if nwo_hint:
             match = find_repo_by_nwo(nwo_hint)
             if match is None:
-                self._refuse_ticket(nwo_hint)
+                self._refuse_ticket(nwo_hint, source)
                 return
             self._launch_spawn(_with_repo(source, str(match["name"])), None)
             return
@@ -1456,28 +1464,44 @@ class CockpitApp(App[None]):
         elif repos:
             self.call_from_thread(self._pick_ticket_repo, source, ref, repos)
         else:
-            self.call_from_thread(self._refuse_ticket, ref)
+            self.call_from_thread(self._refuse_ticket, ref, source)
 
     def _pick_ticket_repo(self, source: str, ref: str, repos: list[str]) -> None:
         """Ask which of `repos` the ticket belongs in, then spawn there.
 
-        Pushed from the inbox's own dismiss callback, so this is push-after-pop
-        rather than a modal over a modal. Cancelling starts nothing — the ticket
-        keeps its row and `i` offers it again.
+        Pushed over the still-open inbox, which is what dismissing it returns to.
+        Cancelling starts nothing — the ticket keeps its row, and gives back the
+        `starting…` mark the inbox put on it.
         """
 
         def _chosen(repo: str | None) -> None:
             if repo:
                 self._launch_spawn(_with_repo(source, repo), None)
+            else:
+                self._release_ticket(source)
 
         self.push_screen(RepoPickScreen(ref, repos), _chosen)
 
-    def _refuse_ticket(self, ref: str) -> None:
+    def _refuse_ticket(self, ref: str, source: str) -> None:
+        self._release_ticket(source)
         self._notify(
             f"{ref}: no configured repo routes that ticket — "
             "press n to start it and pick a repo",
             severity="warning",
         )
+
+    def _release_ticket(self, source: str) -> None:
+        """Take back the inbox's `starting…` mark when nothing was launched.
+
+        The mark is optimistic — the inbox paints it on the keypress, before the
+        paid routing tiebreak has said whether the ticket goes anywhere — so the
+        two paths that decline (an unroutable ticket, a cancelled picker) owe it
+        back. The inbox may have been dismissed in the meantime, which is why
+        this walks the stack rather than holding a reference.
+        """
+        for screen in self.screen_stack:
+            if isinstance(screen, TicketsScreen):
+                screen.release(source)
 
     def action_new_workspace(self) -> None:
         if self._blocked_by_dry("new workspace"):

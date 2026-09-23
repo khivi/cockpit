@@ -347,7 +347,7 @@ first.
 ┌─ Tickets ─────────────────────────────────────┐
 │ 3 assigned to you, with no worktree yet       │
 │ ▾ acme (2)                                    │
-│   PE-412   Fix retry backoff       Todo    2d │
+│   PE-412   Fix retry backoff    starting…  2d │
 │ ? PE-430   Docs pass on the api    Progress 6h│
 │ ▸ widgets-co (1)                              │
 │                                               │
@@ -361,6 +361,11 @@ starts it — the same worktree, workspace and seeded session you'd get by typin
 id into `n`. So the inbox isn't a second way to work; it's the list you reach for when you
 don't yet know what to type. Orgs start folded (unless there's only one), because one
 tracker with a hundred cards assigned to you shouldn't bury the org that has three.
+
+**Starting a ticket doesn't close the list.** The row says `starting…` and the inbox stays
+up, so you can start the next one — or three — and only then hit `esc`. The started row
+stops responding to `enter`, since a second press would cut a second worktree; it drops off
+the list within about 30 seconds, once its worktree shows up on the dashboard.
 
 Seven things make it stay useful rather than becoming a second tracker tab:
 

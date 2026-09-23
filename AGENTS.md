@@ -621,6 +621,22 @@ repo by `cycle.py::_collect_ticket_inbox`, drained once by
   classifies for all four providers, and `app._start_ticket` shells out to `cockpit new`.
   **The URL, not the id**, since `owner/repo#N` doesn't classify and a Trello short link
   carries no board.
+- **`enter` posts `TicketsScreen.Start` and the overlay STAYS UP — only `escape`
+  dismisses.** The inbox is a list you work down, so popping it on the first `enter` cost a
+  re-open and a re-fold per ticket; the screen is therefore a `ModalScreen[None]` whose
+  dismiss value carries nothing, and `action_ticket_inbox` pushes it with **no callback**.
+  `_pick_ticket_repo` is consequently a modal over a modal rather than push-after-pop.
+  Three rules: the started row is marked `STARTED_STATE` in its **State** cell and a second
+  `enter` on it is a **no-op**, since `cockpit new` runs detached and a double-tap has both
+  children resolve "no worktree yet" and the loser cut a `-2` path — the payload's own
+  `in_flight` only lands on the next fast tick, so it cannot be the guard here; `_started`
+  is keyed by **spawn source, not row key**, which a `_rebuild` reissues and a closed fold
+  drops; and the mark is **optimistic, so every path that declines owes it back**
+  (`app._release_ticket` → `TicketsScreen.release`) — the `--dry` gate, an unroutable
+  ticket, a cancelled picker. It walks `screen_stack` rather than holding a reference,
+  since the inbox may be gone by the time the paid tiebreak answers. **Do not** give the
+  screen a dismiss value again, and **do not** make the mark a payload field: nothing
+  outside the overlay reads it.
 - **`_start_ticket` names the repo explicitly, and refuses when routing can't.** No repo is
   named by the caller and its cwd is the *daemon's own*, so `cockpit new`'s documented
   fallback to cwd discovery lands the worktree in whatever repo the daemon happens to be
