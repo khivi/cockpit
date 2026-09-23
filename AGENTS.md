@@ -869,7 +869,7 @@ This is a paid-for regression twice over. A helper was extracted that called `wo
 
 ## Invariant ids — registered in `tests/invariant_ids.py`
 
-`tests/test_invariant_coverage.py` is the third repo-wide invariant test and the AGENTS.md → *tests* direction, where `test_comment_references.py` is the AGENTS.md → *code* one. `INVARIANTS` registers an id against a verbatim phrase from the rule; a test claims it with `@pytest.mark.covers("some.rule.id")`. **The link is the id, never a path or a symbol**, so a rename moves neither end. That file documents what fails hard, what only warns, and why an entry must stay verbatim. Two rules it cannot hold:
+`tests/test_invariant_coverage.py` is the third repo-wide invariant test and the AGENTS.md → *tests* direction, where `test_comment_references.py` is the AGENTS.md → *code* one. `INVARIANTS` registers an id against a verbatim phrase from the rule; a test claims it with `@pytest.mark.covers("some.rule.id")`. **The link is the id, never a path or a symbol**, so a rename moves neither end. Each test in the gate states what it fails on; `invariant_ids.py` says why an entry must stay verbatim. Two rules neither file can hold:
 
 - **It proves a guard EXISTS, never that the guard is strong.** A test that checks nothing satisfies it exactly as well as one that checks everything, and the same author writes the rule *and* the marker, so the two errors correlate rather than cancel. **Do not** read a covered id as a tested rule.
 - **Registration is opt-in and partial by design.** An unregistered rule costs nothing, so registering is something you do while touching a rule, never a migration. **Do not** bulk-register.
