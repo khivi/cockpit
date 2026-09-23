@@ -15,6 +15,13 @@ snapshot immediately (`cache.restamp_pref`, the same call `z` makes) and kick
 the daemon for a full cycle (`z`'s one caveat: sidebar-fold membership is only
 rebuilt on an unscoped cycle), so a session doesn't have to wait out the
 next slow-tick interval for either to take visible effect.
+
+Both are idempotent *writes* rather than no-ops on an unchanged pref: that
+re-stamp-and-kick pair is the only way to converge a pref and a screen that
+disagree, so the second run has to keep doing it. Where `z` applies the pressed
+row's direction to a whole stacked chain, these stay per-PR and warn instead
+(`_warn_split_chain`) — a per-PR snooze below a chain's tip moves nothing on
+either fold surface.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .cache import find_pr_payload_for_cwd, restamp_pref
+from .cache import find_pr_payload_for_cwd, load_pr_payloads_by_branch, restamp_pref
 from .daemon_signal import kick_running
 from .gh import repo_nwo
 from .git import current_branch
@@ -40,6 +47,7 @@ from .nudges import (
     save_pref,
     wake_signature,
 )
+from .stacks import chain_tip
 
 
 def _infer_pr_number() -> int | None:
@@ -151,21 +159,72 @@ def _cmd_unmute(args: argparse.Namespace) -> int:
     return 0
 
 
+def _stack_tip_pr(repo: str, branch: str) -> tuple[int, str] | None:
+    """(number, branch) of the open PR whose snooze decides `branch`'s fold, or
+    None when `branch` is itself the tip (or isn't stacked at all).
+
+    Read off the daemon's cached payloads, so this costs no round-trip and an
+    absent cache simply means no warning — the write it annotates has already
+    happened either way.
+    """
+    if not branch:
+        return None
+    payloads = {
+        head: payload
+        for head, payload in load_pr_payloads_by_branch(repo).items()
+        if str(payload.get("state") or "") == "OPEN"
+    }
+    tip = chain_tip(
+        {head: str(p.get("base") or "") for head, p in payloads.items()}, branch
+    )
+    number = payloads[tip].get("number") if tip != branch else None
+    return (int(number), tip) if number else None
+
+
+def _warn_split_chain(repo: str, pr: int, branch: str, *, snoozing: bool) -> None:
+    """Say so when this PR is stacked under one whose snooze state disagrees.
+
+    `cockpit nudge` stays per-PR — someone naming one number gets that number,
+    unlike the TUI's `z`, which applies the pressed row's direction to the whole
+    chain. But both fold surfaces band a chain by its **tip**, and a snoozed row
+    deliberately carries no glyph, so a snooze below the tip is silent *and*
+    invisible: the row neither sinks nor folds, which reads as the command
+    having done nothing at all. The write stays per-PR; this only names the PR
+    that has to agree before the screen moves.
+    """
+    tip = _stack_tip_pr(repo, branch)
+    if tip is None:
+        return
+    number, tip_branch = tip
+    if load_pref(pref_key(repo, number)).snoozed == snoozing:
+        return
+    state = "is not snoozed" if snoozing else "is still snoozed"
+    print(f"  note: #{pr} is stacked under #{number} ({tip_branch}), which {state}.")
+    print(
+        "  Both folds band a chain by its tip, so this row won't move until: "
+        f"cockpit nudge {'snooze' if snoozing else 'wake'} {number}"
+    )
+
+
 def _cmd_snooze(args: argparse.Namespace) -> int:
     pr, repo, key = _resolve_pr(args.pr)
     pref = load_pref(key)
-    if pref.snoozed:
-        print(f"PR #{pr}: already snoozed")
-        return 0
+    was_snoozed = pref.snoozed
     cwd = Path.cwd()
     branch = current_branch(cwd)
     payload = (find_pr_payload_for_cwd(cwd, branch) if branch else None) or {}
     pref.snoozed = True
-    pref.wake_on = wake_signature(
-        int(payload.get("total") or 0), str(payload.get("review") or "")
-    )
-    pref.wake_nudge = str(payload.get("nudge") or "")
-    pref.wake_head = str(payload.get("headRefOid") or "")
+    # Re-snoozing an already-snoozed PR re-arms deliberately: it is the only
+    # gesture that re-stamps the cells and kicks the daemon, so it has to stay
+    # available as the recovery path when the pref and the surfaces disagree.
+    # With no payload to read, though, the snapshots are left alone — blanking a
+    # live `wake_on` would wake the snooze on the very next tick.
+    if payload or not was_snoozed:
+        pref.wake_on = wake_signature(
+            int(payload.get("total") or 0), str(payload.get("review") or "")
+        )
+        pref.wake_nudge = str(payload.get("nudge") or "")
+        pref.wake_head = str(payload.get("headRefOid") or "")
     # A snooze supersedes a mute — see `nudges.NudgePref` docstring.
     pref.muted = False
     pref.until = None
@@ -174,26 +233,27 @@ def _cmd_snooze(args: argparse.Namespace) -> int:
     restamp_pref(repo, pr, cwd, pref)
     kick_running(quiet=True)
     print(
-        f"snoozed PR #{pr} — wakes on a new comment, review, CI/conflict issue, "
-        "or a push to a PR you're reviewing"
+        f"{'re-snoozed' if was_snoozed else 'snoozed'} PR #{pr} — wakes on a new "
+        "comment, review, CI/conflict issue, or a push to a PR you're reviewing"
     )
+    _warn_split_chain(repo, pr, branch, snoozing=True)
     return 0
 
 
 def _cmd_wake(args: argparse.Namespace) -> int:
     pr, repo, key = _resolve_pr(args.pr)
     pref = load_pref(key)
-    if not pref.snoozed:
-        print(f"PR #{pr}: not snoozed")
-        return 0
+    was_snoozed = pref.snoozed
+    cwd = Path.cwd()
     pref.snoozed = False
     pref.wake_on = ""
     pref.wake_nudge = ""
     pref.wake_head = ""
     save_pref(key, pref)
-    restamp_pref(repo, pr, Path.cwd(), pref)
+    restamp_pref(repo, pr, cwd, pref)
     kick_running(quiet=True)
-    print(f"woke PR #{pr}")
+    print(f"woke PR #{pr}" if was_snoozed else f"PR #{pr}: already awake — re-stamped")
+    _warn_split_chain(repo, pr, current_branch(cwd), snoozing=False)
     return 0
 
 

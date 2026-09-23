@@ -13,7 +13,7 @@ nothing here is cached or stored.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -122,3 +122,36 @@ def stack_order(
         out.extend((i, 1) for i, _ in chain if i != tip)
     out.extend((i, 0) for i in range(len(branches)) if i not in seen)
     return out
+
+
+def chain_tip(base_of: Mapping[str, str], branch: str) -> str:
+    """The branch whose snooze decides `branch`'s fold: the tip of the stack it
+    sits under, or `branch` itself when nothing is stacked on it.
+
+    The third reading of the same `base` link, for the caller that holds neither
+    a live `PR` (`find_stacks`) nor a row (`stack_order`): `cockpit nudge`,
+    which has only the daemon's cached payloads and makes no network call. Both
+    fold surfaces band a chain by its tip, so this is what tells a per-PR snooze
+    whether it will move anything on screen.
+
+    `base_of` maps each open PR's head branch to its base. A fork has no single
+    tip, so the deepest branch wins (ties → the one walked first), as in
+    `stack_order`; a base cycle terminates on the visited set.
+    """
+    children: dict[str, list[str]] = {}
+    for head, base in base_of.items():
+        if head and base and base != head:
+            children.setdefault(base, []).append(head)
+
+    tip, deepest = branch, 0
+    seen = {branch}
+    queue = [(branch, 0)]
+    while queue:
+        cur, depth = queue.pop(0)
+        if depth > deepest:
+            tip, deepest = cur, depth
+        for child in sorted(children.get(cur, ())):
+            if child not in seen:
+                seen.add(child)
+                queue.append((child, depth + 1))
+    return tip

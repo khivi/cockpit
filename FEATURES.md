@@ -276,7 +276,11 @@ What makes it safe to leave on:
   is what you want when the answer to a whole pile is the same one. The rows stay snoozed.
 - **`cockpit nudge mute | unmute | snooze | wake | list | status | forget`** does the
   same from a shell — including snoozing, so a session can quiet its own PR without
-  switching back to the TUI.
+  switching back to the TUI. It acts on the one PR you named, so on a stacked PR it
+  tells you which one further up the chain has to agree before the row moves: the
+  fold is decided by the stack's tip, and `z` is the key that takes the whole chain.
+  Running `snooze` twice is not a no-op — the second run repaints the row and pokes
+  the daemon, which is what you want when the screen and the pref disagree.
 
 ### Keeping stale branches mergeable
 
