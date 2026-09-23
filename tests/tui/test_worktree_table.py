@@ -981,7 +981,7 @@ async def test_update_inventory_keys_cache_by_nwo_not_label(cache_dir, monkeypat
 
 
 @pytest.mark.asyncio
-@pytest.mark.covers("table.links.escape-reaches-terminal")
+@pytest.mark.covers("**The hover tooltip names the destination**")
 async def test_links_survive_all_the_way_into_terminal_output(cache_dir, monkeypatch):
     """The one assertion that isn't about cockpit: a `link` span has to come out
     of a rendered DataTable line as an OSC 8 escape.
@@ -1457,7 +1457,7 @@ def test_a_snoozed_row_carries_no_glyph(cache_dir):
     assert cell.plain == _ws("dozing")
 
 
-@pytest.mark.covers("bands.snoozed.no-glyph-still-suppresses-bell")
+@pytest.mark.covers("**Snooze has no row glyph but still suppresses the 🔔**")
 def test_a_snoozed_row_shows_no_bell(cache_dir):
     """Dropping the 💤 glyph must not drop snooze's *suppression* of the bell.
     `pr-nudge` is never blanked for a snoozed PR, so a snooze that later goes
@@ -1504,7 +1504,7 @@ def test_a_snoozed_row_still_shows_its_mute(cache_dir):
     assert cell.plain == _ws("both", glyph=ICON_PR_MUTED)
 
 
-@pytest.mark.covers("table.status-slot.pad-even-when-blank")
+@pytest.mark.covers("🔇/🔔 differ in ink width per font; **do not** drop that padding.")
 def test_every_glyph_takes_the_same_slot_so_labels_align(cache_dir):
     """The whole point of the fixed slot: a belled row, a muted row and a quiet
     one all start their label at the same column. The glyphs differ in ink width

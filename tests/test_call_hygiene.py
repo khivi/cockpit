@@ -2,14 +2,20 @@
 must never call `signal.signal`, never import `cockpit.lib.cache`, never name
 `plan.md`. A behaviour test cannot cover any of these: there is no observable
 effect to assert on when the banned thing is simply absent, only the presence
-or absence of a reference in source. So this module walks the tree with `ast`
-instead, the same approach `test_comment_references.py` uses for prose.
+or absence of a reference in source.
 
-One family of small AST helpers, reused across the assertions below rather
-than fourteen bespoke greps — greps because the same handful of *shapes*
-recur: "is this name referenced/called/imported anywhere in this file",
-"does this call shell out to this literal command", "does this function's
-call graph reach that one", "does this file write a specific cache key".
+Most of these bans are plain "string X must not appear in file(s) Y" — for
+those a text search is exactly as strong as an AST walk, since a *ban* is
+still enforced even if it happens to also flag a `#` comment mentioning the
+banned thing (the `plan.md` row below already worked this way). Those are
+one parametrized test over `_BANNED_SUBSTRING_CASES`.
+
+A few rules need real structure — "does this call graph reach that function",
+"does this file write a specific cache key", "is this string an actual
+shelled-out command rather than prose" — because a plain substring there would
+either miss the real violation shape or false-positive on a docstring
+explaining the rule. Those keep the `ast`-based helpers below, the same
+approach `test_comment_references.py` uses for prose.
 """
 
 from __future__ import annotations
@@ -176,23 +182,112 @@ def _reachable(graph: dict[str, set[str]], start: str) -> set[str]:
     return seen
 
 
-# ── tui.signals.no-signal-signal ─────────────────────────────────────────
+# ── banned substrings: one test per rule that is purely "X never appears" ──
+
+# (target, banned substring, one-sentence why). `target` is either a single
+# file or a directory searched recursively for every `.py` under it. A plain
+# `in path.read_text()` — no AST — since for a *ban* a comment mentioning the
+# banned thing is still a legitimate trip, exactly like the `plan.md` row
+# always worked. Each needle was checked against the current tree before
+# being added here so it doesn't misfire on a docstring/comment that merely
+# *explains* the rule — which is why several carry a trailing `(`: the bare
+# word appears in the very prose stating the ban.
+_BANNED_SUBSTRING_CASES: tuple[tuple[Path, str, str], ...] = (
+    (
+        COCKPIT_ROOT / "tui" / "app.py",
+        "signal.signal(",
+        "signal.signal raises off the main thread; the TUI registers every "
+        "handler through loop.add_signal_handler instead.",
+    ),
+    (
+        COCKPIT_ROOT / "tui",
+        "render_diff",
+        "render_diff has exactly one caller (cockpit/diff.py); a second "
+        "caller under cockpit/tui/ would reopen the stale-surface bug the "
+        "TUI's own `d` key was removed for.",
+    ),
+    (
+        COCKPIT_ROOT,
+        "plan.md",
+        "plan.md is a session-written artifact the daemon must never depend "
+        "on — no tick, renderer or teardown may even name it, since a "
+        "session might not have written one.",
+    ),
+    (
+        COCKPIT_ROOT,
+        "redirect_stdout(",
+        "One process-wide _QueueWriter captures stdout; a per-tick "
+        "redirect_stdout would let the slow and fast tick threads race on "
+        "the global stream.",
+    ),
+    (
+        COCKPIT_ROOT / "tui" / "widgets" / "worktree_table.py",
+        "ticket_url(",
+        "The ticket link is read from the daemon-cached `url` field "
+        "(cycle._stamp_ticket_urls); a renderer resolving its own is the "
+        "thing this rule bans.",
+    ),
+    (
+        COCKPIT_ROOT / "tui" / "widgets" / "tickets_screen.py",
+        "narrow_repos",
+        "narrow_repos is the paid tiebreak fetch; the ticket-inbox's `?`/`!` "
+        "markers are stage-one-only predictions handed in, so opening the "
+        "modal must reach no network however many tickets it holds.",
+    ),
+    (
+        COCKPIT_ROOT / "diff.py",
+        "load_config",
+        "cockpit diff resolves purely from cwd via git.worktree_root and "
+        "must work in any git repo, registered or not, so it may not read "
+        "config directly.",
+    ),
+    (
+        COCKPIT_ROOT / "diff.py",
+        "_resolve_target",
+        "cockpit diff must work in any git repo, registered or not — "
+        "routing it through close.py::_resolve_target would require a "
+        "configured repo.",
+    ),
+    (
+        COCKPIT_ROOT / "orchestrators" / "cycle.py",
+        "is_collapsed",
+        "Both trailing folds are born collapsed at create time only; "
+        'reading is_collapsed back to "correct" a fold the user '
+        "deliberately expanded would slam it shut on the next cycle.",
+    ),
+)
 
 
-@pytest.mark.covers("tui.signals.no-signal-signal")
-def test_app_never_calls_signal_signal() -> None:
-    """`signal.signal` raises off the main thread; the TUI registers every
-    handler through `loop.add_signal_handler` instead (see `app.py`'s own
-    module docstring). `signal.SIGUSR1` etc. as bare attribute references are
-    fine and expected — only the *call* `signal.signal(...)` is banned."""
-    tree = _parse(COCKPIT_ROOT / "tui" / "app.py")
-    assert "signal.signal" not in _dotted_calls(tree)
+def _files_for(target: Path) -> list[Path]:
+    return [target] if target.is_file() else _iter_python_files(target)
+
+
+@pytest.mark.covers("**Never** `signal.signal` — it raises off the main thread.")
+@pytest.mark.covers("**Do not** re-add a row key that pipes into `cmux diff`")
+@pytest.mark.covers(
+    "**Do not** promote it to a cache cell, a config field, or anything"
+)
+@pytest.mark.covers("**never** per-tick `redirect_stdout` (the threads race).")
+@pytest.mark.covers(
+    "**Do not** answer a missing link by resolving one in `worktree_table.py`."
+)
+@pytest.mark.covers("**Do not** call `narrow_repos` for a marker either")
+@pytest.mark.covers("**Do not** route it through `close.py::_resolve_target`")
+@pytest.mark.covers('**do not** read `is_collapsed` back to "correct" a fold.')
+@pytest.mark.parametrize("target,needle,why", _BANNED_SUBSTRING_CASES)
+def test_banned_substring_absent(target: Path, needle: str, why: str) -> None:
+    offenders = [
+        str(path.relative_to(REPO_ROOT))
+        for path in _files_for(target)
+        if needle in path.read_text()
+    ]
+    assert not offenders, f"{why}\nfound {needle!r} in: {offenders}"
 
 
 # ── cache.renderer.never-reads-source-state ──────────────────────────────
 
 
-@pytest.mark.covers("cache.renderer.never-reads-source-state")
+@pytest.mark.covers("**Never** let a renderer read source state directly.")
 def test_starship_is_a_strict_cache_reader() -> None:
     """starship's field printers are read-only: the daemon owns every cell,
     so a renderer that shells out itself would race the writer and could
@@ -215,63 +310,10 @@ def test_starship_is_a_strict_cache_reader() -> None:
     assert not leaked, f"starship.py reaches into git.py's I/O surface: {leaked}"
 
 
-# ── tui.diff-key.not-reintroduced ────────────────────────────────────────
-
-
-@pytest.mark.covers("tui.diff-key.not-reintroduced")
-def test_no_tui_module_references_render_diff() -> None:
-    """`render_diff` has exactly one caller, `cockpit/diff.py` — the TUI's
-    own `d` key was removed because the daemon's process can't be the one
-    that runs `cmux diff` (stale source/target surface, see AGENTS.md).
-    A second caller under `cockpit/tui/` would reopen that bug."""
-    offenders = [
-        str(path.relative_to(REPO_ROOT))
-        for path in _iter_python_files(COCKPIT_ROOT / "tui")
-        if "render_diff" in _referenced_names(_parse(path))
-    ]
-    assert not offenders, f"render_diff referenced under cockpit/tui/: {offenders}"
-
-
-# ── prompts.plan-gate.never-daemon-read ──────────────────────────────────
-
-
-@pytest.mark.covers("prompts.plan-gate.never-daemon-read")
-def test_no_python_source_names_plan_md() -> None:
-    """`plan.md` is a session-written artifact the daemon must never depend
-    on — no tick, renderer or teardown may read or even name it, since a
-    session might not have written one. Only the prompt templates that tell a
-    session to write it may say its name, and those are `.txt`, so no `.py`
-    file under `cockpit/` may contain the string at all."""
-    offenders = [
-        str(path.relative_to(REPO_ROOT))
-        for path in _iter_python_files(COCKPIT_ROOT)
-        if "plan.md" in path.read_text()
-    ]
-    assert not offenders, f"plan.md named in Python source: {offenders}"
-
-
-# ── stdout.queue-writer.no-per-tick-redirect ─────────────────────────────
-
-
-@pytest.mark.covers("stdout.queue-writer.no-per-tick-redirect")
-def test_redirect_stdout_appears_nowhere_under_cockpit() -> None:
-    """One process-wide `_QueueWriter` captures stdout; per-tick
-    `redirect_stdout` would let the slow and fast tick threads race on the
-    global stream. AST-based rather than grep so `app.py`'s own docstring
-    explaining this (which names `redirect_stdout` in prose) doesn't count —
-    a string inside a docstring is never a `Name`/`Attribute`/import."""
-    offenders = [
-        str(path.relative_to(REPO_ROOT))
-        for path in _iter_python_files(COCKPIT_ROOT)
-        if "redirect_stdout" in _referenced_names(_parse(path))
-    ]
-    assert not offenders, f"redirect_stdout referenced under cockpit/: {offenders}"
-
-
 # ── slack.no-mcp-preflight ────────────────────────────────────────────────
 
 
-@pytest.mark.covers("slack.no-mcp-preflight")
+@pytest.mark.covers("**Never** add a `claude mcp list` pre-flight gate")
 def test_no_source_shells_out_to_claude_mcp_list() -> None:
     """`claude mcp list` health-checks by connecting, which false-negatives
     on an async-handshaking managed connector — the exact setup this feature
@@ -288,81 +330,30 @@ def test_no_source_shells_out_to_claude_mcp_list() -> None:
     assert not offenders, f"shells out to claude mcp list: {offenders}"
 
 
-# ── table.ticket-link.no-renderer-resolve ────────────────────────────────
-
-
-@pytest.mark.covers("table.ticket-link.no-renderer-resolve")
-def test_worktree_table_never_calls_ticket_url() -> None:
-    """The ticket link is read from the daemon-cached `url` field
-    (`cycle._stamp_ticket_urls`); a renderer resolving its own is the thing
-    that rule exists to prevent. Checked as a *call* rather than a general
-    reference: the file has a same-named local variable
-    (`ticket_url = strip_control(_ticket_link(payload))`), which must not
-    trip this."""
-    tree = _parse(COCKPIT_ROOT / "tui" / "widgets" / "worktree_table.py")
-    assert "ticket_url" not in _called_names(tree)
-
-
-# ── ticket-inbox.screen.no-narrow-repos-for-marker ───────────────────────
-
-
-@pytest.mark.covers("ticket-inbox.screen.no-narrow-repos-for-marker")
-def test_tickets_screen_never_references_narrow_repos() -> None:
-    """`narrow_repos` is the paid tiebreak fetch; the inbox screen's `?`/`!`
-    markers are stage-one-only predictions computed by `app._ticket_routes`
-    and handed in, so opening the modal must reach no network however many
-    tickets it holds. Calling `narrow_repos` from the screen would pay that
-    fetch on every repaint."""
-    tree = _parse(COCKPIT_ROOT / "tui" / "widgets" / "tickets_screen.py")
-    assert "narrow_repos" not in _referenced_names(tree)
-
-
-# ── diff.resolution.no-configured-repo-required ──────────────────────────
-
-
-@pytest.mark.covers("diff.resolution.no-configured-repo-required")
-def test_diff_py_imports_neither_load_config_nor_resolve_target() -> None:
-    """`cockpit diff` resolves purely from cwd via `git.worktree_root` and
-    must work in any git repo, registered or not — routing it through
-    `close.py::_resolve_target` (which requires a configured repo) or
-    reading config directly would break that for an unregistered repo."""
-    referenced = _referenced_names(_parse(COCKPIT_ROOT / "diff.py"))
-    assert "load_config" not in referenced
-    assert "_resolve_target" not in referenced
-
-
 # ── events.cursor-file.not-cache-cell ─────────────────────────────────────
 
 
-@pytest.mark.covers("events.cursor-file.not-cache-cell")
+@pytest.mark.covers(
+    "**Do not** grow it into stored inventory or route it through `cache.py`."
+)
 def test_events_py_never_imports_cache_module() -> None:
     """The `cmux events` resume cursor is cmux's own bookmark, not cockpit
     inventory — it must never be routed through `lib.cache`'s flat-cell
     machinery. `cockpit.lib.config` (a different module, `CACHE_DIR` the
-    constant) is imported here and is not what this bans."""
+    constant) is imported here and is not what this bans. Kept AST rather
+    than a substring: `events.py` says "cache" repeatedly in prose (a cached
+    payload, a cache cell, `CACHE_DIR`) with no single safe needle that
+    catches every import spelling of `cockpit.lib.cache` without also
+    matching that prose."""
     tree = _parse(COCKPIT_ROOT / "lib" / "events.py")
     paths = _imported_module_paths(tree)
     assert not any(p == "cockpit.lib.cache" or p.endswith(".cache") for p in paths)
 
 
-# ── folds.collapse.no-read-back ──────────────────────────────────────────
-
-
-@pytest.mark.covers("folds.collapse.no-read-back")
-def test_cycle_py_never_reads_is_collapsed() -> None:
-    """Both trailing folds are born collapsed at create time only; reading
-    `is_collapsed` back to "correct" a fold the user deliberately expanded
-    would slam it shut on the next cycle. cmux's own field name
-    (`is_collapsed: false`) appears only in a comment describing cmux's API,
-    never as code here."""
-    tree = _parse(COCKPIT_ROOT / "orchestrators" / "cycle.py")
-    assert "is_collapsed" not in _referenced_names(tree)
-
-
 # ── config.atomic-write.no-reinline ──────────────────────────────────────
 
 
-@pytest.mark.covers("config.atomic-write.no-reinline")
+@pytest.mark.covers("**do not** re-inline the write at a `config.py` call site")
 def test_atomic_write_text_is_the_only_temp_then_replace_writer() -> None:
     """`config.py::_atomic_write_text` is the one place that performs a
     literal `os.replace(tmp, path)` — every other atomic write (including
@@ -418,7 +409,9 @@ def _session_cell_writes(tree: ast.AST) -> set[str]:
     return stems
 
 
-@pytest.mark.covers("cache.session-cells.daemon-never-writes")
+@pytest.mark.covers(
+    "**Do not** extend this exception to a new cell — the daemon must never *write* one."
+)
 def test_daemon_never_writes_a_session_scoped_cell() -> None:
     """Session cells are written exactly once, from `claude.py::
     stash_from_stdin` off the statusLine hook — the daemon has no visibility
@@ -439,7 +432,9 @@ def test_daemon_never_writes_a_session_scoped_cell() -> None:
 # ── rowaction.z-full-cycle.no-move-to-fast-tick ──────────────────────────
 
 
-@pytest.mark.covers("rowaction.z-full-cycle.no-move-to-fast-tick")
+@pytest.mark.covers(
+    '**Do not** move the pass to the fast tick, whose network-free inputs would read absent payloads as "no reviews left".'
+)
 def test_fast_tick_never_reaches_reconcile_review_groups() -> None:
     """`_reconcile_review_groups` needs `folds`, which is only built when
     `cycle_all` runs unscoped (`only_repo is None`) — the fast tick never
@@ -458,7 +453,7 @@ def test_fast_tick_never_reaches_reconcile_review_groups() -> None:
 # ── update-stale.mechanism.no-local-rebase ────────────────────────────────
 
 
-@pytest.mark.covers("update-stale.mechanism.no-local-rebase")
+@pytest.mark.covers("**Do not** replace this with a local rebase.")
 def test_update_stale_branches_never_shells_a_local_rebase_or_force_push() -> None:
     """`cycle.py::_update_stale_branches` brings a PR's head up to date via
     GitHub's server-side `updatePullRequestBranch` mutation, never a local

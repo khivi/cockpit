@@ -116,7 +116,9 @@ def test_status_text_adds_the_fast_countdown_when_the_fast_tick_is_on():
     assert f"{FAST_GLYPH} 0:20" in status_text(65, 20)
 
 
-@pytest.mark.covers("header.tick-glyphs.tooltip-spells-out-every-glyph")
+@pytest.mark.covers(
+    "**Do not** put a glyph in the bar that the tooltip doesn't spell out."
+)
 def test_the_tooltip_is_the_legend_for_the_two_tick_glyphs():
     # The bar names each tick by glyph alone, so the tooltip is the only place
     # the mapping is spelled out. Drop a glyph from the prose and the counters
@@ -146,7 +148,9 @@ def test_brand_text_degrades_to_the_bare_name_with_no_version():
     assert brand_text("", "").plain == "cockpit"
 
 
-@pytest.mark.covers("header.brand.url-as-argument")
+@pytest.mark.covers(
+    '**Do not** import the URL into the widget, and **do not** answer "the bar is busy" by moving the version into the menu.'
+)
 def test_brand_text_links_to_the_release_notes():
     linked = brand_text("9.9.9", "https://example.test/releases")
     assert any(
@@ -317,7 +321,7 @@ async def test_brand_half_repaints_when_the_version_arrives():
 
 
 @pytest.mark.asyncio
-@pytest.mark.covers("header.bar.countdowns-anchored-right")
+@pytest.mark.covers("`#header-repo` owns the one `1fr` slot")
 async def test_the_countdowns_do_not_move_when_the_cursor_changes_repo():
     # The anchoring invariant: the repo is the only segment whose width changes
     # while the app runs, so it owns the flexible slot and everything right of

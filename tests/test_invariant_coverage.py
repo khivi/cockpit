@@ -2,44 +2,38 @@
 open: it checks that a rule's backticked names still resolve, not that any test
 guards the rule.
 
-`tests/invariant_ids.py` registers the ids; a test claims one with a `covers`
-marker. Each test below states what it fails on and why.
+A test claims a rule by quoting it: `@pytest.mark.covers("<phrase from the
+rule>")`. `rg 'covers\\(' tests/` is then the whole map, test -> rule, with no
+second file to open. This module is the one thing that keeps the quote honest.
 """
 
 from __future__ import annotations
 
 import ast
-import warnings
 from collections import defaultdict
 from pathlib import Path
 
 import pytest
 
-from tests.invariant_ids import INVARIANTS, JUDGMENT_ONLY
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
 
 
-def _covers_calls(tree: ast.AST) -> list[ast.Call]:
-    """Every `....mark.covers(...)` call, decorator or `pytestmark` list alike."""
-    return [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "covers"
-        and isinstance(node.func.value, ast.Attribute)
-        and node.func.value.attr == "mark"
-    ]
-
-
 def _claimed() -> dict[str, list[str]]:
-    """Every id claimed by a `covers()` marker, mapped to `path:line` sites."""
+    """Every phrase claimed by a `covers()` marker, mapped to `path:line`
+    sites. Decorator and `pytestmark` list forms alike — both are a Call."""
     out: dict[str, list[str]] = defaultdict(list)
     for path in sorted(TESTS_DIR.rglob("test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for call in _covers_calls(tree):
+        for call in ast.walk(tree):
+            if not (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "covers"
+                and isinstance(call.func.value, ast.Attribute)
+                and call.func.value.attr == "mark"
+            ):
+                continue
             where = f"{path.relative_to(REPO_ROOT)}:{call.lineno}"
             for arg in call.args:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
@@ -49,56 +43,14 @@ def _claimed() -> dict[str, list[str]]:
     return dict(out)
 
 
-def test_every_covers_marker_names_a_registered_id():
-    """The rot direction that fails loud: a marker outliving its rule — the
-    half of the link a reader would never re-derive."""
-    unknown = {r: sites for r, sites in _claimed().items() if r not in INVARIANTS}
-    assert not unknown, f"covers() ids missing from tests/invariant_ids.py: {unknown}"
-
-
-def test_every_registered_id_names_a_findable_rule():
-    """The registry is the only route from an id back to its rule, so the
-    phrase must still appear in AGENTS.md verbatim, or the two drift silently
-    and the id stops meaning anything.
-
-    It is also the only thing that notices a rule being DELETED. A registry
-    outlives the prose it names: without this, a removed rule would keep its
-    entry and its tests would stay green, guarding something gone.
+def test_every_covers_marker_quotes_a_live_rule():
+    """The only way this rots: a rule is reworded or deleted while the test
+    claiming it stays green, guarding something that no longer says what the
+    marker says it says. The phrase must still appear in AGENTS.md verbatim.
     """
     agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    lost = sorted(r for r, phrase in INVARIANTS.items() if phrase not in agents)
-    assert not lost, (
-        "registered ids whose AGENTS.md phrase no longer appears — the rule was "
-        f"reworded or deleted: {lost}"
+    stale = {p: sites for p, sites in _claimed().items() if p not in agents}
+    assert not stale, (
+        "covers() phrases that have left AGENTS.md — each rule was reworded or "
+        f"deleted, so re-quote it or drop the marker: {stale}"
     )
-
-
-def test_no_two_ids_share_a_phrase():
-    """Two ids on one phrase are two names for one rule, and the gap list then
-    reports the same rule twice — or reports it uncovered while its twin is
-    marked covered. It happens where a rule packs two clauses into one
-    sentence, or where the same bullet is read from either side.
-    """
-    by_phrase: dict[str, list[str]] = defaultdict(list)
-    for rule_id, phrase in INVARIANTS.items():
-        by_phrase[phrase].append(rule_id)
-    shared = {p: ids for p, ids in by_phrase.items() if len(ids) > 1}
-    assert not shared, f"one phrase, several ids — split the rule or merge: {shared}"
-
-
-def test_judgment_only_ids_are_registered_and_unclaimed():
-    """The waiver list must stay honest: every entry a real id, none of them
-    also carrying a test that would have made the waiver unnecessary."""
-    assert not (JUDGMENT_ONLY - set(INVARIANTS)), "waiver names an unregistered id"
-    assert not (JUDGMENT_ONLY & set(_claimed())), "waived rule has a test"
-
-
-def test_report_uncovered_rules():
-    """Report-only: an unregistered rule must not break an unrelated run."""
-    uncovered = sorted(set(INVARIANTS) - set(_claimed()) - JUDGMENT_ONLY)
-    if uncovered:
-        listing = "\n".join(f"  {r}  ({INVARIANTS[r]})" for r in uncovered)
-        warnings.warn(
-            f"{len(uncovered)} registered invariant(s) with no covers() marker:\n{listing}",
-            stacklevel=1,
-        )

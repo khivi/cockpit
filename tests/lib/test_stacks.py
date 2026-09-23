@@ -140,7 +140,7 @@ def test_stack_order_heads_the_chain_with_its_tip():
     assert order == [("khivi/b", 0), ("khivi/a", 1)]
 
 
-@pytest.mark.covers("stacks.tui-nesting.one-level-only")
+@pytest.mark.covers("— **do not** restore the per-level cascade.")
 def test_stack_order_never_nests_deeper_than_one_level():
     # Four PRs stepping right four times is unreadable: the tip heads the group
     # and the three it is stacked on all sit at the same single indent.

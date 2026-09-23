@@ -2132,7 +2132,7 @@ def test_apply_org_defaults_scalar_still_wins_whole():
     assert cfg["repos"][0]["use_worktree"] is False
 
 
-@pytest.mark.covers("orgs.merge.one-level-deep")
+@pytest.mark.covers("**Do not** make it recursive.")
 def test_apply_org_defaults_does_not_descend_into_a_nested_dict():
     cfg: dict = {
         "repos": [
@@ -2183,7 +2183,9 @@ def test_apply_org_defaults_tolerates_missing_and_malformed_orgs():
     assert config_mod.apply_org_defaults({"repos": [{"name": "a", "org": "x"}]})
 
 
-@pytest.mark.covers("orgs.merge.never-persisted")
+@pytest.mark.covers(
+    "**Never persisted** — the config writers re-read `config.json` from disk."
+)
 def test_load_config_merges_org_defaults(tmp_path, monkeypatch):
     path = tmp_path / "config.json"
     path.write_text(json.dumps(_acme_cfg()))
@@ -2344,7 +2346,7 @@ def test_credential_env_names_tolerates_a_malformed_config():
     assert "LINEAR_API_KEY" in names
 
 
-@pytest.mark.covers("config.atomic-write.pid-scoped-suffix")
+@pytest.mark.covers("**Do not** go back to a fixed suffix")
 def test_atomic_write_uses_a_pid_scoped_temp(tmp_path, monkeypatch):
     """A fixed `<name>.tmp` is shared scratch. Several cockpit processes write
     these files concurrently (daemon, `cockpit close`, a detached `cockpit

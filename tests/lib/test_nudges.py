@@ -114,7 +114,7 @@ def test_list_prefs_keys_by_stem_and_skips_garbage_files(nudges, tmp_path):
     assert set(prefs.keys()) == {"acme__1", "acme__2"}
 
 
-@pytest.mark.covers("nudge-prefs.key.requires-repo")
+@pytest.mark.covers("**Do not** add a call site that invents a key without a repo")
 def test_delete_pref_only_touches_its_own_repos_file(nudges):
     # The whole point of the per-repo key: same number, two repos, two files.
     nudges.save_pref(K(nudges, 10), nudges.NudgePref(muted=True))
@@ -296,7 +296,7 @@ def test_wake_signature_changes_with_comments_or_decision(nudges):
     assert nudges.wake_signature(0, "APPROVED") != base
 
 
-@pytest.mark.covers("nudge.wake-signature.excludes-head-oid")
+@pytest.mark.covers("**Do not** fold `head_oid` into `wake_signature`")
 def test_wake_signature_is_blind_to_a_push_head_oid_change(nudges):
     # This signature backs the *review-activity* wake arm in
     # `cycle._resolve_prefs`, shared by a PR that is mine and one I'm
@@ -317,7 +317,7 @@ def test_wake_signature_is_blind_to_a_push_head_oid_change(nudges):
     assert nudges.wake_signature(2, "CHANGES_REQUESTED") != base
 
 
-@pytest.mark.covers("nudge.snooze.no-time-based-until")
+@pytest.mark.covers("**Do not** give the snooze a time-based `until`.")
 def test_snooze_does_not_expire_on_the_clock(nudges):
     # `until` is the mute's expiry; a snooze waits on an event, so a far-past
     # `until` must not silently wake it (only the daemon's signature check does).

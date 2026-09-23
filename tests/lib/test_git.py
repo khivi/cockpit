@@ -195,7 +195,9 @@ def test_tag_workspace_name_prefixes_the_tag():
     )
 
 
-@pytest.mark.covers("sidebar-tag.separator.last-char")
+@pytest.mark.covers(
+    "**A tag ending in a non-alphanumeric takes a space, not `SIDEBAR_TAG_SEP`.**"
+)
 def test_an_emoji_tag_takes_a_space_not_the_separator():
     """`🎛️·dot` reads as a bare leading dot, because the sidebar renders the
     glyph as an icon rather than as a run of text for the separator to part."""
@@ -203,7 +205,9 @@ def test_an_emoji_tag_takes_a_space_not_the_separator():
     assert tag_workspace_name("stale", "🏢") == "🏢 stale"
 
 
-@pytest.mark.covers("sidebar-tag.separator.last-char")
+@pytest.mark.covers(
+    "**A tag ending in a non-alphanumeric takes a space, not `SIDEBAR_TAG_SEP`.**"
+)
 def test_a_tag_ending_in_text_keeps_the_separator():
     """The `{repo}`-expanded form ends in the repo name, so it stays parted —
     dropping the separator there would run two words together."""
@@ -218,7 +222,9 @@ def test_tag_workspace_name_leaves_an_empty_name_alone():
     assert tag_workspace_name("", "infra") == ""
 
 
-@pytest.mark.covers("sidebar-tag.token.resolved-string-only")
+@pytest.mark.covers(
+    "**Do not** teach `tag_workspace_name` about it; it takes a resolved string"
+)
 def test_tag_workspace_name_does_not_expand_the_repo_token():
     """`{repo}` is expanded exactly once, at load time, by
     `config.expand_sidebar_tags` — never by `tag_workspace_name` itself. This
@@ -1062,7 +1068,7 @@ def test_worktree_age_seconds_never_negative(tmp_path):
     assert worktree_age_seconds(wt, now=0) == 0.0
 
 
-@pytest.mark.covers("spawn.adopt-grace.fails-open")
+@pytest.mark.covers("**do not** invert that test")
 def test_worktree_age_seconds_missing_path_fails_open(tmp_path):
     """An un-stat-able path returns inf so the orphan nudge isn't silently muted."""
     assert worktree_age_seconds(tmp_path / "nope") == float("inf")

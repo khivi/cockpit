@@ -2,8 +2,8 @@
 
 ## Open
 
-- **A generated `SPEC.md`** — `tests/invariant_ids.py` plus the `covers()` markers is
-  a traceability matrix in all but presentation. Generate it, never hand-write it.
+- **A generated `SPEC.md`** — the `covers()` markers, each quoting a verbatim AGENTS.md
+  rule, are a traceability matrix in all but presentation. Generate it, never hand-write it.
 
 - **Per-row context headroom** (branch `khivi/stale` on origin, no local worktree,
   nothing committed) — show, per table row, how close that agent is to needing a
