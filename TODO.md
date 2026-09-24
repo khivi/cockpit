@@ -48,6 +48,51 @@
     edit stays a one-file diff, and it fails as a report rather than a merge block — so a
     blind update costs a stale line, not a false verification.
 
+- **An AGENTS.md rule with no bullet behind it** — nothing checks that a documented
+  invariant is a *tested* one. The gate is three tests, all bullet ↔ marker; `/spec-audit`
+  is bullet ↔ test; neither reads AGENTS.md. A **Never** can sit there fully documented,
+  fully believed and entirely untested, and nothing anywhere goes red. The ledger was grown
+  from AGENTS.md by hand, so today's coverage is whatever that one pass happened to catch,
+  and nothing ratchets a *newly added* rule into having a bullet.
+  - **Not a textual alignment check**, which is the obvious build and the wrong one.
+    AGENTS.md states the scar and its **Never**; the bullet states the observable behavior
+    the scar protects. They are different altitudes and deliberately never quote each other,
+    so rewording either breaks nothing — that independence is a feature, and a check that
+    forced them to agree would collapse one into the other. `test_comment_references.py`
+    already covers the only thing that *should* be shared: that a backticked name in either
+    still resolves.
+  - **The checkable direction is coverage, not agreement**: count the `**Never**` /
+    `**Do not**` lines per AGENTS.md section against the bullets in the matching `specs/`
+    file, and flag sections sitting at zero.
+  - **Advisory, never a gate.** The section→file mapping is not 1:1, and some rules are
+    genuinely unassertable — which is what `(untested: …)` exists for. Gate it and the
+    cheapest way green is a waiver per flagged rule, manufacturing exactly the false
+    assurance the ledger is for. A report can be read and argued with; a block gets
+    satisfied.
+  - If built, it is a sibling script under the `spec-audit` skill (`scope.py`'s neighbour),
+    not a mode of the audit itself — it answers a different question and needs none of the
+    bullet↔test pairing.
+
+- **Twelve findings from the first full-ledger audit, unfixed** — 19 findings over 127
+  auditable bullets; the 7 whose missing half was already proven by an untagged sibling are
+  closed (see `docs/specs.md`), leaving the ones that need a real new assertion. Each is a
+  bullet whose claiming test proves less than the bullet says, so the gate is green and the
+  claim is not held up.
+  - **1 mismatch** — `ask.line~1`: the bullet's given is "pending diff comments", but the
+    test builds a bare `AskScreen()` and never goes through `action_ask_row`. Vacuous
+    against the regression it guards: re-couple comments into `AskScreen` and a bare one
+    still opens empty. Needs an app-level test pressing `a` with comments seeded.
+  - **The widest** — `cache.session-cells~1`: the AST ban scans `cockpit.py` +
+    `orchestrators/*.py`, but AGENTS.md says the TUI *is* the daemon, so `cockpit/tui/`
+    — the largest part of it — is unscanned. No violation today; the hole is latent.
+  - **The rest** — `stacks.header~1`, `suite.isolation~1` (nothing proves `real_backend`
+    actually opts a test out of the no-live-backend guard), `spawn.coworker-pr~1`,
+    `cache.no-worktree-no-cells~1`, `table.links~1`, `globalkeys.sync~1`,
+    `stdout.queue-writer~1`, `orphan.no-nudge~1`, `nudge-cli.split-chain~1`,
+    `teardown.unlanded~1`.
+  - **Do not** close any of these by rewording its bullet down to what the test asserts,
+    or by waiving it — under-asserted is not unassertable.
+
 ## Closed unbuilt
 
 - **A generated `SPEC.md`** — rejected. The `covers()` markers now claim hand-owned

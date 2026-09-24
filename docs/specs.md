@@ -88,7 +88,7 @@ truer.
 
 ## The failure mode to expect
 
-A full-ledger audit found **1 mismatch and 19 partials over 127 bullets**, and
+A full-ledger audit found **1 mismatch and 18 partials over 127 bullets**, and
 the partials were overwhelmingly one shape: *the marker sits on the first test
 that proves* a *half of the bullet, while a sibling test proving the other half
 sits unmarked a few hundred lines away.*
