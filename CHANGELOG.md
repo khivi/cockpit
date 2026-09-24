@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.8.0](https://github.com/khivi/cockpit/compare/v3.7.0...v3.8.0) (2026-09-24)
+
+
+### Features
+
+* **diff:** open the viewer as a tab and retire it on --ack ([#535](https://github.com/khivi/cockpit/issues/535)) ([03d389e](https://github.com/khivi/cockpit/commit/03d389e6821d9b95fdb36692c8a78ee0ea6ccc55))
+
 ## [3.7.0](https://github.com/khivi/cockpit/compare/v3.6.1...v3.7.0) (2026-09-23)
 
 
