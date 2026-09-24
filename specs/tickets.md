@@ -1,9 +1,5 @@
 # Tickets — behavior spec
 
-Every bullet is one invariant a test claims by id (`@pytest.mark.covers("<id~rev>")`);
-`(untested: …)` waives a bullet no test can assert. AGENTS.md holds the mechanism
-and the rationale behind each rule.
-
 ## Schema and providers
 
 - [tickets.fields~1] `dev_done` and `merge_done` validate on Linear, Jira and

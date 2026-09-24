@@ -1,9 +1,5 @@
 # GitHub — behavior spec
 
-Every bullet is one invariant a test claims by id (`@pytest.mark.covers("<id~rev>")`);
-`(untested: …)` waives a bullet no test can assert. AGENTS.md holds the mechanism
-and the rationale behind each rule.
-
 ## PR identity
 
 - [gh.pr-rank~1] Given a branch carrying an OPEN PR and a newer, higher-numbered

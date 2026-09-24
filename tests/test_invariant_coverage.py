@@ -112,7 +112,7 @@ def test_every_unwaived_bullet_is_claimed_by_a_test():
     """The enforcement direction: editing the spec is how you demand a test.
     Add a bullet and this fails until a test claims it."""
     revs, waived = _spec_bullets()
-    claimed_ids = {claim.rsplit("~", 1)[0] for claim in _claimed()}
+    claimed_ids = {m.group(1) for claim in _claimed() if (m := _MARKER_RE.match(claim))}
     gaps = sorted(set(revs) - waived - claimed_ids)
     assert not gaps, (
         "spec bullets no test claims — write the test, or waive the bullet "

@@ -30,15 +30,11 @@ ZIZMOR_YML = REPO_ROOT / ".github" / "zizmor.yml"
 _STRIPS_CREDENTIALS = re.compile(r"""persist-credentials:\s*["']?false["']?""")
 
 
-def _text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
 @pytest.mark.covers("release.tag-yml~1")
 def test_tag_yml_checkout_does_not_strip_credentials() -> None:
     """tag.yml may not set `persist-credentials: false` at all — that token is
     what authenticates the tag push two steps later."""
-    body = _text(TAG_YML)
+    body = TAG_YML.read_text(encoding="utf-8")
     assert "actions/checkout" in body, "tag.yml has no checkout step to guard"
     assert not _STRIPS_CREDENTIALS.search(body), (
         "tag.yml sets persist-credentials: false — the tag push loses its "
@@ -53,7 +49,9 @@ def test_tag_yml_keeps_its_artipacked_exemption() -> None:
     reports tag.yml, pushing someone to "fix" it the forbidden way."""
     # Bounded at the next rule key (two spaces, then non-space) so a tag.yml
     # exemption under a *different* rule cannot satisfy this.
-    section = re.search(r"artipacked:.*?(?=\n  \S|\Z)", _text(ZIZMOR_YML), re.S)
+    section = re.search(
+        r"artipacked:.*?(?=\n  \S|\Z)", ZIZMOR_YML.read_text(encoding="utf-8"), re.S
+    )
     assert section, "zizmor.yml has no artipacked ignore list"
     assert (
         "- tag.yml" in section.group()

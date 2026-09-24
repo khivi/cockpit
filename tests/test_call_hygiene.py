@@ -29,10 +29,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 COCKPIT_ROOT = REPO_ROOT / "cockpit"
 
 
-def _iter_python_files(root: Path) -> list[Path]:
-    return sorted(root.rglob("*.py"))
-
-
 def _parse(path: Path) -> ast.Module:
     return ast.parse(path.read_text(), filename=str(path))
 
@@ -259,7 +255,7 @@ _BANNED_SUBSTRING_CASES: tuple[tuple[Path, str, str], ...] = (
 
 
 def _files_for(target: Path) -> list[Path]:
-    return [target] if target.is_file() else _iter_python_files(target)
+    return [target] if target.is_file() else sorted(target.rglob("*.py"))
 
 
 @pytest.mark.covers("tui.signals~1")
@@ -319,7 +315,7 @@ def test_no_source_shells_out_to_claude_mcp_list() -> None:
     covers only the Linear spawn path at runtime; this is the tree-wide,
     every-provider half."""
     offenders: list[str] = []
-    for path in _iter_python_files(COCKPIT_ROOT):
+    for path in sorted(COCKPIT_ROOT.rglob("*.py")):
         for phrase in _call_argument_phrases(_parse(path)):
             if "claude mcp list" in phrase:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {phrase!r}")
@@ -356,7 +352,7 @@ def test_atomic_write_text_is_the_only_temp_then_replace_writer() -> None:
     checks the exact dotted call rather than the general write shape."""
     config_path = COCKPIT_ROOT / "lib" / "config.py"
     offenders: list[str] = []
-    for path in _iter_python_files(COCKPIT_ROOT):
+    for path in sorted(COCKPIT_ROOT.rglob("*.py")):
         tree = _parse(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):

@@ -1,9 +1,5 @@
 # Sidebar — behavior spec
 
-Every bullet is one invariant a test claims by id (`@pytest.mark.covers("<id~rev>")`);
-`(untested: …)` waives a bullet no test can assert. AGENTS.md holds the mechanism
-and the rationale behind each rule.
-
 ## Trailing folds
 
 - [folds.anchor~1] A fold is re-anchored onto a workspace that owns a live

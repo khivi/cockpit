@@ -1,9 +1,5 @@
 # Docs, dev, release and the suite — behavior spec
 
-Every bullet is one invariant a test claims by id (`@pytest.mark.covers("<id~rev>")`);
-`(untested: …)` waives a bullet no test can assert. AGENTS.md holds the mechanism
-and the rationale behind each rule.
-
 ## Docs
 
 - [docs.never-lines~1] (untested: process rule) The **Never** / **Do not**

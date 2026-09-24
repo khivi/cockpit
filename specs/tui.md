@@ -1,9 +1,5 @@
 # TUI — behavior spec
 
-Every bullet is one invariant a test claims by id (`@pytest.mark.covers("<id~rev>")`);
-`(untested: …)` waives a bullet no test can assert. AGENTS.md holds the mechanism
-and the rationale behind each rule.
-
 ## Table
 
 - [table.links~1] A `link` span comes out of a rendered DataTable line as a
