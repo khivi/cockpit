@@ -2417,6 +2417,7 @@ def test_spawn_missing_orphan_spawns_when_clash_cwd_missing(tmp_path):
     assert orphan.call_args.args[0] is ctx.wts[0]
 
 
+@pytest.mark.covers("spawn.adopt-grace~1")
 def test_spawn_missing_orphan_skips_worktree_still_settling(tmp_path, capsys):
     """The `cockpit new` race: that command creates the worktree, then creates
     its workspace as a separate step, so a poll landing between the two sees a
@@ -2459,6 +2460,7 @@ def test_spawn_missing_orphan_spawns_once_grace_elapsed(tmp_path):
     orphan.assert_called_once()
 
 
+@pytest.mark.covers("spawn.adopt-grace~1")
 def test_spawn_missing_pr_match_skips_worktree_still_settling(tmp_path):
     """`cockpit new --pr` races the same way — the worktree matches an open PR
     before its workspace exists, so the matched-PR path would spawn the duplicate
@@ -5083,6 +5085,7 @@ def test_reconcile_review_groups_keeps_orgs_in_separate_folds(tmp_path):
     ]
 
 
+@pytest.mark.covers("folds.born-collapsed~1")
 def test_reconcile_review_groups_folds_a_lone_review(tmp_path):
     # The dedicated anchor means one member is a real group (cmux only drops a
     # group whose *anchor* is its last workspace), so the queue reads the same
@@ -5587,6 +5590,7 @@ def test_a_snoozed_chain_folds_with_the_rest_of_the_pile(tmp_path):
     assert moved == ["wg:reviews", "wg:snoozed"]
 
 
+@pytest.mark.covers("folds.born-collapsed~1")
 def test_reconcile_review_groups_folds_a_lone_snooze(tmp_path):
     # Like a lone review: the dedicated anchor makes a one-member fold real.
     ctx = _stack_ctx(

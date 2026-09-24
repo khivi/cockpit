@@ -2119,6 +2119,43 @@ def test_route_ticket_repos_is_empty_when_no_repo_declares_a_board(cockpit_repo)
     assert route_ticket_repos(_TRELLO_URL) == []
 
 
+@pytest.mark.covers("ticket-routing.no-waiver~1")
+def test_route_ticket_repos_keeps_both_board_declarers(cockpit_repo, tmp_path):
+    """No provider is waived from routing, Trello included. Its short link
+    carries no key, so `tickets.board` is the only discriminator — and with two
+    repos declaring one, the ambiguity has to survive the route rather than
+    collapse onto a single name the caller would spawn against.
+
+    Trello briefly had a waiver here, on the reasoning that its board route
+    needs a fetch spawn makes itself; that route returning nothing is exactly
+    the case that cut two worktrees off `dotfiles`."""
+    from cockpit.spawn import route_ticket_repos
+
+    _set_config_key(cockpit_repo, "tickets", "trello")
+    _set_repo_tickets(cockpit_repo, {"board": "Engineering"})
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data["repos"].append(
+        {
+            "name": "second",
+            "path": str(tmp_path / "second"),
+            "branch_prefix": "khivi/",
+            "default_base": "main",
+            "tickets": {"board": "Platform"},
+        }
+    )
+    cfg_path.write_text(json.dumps(data))
+
+    with patch("cockpit.lib.tickets.fetch_card_board", return_value=None):
+        survivors = route_ticket_repos(_TRELLO_URL)
+
+    # Both, not one: `_trello_narrow_repos` never narrows to zero, so an
+    # inconclusive fetch leaves the caller's ambiguity path to run. One name
+    # here would be a repo the spawn silently picked.
+    assert sorted(survivors) == ["second", "testrepo"]
+    assert len(survivors) != 1
+
+
 @pytest.mark.covers("tickets.routing-survivors~1")
 def test_route_ticket_repos_reports_every_survivor_of_an_ambiguity(
     cockpit_repo, tmp_path
