@@ -30,6 +30,24 @@
     dodged this (a stale total is still the total spent); a stale *headroom* reading
     is wrong.
 
+- **Detecting an unbumped `~rev`** — a spec bullet's revision is hand-declared, so a bullet
+  whose *meaning* changes without a bump leaves every claiming test silently vouching for
+  the old claim, and `tests/test_invariant_coverage.py` cannot see it: the id still
+  resolves, the revision still matches, the suite stays green. No instance found yet — the
+  one marker defect so far was an id rewrite rotating five markers inside one file, which
+  the two-directional gate caught. Reopen when a real one turns up.
+  - **Not by hashing the id.** `covers("cache.flat-cells~a3f2")` fires on every cosmetic
+    edit — bullets are hard-wrapped, so a reflow rewrites text that claims exactly what it
+    claimed before — and a trigger that mostly fires for nothing gets its markers updated
+    without the tests being re-read, which manufactures false assurance instead of leaving
+    an honest gap. It also forces a re-stamp tool, and one command that re-stamps twelve
+    markers asserts twelve re-verifications nobody performed: the move the `spec-audit`
+    skill exists to refuse.
+  - **If built**: a lockfile mapping id → hash of the normalized bullet text, checked by an
+    advisory job reporting "text changed, revision didn't". Markers stay readable, a bullet
+    edit stays a one-file diff, and it fails as a report rather than a merge block — so a
+    blind update costs a stale line, not a false verification.
+
 ## Closed unbuilt
 
 - **A generated `SPEC.md`** — rejected. The `covers()` markers now claim hand-owned
