@@ -30,6 +30,19 @@ def rendered(monkeypatch):
 
 
 @pytest.fixture
+def closed(monkeypatch):
+    """Count the `close_diff_viewers` calls, and report one tab closed."""
+    calls: list[int] = []
+
+    def fake():
+        calls.append(1)
+        return 1
+
+    monkeypatch.setattr(diff_cli, "close_diff_viewers", fake)
+    return calls
+
+
+@pytest.fixture
 def in_worktree(monkeypatch, tmp_path):
     monkeypatch.setattr(diff_cli, "worktree_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(diff_cli, "current_branch", lambda *a: "khivi/some-fix")
@@ -147,7 +160,12 @@ def test_comments_prints_without_marking_anything(
     assert not rendered, "--comments must not open a diff"
 
 
-def test_ack_marks_them_delivered(monkeypatch, in_worktree, rendered, capsys):
+def test_ack_marks_them_delivered_and_puts_the_diff_away(
+    monkeypatch, in_worktree, rendered, closed, capsys
+):
+    """Notes that have been addressed are the last thing the viewer was open
+    for, and cmux fires no event on a comment, so the ack is the only signal
+    there is."""
     monkeypatch.setattr(diff_cli, "main_worktree_path", lambda root: Path("/repo"))
     monkeypatch.setattr(
         diff_cli.diff_comments,
@@ -161,11 +179,16 @@ def test_ack_marks_them_delivered(monkeypatch, in_worktree, rendered, capsys):
 
     assert diff_cli.main(["--ack"]) == 0
     assert marked == [["c1"]]
-    assert "acked a.py:7" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "acked a.py:7" in out
+    assert "closed 1 diff tab" in out
+    assert closed == [1]
     assert not rendered
 
 
-def test_ack_with_nothing_pending_says_so(monkeypatch, in_worktree, capsys):
+def test_ack_with_nothing_pending_says_so(monkeypatch, in_worktree, closed, capsys):
+    """And closes nothing: a diff open with no notes on it is one somebody is
+    still reading."""
     monkeypatch.setattr(diff_cli, "main_worktree_path", lambda root: None)
     monkeypatch.setattr(diff_cli.diff_comments, "pending", lambda roots: [])
     marked: list = []
@@ -176,6 +199,7 @@ def test_ack_with_nothing_pending_says_so(monkeypatch, in_worktree, capsys):
     assert diff_cli.main(["--ack"]) == 0
     assert "nothing to acknowledge" in capsys.readouterr().out
     assert marked == []
+    assert closed == []
 
 
 def test_comments_and_ack_are_mutually_exclusive(in_worktree):

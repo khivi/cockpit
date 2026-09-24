@@ -12,10 +12,10 @@ which diff you got, which matters when the PR fallback fired:
 cockpit diff $ARGUMENTS
 ```
 
-The split lands beside **this** session, so run it here rather than from the
-cockpit dashboard. Resolution is entirely from the current directory and reads
-no cockpit config, so any git repo works. It writes nothing and changes no git
-state.
+The diff opens as a tab in **this** session's pane, so run it here rather than
+from the cockpit dashboard. Resolution is entirely from the current directory and
+reads no cockpit config, so any git repo works. It writes nothing and changes no
+git state.
 
 Reference (see `cockpit diff --help` for the full list):
 
@@ -43,9 +43,10 @@ Each note prints as `file:line — remark`. They are review feedback aimed at th
 session and nothing else surfaces them.
 
 **Do the work before step 3.** `--comments` marks nothing, so notes survive a
-turn that ends early; `--ack` is what says *addressed*, and it is not reversible
-— an acked note is gone from the ledger. If you cannot action one, say so and
-leave it unacked rather than acking to clear the list.
+turn that ends early; `--ack` is what says *addressed*, it closes the diff tab
+the notes were written on, and it is not reversible — an acked note is gone from
+the ledger. If you cannot action one, say so and leave it unacked rather than
+acking to clear the list.
 
 **They never reach GitHub.** These are local notes about *this* worktree, so act
 on them here — do not reply on the PR or treat them as review threads to

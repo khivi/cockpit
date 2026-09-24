@@ -16,8 +16,13 @@ Two things make this more than an alias for `cmux diff`:
     composer submits, and a cockpit workspace is a terminal running Claude's
     TUI, which has no composer, so nothing ever read them. In-workspace you
     *are* the session, so the whole review loop closes here: leave the notes in
-    the split, `--comments` to read them, address them, `--ack` to retire them.
-    The two are separate on purpose — see `_show_comments`.
+    the viewer, `--comments` to read them, address them, `--ack` to retire them
+    and put the diff away. The two are separate on purpose — see
+    `_show_comments`.
+  - **A tab, not a split.** `cmux diff` only knows how to cut a pane beside the
+    terminal it was called from; the viewer is re-homed into that terminal's own
+    pane, so a diff gets the full width and one keystroke puts it aside. See
+    `cmux._move_diff_to_caller_pane`.
 
 Everything else (`--branch`, `--staged`, `--unstaged`, `--last-turn`) is handed
 straight to cmux, which already resolves merge bases and owns the `last-turn`
@@ -41,7 +46,7 @@ from pathlib import Path
 
 from cockpit.lib import diff_comments
 from cockpit.lib.cache import find_pr_payload_for_cwd
-from cockpit.lib.cmux import render_diff
+from cockpit.lib.cmux import close_diff_viewers, render_diff
 from cockpit.lib.git import (
     branch_label,
     current_branch,
@@ -121,6 +126,11 @@ def _ack_comments(root: Path) -> int:
     ledger records *addressed*, not *displayed*. Re-running with nothing pending
     is a no-op that says so, since the honest answer to "did I already ack?" is
     worth more than a silent success.
+
+    It also puts the diff away (`close_diff_viewers`), since notes that have been
+    addressed are the last thing the viewer was open for. Only on the acking
+    path: a run with nothing pending closes nothing, because a diff open with no
+    notes on it is one somebody is still reading.
     """
     pend = _pending(root)
     if not pend:
@@ -130,6 +140,9 @@ def _ack_comments(root: Path) -> int:
     for c in pend:
         print(f"acked {c.file}:{c.line}")
     print(f"\n{len(pend)} comment(s) marked delivered.")
+    closed = close_diff_viewers()
+    if closed:
+        print(f"closed {closed} diff tab(s).")
     return 0
 
 

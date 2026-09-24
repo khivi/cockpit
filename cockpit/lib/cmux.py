@@ -122,9 +122,20 @@ OWNER_ICON = "👥"
 # Verbs that need cmux specifically — the limux fork lacks the persistent-pill,
 # workspace-action (set-color), and workspace-group APIs. Gated here so they
 # no-op on limux instead of erroring; sidebar tint and stack grouping are both
-# additive cmux-only niceties.
+# additive cmux-only niceties. `tree`, `move-surface` and `close-surface` are
+# here for a narrower reason: cockpit only ever reaches for them to re-home or
+# retire a `diff` viewer, so off cmux there is nothing for them to act on.
 _CMUX_ONLY_VERBS = frozenset(
-    {"set-status", "clear-status", "workspace-action", "workspace-group", "diff"}
+    {
+        "set-status",
+        "clear-status",
+        "workspace-action",
+        "workspace-group",
+        "diff",
+        "tree",
+        "move-surface",
+        "close-surface",
+    }
 )
 
 
@@ -531,6 +542,9 @@ def render_diff(
     not be from the daemon — `cockpit diff` is typed by the user at their own
     prompt, so the session is at rest by construction and there is no live turn
     to interrupt.
+
+    The viewer is then pulled into the caller's own pane as a **tab** rather
+    than left as the split cmux opens — see `_move_diff_to_caller_pane`.
     """
     if (patch is None) == (source is None):
         raise ValueError("render_diff needs exactly one of patch= or source=")
@@ -559,6 +573,7 @@ def render_diff(
     except (OSError, ValueError, subprocess.SubprocessError) as e:
         return f"cmux failed: {e}"
     if proc.returncode == 0:
+        _move_diff_to_caller_pane(proc.stdout or "")
         return ""
     err = proc.stderr.strip()
     # The one failure worth naming precisely: the diff viewer is a browser
@@ -566,6 +581,110 @@ def render_diff(
     if "browser_disabled" in err:
         return "diff viewer needs the cmux browser — `cmux enable-browser`"
     return f"diff failed: {err[:80]}"
+
+
+# What a diff-viewer surface's URL starts with (`cmux tree --json` reports it).
+# The viewer is an ordinary browser surface, so this scheme is the only thing
+# that tells one apart from a page the user opened — deliberately not the title,
+# which cockpit authors and would tie recognition to its own wording.
+DIFF_VIEWER_URL_PREFIX = "cmux-diff-viewer://"
+
+# `cmux diff` answers `OK surface=surface:28 pane=pane:28`.
+_DIFF_SURFACE_RE = re.compile(r"\bsurface=(\S+)")
+
+
+def _surface_tree() -> dict:
+    """cmux's window/pane/surface hierarchy with UUIDs, `{}` when unreadable.
+
+    One call rather than `cmux identify` beside it: the tree carries a `caller`
+    block of its own, so the same JSON answers both "which pane am I in" and
+    "which surfaces are open here".
+    """
+    try:
+        tree = json.loads(cmux("tree", "--json", "--id-format", "both", check=False))
+    except ValueError:
+        return {}
+    return tree if isinstance(tree, dict) else {}
+
+
+def _move_diff_to_caller_pane(diff_stdout: str) -> None:
+    """Re-home the diff cmux just opened into the caller's pane, as a tab.
+
+    `cmux diff` has no say in where it lands: it always cuts a new pane beside
+    the source surface, which halves the width of the terminal you are reading
+    the diff *for*. A diff is the widest thing a review looks at, so it wants the
+    whole pane — and as a tab it is also one keystroke from being out of the way
+    again, where a split has to be closed.
+
+    **This does not re-open the `workspace=`/`surface=` question `render_diff`
+    refuses.** Both calls resolve the *caller* — cmux's own `caller.pane_id`, the
+    pane this process is running in — so there is still nothing here for a
+    daemon-side caller to point at a row's workspace, which is the bug that
+    removed the TUI's `d` key.
+
+    Cosmetic and therefore silent: a tree that won't parse, a cmux whose `diff`
+    stops naming the surface it made, or a refused move all leave the split
+    standing, which is what this used to do unconditionally.
+    """
+    found = _DIFF_SURFACE_RE.search(diff_stdout)
+    if not found:
+        return
+    pane = (_surface_tree().get("caller") or {}).get("pane_id")
+    if not pane:
+        return
+    cmux(
+        "move-surface",
+        "--surface",
+        found.group(1),
+        "--pane",
+        pane,
+        "--focus",
+        "true",
+        check=False,
+    )
+
+
+def diff_viewer_surfaces(tree: dict, workspace_id: str) -> list[str]:
+    """The diff-viewer surface ids open in `workspace_id`, per a `tree` payload.
+
+    Takes the tree rather than fetching one, so the walk is testable without a
+    backend and the I/O stays at the one call site (`close_diff_viewers`).
+    """
+    out = []
+    for window in tree.get("windows") or []:
+        for workspace in window.get("workspaces") or []:
+            if workspace.get("id") != workspace_id:
+                continue
+            for pane in workspace.get("panes") or []:
+                for surface in pane.get("surfaces") or []:
+                    url = surface.get("url") or ""
+                    if url.startswith(DIFF_VIEWER_URL_PREFIX) and surface.get("id"):
+                        out.append(surface["id"])
+    return out
+
+
+def close_diff_viewers() -> int:
+    """Close the diff-viewer tabs in the caller's workspace. Returns how many.
+
+    The other half of the tab: `cockpit diff --ack` is the point at which the
+    notes have been addressed, so the diff they were written on has nothing left
+    to say. There is no earlier signal to use — cmux fires no event when a
+    comment is written or submitted (`comments.list` is an rpc method, and the
+    "included when you submit" composer belongs to its *agent* surfaces, not to
+    the terminal one a cockpit workspace runs).
+
+    Scoped to the caller's workspace, and closes **by UUID**: refs are renumbered
+    as surfaces close, so a second ref read before the first close can name
+    something else entirely.
+    """
+    tree = _surface_tree()
+    workspace = (tree.get("caller") or {}).get("workspace_id")
+    if not workspace:
+        return 0
+    surfaces = diff_viewer_surfaces(tree, workspace)
+    for surface in surfaces:
+        cmux("close-surface", "--surface", surface, check=False)
+    return len(surfaces)
 
 
 def apply_wip_pill(ref: str, dirty_count: int) -> None:
