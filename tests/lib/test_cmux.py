@@ -10,6 +10,7 @@ import json
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -2130,28 +2131,61 @@ def test_reassert_on_empty_fleet_makes_no_cmux_calls():
 # that asymmetry is what these pin.
 
 
+def _tree_json(pane="pane-uuid", workspace="ws-uuid", surfaces=()):
+    """A `cmux tree --json --id-format both` payload, reduced to what is read."""
+    return json.dumps(
+        {
+            "caller": {"pane_id": pane, "workspace_id": workspace},
+            "windows": [
+                {
+                    "workspaces": [
+                        {"id": workspace, "panes": [{"surfaces": list(surfaces)}]}
+                    ]
+                }
+            ],
+        }
+    )
+
+
 def _render(**kw):
-    """Call `render_diff` against a stubbed cmux, returning `(argv, env, rc_msg)`."""
-    seen: dict = {}
+    """Call `render_diff` against a stubbed cmux, returning `(seen, rc_msg)`.
 
-    class _Proc:
-        returncode = kw.pop("_rc", 0)
-        stderr = kw.pop("_stderr", "")
+    `seen["cmd"]` stays the `cmux diff` argv the older assertions read; the
+    follow-up calls that re-home the viewer into the caller's pane land in
+    `seen["calls"]`.
+    """
+    seen: dict = {"calls": []}
+    rc = kw.pop("_rc", 0)
+    stderr = kw.pop("_stderr", "")
+    diff_stdout = kw.pop("_stdout", "OK surface=surface:9 pane=pane:9\n")
+    tree = kw.pop("_tree", _tree_json())
 
-    def fake_run(cmd, **rkw):
+    def fake_exec(cmd, **rkw):
+        seen["calls"].append(cmd)
         seen["cmd"] = cmd
         seen["env"] = rkw.get("env")
         seen["input"] = rkw.get("input")
         seen["cwd"] = rkw.get("cwd")
-        return _Proc()
+        return SimpleNamespace(returncode=rc, stderr=stderr, stdout=diff_stdout)
+
+    # `cmux()`'s own binding, which is where the follow-up calls go — patching
+    # `subprocess.run` alone would leave them hitting the real binary.
+    def fake_cmux(cmd, **rkw):
+        seen["calls"].append(cmd)
+        return tree if len(cmd) > 1 and cmd[1] == "tree" else ""
 
     with (
         patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
         patch("cockpit.lib.cmux.shutil.which", return_value="/usr/bin/cmux"),
-        patch("cockpit.lib.cmux.subprocess.run", fake_run),
+        patch("cockpit.lib.cmux.subprocess.run", fake_exec),
+        patch("cockpit.lib.cmux.run", fake_cmux),
     ):
         msg = cmux_mod.render_diff(**kw)
     return seen, msg
+
+
+def _verbs(seen):
+    return [cmd[1] for cmd in seen["calls"] if len(cmd) > 1]
 
 
 def test_render_diff_never_touches_the_environment(monkeypatch):
@@ -2225,6 +2259,136 @@ def test_render_diff_is_inert_without_cmux():
     with patch("cockpit.lib.tool.resolve_tool", return_value="none"):
         msg = cmux_mod.render_diff(patch="d", cwd="/r", title="t")
     assert "requires cmux" in msg
+
+
+def test_render_diff_rehomes_the_viewer_into_the_callers_pane():
+    """`cmux diff` always cuts a pane beside the terminal it was called from,
+    which halves the width of the thing you are reading the diff for. Moving it
+    into the caller's own pane makes it a full-width tab instead."""
+    seen, msg = _render(patch="d", cwd="/r", title="t")
+    assert msg == ""
+    (move,) = [c for c in seen["calls"] if c[1] == "move-surface"]
+    assert move[move.index("--surface") + 1] == "surface:9", "the diff cmux made"
+    assert move[move.index("--pane") + 1] == "pane-uuid", "the caller's own pane"
+    assert move[move.index("--focus") + 1] == "true"
+
+
+def test_rehoming_resolves_the_caller_and_never_a_target():
+    """The move must not reopen the `workspace=`/`keep_surface=` question that
+    removed the TUI's `d` key: it reads cmux's own `caller` block, so there is
+    still nothing here to aim at another row's workspace."""
+    seen, _ = _render(patch="d", cwd="/r", title="t")
+    (tree,) = [c for c in seen["calls"] if c[1] == "tree"]
+    assert "--workspace" not in tree and "--surface" not in tree
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"_stdout": "OK\n"},
+        {"_tree": "not json"},
+        {"_tree": json.dumps({"caller": {}})},
+    ],
+    ids=["diff-named-no-surface", "unreadable-tree", "no-caller-pane"],
+)
+def test_the_split_stands_when_the_move_cannot_be_resolved(kw):
+    """Cosmetic, so every failure degrades to what this did unconditionally
+    before — a split — rather than to an error on a diff that did open."""
+    seen, msg = _render(patch="d", cwd="/r", title="t", **kw)
+    assert msg == ""
+    assert "move-surface" not in _verbs(seen)
+
+
+def test_a_failed_diff_moves_nothing():
+    seen, msg = _render(patch="d", cwd="/r", title="t", _rc=1, _stderr="kaboom")
+    assert "kaboom" in msg
+    assert _verbs(seen) == ["diff"]
+
+
+# --- close_diff_viewers ----------------------------------------------------
+#
+# The other half of the tab: `cockpit diff --ack` is the point at which the
+# notes have been addressed, so the diff they were written on is done. cmux
+# emits no event when a comment is written or submitted, which is why there is
+# no earlier signal to hang this off.
+
+_DIFF_URL = cmux_mod.DIFF_VIEWER_URL_PREFIX + "abc/diff-1.html"
+
+
+def _close(tree):
+    """Run `close_diff_viewers` against a stubbed cmux → `(count, argvs)`."""
+    calls: list[list[str]] = []
+
+    def fake_cmux(cmd, **rkw):
+        calls.append(cmd)
+        return tree if len(cmd) > 1 and cmd[1] == "tree" else ""
+
+    with (
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.cmux.shutil.which", return_value="/usr/bin/cmux"),
+        patch("cockpit.lib.cmux.run", fake_cmux),
+    ):
+        count = cmux_mod.close_diff_viewers()
+    return count, calls
+
+
+def test_close_diff_viewers_closes_by_uuid_not_ref():
+    """Refs are renumbered as surfaces close, so a ref read before the first
+    close can name something else entirely by the time it is used."""
+    tree = _tree_json(
+        surfaces=[
+            {"id": "term-uuid", "ref": "surface:1", "type": "terminal", "url": None},
+            {
+                "id": "diff-uuid",
+                "ref": "surface:2",
+                "type": "browser",
+                "url": _DIFF_URL,
+            },
+        ]
+    )
+    count, calls = _close(tree)
+    assert count == 1
+    (close,) = [c for c in calls if c[1] == "close-surface"]
+    assert close[close.index("--surface") + 1] == "diff-uuid"
+
+
+def test_close_diff_viewers_leaves_other_browser_tabs_alone():
+    """Recognition is the `cmux-diff-viewer://` scheme, never the title cockpit
+    itself wrote — a page the user opened is not cockpit's to close."""
+    tree = _tree_json(
+        surfaces=[
+            {"id": "page", "type": "browser", "url": "https://example.com/pr/1"},
+            {
+                "id": "named-like-a-diff",
+                "type": "browser",
+                "url": None,
+                "title": "PR #4",
+            },
+        ]
+    )
+    count, calls = _close(tree)
+    assert count == 0
+    assert "close-surface" not in [c[1] for c in calls if len(c) > 1]
+
+
+def test_close_diff_viewers_is_scoped_to_the_callers_workspace():
+    other = {"id": "elsewhere", "type": "browser", "url": _DIFF_URL}
+    tree = json.loads(_tree_json(surfaces=[{"id": "mine", "url": _DIFF_URL}]))
+    tree["windows"][0]["workspaces"].append(
+        {"id": "other-ws", "panes": [{"surfaces": [other]}]}
+    )
+    count, calls = _close(json.dumps(tree))
+    assert count == 1
+    (close,) = [c for c in calls if c[1] == "close-surface"]
+    assert close[close.index("--surface") + 1] == "mine"
+
+
+def test_close_diff_viewers_does_nothing_without_a_caller():
+    """An unreadable tree, or one from a cmux that stops reporting the caller,
+    must not fall back to closing whatever it can see."""
+    count, calls = _close("not json")
+    assert count == 0
+    assert [c[1] for c in calls] == ["tree"]
 
 
 # ── spawn_pr_workspace / spawn_orphan_workspace ─────────────────────────────

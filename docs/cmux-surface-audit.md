@@ -178,10 +178,12 @@ warning naming the tier, not a behaviour change.
 ### 2. `AGENTS.md` claimed a read that does not happen
 
 The inventory invariant read *"Each cycle re-reads `git worktree list` and `cmux
-tree`"*. Nothing in `cockpit/` invokes `cmux tree`. The real reads are `rpc
-workspace.list` and `list-workspaces`.
+tree`"*. No tick invokes `cmux tree`. The real reads are `rpc workspace.list`
+and `list-workspaces`.
 
 **Fixed on this branch.** The invariant is correct; only the command name was wrong.
+(`cmux tree` has since acquired one caller — `cockpit diff`, off the tick — which
+does not change the invariant: the cycle still does not read it.)
 
 ### 3. `terminal.replay.v1` was required for a feature that was never built
 
@@ -233,7 +235,7 @@ the unused set is bucketed below.
 
 | Verb | What it does | What cockpit could use it for | Blocker / cost |
 |---|---|---|---|
-| `diff` | Native diff viewer. Reads a patch on stdin, `--source unstaged\|staged\|branch\|last-turn`, `--layout split\|unified`. Renders in a browser split. | A real PR/branch diff view — syntax highlighting, dual line numbers, collapsed unmodified regions. Strictly better than a Textual overlay. | **Used by `cockpit diff`** (`cmux.render_diff`), which pipes `gh pr diff` in for the PR case and forwards `--source` otherwise. Deliberately a CLI and not a TUI key: run from the daemon, `--workspace`/`--surface` both default to the dashboard's own. Needs `cmux enable-browser`; preflight warns when it is off. Split layout overprints at narrow width, so cockpit sends `--layout unified`. |
+| `diff` | Native diff viewer. Reads a patch on stdin, `--source unstaged\|staged\|branch\|last-turn`, `--layout split\|unified`. Renders in a browser split. | A real PR/branch diff view — syntax highlighting, dual line numbers, collapsed unmodified regions. Strictly better than a Textual overlay. | **Used by `cockpit diff`** (`cmux.render_diff`), which pipes `gh pr diff` in for the PR case and forwards `--source` otherwise. Deliberately a CLI and not a TUI key: run from the daemon, `--workspace`/`--surface` both default to the dashboard's own. Needs `cmux enable-browser`; preflight warns when it is off. Split layout overprints at narrow width, so cockpit sends `--layout unified`. The pane it cuts is then re-homed into the caller's own pane as a tab (`tree` + `move-surface`), and `cockpit diff --ack` retires it (`close-surface`). |
 | `open` | Opens a URL or path in a cmux browser pane. | `p` could open the PR in-app instead of the system browser. cmux settings already carry `openPullRequestLinksInCmuxBrowser`. | Browser must be enabled. Changes `p`'s behaviour, so it wants a config opt-out. |
 | `read-screen` | Reads a session's terminal, `--scrollback`, `--lines <n>`. | Peek at why a session stopped without focusing it. | **Now used** — `cmux.py::_screen_signals_idle`, the fast tick's fallback self-heal for a workspace reporting no `claude_code=` state at all (see the Nudge idle-gate section of `AGENTS.md`). **Probed working 2026-08-20**: returns real scrollback past one viewport from a full-screen TUI on the alternate screen, as plain text — zero ESC bytes across 40 lines. |
 | `comments` | `comments list [--repo <path>] [--all] [--json]` — the diff-viewer comment store, read out of cmux rather than off disk. | cockpit already reads these notes (`lib/diff_comments.py`) by locating cmux's own files, which is why it has to offer **two** candidate repo roots: which one a worktree is filed under is undocumented. A `--repo` flag answers that question directly. | Unprobed. Would replace a file read with a subprocess per worktree per fast tick, so it wants measuring before it is worth it — the current read is free. |
@@ -246,7 +248,7 @@ the unused set is bucketed below.
 | `todo` | Per-workspace todo list: `add/list/check/uncheck/start/rm/clear`. | Surfacing a session's plan in the sidebar. | Writes UI state cockpit would then own and have to reconcile. |
 | `set-progress` / `clear-progress` | Per-workspace progress bar, `0.0-1.0` + `--label`. | A visible long-operation indicator (spawn, fetch, teardown) on the affected row. | Trivial; nothing blocks it. |
 | `log` / `list-log` / `clear-log` | Per-workspace log buffer, `--level`, `--source`. | Somewhere for `spawn.log` and per-cycle errors to land that is attached to the row they concern, instead of a file. | `list-log` is per-workspace, so reading N rows is N subprocesses. |
-| `tree` / `top` / `memory` | Process tree, CPU/memory per workspace, memory grouping. | A resource column beside `$`; catching a runaway agent. | `top` supports `--all` and `--format tsv`, so unlike most of this list it is **one** call for every workspace. The cheapest unexplored thing here. |
+| `tree` / `top` / `memory` | Process tree, CPU/memory per workspace, memory grouping. | A resource column beside `$`; catching a runaway agent. | `top` supports `--all` and `--format tsv`, so unlike most of this list it is **one** call for every workspace. The cheapest unexplored thing here. `tree --json --id-format both` is **now used** by `cockpit diff` — it reports a `caller` block, so one call answers both "which pane am I in" and "which surfaces are open here". |
 | `browser` | 43 subcommands — navigate, click, fill, screenshot, snapshot, eval, network routing, cookies, storage, tracing. A Playwright-shaped automation surface, mirrored by ~100 `browser.*` RPC methods. | Nothing in cockpit's current scope. Listed because `diff` and `open` both render into a browser pane, so anything built on either inherits `enable-browser` as a prerequisite. | Needs the browser enabled. By far the largest single family, and entirely unexamined. |
 | `markdown` | `markdown [open] <path>` — formatted viewer panel with live reload. | Rendering a PR body, a plan file, or `AGENTS.md` in-app rather than in the pager. | Its own panel, so it competes with the TUI for screen rather than composing with it. Unprobed. |
 | `feed` | CLI is only `feed tui\|clear`, but the RPC family behind it is six methods: `feed.list`, `feed.push`, `feed.jump`, and the three replies (`feed.permission.reply`, `feed.question.reply`, `feed.exit_plan.reply`). `feed.list` returns a cross-workspace event log keyed by `cwd` **and** `workstream_id` — the Claude session id. | Two things nothing else on this surface offers. (1) **A structural answer to the `Needs input` ambiguity**: a pending choice is an item with `kind: question`, `status: pending`, a `request_id` and a null `resolved_at`, where the idle gate's fallback is `_screen_signals_idle` scraping terminal chrome. (2) **Answering that choice without synthesizing a keystroke**, via the reply methods. It also carries `kind: stop`, the same Claude Code Stop event cockpit installs its own `~/.claude` hook to capture. | **Probed working 2026-09-11** — see below. Undocumented, unbounded, and it would be a second at-rest authority, which the nudge-gate invariant currently forbids. |
@@ -351,13 +353,18 @@ panes — but note `capture-pane` takes `--scrollback --lines <n>`, making it a
 near-duplicate of `read-screen`, and `wait-for` is a real synchronisation
 primitive if anything ever needs to block on a session reaching a state.
 
-**Layout.** `new-pane`, `new-split`, `new-surface`, `split-off`,
-`move-surface`, `focus-pane`, `list-panes`, `tab-action`, `rename-tab`, the window
-verbs, `send-panel`/`send-key-panel`, and the rest of the pane/surface/tab/window
-tier. cockpit is workspace-granular by design: a worktree maps to a workspace, and
+**Layout.** `new-pane`, `new-split`, `new-surface`, `split-off`, `focus-pane`,
+`list-panes`, `tab-action`, `rename-tab`, the window verbs,
+`send-panel`/`send-key-panel`, and the rest of the pane/surface/tab/window tier.
+cockpit is workspace-granular by design: a worktree maps to a workspace, and
 every cell, pill, and row key is keyed that way. A pane-aware cockpit is a different
 product, not a missing feature — and the `send-panel` pair in particular would
 duplicate `send`/`send-key` at a granularity nothing else in the codebase models.
+
+The two exceptions, `move-surface` and `close-surface`, prove the rule rather
+than breaking it: both are `cockpit diff`'s, both act on a surface **cmux itself
+just made on cockpit's behalf**, and neither is reachable from a tick. Nothing is
+keyed by pane or surface as a result.
 
 **Remote and infra.** `ssh`, `mosh`, `ssh-tmux`, `mosh-tmux`, the
 `ssh-session-*` trio, `remote-daemon-status`, `remotes`, `vm`/`cloud`,

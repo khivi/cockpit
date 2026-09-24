@@ -163,14 +163,17 @@ cockpit diff --comments   # read the notes left on this work
 cockpit diff --ack        # retire them, once they're addressed
 ```
 
-That opens a browser split beside you, syntax-highlighted; click a line and leave a note.
+That opens as a **tab in the session you ran it from**, syntax-highlighted and the full
+width of the pane; click a line and leave a note. Switch back to the terminal tab whenever
+you want the session again — the diff stays where you left it.
 
 **Then the session picks them up on its own.** Within ~30 seconds the daemon notices notes
 waiting on that worktree and hands them to the agent sitting in it — you leave the notes,
-close the split, and the work starts. It reads them, addresses them, and runs `--ack` to
-retire them. Reading and acking are separate commands on purpose: a turn that ends early
-leaves the notes pending rather than losing review feedback that exists nowhere else, and
-a note the agent can't action stays unacked instead of being quietly cleared.
+switch back, and the work starts. It reads them, addresses them, and runs `--ack` to
+retire them, which also closes the diff tab: the notes it was open for are done with.
+Reading and acking are separate commands on purpose: a turn that ends early leaves the
+notes pending rather than losing review feedback that exists nowhere else, and a note the
+agent can't action stays unacked instead of being quietly cleared.
 
 That hand-over is the one automatic message cockpit sends that isn't about a PR, and it
 plays by the same rules: it goes only to a session genuinely parked at its prompt, never
