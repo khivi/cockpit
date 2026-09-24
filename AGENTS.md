@@ -26,7 +26,7 @@ Any change to `match_worktrees`, `_spawn_missing_workspaces`, `nudge_if_idle`, `
 
 ### Docs have four altitudes — put a fact at exactly one of them
 
-`FEATURES.md` (user) · `README.md` (visitor) · `docs/config.md` (operator) · `AGENTS.md` + `docs/state-machine.md` (you). **A change to user-visible behaviour updates `FEATURES.md` in the same PR** — nothing fails when it's skipped.
+`FEATURES.md` (user) · `README.md` (visitor) · `docs/config.md` (operator) · `AGENTS.md` + `docs/state-machine.md` + `specs/` (you — rulebook, control flow, and behavior ledger respectively). **A change to user-visible behaviour updates `FEATURES.md` in the same PR** — nothing fails when it's skipped.
 
 - **Don't restate across altitudes** — duplicated prose drifts silently.
 - **`FEATURE_GUIDE_URL` points at `main`, deliberately**: the version bump lands before `tag.yml` pushes the tag, so a pinned URL 404s for the whole release-PR window. **Do not** pin it to a tag.
@@ -130,7 +130,7 @@ Row caps are `{pr, ticket, muted, snoozed, workspace, primary}`: the first four 
 
 ### Only the daemon writes the cache; renderers read
 
-`lib/starship.py` field printers are strictly read-only (no gh/git/subprocess/`atomic_write`).
+`lib/starship.py` field printers are strictly read-only.
 
 - **Slow tick** (300s) — `cycle.py::cycle_all`: full reconcile (gh fetch, base-distance, per-PR JSON, PR flat cells, git-state cells, pills).
 - **Fast tick** (30s) — `cockpit.py::_fast_tick`: pidfile re-assert, then a network-free republish of git-state, per-worktree cost, PR flat cells from disk, workspace-name and sidebar-colour reconcile, trailing-fold restore, and the `idle=` pill re-assert. Those three write into live cmux and are `dry`-gated; the local disk republish is not. It closes with the two sends that must follow the idle re-assert — the diff-comment hand-over and the seed-queue drain — each `dry`-gated through `nudge_if_idle`'s own `dry=` rather than by skipping the call.
@@ -406,7 +406,7 @@ The closed set is the point: **the PR nudge** (`cycle.py`, slow tick, `PR.nudge_
 
 ### `cockpit broadcast` reuses the nudge gate — no second send path, no cache cell
 
-`cockpit/broadcast.py` fans a line out to every idle workspace via `nudge_if_idle(..., tag="broadcast")` with no `pref_key`. A one-shot gesture: no cell, pill, or `pill_state`, and skipped refs are printed, never queued. **Do not** give it its own send path, idle check, or cache cell — extend `nudge_if_idle` instead.
+`cockpit/broadcast.py` is a one-shot gesture: no cell, pill, or `pill_state`, and skipped refs are printed, never queued. **Do not** give it its own send path, idle check, or cache cell — extend `nudge_if_idle` instead.
 
 **`--repo` and `--worktree` are filters over that one loop, never a second scope.** `--repo` matches each workspace's cwd against the repo's own `worktrees()` (`_repo_paths`) — **never a path-prefix test**, exactly like `_park_workspaces` and the repo-header `a`, since a worktree usually lives in a *sibling* directory. The repo is named by its **one** identity (`_repo_label`, the `name`-or-basename the table shows), casefolded — **do not** accept the path basename as a second spelling, since under a bare clone every repo's path ends in `.bare` and `--repo .bare` would then broadcast into whichever one sorted first. An unknown name exits **2** listing the configured repos rather than silently broadcasting to everything. The unscoped path makes **no** config read at all — broadcast reaches workspaces cockpit doesn't manage, so reading the config there could only narrow it.
 
@@ -437,7 +437,7 @@ Removed along with that config key, its preflight validator, and the orphan_pref
 
 ### `$COCKPIT_HOME` may be inside a file-sync folder — write pid-scoped, warn on conflicts
 
-- **The temp file in `config.py::_atomic_write_text` carries `os.getpid()`.** `os.replace` is atomic, so a fixed `<name>.tmp` never yields a *torn* file — it yields a **wrong** one, since several cockpit processes write these concurrently and the loser's whole content lands under the winner's name. **Do not** go back to a fixed suffix, and **do not** re-inline the write.
+- **The temp file in `config.py::_atomic_write_text` carries `os.getpid()`.** `os.replace` is atomic, so a fixed `<name>.tmp` never yields a *torn* file — it yields a **wrong** one, since several cockpit processes write these concurrently and the loser's whole content lands under the winner's name. **Do not** go back to a fixed suffix, and **do not** re-inline the write at a `config.py` call site — `_atomic_write_text` is the one writer there. A *sibling* module owning its own state dir may repeat the pattern (`seed_queue.enqueue` does, citing this rule), so the guard is the literal `os.replace`, which nothing else in the tree calls.
 - **`preflight._warn_sync_conflicts` surfaces a conflicted copy and cannot do more** — the conflict is resolved outside the process, so the edit is silently gone and the only symptom is a setting that "didn't take". It matches **only** `conflicted copy` and `.sync-conflict-`; iCloud's, Drive's and OneDrive's spellings are indistinguishable from ordinary filenames, and a false alarm trains the user to ignore a warning that means real data loss.
 
 ### Machine-local runtime state lives in `$COCKPIT_RUNTIME_DIR`, never `$COCKPIT_HOME`
@@ -775,7 +775,7 @@ pre-commit run zizmor --all-files
 
 `dev.sh` forces `--dry` onto **every** `watch` invocation, not just its no-args default. Its config scrub drops `fast_skills`/`slow_skills` and deliberately **keeps** `skills`, which holds only slash-command names.
 
-**`--dry` was fully plumbed through long before it was reachable** — `cockpit.py` hardcoded `dry=False`. It is now threaded via `_build_state(dry)` → `state["dry"]` → `_once_with` → `cycle_all`. **Do not** re-hardcode that call site, and **do not** add a second dev-only suppression path beside it.
+**`--dry` was fully plumbed through long before it was reachable** — `cockpit.py` hardcoded `dry=False`. **Do not** re-hardcode that call site, and **do not** add a second dev-only suppression path beside it.
 
 `--dry` also suppresses the **cache writes**, which is why snapshot mode copies the real PR JSONs in. Every cmux-facing feature is **inert** under `tool: none`, so the sandbox is right for the table, cells, config, prompts and the cycle's decisions, and wrong for anything cmux-facing.
 
@@ -866,6 +866,17 @@ This is a paid-for regression twice over. A helper was extracted that called `wo
 - **`cmux` is the one leaf the first rule cannot reach, so a gate that stands in for a third party's readiness must VERIFY THE OUTCOME rather than trust the proxy.** `_no_live_backend` blocks the real binary on purpose — a real `cmux create` acts on the live sidebar and no `tmp_path` undoes it — so every `cmux` test is against a stub, and "stubbing the command tests the stub" becomes unavoidable exactly there. A stub can only re-assert the belief it was written from, which is how `deliver_followup` shipped reading `claude_code=` as "the composer will queue this" and lost every cold spawn's seeded body for 81 releases behind three green tests and full line coverage. **Do not** add a call site that infers a third party's readiness from a signal a third party emits about itself and then acts irreversibly on the inference; confirm the effect and report when it can't be confirmed. The bug class is invisible to mocks and to coverage, so the answer is in the code's shape, not in more tests.
 - **An e2e test buys the pair's vocabulary and effect — never a race.** `tests/e2e/test_followup_delivery.py` is the one module that mutates live state, so it is gated on `COCKPIT_E2E_LIVE_DELIVERY=1` on top of `real_backend` and cannot ride `pytest -n auto`. It spawns outside every registered repo (`_reap_workspace_orphans` ignores those), closes through `cmux_close_workspace_best_effort`, and reads the session's own transcript as an oracle cockpit doesn't own. It is **not** a regression test for the readiness race: reverted to the pre-fix body it passes 3/3, because a warm machine boots Claude in ~1s. **Do not** promote it to one, and **do not** let a green run there read as proof the race is handled — that lives in the unit invariant.
 - **Repo-wide invariant tests** assert a fact about the tree instead of prose nobody re-derives: `tests/e2e/test_cmux_surface.py` and `tests/test_comment_references.py` (every `backticked` symbol and path still resolves — in a comment or docstring, and in this file's own prose). A rename otherwise leaves names behind as claims that read fine and mean nothing, which is how github_done_on_merge survived in two docstrings as the live gate (deliberately unbackticked here — a backtick marks a name that resolves *now*). Both carry a small allowlist for genuinely external names, **not** a place to park a stale reference.
+
+## Invariant coverage — `specs/` is the ledger, and every bullet must be claimed
+
+`specs/*.md` is the behavior spec, human-owned. One bullet per invariant, `- [<id>~<rev>] <what the system does>`. This file stays the rulebook — the scar and its **Never** — while the spec bullet states the behavior the scar protects; the two are different altitudes, and neither quotes the other, so rewording either breaks nothing. A test claims a bullet with `@pytest.mark.covers("<id>~<rev>")` (one or more ids per marker); `rg 'covers\(' tests/` maps test → id, `rg '<id>' specs/` lands on the bullet.
+
+`tests/test_invariant_coverage.py` holds the gate in **both directions**: a marker naming an id no bullet carries fails, and an unwaived bullet no test claims fails. That second direction is the point — **editing the spec is how you demand a test.** Add a bullet, and CI is red until a test claims it; bullets flow spec → test, never the other way. Four rules:
+
+- **The revision is the re-verify trigger.** Reword a bullet without changing its meaning and the revision stays; change what it claims and you bump `~<rev>`, which fails every test still claiming the old one until each is re-checked against the new claim and its marker bumped.
+- **`(untested: <reason>)` waives a bullet nothing runnable can assert** — a process rule, or design rationale a test could only pin the shape of. Waivers are counted against `WAIVED_COUNT` in the gate, so adding one is a deliberate edit there, never a drive-by. A test claiming a waived bullet fails: drop the waiver instead.
+- **A claimed bullet proves a guard EXISTS, never that the guard is strong.** A test that checks nothing satisfies it exactly as well as one that checks everything, and the same author writes the bullet *and* the marker, so the two errors correlate rather than cancel. The `spec-audit` skill is the advisory third party — a judge pass over each bullet and its claiming tests, run on demand or after a `~<rev>` bump; it proposes, never edits, and never gates a merge.
+- **The spec is hand-owned, never generated.** A spec generated from the markers would summarize the tests' own claims and review nothing. The one sanctioned generation was the bootstrap — a first draft since edited by hand.
 
 ## Sync
 

@@ -8,6 +8,7 @@ tests are hermetic.
 from __future__ import annotations
 
 import importlib
+import inspect
 import time
 
 import pytest
@@ -113,6 +114,7 @@ def test_list_prefs_keys_by_stem_and_skips_garbage_files(nudges, tmp_path):
     assert set(prefs.keys()) == {"acme__1", "acme__2"}
 
 
+@pytest.mark.covers("nudge-prefs.repo-key~1")
 def test_delete_pref_only_touches_its_own_repos_file(nudges):
     # The whole point of the per-repo key: same number, two repos, two files.
     nudges.save_pref(K(nudges, 10), nudges.NudgePref(muted=True))
@@ -122,6 +124,7 @@ def test_delete_pref_only_touches_its_own_repos_file(nudges):
     assert nudges.load_pref(K(nudges, 10, "other")).snoozed is True
 
 
+@pytest.mark.covers("nudge-prefs.repo-key~1")
 def test_a_snooze_in_one_repo_leaves_the_same_number_elsewhere_alone(nudges):
     nudges.save_pref(K(nudges, 10), nudges.NudgePref(snoozed=True, wake_on="0|"))
     assert nudges.should_nudge(K(nudges, 10)) is False
@@ -294,6 +297,28 @@ def test_wake_signature_changes_with_comments_or_decision(nudges):
     assert nudges.wake_signature(0, "APPROVED") != base
 
 
+@pytest.mark.covers("nudge.wake-signature~1")
+def test_wake_signature_is_blind_to_a_push_head_oid_change(nudges):
+    # This signature backs the *review-activity* wake arm in
+    # `cycle._resolve_prefs`, shared by a PR that is mine and one I'm
+    # reviewing; a push is woken separately by `wake_head`, gated on `not
+    # PR.mine`. If a push perturbed this signature too, my own push to my own
+    # PR would wake my own snooze — the thing that gate exists to prevent.
+    # A head oid cannot reach it unless it becomes a parameter, so that is
+    # what this pins.
+    assert list(inspect.signature(nudges.wake_signature).parameters) == [
+        "total_from_others",
+        "review_decision",
+    ]
+
+    # Sensitive to both of those, so "blind to a head oid" is a real exclusion
+    # rather than a function that happens to ignore its inputs.
+    base = nudges.wake_signature(2, "APPROVED")
+    assert nudges.wake_signature(3, "APPROVED") != base
+    assert nudges.wake_signature(2, "CHANGES_REQUESTED") != base
+
+
+@pytest.mark.covers("nudge.snooze-wake~1")
 def test_snooze_does_not_expire_on_the_clock(nudges):
     # `until` is the mute's expiry; a snooze waits on an event, so a far-past
     # `until` must not silently wake it (only the daemon's signature check does).

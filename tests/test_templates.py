@@ -66,6 +66,7 @@ def test_no_template_escapes_the_registry():
 
 
 @pytest.mark.parametrize("name,slots", _TEMPLATES.items())
+@pytest.mark.covers("prompts.templates~1")
 def test_render_fills_every_declared_slot(name, slots):
     """Rendering with each declared slot leaves no `{...}` placeholder behind."""
     rendered = templates.render(name, **{s: f"<{s}>" for s in slots})
@@ -74,6 +75,7 @@ def test_render_fills_every_declared_slot(name, slots):
         assert f"<{s}>" in rendered
 
 
+@pytest.mark.covers("prompts.templates~1")
 def test_missing_slot_raises_loudly():
     """A forgotten field is a KeyError, not a silent stray placeholder."""
     with pytest.raises(KeyError):

@@ -2132,6 +2132,42 @@ def test_apply_org_defaults_scalar_still_wins_whole():
     assert cfg["repos"][0]["use_worktree"] is False
 
 
+@pytest.mark.covers("orgs.merge~1")
+def test_apply_org_defaults_does_not_descend_into_a_nested_dict():
+    cfg: dict = {
+        "repos": [
+            {
+                "name": "r",
+                "path": "/r",
+                "org": "acme",
+                "tickets": {"extra": {"repo_inner": "own"}},
+            }
+        ],
+        "orgs": {
+            "acme": {
+                "tickets": {
+                    "provider": "linear",
+                    "extra": {"org_inner": "shared", "repo_inner": "org"},
+                }
+            }
+        },
+    }
+    config_mod.apply_org_defaults(cfg)
+    tickets = cfg["repos"][0]["tickets"]
+    assert tickets["provider"] == "linear"  # unset on the repo → inherited
+    # A recursive merge would yield {"org_inner": "shared", "repo_inner": "own"}.
+    # One level deep, the repo's nested dict is one opaque value and wins whole.
+    assert tickets["extra"] == {"repo_inner": "own"}
+
+    # The fresh-dict rule applies at the same depth: mutating the repo's merged
+    # nested dict must not reach the org block (or a sibling repo's copy of it).
+    tickets["extra"]["repo_inner"] = "mutated"
+    assert cfg["orgs"]["acme"]["tickets"]["extra"] == {
+        "org_inner": "shared",
+        "repo_inner": "org",
+    }
+
+
 def test_apply_org_defaults_tolerates_missing_and_malformed_orgs():
     # Runs before preflight validates, so a dangling reference or a non-string
     # org must be skipped, never raise (an unhashable org key would TypeError).
@@ -2147,6 +2183,7 @@ def test_apply_org_defaults_tolerates_missing_and_malformed_orgs():
     assert config_mod.apply_org_defaults({"repos": [{"name": "a", "org": "x"}]})
 
 
+@pytest.mark.covers("orgs.not-persisted~1")
 def test_load_config_merges_org_defaults(tmp_path, monkeypatch):
     path = tmp_path / "config.json"
     path.write_text(json.dumps(_acme_cfg()))
@@ -2307,6 +2344,7 @@ def test_credential_env_names_tolerates_a_malformed_config():
     assert "LINEAR_API_KEY" in names
 
 
+@pytest.mark.covers("config.tmp-suffix~1")
 def test_atomic_write_uses_a_pid_scoped_temp(tmp_path, monkeypatch):
     """A fixed `<name>.tmp` is shared scratch. Several cockpit processes write
     these files concurrently (daemon, `cockpit close`, a detached `cockpit

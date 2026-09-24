@@ -93,9 +93,10 @@ _EXTERNAL_PATHS = {
     "Formula/cockpit.rb",
 }
 
-# The agent instruction set, scanned for backticked references. A tuple rather
-# than a bare string because the set may grow again if AGENTS.md is ever split.
+# The agent instruction set, scanned for backticked references: AGENTS.md plus
+# the behavior spec, whose bullets name the same symbols the rules do.
 _DOC_SOURCES = ("AGENTS.md",)
+_DOC_PREFIXES = ("specs/",)
 
 # What the instruction set must not vouch for itself through — the sources plus
 # every alias of them. `.github/copilot-instructions.md` is a symlink to
@@ -104,6 +105,10 @@ _DOC_SOURCES = ("AGENTS.md",)
 # anything. It is excluded here but NOT scanned above: same bytes under a second
 # name would double-report every finding against a path nobody edits.
 _DOC_FILES = (*_DOC_SOURCES, ".github/copilot-instructions.md")
+
+
+def _is_doc_source(rel: str) -> bool:
+    return rel in _DOC_SOURCES or rel.startswith(_DOC_PREFIXES)
 
 
 def _tracked_files() -> list[str]:
@@ -184,6 +189,7 @@ def literals(tracked: list[str]) -> str:
     )
 
 
+@pytest.mark.covers("docs.backticks~1")
 def test_backticked_symbols_in_comments_still_exist(
     references: dict[str, list[tuple[str, int]]],
     defined_symbols: set[str],
@@ -260,7 +266,7 @@ def test_backticked_paths_in_comments_still_exist(
 
 
 def _is_doc(rel: str) -> bool:
-    return rel in _DOC_FILES
+    return rel in _DOC_FILES or rel.startswith(_DOC_PREFIXES)
 
 
 @pytest.fixture(scope="module")
@@ -273,7 +279,7 @@ def doc_references(tracked: list[str]) -> dict[str, list[tuple[str, int]]]:
     """
     found: dict[str, list[tuple[str, int]]] = {}
     for rel in tracked:
-        if rel not in _DOC_SOURCES:
+        if not _is_doc_source(rel):
             continue
         for lineno, line in enumerate((REPO_ROOT / rel).read_text().split("\n"), 1):
             for name in _BACKTICK_RE.findall(line):
@@ -291,12 +297,13 @@ def literals_outside_docs(tracked: list[str]) -> str:
     )
 
 
+@pytest.mark.covers("docs.backticks~1")
 def test_backticked_symbols_in_the_instruction_set_still_exist(
     doc_references: dict[str, list[tuple[str, int]]],
     defined_symbols: set[str],
     literals_outside_docs: str,
 ) -> None:
-    """AGENTS.md and docs/invariants/* name symbols that must still resolve.
+    """AGENTS.md and specs/* name symbols that must still resolve.
 
     Same rule as the comment check above, applied to the prose that is dense
     with rationale — and rationale names things, so a rename leaves the old name

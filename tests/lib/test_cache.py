@@ -488,6 +488,52 @@ def test_cwd_key_slug_shape():
     assert cache_mod._cwd_key(_P("/tmp/foo/repo")) == a
 
 
+@pytest.mark.covers("cache.flat-cells~2")
+def test_flat_cells_keyed_by_worktree_not_branch(cache_dir, tmp_path):
+    """Two worktrees in different repos sharing one branch label must not
+    share a cell. Fails if a cell is ever keyed off the branch (or anything
+    else that collapses to the branch), which merges unrelated repos' rows —
+    the `khivi/ci-gatekeeper` regression AGENTS.md documents."""
+    repo_a = tmp_path / "repoA" / "khivi-ci-gatekeeper"
+    repo_b = tmp_path / "repoB" / "khivi-ci-gatekeeper"
+    repo_a.mkdir(parents=True)
+    repo_b.mkdir(parents=True)
+
+    cache_mod.write_worktree_pr_cache(
+        repo_a,
+        state="OPEN",
+        is_draft=False,
+        review_decision="REVIEW_REQUIRED",
+        number=11,
+        title="A's PR",
+        snoozed="snoozed",
+    )
+    cache_mod.write_worktree_pr_cache(
+        repo_b,
+        state="OPEN",
+        is_draft=False,
+        review_decision="REVIEW_REQUIRED",
+        number=22,
+        title="B's PR",
+        snoozed="",
+    )
+    cache_mod.write_base_distance(repo_a, 3)
+    cache_mod.write_base_distance(repo_b, 7)
+
+    def _cells(wt):
+        stems = ("pr-num", "pr-snoozed", "base-distance")
+        return {s: cache_mod.read_text(cache_mod.cwd_cache(s, wt)) for s in stems}
+
+    # Both sides in one comparison, so a collapsed key prints which repo's
+    # values won rather than failing on whichever stem is asserted first.
+    assert _cells(repo_a) == {
+        "pr-num": "11",
+        "pr-snoozed": "snoozed",
+        "base-distance": "3",
+    }
+    assert _cells(repo_b) == {"pr-num": "22", "pr-snoozed": "", "base-distance": "7"}
+
+
 def test_write_git_state_cache_in_real_repo(_clean_git_env, cache_dir, tmp_path):
     from tests.fixtures import make_git_repo
 
@@ -934,6 +980,7 @@ def test_republish_keeps_two_repos_on_one_branch_apart(json_cache):
     assert (flat / f"pr-num-{cache_mod._cwd_key(other)}").read_text() == "20"
 
 
+@pytest.mark.covers("cache.no-worktree-no-cells~1")
 def test_republish_skips_a_pr_with_no_worktree(json_cache):
     """No worktree → no row, no session, nowhere to key a cell. The JSON
     snapshot is still written; only the flat republish sits it out."""
@@ -942,6 +989,7 @@ def test_republish_skips_a_pr_with_no_worktree(json_cache):
     assert not any(cache_mod.FLAT_CACHE_DIR.glob("pr-num-*"))
 
 
+@pytest.mark.covers("pr-list.one-per-branch~2")
 def test_prune_superseded_drops_loser_keeps_winner(json_cache):
     merged = _snapshot(json_cache, "cockpit", 91, "khivi/side", state="MERGED")
     live = _snapshot(json_cache, "cockpit", 126, "khivi/side", state="OPEN")
@@ -959,6 +1007,7 @@ def test_prune_superseded_keeps_lone_snapshot(json_cache):
     assert only.exists()
 
 
+@pytest.mark.covers("pr-list.one-per-branch~2")
 def test_prune_superseded_scoped_to_repo(json_cache):
     # Two repos with the same branch name must not cross-prune.
     a = _snapshot(json_cache, "repoA", 1, "khivi/side", state="MERGED")
@@ -1184,6 +1233,67 @@ def test_restamp_pref_without_a_snapshot_is_a_noop(json_cache):
     assert not (cache_mod.FLAT_CACHE_DIR / f"pr-snoozed-{_KEY}").exists()
 
 
+def _read_tree(**labeled_dirs: Path) -> dict[str, bytes]:
+    """Flat `{label}/{filename} -> bytes` snapshot of every file directly under
+    each given directory, so two directories' cells can't collide in the map."""
+    out: dict[str, bytes] = {}
+    for label, d in labeled_dirs.items():
+        for p in sorted(d.iterdir()):
+            if p.is_file():
+                out[f"{label}/{p.name}"] = p.read_bytes()
+    return out
+
+
+@pytest.mark.covers("nudge.restamp~1")
+def test_restamp_pref_touches_only_its_own_cells(json_cache):
+    """`restamp_pref` may touch PR #7's snapshot and that snapshot's own `pr-*`
+    cells for one cwd, nothing else. A sibling PR, a second worktree, and
+    `pr-checks`/`diff-comments` on the same cwd come out byte-identical."""
+    cache_dir = json_cache
+    flat = cache_mod.FLAT_CACHE_DIR
+    other_wt = Path("/tmp/wt-other")
+
+    _snapshot(cache_dir, "cockpit", 7, "khivi/nap", cwd=str(_WT_PATH))
+    # A sibling PR in the same repo, backed by a different worktree — must
+    # survive untouched, including its own pr-* cells below.
+    _snapshot(cache_dir, "cockpit", 8, "khivi/other", cwd=str(other_wt))
+
+    # Daemon-derived cells: the ordinary republish (writes pr-* + pr-checks for
+    # every cached snapshot's cwd) plus a diff-comments write for PR #7's own
+    # worktree — a cell restamp_pref's cwd-scoped write path never reaches.
+    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.write_diff_comments_cache(_WT_PATH, 3)
+
+    before = _read_tree(cache=cache_dir, flat=flat)
+    assert before, "fixture seeded nothing — this assertion would be vacuous"
+
+    cache_mod.restamp_pref("cockpit", 7, _WT_PATH, NudgePref(snoozed=True))
+
+    after = _read_tree(cache=cache_dir, flat=flat)
+    changed = {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)}
+
+    owned_flat_stems = {
+        "pr-state",
+        "pr-num",
+        "pr-title",
+        "pr-muted",
+        "pr-comments",
+        "pr-comments-total",
+        "pr-author",
+        "pr-nudge",
+        "pr-ticket",
+        "pr-base",
+        "pr-snoozed",
+    }
+    allowed = {"cache/cockpit__pr-7.json"} | {
+        f"flat/{stem}-{_KEY}" for stem in owned_flat_stems
+    }
+    assert changed <= allowed, f"touched cells it doesn't own: {changed - allowed}"
+    # And the row-action actually did something — this isn't vacuously true.
+    assert "cache/cockpit__pr-7.json" in changed
+    assert f"flat/pr-snoozed-{_KEY}" in changed
+
+
 # ── Per-worktree session cost ───────────────────────────────────────────────
 
 
@@ -1223,6 +1333,14 @@ def _seed_sessions(projects_dir: Path, cache_dir: Path, cwd: Path, costs: dict) 
 )
 def test_claude_project_slug_matches_claude_codes_layout(path, slug):
     assert cache_mod._claude_project_slug(path) == slug
+
+
+@pytest.mark.covers("wt-cost.slug~1")
+def test_claude_project_slug_is_lossy_so_it_has_no_inverse():
+    """`repo.wt` and `repo-wt` share a slug, so no code can recover a path from
+    one — the map is only ever walked forwards, worktree path -> directory."""
+    slug = cache_mod._claude_project_slug
+    assert slug("/opt/dev/repo.wt") == slug("/opt/dev/repo-wt")
 
 
 def test_worktree_cost_sums_every_session_in_the_worktree(
@@ -1320,6 +1438,7 @@ def test_cost_reporting_available_is_false_with_no_cells(cache_dir):
     assert cache_mod.cost_reporting_available() is False
 
 
+@pytest.mark.covers("wt-cost.gate~2")
 def test_cost_reporting_available_is_false_when_every_session_reports_zero(cache_dir):
     """The gate for a plan/build that writes `total_cost_usd: 0` — the `$`
     column must not appear just because the cells exist."""
@@ -1328,6 +1447,7 @@ def test_cost_reporting_available_is_false_when_every_session_reports_zero(cache
     assert cache_mod.cost_reporting_available() is False
 
 
+@pytest.mark.covers("wt-cost.gate~2")
 def test_cost_reporting_available_is_true_on_one_real_number(cache_dir):
     (cache_dir / "cost-aaa").write_text("0.0000")
     (cache_dir / "cost-bbb").write_text("2.9009")
@@ -1344,6 +1464,7 @@ def test_cost_reporting_available_ignores_worktree_totals(cache_dir, tmp_path):
 # ── terminal-control sanitization (`strip_control` / `read_text`) ────────────
 
 
+@pytest.mark.covers("cache.strip-control~1")
 def test_read_text_neutralizes_an_escape_sequence_in_a_cell(cache_dir, tmp_path):
     """Cell values are authored by whoever opened the PR. `read_text` is the one
     seam every renderer reads them through, so the escape must not survive it."""

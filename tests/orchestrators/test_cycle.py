@@ -1421,6 +1421,7 @@ def test_cycle_repo_skipped_without_folds_does_not_explode():
         _run_cycle_repo()
 
 
+@pytest.mark.covers("folds.partial~1")
 def test_cycle_repo_leaves_folds_complete_on_a_healthy_repo(tmp_path):
     folds = cycle.ReviewFolds()
     with _enter_all(_cycle_patches(tmp_path, [])):
@@ -2348,6 +2349,7 @@ def test_spawn_missing_bg_spawns_my_pr_without_worktree(tmp_path):
     sp.assert_not_called()
 
 
+@pytest.mark.covers("spawn.opt-out~2")
 def test_spawn_missing_no_worktree_repo_never_auto_spawns(tmp_path):
     """A `use_worktree: false` repo (bare `cockpit new`) opts out of all
     auto-spawning, even with a matching open PR that would otherwise be created."""
@@ -2962,6 +2964,7 @@ def test_handle_orphans_never_closes(tmp_path):
     assert {c.args[1] for c in refresh_mock.call_args_list} == {"ws:mine", "ws:cow"}
 
 
+@pytest.mark.covers("orphan.no-nudge~1")
 def test_refresh_orphan_applies_pills_and_sends_nothing(tmp_path):
     """An orphan is display-only. The "push commits and open a PR" nudge used to
     fire here every slow tick past a grace window; it was the one automatic send
@@ -3015,6 +3018,7 @@ def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
 
 
 @pytest.mark.parametrize("mine,nudged", [(True, True), (False, False)])
+@pytest.mark.covers("spawn.coworker-pr~1")
 def test_refresh_tracked_pills_nudges_only_my_prs(tmp_path, mine, nudged):
     """A coworker's PR (a `review_prs` worktree, or a manual review checkout)
     tracks and pills like any other, but is never nudged — "fix the failing CI"
@@ -3230,6 +3234,7 @@ def test_prefetch_linear_blocks_refetches_when_stale(tmp_path):
     fetch.assert_called_once_with(["PE-1234"], api_key=ANY)
 
 
+@pytest.mark.covers("devdone.batch-fetch~1")
 def test_prefetch_linear_blocks_batches_across_prs_one_call(tmp_path):
     """All due tickets across every PR collapse into a single batched fetch, and
     each PR's block is assembled from the shared result."""
@@ -4118,6 +4123,44 @@ def test_cycle_all_only_repo_reconciles_just_that_repo():
     assert swept == []
 
 
+@pytest.mark.covers("rowaction.z-folds~1")
+def test_cycle_all_only_repo_never_builds_or_reconciles_folds():
+    # A scoped run builds no ReviewFolds and never reaches the cross-repo
+    # reconcile: a bucket holding no ref from the scoped repo is dissolved,
+    # taking every other org's fold with it.
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
+    folds_seen: list[cycle.ReviewFolds | None] = []
+    reconciled: list[cycle.ReviewFolds] = []
+    with (
+        patch.object(cycle, "ensure_state_dirs", lambda: None),
+        patch.object(cycle, "_cache_only", lambda cfg: False),
+        patch.object(cycle, "_drain_close_requests", lambda *, dry: None),
+        patch.object(cycle, "close_gone_cwd_workspaces", lambda *, dry: None),
+        patch.object(cycle, "_reap_workspace_orphans", lambda *_a, **_k: None),
+        patch.object(
+            cycle,
+            "cycle_repo",
+            lambda repo_entry, *_a, **kw: folds_seen.append(kw.get("folds")),
+        ),
+        patch.object(
+            cycle,
+            "_reconcile_review_groups",
+            lambda folds, **kw: reconciled.append(folds),
+        ),
+    ):
+        cycle.cycle_all(
+            cfg,
+            "khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            only_repo="/b",
+        )
+    assert reconciled == []
+    # Not merely short-circuited elsewhere: `cycle_repo` was handed no folds.
+    assert folds_seen == [None]
+
+
 def test_cycle_all_only_repo_unknown_path_reconciles_nothing():
     cfg = {"repos": [{"name": "a", "path": "/a"}]}
     seen: list[str] = []
@@ -4530,6 +4573,7 @@ def _group(ref, name, anchor, members, icon=""):
     )
 
 
+@pytest.mark.covers("stacks.header~1")
 def test_reconcile_sidebar_groups_creates_a_group_named_for_the_tip(tmp_path):
     # The tip names the fold and leads it (`create_workspace_group` lands the
     # first ref at the top), the same order the TUI renders the chain in.
@@ -4831,6 +4875,7 @@ def _folds(*ctx_refs):
     return folds
 
 
+@pytest.mark.covers("sidebar-tag.fold-header~1")
 def test_fold_tag_reads_the_org_block_not_a_members_expanded_tag(tmp_path):
     # `apply_org_defaults` copies the org's scalar down and `expand_sidebar_tags`
     # rewrites `{repo}` per member, so the repo entry reads `🛡️ mlops` — naming
@@ -4840,6 +4885,7 @@ def test_fold_tag_reads_the_org_block_not_a_members_expanded_tag(tmp_path):
     assert cycle._fold_tag(cfg, repo_entry) == "🛡️"
 
 
+@pytest.mark.covers("sidebar-tag.fold-header~1")
 def test_fold_tag_keeps_a_literal_org_tag_whole(tmp_path):
     cfg = {"orgs": {"Acme": {"sidebar_tag": "♻️"}}}
     assert cycle._fold_tag(cfg, {"name": "a", "org": "Acme"}) == "♻️"
@@ -5243,6 +5289,7 @@ def test_reconcile_sidebar_groups_leaves_a_stacked_coworker_pr_in_its_stack(tmp_
     assert folds.buckets == {"n": []}  # a workspace lives in exactly one group
 
 
+@pytest.mark.covers("folds.born-collapsed~1")
 def test_reconcile_review_groups_reparks_an_existing_fold(tmp_path):
     ctx = _stack_ctx(
         tmp_path,
@@ -5337,6 +5384,7 @@ def _snoozed_stack(tmp_path, snoozed, folds=None):
     return create, dissolved
 
 
+@pytest.mark.covers("stacks.snoozed~1")
 def test_a_stack_with_a_snoozed_tip_joins_the_snoozed_pile_whole(tmp_path):
     # A workspace lives in exactly one group, so the chain gives up its own to
     # fold away inside `<org> snoozed (N)` — where the table already files it
@@ -5449,6 +5497,37 @@ def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
         SNOOZE_GROUP_ICON,
     ]
     assert moved == ["wg:reviews", "wg:snoozed"]
+
+
+@pytest.mark.covers("folds.order~1")
+def test_reconcile_review_groups_order_follows_the_tuples_walk_order(tmp_path):
+    # `_TRAILING_FOLDS` carries no priority/rank field for "reviews above
+    # snoozed" — the pass just walks the tuple in order and re-parks each pile
+    # with `--to-index 9999`, so whichever entry is walked *last* ends up
+    # lowest. If a rank field were doing the sorting, reversing the tuple
+    # would leave the emitted order alone; instead it flips it, which is the
+    # observable proof that pass order is the only thing deciding it.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "khivi/b", "main")],
+        coworkers=("workspace:1",),
+        snoozed=("workspace:2",),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+
+    def _icons_in_walk_order():
+        with (
+            patch.object(cycle, "list_workspace_groups", return_value=[]),
+            patch.object(cycle, "create_workspace_group", return_value=None) as create,
+        ):
+            cycle._reconcile_review_groups(folds, dry=False)
+        return [c.kwargs["icon"] for c in create.call_args_list]
+
+    assert _icons_in_walk_order() == [REVIEW_GROUP_ICON, SNOOZE_GROUP_ICON]
+
+    with patch.object(cycle, "_TRAILING_FOLDS", tuple(reversed(cycle._TRAILING_FOLDS))):
+        assert _icons_in_walk_order() == [SNOOZE_GROUP_ICON, REVIEW_GROUP_ICON]
 
 
 def test_a_snoozed_chain_folds_with_the_rest_of_the_pile(tmp_path):
@@ -6167,6 +6246,7 @@ def test_restore_leaves_a_fold_that_is_still_there_alone():
     create.assert_not_called()
 
 
+@pytest.mark.covers("folds.restore-reads~1")
 def test_restore_gives_up_when_the_group_read_failed():
     # The whole reason `read_workspace_groups` exists: a failed read flattens to
     # an empty list, which reads as "every fold is gone" and would duplicate
@@ -6219,6 +6299,7 @@ def test_restore_rebuilds_around_only_the_members_still_live():
     assert create.call_args.args[1] == ["ws:2"]
 
 
+@pytest.mark.covers("folds.restore~1")
 def test_restore_can_only_create():
     # The property that makes a 30s network-free fold pass safe at all: every
     # failure mode costs a missing fold for one more interval, never a closed

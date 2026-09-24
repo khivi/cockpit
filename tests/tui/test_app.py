@@ -262,6 +262,48 @@ async def test_slow_tick_gets_per_repo_publish_callback(monkeypatch, tmp_path):
         assert table.row_count == 2  # repo header + 1 worktree, per-repo callback
 
 
+@pytest.mark.covers("tui.on-repo-done~1")
+async def test_on_repo_done_writes_no_cache_cells(monkeypatch, tmp_path):
+    # AGENTS.md, "Per-repo table republish": the slow tick's `on_repo_done` hook
+    # republishes the table after each repo — but "**Never** let it write a cell
+    # — only the daemon writes." `cache.atomic_write` is the one funnel every
+    # cell and snapshot goes through, so recording it catches any writer the
+    # real callback (`_publish_inventory`) reaches.
+    import cockpit.lib.cache as cache_mod
+
+    writes: list[Path] = []
+    monkeypatch.setattr(cache_mod, "atomic_write", lambda p, _payload: writes.append(p))
+
+    wt = Worktree(path=tmp_path / "wt-a", branch="khivi/feat-a")
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [{"name": "repo", "path": str(tmp_path)}]},
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app.worktrees",
+        lambda p, prefix="", repo_name="", sidebar_tag="": [wt],
+    )
+
+    published = threading.Event()
+
+    def slow(on_repo_done=None, only_repo=None):
+        on_repo_done()  # exercise the real per-repo republish hook
+        published.set()
+
+    app = CockpitApp(
+        slow_tick=slow, fast_tick=lambda: None, slow_secs=300, fast_secs=30
+    )
+    async with app.run_test() as pilot:
+        for _ in range(20):
+            if published.is_set():
+                break
+            await pilot.pause(0.1)
+        assert published.is_set()
+        assert app.query_one(WorktreeTable).row_count  # the hook really rendered
+
+    assert writes == []
+
+
 async def test_fast_starts_only_after_first_slow():
     order: list[str] = []
 
@@ -1152,6 +1194,7 @@ async def test_new_box_selected_repo_becomes_spawn_cwd(monkeypatch, tmp_path):
     assert launched["cwd"] == str(repo_b)  # chosen repo, not the cursor row's
 
 
+@pytest.mark.covers("spawn.picker-parked~1")
 async def test_new_box_sinks_parked_repos_and_unhides_on_spawn(monkeypatch, tmp_path):
     # A parked repo stays offered in the modal's picker, but sorts below the live
     # ones and is labelled `(hidden)`. Picking it is a deliberate un-park: the
@@ -1521,6 +1564,7 @@ async def test_z_opens_and_shuts_a_repos_snoozed_fold(monkeypatch, tmp_path):
         assert table.row_count == 3
 
 
+@pytest.mark.covers("folds.snoozed-toggle~2")
 async def test_the_fold_row_advertises_only_the_two_fold_keys(monkeypatch, tmp_path):
     # It carries no workspace, so every workspace-targeted row key would no-op
     # there. The two that stay both act on the FOLD itself: `z` opens and shuts
@@ -2557,6 +2601,7 @@ def _stacked_snooze_app(monkeypatch, tmp_path):
     return app, tip, root, prefs, saved
 
 
+@pytest.mark.covers("nudge.chain-snooze~1")
 async def test_snooze_takes_the_whole_stack(monkeypatch, tmp_path):
     # Pressed on a member *below* the tip, which used to be a total no-op on
     # screen: the fold bands a chain by its tip, and a snoozed row paints no
@@ -2653,16 +2698,20 @@ async def test_mute_still_kicks_repo_scoped(monkeypatch, tmp_path):
     assert kicks == [(app._kick_slow, (str(repo_path),))]
 
 
+@pytest.mark.covers("events.doorbell~1")
 async def test_workspace_event_kicks_the_fast_tick():
     # The `cmux events` doorbell: a workspace created/closed out from under us
-    # republishes now instead of at the next 30s fast tick.
+    # republishes now instead of at the next 30s fast tick. It must never feed
+    # the slow tick — an event is a trigger only, never a decision.
     app, calls = _make_app()
     async with app.run_test() as pilot:
         await pilot.pause(0.8)
-        before = calls["fast"]
+        before_fast = calls["fast"]
+        before_slow = calls["slow"]
         app._on_workspace_event()
         await pilot.pause(0.5)
-        assert calls["fast"] == before + 1
+        assert calls["fast"] == before_fast + 1
+        assert calls["slow"] == before_slow
 
 
 async def test_event_during_a_running_fast_tick_is_not_lost():
@@ -2716,6 +2765,7 @@ async def test_sidebar_x_closes_the_worktree(monkeypatch):
     assert closed == [("/tmp/repo/feat", {"quiet": True})]
 
 
+@pytest.mark.covers("events.sidebar-x~1")
 async def test_sidebar_x_never_forces(monkeypatch):
     """`C`'s open-PR override is a deliberate second keystroke. The X is one
     click with no modifier, so it must land on the refusing gate, not force."""
@@ -3453,6 +3503,7 @@ async def test_menu_is_not_row_gated():
         assert str(menu.render()) == HeaderBar.MENU_LABEL
 
 
+@pytest.mark.covers("footer.tooltips~1")
 async def test_footer_key_hover_explains_that_key():
     # The footer's one-word labels say what a key is called, never what it
     # does. Hovering a segment — key or label — sets the bar's tooltip to that
@@ -3521,6 +3572,7 @@ async def test_every_advertised_footer_key_has_a_tooltip():
         assert rendered <= set(FooterBar.TOOLTIPS), rendered - set(FooterBar.TOOLTIPS)
 
 
+@pytest.mark.covers("header.guide-entry~1")
 async def test_feature_guide_action_opens_the_docs_url(monkeypatch):
     from cockpit.tui import app as app_mod
 
@@ -3535,6 +3587,19 @@ async def test_feature_guide_action_opens_the_docs_url(monkeypatch):
     assert opened[0].startswith("https://")
 
 
+@pytest.mark.covers("docs.guide-url~1")
+def test_feature_guide_url_constant_is_unpinned():
+    # A pinned URL 404s for the whole release-PR window: the version bump lands
+    # before tag.yml pushes the tag. The sibling test compares the constant to
+    # itself, so it is the literal that has to be pinned here.
+    from cockpit.tui import app as app_mod
+
+    # The tree-ish is the whole question, so pin it exactly: any tag-pinned
+    # spelling (`/blob/v3.6.1/`, `/releases/tag/...`) fails this one line.
+    assert "/blob/main/" in app_mod.FEATURE_GUIDE_URL
+
+
+@pytest.mark.covers("docs.guide-url~1")
 async def test_release_notes_action_opens_the_unpinned_releases_index(monkeypatch):
     from cockpit.tui import app as app_mod
 
@@ -3758,6 +3823,7 @@ async def test_a_repo_name_with_a_space_survives_the_relaunch(monkeypatch):
     assert shlex.split(launched[0])[-2:] == ["--repo", "Acme Infra"]
 
 
+@pytest.mark.covers("ticket-routing.explicit-repo~1")
 async def test_an_unroutable_ticket_refuses_loudly(monkeypatch):
     """No candidate survives either stage, so there is nothing to offer and
     nothing to derive. Falling through to the daemon's cwd here is what cut two
@@ -3775,6 +3841,7 @@ async def test_an_unroutable_ticket_refuses_loudly(monkeypatch):
     assert "PE-412" in notified[0] and "press n" in notified[0]
 
 
+@pytest.mark.covers("ticket-routing.no-waiver~1")
 async def test_an_ambiguous_trello_card_never_reaches_the_spawn(monkeypatch):
     """Its short link carries no key, so the board is the only discriminator —
     and with more than one repo declaring one, routing can't name a repo."""

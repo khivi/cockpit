@@ -14,6 +14,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from tests.asserts import expected_starship as _expected_starship
 from tests.fixtures import (
     make_bin_on_path as _make_bin_on_path,
@@ -129,6 +131,7 @@ def test_watch_dry_flag_reaches_the_cycle(tmp_path, monkeypatch):
     assert built[-1]["dry"] is True
 
 
+@pytest.mark.covers("dry.threading~1")
 def test_once_with_threads_dry_into_the_cycle(monkeypatch):
     """The other half of the gate: a flag that lands in `state` but never
     reaches `cycle_all` would be silently unsafe — autoclose would still remove
@@ -737,6 +740,7 @@ def test_fast_tick_cell_writes_stay_bounded(monkeypatch):
     assert peak <= cockpit.CELL_WRITE_WORKERS
 
 
+@pytest.mark.covers("dry.surfaces~1")
 def test_fast_tick_does_not_touch_cmux_under_dry(tmp_path, monkeypatch):
     """`--dry` promises never to act, but the fast tick is a second path to the
     same effects: it renames and recolours the user's LIVE cmux workspaces every
@@ -940,6 +944,7 @@ def _nudge_fixture(tmp_path, monkeypatch, *, pending, workspace=True):
     return cockpit, repo, wt, sends
 
 
+@pytest.mark.covers("diff-nudge.send~1")
 def test_fast_tick_hands_pending_notes_to_the_session_that_owns_them(
     tmp_path, monkeypatch
 ):

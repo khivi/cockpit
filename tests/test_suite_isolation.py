@@ -25,6 +25,7 @@ import pytest
 from tests.conftest import _REAL_COCKPIT_HOME
 
 
+@pytest.mark.covers("suite.isolation~1")
 def test_execing_the_real_cmux_raises():
     with pytest.raises(RuntimeError, match="blocked"):
         subprocess.Popen(["cmux", "list-workspaces"])
@@ -82,6 +83,7 @@ def test_cockpit_home_is_not_the_developers():
     assert Path(COCKPIT_HOME).resolve() != _REAL_COCKPIT_HOME
 
 
+@pytest.mark.covers("suite.isolation~1")
 def test_writing_into_the_real_cockpit_home_raises():
     """The second layer: a test that rebuilds the path by hand, or a module
     that captured it at import, still cannot land a byte in it."""

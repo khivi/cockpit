@@ -85,6 +85,7 @@ def test_linear_id_lowercase_normalised_to_upper():
     assert value == "PE-1234"
 
 
+@pytest.mark.covers("tickets.url~1")
 def test_linear_issue_url_returns_linear_mode_with_bare_id():
     """The clipboard shape. Without this it fell through to `branch` and git
     rejected the whole URL as a branch name.
@@ -583,6 +584,95 @@ def test_spawn_leaves_other_repos_parked(spawn_main, tmp_path):
     assert "un-hid" not in out
 
 
+# The bare `--cwd` test above is the one mode where the spawned target IS the
+# main worktree itself. Every mode below lands in a SIBLING directory of
+# `cockpit_repo.repo` (a fresh branch's own worktree), so together they pin
+# the other half of the rule: `_unhide_spawn_target` keys off
+# `main_worktree_path(wt)` — the repo's resolved root, the same path
+# `hidden.py` stores — never the freshly created worktree's own path.
+
+
+def _spawn_named_branch(spawn_main, cockpit_repo, monkeypatch, push_branch):
+    return spawn_main(["--name", "foo", "--repo", "testrepo"])
+
+
+def _spawn_existing_branch(spawn_main, cockpit_repo, monkeypatch, push_branch):
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    push_branch("khivi/parked-target")
+    return spawn_main(["--branch", "khivi/parked-target", "--repo", "testrepo"])
+
+
+def _spawn_pr(spawn_main, cockpit_repo, monkeypatch, push_branch):
+    import cockpit.spawn as spawn
+    from cockpit.lib.git import create_new_branch_worktree
+
+    # `resolve_pr_branch` and the PR-fetch half of `create_worktree` both talk
+    # to a real GitHub remote, which the tmp `origin.git` bare repo isn't —
+    # stub both so `--pr` reaches the worktree-creation + unhide tail without
+    # a live `gh`/`git fetch refs/pull/...` round-trip.
+    monkeypatch.setattr(spawn, "resolve_pr_branch", lambda *_a, **_kw: "pr-99-branch")
+    monkeypatch.setattr(
+        spawn,
+        "create_worktree",
+        lambda repo, branch, wt_path, *, base, pr_num=None, branch_prefix="": (
+            create_new_branch_worktree(repo, branch, wt_path, base=base)
+        ),
+    )
+    monkeypatch.setattr(
+        spawn,
+        "fetch_pr_info",
+        lambda *_a, **_kw: {
+            "number": 99,
+            "title": "t",
+            "author": {"login": "x"},
+            "url": "https://example.invalid/pull/99",
+        },
+    )
+    return spawn_main(["--pr", "99", "--repo", "testrepo"])
+
+
+def _spawn_ticket_ref(spawn_main, cockpit_repo, monkeypatch, push_branch):
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    return spawn_main(["PE-1234", "--repo", "testrepo"])
+
+
+_PARKED_SPAWN_MODES = [
+    pytest.param(_spawn_named_branch, id="name"),
+    pytest.param(_spawn_existing_branch, id="branch"),
+    pytest.param(_spawn_pr, id="pr"),
+    pytest.param(_spawn_ticket_ref, id="ticket"),
+]
+
+
+@pytest.mark.covers("spawn.unhide~1")
+@pytest.mark.parametrize("spawn_fn", _PARKED_SPAWN_MODES)
+def test_spawn_modes_into_parked_repo_all_unhide(
+    spawn_fn, spawn_main, cockpit_repo, monkeypatch, push_branch
+):
+    """`--pr`, an existing `--branch`, a `--name`d branch, and a ticket ref
+    (`PE-1234`, Linear/Jira-shaped) all reach the SAME `_unhide_spawn_target`
+    gate rather than a per-mode branch. A per-mode regression (the gate
+    wired into only one dispatch arm) fails exactly the parametrizations it
+    doesn't cover; a keying regression (matching on the spawned worktree's
+    own path instead of the resolved repo root) fails every one of them,
+    since each mode here creates its worktree in a sibling directory of
+    `cockpit_repo.repo`.
+    """
+    from cockpit.lib.hidden import is_hidden, toggle_hidden
+
+    toggle_hidden(cockpit_repo.repo)
+    assert is_hidden(cockpit_repo.repo)
+
+    code, out, _err = spawn_fn(spawn_main, cockpit_repo, monkeypatch, push_branch)
+    assert code == 0
+    assert not is_hidden(cockpit_repo.repo)
+    assert "un-hid parked repo" in out
+
+
 def test_bare_outside_git_repo_errors(spawn_main, tmp_path, monkeypatch):
     plain = tmp_path / "not-a-repo"
     plain.mkdir()
@@ -654,6 +744,7 @@ def test_no_sidebar_tag_leaves_the_spawned_name_alone(spawn_main):
     assert _cmux_kwarg(spawn_main.cmux_calls[0], "name") == "foo"
 
 
+@pytest.mark.covers("sidebar-tag.cwd~1")
 def test_cwd_alone_takes_no_sidebar_tag(spawn_main, cockpit_repo, tmp_path):
     """A `--cwd` with no `--repo` has no repo determined, so it gets no tag —
     guessing one from the spawn process's cwd would stamp the workspace with
@@ -724,6 +815,7 @@ def test_pr_author_falls_back_when_author_null_or_absent():
 # ── --review (per-repo review_prs) ─────────────────────────────────────────
 
 
+@pytest.mark.covers("spawn.review-default~1")
 def test_review_prompt_leads_with_bundled_prose_by_default():
     """No `--review-command`: the lead is cockpit's own `review_prose.txt`, never
     a command it doesn't ship."""
@@ -798,6 +890,23 @@ def test_plan_only_prompt_uses_custom_command():
     assert "PLAN ONLY" in p  # the shared no-code gate always rides along
 
 
+@pytest.mark.covers("spawn.plan-fallback~1")
+def test_plan_only_prompt_forwards_source_into_source_block():
+    """Every OTHER `_plan_only_prompt(...)` call in this file omits `source=`,
+    so this is the one direct exercise of the slot: when no `(mode,
+    provider)` pair matches, `main()` hands the fallback the ticket/thread
+    ref via this argument rather than seeding a bare branch name — see
+    `test_gh_issue_without_provider_seeds_ref_in_plan_only` below for the
+    end-to-end version of the same rule."""
+    import cockpit.spawn as spawn
+
+    p = spawn._plan_only_prompt(
+        "khivi/feature", None, source="https://trello.com/c/aB3dZ9"
+    )
+    assert "**Source**: https://trello.com/c/aB3dZ9" in p
+
+
+@pytest.mark.covers("prompts.plan-untracked~1")
 def test_both_plan_gates_persist_the_plan_and_forbid_committing_it():
     """The gate names its artifact and refuses to stage it.
 
@@ -1307,6 +1416,8 @@ def test_linear_seeds_smart_prompt_with_no_mcp_pre_flight(spawn_main, cockpit_re
     assert "STOP" in cmd
 
 
+@pytest.mark.covers("tickets.no-preflight~1")
+@pytest.mark.covers("slack.no-preflight~1")
 def test_spawn_never_shells_out_to_claude_mcp_list(spawn_main, cockpit_repo):
     """The probe is gone at the source, not just unused: a Linear spawn must
     make no `claude mcp list` subprocess call at all. Guards against it being
@@ -1610,6 +1721,7 @@ def test_context_injected_into_seeded_prompt(spawn_main, monkeypatch):
     assert "PLAN ONLY" in cmd  # seeded prompt preserved
 
 
+@pytest.mark.covers("spawn.context-flag~1")
 def test_bare_context_errors(spawn_main):
     """Bare `--context` means 'summarize this session' — a job only the calling
     agent can do. Reaching the CLI unexpanded must fail loudly, not spawn a
@@ -1754,6 +1866,7 @@ def test_linear_key_routing_disabled_without_a_provider(
     assert "cannot determine repo" in err
 
 
+@pytest.mark.covers("spawn.ticket-prompt~1")
 def test_linear_key_routing_reads_the_candidates_not_the_global_block(
     spawn_main, cockpit_repo, monkeypatch
 ):
@@ -2006,6 +2119,7 @@ def test_route_ticket_repos_is_empty_when_no_repo_declares_a_board(cockpit_repo)
     assert route_ticket_repos(_TRELLO_URL) == []
 
 
+@pytest.mark.covers("tickets.routing-survivors~1")
 def test_route_ticket_repos_reports_every_survivor_of_an_ambiguity(
     cockpit_repo, tmp_path
 ):
@@ -2170,9 +2284,13 @@ def test_linear_key_without_provider_seeds_ref_in_plan_only(spawn_main, cockpit_
     assert "PE-1234" in cmd
 
 
+@pytest.mark.covers("spawn.plan-fallback~1")
 def test_gh_issue_without_provider_seeds_ref_in_plan_only(spawn_main, cockpit_repo):
     """The URL form's ref keeps its repo (`o/r#42`), so the session can look the
-    issue up without guessing which repo it belongs to."""
+    issue up without guessing which repo it belongs to. End-to-end version of
+    `test_plan_only_prompt_forwards_source_into_source_block`: `main()`'s
+    fallback dispatch (no `(mode, provider)` pair matches `gh-issue` with no
+    ticket provider configured) reaches `_plan_only_prompt`'s `source=` slot."""
     code, _out, _err = spawn_main(
         ["https://github.com/o/r/issues/42", "--repo", "testrepo"]
     )

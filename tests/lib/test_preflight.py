@@ -650,6 +650,7 @@ def test_preflight_exits_on_leftover_flat_linear_key_per_repo(
         ("api_key_env", "token_env", "linear"),
     ],
 )
+@pytest.mark.covers("tickets.legacy~1")
 def test_preflight_exits_on_superseded_tickets_field(
     tmp_path, monkeypatch, capsys, legacy, new, provider
 ):
@@ -995,6 +996,7 @@ def test_preflight_warns_naming_the_orgs_own_trello_credential(
     assert "TRELLO_API_TOKEN" not in err
 
 
+@pytest.mark.covers("tickets.credential-warning~1")
 def test_preflight_silent_for_a_github_ticket_repo_with_no_credential_env(
     tmp_path, monkeypatch, capsys
 ):
@@ -1516,6 +1518,7 @@ def test_workspace_backend_silent_when_cmux_answers_nothing(monkeypatch, capsys)
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.covers("capabilities.degrade~1")
 def test_workspace_backend_warns_on_a_missing_verb(monkeypatch, capsys):
     monkeypatch.setattr(preflight_mod, "resolve_tool", lambda: "cmux")
     healthy = _healthy()

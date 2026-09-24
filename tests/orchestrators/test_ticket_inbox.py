@@ -109,6 +109,7 @@ def test_repos_sharing_a_credential_and_bucket_cost_one_fetch(provider, written)
     assert list(out) == ["acme"]
 
 
+@pytest.mark.covers("ticket-inbox.axes~1")
 def test_two_credentials_in_one_bucket_are_fetched_separately(provider, written):
     """Asking one workspace about another's ticket answers about a different
     issue that merely shares an identifier."""
@@ -152,6 +153,7 @@ def test_partial_cycle_writes_nothing(provider, written):
     written.assert_not_called()
 
 
+@pytest.mark.covers("ticket-inbox.fetch~1")
 def test_a_failed_fetch_suspends_only_its_own_bucket(provider, written):
     provider._results = [None, [_ticket("ENG-2")]]
     inbox = _inbox(_entry(bucket="acme"), _entry(bucket="widgets-co", name="w"))
@@ -172,6 +174,7 @@ def test_a_failed_group_suspends_a_bucket_its_sibling_group_filled(provider, wri
     written.assert_not_called()
 
 
+@pytest.mark.covers("ticket-inbox.fetch~1")
 def test_an_empty_answer_is_written_not_suspended(provider, written):
     """`[]` is "asked, nothing assigned" — a real state the inbox must show."""
     provider._result = []

@@ -291,6 +291,7 @@ async def test_a_ticket_with_no_handle_shows_its_id():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers("tickets-screen.widths~1")
 async def test_a_revealed_title_is_not_clipped_to_its_column_label():
     """Opening a fold must not paint the new rows at the pre-fold width.
 
@@ -451,6 +452,7 @@ async def test_a_ticket_outside_stage_one_is_marked_with_nothing():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers("tickets-screen.widths~1")
 async def test_a_marker_never_widens_the_ticket_column():
     """The widths are explicit for a paid-for reason — auto-sizing caches the
     wrong width on a fold — so the marker comes out of the handle's budget."""

@@ -195,6 +195,7 @@ def test_tag_workspace_name_prefixes_the_tag():
     )
 
 
+@pytest.mark.covers("sidebar-tag.separator~1")
 def test_an_emoji_tag_takes_a_space_not_the_separator():
     """`🎛️·dot` reads as a bare leading dot, because the sidebar renders the
     glyph as an icon rather than as a run of text for the separator to part."""
@@ -202,6 +203,7 @@ def test_an_emoji_tag_takes_a_space_not_the_separator():
     assert tag_workspace_name("stale", "🏢") == "🏢 stale"
 
 
+@pytest.mark.covers("sidebar-tag.separator~1")
 def test_a_tag_ending_in_text_keeps_the_separator():
     """The `{repo}`-expanded form ends in the repo name, so it stays parted —
     dropping the separator there would run two words together."""
@@ -214,6 +216,24 @@ def test_tag_workspace_name_leaves_an_empty_name_alone():
     """A detached worktree has no label; tagging one would invent a workspace
     named after nothing but its repo."""
     assert tag_workspace_name("", "infra") == ""
+
+
+@pytest.mark.covers("sidebar-tag.token~1")
+def test_tag_workspace_name_does_not_expand_the_repo_token():
+    """`{repo}` is expanded exactly once, at load time, by
+    `config.expand_sidebar_tags` — never by `tag_workspace_name` itself. This
+    is what lets the token be declared on an org block: `apply_org_defaults`
+    copies a scalar verbatim, so an org-level `sidebar_tag` of `"{repo}"`
+    would label the whole org rather than each member unless something
+    resolves it to the member's own repo name before it reaches this
+    function. `tag_workspace_name` must stay dumb about the token and treat
+    it as ordinary text.
+
+    `{repo}` ends in `}`, a non-alnum character, so the last-char separator
+    rule (`sidebar-tag.separator.last-char`) applies here too: the prefix
+    takes a plain space, not `SIDEBAR_TAG_SEP`.
+    """
+    assert tag_workspace_name("fix-retry", "{repo}") == "{repo} fix-retry"
 
 
 def test_workspace_name_applies_the_repos_sidebar_tag(tmp_path):
@@ -1042,6 +1062,7 @@ def test_worktree_age_seconds_never_negative(tmp_path):
     assert worktree_age_seconds(wt, now=0) == 0.0
 
 
+@pytest.mark.covers("spawn.adopt-grace~1")
 def test_worktree_age_seconds_missing_path_fails_open(tmp_path):
     """An un-stat-able path returns inf so the orphan nudge isn't silently muted."""
     assert worktree_age_seconds(tmp_path / "nope") == float("inf")

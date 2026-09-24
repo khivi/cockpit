@@ -58,6 +58,7 @@ def _pr(
 # ── PR.stale_vs_base / update_branch_skip_reason ────────────────────────────
 
 
+@pytest.mark.covers("update-stale.trigger~1")
 def test_stale_vs_base_is_behind_only():
     """`BEHIND` is the only state meaning "the base moved AND the repo requires
     up-to-date branches". `BLOCKED`/`CLEAN`/`UNKNOWN` are not staleness."""
@@ -85,6 +86,7 @@ def test_skip_reasons(kwargs, expected):
     assert _pr(**kwargs).update_branch_skip_reason() == expected
 
 
+@pytest.mark.covers("update-stale.ruleset-read~1")
 def test_approved_pr_is_skipped_when_the_base_dismisses_stale_reviews():
     """The load-bearing gate. Updating an approved PR under
     `dismissesStaleReviews` discards the approval, turning a mergeable PR into
@@ -93,6 +95,7 @@ def test_approved_pr_is_skipped_when_the_base_dismisses_stale_reviews():
     assert "dismisses stale reviews" in pr.update_branch_skip_reason()
 
 
+@pytest.mark.covers("update-stale.ruleset-read~1")
 def test_the_dismissal_verdict_can_be_injected_for_rulesets():
     """`dismisses_stale_reviews` reads only classic branch protection; the caller
     resolves rulesets too and passes the combined verdict."""
@@ -297,6 +300,7 @@ def test_resync_refuses_a_dirty_worktree(repo_pair, tmp_path):
     assert (work / "scratch.txt").read_text() == "uncommitted"
 
 
+@pytest.mark.covers("update-stale.resync~1")
 def test_resync_refuses_when_head_moved_past_the_expected_sha(repo_pair, tmp_path):
     """The compare-and-swap: a local commit made after the cycle's fetch means
     the worktree holds work origin never had, so a hard reset would discard it."""
@@ -430,6 +434,7 @@ def test_dry_never_writes(tmp_path):
     upd.assert_not_called()
 
 
+@pytest.mark.covers("update-stale.cas~1")
 def test_an_approved_behind_pr_is_updated_with_a_compare_and_swap(tmp_path):
     ctx = _ctx(tmp_path, [_pr(head="abc123")])
     with patch.object(
@@ -443,6 +448,7 @@ def test_an_approved_behind_pr_is_updated_with_a_compare_and_swap(tmp_path):
     assert kwargs["method"] == "REBASE"
 
 
+@pytest.mark.covers("update-stale.scope~1")
 def test_a_snoozed_pr_is_updated_even_though_it_is_not_approved(tmp_path):
     from cockpit.lib.nudges import NudgePref
 
@@ -455,6 +461,7 @@ def test_a_snoozed_pr_is_updated_even_though_it_is_not_approved(tmp_path):
     upd.assert_called_once()
 
 
+@pytest.mark.covers("update-stale.scope~1")
 def test_an_unapproved_unsnoozed_pr_is_left_alone(tmp_path):
     """The quiescent-state scoping: a PR under active work may have a session
     mid-turn on it, and rewriting the head underneath one is the failure this
@@ -491,6 +498,8 @@ def test_a_failure_clears_the_marker_so_the_next_tick_retries(tmp_path):
     assert not any(k.startswith("update-branch:") for k in ctx.pill_state)
 
 
+@pytest.mark.covers("update-stale.dismissal-gate~1")
+@pytest.mark.covers("update-stale.two-sources~1")
 def test_a_ruleset_dismissal_blocks_an_approved_update(tmp_path):
     """The hole this closes: a rulesets-only repo reports
     `branchProtectionRule: null`, so the classic field reads False."""
@@ -503,6 +512,7 @@ def test_a_ruleset_dismissal_blocks_an_approved_update(tmp_path):
     upd.assert_not_called()
 
 
+@pytest.mark.covers("update-stale.fail-closed~1")
 def test_an_unreadable_ruleset_fails_closed_for_approved_prs(tmp_path):
     """ "Couldn't ask" must not read as "safe" — being wrong here discards an
     approval. This is the one place cockpit fails closed."""
@@ -515,6 +525,7 @@ def test_an_unreadable_ruleset_fails_closed_for_approved_prs(tmp_path):
     upd.assert_not_called()
 
 
+@pytest.mark.covers("update-stale.fail-closed~1")
 def test_a_snoozed_pr_never_pays_the_ruleset_lookup(tmp_path):
     """No approval to lose, so it neither consults the endpoint nor fails closed
     when that endpoint is unavailable."""

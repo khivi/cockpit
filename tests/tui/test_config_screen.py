@@ -95,6 +95,7 @@ async def test_plain_json_body_is_unstyled():
         assert text.spans == []
 
 
+@pytest.mark.covers("globalkeys.sync~1")
 async def test_palette_offers_output_but_not_sync():
     # Output is palette-only, so its hit is the ONLY in-app route to it. Sync
     # has the `s` key instead — one surface per action, or the two drift.
@@ -132,6 +133,7 @@ async def test_palette_offers_the_release_notes():
             assert any("What's new" in str(h.text) for h in hits), query
 
 
+@pytest.mark.covers("palette.discover~1")
 async def test_every_entry_shows_on_an_empty_palette():
     # `discover` is what fills the palette before anything is typed; `search`
     # runs only once there IS a query. Implementing search alone left `^P`
@@ -184,6 +186,7 @@ async def test_discovered_entries_invoke_their_app_action():
     assert called == ["output", "show", "edit", "news", "guide"]
 
 
+@pytest.mark.covers("palette.order~1")
 async def test_palette_order_runs_in_app_before_it_leaves():
     # `discover` yields in COMMANDS order, so the tuple IS the empty palette.
     # Ordered by distance from the dashboard: overlays, then $EDITOR, then the

@@ -116,6 +116,7 @@ def test_status_text_adds_the_fast_countdown_when_the_fast_tick_is_on():
     assert f"{FAST_GLYPH} 0:20" in status_text(65, 20)
 
 
+@pytest.mark.covers("header.tick-glyphs~1")
 def test_the_tooltip_is_the_legend_for_the_two_tick_glyphs():
     # The bar names each tick by glyph alone, so the tooltip is the only place
     # the mapping is spelled out. Drop a glyph from the prose and the counters
@@ -125,6 +126,7 @@ def test_the_tooltip_is_the_legend_for_the_two_tick_glyphs():
     assert f"{FAST_GLYPH} Fast tick" in tooltip
 
 
+@pytest.mark.covers("header.tick-glyphs~1")
 def test_the_two_tick_glyphs_are_the_same_cell_width():
     # They sit in one right-anchored segment. Equal width means a font that
     # disagrees with `cell_len` shifts the whole segment rather than splitting
@@ -145,6 +147,7 @@ def test_brand_text_degrades_to_the_bare_name_with_no_version():
     assert brand_text("", "").plain == "cockpit"
 
 
+@pytest.mark.covers("header.brand~1")
 def test_brand_text_links_to_the_release_notes():
     linked = brand_text("9.9.9", "https://example.test/releases")
     assert any(
@@ -152,6 +155,7 @@ def test_brand_text_links_to_the_release_notes():
     )
 
 
+@pytest.mark.covers("header.brand~1")
 def test_brand_text_carries_no_link_when_no_url_is_supplied():
     assert not any("link" in str(span.style) for span in brand_text("9.9.9", "").spans)
 
@@ -315,6 +319,7 @@ async def test_brand_half_repaints_when_the_version_arrives():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers("header.countdowns~1")
 async def test_the_countdowns_do_not_move_when_the_cursor_changes_repo():
     # The anchoring invariant: the repo is the only segment whose width changes
     # while the app runs, so it owns the flexible slot and everything right of

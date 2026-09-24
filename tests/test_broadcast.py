@@ -257,6 +257,7 @@ def test_unnamed_repo_falls_back_to_its_directory(monkeypatch, tmp_path, capsys)
     assert "sent to 1/1" in capsys.readouterr().out
 
 
+@pytest.mark.covers("broadcast.repo~1")
 def test_bare_repo_basename_is_not_a_second_spelling(monkeypatch, tmp_path, capsys):
     """Under a bare clone every repo's path ends in `.bare`. If the basename
     were accepted alongside the name, `--repo .bare` would resolve to whichever
@@ -379,6 +380,7 @@ def test_without_repo_nothing_reads_the_config(monkeypatch):
     assert broadcast.main(["/compact"]) == 0
 
 
+@pytest.mark.covers("broadcast.send~1")
 def test_nudge_called_with_broadcast_tag(monkeypatch):
     monkeypatch.setattr(
         broadcast, "workspace_cwds", lambda *, include_self=False: _cwds("workspace:a")
