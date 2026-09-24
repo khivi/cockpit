@@ -263,13 +263,13 @@ def _files_for(target: Path) -> list[Path]:
 
 
 @pytest.mark.covers("tui.signals~1")
-@pytest.mark.covers("cache.renderer-readonly~1")
 @pytest.mark.covers("tui.diff-key~1")
 @pytest.mark.covers("prompts.plan-unread~1")
 @pytest.mark.covers("stdout.queue-writer~1")
-@pytest.mark.covers("slack.no-preflight~1")
 @pytest.mark.covers("table.ticket-link~1")
 @pytest.mark.covers("ticket-inbox.screen~1")
+@pytest.mark.covers("diff.resolution~1")
+@pytest.mark.covers("folds.collapse-readback~1")
 @pytest.mark.parametrize("target,needle,why", _BANNED_SUBSTRING_CASES)
 def test_banned_substring_absent(target: Path, needle: str, why: str) -> None:
     offenders = [
@@ -280,10 +280,10 @@ def test_banned_substring_absent(target: Path, needle: str, why: str) -> None:
     assert not offenders, f"{why}\nfound {needle!r} in: {offenders}"
 
 
-# ── cache.renderer.never-reads-source-state ──────────────────────────────
+# ── cache.renderer-readonly ──────────────────────────────
 
 
-@pytest.mark.covers("diff.resolution~1")
+@pytest.mark.covers("cache.renderer-readonly~1")
 def test_starship_is_a_strict_cache_reader() -> None:
     """starship's field printers are read-only: the daemon owns every cell,
     so a renderer that shells out itself would race the writer and could
@@ -306,10 +306,10 @@ def test_starship_is_a_strict_cache_reader() -> None:
     assert not leaked, f"starship.py reaches into git.py's I/O surface: {leaked}"
 
 
-# ── slack.no-mcp-preflight ────────────────────────────────────────────────
+# ── slack.no-preflight ────────────────────────────────────────────────
 
 
-@pytest.mark.covers("events.cursor-file~1")
+@pytest.mark.covers("slack.no-preflight~1")
 def test_no_source_shells_out_to_claude_mcp_list() -> None:
     """`claude mcp list` health-checks by connecting, which false-negatives
     on an async-handshaking managed connector — the exact setup this feature
@@ -326,10 +326,10 @@ def test_no_source_shells_out_to_claude_mcp_list() -> None:
     assert not offenders, f"shells out to claude mcp list: {offenders}"
 
 
-# ── events.cursor-file.not-cache-cell ─────────────────────────────────────
+# ── events.cursor-file ─────────────────────────────────────
 
 
-@pytest.mark.covers("folds.collapse-readback~1")
+@pytest.mark.covers("events.cursor-file~1")
 def test_events_py_never_imports_cache_module() -> None:
     """The `cmux events` resume cursor is cmux's own bookmark, not cockpit
     inventory — it must never be routed through `lib.cache`'s flat-cell
@@ -344,7 +344,7 @@ def test_events_py_never_imports_cache_module() -> None:
     assert not any(p == "cockpit.lib.cache" or p.endswith(".cache") for p in paths)
 
 
-# ── config.atomic-write.no-reinline ──────────────────────────────────────
+# ── config.write-funnel ──────────────────────────────────────
 
 
 @pytest.mark.covers("config.write-funnel~1")
@@ -369,7 +369,7 @@ def test_atomic_write_text_is_the_only_temp_then_replace_writer() -> None:
     assert not offenders, f"os.replace called outside _atomic_write_text: {offenders}"
 
 
-# ── cache.session-cells.daemon-never-writes ──────────────────────────────
+# ── cache.session-cells ──────────────────────────────
 
 # Every stem `claude.py::stash_from_stdin` writes. The daemon may still READ
 # "cost" (it derives wt-cost from it) — this set is checked only against
@@ -421,7 +421,7 @@ def test_daemon_never_writes_a_session_scoped_cell() -> None:
     assert not offenders, f"daemon writes a session-scoped cell: {offenders}"
 
 
-# ── rowaction.z-full-cycle.no-move-to-fast-tick ──────────────────────────
+# ── rowaction.z-tick ──────────────────────────
 
 
 @pytest.mark.covers("rowaction.z-tick~1")
@@ -440,7 +440,7 @@ def test_fast_tick_never_reaches_reconcile_review_groups() -> None:
     assert "restore_trailing_folds" in reachable  # sanity: the graph isn't empty/broken
 
 
-# ── update-stale.mechanism.no-local-rebase ────────────────────────────────
+# ── update-stale.mutation ────────────────────────────────
 
 
 @pytest.mark.covers("update-stale.mutation~1")
