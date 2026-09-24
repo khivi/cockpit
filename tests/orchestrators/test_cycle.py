@@ -1421,9 +1421,7 @@ def test_cycle_repo_skipped_without_folds_does_not_explode():
         _run_cycle_repo()
 
 
-@pytest.mark.covers(
-    "**Do not** re-key this on the bucket being empty rather than the cycle being complete."
-)
+@pytest.mark.covers("folds.partial.keyed-on-completeness~1")
 def test_cycle_repo_leaves_folds_complete_on_a_healthy_repo(tmp_path):
     folds = cycle.ReviewFolds()
     with _enter_all(_cycle_patches(tmp_path, [])):
@@ -2351,7 +2349,7 @@ def test_spawn_missing_bg_spawns_my_pr_without_worktree(tmp_path):
     sp.assert_not_called()
 
 
-@pytest.mark.covers("**Do not** let these repos reach any auto-spawn.")
+@pytest.mark.covers("spawn.use-worktree-false.no-auto-spawn~1")
 def test_spawn_missing_no_worktree_repo_never_auto_spawns(tmp_path):
     """A `use_worktree: false` repo (bare `cockpit new`) opts out of all
     auto-spawning, even with a matching open PR that would otherwise be created."""
@@ -2966,9 +2964,7 @@ def test_handle_orphans_never_closes(tmp_path):
     assert {c.args[1] for c in refresh_mock.call_args_list} == {"ws:mine", "ws:cow"}
 
 
-@pytest.mark.covers(
-    '**Do not** re-add it, and **do not** answer "an abandoned worktree should nag" with a send'
-)
+@pytest.mark.covers("orphan-nudge.removed.no-reinstate~1")
 def test_refresh_orphan_applies_pills_and_sends_nothing(tmp_path):
     """An orphan is display-only. The "push commits and open a PR" nudge used to
     fire here every slow tick past a grace window; it was the one automatic send
@@ -3022,9 +3018,7 @@ def test_refresh_tracked_pills_renames_drifted_workspace(tmp_path):
 
 
 @pytest.mark.parametrize("mine,nudged", [(True, True), (False, False)])
-@pytest.mark.covers(
-    "**Do not** add a nudge or authority grant keyed off the worktree's existence alone."
-)
+@pytest.mark.covers("spawn.coworker-pr.review-mode-only~1")
 def test_refresh_tracked_pills_nudges_only_my_prs(tmp_path, mine, nudged):
     """A coworker's PR (a `review_prs` worktree, or a manual review checkout)
     tracks and pills like any other, but is never nudged — "fix the failing CI"
@@ -3240,7 +3234,7 @@ def test_prefetch_linear_blocks_refetches_when_stale(tmp_path):
     fetch.assert_called_once_with(["PE-1234"], api_key=ANY)
 
 
-@pytest.mark.covers("**Do not** drop back to a per-PR fetch fan-out.")
+@pytest.mark.covers("devdone.fetch.no-per-pr-fanout~1")
 def test_prefetch_linear_blocks_batches_across_prs_one_call(tmp_path):
     """All due tickets across every PR collapse into a single batched fetch, and
     each PR's block is assembled from the shared result."""
@@ -4129,7 +4123,7 @@ def test_cycle_all_only_repo_reconciles_just_that_repo():
     assert swept == []
 
 
-@pytest.mark.covers("**Do not** instead build `folds` under `only_repo`")
+@pytest.mark.covers("rowaction.z-full-cycle.no-folds-under-only-repo~1")
 def test_cycle_all_only_repo_never_builds_or_reconciles_folds():
     # A scoped run builds no ReviewFolds and never reaches the cross-repo
     # reconcile: a bucket holding no ref from the scoped repo is dissolved,
@@ -4579,7 +4573,7 @@ def _group(ref, name, anchor, members, icon=""):
     )
 
 
-@pytest.mark.covers("**Do not** re-name the group after the root.")
+@pytest.mark.covers("stacks.group-header.tip-not-root~1")
 def test_reconcile_sidebar_groups_creates_a_group_named_for_the_tip(tmp_path):
     # The tip names the fold and leads it (`create_workspace_group` lands the
     # first ref at the top), the same order the TUI renders the chain in.
@@ -4881,7 +4875,7 @@ def _folds(*ctx_refs):
     return folds
 
 
-@pytest.mark.covers("**Do not** feed a member's merged tag into a fold header:")
+@pytest.mark.covers("sidebar-tag.fold-header.reads-bucket-not-member~1")
 def test_fold_tag_reads_the_org_block_not_a_members_expanded_tag(tmp_path):
     # `apply_org_defaults` copies the org's scalar down and `expand_sidebar_tags`
     # rewrites `{repo}` per member, so the repo entry reads `🛡️ mlops` — naming
@@ -5294,7 +5288,7 @@ def test_reconcile_sidebar_groups_leaves_a_stacked_coworker_pr_in_its_stack(tmp_
     assert folds.buckets == {"n": []}  # a workspace lives in exactly one group
 
 
-@pytest.mark.covers("**Do not** promote this to an unconditional re-assert")
+@pytest.mark.covers("folds.collapse.create-time-only~1")
 def test_reconcile_review_groups_reparks_an_existing_fold(tmp_path):
     ctx = _stack_ctx(
         tmp_path,
@@ -5389,7 +5383,7 @@ def _snoozed_stack(tmp_path, snoozed, folds=None):
     return create, dissolved
 
 
-@pytest.mark.covers("— **do not** re-introduce a position-based answer")
+@pytest.mark.covers("stacks.snoozed-diversion.not-position-based~1")
 def test_a_stack_with_a_snoozed_tip_joins_the_snoozed_pile_whole(tmp_path):
     # A workspace lives in exactly one group, so the chain gives up its own to
     # fold away inside `<org> snoozed (N)` — where the table already files it
@@ -5504,7 +5498,7 @@ def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
     assert moved == ["wg:reviews", "wg:snoozed"]
 
 
-@pytest.mark.covers("so **do not** reorder that tuple expecting names to sort it out")
+@pytest.mark.covers("folds.trailing.pass-order-not-rank~1")
 def test_reconcile_review_groups_order_follows_the_tuples_walk_order(tmp_path):
     # `_TRAILING_FOLDS` carries no priority/rank field for "reviews above
     # snoozed" — the pass just walks the tuple in order and re-parks each pile
@@ -6251,7 +6245,7 @@ def test_restore_leaves_a_fold_that_is_still_there_alone():
     create.assert_not_called()
 
 
-@pytest.mark.covers("**Do not** re-merge the two functions.")
+@pytest.mark.covers("folds.restore.separate-read-functions~1")
 def test_restore_gives_up_when_the_group_read_failed():
     # The whole reason `read_workspace_groups` exists: a failed read flattens to
     # an empty list, which reads as "every fold is gone" and would duplicate
@@ -6304,7 +6298,7 @@ def test_restore_rebuilds_around_only_the_members_still_live():
     assert create.call_args.args[1] == ["ws:2"]
 
 
-@pytest.mark.covers("**It can only create**")
+@pytest.mark.covers("folds.restore.create-only~1")
 def test_restore_can_only_create():
     # The property that makes a 30s network-free fold pass safe at all: every
     # failure mode costs a missing fold for one more interval, never a closed

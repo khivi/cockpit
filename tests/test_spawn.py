@@ -85,9 +85,7 @@ def test_linear_id_lowercase_normalised_to_upper():
     assert value == "PE-1234"
 
 
-@pytest.mark.covers(
-    "**Do not** pass them through verbatim the way `slack`/`trello` mode does."
-)
+@pytest.mark.covers("tickets.url.extract-not-verbatim~1")
 def test_linear_issue_url_returns_linear_mode_with_bare_id():
     """The clipboard shape. Without this it fell through to `branch` and git
     rejected the whole URL as a branch name.
@@ -650,9 +648,7 @@ _PARKED_SPAWN_MODES = [
 ]
 
 
-@pytest.mark.covers(
-    "**Do not** move this into a per-mode branch, and **do not** key it on the worktree path."
-)
+@pytest.mark.covers("spawn.unhide.single-gate-every-mode~1")
 @pytest.mark.parametrize("spawn_fn", _PARKED_SPAWN_MODES)
 def test_spawn_modes_into_parked_repo_all_unhide(
     spawn_fn, spawn_main, cockpit_repo, monkeypatch, push_branch
@@ -748,9 +744,7 @@ def test_no_sidebar_tag_leaves_the_spawned_name_alone(spawn_main):
     assert _cmux_kwarg(spawn_main.cmux_calls[0], "name") == "foo"
 
 
-@pytest.mark.covers(
-    "**do not** fall back to `discover_repo()`, which guesses from wherever the user was standing."
-)
+@pytest.mark.covers("sidebar-tag.cwd-alone.no-tag~1")
 def test_cwd_alone_takes_no_sidebar_tag(spawn_main, cockpit_repo, tmp_path):
     """A `--cwd` with no `--repo` has no repo determined, so it gets no tag —
     guessing one from the spawn process's cwd would stamp the workspace with
@@ -821,7 +815,7 @@ def test_pr_author_falls_back_when_author_null_or_absent():
 # ── --review (per-repo review_prs) ─────────────────────────────────────────
 
 
-@pytest.mark.covers("**Do not** re-add a default naming any command")
+@pytest.mark.covers("spawn.review-default.no-named-command~1")
 def test_review_prompt_leads_with_bundled_prose_by_default():
     """No `--review-command`: the lead is cockpit's own `review_prose.txt`, never
     a command it doesn't ship."""
@@ -896,7 +890,7 @@ def test_plan_only_prompt_uses_custom_command():
     assert "PLAN ONLY" in p  # the shared no-code gate always rides along
 
 
-@pytest.mark.covers("seeding the bare ref — **do not** drop the `source` slot.")
+@pytest.mark.covers("spawn.plan-fallback.keeps-source-slot~1")
 def test_plan_only_prompt_forwards_source_into_source_block():
     """Every OTHER `_plan_only_prompt(...)` call in this file omits `source=`,
     so this is the one direct exercise of the slot: when no `(mode,
@@ -912,7 +906,7 @@ def test_plan_only_prompt_forwards_source_into_source_block():
     assert "**Source**: https://trello.com/c/aB3dZ9" in p
 
 
-@pytest.mark.covers("**Do not** teach it to commit that file")
+@pytest.mark.covers("prompts.plan-gate.never-commit~1")
 def test_both_plan_gates_persist_the_plan_and_forbid_committing_it():
     """The gate names its artifact and refuses to stage it.
 
@@ -1422,7 +1416,7 @@ def test_linear_seeds_smart_prompt_with_no_mcp_pre_flight(spawn_main, cockpit_re
     assert "STOP" in cmd
 
 
-@pytest.mark.covers("**Do not** reintroduce a pre-flight for any provider.")
+@pytest.mark.covers("tickets.no-preflight-any-provider~1")
 def test_spawn_never_shells_out_to_claude_mcp_list(spawn_main, cockpit_repo):
     """The probe is gone at the source, not just unused: a Linear spawn must
     make no `claude mcp list` subprocess call at all. Guards against it being
@@ -1726,7 +1720,7 @@ def test_context_injected_into_seeded_prompt(spawn_main, monkeypatch):
     assert "PLAN ONLY" in cmd  # seeded prompt preserved
 
 
-@pytest.mark.covers("**Do not** teach the CLI to synthesize its own context.")
+@pytest.mark.covers("spawn.context-flag.no-synthesis~1")
 def test_bare_context_errors(spawn_main):
     """Bare `--context` means 'summarize this session' — a job only the calling
     agent can do. Reaching the CLI unexpanded must fail loudly, not spawn a
@@ -1871,7 +1865,7 @@ def test_linear_key_routing_disabled_without_a_provider(
     assert "cannot determine repo" in err
 
 
-@pytest.mark.covers("**`spawn.py`'s half is deferred")
+@pytest.mark.covers("spawn.ticket-prompt.reads-repo-block~1")
 def test_linear_key_routing_reads_the_candidates_not_the_global_block(
     spawn_main, cockpit_repo, monkeypatch
 ):
@@ -2124,9 +2118,7 @@ def test_route_ticket_repos_is_empty_when_no_repo_declares_a_board(cockpit_repo)
     assert route_ticket_repos(_TRELLO_URL) == []
 
 
-@pytest.mark.covers(
-    "**Do not** collapse this back to one key read off `candidates[0]`."
-)
+@pytest.mark.covers("tickets.routing.narrow-reports-all-survivors~1")
 def test_route_ticket_repos_reports_every_survivor_of_an_ambiguity(
     cockpit_repo, tmp_path
 ):
@@ -2291,7 +2283,7 @@ def test_linear_key_without_provider_seeds_ref_in_plan_only(spawn_main, cockpit_
     assert "PE-1234" in cmd
 
 
-@pytest.mark.covers("seeding the bare ref — **do not** drop the `source` slot.")
+@pytest.mark.covers("spawn.plan-fallback.keeps-source-slot~1")
 def test_gh_issue_without_provider_seeds_ref_in_plan_only(spawn_main, cockpit_repo):
     """The URL form's ref keeps its repo (`o/r#42`), so the session can look the
     issue up without guessing which repo it belongs to. End-to-end version of

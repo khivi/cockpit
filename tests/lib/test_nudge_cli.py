@@ -277,7 +277,7 @@ def _prefs(**snoozed_by_key):
     return lambda key: NudgePref(snoozed=snoozed_by_key.get(key, False))
 
 
-@pytest.mark.covers("so **do not** re-derive a chain in `nudge_cli.py`")
+@pytest.mark.covers("nudge-cli.split-chain.reuses-chain-tip~1")
 def test_snooze_below_an_unsnoozed_tip_names_the_pr_that_has_to_agree(capsys):
     with (
         patch.multiple(

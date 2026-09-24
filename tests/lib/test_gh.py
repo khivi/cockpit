@@ -448,7 +448,7 @@ def test_identify_stale_refetches_unknown_ci_even_when_updated_at_unchanged():
 # ── one PR per head branch — the join key every downstream reader uses ──────
 
 
-@pytest.mark.covers("**Do not** rank by number alone.")
+@pytest.mark.covers("gh.pr-rank.not-number-alone~1")
 def test_a_closed_duplicate_never_wins_its_branch():
     """The live shape that churned a workspace every slow tick: a duplicate PR
     opened seconds after the real one and closed. It carries the *higher*
@@ -643,9 +643,7 @@ def test_synth_branch_label_reads_as_base_feature():
     assert branch_label(b) == "new-onboarding"
 
 
-@pytest.mark.covers(
-    "**Do not** re-thread `headRefName` straight into a worktree branch."
-)
+@pytest.mark.covers("gh.trunk-head.no-raw-headrefname~1")
 def test_relevant_pr_query_routes_synth_by_number():
     q, variables = _relevant_pr_query(
         "o",

@@ -66,7 +66,7 @@ def test_no_template_escapes_the_registry():
 
 
 @pytest.mark.parametrize("name,slots", _TEMPLATES.items())
-@pytest.mark.covers("`tests/test_templates.py` asserts every template resolves.")
+@pytest.mark.covers("prompts.templates.all-resolve~1")
 def test_render_fills_every_declared_slot(name, slots):
     """Rendering with each declared slot leaves no `{...}` placeholder behind."""
     rendered = templates.render(name, **{s: f"<{s}>" for s in slots})

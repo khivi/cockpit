@@ -26,7 +26,7 @@ Any change to `match_worktrees`, `_spawn_missing_workspaces`, `nudge_if_idle`, `
 
 ### Docs have four altitudes — put a fact at exactly one of them
 
-`FEATURES.md` (user) · `README.md` (visitor) · `docs/config.md` (operator) · `AGENTS.md` + `docs/state-machine.md` (you). **A change to user-visible behaviour updates `FEATURES.md` in the same PR** — nothing fails when it's skipped.
+`FEATURES.md` (user) · `README.md` (visitor) · `docs/config.md` (operator) · `AGENTS.md` + `docs/state-machine.md` + `specs/` (you — rulebook, control flow, and behavior ledger respectively). **A change to user-visible behaviour updates `FEATURES.md` in the same PR** — nothing fails when it's skipped.
 
 - **Don't restate across altitudes** — duplicated prose drifts silently.
 - **`FEATURE_GUIDE_URL` points at `main`, deliberately**: the version bump lands before `tag.yml` pushes the tag, so a pinned URL 404s for the whole release-PR window. **Do not** pin it to a tag.
@@ -867,12 +867,16 @@ This is a paid-for regression twice over. A helper was extracted that called `wo
 - **An e2e test buys the pair's vocabulary and effect — never a race.** `tests/e2e/test_followup_delivery.py` is the one module that mutates live state, so it is gated on `COCKPIT_E2E_LIVE_DELIVERY=1` on top of `real_backend` and cannot ride `pytest -n auto`. It spawns outside every registered repo (`_reap_workspace_orphans` ignores those), closes through `cmux_close_workspace_best_effort`, and reads the session's own transcript as an oracle cockpit doesn't own. It is **not** a regression test for the readiness race: reverted to the pre-fix body it passes 3/3, because a warm machine boots Claude in ~1s. **Do not** promote it to one, and **do not** let a green run there read as proof the race is handled — that lives in the unit invariant.
 - **Repo-wide invariant tests** assert a fact about the tree instead of prose nobody re-derives: `tests/e2e/test_cmux_surface.py` and `tests/test_comment_references.py` (every `backticked` symbol and path still resolves — in a comment or docstring, and in this file's own prose). A rename otherwise leaves names behind as claims that read fine and mean nothing, which is how github_done_on_merge survived in two docstrings as the live gate (deliberately unbackticked here — a backtick marks a name that resolves *now*). Both carry a small allowlist for genuinely external names, **not** a place to park a stale reference.
 
-## Invariant coverage — the marker quotes the rule, not an id
+## Invariant coverage — `specs/` is the ledger, and every bullet must be claimed
 
-A test claims a rule by quoting it verbatim — `@pytest.mark.covers("**the exact phrase**")`. `rg 'covers\(' tests/` is the whole map, test → rule, no registry to open. `tests/test_invariant_coverage.py` runs one test, `test_every_covers_marker_quotes_a_live_rule`: a reworded or deleted rule fails loudly rather than leave a marker quoting something gone — the trade for dropping the registry is there is no gap list, so nothing reports a rule that has no test. Two rules neither file can hold:
+`specs/*.md` is the behavior spec, human-owned. One bullet per invariant, `- [<id>~<rev>] <what the system does>`. This file stays the rulebook — the scar and its **Never** — while the spec bullet states the behavior the scar protects; the two are different altitudes, and neither quotes the other, so rewording either breaks nothing. A test claims a bullet with `@pytest.mark.covers("<id>~<rev>")` (one or more ids per marker); `rg 'covers\(' tests/` maps test → id, `rg '<id>' specs/` lands on the bullet.
 
-- **It proves a guard EXISTS, never that the guard is strong.** A test that checks nothing satisfies it exactly as well as one that checks everything, and the same author writes the rule *and* the marker, so the two errors correlate rather than cancel. **Do not** read a claimed rule as a tested one.
-- **Claiming a rule is opt-in and partial by design.** An unclaimed rule costs nothing, so you add a marker while touching a rule, never as a migration. **Do not** bulk-add.
+`tests/test_invariant_coverage.py` holds the gate in **both directions**: a marker naming an id no bullet carries fails, and an unwaived bullet no test claims fails. That second direction is the point — **editing the spec is how you demand a test.** Add a bullet, and CI is red until a test claims it; bullets flow spec → test, never the other way. Four rules:
+
+- **The revision is the re-verify trigger.** Reword a bullet without changing its meaning and the revision stays; change what it claims and you bump `~<rev>`, which fails every test still claiming the old one until each is re-checked against the new claim and its marker bumped.
+- **`(untested: <reason>)` waives a bullet nothing runnable can assert** — a process rule, or design rationale a test could only pin the shape of. Waivers are counted against `WAIVED_COUNT` in the gate, so adding one is a deliberate edit there, never a drive-by. A test claiming a waived bullet fails: drop the waiver instead.
+- **A claimed bullet proves a guard EXISTS, never that the guard is strong.** A test that checks nothing satisfies it exactly as well as one that checks everything, and the same author writes the bullet *and* the marker, so the two errors correlate rather than cancel.
+- **The spec is hand-owned, never generated.** A spec generated from the markers would summarize the tests' own claims and review nothing. The one sanctioned generation was the bootstrap — a first draft since edited by hand.
 
 ## Sync
 

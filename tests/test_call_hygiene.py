@@ -262,18 +262,14 @@ def _files_for(target: Path) -> list[Path]:
     return [target] if target.is_file() else _iter_python_files(target)
 
 
-@pytest.mark.covers("**Never** `signal.signal` — it raises off the main thread.")
-@pytest.mark.covers("**Do not** re-add a row key that pipes into `cmux diff`")
-@pytest.mark.covers(
-    "**Do not** promote it to a cache cell, a config field, or anything"
-)
-@pytest.mark.covers("**never** per-tick `redirect_stdout` (the threads race).")
-@pytest.mark.covers(
-    "**Do not** answer a missing link by resolving one in `worktree_table.py`."
-)
-@pytest.mark.covers("**Do not** call `narrow_repos` for a marker either")
-@pytest.mark.covers("**Do not** route it through `close.py::_resolve_target`")
-@pytest.mark.covers('**do not** read `is_collapsed` back to "correct" a fold.')
+@pytest.mark.covers("tui.signals.no-signal-signal~1")
+@pytest.mark.covers("cache.renderer.never-reads-source-state~1")
+@pytest.mark.covers("tui.diff-key.not-reintroduced~1")
+@pytest.mark.covers("prompts.plan-gate.never-daemon-read~1")
+@pytest.mark.covers("stdout.queue-writer.no-per-tick-redirect~1")
+@pytest.mark.covers("slack.no-mcp-preflight~1")
+@pytest.mark.covers("table.ticket-link.no-renderer-resolve~1")
+@pytest.mark.covers("ticket-inbox.screen.no-narrow-repos-for-marker~1")
 @pytest.mark.parametrize("target,needle,why", _BANNED_SUBSTRING_CASES)
 def test_banned_substring_absent(target: Path, needle: str, why: str) -> None:
     offenders = [
@@ -287,7 +283,7 @@ def test_banned_substring_absent(target: Path, needle: str, why: str) -> None:
 # ── cache.renderer.never-reads-source-state ──────────────────────────────
 
 
-@pytest.mark.covers("**Never** let a renderer read source state directly.")
+@pytest.mark.covers("diff.resolution.no-configured-repo-required~1")
 def test_starship_is_a_strict_cache_reader() -> None:
     """starship's field printers are read-only: the daemon owns every cell,
     so a renderer that shells out itself would race the writer and could
@@ -313,7 +309,7 @@ def test_starship_is_a_strict_cache_reader() -> None:
 # ── slack.no-mcp-preflight ────────────────────────────────────────────────
 
 
-@pytest.mark.covers("**Never** add a `claude mcp list` pre-flight gate")
+@pytest.mark.covers("events.cursor-file.not-cache-cell~1")
 def test_no_source_shells_out_to_claude_mcp_list() -> None:
     """`claude mcp list` health-checks by connecting, which false-negatives
     on an async-handshaking managed connector — the exact setup this feature
@@ -333,9 +329,7 @@ def test_no_source_shells_out_to_claude_mcp_list() -> None:
 # ── events.cursor-file.not-cache-cell ─────────────────────────────────────
 
 
-@pytest.mark.covers(
-    "**Do not** grow it into stored inventory or route it through `cache.py`."
-)
+@pytest.mark.covers("folds.collapse.no-read-back~1")
 def test_events_py_never_imports_cache_module() -> None:
     """The `cmux events` resume cursor is cmux's own bookmark, not cockpit
     inventory — it must never be routed through `lib.cache`'s flat-cell
@@ -353,7 +347,7 @@ def test_events_py_never_imports_cache_module() -> None:
 # ── config.atomic-write.no-reinline ──────────────────────────────────────
 
 
-@pytest.mark.covers("**do not** re-inline the write at a `config.py` call site")
+@pytest.mark.covers("config.atomic-write.no-reinline~1")
 def test_atomic_write_text_is_the_only_temp_then_replace_writer() -> None:
     """`config.py::_atomic_write_text` is the one place that performs a
     literal `os.replace(tmp, path)` — every other atomic write (including
@@ -409,9 +403,7 @@ def _session_cell_writes(tree: ast.AST) -> set[str]:
     return stems
 
 
-@pytest.mark.covers(
-    "**Do not** extend this exception to a new cell — the daemon must never *write* one."
-)
+@pytest.mark.covers("cache.session-cells.daemon-never-writes~1")
 def test_daemon_never_writes_a_session_scoped_cell() -> None:
     """Session cells are written exactly once, from `claude.py::
     stash_from_stdin` off the statusLine hook — the daemon has no visibility
@@ -432,9 +424,7 @@ def test_daemon_never_writes_a_session_scoped_cell() -> None:
 # ── rowaction.z-full-cycle.no-move-to-fast-tick ──────────────────────────
 
 
-@pytest.mark.covers(
-    '**Do not** move the pass to the fast tick, whose network-free inputs would read absent payloads as "no reviews left".'
-)
+@pytest.mark.covers("rowaction.z-full-cycle.no-move-to-fast-tick~1")
 def test_fast_tick_never_reaches_reconcile_review_groups() -> None:
     """`_reconcile_review_groups` needs `folds`, which is only built when
     `cycle_all` runs unscoped (`only_repo is None`) — the fast tick never
@@ -453,7 +443,7 @@ def test_fast_tick_never_reaches_reconcile_review_groups() -> None:
 # ── update-stale.mechanism.no-local-rebase ────────────────────────────────
 
 
-@pytest.mark.covers("**Do not** replace this with a local rebase.")
+@pytest.mark.covers("update-stale.mechanism.no-local-rebase~1")
 def test_update_stale_branches_never_shells_a_local_rebase_or_force_push() -> None:
     """`cycle.py::_update_stale_branches` brings a PR's head up to date via
     GitHub's server-side `updatePullRequestBranch` mutation, never a local

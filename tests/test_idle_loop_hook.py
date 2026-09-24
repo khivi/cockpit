@@ -268,9 +268,7 @@ def test_no_workspace_id_is_noop(tmp_path, monkeypatch):
     assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
-@pytest.mark.covers(
-    "**The liveness guard in the hook must compare against a listing that carries workspace *ids*.**"
-)
+@pytest.mark.covers("idle-pill.liveness.match-on-workspace-id~1")
 def test_dead_workspace_is_noop(tmp_path, monkeypatch):
     # Workspace was closed/recreated — its ID is no longer in the listing.
     # Hook must exit silently so we don't hammer a dead socket and fill the
@@ -282,9 +280,7 @@ def test_dead_workspace_is_noop(tmp_path, monkeypatch):
     assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
-@pytest.mark.covers(
-    "**The liveness guard in the hook must compare against a listing that carries workspace *ids*.**"
-)
+@pytest.mark.covers("idle-pill.liveness.match-on-workspace-id~1")
 def test_substring_workspace_id_does_not_match(tmp_path, monkeypatch):
     # A prefix of a live id must not match it. The case pattern carries the
     # surrounding JSON quotes, which is what makes the match exact.
@@ -295,9 +291,7 @@ def test_substring_workspace_id_does_not_match(tmp_path, monkeypatch):
     assert _wait_quiet(log), log.read_text() if log.exists() else "log missing"
 
 
-@pytest.mark.covers(
-    "**The liveness guard in the hook must compare against a listing that carries workspace *ids*.**"
-)
+@pytest.mark.covers("idle-pill.liveness.match-on-workspace-id~1")
 def test_live_workspace_passes_through(fake_cmux):
     # Sanity: fake_cmux registers LIVE_WS as live, so the phase must reach
     # the cmux call. (Companion to test_dead_workspace_is_noop.)

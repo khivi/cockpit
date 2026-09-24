@@ -116,7 +116,7 @@ async def test_escape_hands_back_what_was_typed():
     assert result == [("cancel", "half a thought")]
 
 
-@pytest.mark.covers("**Do not** re-attach comments here.")
+@pytest.mark.covers("ask.line.no-comment-reattach~1")
 async def test_the_box_opens_empty():
     """`a` sends exactly what you type. It briefly offered a lead-in when diff
     comments were pending; those are now read in the workspace by `cockpit diff

@@ -131,9 +131,7 @@ def test_watch_dry_flag_reaches_the_cycle(tmp_path, monkeypatch):
     assert built[-1]["dry"] is True
 
 
-@pytest.mark.covers(
-    "**Do not** re-hardcode that call site, and **do not** add a second dev-only suppression path beside it."
-)
+@pytest.mark.covers("dry.threading.single-path~1")
 def test_once_with_threads_dry_into_the_cycle(monkeypatch):
     """The other half of the gate: a flag that lands in `state` but never
     reaches `cycle_all` would be silently unsafe — autoclose would still remove
@@ -742,7 +740,7 @@ def test_fast_tick_cell_writes_stay_bounded(monkeypatch):
     assert peak <= cockpit.CELL_WRITE_WORKERS
 
 
-@pytest.mark.covers("**Do not** narrow the gate back to the cycle.")
+@pytest.mark.covers("dry.gate.not-cycle-only~1")
 def test_fast_tick_does_not_touch_cmux_under_dry(tmp_path, monkeypatch):
     """`--dry` promises never to act, but the fast tick is a second path to the
     same effects: it renames and recolours the user's LIVE cmux workspaces every
@@ -946,7 +944,7 @@ def _nudge_fixture(tmp_path, monkeypatch, *, pending, workspace=True):
     return cockpit, repo, wt, sends
 
 
-@pytest.mark.covers("**do not** give it a second send path.")
+@pytest.mark.covers("diff-nudge.send.single-path~1")
 def test_fast_tick_hands_pending_notes_to_the_session_that_owns_them(
     tmp_path, monkeypatch
 ):

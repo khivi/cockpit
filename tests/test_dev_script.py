@@ -120,9 +120,7 @@ def test_refuses_setup(fake_repo):
 
 
 @pytest.mark.parametrize("sub", ["new", "close"])
-@pytest.mark.covers(
-    "**Do not** add a subcommand that mutates through git without a refusal beside it."
-)
+@pytest.mark.covers("dev-script.git-mutation.refusal~1")
 def test_refuses_the_subcommands_that_mutate_through_git(fake_repo, sub):
     """`tool: none` and `--dry` are both backend-facing, and neither gates
     `git`. The sandbox config is a snapshot pointing at the REAL repos, so

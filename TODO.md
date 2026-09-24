@@ -2,9 +2,6 @@
 
 ## Open
 
-- **A generated `SPEC.md`** — the `covers()` markers, each quoting a verbatim AGENTS.md
-  rule, are a traceability matrix in all but presentation. Generate it, never hand-write it.
-
 - **Per-row context headroom** (branch `khivi/stale` on origin, no local worktree,
   nothing committed) — show, per table row, how close that agent is to needing a
   `/compact`.
@@ -34,6 +31,11 @@
     is wrong.
 
 ## Closed unbuilt
+
+- **A generated `SPEC.md`** — rejected. The `covers()` markers now claim hand-owned
+  `specs/*.md` bullets instead of quoting AGENTS.md, so the traceability matrix exists,
+  but generating its prose from the markers would summarize the tests' own claims and
+  review nothing. The spec stays hand-written; only the bootstrap was generated.
 
 - **Respawn a session** — close a worktree's workspace and spawn a fresh one at the
   same path, so a session picks up an edited skill file. Not building it. The

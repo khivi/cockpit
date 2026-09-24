@@ -260,7 +260,7 @@ def test_wip_dropped_while_a_rebase_or_merge_is_in_flight():
     assert {"kind": "wip", "count": 7} in decide_pills(_pr(), _wt(dirty=7))
 
 
-@pytest.mark.covers("**Do not** answer a buried pill by reordering `KIND_ORDER`")
+@pytest.mark.covers("pills.wip-suppression.not-reorder~1")
 def test_an_approved_pr_mid_rebase_fits_the_three_visible_rows():
     """The reported shape: approved, conflicted, rebasing and dirty at once. The
     approval has to clear cmux's fold, which it only does once `wip` steps
