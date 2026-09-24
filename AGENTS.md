@@ -875,7 +875,7 @@ This is a paid-for regression twice over. A helper was extracted that called `wo
 
 - **The revision is the re-verify trigger.** Reword a bullet without changing its meaning and the revision stays; change what it claims and you bump `~<rev>`, which fails every test still claiming the old one until each is re-checked against the new claim and its marker bumped.
 - **`(untested: <reason>)` waives a bullet nothing runnable can assert** — a process rule, or design rationale a test could only pin the shape of. Waivers are counted against `WAIVED_COUNT` in the gate, so adding one is a deliberate edit there, never a drive-by. A test claiming a waived bullet fails: drop the waiver instead.
-- **A claimed bullet proves a guard EXISTS, never that the guard is strong.** A test that checks nothing satisfies it exactly as well as one that checks everything, and the same author writes the bullet *and* the marker, so the two errors correlate rather than cancel.
+- **A claimed bullet proves a guard EXISTS, never that the guard is strong.** A test that checks nothing satisfies it exactly as well as one that checks everything, and the same author writes the bullet *and* the marker, so the two errors correlate rather than cancel. The `spec-audit` skill is the advisory third party — a judge pass over each bullet and its claiming tests, run on demand or after a `~<rev>` bump; it proposes, never edits, and never gates a merge.
 - **The spec is hand-owned, never generated.** A spec generated from the markers would summarize the tests' own claims and review nothing. The one sanctioned generation was the bootstrap — a first draft since edited by hand.
 
 ## Sync
