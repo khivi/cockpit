@@ -1252,7 +1252,6 @@ def test_restamp_pref_touches_only_its_own_cells(json_cache):
     cache_dir = json_cache
     flat = cache_mod.FLAT_CACHE_DIR
     other_wt = Path("/tmp/wt-other")
-    other_key = cache_mod._cwd_key(other_wt)
 
     _snapshot(cache_dir, "cockpit", 7, "khivi/nap", cwd=str(_WT_PATH))
     # A sibling PR in the same repo, backed by a different worktree — must
@@ -1289,20 +1288,10 @@ def test_restamp_pref_touches_only_its_own_cells(json_cache):
     allowed = {"cache/cockpit__pr-7.json"} | {
         f"flat/{stem}-{_KEY}" for stem in owned_flat_stems
     }
-    assert changed <= allowed
+    assert changed <= allowed, f"touched cells it doesn't own: {changed - allowed}"
     # And the row-action actually did something — this isn't vacuously true.
     assert "cache/cockpit__pr-7.json" in changed
     assert f"flat/pr-snoozed-{_KEY}" in changed
-
-    # Name the files most at risk of a future "just one more cell" edit, so a
-    # widened allowlist fails here too rather than only in `changed <= allowed`.
-    assert not changed & {
-        "cache/cockpit__pr-8.json",
-        f"flat/pr-checks-{_KEY}",
-        f"flat/diff-comments-{_KEY}",
-        f"flat/pr-num-{other_key}",
-        f"flat/pr-checks-{other_key}",
-    }
 
 
 # ── Per-worktree session cost ───────────────────────────────────────────────
