@@ -365,6 +365,37 @@ def test_atomic_write_text_is_the_only_temp_then_replace_writer() -> None:
     assert not offenders, f"os.replace called outside _atomic_write_text: {offenders}"
 
 
+# ── teardown.close-funnel ────────────────────────────
+
+
+@pytest.mark.covers("teardown.close-funnel~1")
+def test_close_workspace_is_only_called_by_the_self_close_funnel() -> None:
+    """`cmux_close_workspace_best_effort` records the self-close before it
+    closes, so `cmux events` reads the resulting `workspace.closed` as
+    cockpit's own rather than the user's sidebar X — which routes into
+    teardown. Unfiltered, parking a repo would tear down every worktree in it.
+
+    Carved out per *function* rather than per file, exactly as
+    `config.write-funnel~1` does: a second raw close added to lib/cmux.py, the
+    most likely place for one, is still a violation.
+
+    `tests/lib/test_cmux.py::test_close_gone_cwd_workspaces_uses_best_effort_not_raw_cmux`
+    pins one call site at runtime; this is the tree-wide half. Matching on the
+    call's argument phrase rather than the raw source is what keeps prose
+    naming `close-workspace` (this docstring included) from tripping it."""
+    funnel = COCKPIT_ROOT / "lib" / "cmux.py"
+    offenders: list[str] = []
+    for path in sorted(COCKPIT_ROOT.rglob("*.py")):
+        for node in ast.walk(_parse(path)):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            if path == funnel and node.name == "cmux_close_workspace_best_effort":
+                continue
+            if any("close-workspace" in p for p in _call_argument_phrases(node)):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}::{node.name}")
+    assert not offenders, f"raw close-workspace outside the funnel: {offenders}"
+
+
 # ── cache.session-cells ──────────────────────────────
 
 # Every stem `claude.py::stash_from_stdin` writes. The daemon may still READ

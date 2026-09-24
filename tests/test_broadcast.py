@@ -288,6 +288,7 @@ def test_bare_repo_basename_is_not_a_second_spelling(monkeypatch, tmp_path, caps
     assert "sent to" not in capsys.readouterr().out
 
 
+@pytest.mark.covers("broadcast.repo~1")
 def test_unknown_repo_exits_2_and_names_the_configured_ones(
     monkeypatch, tmp_path, capsys
 ):

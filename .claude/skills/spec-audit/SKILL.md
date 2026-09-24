@@ -18,21 +18,66 @@ Not for this: finding unclaimed bullets or dead markers (the gate fails those),
 untested source lines (`/coverage-audit`), or writing the spec (it is
 hand-owned).
 
+## Arguments
+
+| You type | Scope | Shape of the run |
+|---|---|---|
+| `/spec-audit` | this worktree's branch vs `origin/main` | inline, usually a handful of ids |
+| `/spec-audit all` | every unwaived bullet in the ledger | fan out — see below |
+| `/spec-audit <PR#>` | that PR's diff | inline |
+| `/spec-audit <id>~1` | one bullet, however scoped | inline |
+
+Anything else in the argument is an instruction about *how* to run, not what to
+audit (`all - use subagents`). A bare `/spec-audit` on a branch that touched no
+spec or test file is a legitimate empty run — say so rather than silently
+widening to `all`, which is a hundred-and-twenty-seven-bullet read nobody asked
+for.
+
 ## Scope
 
-Default: only pairs the current branch touched.
+`scope.py` resolves it and sizes the ledger in one call. Start every run here:
 
 ```bash
-git diff origin/main --name-only -- specs/ tests/
+python3 .claude/skills/spec-audit/scope.py          # branch, vs origin/main
+python3 .claude/skills/spec-audit/scope.py all      # every unwaived bullet
+python3 .claude/skills/spec-audit/scope.py --pr 539  # a PR's diff
+python3 .claude/skills/spec-audit/scope.py --ids-only # just the ids, to iterate
 ```
 
+It prints per-file bullet / waived / auditable counts and a total, then the
+in-scope ids with how many tests claim each — so a bullet claimed by three
+tests is flagged as a union to judge before you open a single file. Report the
+totals you audited against; they are the denominator a reader needs to know
+whether "all entailed" covered nine bullets or a hundred and twenty-seven.
+
+**Do not** count bullets with `rg -c`. A bullet's text wraps, so its id and its
+`(untested: …)` waiver sit on different lines: `rg -c '\(untested:'` counts
+LINES and silently reports a different number than `scope.py` for the same
+ledger. That is what the script exists to stop.
+
 A changed spec file scopes to the ids of its edited bullets; a changed test
-file scopes to the ids its markers claim. On `all`, audit every unwaived
-bullet. Skip `(untested: …)` bullets either way — nothing runnable to judge.
+file scopes to the ids its markers claim. Both are resolved from ADDED lines
+only, never a hunk's declared range — `gh pr diff` carries three lines of
+context, so a range would pull in whatever marker happens to sit beside an
+edit. Skip `(untested: …)` bullets either way; nothing runnable to judge.
+
+**The script sizes the run; it does not perform it.** It cannot judge a pair —
+that is reading a bullet against every test claiming it and deciding whether
+the test would fail if the claim were false, which is the one thing here that
+is not mechanical. `scope.py` exists so the *denominator* stops being guessed,
+not to shrink the reading.
+
+**`all` is ~127 bullets — fan it out.** One pass cannot hold that many pairs
+honestly; it degrades into skimming, which reports "all entailed" for a ledger
+nobody read. Launch one subagent per spec file (group the small ones to even
+out the load), give each the rubric and the read-only constraint verbatim, and
+judge their findings yourself before relaying — a subagent returns a summary,
+not a fact. A branch or `--pr` scope is usually small enough to do inline.
 
 ## Pair each id
 
-The mapping is two greps (the same pair AGENTS.md documents):
+`scope.py` already told you how many tests claim each id. The mapping itself is
+two greps (the same pair AGENTS.md documents):
 
 ```bash
 rg -n '<id>~' specs/    # the bullet
@@ -76,6 +121,8 @@ the adversarial reading of this skill:
 ## Report
 
 Mismatches first, then partials with the missing assertion sketched as a
-snippet, entailed as a bare count. Cap findings at five and give the remainder
-as a number. When every pair holds, say "all entailed" — promoting a nit to
-fill the section is how the audit stops carrying signal.
+snippet, entailed as a bare count. Open with `scope.py`'s denominator — *127
+auditable, 5 in scope* — since "all entailed" means nothing without it. Cap
+findings at five and give the remainder as a number. When every pair holds, say
+"all entailed" — promoting a nit to fill the section is how the audit stops
+carrying signal.

@@ -1388,6 +1388,7 @@ def test_write_worktree_cost_cache_round_trips(projects_dir, cache_dir, tmp_path
     assert cache_mod.read_worktree_cost(wt) == pytest.approx(31.5146)
 
 
+@pytest.mark.covers("wt-cost.gate~2")
 def test_write_worktree_cost_cache_writes_blank_not_zero(
     projects_dir, cache_dir, tmp_path
 ):

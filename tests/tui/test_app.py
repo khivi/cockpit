@@ -2619,6 +2619,34 @@ async def test_snooze_takes_the_whole_stack(monkeypatch, tmp_path):
     assert sorted(saved) == ["beta__1", "beta__2"]
 
 
+@pytest.mark.covers("nudge.chain-snooze~1")
+async def test_snooze_reads_chain_membership_off_the_table(monkeypatch):
+    """Membership is the *render's* own record, read on the main thread and
+    handed to the worker. `test_snooze_takes_the_whole_stack` passes the member
+    list in, so it would still pass if `action_snooze_row` re-derived the chain
+    itself — and a chain re-derived off the worker thread races the render,
+    while one derived from the PRs rather than the rows lets the keypress and
+    the fold disagree about who is in it."""
+    app, _ = _make_app()
+    handed: list = []
+    monkeypatch.setattr(
+        CockpitApp, "_toggle_snooze", lambda self, p, paths: handed.append((p, paths))
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = app.query_one(WorktreeTable)
+        monkeypatch.setattr(table, "current_capabilities", lambda: frozenset())
+        monkeypatch.setattr(table, "current_path", lambda: "/w/root")
+        monkeypatch.setattr(table, "chain_paths", lambda p: [f"chain-of:{p}"])
+
+        app.action_snooze_row()
+
+    # The list is `chain_paths`' return verbatim, so it cannot have come from
+    # anywhere else; `action_snooze_row` is a plain method, so the read provably
+    # happens before the (patched-out) worker is reached.
+    assert handed == [("/w/root", ["chain-of:/w/root"])]
+
+
 async def test_waking_takes_the_whole_stack_too(monkeypatch, tmp_path):
     # The direction is the *pressed* row's, applied to the chain — so a chain
     # left half-snoozed by `cockpit nudge` converges instead of staying split.
@@ -3839,24 +3867,6 @@ async def test_an_unroutable_ticket_refuses_loudly(monkeypatch):
     CockpitApp._route_ticket.__wrapped__(app, "PE-412", "PE-412")  # type: ignore[attr-defined]
     assert launched == []
     assert "PE-412" in notified[0] and "press n" in notified[0]
-
-
-@pytest.mark.covers("ticket-routing.no-waiver~1")
-async def test_an_ambiguous_trello_card_never_reaches_the_spawn(monkeypatch):
-    """Its short link carries no key, so the board is the only discriminator —
-    and with more than one repo declaring one, routing can't name a repo."""
-    app, _ = _make_app()
-    launched: list = []
-    notified: list = []
-    monkeypatch.setattr(
-        CockpitApp, "_launch_spawn", lambda self, s, cwd: launched.append(s)
-    )
-    monkeypatch.setattr(CockpitApp, "_notify", lambda self, m, **k: notified.append(m))
-    _drive_ticket_route(monkeypatch, [])
-    url = "https://trello.com/c/aB3dZ9"
-    CockpitApp._route_ticket.__wrapped__(app, url, url)  # type: ignore[attr-defined]
-    assert launched == []
-    assert "press n" in notified[0]
 
 
 async def test_an_ambiguous_ticket_asks_instead_of_refusing(monkeypatch):

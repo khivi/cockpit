@@ -1882,6 +1882,7 @@ def test_one_line_collapses_literal_backslash_escapes():
     assert one_line(r"a\tb") == "a b"
 
 
+@pytest.mark.covers("send.one-line~1")
 def test_one_line_leaves_a_plain_message_untouched():
     assert one_line("fix CI") == "fix CI"
     assert one_line("/compact") == "/compact"

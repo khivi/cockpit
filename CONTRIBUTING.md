@@ -39,6 +39,28 @@ subprocesses, so `-n auto` parallelises it near-linearly (115s → 16s on 18 cor
 
 Test layout and per-layer style (leaf vs orchestrator vs CLI vs TUI vs e2e; new files get their own `test_<name>.py`): [`AGENTS.md`](./AGENTS.md#test-layout).
 
+## Specs
+
+`specs/*.md` is a hand-owned ledger of behavior invariants, one bullet each. A
+test claims one with `@pytest.mark.covers("<id>~<rev>")`.
+
+```bash
+rg -n '<id>~' specs/ tests/                        # the bullet, and every test claiming it
+python3 .claude/skills/spec-audit/scope.py          # what this branch put in scope
+```
+
+**Bullets flow spec → test, never the reverse.** Add a bullet and
+`tests/test_invariant_coverage.py` fails until something claims it — editing the
+spec is how you demand a test. The gate is two-directional, so a marker naming
+a bullet that no longer exists fails too.
+
+The gate only proves a bullet is *claimed*, never that the claiming test is
+strong enough to catch a regression. `/spec-audit` is the advisory judge pass
+over that gap; it proposes and never edits.
+
+Workflow, verdicts and the common failure mode: [`docs/specs.md`](./docs/specs.md).
+Rules and rationale: [`AGENTS.md`](./AGENTS.md#invariant-coverage--specs-is-the-ledger-and-every-bullet-must-be-claimed).
+
 ## Rules (full text in AGENTS.md)
 
 - **Worktrees** — one dedicated worktree per branch; never edit `main` or a feature branch in the primary checkout. Cockpit derives per-branch state from `git worktree list`, so in-place edits break PR-tracking. [details](./AGENTS.md#worktree-discipline)
