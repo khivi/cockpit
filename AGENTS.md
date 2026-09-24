@@ -878,6 +878,8 @@ This is a paid-for regression twice over. A helper was extracted that called `wo
 - **A claimed bullet proves a guard EXISTS, never that the guard is strong.** A test that checks nothing satisfies it exactly as well as one that checks everything, and the same author writes the bullet *and* the marker, so the two errors correlate rather than cancel. The `spec-audit` skill is the advisory third party — a judge pass over each bullet and its claiming tests, run on demand or after a `~<rev>` bump; it proposes, never edits, and never gates a merge.
 - **The spec is hand-owned, never generated.** A spec generated from the markers would summarize the tests' own claims and review nothing. The one sanctioned generation was the bootstrap — a first draft since edited by hand.
 
+The procedure around these rules — adding a bullet, bumping a revision, scoping and reading an audit — is `docs/specs.md`, which deliberately restates none of the above.
+
 ## Sync
 
 AGENTS.md is canonical — `CLAUDE.md` imports it, `.github/copilot-instructions.md` symlinks to it; edit only this file.
