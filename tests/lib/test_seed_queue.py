@@ -60,7 +60,7 @@ def test_enqueue_fails_open_when_the_runtime_dir_is_unwritable(monkeypatch, caps
     assert "cannot queue seed retry" in capsys.readouterr().err
 
 
-@pytest.mark.covers("seed-queue.stale.no-eventual-delivery~1")
+@pytest.mark.covers("seed-queue.stale~1")
 def test_prune_stale_drops_a_body_too_old_to_be_a_first_turn():
     """A seed body says "you are starting a fresh task" and asks for a rename and
     a plan. Delivered into a session the user has since been working in, it is

@@ -374,7 +374,7 @@ def test_state_blockers_others_local_commits_still_block(tmp_path):
     assert blockers == ["2 unlanded commit(s)"]
 
 
-@pytest.mark.covers("teardown.unlanded.ownership-split-not-collapsed~1")
+@pytest.mark.covers("teardown.unlanded~1")
 def test_state_blockers_mine_uses_unlanded_count(tmp_path):
     """Our own pushed-but-unmerged branch still blocks.
 

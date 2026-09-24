@@ -488,7 +488,7 @@ def test_cwd_key_slug_shape():
     assert cache_mod._cwd_key(_P("/tmp/foo/repo")) == a
 
 
-@pytest.mark.covers("cache.key.flat-cells-by-worktree-path~1")
+@pytest.mark.covers("cache.flat-cells~1")
 def test_flat_cells_keyed_by_worktree_not_branch(cache_dir, tmp_path):
     """Two worktrees in different repos sharing one branch label must not
     share a cell. Fails if a cell is ever keyed off the branch (or anything
@@ -1005,7 +1005,7 @@ def test_prune_superseded_keeps_lone_snapshot(json_cache):
     assert only.exists()
 
 
-@pytest.mark.covers("pr-list.one-per-head-branch~1")
+@pytest.mark.covers("pr-list.one-per-branch~1")
 def test_prune_superseded_scoped_to_repo(json_cache):
     # Two repos with the same branch name must not cross-prune.
     a = _snapshot(json_cache, "repoA", 1, "khivi/side", state="MERGED")
@@ -1242,7 +1242,7 @@ def _read_tree(**labeled_dirs: Path) -> dict[str, bytes]:
     return out
 
 
-@pytest.mark.covers("nudge.restamp-pref.scope-frozen~1")
+@pytest.mark.covers("nudge.restamp~1")
 def test_restamp_pref_touches_only_its_own_cells(json_cache):
     """`restamp_pref` may touch PR #7's snapshot and that snapshot's own `pr-*`
     cells for one cwd, nothing else. A sibling PR, a second worktree, and
@@ -1344,7 +1344,7 @@ def test_claude_project_slug_matches_claude_codes_layout(path, slug):
     assert cache_mod._claude_project_slug(path) == slug
 
 
-@pytest.mark.covers("wt-cost.slug.one-way-only~1")
+@pytest.mark.covers("wt-cost.slug~1")
 def test_claude_project_slug_is_lossy_so_it_has_no_inverse():
     """`repo.wt` and `repo-wt` share a slug, so no code can recover a path from
     one — the map is only ever walked forwards, worktree path -> directory."""
@@ -1447,7 +1447,7 @@ def test_cost_reporting_available_is_false_with_no_cells(cache_dir):
     assert cache_mod.cost_reporting_available() is False
 
 
-@pytest.mark.covers("wt-cost.gate.data-not-plan~1")
+@pytest.mark.covers("wt-cost.gate~1")
 def test_cost_reporting_available_is_false_when_every_session_reports_zero(cache_dir):
     """The gate for a plan/build that writes `total_cost_usd: 0` — the `$`
     column must not appear just because the cells exist."""
@@ -1472,7 +1472,7 @@ def test_cost_reporting_available_ignores_worktree_totals(cache_dir, tmp_path):
 # ── terminal-control sanitization (`strip_control` / `read_text`) ────────────
 
 
-@pytest.mark.covers("cache.strip-control.single-seam-in-read-text~1")
+@pytest.mark.covers("cache.strip-control~1")
 def test_read_text_neutralizes_an_escape_sequence_in_a_cell(cache_dir, tmp_path):
     """Cell values are authored by whoever opened the PR. `read_text` is the one
     seam every renderer reads them through, so the escape must not survive it."""

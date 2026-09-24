@@ -189,7 +189,7 @@ def literals(tracked: list[str]) -> str:
     )
 
 
-@pytest.mark.covers("docs.references.backticks-resolve~1")
+@pytest.mark.covers("docs.backticks~1")
 def test_backticked_symbols_in_comments_still_exist(
     references: dict[str, list[tuple[str, int]]],
     defined_symbols: set[str],
@@ -297,7 +297,7 @@ def literals_outside_docs(tracked: list[str]) -> str:
     )
 
 
-@pytest.mark.covers("docs.references.backticks-resolve~1")
+@pytest.mark.covers("docs.backticks~1")
 def test_backticked_symbols_in_the_instruction_set_still_exist(
     doc_references: dict[str, list[tuple[str, int]]],
     defined_symbols: set[str],

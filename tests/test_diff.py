@@ -80,7 +80,7 @@ def test_no_pr_falls_back_to_branch_and_says_so(
 
 
 @pytest.mark.parametrize("flag", ["--branch", "--staged", "--unstaged", "--last-turn"])
-@pytest.mark.covers("diff.source-flags.no-reimplemented-git~1")
+@pytest.mark.covers("diff.source-flags~1")
 def test_source_flags_pass_through_without_touching_gh(
     monkeypatch, in_worktree, rendered, flag
 ):
@@ -103,7 +103,7 @@ def test_base_rides_along(monkeypatch, in_worktree, rendered):
     assert rendered[0]["base"] == "origin/stage"
 
 
-@pytest.mark.covers("diff.render.no-second-caller-params~1")
+@pytest.mark.covers("diff.render~1")
 def test_targets_the_worktree_it_was_launched_from(monkeypatch, in_worktree, rendered):
     """The whole premise: the command runs inside the workspace it targets, so
     it names neither a workspace nor a surface and cmux's own defaults land the
@@ -137,7 +137,7 @@ def test_viewer_failure_exits_1(monkeypatch, in_worktree, capsys):
     assert "browser is off" in capsys.readouterr().err
 
 
-@pytest.mark.covers("diff.comments.split-not-merged~1")
+@pytest.mark.covers("diff.comments~1")
 def test_comments_prints_without_marking_anything(
     monkeypatch, in_worktree, rendered, capsys
 ):

@@ -144,7 +144,7 @@ def test_cmux_status_pills_matches_decisions():
     ]
 
 
-@pytest.mark.covers("pills.pr-pill.exclusive-renderer~1")
+@pytest.mark.covers("pills.pr-exclusive~1")
 def test_cmux_drops_state_pill():
     # cmux suppresses the `state` pill — the `pr` pill already carries MERGED,
     # and its trailing glyph carries CI.
@@ -561,7 +561,7 @@ def test_deliver_followup_sends_text_then_enter_when_ready():
     assert any(c[0] == "send-key" and "enter" in c for c in calls)
 
 
-@pytest.mark.covers("send.one-line.inside-the-funnel~1")
+@pytest.mark.covers("send.one-line~1")
 def test_deliver_followup_collapses_the_text_to_one_line():
     """`cmux send` synthesizes keypresses, so a newline arrives as Enter — i.e.
     submit. Un-normalized, "do X\ndo Y" submits "do X" as its own truncated
@@ -763,8 +763,8 @@ def test_deliver_followup_submits_only_after_the_body_shows_in_the_composer():
     assert verbs.index("read-screen", verbs.index("send")) < verbs.index("send-key")
 
 
-@pytest.mark.covers("spawn.seed.no-enter-on-unconfirmed~1")
-@pytest.mark.covers("spawn.seed.no-raise-attempt-count~1")
+@pytest.mark.covers("spawn.seed-enter~1")
+@pytest.mark.covers("spawn.seed-budget~1")
 def test_deliver_followup_retries_a_body_that_never_lands_then_refuses_to_submit():
     """A body the composer never echoes is re-typed, and if it still never
     appears the delivery is reported instead of submitted — pressing Enter on
@@ -1433,7 +1433,7 @@ def test_nudge_fires_on_native_idle_without_pill_and_self_heals():
     assert len(set_idle) == 1, calls  # self-healed the dropped pill
 
 
-@pytest.mark.covers("idle-gate.never-trust-needs-input~1")
+@pytest.mark.covers("idle-gate.needs-input~1")
 def test_nudge_suppressed_on_bare_needs_input():
     """`Needs input` is ambiguous (idle-at-prompt OR a pending y/n permission).
     With no `idle=` pill it must NOT nudge — the regression-fix must not become a
@@ -1682,8 +1682,8 @@ def test_create_workspace_group_spawns_the_anchor_outside_every_repo():
     assert create[create.index("--cwd") + 1] == str(Path.home())
 
 
-@pytest.mark.covers("folds.anchor.owns-a-live-shell~1")
-@pytest.mark.covers("stacks.anchor.durable-anchor-required~1")
+@pytest.mark.covers("folds.anchor~1")
+@pytest.mark.covers("stacks.anchor~1")
 def test_create_workspace_group_reanchors_onto_a_workspace_with_a_live_shell():
     # `workspace-group create` spawns its anchor with no command, and a
     # command-less cmux workspace has no terminal surface at all — so cmux
@@ -1710,7 +1710,7 @@ def test_create_workspace_group_reanchors_onto_a_workspace_with_a_live_shell():
     assert spawn[spawn.index("--cwd") + 1] == str(Path.home())
 
 
-@pytest.mark.covers("folds.anchor.owns-a-live-shell~1")
+@pytest.mark.covers("folds.anchor~1")
 def test_create_workspace_group_closes_the_husk_anchor_through_the_self_close_funnel():
     # A raw `close-workspace` would leave the resulting `workspace.closed` event
     # looking like the user clicking cmux's ✕, which routes into teardown.
@@ -1866,13 +1866,13 @@ def test_group_verbs_noop_on_limux():
 # ── send-text normalization (every newline is an Enter) ──────────────────────
 
 
-@pytest.mark.covers("send.one-line.inside-the-funnel~1")
+@pytest.mark.covers("send.one-line~1")
 def test_one_line_collapses_real_newlines():
     assert one_line("first\nsecond") == "first second"
     assert one_line("a\r\nb") == "a b"
 
 
-@pytest.mark.covers("send.one-line.inside-the-funnel~1")
+@pytest.mark.covers("send.one-line~1")
 def test_one_line_collapses_literal_backslash_escapes():
     r"""The two-character `\n` is what `cmux send` documents as Enter, so it is
     just as dangerous as a real newline — and far likelier, since it survives
@@ -1969,7 +1969,7 @@ def test_rest_skip_reason_never_sends():
     assert [a[0] for a in calls] == ["list-status"]
 
 
-@pytest.mark.covers("idle-gate.verdict.single-function~1")
+@pytest.mark.covers("idle-gate.verdict~1")
 def test_rest_skip_reason_agrees_with_the_gate_on_every_case():
     """The whole point: a display caller must not be able to disagree with the
     decision. Same inputs through both paths, same verdict."""
@@ -2056,7 +2056,7 @@ def test_reassert_writes_the_pill_when_native_idle_and_pill_missing():
         "",
     ],
 )
-@pytest.mark.covers("idle-gate.reassert.no-second-authority~1")
+@pytest.mark.covers("idle-gate.reassert~1")
 def test_reassert_writes_nothing_without_an_unambiguous_idle(status):
     healed, writes = _reassert_calls({"workspace:1": status})
     assert healed == []
@@ -2683,8 +2683,8 @@ def test_close_gone_cwd_workspaces_closes_missing_cwd_via_best_effort(tmp_path):
     assert calls == ["workspace:1"]
 
 
-@pytest.mark.covers("events.self-close.single-funnel~1")
-@pytest.mark.covers("teardown.close.never-raw-cmux~1")
+@pytest.mark.covers("events.self-close~1")
+@pytest.mark.covers("teardown.close-funnel~1")
 def test_close_gone_cwd_workspaces_uses_best_effort_not_raw_cmux(tmp_path):
     """Pin the AGENTS.md invariant: a close must go through
     `cmux_close_workspace_best_effort`, the funnel that records the

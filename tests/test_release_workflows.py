@@ -34,7 +34,7 @@ def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-@pytest.mark.covers("release.tag-yml.keeps-credentials~1")
+@pytest.mark.covers("release.tag-yml~1")
 def test_tag_yml_checkout_does_not_strip_credentials() -> None:
     """tag.yml may not set `persist-credentials: false` at all — that token is
     what authenticates the tag push two steps later."""
@@ -46,7 +46,7 @@ def test_tag_yml_checkout_does_not_strip_credentials() -> None:
     )
 
 
-@pytest.mark.covers("release.tag-yml.keeps-credentials~1")
+@pytest.mark.covers("release.tag-yml~1")
 def test_tag_yml_keeps_its_artipacked_exemption() -> None:
     """The other way this regression arrives: removing tag.yml's `artipacked`
     exemption rather than its credentials. Without the exemption zizmor's hook
