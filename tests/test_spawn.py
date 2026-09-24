@@ -1417,6 +1417,7 @@ def test_linear_seeds_smart_prompt_with_no_mcp_pre_flight(spawn_main, cockpit_re
 
 
 @pytest.mark.covers("tickets.no-preflight~1")
+@pytest.mark.covers("slack.no-preflight~1")
 def test_spawn_never_shells_out_to_claude_mcp_list(spawn_main, cockpit_repo):
     """The probe is gone at the source, not just unused: a Linear spawn must
     make no `claude mcp list` subprocess call at all. Guards against it being

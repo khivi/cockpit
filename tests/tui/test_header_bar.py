@@ -126,6 +126,7 @@ def test_the_tooltip_is_the_legend_for_the_two_tick_glyphs():
     assert f"{FAST_GLYPH} Fast tick" in tooltip
 
 
+@pytest.mark.covers("header.tick-glyphs~1")
 def test_the_two_tick_glyphs_are_the_same_cell_width():
     # They sit in one right-anchored segment. Equal width means a font that
     # disagrees with `cell_len` shifts the whole segment rather than splitting
@@ -154,6 +155,7 @@ def test_brand_text_links_to_the_release_notes():
     )
 
 
+@pytest.mark.covers("header.brand~1")
 def test_brand_text_carries_no_link_when_no_url_is_supplied():
     assert not any("link" in str(span.style) for span in brand_text("9.9.9", "").spans)
 

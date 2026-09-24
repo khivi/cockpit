@@ -2349,7 +2349,7 @@ def test_spawn_missing_bg_spawns_my_pr_without_worktree(tmp_path):
     sp.assert_not_called()
 
 
-@pytest.mark.covers("spawn.opt-out~1")
+@pytest.mark.covers("spawn.opt-out~2")
 def test_spawn_missing_no_worktree_repo_never_auto_spawns(tmp_path):
     """A `use_worktree: false` repo (bare `cockpit new`) opts out of all
     auto-spawning, even with a matching open PR that would otherwise be created."""
@@ -4885,6 +4885,7 @@ def test_fold_tag_reads_the_org_block_not_a_members_expanded_tag(tmp_path):
     assert cycle._fold_tag(cfg, repo_entry) == "🛡️"
 
 
+@pytest.mark.covers("sidebar-tag.fold-header~1")
 def test_fold_tag_keeps_a_literal_org_tag_whole(tmp_path):
     cfg = {"orgs": {"Acme": {"sidebar_tag": "♻️"}}}
     assert cycle._fold_tag(cfg, {"name": "a", "org": "Acme"}) == "♻️"

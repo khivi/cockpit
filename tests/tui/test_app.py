@@ -1564,7 +1564,7 @@ async def test_z_opens_and_shuts_a_repos_snoozed_fold(monkeypatch, tmp_path):
         assert table.row_count == 3
 
 
-@pytest.mark.covers("folds.snoozed-toggle~1")
+@pytest.mark.covers("folds.snoozed-toggle~2")
 async def test_the_fold_row_advertises_only_the_two_fold_keys(monkeypatch, tmp_path):
     # It carries no workspace, so every workspace-targeted row key would no-op
     # there. The two that stay both act on the FOLD itself: `z` opens and shuts
@@ -3599,6 +3599,7 @@ def test_feature_guide_url_constant_is_unpinned():
     assert "/blob/main/" in app_mod.FEATURE_GUIDE_URL
 
 
+@pytest.mark.covers("docs.guide-url~1")
 async def test_release_notes_action_opens_the_unpinned_releases_index(monkeypatch):
     from cockpit.tui import app as app_mod
 

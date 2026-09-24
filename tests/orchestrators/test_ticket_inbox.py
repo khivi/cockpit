@@ -153,6 +153,7 @@ def test_partial_cycle_writes_nothing(provider, written):
     written.assert_not_called()
 
 
+@pytest.mark.covers("ticket-inbox.fetch~1")
 def test_a_failed_fetch_suspends_only_its_own_bucket(provider, written):
     provider._results = [None, [_ticket("ENG-2")]]
     inbox = _inbox(_entry(bucket="acme"), _entry(bucket="widgets-co", name="w"))
