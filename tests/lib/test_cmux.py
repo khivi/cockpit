@@ -2066,6 +2066,7 @@ def test_reassert_writes_nothing_without_an_unambiguous_idle(status):
 _IDLE_SCREEN = "some output\n─────\n❯  \n─────\nbranch\n-- INSERT -- auto mode on"
 
 
+@pytest.mark.covers("idle-gate.reassert~1")
 def test_reassert_heals_no_native_state_when_the_screen_confirms_idle():
     """The one case the `Idle`-only path can't reach: cmux never registered
     `claude_code=` for this ref at all. `_screen_signals_idle` is the

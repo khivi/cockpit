@@ -362,6 +362,7 @@ def test_state_blockers_others_pushed_pr_not_blocked(tmp_path):
     default_baseline.assert_not_called()
 
 
+@pytest.mark.covers("teardown.unlanded~1")
 def test_state_blockers_others_local_commits_still_block(tmp_path):
     """Commits that exist only locally block even on someone else's branch."""
     wt = tmp_path / "wt"

@@ -163,6 +163,7 @@ def test_comments_prints_without_marking_anything(
     assert not rendered, "--comments must not open a diff"
 
 
+@pytest.mark.covers("diff.comments~1")
 def test_ack_marks_them_delivered_and_puts_the_diff_away(
     monkeypatch, in_worktree, rendered, closed, capsys
 ):

@@ -95,6 +95,7 @@ def test_approved_pr_is_skipped_when_the_base_dismisses_stale_reviews():
     assert "dismisses stale reviews" in pr.update_branch_skip_reason()
 
 
+@pytest.mark.covers("update-stale.ruleset-read~1")
 def test_the_dismissal_verdict_can_be_injected_for_rulesets():
     """`dismisses_stale_reviews` reads only classic branch protection; the caller
     resolves rulesets too and passes the combined verdict."""
@@ -447,6 +448,7 @@ def test_an_approved_behind_pr_is_updated_with_a_compare_and_swap(tmp_path):
     assert kwargs["method"] == "REBASE"
 
 
+@pytest.mark.covers("update-stale.scope~1")
 def test_a_snoozed_pr_is_updated_even_though_it_is_not_approved(tmp_path):
     from cockpit.lib.nudges import NudgePref
 
@@ -523,6 +525,7 @@ def test_an_unreadable_ruleset_fails_closed_for_approved_prs(tmp_path):
     upd.assert_not_called()
 
 
+@pytest.mark.covers("update-stale.fail-closed~1")
 def test_a_snoozed_pr_never_pays_the_ruleset_lookup(tmp_path):
     """No approval to lose, so it neither consults the endpoint nor fails closed
     when that endpoint is unavailable."""

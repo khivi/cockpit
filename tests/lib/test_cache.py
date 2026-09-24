@@ -989,6 +989,7 @@ def test_republish_skips_a_pr_with_no_worktree(json_cache):
     assert not any(cache_mod.FLAT_CACHE_DIR.glob("pr-num-*"))
 
 
+@pytest.mark.covers("pr-list.one-per-branch~2")
 def test_prune_superseded_drops_loser_keeps_winner(json_cache):
     merged = _snapshot(json_cache, "cockpit", 91, "khivi/side", state="MERGED")
     live = _snapshot(json_cache, "cockpit", 126, "khivi/side", state="OPEN")
@@ -1006,7 +1007,7 @@ def test_prune_superseded_keeps_lone_snapshot(json_cache):
     assert only.exists()
 
 
-@pytest.mark.covers("pr-list.one-per-branch~1")
+@pytest.mark.covers("pr-list.one-per-branch~2")
 def test_prune_superseded_scoped_to_repo(json_cache):
     # Two repos with the same branch name must not cross-prune.
     a = _snapshot(json_cache, "repoA", 1, "khivi/side", state="MERGED")

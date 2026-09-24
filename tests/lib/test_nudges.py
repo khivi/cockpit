@@ -124,6 +124,7 @@ def test_delete_pref_only_touches_its_own_repos_file(nudges):
     assert nudges.load_pref(K(nudges, 10, "other")).snoozed is True
 
 
+@pytest.mark.covers("nudge-prefs.repo-key~1")
 def test_a_snooze_in_one_repo_leaves_the_same_number_elsewhere_alone(nudges):
     nudges.save_pref(K(nudges, 10), nudges.NudgePref(snoozed=True, wake_on="0|"))
     assert nudges.should_nudge(K(nudges, 10)) is False
