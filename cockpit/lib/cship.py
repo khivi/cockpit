@@ -10,6 +10,17 @@ subprocess only — it rewrites `STARSHIP_SHELL=unknown` (which cship 1.7.1
 sets to force plain ANSI) to `sh`, so starship's [custom.*] modules
 actually render. Host PATH is never touched.
 
+`STARSHIP_CONFIG` is pinned on that same subprocess. cship resolves the
+starship config itself — `STARSHIP_CONFIG` first, then `$XDG_CONFIG_HOME`,
+then `~/.config` — and spawns starship against a temp copy of whatever it
+found, so a value exported by the user's interactive shell (starship's own
+zsh/fish init does export one) is inherited through Claude Code and renders
+their shell prompt into the footer slot. Pinning it to the path
+`install_starship_default_config` writes is the fix; cship's `--config`
+flag is NOT, despite its help text naming starship.toml — it replaces
+cship's own config file, which is where cockpit's `[cship]/lines` layout
+lives.
+
 This module's sole job is the binary invocation. The flat cockpit-cache
 layout lives in `lib.cache`; starship-side readers live in `lib.starship`.
 """
@@ -21,6 +32,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from .config import starship_user_config_path
 
 CSHIP_BIN = "cship"
 STARSHIP_BIN = "starship"
@@ -58,6 +71,7 @@ def invoke_cship(blob: bytes, sid: str | None) -> int:
     if sid:
         env["CSHIP_SESSION_ID"] = sid
     env["PATH"] = f"{BIN_DIR}{os.pathsep}{env.get('PATH', '')}"
+    env["STARSHIP_CONFIG"] = str(starship_user_config_path())
     res = subprocess.run([CSHIP_BIN], input=blob, capture_output=True, env=env)
     if res.stdout:
         sys.stdout.buffer.write(res.stdout)

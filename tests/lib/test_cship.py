@@ -4,7 +4,12 @@ The shim rewrites `STARSHIP_SHELL=unknown` (which cship 1.7.1 forces) to
 `sh` before exec'ing the real starship — without this, every [custom.*]
 module in the cockpit footer renders empty. These tests drive the real
 shim script against a fake "real starship" planted in a tmpdir, and unit-
-test the PATH-injection + missing-binary error rendering in cship.py.
+test the PATH-injection, STARSHIP_CONFIG pin and missing-binary error
+rendering in cship.py.
+
+The pin is only half-pinned here: a stub can show which env cship is handed
+but not what cship does with it. The render under a hostile value is
+tests/e2e/test_cship_starship.py's.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import cockpit.lib.config as config_mod
 import cockpit.lib.cship as cship_mod
 from tests.fixtures import make_bin_on_path
 
@@ -172,6 +178,70 @@ def test_invoke_cship_sets_session_id_alongside_path(both_bins_installed):
 
     assert captured["env"]["CSHIP_SESSION_ID"] == "sess-abc"
     assert str(cship_mod.BIN_DIR) in captured["env"]["PATH"]
+
+
+# ── cship.py: STARSHIP_CONFIG pin ─────────────────────────────────────────
+
+
+def _captured_env(fake_run_target, sid=None) -> dict[str, str]:
+    captured: dict[str, dict[str, str]] = {}
+
+    def fake_run(cmd, **kw):
+        captured["env"] = kw["env"]
+        return MagicMock(returncode=0, stdout=b"", stderr=b"")
+
+    with patch.object(fake_run_target.subprocess, "run", side_effect=fake_run):
+        fake_run_target.invoke_cship(b"{}", sid)
+    return captured["env"]
+
+
+def test_invoke_cship_overrides_inherited_starship_config(
+    both_bins_installed, monkeypatch, tmp_path
+):
+    """A STARSHIP_CONFIG exported by the user's interactive shell — starship's
+    own zsh/fish init exports one — is inherited through Claude Code, and cship
+    resolves the starship config itself, so the hostile value would render the
+    user's shell prompt into the footer slot."""
+    monkeypatch.setenv("STARSHIP_CONFIG", str(tmp_path / "shell-prompt.toml"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    env = _captured_env(cship_mod)
+
+    assert env["STARSHIP_CONFIG"] == str(tmp_path / "xdg" / "starship.toml")
+
+
+def test_invoke_cship_pins_starship_config_when_unset(
+    both_bins_installed, monkeypatch, tmp_path
+):
+    monkeypatch.delenv("STARSHIP_CONFIG", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    env = _captured_env(cship_mod)
+
+    assert env["STARSHIP_CONFIG"] == str(tmp_path / "xdg" / "starship.toml")
+
+
+def test_invoke_cship_pins_the_path_the_installer_writes(
+    both_bins_installed, monkeypatch, tmp_path
+):
+    """The pin and `install_starship_default_config`'s destination must be one
+    path, not two that agree by coincidence."""
+    monkeypatch.setenv("STARSHIP_CONFIG", str(tmp_path / "shell-prompt.toml"))
+
+    env = _captured_env(cship_mod)
+
+    assert env["STARSHIP_CONFIG"] == str(config_mod.starship_user_config_path())
+
+
+def test_invoke_cship_config_pin_does_not_mutate_os_environ(
+    both_bins_installed, monkeypatch, tmp_path
+):
+    hostile = str(tmp_path / "shell-prompt.toml")
+    monkeypatch.setenv("STARSHIP_CONFIG", hostile)
+
+    _captured_env(cship_mod)
+
+    assert os.environ["STARSHIP_CONFIG"] == hostile
 
 
 # ── cship.py: missing-binary loud errors ──────────────────────────────────

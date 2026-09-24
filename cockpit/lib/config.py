@@ -16,8 +16,10 @@ Owns:
     edits to ~/.config/cship.toml survive across daemon restarts; running
     `cockpit setup` deliberately clobbers them back to the bundled default.
   - install_starship_default_config(): same contract for ~/.config/starship.toml.
-    cship's $starship_prompt spawns starship with STARSHIP_CONFIG set to that
-    path, so any [custom.*] rendering depends on this file existing.
+    cship resolves that file itself (STARSHIP_CONFIG -> $XDG_CONFIG_HOME ->
+    ~/.config) and spawns starship against a temp copy of it, so any [custom.*]
+    rendering depends on this file existing — and on cship's discovery landing
+    here, which `lib.cship.invoke_cship` pins.
 """
 
 from __future__ import annotations
@@ -1473,7 +1475,7 @@ def repin_interpreter_if_stale() -> None:
     if not load_config().get("use_cship"):
         return
     try:
-        _repin_starship_config(_starship_user_config_path())
+        _repin_starship_config(starship_user_config_path())
     except Exception as exc:
         print(f"cockpit: starship repin failed: {exc}", file=sys.stderr)
     try:
@@ -1575,7 +1577,9 @@ def _cship_user_config_path() -> Path:
     return _xdg_config_path("cship.toml")
 
 
-def _starship_user_config_path() -> Path:
+def starship_user_config_path() -> Path:
+    """Where `install_starship_default_config` writes, and where `lib.cship`
+    pins cship's discovery — public because those two must not drift."""
     return _xdg_config_path("starship.toml")
 
 
@@ -1632,10 +1636,10 @@ def install_cship_default_config() -> None:
 def install_starship_default_config() -> None:
     """Rewrite ~/.config/starship.toml from the bundled default when `use_cship: true`.
 
-    cship's `[cship]/lines = ["...$starship_prompt..."]` schema spawns
-    starship with STARSHIP_CONFIG=~/.config/starship.toml whenever
-    $starship_prompt expands, so the [time] and [custom.*] modules are
-    rendered out of THIS file, not cship.toml. Same --setup-only contract
+    cship's `[cship]/lines = ["...$starship_prompt..."]` schema resolves the
+    starship config itself whenever $starship_prompt expands and spawns
+    starship against a temp copy of it, so the [time] and [custom.*] modules
+    are rendered out of THIS file, not cship.toml. Same --setup-only contract
     as install_cship_default_config: reconcile cycles never touch it.
 
     Substitutes the literal `__COCKPIT_CSHIP__` token in the bundled toml
@@ -1661,5 +1665,5 @@ def install_starship_default_config() -> None:
         .replace(STARSHIP_LINE_SEP_PLACEHOLDER, line_sep)
     ).encode()
     _seed_default_toml(
-        STARSHIP_DEFAULT_TOML, _starship_user_config_path(), "starship", payload
+        STARSHIP_DEFAULT_TOML, starship_user_config_path(), "starship", payload
     )

@@ -1,10 +1,13 @@
 # Default starship config bundled with the cockpit plugin.
 #
-# cship's [starship_prompt] hook spawns the starship binary with
-# STARSHIP_CONFIG=~/.config/starship.toml whenever $starship_prompt appears
+# cship's [starship_prompt] hook resolves this file (STARSHIP_CONFIG, else
+# $XDG_CONFIG_HOME/starship.toml, else ~/.config/starship.toml) and spawns the
+# starship binary against a temp copy of it whenever $starship_prompt appears
 # in cship.toml's `format`. That delegation is the only way to render
 # starship-flavored [custom.*] modules — cship's own line renderer does not
-# evaluate [custom.*] sections.
+# evaluate [custom.*] sections. cockpit pins STARSHIP_CONFIG on the cship
+# subprocess so an inherited shell value can't redirect that lookup; see
+# cockpit/lib/cship.py.
 #
 # Copied to ~/.config/starship.toml only when you run `cockpit setup`
 # (the explicit footer-setup command). --watch reconcile cycles
