@@ -248,6 +248,7 @@ def _unresolved_paths(
     return stale
 
 
+@pytest.mark.covers("docs.backticks~1")
 def test_backticked_paths_in_comments_still_exist(
     references: dict[str, list[tuple[str, int]]],
     tracked: list[str],
@@ -331,6 +332,7 @@ def test_backticked_symbols_in_the_instruction_set_still_exist(
     )
 
 
+@pytest.mark.covers("docs.backticks~1")
 def test_backticked_paths_in_the_instruction_set_still_exist(
     doc_references: dict[str, list[tuple[str, int]]],
     tracked: list[str],

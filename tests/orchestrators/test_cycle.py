@@ -1396,6 +1396,7 @@ def test_cycle_repo_phase_order(tmp_path):
     ]
 
 
+@pytest.mark.covers("folds.partial~1")
 def test_cycle_repo_marks_folds_partial_when_the_repo_is_skipped():
     # `_prepare_cycle` returns None on a transient `gh` failure (and on a missing
     # path / unresolvable nwo / cmux down). The repo then never fills its bucket,
@@ -5233,6 +5234,7 @@ def test_reconcile_review_groups_still_dissolves_after_a_complete_cycle(tmp_path
     close.assert_called_once_with("workspace:9")
 
 
+@pytest.mark.covers("folds.partial~1")
 def test_reconcile_review_groups_still_reparks_a_partial_cycles_live_folds(tmp_path):
     # Suspending the dissolve must not suspend the re-park: a repo that *did*
     # report still gets its pile pushed back to the bottom of the sidebar.
@@ -5409,6 +5411,7 @@ def test_a_stack_with_a_snoozed_tip_joins_the_snoozed_pile_whole(tmp_path):
     }
 
 
+@pytest.mark.covers("stacks.snoozed~1")
 def test_a_diverted_chain_gives_up_its_stack_group(tmp_path):
     # The other half: leaving the stack group in place would show the chain
     # twice — once as its own sidebar row, once inside the snoozed fold.

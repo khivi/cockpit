@@ -2059,6 +2059,7 @@ def test_trello_card_routing_narrows_by_board_when_several_declare_one(
     fetch.assert_called_once_with("aB3dZ9", key="k", token="t")
 
 
+@pytest.mark.covers("ticket-routing.no-waiver~1")
 def test_trello_card_routing_inconclusive_fetch_warns_and_falls_back(
     spawn_main, cockpit_repo, monkeypatch, tmp_path
 ):
