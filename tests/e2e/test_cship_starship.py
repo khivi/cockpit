@@ -43,6 +43,8 @@ PLACEHOLDER = "__COCKPIT_STARSHIP__"
 # (lib.config.STARSHIP_CMD): the venv interpreter + module dispatch.
 STARSHIP_CMD = f"{sys.executable} -m cockpit.cli starship"
 STATUSLINE_CMD = [sys.executable, "-m", "cockpit.cli", "statusline"]
+# The `format` of the decoy config the fixture points STARSHIP_CONFIG at.
+HOSTILE_MARKER = "HOSTILE-SHELL-PROMPT"
 
 
 @pytest.fixture
@@ -70,11 +72,20 @@ def footer_env(tmp_path):
     (config_dir / "starship.toml").write_text(starship_toml)
     shutil.copy(DEFAULTS / "cship.toml", config_dir / "cship.toml")
 
+    # A hostile STARSHIP_CONFIG, deliberately — starship's zsh/fish init
+    # exports one, so Claude Code inherits the user's shell-prompt config and
+    # cship (which resolves the starship config itself) renders THAT into the
+    # footer slot unless `invoke_cship` pins the var. Every test in this module
+    # therefore renders under the conditions of that bug; the decoy's marker is
+    # asserted against directly by test_hostile_starship_config_does_not_hijack.
+    decoy = tmp_path / "shell-prompt.toml"
+    decoy.write_text(f'format = "{HOSTILE_MARKER}"\n')
+
     env = {
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(config_dir),
         "TMPDIR": str(tmpdir),
-        "STARSHIP_CONFIG": str(config_dir / "starship.toml"),
+        "STARSHIP_CONFIG": str(decoy),
         # Keep the host's PATH so cship + starship binaries resolve.
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
     }
@@ -117,6 +128,21 @@ def test_footer_renders_context_pill(footer_env):
     assert res.returncode == 0, res.stderr.decode()
     out = res.stdout.decode("utf-8", errors="replace")
     assert "42%/1M" in out, f"context pill missing from footer: {out!r}"
+
+
+def test_hostile_starship_config_does_not_hijack_the_footer(footer_env):
+    """The bug this module's fixture now reproduces: cship resolves the
+    starship config itself, so an inherited STARSHIP_CONFIG rendered the
+    user's shell prompt in place of cockpit's pills. `invoke_cship` pins the
+    var; a stub can only show which env cship was handed, so the render is
+    the evidence."""
+    env, cache, _cfg = footer_env
+    (cache / "context").write_text("42 1000000")
+    res = _run_footer(env)
+    assert res.returncode == 0, res.stderr.decode()
+    out = res.stdout.decode("utf-8", errors="replace")
+    assert HOSTILE_MARKER not in out, f"inherited STARSHIP_CONFIG won: {out!r}"
+    assert "42%/1M" in out, f"cockpit pills missing: {out!r}"
 
 
 def test_footer_does_not_render_time_pill(footer_env):
@@ -294,12 +320,18 @@ def test_shim_is_load_bearing_for_custom_modules(footer_env):
     without. With the shim, `STARSHIP_SHELL=unknown` is rewritten to
     `sh` and [custom.context] renders. Without it, the pill disappears.
     This is the test that would have caught the current bug."""
-    env, cache, _cfg = footer_env
+    env, cache, cfg = footer_env
     (cache / "context").write_text("42 1000000")
 
     # Inputs cship expects on stdin: any JSON blob is fine; the cache
     # file is what feeds [custom.context].
     blob = b'{"session_id":null}'
+
+    # These two legs exec cship directly rather than through the statusline
+    # entry point, so they must stand in for the STARSHIP_CONFIG pin
+    # `invoke_cship` applies — otherwise both render the fixture's decoy and
+    # the shim's effect is invisible.
+    env = {**env, "STARSHIP_CONFIG": str(cfg / "starship.toml")}
 
     env_no_shim = {**env, "STARSHIP_SHELL": "unknown"}
     res_no_shim = subprocess.run(

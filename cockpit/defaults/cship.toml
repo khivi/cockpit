@@ -8,8 +8,8 @@
 # The legacy top-level `format = "..."` layout silently loads in "wrapper-free"
 # mode (see cship's debug log: "loading cship.toml in legacy wrapper-free
 # format") and never spawns starship, so every [custom.*] module disappears.
-# The wrapper form below makes cship invoke starship with
-# STARSHIP_CONFIG=~/.config/starship.toml whenever $starship_prompt expands.
+# The wrapper form below makes cship resolve ~/.config/starship.toml and
+# invoke starship against a temp copy of it whenever $starship_prompt expands.
 # See cockpit/defaults/starship.toml for the modules rendered downstream
 # (clock, context, session-time, rate-limit, Linear, PR pills).
 #
