@@ -190,6 +190,7 @@ def test_ack_marks_them_delivered_and_puts_the_diff_away(
     assert not rendered
 
 
+@pytest.mark.covers("diff.comments~1")
 def test_ack_with_nothing_pending_says_so(monkeypatch, in_worktree, closed, capsys):
     """And closes nothing: a diff open with no notes on it is one somebody is
     still reading."""
