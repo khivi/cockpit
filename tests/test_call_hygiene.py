@@ -283,7 +283,7 @@ def test_banned_substring_absent(target: Path, needle: str, why: str) -> None:
 # ── cache.renderer-readonly ──────────────────────────────
 
 
-@pytest.mark.covers("cache.renderer-readonly~1")
+@pytest.mark.covers("cache.renderer-readonly~2")
 def test_starship_is_a_strict_cache_reader() -> None:
     """starship's field printers are read-only: the daemon owns every cell,
     so a renderer that shells out itself would race the writer and could

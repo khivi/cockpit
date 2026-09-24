@@ -488,7 +488,7 @@ def test_cwd_key_slug_shape():
     assert cache_mod._cwd_key(_P("/tmp/foo/repo")) == a
 
 
-@pytest.mark.covers("cache.flat-cells~1")
+@pytest.mark.covers("cache.flat-cells~2")
 def test_flat_cells_keyed_by_worktree_not_branch(cache_dir, tmp_path):
     """Two worktrees in different repos sharing one branch label must not
     share a cell. Fails if a cell is ever keyed off the branch (or anything
@@ -980,6 +980,7 @@ def test_republish_keeps_two_repos_on_one_branch_apart(json_cache):
     assert (flat / f"pr-num-{cache_mod._cwd_key(other)}").read_text() == "20"
 
 
+@pytest.mark.covers("cache.no-worktree-no-cells~1")
 def test_republish_skips_a_pr_with_no_worktree(json_cache):
     """No worktree → no row, no session, nowhere to key a cell. The JSON
     snapshot is still written; only the flat republish sits it out."""
@@ -1447,7 +1448,7 @@ def test_cost_reporting_available_is_false_with_no_cells(cache_dir):
     assert cache_mod.cost_reporting_available() is False
 
 
-@pytest.mark.covers("wt-cost.gate~1")
+@pytest.mark.covers("wt-cost.gate~2")
 def test_cost_reporting_available_is_false_when_every_session_reports_zero(cache_dir):
     """The gate for a plan/build that writes `total_cost_usd: 0` — the `$`
     column must not appear just because the cells exist."""
@@ -1456,6 +1457,7 @@ def test_cost_reporting_available_is_false_when_every_session_reports_zero(cache
     assert cache_mod.cost_reporting_available() is False
 
 
+@pytest.mark.covers("wt-cost.gate~2")
 def test_cost_reporting_available_is_true_on_one_real_number(cache_dir):
     (cache_dir / "cost-aaa").write_text("0.0000")
     (cache_dir / "cost-bbb").write_text("2.9009")
