@@ -130,7 +130,7 @@ Row caps are `{pr, ticket, muted, snoozed, workspace, primary}`: the first four 
 
 ### Only the daemon writes the cache; renderers read
 
-`lib/starship.py` field printers are strictly read-only (no gh/git/subprocess/`atomic_write`).
+`lib/starship.py` field printers are strictly read-only.
 
 - **Slow tick** (300s) — `cycle.py::cycle_all`: full reconcile (gh fetch, base-distance, per-PR JSON, PR flat cells, git-state cells, pills).
 - **Fast tick** (30s) — `cockpit.py::_fast_tick`: pidfile re-assert, then a network-free republish of git-state, per-worktree cost, PR flat cells from disk, workspace-name and sidebar-colour reconcile, trailing-fold restore, and the `idle=` pill re-assert. Those three write into live cmux and are `dry`-gated; the local disk republish is not. It closes with the two sends that must follow the idle re-assert — the diff-comment hand-over and the seed-queue drain — each `dry`-gated through `nudge_if_idle`'s own `dry=` rather than by skipping the call.
@@ -406,7 +406,7 @@ The closed set is the point: **the PR nudge** (`cycle.py`, slow tick, `PR.nudge_
 
 ### `cockpit broadcast` reuses the nudge gate — no second send path, no cache cell
 
-`cockpit/broadcast.py` fans a line out to every idle workspace via `nudge_if_idle(..., tag="broadcast")` with no `pref_key`. A one-shot gesture: no cell, pill, or `pill_state`, and skipped refs are printed, never queued. **Do not** give it its own send path, idle check, or cache cell — extend `nudge_if_idle` instead.
+`cockpit/broadcast.py` is a one-shot gesture: no cell, pill, or `pill_state`, and skipped refs are printed, never queued. **Do not** give it its own send path, idle check, or cache cell — extend `nudge_if_idle` instead.
 
 **`--repo` and `--worktree` are filters over that one loop, never a second scope.** `--repo` matches each workspace's cwd against the repo's own `worktrees()` (`_repo_paths`) — **never a path-prefix test**, exactly like `_park_workspaces` and the repo-header `a`, since a worktree usually lives in a *sibling* directory. The repo is named by its **one** identity (`_repo_label`, the `name`-or-basename the table shows), casefolded — **do not** accept the path basename as a second spelling, since under a bare clone every repo's path ends in `.bare` and `--repo .bare` would then broadcast into whichever one sorted first. An unknown name exits **2** listing the configured repos rather than silently broadcasting to everything. The unscoped path makes **no** config read at all — broadcast reaches workspaces cockpit doesn't manage, so reading the config there could only narrow it.
 
@@ -775,7 +775,7 @@ pre-commit run zizmor --all-files
 
 `dev.sh` forces `--dry` onto **every** `watch` invocation, not just its no-args default. Its config scrub drops `fast_skills`/`slow_skills` and deliberately **keeps** `skills`, which holds only slash-command names.
 
-**`--dry` was fully plumbed through long before it was reachable** — `cockpit.py` hardcoded `dry=False`. It is now threaded via `_build_state(dry)` → `state["dry"]` → `_once_with` → `cycle_all`. **Do not** re-hardcode that call site, and **do not** add a second dev-only suppression path beside it.
+**`--dry` was fully plumbed through long before it was reachable** — `cockpit.py` hardcoded `dry=False`. **Do not** re-hardcode that call site, and **do not** add a second dev-only suppression path beside it.
 
 `--dry` also suppresses the **cache writes**, which is why snapshot mode copies the real PR JSONs in. Every cmux-facing feature is **inert** under `tool: none`, so the sandbox is right for the table, cells, config, prompts and the cycle's decisions, and wrong for anything cmux-facing.
 
