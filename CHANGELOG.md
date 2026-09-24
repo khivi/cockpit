@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.8.1](https://github.com/khivi/cockpit/compare/v3.8.0...v3.8.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **statusline:** pin STARSHIP_CONFIG so a shell's value can't hijack the footer ([#537](https://github.com/khivi/cockpit/issues/537)) ([90cd68f](https://github.com/khivi/cockpit/commit/90cd68facd86c43316ecaefc357c5725be474083))
+
 ## [3.8.0](https://github.com/khivi/cockpit/compare/v3.7.0...v3.8.0) (2026-09-24)
 
 
