@@ -2012,14 +2012,22 @@ def test_nudge_gate_order_unchanged_by_the_shared_read():
 
 
 def _reassert_calls(
-    statuses: dict[str, str], screens: dict[str, str] | None = None
+    statuses: dict[str, str],
+    screens: dict[str, str] | None = None,
+    in_flight: bool | None = False,
 ) -> tuple[list[str], list[tuple]]:
     """Drive `reassert_idle_pills` over `statuses` (ref -> list-status text)
     and `screens` (ref -> read-screen text, consulted only for the
     no-native-state fallback; defaults to "" — no screen evidence), returning
     the healed refs and every non-read cmux call it made. `is_cmux` is pinned
     True so the fallback's own gate doesn't depend on the test environment's
-    real config."""
+    real config.
+
+    `in_flight` is `transcript.turn_in_flight`'s answer, defaulting to the
+    at-rest `False` so the screen half stays the subject of most cases. Stubbed
+    rather than driven off real JSONL because the real thing is keyed by cwd and
+    this suite's refs have no worktrees; `tests/lib/test_transcript.py` covers
+    the reader itself against real files."""
     writes: list[tuple] = []
     screens = screens or {}
 
@@ -2031,11 +2039,13 @@ def _reassert_calls(
         writes.append(args)
         return ""
 
+    cwds = {ref: Path(f"/tmp/{ref.replace(':', '-')}") for ref in statuses}
     with (
         patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
         patch("cockpit.lib.cmux.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.transcript.turn_in_flight", return_value=in_flight),
     ):
-        healed = reassert_idle_pills(list(statuses))
+        healed = reassert_idle_pills(cwds)
     return healed, writes
 
 
@@ -2057,7 +2067,7 @@ def test_reassert_writes_the_pill_when_native_idle_and_pill_missing():
         "",
     ],
 )
-@pytest.mark.covers("idle-gate.reassert~1")
+@pytest.mark.covers("idle-gate.reassert~2")
 def test_reassert_writes_nothing_without_an_unambiguous_idle(status):
     healed, writes = _reassert_calls({"workspace:1": status})
     assert healed == []
@@ -2067,16 +2077,40 @@ def test_reassert_writes_nothing_without_an_unambiguous_idle(status):
 _IDLE_SCREEN = "some output\n─────\n❯  \n─────\nbranch\n-- INSERT -- auto mode on"
 
 
-@pytest.mark.covers("idle-gate.reassert~1")
-def test_reassert_heals_no_native_state_when_the_screen_confirms_idle():
+@pytest.mark.covers("idle-gate.reassert~2")
+def test_reassert_heals_no_native_state_when_screen_and_transcript_agree():
     """The one case the `Idle`-only path can't reach: cmux never registered
-    `claude_code=` for this ref at all. `_screen_signals_idle` is the
-    documented fallback for exactly this gap."""
+    `claude_code=` for this ref at all. Healing needs BOTH witnesses — the
+    screen for "no dialog is up", the transcript for "no turn is running"."""
     healed, writes = _reassert_calls(
         {"workspace:1": ""}, screens={"workspace:1": _IDLE_SCREEN}
     )
     assert healed == ["workspace:1"]
     assert any("set-status" in a for a in writes[0]), writes
+
+
+@pytest.mark.covers("idle-gate.reassert~2")
+@pytest.mark.parametrize("in_flight", [True, None])
+def test_reassert_refuses_a_mid_turn_session_the_screen_calls_idle(in_flight):
+    """The regression the screen alone could never catch.
+
+    `_IDLE_SCREEN` is byte-for-byte what a MID-TURN session renders: Claude
+    Code's `-- INSERT --` tracks composer focus, not turn state, and a running
+    turn keeps focus so type-ahead can be queued. Measured on a live session
+    reporting `claude_code=Running`. Reachable on a cold spawn — no native
+    state yet, no Stop hook yet, first turn running — where the wrongly-written
+    pill is then read as at-rest by the seed-queue drain on the same tick.
+
+    `None` refuses alongside `True`: a transcript that cannot be read is not
+    evidence of rest.
+    """
+    healed, writes = _reassert_calls(
+        {"workspace:1": ""},
+        screens={"workspace:1": _IDLE_SCREEN},
+        in_flight=in_flight,
+    )
+    assert healed == []
+    assert writes == []
 
 
 @pytest.mark.parametrize(
@@ -2121,11 +2155,29 @@ def test_reassert_heals_only_the_eligible_refs_in_a_mixed_fleet():
 
 def test_screen_signals_idle_is_cmux_only():
     """Never issues (or trusts) a `read-screen` under limux — the pill it
-    would feed is a cmux-only no-op there anyway."""
+    would feed is a cmux-only no-op there anyway.
+
+    Passes a cwd and an at-rest transcript so the refusal can only be the
+    backend gate; with the default `cwd=None` this would pass either way.
+    """
     from cockpit.lib.cmux import _screen_signals_idle
 
     with (
         patch("cockpit.lib.cmux.tool.is_cmux", return_value=False),
+        patch("cockpit.lib.cmux.transcript.turn_in_flight", return_value=False),
+        patch("cockpit.lib.cmux.cmux") as m,
+    ):
+        assert _screen_signals_idle("workspace:1", Path("/tmp/wt")) is False
+    m.assert_not_called()
+
+
+def test_screen_signals_idle_refuses_without_a_cwd():
+    """No cwd means no transcript to ask, so there is no turn-state evidence —
+    and the screen cannot supply it. Refuses before spending a `read-screen`."""
+    from cockpit.lib.cmux import _screen_signals_idle
+
+    with (
+        patch("cockpit.lib.cmux.tool.is_cmux", return_value=True),
         patch("cockpit.lib.cmux.cmux") as m,
     ):
         assert _screen_signals_idle("workspace:1") is False
@@ -2134,7 +2186,7 @@ def test_screen_signals_idle_is_cmux_only():
 
 def test_reassert_on_empty_fleet_makes_no_cmux_calls():
     with patch("cockpit.lib.cmux.cmux") as m:
-        assert reassert_idle_pills([]) == []
+        assert reassert_idle_pills({}) == []
     m.assert_not_called()
 
 

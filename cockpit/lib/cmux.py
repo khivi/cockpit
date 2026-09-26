@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from . import run, seed_queue, tool
+from . import run, seed_queue, tool, transcript
 from .colors import CMUX_COLOR_ANSI, bold, dim
 from .constants import MAIN_BRANCHES
 from .gh import PR
@@ -1308,30 +1308,43 @@ def workspace_is_idle(ref: str) -> bool:
 # "when in doubt, don't" bias as `_native_claude_state`'s own ambiguity note.
 _PENDING_SCREEN_MARKERS = ("Enter to select", "Esc to cancel", "to navigate")
 
-# Claude Code's own insert-mode indicator, shown in the composer's border only
-# while it has focus and is ready to accept typing — absent while a turn is
-# running (verified: a mid-turn screen's rule-bounded prompt box omits it).
+# Claude Code's own insert-mode indicator, shown in the composer's border while
+# it has focus. It says the composer is available for typing; it does NOT say
+# the session is at rest, since a running turn keeps focus so type-ahead can be
+# queued. A pending choice does take focus away, so this rules out a dialog the
+# markers above might have missed — the turn axis belongs to `transcript`.
 _IDLE_SCREEN_MARKER = "-- INSERT --"
 
 
-def _screen_signals_idle(ref: str, *, lines: int = 12) -> bool:
-    """Best-effort screen read confirming an idle composer, for the one case
+def _screen_signals_idle(ref: str, cwd: Path | None = None, *, lines: int = 12) -> bool:
+    """Best-effort check that `ref` is at rest, for the one case
     `reassert_idle_pills` otherwise can never reach: cmux reporting no
     `claude_code=` state for `ref` at all (see that function's docstring).
 
+    Two independent axes, because neither source covers both:
+
+    - **Is a turn running?** `transcript.turn_in_flight(cwd)`, where only a
+      definite `False` passes. The screen cannot answer this: `-- INSERT --`
+      survives a running turn, so this function returned True for a session
+      reporting `claude_code=Running` — the defect `cwd` was added to fix.
+    - **Is a choice pending?** The screen, unchanged. Any pending-choice marker
+      refuses, the insert-mode indicator must be present (a permission prompt
+      or an `AskUserQuestion` takes focus off the composer, so it disappears),
+      and the prompt line must be empty.
+
     Never used to gate a `send` — only to decide whether *this* self-heal
     should write the pill, so a false positive costs one wrongly-early pill
-    write, not a delivered message into a live confirmation. Kept deliberately
-    conservative: requires the composer's own insert-mode indicator AND an
-    empty prompt line, and refuses outright if any pending-choice marker
-    appears anywhere in the read.
+    write, not a delivered message into a live confirmation.
 
-    cmux-only (limux has no `read-screen`); fails closed on any read failure,
-    a missing/renamed indicator, or an unexpected screen shape — this is a
-    heuristic over a third party's terminal chrome, and it may drift under an
-    unrelated cmux or Claude Code UI change.
+    cmux-only (limux has no `read-screen`); fails closed on an absent cwd, an
+    unreadable transcript, a read failure, a missing/renamed indicator, or an
+    unexpected screen shape — the screen half is a heuristic over a third
+    party's terminal chrome, and it may drift under an unrelated cmux or Claude
+    Code UI change.
     """
     if not tool.is_cmux():
+        return False
+    if cwd is None or transcript.turn_in_flight(cwd) is not False:
         return False
     screen = cmux("read-screen", "--workspace", ref, "--lines", str(lines), check=False)
     if not screen or any(m in screen for m in _PENDING_SCREEN_MARKERS):
@@ -1341,7 +1354,7 @@ def _screen_signals_idle(ref: str, *, lines: int = 12) -> bool:
     return any(line.rstrip() == "❯" for line in screen.splitlines())
 
 
-def reassert_idle_pills(refs: Iterable[str]) -> list[str]:
+def reassert_idle_pills(cwds: Mapping[str, Path]) -> list[str]:
     """Write `idle=` for every ref that's actually at rest but carries no
     pill. Returns the refs healed.
 
@@ -1356,18 +1369,18 @@ def reassert_idle_pills(refs: Iterable[str]) -> list[str]:
 
     For a ref reporting NO native state at all — cmux never registered it, or
     lost it before this ever ran — there is no `Idle` window to catch, so the
-    fallback is `_screen_signals_idle`: a direct, narrowly-scoped read of the
-    same evidence a human would look at to answer "is this actually idle?".
-    It never overrides an unambiguous refusal (`Running`, `Needs input`) —
-    those still wait for the ordinary `Idle` window like everything else.
+    fallback is `_screen_signals_idle`, which needs the ref's cwd to reach the
+    transcript. Hence the mapping: the caller already holds one, so nothing
+    here fetches its own input. It never overrides an unambiguous refusal
+    (`Running`, `Needs input`) — those still wait for the ordinary `Idle`
+    window like everything else.
 
     Deliberately only ever *writes* a pill, never clears one: a stale `idle=`
     on a now-running session is already handled by the gate's `Running` guard,
     whereas a wrongly-cleared pill would silence a reachable session. Every
     failure mode therefore costs at most one interval of a missing pill.
     """
-    refs = list(refs)
-    if not refs:
+    if not cwds:
         return []
 
     def _one(ref: str) -> str | None:
@@ -1375,17 +1388,22 @@ def reassert_idle_pills(refs: Iterable[str]) -> list[str]:
         if _has_pill(lines, "idle"):
             return None
         native = _native_claude_state(lines)
-        if native != "Idle" and not (native is None and _screen_signals_idle(ref)):
+        if native != "Idle" and not (
+            native is None and _screen_signals_idle(ref, cwds[ref])
+        ):
             return None
         _set_status(ref, "idle", "idle", GREY)
         return ref
 
     # One `list-status` subprocess per workspace, ~150ms each and mutually
-    # independent — serial that is ~3.5s of a 30s tick at fleet scale. A
-    # second `read-screen` round-trip only fires for the no-native-state case,
-    # which should be rare.
-    with ThreadPoolExecutor(max_workers=min(8, len(refs))) as pool:
-        return [r for r in pool.map(_one, refs) if r]
+    # independent — serial that is ~3.5s of a 30s tick at fleet scale. The
+    # no-native-state fallback pays a local transcript read and, only past it,
+    # a second `read-screen` round-trip. That case is NOT rare — 20 of 22
+    # workspaces reported no native state when this was measured — but the
+    # transcript read is a file glob, and most of those already carry a pill
+    # and return above before either.
+    with ThreadPoolExecutor(max_workers=min(8, len(cwds))) as pool:
+        return [r for r in pool.map(_one, cwds) if r]
 
 
 def find_cockpit_workspaces(
