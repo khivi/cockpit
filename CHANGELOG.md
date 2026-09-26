@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.8.2](https://github.com/khivi/cockpit/compare/v3.8.1...v3.8.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* **nudge:** stop the idle self-heal writing a pill mid-turn ([#540](https://github.com/khivi/cockpit/issues/540)) ([ea0e6d6](https://github.com/khivi/cockpit/commit/ea0e6d68014a493351114f828ceb7fe57fb11702))
+
 ## [3.8.1](https://github.com/khivi/cockpit/compare/v3.8.0...v3.8.1) (2026-09-24)
 
 
