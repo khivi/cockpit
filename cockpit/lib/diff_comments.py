@@ -31,6 +31,15 @@ machine's ids are noise. The ledger is one uuid per comment ever delivered and
 is never pruned: a few hundred bytes a year, against a scan-and-intersect pass
 that would have to run on every send.
 
+**`submissionText` is deliberately left unread**, though it is the block cmux's
+own composer would have submitted and reusing it beats assembling a line here.
+That block embeds the diff hunk — repo content, a fork contributor's on a
+`review_prs` worktree, printed to a terminal the agent reads — and
+`cache.strip_control`, the one neutralizer, replaces `\\n` and `\\t`, so a
+multi-line hunk through it is U+FFFD per newline and per indent. Taking `side`,
+`line_text` and the span instead needs neither an unfiltered widening nor a
+second neutralizer: all three are single-line values the existing filter handles.
+
 Everything here fails **open** — an unreadable store or ledger yields "no
 pending comments" and an unwritable ledger costs one duplicate delivery. The
 alternative is a send that raises, and the message is what the user actually
@@ -43,6 +52,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .cache import strip_control
 from .config import COCKPIT_RUNTIME_DIR
 
 STORE_DIR = Path.home() / "Library" / "Application Support" / "cmux" / "diff-comments"
@@ -51,12 +61,24 @@ DELIVERED = COCKPIT_RUNTIME_DIR / "diff-comments-delivered.json"
 
 @dataclass(frozen=True)
 class Comment:
-    """One line-anchored remark, reduced to what a prompt needs."""
+    """One line-anchored remark, reduced to what a prompt needs.
+
+    `line` is a position in the diff, not in the file; `side` says which side,
+    and on `deletions` the file's line of that number is a different line.
+    `line_text` is what the remark was written against — what survives the file
+    moving, and what tells two identically-worded remarks apart.
+
+    The three anchor fields default, so a record from a cmux predating them
+    reads as it did before they existed.
+    """
 
     id: str
     file: str
     line: int
     message: str
+    end_line: int = 0
+    side: str = ""
+    line_text: str = ""
 
 
 def _roots(paths) -> set[str]:
@@ -113,6 +135,9 @@ def pending_by_root(roots: set[str]) -> dict[str, list[Comment]]:
                     file=c.get("filePath") or "?",
                     line=c.get("startLine") or 0,
                     message=message,
+                    end_line=c.get("endLine") or 0,
+                    side=str(c.get("side") or ""),
+                    line_text=strip_control(str(c.get("lineText") or "").strip()),
                 )
             )
     for bucket in out.values():

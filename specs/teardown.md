@@ -29,3 +29,10 @@
   pending ids as delivered and puts the viewer tab away rather than opening
   one — while with nothing pending it closes nothing, since an open diff
   with no notes is one somebody is still reading.
+- [diff.comments-anchor~1] A printed note carries the side its line number
+  belongs to and the text the note was written against, and a dragged range
+  keeps its span; a record carrying none of the three prints as it did before
+  they existed.
+- [diff.comments-neutralized~1] The anchored text is neutralized on the way
+  out, since it is repo content and a `review_prs` worktree's is a fork
+  contributor's.
