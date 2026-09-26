@@ -207,6 +207,77 @@ def test_ack_with_nothing_pending_says_so(monkeypatch, in_worktree, closed, caps
     assert closed == []
 
 
+@pytest.mark.covers("diff.comments-anchor~1")
+def test_a_note_names_the_side_its_line_number_belongs_to(
+    monkeypatch, in_worktree, capsys
+):
+    """On `deletions` the number is a position in the diff's old side, so the
+    current file's line of that number is a different line. Printed bare, it
+    sent the reader somewhere unrelated with nothing admitting it."""
+    monkeypatch.setattr(diff_cli, "main_worktree_path", lambda root: None)
+    monkeypatch.setattr(
+        diff_cli.diff_comments,
+        "pending",
+        lambda roots: [
+            Comment(
+                id="c1",
+                file="ci.yml",
+                line=140,
+                message="remove comment",
+                side="deletions",
+                line_text="# the fnox hooks are diff-scoped",
+            )
+        ],
+    )
+
+    assert diff_cli.main(["--comments"]) == 0
+    out = capsys.readouterr().out
+    assert "ci.yml:140 (old side) — remove comment" in out
+    assert "│ # the fnox hooks are diff-scoped" in out
+
+
+@pytest.mark.covers("diff.comments-anchor~1")
+def test_a_dragged_range_keeps_its_span(monkeypatch, in_worktree, capsys):
+    monkeypatch.setattr(diff_cli, "main_worktree_path", lambda root: None)
+    monkeypatch.setattr(
+        diff_cli.diff_comments,
+        "pending",
+        lambda roots: [
+            Comment(
+                id="c1",
+                file="a.py",
+                line=140,
+                end_line=148,
+                message="this whole block",
+                side="additions",
+            )
+        ],
+    )
+
+    assert diff_cli.main(["--comments"]) == 0
+    assert "a.py:140-148 (new side) — this whole block" in capsys.readouterr().out
+
+
+@pytest.mark.covers("diff.comments-anchor~1")
+def test_a_note_carrying_no_anchor_prints_as_it_always_did(
+    monkeypatch, in_worktree, capsys
+):
+    """An older cmux's store has none of the three keys, so the fields default
+    and the line must come out byte-identical to the pre-anchor format."""
+    monkeypatch.setattr(diff_cli, "main_worktree_path", lambda root: None)
+    monkeypatch.setattr(
+        diff_cli.diff_comments,
+        "pending",
+        lambda roots: [Comment(id="c1", file="a.py", line=7, message="rename this")],
+    )
+
+    assert diff_cli.main(["--comments"]) == 0
+    out = capsys.readouterr().out
+    assert "a.py:7 — rename this" in out
+    assert "│" not in out, "no anchor line when there is no anchored text"
+    assert "side" not in out
+
+
 def test_comments_and_ack_are_mutually_exclusive(in_worktree):
     with pytest.raises(SystemExit) as e:
         diff_cli.main(["--comments", "--ack"])

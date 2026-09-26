@@ -35,7 +35,7 @@ def _write(store, name, root, comments):
     )
 
 
-def _comment(cid="c1", path="app/main.py", line=10, message="reduce comments"):
+def _comment(cid="c1", path="app/main.py", line=10, message="reduce comments", **over):
     return {
         "id": cid,
         "filePath": path,
@@ -43,7 +43,9 @@ def _comment(cid="c1", path="app/main.py", line=10, message="reduce comments"):
         "endLine": line,
         "message": message,
         "side": "additions",
+        "lineText": "    return None",
         "submissionText": "Review comment on ...\n\n```diff\n+x\n```\n",
+        **over,
     }
 
 
@@ -57,6 +59,56 @@ def test_pending_finds_comments_filed_against_the_row(_store, tmp_path):
     assert [(c.file, c.line, c.message) for c in got] == [
         ("app/main.py", 10, "reduce comments")
     ]
+
+
+def test_the_anchor_fields_are_carried_off_the_store(_store, tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _write(_store, "a", wt, [_comment(line=140, endLine=148, side="deletions")])
+
+    (c,) = diff_comments.pending([wt])
+
+    assert (c.line, c.end_line, c.side, c.line_text) == (
+        140,
+        148,
+        "deletions",
+        "return None",
+    )
+
+
+def test_a_record_with_no_anchor_keys_reads_as_it_did_before_them(_store, tmp_path):
+    """A store written by a cmux predating the fields, which must not become an
+    error or a `None` leaking into the print site."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _write(
+        _store,
+        "a",
+        wt,
+        [{"id": "c1", "filePath": "a.py", "startLine": 7, "message": "rename"}],
+    )
+
+    (c,) = diff_comments.pending([wt])
+
+    assert (c.end_line, c.side, c.line_text) == (0, "", "")
+
+
+@pytest.mark.covers("diff.comments-neutralized~1")
+def test_the_anchored_text_is_neutralized(_store, tmp_path):
+    """It is repo content, and on a `review_prs` worktree that is a fork
+    contributor's — printed to a terminal cockpit taught to honour OSC 8. A
+    hunk carrying its own escape sequence must not reach it intact."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _write(
+        _store, "a", wt, [_comment(lineText="x = 1\x1b]8;;http://evil\x07click\x07")]
+    )
+
+    (c,) = diff_comments.pending([wt])
+
+    assert "\x1b" not in c.line_text and "\x07" not in c.line_text
+    assert c.line_text.startswith("x = 1")
+    assert "evil" in c.line_text, "tampering stays visible rather than vanishing"
 
 
 def test_a_comment_filed_against_another_repo_is_not_delivered(_store, tmp_path):

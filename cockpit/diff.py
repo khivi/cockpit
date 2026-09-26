@@ -97,6 +97,18 @@ def _pending(root: Path) -> list:
     return diff_comments.pending([root, main_worktree_path(root)])
 
 
+def _format_comment(c: diff_comments.Comment) -> str:
+    """One note, with the side its line number belongs to and its anchor text.
+
+    Printed bare, a `deletions` number sent the reader to that line of the
+    *current* file, which is a different line. See `Comment` for the rest.
+    """
+    span = f"{c.line}-{c.end_line}" if c.end_line > c.line else f"{c.line}"
+    side = {"additions": " (new side)", "deletions": " (old side)"}.get(c.side, "")
+    head = f"{c.file}:{span}{side} — {c.message}"
+    return f"{head}\n    │ {c.line_text}" if c.line_text else head
+
+
 def _show_comments(root: Path) -> int:
     """`--comments`: print the pending notes and mark **nothing**.
 
@@ -111,7 +123,7 @@ def _show_comments(root: Path) -> int:
         print("cockpit diff: no pending diff comments for this worktree")
         return 0
     for c in pend:
-        print(f"{c.file}:{c.line} — {c.message}")
+        print(_format_comment(c))
     print(
         f"\n{len(pend)} pending. Address them, then run `cockpit diff --ack` "
         "so they stop being offered."

@@ -9,9 +9,11 @@
 - [idle-gate.needs-input~1] Given native `Needs input` and no `idle=` pill,
   `nudge_if_idle` refuses the send — the state is ambiguous between parked-
   at-prompt and a pending y/n permission.
-- [idle-gate.reassert~1] Given any native state short of unambiguous `Idle`,
+- [idle-gate.reassert~2] Given any native state short of unambiguous `Idle`,
   the fast-tick reassert writes no pill; a ref reporting no native state at
-  all heals only when the screen read confirms the bare composer.
+  all heals only when the transcript shows no tool call in flight AND the
+  screen confirms the bare composer — a mid-turn screen is indistinguishable
+  from an at-rest one, so the screen alone is not evidence of rest.
 - [idle-gate.verdict~1] For every gate case, `rest_skip_reason`'s verdict
   matches whether `nudge_if_idle` would deliver — the display caller cannot
   disagree with the decision.
