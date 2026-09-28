@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.9.1](https://github.com/khivi/cockpit/compare/v3.9.0...v3.9.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **statusline:** restore the two-line footer on macOS ([#544](https://github.com/khivi/cockpit/issues/544)) ([a6675cb](https://github.com/khivi/cockpit/commit/a6675cb2a8af1a8e403ef05426499c75952224e7))
+
 ## [3.9.0](https://github.com/khivi/cockpit/compare/v3.8.2...v3.9.0) (2026-09-28)
 
 
