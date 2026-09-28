@@ -328,10 +328,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--context",
         nargs="?",
         const="",
-        help="summary of the current session, injected into the seeded "
-        "first-turn prompt under a 'Caller session context' heading. Bare "
-        "`--context` means 'summarize this session' — only the calling agent "
-        "can do that, so `/cockpit-new` expands it to `--context <summary>` "
+        help="what the new workspace needs from the calling session, injected "
+        "into the seeded first-turn prompt under a 'Caller session context' "
+        "heading. Bare `--context` means 'select that yourself' — only the "
+        "calling agent can, so `/cockpit-new` expands it to `--context <text>` "
         "before invoking the CLI; reaching the CLI bare is an error.",
     )
     raw = sys.argv[1:] if argv is None else argv
