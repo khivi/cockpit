@@ -1723,9 +1723,9 @@ def test_context_injected_into_seeded_prompt(spawn_main, monkeypatch):
 
 @pytest.mark.covers("spawn.context-flag~1")
 def test_bare_context_errors(spawn_main):
-    """Bare `--context` means 'summarize this session' — a job only the calling
-    agent can do. Reaching the CLI unexpanded must fail loudly, not spawn a
-    workspace that silently inherits nothing."""
+    """Bare `--context` means 'select what the new workspace needs' — a job only
+    the calling agent can do. Reaching the CLI unexpanded must fail loudly, not
+    spawn a workspace that silently inherits nothing."""
     code, _out, err = spawn_main(["ctx-feat", "--repo", "testrepo", "--context"])
     assert code == 2
     assert "--context with no text" in err

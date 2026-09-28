@@ -216,7 +216,12 @@ and a first turn seeded with the context it needs:
 
 Two extras worth knowing. Append `-- some extra instructions` and it rides along into the
 seeded prompt. And `/cockpit-new --context` from inside a Claude session hands the new
-workspace a summary of the conversation you're leaving, so it doesn't start cold.
+workspace what it needs from the conversation you're leaving, so it doesn't start cold —
+the goal, the decisions already made, the approaches already ruled out, the exact PR
+numbers and ticket keys and paths. Not a transcript: whatever the new workspace can read
+for itself out of the repo is left for it to read. Give the flag a value —
+`--context 'the auth refactor'` — and that text is kept as written and scopes what else
+comes with it.
 
 **A ticket key routes itself to the right repo.** `cockpit new PE-1234` finds the repo
 declaring that team prefix — free and offline. If several repos share the team (the
