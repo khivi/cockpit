@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.9.0](https://github.com/khivi/cockpit/compare/v3.8.2...v3.9.0) (2026-09-28)
+
+
+### Features
+
+* **spawn:** make --context select what the new workspace needs ([#542](https://github.com/khivi/cockpit/issues/542)) ([5210677](https://github.com/khivi/cockpit/commit/52106771a309d32a7fb14b57098d12d6c543dee9))
+
 ## [3.8.2](https://github.com/khivi/cockpit/compare/v3.8.1...v3.8.2) (2026-09-26)
 
 
