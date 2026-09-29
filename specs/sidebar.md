@@ -9,9 +9,10 @@
 - [folds.born-collapsed~1] A trailing fold is created collapsed; an
   already-standing fold is re-parked without any collapse re-assert, so one
   the user expanded stays expanded.
-- [folds.collapse-readback~1] `is_collapsed` appears nowhere in `cycle.py` —
-  reading it back to "correct" a fold would slam shut one the user
-  deliberately expanded.
+- [folds.collapse-readback~1] A fold the user expanded stays expanded for the
+  life of the session — the cycle never re-collapses one it did not just
+  create. Asserted structurally: `is_collapsed` appears nowhere in
+  `cycle.py`.
 - [folds.partial~1] Given a healthy repo cycle, `ReviewFolds.partial` stays
   False; a repo that fails to report sets it, which suspends the dissolve
   loop while re-park, rename and re-member still run.
@@ -80,9 +81,9 @@
 
 ## cmux events
 
-- [events.cursor-file~1] `events.py` imports nothing from the cache module —
-  the resume cursor is cmux's bookmark and never routes through flat-cell
-  machinery.
+- [events.cursor-file~1] The resume cursor is cmux's bookmark and never
+  becomes stored inventory — nothing a renderer reads is derived from it.
+  Asserted structurally: `events.py` imports nothing from the cache module.
 - [events.doorbell~1] Given a workspace event, the fast tick runs once,
   immediately, and the slow tick count is untouched — a trigger, never a
   decision.

@@ -21,9 +21,9 @@
   and `gh` is never reached.
 - [diff.viewer~1] (untested: design rationale) There is no second in-overlay
   renderer and no `delta` dependency — both tried and removed.
-- [diff.resolution~1] `diff.py` names neither `load_config` nor
-  `_resolve_target`; resolution is `git.worktree_root` alone, so any git
-  repo works whether or not it is registered.
+- [diff.resolution~1] `cockpit diff` works in any git repo whether or not it
+  is registered — resolution is `git.worktree_root` alone. Asserted
+  structurally: `diff.py` names neither `load_config` nor `_resolve_target`.
 - [diff.comments~1] Given a pending note, `--comments` prints it with the
   `--ack` hint, marks nothing, and opens no diff; `--ack` marks exactly the
   pending ids as delivered and puts the viewer tab away rather than opening

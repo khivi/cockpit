@@ -24,9 +24,10 @@ and the rationale behind each rule.
   `rate-limit-5h`, `model`, `permission-mode`, `transcript-path`, `cost`)
   appears anywhere in the daemon — `stash_from_stdin` is the sole writer, and
   the daemon's one read of them is `cost-<sid>`.
-- [cache.renderer-readonly~2] `lib/starship.py` references no `subprocess`,
-  no `atomic_write`, imports nothing from `gh`, and touches nothing in
-  `git.py` beyond the `GitStatusCounts` data type.
+- [cache.renderer-readonly~2] A field printer reads cells and nothing else —
+  no source state, no cache write. Asserted structurally: `lib/starship.py`
+  references no `subprocess`, no `atomic_write`, imports nothing from `gh`,
+  and touches nothing in `git.py` beyond the `GitStatusCounts` data type.
 
 ## Worktree cost
 
@@ -42,6 +43,8 @@ and the rationale behind each rule.
 - [config.tmp-suffix~1] Given two processes atomically writing the same
   config path, each temp file's name carries its own `os.getpid()`, so the
   loser cannot land its whole content under the winner's name.
-- [config.write-funnel~1] `os.replace` is called in exactly one function
-  under cockpit/ — `_atomic_write_text`; sibling state dirs that repeat the
+- [config.write-funnel~1] Every config write lands through the one pid-scoped
+  writer, so no call site can reintroduce a fixed temp suffix. Asserted
+  structurally: `os.replace` is called in exactly one function under
+  cockpit/ — `_atomic_write_text`; sibling state dirs that repeat the
   pid-suffix pattern go through `Path.replace` instead.
