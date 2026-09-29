@@ -984,9 +984,12 @@ def test_republish_keeps_two_repos_on_one_branch_apart(json_cache):
 def test_republish_skips_a_pr_with_no_worktree(json_cache):
     """No worktree → no row, no session, nowhere to key a cell. The JSON
     snapshot is still written; only the flat republish sits it out."""
-    _snapshot(json_cache, "cockpit", 5, "khivi/remote-only", cwd="")
+    snapshot = _snapshot(json_cache, "cockpit", 5, "khivi/remote-only", cwd="")
     cache_mod.republish_pr_caches_from_disk()
     assert not any(cache_mod.FLAT_CACHE_DIR.glob("pr-num-*"))
+    assert snapshot.exists()
+    served = cache_mod.find_pr_payload("khivi/remote-only", "cockpit")
+    assert served is not None and served["number"] == 5
 
 
 @pytest.mark.covers("pr-list.one-per-branch~2")
