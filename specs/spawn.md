@@ -28,6 +28,11 @@
 - [spawn.seed-budget~1] The same failed delivery re-types the body exactly
   once before giving up — the waiting lives in the echo polls, and a slow
   boot is answered by polling, never a third send.
+- [spawn.seed-garbled~1] Given a submitted body the session received altered,
+  delivery reports it — the composer echo confirms only the body's first
+  characters, so loss past them is read from Claude Code's own transcript
+  rather than the screen. Nothing is re-queued, an absent record is never read
+  as corruption, and a caller passing no worktree simply forgoes the check.
 - [spawn.ticket-prompt~1] Given a repo declaring a Linear team key with no
   global `tickets` block at all, its bare ticket id still routes to it — the
   routing gate asks the matched candidates about their provider, never the

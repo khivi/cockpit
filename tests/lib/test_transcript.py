@@ -193,3 +193,100 @@ def test_in_flight_outranks_an_unreadable_sibling(project):
         assert transcript.turn_in_flight(cwd) is True
     finally:
         path.chmod(0o644)
+
+
+# ── submitted_body: what actually reached the composer ──────────────────────
+
+
+def _user_text(text: str) -> dict:
+    return {
+        "type": "user",
+        "timestamp": "2026-09-29T12:00:00.000Z",
+        "message": {"role": "user", "content": [{"type": "text", "text": text}]},
+    }
+
+
+def _queued(text: str, *, at: str = "2026-09-29T12:00:00.000Z") -> dict:
+    return {
+        "type": "queue-operation",
+        "operation": "enqueue",
+        "timestamp": at,
+        "content": text,
+    }
+
+
+def _queued_attachment(text: str) -> dict:
+    return {
+        "timestamp": "2026-09-29T12:00:00.000Z",
+        "attachment": {"type": "queued_command", "prompt": text},
+    }
+
+
+def test_submitted_body_reads_a_plain_user_turn(project):
+    cwd, write = project
+    write("s1", _user_text("hello there, this is the body"))
+    assert transcript.submitted_body(cwd, "hello there") == (
+        "hello there, this is the body"
+    )
+
+
+def test_submitted_body_reads_a_body_queued_mid_turn(project):
+    """The shape the garbled prompt actually arrived as: typed into a session
+    whose turn was still running, so Claude Code queued it rather than
+    starting it."""
+    cwd, write = project
+    write("s1", _queued("hello there, this is the body"))
+    assert transcript.submitted_body(cwd, "hello there") == (
+        "hello there, this is the body"
+    )
+
+
+def test_submitted_body_reads_a_queued_command_attachment(project):
+    cwd, write = project
+    write("s1", _queued_attachment("hello there, this is the body"))
+    assert transcript.submitted_body(cwd, "hello there") == (
+        "hello there, this is the body"
+    )
+
+
+def test_submitted_body_is_none_when_nothing_matches(project):
+    cwd, write = project
+    write("s1", _user_text("an unrelated turn"))
+    assert transcript.submitted_body(cwd, "hello there") is None
+
+
+def test_submitted_body_is_none_with_no_transcript_at_all(project):
+    cwd, _ = project
+    assert transcript.submitted_body(cwd, "hello there") is None
+
+
+def test_submitted_body_returns_the_newest_match(project):
+    """A re-delivery must not be judged against an older copy of itself."""
+    cwd, write = project
+    write(
+        "s1",
+        _queued("hello there, the old one", at="2026-09-29T11:00:00.000Z"),
+        _queued("hello there, the new one", at="2026-09-29T12:00:00.000Z"),
+    )
+    assert transcript.submitted_body(cwd, "hello there") == ("hello there, the new one")
+
+
+def test_submitted_body_surfaces_a_garbled_body(project):
+    """The regression this exists for: the first 24 characters land intact and
+    chunks go missing after them, so a prefix check passes while the session
+    acts on a corrupted prompt."""
+    cwd, write = project
+    sent = "You are starting a fresh task on branch dat-340. Rename the branch."
+    write("s1", _queued("You are starting a fresh task on branch dat-3ame the branch."))
+    assert transcript.submitted_body(cwd, sent[:24]) != sent
+
+
+def test_submitted_body_skips_an_unparsable_line(project):
+    cwd, write = project
+    proj = transcript.CLAUDE_PROJECTS_DIR / transcript._claude_project_slug(cwd)
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / "s1.jsonl").write_text(
+        "{half written\n" + json.dumps(_queued("hello there, intact")) + "\n",
+        encoding="utf-8",
+    )
+    assert transcript.submitted_body(cwd, "hello there") == "hello there, intact"

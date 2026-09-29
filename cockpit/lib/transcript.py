@@ -98,6 +98,74 @@ def _has_open_tool_use(path: Path) -> bool | None:
     return bool(issued - answered)
 
 
+def _record_body(record: dict) -> str | None:
+    """The submitted prompt text carried by `record`, or None if it carries none.
+
+    Three shapes hold one, because a body's landing place depends on whether a
+    turn was already running when it was submitted: a plain `user` message, a
+    `queue-operation` (typed mid-turn, so Claude Code queued it), and the
+    `queued_command` attachment written when that queue is drained.
+    """
+    if record.get("type") == "queue-operation":
+        content = record.get("content")
+        return content if isinstance(content, str) else None
+    attachment = record.get("attachment")
+    if isinstance(attachment, dict) and attachment.get("type") == "queued_command":
+        prompt = attachment.get("prompt")
+        return prompt if isinstance(prompt, str) else None
+    message = record.get("message")
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return None
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    parts = [
+        b["text"]
+        for b in content
+        if isinstance(b, dict)
+        and b.get("type") == "text"
+        and isinstance(b.get("text"), str)
+    ]
+    return "".join(parts) or None
+
+
+def submitted_body(cwd: os.PathLike[str] | str, prefix: str) -> str | None:
+    """The most recently submitted body at `cwd` starting with `prefix`, or None.
+
+    Claude Code's own durable record of what actually reached the composer,
+    which is the only place a body can be checked in full: past roughly a
+    thousand characters the composer collapses a fast keystroke burst into
+    `[Pasted text #N]` placeholders, so the screen shows fragments and
+    `cmux._screen_shows` cannot see the middle of a long prompt at all.
+
+    Newest match wins. No match is None, never "the body was corrupted" — the
+    record may simply not be written yet.
+    """
+    best: tuple[str, str] | None = None
+    for path in _session_files(cwd):
+        try:
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if not line.strip():
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    body = _record_body(record)
+                    if body is None or not body.startswith(prefix):
+                        continue
+                    stamp = record.get("timestamp")
+                    key = stamp if isinstance(stamp, str) else ""
+                    if best is None or key >= best[0]:
+                        best = (key, body)
+        except OSError:
+            continue
+    return best[1] if best else None
+
+
 def turn_in_flight(cwd: os.PathLike[str] | str) -> bool | None:
     """True when a Claude turn is running at `cwd`, False when none is, None
     when it cannot be told.

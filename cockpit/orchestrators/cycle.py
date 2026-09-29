@@ -2503,7 +2503,7 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
             continue
         ref = spawn_workspace(ws_name, repo_path, claude_command(initial))
         if ref is not None and followup:
-            deliver_followup(ref, followup)
+            deliver_followup(ref, followup, cwd=repo_path)
 
 
 def _repo_owned_refs(ctx: RepoCycle, keep_refs: set[str]) -> list[str]:

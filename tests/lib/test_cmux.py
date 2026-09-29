@@ -2548,7 +2548,7 @@ def _patched_pr_spawn(
     invocation in call order, so tests can assert both gating and ordering."""
     calls: list[tuple] = []
 
-    def _deliver(ref, text):
+    def _deliver(ref, text, *, cwd=None):
         calls.append(("deliver_followup", ref, text))
         return True
 
@@ -2617,7 +2617,7 @@ def _patched_orphan_spawn(
 ):
     calls: list[tuple] = []
 
-    def _deliver(ref, text):
+    def _deliver(ref, text, *, cwd=None):
         calls.append(("deliver_followup", ref, text))
         return True
 
@@ -3283,3 +3283,84 @@ def test_clear_pr_pills_clears_every_pr_pill_key():
     cleared_keys = {a[1] for a in calls if a[0] == "clear-status"}
     assert cleared_keys == set(cmux_mod._PR_PILL_CLEAR_KEYS)
     assert all(a[0] == "clear-status" for a in calls)
+
+
+# ── post-submit body check (the screen cannot see a long body) ───────────────
+
+
+def _delivered(text, submitted, capsys, cwd="/wt"):
+    """Run a successful `deliver_followup` whose transcript reports `submitted`,
+    and hand back what it printed."""
+    screens = ["❯ \n", f"❯ {text}\n"]
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=_followup_cmux(screens)),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.time.sleep"),
+        patch(
+            "cockpit.lib.cmux.transcript.submitted_body", return_value=submitted
+        ) as probe,
+    ):
+        assert deliver_followup("workspace:1", text, cwd=Path(cwd)) is True
+    return capsys.readouterr().out, probe
+
+
+@pytest.mark.covers("spawn.seed-garbled~1")
+def test_a_garbled_body_is_reported_after_submission(capsys):
+    """The screen check confirms only the first 24 characters, so loss after
+    them is invisible to it — a live prompt lost two chunks from its middle
+    with its prefix intact and was submitted silently."""
+    sent = "You are starting a fresh task on branch dat-340. Rename the branch."
+    out, _ = _delivered(sent, "You are starting a fresh ame the branch.", capsys)
+    assert "garbled" in out
+    assert str(len(sent)) in out
+
+
+@pytest.mark.covers("spawn.seed-garbled~1")
+def test_an_intact_body_is_not_reported(capsys):
+    sent = "You are starting a fresh task on branch dat-340. Rename the branch."
+    out, _ = _delivered(sent, sent, capsys)
+    assert "garbled" not in out
+
+
+@pytest.mark.covers("spawn.seed-garbled~1")
+def test_an_absent_transcript_record_says_nothing(capsys):
+    """No record must never read as corruption: the transcript is appended
+    asynchronously, so "not there yet" and "arrived wrong" are different."""
+    out, _ = _delivered("do the thing", None, capsys)
+    assert "garbled" not in out
+
+
+@pytest.mark.covers("spawn.seed-garbled~1")
+def test_the_check_is_skipped_without_a_cwd(capsys):
+    """A caller with no worktree keeps byte-identical prior behaviour."""
+    screens = ["❯ \n", "❯ do the thing\n"]
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=_followup_cmux(screens)),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.time.sleep"),
+        patch("cockpit.lib.cmux.transcript.submitted_body") as probe,
+    ):
+        assert deliver_followup("workspace:1", "do the thing") is True
+    probe.assert_not_called()
+    assert "garbled" not in capsys.readouterr().out
+
+
+@pytest.mark.covers("spawn.seed-garbled~1")
+def test_a_garbled_body_is_not_queued_for_retry(capsys):
+    """A garbled body still REACHED the session, so a retry stacks a second
+    prompt on a turn already acting on the first — the reason a failed Enter
+    is not queued either."""
+    sent = "You are starting a fresh task on branch dat-340. Rename the branch."
+    screens = ["❯ \n", f"❯ {sent}\n"]
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=_followup_cmux(screens)),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.time.sleep"),
+        patch("cockpit.lib.cmux.transcript.submitted_body", return_value="garbage"),
+        patch("cockpit.lib.cmux.seed_queue.enqueue") as enqueue,
+    ):
+        assert deliver_followup("workspace:1", sent, cwd=Path("/wt")) is True
+    enqueue.assert_not_called()

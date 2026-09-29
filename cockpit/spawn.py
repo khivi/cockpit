@@ -1248,7 +1248,7 @@ def main(argv: list[str] | None = None) -> int:
         initial, followup = split_prompt_prefix(prompt)
         new_ref = spawn_workspace(ws_name, wt, claude_command(initial))
         if new_ref is not None and followup:
-            deliver_followup(new_ref, followup)
+            deliver_followup(new_ref, followup, cwd=wt)
     elif prompt:
         # The worktree's Claude is already running, so the prompt can't ride in
         # on `--command`. Deliver it into the live session: type the text into
@@ -1260,7 +1260,7 @@ def main(argv: list[str] | None = None) -> int:
         # that a multi-line prompt submits its first fragment as a truncated
         # instruction of its own. It also brings the readiness wait and the
         # logged-not-raised send failure this call site had neither of.
-        deliver_followup(existing_ref, prompt)
+        deliver_followup(existing_ref, prompt, cwd=wt)
         print(
             f"note: delivered prompt to existing workspace {ws_name}",
             file=sys.stderr,
