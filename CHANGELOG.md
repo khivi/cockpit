@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.9.2](https://github.com/khivi/cockpit/compare/v3.9.1...v3.9.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* **spawn:** report a seed body the session received garbled ([#546](https://github.com/khivi/cockpit/issues/546)) ([5e7adca](https://github.com/khivi/cockpit/commit/5e7adcabf00f5bb5eb03125ae3a86cfe743f6cfa))
+
 ## [3.9.1](https://github.com/khivi/cockpit/compare/v3.9.0...v3.9.1) (2026-09-28)
 
 
