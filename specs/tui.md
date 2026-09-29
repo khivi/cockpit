@@ -10,9 +10,9 @@
   their label at the same cell column — the status glyph sits in a
   fixed-width slot a glyphless row pays in blanks, measured in cells, not
   bytes.
-- [table.ticket-link~1] `worktree_table.py` never calls the live ticket-URL
-  resolver — the ticket cell's link reads the `url` the daemon cached, and a
-  renderer resolving its own is the banned thing.
+- [table.ticket-link~1] The ticket cell's link is the `url` the daemon cached;
+  a renderer never resolves its own. Asserted structurally:
+  `worktree_table.py` never calls the live ticket-URL resolver.
 
 ## Header bar
 
@@ -59,17 +59,18 @@
 
 - [tui.on-repo-done~1] Given the slow tick's per-repo hook firing, no cache
   write occurs — the republish repaints the table and writes nothing.
-- [tui.signals~1] `signal.signal(` appears nowhere in `tui/app.py` —
-  handlers install through `loop.add_signal_handler`, since the direct call
-  raises off the main thread.
-- [tui.diff-key~1] `render_diff` appears nowhere under `cockpit/tui/` — a
-  second caller would reopen the stale-surface bug the `d` key was removed
-  for.
+- [tui.signals~1] Signal handlers install through `loop.add_signal_handler`,
+  so installing one off the main thread cannot raise. Asserted structurally:
+  `signal.signal(` appears nowhere in `tui/app.py`.
+- [tui.diff-key~1] No row key opens a diff — the daemon's own workspace and
+  surface are the wrong target, which is the stale-surface bug the `d` key was
+  removed for. Asserted structurally: `render_diff` appears nowhere under
+  `cockpit/tui/`.
 - [tui.nudge-key~1] (untested: design rationale) There is no manual nudge key
   with a canned message; a manual send is `a`'s typed line.
-- [stdout.queue-writer~1] `redirect_stdout(` appears nowhere under cockpit/ —
-  one process-wide `_QueueWriter` captures tick prints, and a per-tick
-  redirect would let the two tick threads race on the global stream.
+- [stdout.queue-writer~1] One process-wide `_QueueWriter` captures every tick
+  print, so the two tick threads cannot race on the global stream. Asserted
+  structurally: `redirect_stdout(` appears nowhere under cockpit/.
 - [ask.line~1] Given pending diff comments, the ask box still opens empty —
   `a` sends exactly what you type, and the notes are read in the workspace
   by `cockpit diff --comments` instead.
@@ -82,9 +83,10 @@
 - [rowaction.z-folds~1] Given a repo-scoped cycle, no `ReviewFolds` is built
   and the cross-repo reconcile is never reached — a scoped bucket would
   dissolve every other org's fold.
-- [rowaction.z-tick~1] `_reconcile_review_groups` is unreachable from the
-  fast tick's call graph, while `restore_trailing_folds` — the narrower,
-  create-only replay — is reachable.
+- [rowaction.z-tick~1] The fast tick never rebuilds a trailing fold from its
+  network-free inputs — it only replays a standing record. Asserted
+  structurally: `_reconcile_review_groups` is unreachable from the fast tick's
+  call graph, while the create-only `restore_trailing_folds` is reachable.
 
 ## Tickets screen
 

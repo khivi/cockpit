@@ -34,6 +34,27 @@ top to bottom by people, not just grepped.
 Write the bullet as an **observable scenario**, not a rule. "A trailing fold is
 created collapsed" can be tested; "folds should be unobtrusive" cannot.
 
+## Bullets asserted by the code's shape
+
+Some invariants are negative — nothing calls this, nothing imports that — and
+the only runnable assertion is a grep over the tree. That is legitimate, and it
+is also the one shape that can drift from behaviour while staying green: a grep
+proves the code *conforms*, never that the system *does the right thing*. A
+renderer that stopped importing `gh` and started shelling `git` satisfies
+`cache.renderer-readonly~2` exactly as well as one that reads cells.
+
+So the bullet leads with the promise and names the grep second, as the means:
+
+> A field printer reads cells and nothing else — no source state, no cache
+> write. Asserted structurally: `lib/starship.py` references no `subprocess` …
+
+Not the inverse. A bullet that opens with the symbol is specifying the
+implementation, and the reader has no way to tell which behaviour would break
+if it were violated — which is the fact `/spec-audit` needs and cannot recover.
+Thirteen bullets carry this shape; `rg -n 'Asserted' specs/` lists them, and
+each is a standing candidate for a behavioural test that would retire the
+proxy.
+
 ## Finding a pair
 
 ```bash

@@ -62,9 +62,10 @@
   written empty — asked-and-nothing-assigned is a real state — while a failed
   fetch (`None`) suspends only its own bucket, which keeps the payload it
   had.
-- [ticket-inbox.screen~1] `tickets_screen.py` never references
-  `narrow_repos` — routing markers are computed by the app and handed in, so
-  opening the modal reaches no network however many tickets it holds.
+- [ticket-inbox.screen~1] Opening the inbox reaches no network however many
+  tickets it holds — routing markers are computed by the app and handed in.
+  Asserted structurally: `tickets_screen.py` never references
+  `narrow_repos`.
 - [ticket-inbox.markers~1] (untested: design rationale) The three-way routing
   answer is a one-cell marker in the handle's ellipsis budget, never a Repo
   column.

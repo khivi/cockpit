@@ -57,9 +57,11 @@
   write `plan.md` AND carry the never-stage line — cockpit's `.gitignore`
   does not travel to the repos it spawns into, so the prose is the only
   thing holding a tracked plan out of a squash merge there.
-- [prompts.plan-unread~1] No Python source under cockpit/ names the plan
-  artifact, so no tick, renderer, or teardown can come to depend on a file a
-  session might not have written.
-- [slack.no-preflight~1] No call under cockpit/ shells `claude mcp list` —
-  tree-wide and provider-neutral, including the Linear spawn path at runtime;
-  each provider prompt carries its own retry-then-STOP step instead.
+- [prompts.plan-unread~1] No tick, renderer or teardown depends on the plan
+  artifact, which a session may never have written. Asserted structurally: no
+  Python source under cockpit/ names it.
+- [slack.no-preflight~1] No provider's spawn gates its fetch on probing for an
+  MCP connector — a managed connector handshakes asynchronously and reports
+  absent while live — so each provider prompt carries its own retry-then-STOP
+  step instead. Asserted structurally: no call under cockpit/ shells
+  `claude mcp list`, tree-wide and including the Linear spawn path at runtime.
