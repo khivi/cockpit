@@ -67,7 +67,7 @@ the test would fail if the claim were false, which is the one thing here that
 is not mechanical. `scope.py` exists so the *denominator* stops being guessed,
 not to shrink the reading.
 
-**`all` is ~127 bullets — fan it out.** One pass cannot hold that many pairs
+**`all` is ~130 bullets — fan it out.** One pass cannot hold that many pairs
 honestly; it degrades into skimming, which reports "all entailed" for a ledger
 nobody read. Launch one subagent per spec file (group the small ones to even
 out the load), give each the rubric and the read-only constraint verbatim, and
@@ -83,6 +83,11 @@ two greps (the same pair AGENTS.md documents):
 rg -n '<id>~' specs/    # the bullet
 rg -n '<id>~' tests/    # every claiming marker
 ```
+
+Read the bullet first, and before opening a test, write one line naming what a
+test would have to construct for the claim to be falsifiable. Judge against
+that line. Opening the test first anchors the reading on whatever it happens to
+assert, and the bullet then reads as satisfied whatever it says.
 
 Read the whole test function under each marker — the fixtures and helpers it
 leans on too, when the assertion's strength lives there. A bullet claimed by
@@ -102,10 +107,16 @@ false?** Concretely:
   the restamp test's "this isn't vacuously true" asserts do.
 - For a ban bullet, the needle/AST check actually catches the violation shape
   the bullet describes, not only the spelling the author imagined.
+- Length and scaffolding are not strength. A long test with elaborate fixtures
+  and a confident name is the adversarial case, not the safe one — judge the
+  assertion, not the setup around it.
 
-Verdicts: **entailed**, **partial** (name exactly what goes unasserted), or
+Verdicts: **entailed**, **partial** (name exactly what goes unasserted),
 **mismatch** (the test asserts something else — the marker is vouching for the
-wrong bullet).
+wrong bullet), or **unassertable** (the bullet is the defect: it claims
+something no test could falsify as worded, or two things at once). Report an
+unassertable bullet and stop — do not reword it and do not propose a waiver,
+both being the author's call, and an under-asserted bullet is not this verdict.
 
 ## Never weaken
 
@@ -117,12 +128,16 @@ the adversarial reading of this skill:
 - **Do not** bump a `~rev` or touch a marker; both are the author's re-verify
   act, not the auditor's.
 - **Do not** propose a waiver for a bullet that is merely under-asserted.
+- **Do not** replace the reading with a confidence score over the pairs, fanned
+  out or otherwise. A cascade needs a threshold validated on labelled pairs of
+  the kind it will meet; there are none here, and self-reported confidence from
+  the judging model is not the third party this skill exists to be.
 
 ## Report
 
-Mismatches first, then partials with the missing assertion sketched as a
-snippet, entailed as a bare count. Open with `scope.py`'s denominator — *127
-auditable, 5 in scope* — since "all entailed" means nothing without it. Cap
-findings at five and give the remainder as a number. When every pair holds, say
-"all entailed" — promoting a nit to fill the section is how the audit stops
-carrying signal.
+Mismatches first, then unassertable bullets, then partials with the missing
+assertion sketched as a snippet, entailed as a bare count. Open with
+`scope.py`'s denominator — *130 auditable, 5 in scope* — since "all entailed"
+means nothing without it. Cap findings at five and give the remainder as a
+number. When every pair holds, say "all entailed" — promoting a nit to fill the
+section is how the audit stops carrying signal.
