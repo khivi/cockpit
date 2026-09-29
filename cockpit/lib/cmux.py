@@ -806,6 +806,11 @@ _FOLLOWUP_ECHO_POLL_SECONDS = 1.0
 # composer's own wrapping and its `[Pasted text #N]` collapsing of a long line.
 _FOLLOWUP_ECHO_PREFIX_CHARS = 24
 
+# Claude Code writes the transcript record asynchronously, so the first look
+# after a submit usually misses.
+_BODY_CHECK_POLLS = 6
+_BODY_CHECK_POLL_SECONDS = 1.0
+
 
 def _claude_ready(ref: str) -> bool:
     """True once the workspace's claude has registered any `claude_code=` state
@@ -849,7 +854,7 @@ def _queue_retry(ref: str, text: str) -> bool:
     return False
 
 
-def deliver_followup(ref: str, text: str) -> bool:
+def deliver_followup(ref: str, text: str, *, cwd: Path | None = None) -> bool:
     """Deliver `text` as a SEPARATE submission into an already-spawned
     workspace's claude — the second half of the two-send `prompt_prefix` flow
     (the prefix slash command rides in as the initial `--command`, the task body
@@ -883,6 +888,10 @@ def deliver_followup(ref: str, text: str) -> bool:
     its own truncated instruction. This is the second funnel — every send that
     does NOT go through the idle gate goes through here, so no call site has to
     remember. **Do not** re-add a raw `cmux send` pair beside it.
+
+    `cwd` is threaded from the caller (which already holds it) rather than
+    resolved here, on `_screen_signals_idle`' rule. Omitting it keeps every
+    prior behaviour and only gives up the post-submit check.
 
     Deliberately NOT idle-gated, unlike `nudge_if_idle`. Both callers are
     delivering a prompt the user just asked for into a workspace cockpit is
@@ -944,7 +953,40 @@ def deliver_followup(ref: str, text: str) -> bool:
             flush=True,
         )
         return False
+    _warn_if_body_garbled(ref, text, cwd)
     return True
+
+
+def _warn_if_body_garbled(ref: str, text: str, cwd: Path | None) -> None:
+    """Report a submitted body that does not match what was sent.
+
+    The echo above confirms only `_FOLLOWUP_ECHO_PREFIX_CHARS`, so it is blind
+    to loss past them; a live prompt arrived with two chunks gone from its
+    middle, prefix intact, and was submitted. The screen cannot answer this at
+    all for a long body — see `transcript.submitted_body`.
+
+    Warns only; deliberately no `_queue_retry`. A garbled body still *reached*
+    the session, so re-sending stacks a second prompt on a turn already acting
+    on the first — the same reason a failed Enter is not queued.
+    """
+    if cwd is None:
+        return
+    prefix = text[:_FOLLOWUP_ECHO_PREFIX_CHARS]
+    if not prefix:
+        return
+    for _ in range(_BODY_CHECK_POLLS):
+        time.sleep(_BODY_CHECK_POLL_SECONDS)
+        landed = transcript.submitted_body(cwd, prefix)
+        if landed is None:
+            continue
+        if landed != text:
+            print(
+                f"  warn: followup body reached {ref} garbled — sent "
+                f"{len(text)} chars, session received {len(landed)}. "
+                f"The session is acting on a corrupted prompt.",
+                flush=True,
+            )
+        return
 
 
 def rename_workspace_if_needed(
@@ -1666,7 +1708,7 @@ def spawn_pr_workspace(
         )
         return None
     if followup:
-        deliver_followup(ref, followup)
+        deliver_followup(ref, followup, cwd=wt.path)
     apply_pills(ref, pr, wt, self_user, pref)
     print(
         f"  {verb('spawned')} {bold(wt.short)} ({ref})  #{pr.number}"
@@ -1691,7 +1733,7 @@ def spawn_orphan_workspace(wt: Worktree, *, dry: bool = False) -> str | None:
         )
         return None
     if followup:
-        deliver_followup(ref, followup)
+        deliver_followup(ref, followup, cwd=wt.path)
     _set_status(ref, ORPHAN_KEY, ORPHAN_ICON, ORANGE)
     apply_wip_pill(ref, wt.dirty_count)
     print(

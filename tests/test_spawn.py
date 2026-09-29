@@ -395,7 +395,7 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
         )
         return "ws:test"
 
-    def fake_deliver_followup(ref, text):
+    def fake_deliver_followup(ref, text, *, cwd=None):
         followup_calls.append((ref, text))
         # Also synthesized into cmux-style tuples, like `spawn_workspace` above:
         # `deliver_followup` IS the send pair (plus a readiness wait and the
