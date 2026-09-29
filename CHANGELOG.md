@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.9.3](https://github.com/khivi/cockpit/compare/v3.9.2...v3.9.3) (2026-09-29)
+
+
+### Documentation
+
+* **specs:** lead structurally-asserted bullets with the behaviour they promise ([#548](https://github.com/khivi/cockpit/issues/548)) ([d76bf5e](https://github.com/khivi/cockpit/commit/d76bf5e9f8f0363ba2f41bc264929b7b79e04550))
+
 ## [3.9.2](https://github.com/khivi/cockpit/compare/v3.9.1...v3.9.2) (2026-09-29)
 
 
