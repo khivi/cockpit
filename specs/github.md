@@ -1,5 +1,22 @@
 # GitHub — behavior spec
 
+## Host
+
+- [gh.host-from-origin~1] A repo whose `origin` is on a non-github.com host has
+  that host stated on every `gh` call made about it — the PR fetches, the
+  ruleset read, the update-branch mutation, the login lookup and the issue
+  transport — while a github.com repo's calls carry no host at all, and an
+  unparsable remote reads as github.com.
+- [gh.host-required~1] `_graphql` cannot be called without stating a host, so a
+  new GraphQL call site cannot inherit the default one silently.
+- [gh.host-unauthenticated-warns~1] A configured repo on a host `gh` holds no
+  token for warns at startup, naming the host and the login command, rather
+  than rendering as a repo with no PRs; a github.com repo asks `gh` nothing.
+- [gh.reap-prefix-per-host~1] The orphan reaper tests a stranded workspace's
+  branch ref against the login of its own repo's host, so an enterprise-login
+  ref is still recognised as mine; a host that cannot answer falls back to the
+  process-wide login, which deletes no ref rather than the wrong one.
+
 ## PR identity
 
 - [gh.pr-rank~1] Given a branch carrying an OPEN PR and a newer, higher-numbered

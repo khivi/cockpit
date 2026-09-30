@@ -310,3 +310,25 @@ def test_fetch_my_open_failure_is_none_not_empty():
 def test_fetch_my_open_answered_with_nothing_is_empty_not_none():
     with patch.object(gh.subprocess, "run", return_value=_run("[]")):
         assert gh.fetch_my_open(["acme/a"]) == []
+
+
+# ── host awareness: `--repo <nwo>` and `api user` both ignore the cwd ───────
+
+
+@pytest.mark.covers("gh.host-from-origin~1")
+def test_gh_json_states_the_host_derived_from_the_repo_dir(tmp_path, monkeypatch):
+    """`--repo owner/name` overrides cwd detection, so an enterprise issue was
+    looked up on github.com. The host is derived at this seam — the module's
+    one I/O boundary — so no fetcher can disagree about which host it asked."""
+    monkeypatch.setattr(gh, "origin_host", lambda _p: "ghe.example.org")
+    done = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
+    with patch("cockpit.lib.github_issues.subprocess.run", return_value=done) as m:
+        gh._gh_json(["issue", "view", "1"], repo_dir=str(tmp_path))
+    assert m.call_args.kwargs["env"]["GH_HOST"] == "ghe.example.org"
+
+
+def test_gh_json_leaves_the_environment_alone_without_a_repo_dir():
+    done = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
+    with patch("cockpit.lib.github_issues.subprocess.run", return_value=done) as m:
+        gh._gh_json(["api", "user"])
+    assert m.call_args.kwargs["env"] is None

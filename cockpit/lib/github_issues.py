@@ -28,6 +28,9 @@ import json
 import re
 import subprocess
 
+from .gh import gh_env
+from .git import origin_host
+
 # The GitHub-specific fields the `tickets` config block accepts, as
 # `(name, kind)` (kind resolved to a validator in `tickets.py`). The provider
 # owns its own config surface; this *specification* drives preflight validation
@@ -149,6 +152,13 @@ def _gh_json(args: list[str], *, repo_dir: str | None = None) -> dict | list | N
     Mirrors `linear._post_graphql`'s degrade-never-raise contract. A missing
     `gh`, non-zero exit, timeout, or unparsable output all collapse to None
     (caller treats it as "state unknown" → pill stays off).
+
+    The host is derived here rather than threaded from each caller because this
+    is the module's one I/O seam and `repo_dir` is the only thing it could be
+    derived from: neither `api user` nor `--repo <owner>/<name>` consults the
+    cwd, so both answer on github.com unless the host is stated (`gh.gh_env`).
+    Deriving it at the seam means the five public fetchers cannot disagree
+    about which host they asked.
     """
     try:
         res = subprocess.run(
@@ -157,6 +167,7 @@ def _gh_json(args: list[str], *, repo_dir: str | None = None) -> dict | list | N
             text=True,
             cwd=repo_dir,
             timeout=_GH_TIMEOUT_SECONDS,
+            env=gh_env(origin_host(repo_dir) if repo_dir else ""),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None

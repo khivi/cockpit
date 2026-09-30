@@ -3832,7 +3832,7 @@ def test_deep_cutoff_produces_a_date_github_search_accepts():
     """
     captured: dict[str, str] = {}
 
-    def _capture(_query: str, variables: dict[str, str]) -> dict:
+    def _capture(_query: str, variables: dict[str, str], _host: str = "") -> dict:
         captured.update(variables)
         return {"data": {"search": {"nodes": [], "pageInfo": {"hasNextPage": False}}}}
 
@@ -6482,3 +6482,80 @@ def test_collect_ticket_inbox_marks_started_tickets_active():
     inbox = TicketInbox()
     cycle._collect_ticket_inbox(ctx, repo_entry, inbox)  # type: ignore[arg-type]
     assert inbox.active == {"pe-412", "ab3dz9"}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Host awareness: the login is per host, so both the PR pass and the reaper
+# have to ask the repo's own host who "I" am.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.covers("gh.reap-prefix-per-host~1")
+def test_reap_recognises_my_branch_under_the_repo_hosts_own_login(
+    reap_isolated, tmp_path
+):
+    """The stale branch-ref delete is gated on the `<login>/` prefix. Reading
+    github.com's login for an enterprise repo stops recognising my own refs."""
+    cycle_mod, cr = reap_isolated
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    wt = _wt_stub(repo_path, "main")
+    ghost_cwd = repo_path / "removed-worktree"
+    ghost_cwd.mkdir()
+
+    with (
+        patch.object(cycle_mod, "worktrees_basic", return_value=[wt]),
+        patch.object(cycle_mod, "origin_host", return_value="ghe.example.org"),
+        patch.object(cycle_mod, "self_user_for_host", return_value="k.helweg"),
+        patch.object(
+            cycle_mod,
+            "workspace_state",
+            return_value=(
+                {"workspace:99": "k.helweg/ghost"},
+                {"workspace:99": ghost_cwd},
+            ),
+        ),
+        patch.object(cycle_mod, "workspace_is_idle", return_value=True),
+    ):
+        cycle_mod._reap_workspace_orphans(
+            [{"path": str(repo_path), "name": "repo"}], "khivi", dry=False
+        )
+
+    _, req = cr.iter_pending()[0]
+    assert req.branch == "k.helweg/ghost"
+
+
+@pytest.mark.covers("gh.reap-prefix-per-host~1")
+def test_reap_falls_back_to_the_process_login_when_the_host_cannot_answer(
+    reap_isolated, tmp_path
+):
+    """An expired tenant token must not abort the reap. The fallback direction
+    is the conservative one: an unrecognised login deletes no branch ref."""
+    cycle_mod, cr = reap_isolated
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    wt = _wt_stub(repo_path, "main")
+    ghost_cwd = repo_path / "removed-worktree"
+    ghost_cwd.mkdir()
+
+    with (
+        patch.object(cycle_mod, "worktrees_basic", return_value=[wt]),
+        patch.object(cycle_mod, "origin_host", return_value="ghe.example.org"),
+        patch.object(cycle_mod, "self_user_for_host", return_value=""),
+        patch.object(
+            cycle_mod,
+            "workspace_state",
+            return_value=(
+                {"workspace:99": "someone-else/ghost"},
+                {"workspace:99": ghost_cwd},
+            ),
+        ),
+        patch.object(cycle_mod, "workspace_is_idle", return_value=True),
+    ):
+        cycle_mod._reap_workspace_orphans(
+            [{"path": str(repo_path), "name": "repo"}], "khivi", dry=False
+        )
+
+    _, req = cr.iter_pending()[0]
+    assert req.ref == "workspace:99"  # still reaped — only the ref delete is gated
+    assert req.branch is None

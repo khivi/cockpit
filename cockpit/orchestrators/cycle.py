@@ -117,6 +117,7 @@ from cockpit.lib.gh import (
     list_open_pr_heads,
     list_relevant_prs,
     repo_nwo,
+    self_user_for_host,
     update_pull_request_branch,
 )
 from cockpit.lib.git import (
@@ -132,6 +133,7 @@ from cockpit.lib.git import (
     list_local_branches,
     log_ff_advances,
     origin_head_branch,
+    origin_host,
     prune_worktrees,
     resync_to_origin,
     tag_workspace_name,
@@ -769,7 +771,7 @@ def _update_stale_branches(ctx: RepoCycle) -> None:
         if pr.review_decision == "APPROVED" and pr.base:
             if pr.base not in dismissal:
                 ruleset = branch_dismisses_stale_reviews(
-                    nwo, pr.base, repo_dir=repo_dir
+                    nwo, pr.base, repo_dir=repo_dir, host=ctx.host
                 )
                 # Fails CLOSED, unlike most of cockpit: "couldn't ask" must not
                 # read as "safe", because being wrong here silently discards an
@@ -793,7 +795,7 @@ def _update_stale_branches(ctx: RepoCycle) -> None:
         prior_head = pr.head_oid or ""
         ctx.pill_state[marker] = True
         ok, detail = update_pull_request_branch(
-            pr.node_id, prior_head, method=method, repo_dir=repo_dir
+            pr.node_id, prior_head, method=method, repo_dir=repo_dir, host=ctx.host
         )
         if not ok:
             # Clear the marker so a transient failure retries next tick.
@@ -1553,6 +1555,10 @@ class RepoCycle:
     # empty-but-unreliable, so the workspace-capable tier (spawn/skills) is skipped
     # to avoid re-spawning duplicates of live-but-unlisted workspaces.
     workspace_state_ok: bool = True
+    # Hostname for every `gh api` call about this repo, "" for github.com. See
+    # `gh.gh_env`: `api` ignores the cwd, so an unstated host answers on
+    # github.com with an empty result set that reads as "no PRs".
+    host: str = ""
     default_branch: str | None = None
     prefs: dict[int, NudgePref] = field(default_factory=dict)
     base_distance: dict[str, int] = field(default_factory=dict)
@@ -1704,6 +1710,13 @@ def _prepare_cycle(
         print(f"  {yellow('skip')} {repo_path}: {e}", flush=True)
         return None
 
+    # Resolved before the first `gh api` call of the repo pass, and before
+    # `self_user`: the login is per host, and reading github.com's here would
+    # make every PR on an enterprise tenant read as a coworker's.
+    host = origin_host(repo_path)
+    if host:
+        self_user = self_user_for_host(host) or self_user
+
     # Drop admin entries for worktree dirs deleted out-of-band before we read
     # the list, so teardown/autoclose never act on a path that no longer exists.
     prune_worktrees(repo_path)
@@ -1727,12 +1740,17 @@ def _prepare_cycle(
             owner,
             name,
             cutoff_days=int(cfg.get("autoclose_age_days", 14)),
+            host=host,
         )
         # Unbounded merged map for the branch-ref reaper (`_reap_branch_refs`),
         # which sees branches whose worktrees were removed long before the
         # 14-day autoclose window. Fetched in parallel so it adds no latency.
         merged_deep_fut = ex.submit(
-            fetch_merged_branches, owner, name, cutoff_days=_DEEP_MERGED_CUTOFF_DAYS
+            fetch_merged_branches,
+            owner,
+            name,
+            cutoff_days=_DEEP_MERGED_CUTOFF_DAYS,
+            host=host,
         )
         wts = wts_fut.result()
         try:
@@ -1762,7 +1780,9 @@ def _prepare_cycle(
     # OPEN→MERGED / OPEN→CLOSED — `is:open author:self` alone misses those.
     branches = sorted({w.branch for w in wts if w.branch not in MAIN_BRANCHES})
     try:
-        prs = list_relevant_prs(owner, name, self_user, branches, cache=pr_cache)
+        prs = list_relevant_prs(
+            owner, name, self_user, branches, cache=pr_cache, host=host
+        )
     except RuntimeError as e:
         print(
             f"  {yellow('skip')} {owner}/{name}: list_relevant_prs failed: {e}",
@@ -1779,7 +1799,7 @@ def _prepare_cycle(
     review_candidates: list[OpenPRHead] = []
     if repo_entry.get("review_prs") and has_workspace_backend():
         try:
-            review_candidates = list_open_pr_heads(owner, name)
+            review_candidates = list_open_pr_heads(owner, name, host=host)
         except RuntimeError as e:
             print(
                 f"  {yellow('warn')} {owner}/{name}: review_prs open-PR fetch "
@@ -1822,6 +1842,7 @@ def _prepare_cycle(
         dry=dry,
         headless=headless,
         workspace_state_ok=workspace_state_ok,
+        host=host,
         default_branch=origin_head_branch(repo_path),
         prefs=prefs,
         review_candidates=review_candidates,
@@ -3261,7 +3282,12 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
     wt_by_name = {wt.workspace_name: wt for wt in all_wts}
 
     names, cwds = workspace_state()
-    my_prefix = f"{self_user}/"
+
+    def _my_prefix(repo_path: Path) -> str:
+        """`<login>/` for the repo's own host — the login is per host."""
+        host = origin_host(repo_path)
+        login = (self_user_for_host(host) if host else "") or self_user
+        return f"{login}/"
 
     def _owning_repo(cwd: Path | None) -> tuple[str, Path] | None:
         if cwd is None:
@@ -3289,7 +3315,9 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
                 flush=True,
             )
             continue
-        last_known_branch = ws_name if ws_name.startswith(my_prefix) else None
+        last_known_branch = (
+            ws_name if ws_name.startswith(_my_prefix(repo_path)) else None
+        )
         req = TeardownRequest(
             ref=ref,
             name=ws_name,
