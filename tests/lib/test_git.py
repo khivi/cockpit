@@ -1492,3 +1492,48 @@ def test_behind_of_origin_returns_zero_for_empty_branch_without_a_git_call(
 
     monkeypatch.setattr(gitlib, "_rev_list_count", _fail_if_called)
     assert behind_of_origin(cockpit_repo.repo, "") == 0
+
+
+# ── origin_host: the host every `gh api` call has to state ──────────────────
+
+
+def _repo_with_origin(tmp_path, url: str, name: str = "r"):
+    repo = tmp_path / name
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    if url:
+        subprocess.run(
+            ["git", "-C", str(repo), "remote", "add", "origin", url], check=True
+        )
+    gitlib.origin_host.cache_clear()
+    return repo
+
+
+@pytest.mark.covers("gh.host-from-origin~1")
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://vectorwave-corporation.ghe.com/Eng/pkg.git",
+            "vectorwave-corporation.ghe.com",
+        ),
+        (
+            "git@vectorwave-corporation.ghe.com:Eng/pkg.git",
+            "vectorwave-corporation.ghe.com",
+        ),
+        ("ssh://git@ghe.example.org/Eng/pkg.git", "ghe.example.org"),
+        ("https://user:tok@ghe.example.org/Eng/pkg.git", "ghe.example.org"),
+        ("https://GHE.EXAMPLE.ORG/Eng/pkg.git", "ghe.example.org"),
+        # github.com in every spelling is "" — the sentinel for "state no host",
+        # so a github.com call path stays byte-identical.
+        ("https://github.com/khivi/cockpit.git", ""),
+        ("git@github.com:khivi/cockpit.git", ""),
+        ("https://www.github.com/khivi/cockpit.git", ""),
+        # Unparsable and non-GitHub-shaped remotes fail to "": a wrong host is
+        # worse than the default one.
+        ("/srv/mirrors/pkg.git", ""),
+        ("", ""),
+    ],
+)
+def test_origin_host_reads_the_remote(tmp_path, url, expected):
+    assert gitlib.origin_host(_repo_with_origin(tmp_path, url)) == expected

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -695,6 +696,46 @@ def _warn_unresolvable_base(cfg: dict) -> None:
         )
 
 
+def _warn_unauthenticated_hosts(cfg: dict) -> None:
+    """Soft-warn when a repo's origin host has no `gh` token.
+
+    This is the one detector for the failure class `gh.gh_env` exists to fix:
+    an unauthenticated (or unstated) host answers `gh api` with HTTP 200 and an
+    empty result set, so the repo renders as having no PRs — success-shaped.
+    github.com repos are skipped, since `origin_host` reports "" for them and an
+    unauthenticated default host already fails loudly everywhere else.
+
+    `gh auth token` rather than `gh auth status`: it reads the keyring locally
+    (~40ms, no network) and answers by exit code, so there is no prose to parse
+    and the token itself is never read. Always a warning — this must never stop
+    the daemon, since the git half of every row still works.
+    """
+    from .git import origin_host
+
+    hosts = {
+        origin_host(path)
+        for repo in cfg.get("repos", [])
+        if (path := Path(repo.get("path", "")).expanduser()).is_dir()
+    }
+    hosts.discard("")
+    for host in sorted(hosts):
+        res = subprocess.run(
+            ["gh", "auth", "token", "--hostname", host],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode == 0:
+            continue
+        print(
+            f"{yellow('cockpit:')} `gh` has no token for {host} — that host's "
+            "repos will render as having no PRs (its API answers with an empty "
+            f"result set, not an error). Fix: gh auth login --hostname {host}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _validate_workspace_backend() -> None:
     """Soft-warn when the resolved cmux lacks a verb or capability cockpit needs.
 
@@ -843,6 +884,8 @@ def preflight(cfg: dict, *, for_setup: bool = False) -> None:
     _warn_sync_conflicts()
     _warn_legacy_runtime_state()
     _warn_unresolvable_base(cfg)
+    if not for_setup:
+        _warn_unauthenticated_hosts(cfg)
 
     if cfg.get("tool", "auto") == "auto":
         resolved = resolve_tool()

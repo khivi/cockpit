@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from pathlib import Path
 
 from . import run
@@ -59,8 +61,25 @@ def require_gh() -> None:
         sys.exit(2)
 
 
-def gh_json(args: list[str]) -> dict | list:
-    data: dict | list = json.loads(run(["gh", *args]))
+def gh_env(host: str) -> dict[str, str] | None:
+    """Child environment pinning `gh` to `host`, or None to leave it alone.
+
+    `gh pr view` / `gh repo view` infer the host from the cwd's origin remote.
+    `gh api` — graphql and REST paths alike — does NOT: it answers on the
+    default host with HTTP 200 and an empty result set, indistinguishable from
+    a repo with nothing to report. `--repo <owner>/<name>` has the same
+    blindness, since it overrides cwd detection outright.
+
+    `GH_HOST` in the child covers all three argv shapes where `--hostname`
+    covers only `api`, and stays per-call — set on the daemon process it would
+    redirect every github.com repo. An empty `host` returns None, so a
+    github.com call path is byte-identical to one that never knew about hosts.
+    """
+    return {**os.environ, "GH_HOST": host} if host else None
+
+
+def gh_json(args: list[str], *, host: str = "") -> dict | list:
+    data: dict | list = json.loads(run(["gh", *args], env=gh_env(host)))
     return data
 
 
@@ -89,13 +108,32 @@ def default_branch(repo: Path) -> str:
     return out.removeprefix("origin/") if out else "main"
 
 
-def gh_self_user() -> str:
+@cache
+def gh_self_user(host: str = "") -> str:
     """Resolve the current authenticated GitHub user via `gh api user`.
 
     Cockpit does not hardcode usernames; cycle() needs it to distinguish
     self-authored PRs from coworker PRs.
+
+    Per host, because the login is per host: one account on github.com and
+    another on an enterprise tenant would otherwise make every PR on the second
+    read as a coworker's, which silences its nudge and seeds a review prompt
+    instead of an author one. Cached per host — one token, one login.
     """
-    return run(["gh", "api", "user", "--jq", ".login"]).strip()
+    return run(["gh", "api", "user", "--jq", ".login"], env=gh_env(host)).strip()
+
+
+def self_user_for_host(host: str) -> str:
+    """`gh_self_user(host)`, or "" when that host cannot answer.
+
+    A repo pass must not abort because one tenant's token expired, so callers
+    fall back to the process-wide login. That direction is the conservative
+    one: an unrecognised login reaps and nudges less, never more.
+    """
+    try:
+        return gh_self_user(host)
+    except RuntimeError:
+        return ""
 
 
 # GitHub's search API matches NOTHING for a `merged:>=<date>` older than the
@@ -121,6 +159,7 @@ def fetch_merged_branches(
     *,
     cutoff_days: int = 14,
     max_pages: int = 10,
+    host: str = "",
 ) -> dict[str, str]:
     """Map branch → head SHA at merge for PRs merged in the last `cutoff_days`.
 
@@ -154,7 +193,7 @@ def fetch_merged_branches(
         if cursor:
             variables["cursor"] = cursor
         try:
-            data = _graphql(_MERGED_BRANCHES_QUERY, variables)
+            data = _graphql(_MERGED_BRANCHES_QUERY, variables, host)
         except RuntimeError:
             return {}
         try:
@@ -216,7 +255,7 @@ class OpenPRHead:
     author_association: str = ""
 
 
-def list_open_pr_heads(owner: str, name: str) -> list[OpenPRHead]:
+def list_open_pr_heads(owner: str, name: str, *, host: str = "") -> list[OpenPRHead]:
     """Every open PR in the repo as (number, head branch, author login,
     authorAssociation).
 
@@ -239,7 +278,7 @@ def list_open_pr_heads(owner: str, name: str) -> list[OpenPRHead]:
         if cursor:
             variables["cursor"] = cursor
         try:
-            data = _graphql(_OPEN_PR_HEADS_QUERY, variables)
+            data = _graphql(_OPEN_PR_HEADS_QUERY, variables, host)
         except RuntimeError:
             return []
         try:
@@ -419,7 +458,11 @@ def pr_body(repo_dir: Path, number: int) -> str:
 
 
 def branch_dismisses_stale_reviews(
-    repo_nwo_str: str, branch: str, *, repo_dir: str | Path | None = None
+    repo_nwo_str: str,
+    branch: str,
+    *,
+    repo_dir: str | Path | None = None,
+    host: str = "",
 ) -> bool | None:
     """Whether a **ruleset** on `branch` dismisses stale approvals on push.
     True/False, or None when it couldn't be determined.
@@ -442,6 +485,7 @@ def branch_dismisses_stale_reviews(
             capture_output=True,
             text=True,
             cwd=str(repo_dir) if repo_dir else None,
+            env=gh_env(host),
         )
     except (FileNotFoundError, OSError):
         return None
@@ -475,6 +519,7 @@ def update_pull_request_branch(
     *,
     method: str = "REBASE",
     repo_dir: str | Path | None = None,
+    host: str = "",
 ) -> tuple[bool, str]:
     """Bring a PR's head up to date with its base, server-side — GitHub's own
     "Update branch" button (`updatePullRequestBranch`). Returns (ok, detail).
@@ -515,6 +560,7 @@ def update_pull_request_branch(
             capture_output=True,
             text=True,
             cwd=str(repo_dir) if repo_dir else None,
+            env=gh_env(host),
         )
     except (FileNotFoundError, OSError) as exc:
         return False, str(exc)
@@ -980,11 +1026,18 @@ def _relevant_pr_query(
     return query, variables
 
 
-def _graphql(query: str, variables: dict[str, str]) -> dict:
+def _graphql(query: str, variables: dict[str, str], host: str) -> dict:
+    """`gh api graphql`, with the host stated.
+
+    `host` is required rather than defaulted for the same reason `_SEARCH_EPOCH`
+    exists above: getting it wrong costs a 200 OK with an empty `nodes` list,
+    which reads as "this repo has nothing" and cannot be told from success. A
+    new call site has to state a host; "" is github.com, chosen explicitly.
+    """
     args = ["api", "graphql", "-f", f"query={query}"]
     for k, v in variables.items():
         args.extend(["-f", f"{k}={v}"])
-    data = gh_json(args)
+    data = gh_json(args, host=host)
     assert isinstance(data, dict)  # noqa: S101 - mypy narrow, not a runtime check
     # Partial-success responses (200 OK with `data` + `errors`) are common
     # during GH Actions outages — checkSuites resolves to null while PR
@@ -1010,12 +1063,12 @@ def _collect_nodes(data: dict, n_branches: int) -> list[dict]:
 
 
 def _fetch_light_phase(
-    owner: str, name: str, self_user: str, branches: list[str]
+    owner: str, name: str, self_user: str, branches: list[str], host: str = ""
 ) -> dict[int, str]:
     query, variables = _relevant_pr_query(
         owner, name, self_user, branches, _PR_LIGHT_FIELDS
     )
-    light_data = _graphql(query, variables)
+    light_data = _graphql(query, variables, host)
     light_nodes = _collect_nodes(light_data, len(branches))
     light_by_number: dict[int, str] = {}
     for ln in light_nodes:
@@ -1042,6 +1095,7 @@ def _hydrate_stale(
     stale: list[int],
     light_by_number: dict[int, str],
     cache: dict[int, tuple[PR, str]],
+    host: str = "",
 ) -> None:
     # PR numbers are ints from prior GraphQL responses; safe to interpolate.
     alias_lines = [
@@ -1053,7 +1107,7 @@ def _hydrate_stale(
         f"{{ repository(owner: $owner, name: $name) "
         f"{{ {' '.join(alias_lines)} }} }}"
     )
-    heavy_data = _graphql(heavy_q, {"owner": owner, "name": name})
+    heavy_data = _graphql(heavy_q, {"owner": owner, "name": name}, host)
     repo = heavy_data["data"]["repository"]
     for i, num in enumerate(stale):
         node = repo.get(f"pr{i}")
@@ -1111,6 +1165,7 @@ def list_relevant_prs(
     self_user: str,
     branches: list[str],
     cache: dict[int, tuple[PR, str]] | None = None,
+    host: str = "",
 ) -> list[PR]:
     """My open PRs (by author search) + newest PR for each local worktree
     branch (any state — OPEN, MERGED, or CLOSED), at most one per head branch.
@@ -1131,12 +1186,12 @@ def list_relevant_prs(
     cycles where nothing moved cost one cheap GraphQL call instead of the
     heavy one.
     """
-    light_by_number = _fetch_light_phase(owner, name, self_user, branches)
+    light_by_number = _fetch_light_phase(owner, name, self_user, branches, host)
     if cache is None:
         cache = {}
     stale = _identify_stale(light_by_number, cache)
     if stale:
-        _hydrate_stale(owner, name, self_user, stale, light_by_number, cache)
+        _hydrate_stale(owner, name, self_user, stale, light_by_number, cache, host)
     for num in list(cache):
         if num not in light_by_number:
             del cache[num]

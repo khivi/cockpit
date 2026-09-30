@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+from unittest.mock import patch
 
 import pytest
 
 from cockpit.lib import preflight as preflight_mod
 from cockpit.lib.config import CONFIG_EXAMPLE
 from cockpit.lib.preflight import (
+    _warn_unauthenticated_hosts,
     _warn_unresolvable_base,
     preflight,
     validate_config,
@@ -1720,4 +1722,82 @@ def test_no_legacy_warning_on_a_clean_home(tmp_path, monkeypatch, capsys):
 
     preflight_mod._warn_legacy_runtime_state()
 
+    assert capsys.readouterr().err == ""
+
+
+# ── unauthenticated hosts: the one detector for a success-shaped failure ────
+
+
+def _only_gh(rc: int):
+    """Stub `gh` and let every other subprocess through.
+
+    `subprocess` is one module object, so patching it here also intercepts the
+    `git remote get-url` inside `origin_host` — which would resolve every host
+    to "" and make this warning untestable.
+    """
+    real = subprocess.run
+
+    def _run(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "gh":
+            return subprocess.CompletedProcess(cmd, rc, stdout="", stderr="")
+        return real(cmd, *args, **kwargs)
+
+    return _run
+
+
+def _repo_on_host(tmp_path, url: str, name: str = "r"):
+    import cockpit.lib.git as gitlib
+
+    repo = tmp_path / name
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", url], check=True)
+    gitlib.origin_host.cache_clear()
+    return {"name": name, "path": str(repo)}
+
+
+@pytest.mark.covers("gh.host-unauthenticated-warns~1")
+def test_warn_unauthenticated_hosts_names_the_host_and_the_fix(tmp_path, capsys):
+    cfg = {
+        "repos": [
+            _repo_on_host(tmp_path, "https://ghe.example.org/Eng/pkg.git", "enterprise")
+        ]
+    }
+    with patch("cockpit.lib.preflight.subprocess.run", side_effect=_only_gh(1)):
+        _warn_unauthenticated_hosts(cfg)
+    err = capsys.readouterr().err
+    assert "ghe.example.org" in err
+    assert "empty result set" in err  # says WHY it reads as success
+    assert "gh auth login --hostname ghe.example.org" in err
+
+
+@pytest.mark.covers("gh.host-unauthenticated-warns~1")
+def test_warn_unauthenticated_hosts_silent_when_the_token_is_there(tmp_path, capsys):
+    cfg = {
+        "repos": [
+            _repo_on_host(tmp_path, "https://ghe.example.org/Eng/pkg.git", "enterprise")
+        ]
+    }
+    with patch("cockpit.lib.preflight.subprocess.run", side_effect=_only_gh(0)):
+        _warn_unauthenticated_hosts(cfg)
+    assert capsys.readouterr().err == ""
+
+
+def test_warn_unauthenticated_hosts_never_asks_about_github_com(tmp_path, capsys):
+    """github.com resolves to "" — the default host, which fails loudly
+    everywhere else. No subprocess at all, so this costs nothing for the
+    ordinary config."""
+    cfg = {
+        "repos": [_repo_on_host(tmp_path, "git@github.com:khivi/cockpit.git", "core")]
+    }
+
+    real = subprocess.run
+
+    def _fail(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "gh":
+            raise AssertionError("gh must not be consulted for github.com")
+        return real(cmd, *args, **kwargs)
+
+    with patch("cockpit.lib.preflight.subprocess.run", side_effect=_fail):
+        _warn_unauthenticated_hosts(cfg)
     assert capsys.readouterr().err == ""

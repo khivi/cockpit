@@ -9,6 +9,7 @@ caused the whole reconcile row to be skipped.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from datetime import UTC, datetime, timedelta
@@ -27,14 +28,18 @@ from cockpit.lib.gh import (
     _identify_stale,
     _one_pr_per_branch,
     _relevant_pr_query,
+    branch_dismisses_stale_reviews,
     fetch_merged_branches,
     fetch_pr_state_for_branch,
+    gh_env,
+    gh_self_user,
     list_open_pr_heads,
     list_relevant_prs,
     pr_worktree_branch,
     repo_nwo,
     require_gh,
     resolve_pr_branch,
+    self_user_for_host,
     update_pull_request_branch,
 )
 from cockpit.lib.git import branch_label
@@ -102,14 +107,14 @@ def test_graphql_passes_through_errors_field():
         }
     )
     with patch("cockpit.lib.gh.run", return_value=payload):
-        data = _graphql("query { mine }", {})
+        data = _graphql("query { mine }", {}, "")
     assert data["errors"][0]["type"] == "SERVICE_UNAVAILABLE"
 
 
 def test_graphql_returns_data_when_no_errors():
     payload = json.dumps({"data": {"mine": {"nodes": []}}})
     with patch("cockpit.lib.gh.run", return_value=payload):
-        data = _graphql("query { mine }", {})
+        data = _graphql("query { mine }", {}, "")
     assert data == {"data": {"mine": {"nodes": []}}}
 
 
@@ -314,7 +319,7 @@ def test_fetch_merged_branches_search_includes_date_window():
     """
     captured: dict[str, str] = {}
 
-    def _capture(_query: str, variables: dict[str, str]) -> dict:
+    def _capture(_query: str, variables: dict[str, str], _host: str = "") -> dict:
         captured.update(variables)
         return _page([])
 
@@ -335,7 +340,7 @@ def test_fetch_merged_branches_clamps_an_all_time_cutoff_to_the_epoch():
     """
     captured: dict[str, str] = {}
 
-    def _capture(_query: str, variables: dict[str, str]) -> dict:
+    def _capture(_query: str, variables: dict[str, str], _host: str = "") -> dict:
         captured.update(variables)
         return _page([])
 
@@ -349,7 +354,7 @@ def test_fetch_merged_branches_keeps_a_normal_cutoff_unclamped():
     captured: dict[str, str] = {}
     expected = (datetime.now(UTC) - timedelta(days=14)).strftime("%Y-%m-%d")
 
-    def _capture(_query: str, variables: dict[str, str]) -> dict:
+    def _capture(_query: str, variables: dict[str, str], _host: str = "") -> dict:
         captured.update(variables)
         return _page([])
 
@@ -1053,3 +1058,112 @@ def test_repo_nwo_raises_runtime_error_naming_repo_dir_on_failure():
         pytest.raises(RuntimeError, match=r"/some/repo"),
     ):
         repo_nwo(Path("/some/repo"))
+
+
+# ── host awareness: `gh api` ignores the cwd, so the host is stated ─────────
+
+
+def test_gh_env_leaves_github_com_alone():
+    """ "" is the sentinel for the default host: no env dict at all, so a
+    github.com call is byte-identical to one made before hosts existed."""
+    assert gh_env("") is None
+
+
+@pytest.mark.covers("gh.host-from-origin~1")
+def test_gh_env_pins_the_host_and_keeps_the_rest_of_the_environment():
+    env = gh_env("ghe.example.org")
+    assert env is not None
+    assert env["GH_HOST"] == "ghe.example.org"
+    # PATH has to survive, or the child can't find its own subprocesses.
+    assert env.get("PATH") == os.environ.get("PATH")
+
+
+@pytest.mark.covers("gh.host-required~1")
+def test_graphql_cannot_be_called_without_stating_a_host():
+    """A host-less `gh api graphql` answers on github.com with an empty result
+    set — 200 OK, indistinguishable from success. The parameter is required so
+    a new call site has to choose."""
+    with pytest.raises(TypeError):
+        _graphql("query { mine }", {})  # type: ignore[call-arg]
+
+
+@pytest.mark.covers("gh.host-from-origin~1")
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [("ghe.example.org", "ghe.example.org"), ("", None)],
+)
+def test_graphql_states_the_host_to_gh(host, expected):
+    payload = json.dumps({"data": {"mine": {"nodes": []}}})
+    with patch("cockpit.lib.gh.run", return_value=payload) as m:
+        _graphql("query { mine }", {}, host)
+    env = m.call_args.kwargs["env"]
+    assert (env or {}).get("GH_HOST") == expected
+
+
+@pytest.mark.covers("gh.host-from-origin~1")
+def test_every_pr_fetch_entry_point_forwards_its_host():
+    """The four fetches the repo pass makes, and the zero-PR symptom: each one
+    is a search or an alias query whose host decides whether it answers about
+    the tenant or about github.com."""
+    seen: list[str] = []
+
+    def _record(query, variables, host):
+        seen.append(host)
+        return {"data": {"search": {"nodes": [], "pageInfo": {"hasNextPage": False}}}}
+
+    with patch("cockpit.lib.gh._graphql", side_effect=_record):
+        fetch_merged_branches("o", "n", host="ghe.example.org")
+        list_open_pr_heads("o", "n", host="ghe.example.org")
+    assert seen == ["ghe.example.org", "ghe.example.org"]
+
+    seen.clear()
+    light = {"data": {"mine": {"nodes": [{"number": 1, "updatedAt": "2026-01-01"}]}}}
+    heavy = {"data": {"repository": {"pr0": None}}}
+    with patch("cockpit.lib.gh._graphql", side_effect=[light, heavy]) as m:
+        list_relevant_prs("o", "n", "me", [], cache={}, host="ghe.example.org")
+    assert [c.args[2] for c in m.call_args_list] == [
+        "ghe.example.org",
+        "ghe.example.org",
+    ]
+
+
+@pytest.mark.covers("gh.host-from-origin~1")
+def test_self_user_is_resolved_per_host():
+    """The login is per host. Reading github.com's for an enterprise repo makes
+    every PR there read as a coworker's — no nudge, and a review-mode seed."""
+    gh_self_user.cache_clear()
+    logins = {"": "khivi", "ghe.example.org": "k.helweg"}
+    with patch(
+        "cockpit.lib.gh.run",
+        side_effect=lambda cmd, **kw: logins[(kw.get("env") or {}).get("GH_HOST", "")],
+    ):
+        assert gh_self_user() == "khivi"
+        assert gh_self_user("ghe.example.org") == "k.helweg"
+    gh_self_user.cache_clear()
+
+
+def test_self_user_for_host_degrades_to_empty():
+    """A tenant whose token expired must not abort the repo pass; the caller
+    falls back to the process-wide login, which reaps less rather than more."""
+    gh_self_user.cache_clear()
+    with patch("cockpit.lib.gh.run", side_effect=RuntimeError("bad creds")):
+        assert self_user_for_host("ghe.example.org") == ""
+    gh_self_user.cache_clear()
+
+
+@pytest.mark.covers("gh.host-from-origin~1")
+def test_the_ruleset_read_and_the_update_mutation_state_the_host():
+    """Both sit on the approval-protecting path: the ruleset read fails CLOSED,
+    so a host-blind 404 reads as "dismisses stale reviews" and silently
+    disables every update."""
+    done = subprocess.CompletedProcess([], 0, stdout="[]", stderr="")
+    with patch("cockpit.lib.gh.subprocess.run", return_value=done) as m:
+        branch_dismisses_stale_reviews("o/n", "main", host="ghe.example.org")
+    assert m.call_args.kwargs["env"]["GH_HOST"] == "ghe.example.org"
+
+    ok = subprocess.CompletedProcess(
+        [], 0, stdout=json.dumps({"data": {"updatePullRequestBranch": {}}}), stderr=""
+    )
+    with patch("cockpit.lib.gh.subprocess.run", return_value=ok) as m:
+        update_pull_request_branch("id", "oid", host="ghe.example.org")
+    assert m.call_args.kwargs["env"]["GH_HOST"] == "ghe.example.org"

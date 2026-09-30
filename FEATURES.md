@@ -552,6 +552,14 @@ Mistyped settings hard-fail at startup with the valid options listed, rather tha
 doing nothing. So do settings renamed in past versions — an ignored setting is a feature
 that goes dark without telling you.
 
+**GitHub Enterprise repos work alongside github.com ones, with nothing to configure.** Each
+repo's host comes from its own `origin` remote, so one dashboard can watch your company's
+enterprise tenant and your github.com side projects at once — PRs, CI, reviews, issues and
+the per-host login all resolve against the right server. The one thing worth knowing: run
+`gh auth login --hostname <your-host>` first. Without a token for that host the API answers
+with an empty result set rather than an error, so cockpit warns at startup instead of
+showing you a repo that looks like it has no PRs.
+
 With an `orgs` block in play, what a given repo actually resolved to isn't visible just by
 reading `config.json` — `cockpit config inspect` prints it: the effective config, merged and
 expanded, as JSON. `--repo NAME` narrows it to one repo and also shows which ticket provider

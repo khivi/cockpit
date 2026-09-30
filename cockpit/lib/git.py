@@ -10,6 +10,7 @@ import time
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import NamedTuple
 
@@ -939,6 +940,32 @@ def count_status(wt_path: Path) -> GitStatusCounts:
         if line[1] in "MD":
             unstaged += 1
     return GitStatusCounts(staged, unstaged, untracked)
+
+
+_SCP_REMOTE_RE = re.compile(r"^[^/@]+@(?P<host>[^:/]+):")
+_URL_REMOTE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^/@]*@)?(?P<host>[^/:]+)")
+
+GITHUB_HOST = "github.com"
+
+
+@cache
+def origin_host(repo: str | os.PathLike) -> str:
+    """Hostname of `origin`, or "" for github.com and anything unparsable.
+
+    "" is the sentinel for "state no host" — see `gh.gh_env`. Reading the
+    remote rather than asking `gh` keeps this offline and callable before any
+    `gh` invocation. Cached: the daemon re-derives inventory every cycle while a
+    repo's origin does not move under it.
+    """
+    r = _git(repo, "remote", "get-url", "origin")
+    if r.returncode != 0:
+        return ""
+    url = r.stdout.strip()
+    m = _SCP_REMOTE_RE.match(url) or _URL_REMOTE_RE.match(url)
+    if not m:
+        return ""
+    host = m.group("host").casefold()
+    return "" if host in (GITHUB_HOST, f"www.{GITHUB_HOST}") else host
 
 
 def origin_head_branch(repo: Path) -> str | None:
