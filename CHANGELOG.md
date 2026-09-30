@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.10.0](https://github.com/khivi/cockpit/compare/v3.9.3...v3.10.0) (2026-09-30)
+
+
+### Features
+
+* **diff:** fall back to --unstaged on a trunk branch with no PR ([#551](https://github.com/khivi/cockpit/issues/551)) ([ee73c94](https://github.com/khivi/cockpit/commit/ee73c943d7ff80a8fa3485055b414c49d97c2e5d))
+
 ## [3.9.3](https://github.com/khivi/cockpit/compare/v3.9.2...v3.9.3) (2026-09-29)
 
 
