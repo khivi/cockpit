@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.12.0](https://github.com/khivi/cockpit/compare/v3.11.0...v3.12.0) (2026-09-30)
+
+
+### Features
+
+* **tickets:** tell a session which tracker and MCP server its repo files against ([#555](https://github.com/khivi/cockpit/issues/555)) ([335e47f](https://github.com/khivi/cockpit/commit/335e47fbf6b5a0f75e15a4543b44552123001d7b))
+
 ## [3.11.0](https://github.com/khivi/cockpit/compare/v3.10.0...v3.11.0) (2026-09-30)
 
 
