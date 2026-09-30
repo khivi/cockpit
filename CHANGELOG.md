@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.11.0](https://github.com/khivi/cockpit/compare/v3.10.0...v3.11.0) (2026-09-30)
+
+
+### Features
+
+* **gh:** state the API host per call so enterprise repos render their PRs ([#553](https://github.com/khivi/cockpit/issues/553)) ([9b5319d](https://github.com/khivi/cockpit/commit/9b5319dac5af6d0a8c004cf2c0132ffb81b12942))
+
 ## [3.10.0](https://github.com/khivi/cockpit/compare/v3.9.3...v3.10.0) (2026-09-30)
 
 
