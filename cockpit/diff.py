@@ -10,7 +10,9 @@ Two things make this more than an alias for `cmux diff`:
 
   - **The PR diff.** cmux has no PR source; `gh pr diff` piped to `cmux diff -`
     is what the TUI's `d` adds, and there was no CLI route to it. That is the
-    default here, since the PR is what you review.
+    default here, since the PR is what you review. With no PR it falls back to
+    `--branch`, or to `--unstaged` on a trunk branch, where a branch diff can
+    only show unpushed commits.
   - **`--comments` / `--ack`.** The notes you leave in the viewer are collected
     by `lib.diff_comments` — cmux folds them into the next message its own
     composer submits, and a cockpit workspace is a terminal running Claude's
@@ -47,6 +49,7 @@ from pathlib import Path
 from cockpit.lib import diff_comments
 from cockpit.lib.cache import find_pr_payload_for_cwd
 from cockpit.lib.cmux import close_diff_viewers, render_diff
+from cockpit.lib.constants import MAIN_BRANCHES
 from cockpit.lib.git import (
     branch_label,
     current_branch,
@@ -210,10 +213,14 @@ def main(argv: list[str] | None = None) -> int:
         patch, err = _pr_patch(root)
         if err:
             # No PR is the ordinary case on a fresh branch, not a failure worth
-            # exiting on: fall back to the branch diff so the command always
-            # shows you something, and say which one you got.
-            print(f"cockpit diff: no PR diff ({err}) — showing --branch instead")
-            source, patch = "branch", None
+            # exiting on: fall back so the command always shows you something,
+            # and say which one you got. On a trunk branch `--branch` resolves
+            # its merge base against origin/HEAD, i.e. itself, so it can only
+            # ever show unpushed commits — never the pending edits that are the
+            # whole of the work in a repo committed to directly.
+            source = "unstaged" if branch in MAIN_BRANCHES else "branch"
+            patch = None
+            print(f"cockpit diff: no PR diff ({err}) — showing --{source} instead")
         else:
             num = (find_pr_payload_for_cwd(root, branch) or {}).get("number")
             label = f"PR #{num} — {label}" if num else f"PR — {label}"

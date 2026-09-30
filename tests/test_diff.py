@@ -61,6 +61,7 @@ def test_default_opens_the_pr_patch(monkeypatch, in_worktree, rendered, capsys):
     assert "PR #42" in capsys.readouterr().out
 
 
+@pytest.mark.covers("diff.pr-fallback~1")
 def test_no_pr_falls_back_to_branch_and_says_so(
     monkeypatch, in_worktree, rendered, capsys
 ):
@@ -77,6 +78,27 @@ def test_no_pr_falls_back_to_branch_and_says_so(
     assert call["source"] == "branch"
     out = capsys.readouterr().out
     assert "no PR diff" in out and "--branch instead" in out
+
+
+@pytest.mark.parametrize("trunk", ["main", "master"])
+@pytest.mark.covers("diff.pr-fallback~1")
+def test_no_pr_on_a_trunk_branch_falls_back_to_unstaged(
+    monkeypatch, in_worktree, rendered, capsys, trunk
+):
+    """On master/main a branch diff resolves against origin/HEAD — itself — so
+    it can only show unpushed commits, never the pending edits that are the
+    whole of the work in a repo committed to directly."""
+    monkeypatch.setattr(diff_cli, "current_branch", lambda *a: trunk)
+    monkeypatch.setattr(
+        diff_cli, "_pr_patch", lambda root: ("", 'no pull requests found for "x"')
+    )
+
+    assert diff_cli.main([]) == 0
+    (call,) = rendered
+    assert call["patch"] is None
+    assert call["source"] == "unstaged"
+    out = capsys.readouterr().out
+    assert "no PR diff" in out and "--unstaged instead" in out
 
 
 @pytest.mark.parametrize("flag", ["--branch", "--staged", "--unstaged", "--last-turn"])

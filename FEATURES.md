@@ -155,7 +155,8 @@ either way.
 is — in the session's own terminal, not on the dashboard:
 
 ```bash
-cockpit diff              # this worktree's PR diff — the branch diff if there's no PR yet
+cockpit diff              # this worktree's PR diff — with no PR, the branch diff,
+                          #   or the unstaged one on main/master
 cockpit diff --branch     # or ask for one directly: --branch, --staged,
 cockpit diff --staged     #   --unstaged, --last-turn (what changed since the agent's
 cockpit diff --last-turn  #   last turn), with --base to re-point --branch

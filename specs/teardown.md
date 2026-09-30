@@ -16,6 +16,9 @@
 - [diff.render~1] Given `cockpit diff --branch` run inside a worktree,
   `render_diff` names neither a workspace nor a surface, and passes the
   worktree root — not the invoking directory — as `cwd`.
+- [diff.pr-fallback~1] Given no PR on the branch, the default opens a local
+  diff rather than exiting, and names which one it substituted: `--unstaged` on
+  a trunk branch, `--branch` anywhere else.
 - [diff.source-flags~1] Given any of `--branch`, `--staged`, `--unstaged`,
   `--last-turn`, the flag goes over as cmux's own `--source` with no patch,
   and `gh` is never reached.
