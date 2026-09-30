@@ -126,6 +126,7 @@ from cockpit.lib.config import (
     load_config,
     plan_command,
     repo_tickets,
+    ticket_mcp_server,
     trello_boards,
 )
 from cockpit.lib.config import (
@@ -703,11 +704,57 @@ def resolve_skill(name: str, repo_name: str | None) -> tuple[Path, str]:
     )
 
 
+def _tickets_block(repo_entry: dict | None) -> str:
+    """The repo's resolved tracker identity, stated on the first turn.
+
+    A session that needs to file a ticket has no way to derive which tracker,
+    team or board its repo belongs to — that mapping lives in cockpit's config,
+    which is the one thing here the session cannot see. Stating it up front costs
+    nothing and means the common case needs no tool call; `cockpit config
+    tickets` is the live re-read for a session past a compact or a config edit,
+    since this block is frozen at spawn time.
+
+    Provider and scope both come off the `TicketProvider`, never a provider-name
+    branch — the scoping field is `keys` for two providers, `board` for a third
+    and absent for the fourth. Empty for `tickets: none` and for an
+    undetermined repo (a `--cwd` spawn with no `--repo`), where guessing from the
+    spawn process's cwd would name whichever repo the user was standing in.
+
+    Names no credential: the MCP connector carries its own auth, and
+    `_bg_spawn_pr` strips every ticket credential from an auto-spawned session's
+    env, so naming an env var here would be untrue exactly where it was read.
+
+    Names the `tickets.mcp_server` where one is configured: one Linear key opens
+    one workspace, so an account spanning two orgs has a server per org and the
+    wrong one answers about a different issue sharing an identifier. Unset points
+    at the provider's connector generically, right for a single workspace and for
+    a claude.ai-managed connector, which has no name to state.
+    """
+    if repo_entry is None:
+        return ""
+    cfg = load_config()
+    provider = provider_for(cfg, repo_entry)
+    if provider is None:
+        return ""
+    scopes = provider.inbox_scopes(cfg, repo_entry)
+    scope = f" (scope: {', '.join(scopes)})" if scopes else ""
+    server = ticket_mcp_server(cfg, repo_entry)
+    via = (
+        f"the `{server}` MCP server" if server else f"the {provider.name} MCP connector"
+    )
+    return (
+        f"\n\n**Tickets**: this repo tracks work in {provider.name}{scope}. "
+        f"Use {via} for any ticket you read or file, rather than guessing a "
+        f"destination. `cockpit config tickets` re-reads this."
+    )
+
+
 def _plan_only_prompt(
     branch: str,
     pr_info: dict | None = None,
     command: str = "",
     source: str | None = None,
+    repo_entry: dict | None = None,
 ) -> str:
     """Plan-only first-turn prompt. PR context block is included when `pr_info` is set.
 
@@ -737,10 +784,13 @@ def _plan_only_prompt(
         )
     if source:
         source_block += f"\n\n**Source**: {source}"
+    tickets = _tickets_block(repo_entry)
     if command:
-        context = f"branch: {branch}" + source_block
+        context = f"branch: {branch}" + source_block + tickets
         return _scenario_prompt("command_seed", command=command, context=context)
-    return render("plan_only", branch=branch, source_block=source_block)
+    return render(
+        "plan_only", branch=branch, source_block=source_block, tickets_block=tickets
+    )
 
 
 def _review_prompt(branch: str, pr_info: dict | None = None, command: str = "") -> str:
@@ -1205,6 +1255,7 @@ def main(argv: list[str] | None = None) -> int:
                 pr_info,
                 command=plan_command(repo_entry=repo_cfg),
                 source=ticket_ref,
+                repo_entry=repo_cfg,
             )
 
     if args.claude_addendum:

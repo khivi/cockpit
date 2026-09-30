@@ -622,6 +622,31 @@ def linear_team_keys(
     return []
 
 
+def ticket_mcp_server(
+    cfg: dict | None = None, repo_entry: dict | None = None
+) -> str | None:
+    """The MCP server name a session should reach this repo's tracker through
+    (`tickets.mcp_server`), or None.
+
+    One Linear API key opens exactly one workspace, so an account spanning two
+    Linear orgs needs a *server* per org — and which one a repo belongs to is a
+    fact only cockpit's config holds. Declared on an `orgs` block it covers every
+    member repo through the ordinary per-field merge, the same rung `token_env`
+    rides; that indirection is the point, since config carries the server's
+    *name* and never a credential.
+
+    Provider-neutral (a Jira account can span two sites the same way), so it
+    lives in `tickets._COMMON_CONFIG_FIELDS` rather than being split per
+    provider. Read-only from cockpit's side: nothing here registers, probes or
+    validates a server — an unregistered name surfaces when the session tries it,
+    and the provider prompts carry their own retry-then-STOP for that.
+    """
+    val = _tickets_field(cfg, repo_entry, "mcp_server")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return None
+
+
 def linear_project(
     cfg: dict | None = None, repo_entry: dict | None = None
 ) -> str | None:

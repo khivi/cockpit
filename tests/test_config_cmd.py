@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 import cockpit.config_cmd as config_cmd
 import cockpit.lib.config as config_mod
 
@@ -193,3 +195,140 @@ def test_a_resolved_tag_prints_as_the_glyph_it_will_render_as(capsys):
     out = capsys.readouterr().out
     assert "🛡️ svc-auth" in out
     assert "\\ud83d" not in out
+
+
+# --- `cockpit config tickets` ------------------------------------------------
+# The session-facing sibling of `inspect --repo`: same resolution, but it
+# defaults to the cwd's repo, because a session knows which worktree it is in
+# and not what the config calls the repo.
+
+
+def test_tickets_prints_provider_and_scope_off_the_provider(capsys):
+    """`scope` is `TicketProvider.inbox_scopes`, so `keys` (Linear/Jira) and
+    `board` (Trello) both surface without this command knowing which is which."""
+    _write_cfg(_acme_cfg())
+    assert config_cmd.main(["tickets", "--repo", "svc-auth"]) == 0
+    out = capsys.readouterr().out
+    assert "repo: svc-auth" in out
+    assert "provider: linear" in out
+    assert "scope: ACME" in out
+
+
+def test_tickets_reads_the_scope_from_a_trello_board_not_keys(capsys):
+    cfg = {
+        "repos": [
+            {
+                "name": "svc-auth",
+                "path": "/a",
+                "tickets": {"provider": "trello", "board": "Platform"},
+            }
+        ]
+    }
+    _write_cfg(cfg)
+    assert config_cmd.main(["tickets", "--repo", "svc-auth"]) == 0
+    out = capsys.readouterr().out
+    assert "provider: trello" in out
+    assert "scope: Platform" in out
+
+
+def test_tickets_reports_none_and_prints_no_scope_line(capsys):
+    _write_cfg(_acme_cfg())
+    assert config_cmd.main(["tickets", "--repo", "solo"]) == 0
+    out = capsys.readouterr().out
+    assert "provider: none" in out
+    assert "scope:" not in out
+
+
+def test_tickets_prints_an_undeclared_scope_as_such(capsys):
+    """GitHub declares no scope — an issue ref carries its own repo — and so
+    does a provider whose `keys` the config never set. Both must read as
+    'nothing to file into here', never as a blank value."""
+    cfg = {
+        "repos": [{"name": "svc-auth", "path": "/a", "tickets": {"provider": "github"}}]
+    }
+    _write_cfg(cfg)
+    assert config_cmd.main(["tickets", "--repo", "svc-auth"]) == 0
+    assert "scope: (none declared)" in capsys.readouterr().out
+
+
+@pytest.mark.covers("tickets.config-verb~1")
+def test_tickets_never_prints_a_credential_value(monkeypatch, capsys):
+    """The same hard constraint `inspect` carries, re-asserted on the verb a
+    session actually runs — both render through `_print_credentials`."""
+    sentinel = "sk-do-not-print-me-98765"
+    monkeypatch.setenv("LINEAR_TEST_TOKEN", sentinel)
+    cfg = {
+        "repos": [
+            {
+                "name": "svc-auth",
+                "path": "/a",
+                "tickets": {
+                    "provider": "linear",
+                    "keys": ["ACME"],
+                    "token_env": "LINEAR_TEST_TOKEN",
+                },
+            }
+        ]
+    }
+    _write_cfg(cfg)
+    assert config_cmd.main(["tickets", "--repo", "svc-auth"]) == 0
+    out = capsys.readouterr().out
+    assert "LINEAR_TEST_TOKEN: set" in out
+    assert sentinel not in out
+
+
+@pytest.mark.covers("tickets.config-cwd~1")
+def test_tickets_defaults_to_the_cwd_repo(monkeypatch, capsys):
+    _write_cfg(_acme_cfg())
+    monkeypatch.setattr(
+        config_cmd, "discover_repo", lambda: config_mod.load_config()["repos"][0]
+    )
+    assert config_cmd.main(["tickets"]) == 0
+    assert "repo: svc-auth" in capsys.readouterr().out
+
+
+@pytest.mark.covers("tickets.config-cwd~1")
+def test_tickets_outside_a_configured_repo_exits_2_and_lists_repos(monkeypatch, capsys):
+    """Exiting 2 rather than printing `provider: none` — the cwd not being a
+    configured repo is a different fact from the repo having no tracker, and
+    collapsing them tells a session its tracker is unconfigured when cockpit
+    simply does not manage the directory it is standing in."""
+    _write_cfg(_acme_cfg())
+    monkeypatch.setattr(config_cmd, "discover_repo", lambda: None)
+    assert config_cmd.main(["tickets"]) == 2
+    err = capsys.readouterr().err
+    assert "not inside a configured repo" in err
+    assert "svc-auth" in err
+
+
+def test_tickets_unknown_repo_exits_2_naming_the_verb(capsys):
+    _write_cfg(_acme_cfg())
+    assert config_cmd.main(["tickets", "--repo", "bogus"]) == 2
+    err = capsys.readouterr().err
+    assert "cockpit config tickets: unknown repo 'bogus'" in err
+    assert "svc-web" in err
+
+
+def test_tickets_prints_the_configured_mcp_server(capsys):
+    cfg = {
+        "repos": [
+            {
+                "name": "svc-auth",
+                "path": "/a",
+                "tickets": {
+                    "provider": "linear",
+                    "keys": ["ACME"],
+                    "mcp_server": "linear-acme",
+                },
+            }
+        ]
+    }
+    _write_cfg(cfg)
+    assert config_cmd.main(["tickets", "--repo", "svc-auth"]) == 0
+    assert "mcp server: linear-acme" in capsys.readouterr().out
+
+
+def test_tickets_prints_an_undeclared_mcp_server_as_such(capsys):
+    _write_cfg(_acme_cfg())
+    assert config_cmd.main(["tickets", "--repo", "svc-auth"]) == 0
+    assert "mcp server: (none declared)" in capsys.readouterr().out
