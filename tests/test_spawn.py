@@ -2639,3 +2639,165 @@ def test_gh_issue_spawn_no_label_when_unset(spawn_main, cockpit_repo, monkeypatc
     monkeypatch.setattr(spawn, "add_label", _record)
     spawn_main(["i#42", "--repo", "testrepo"])
     assert calls == []
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# _tickets_block — the repo's tracker identity, stated on the first turn
+#
+# The mapping from repo to tracker/team/board lives in cockpit's config, which
+# is the one thing a session in a worktree cannot see. These pin that it is
+# stated, that it comes off the `TicketProvider` rather than a provider-name
+# branch, and that it stays absent where cockpit has no answer.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _repo_entry(cockpit_repo) -> dict:
+    import cockpit.lib.config as cockpit_config
+
+    entry: dict = cockpit_config.load_config()["repos"][0]
+    return entry
+
+
+@pytest.mark.covers("prompts.ticket-identity~1")
+def test_tickets_block_states_the_provider_and_its_scope(cockpit_repo):
+    import cockpit.spawn as spawn
+
+    _set_config_key(cockpit_repo, "tickets", {"provider": "linear", "keys": ["ACME"]})
+    block = spawn._tickets_block(_repo_entry(cockpit_repo))
+    assert "linear" in block
+    assert "ACME" in block
+
+
+@pytest.mark.covers("prompts.ticket-scope-derived~1")
+def test_tickets_block_reads_the_scope_off_the_provider_not_a_keys_field(cockpit_repo):
+    """Trello scopes by `board` where Linear scopes by `keys`, and this builder
+    knows neither — `TicketProvider.inbox_scopes` does. A hardcoded `keys` read
+    would silently state a scopeless Trello repo."""
+    import cockpit.spawn as spawn
+
+    _set_config_key(
+        cockpit_repo, "tickets", {"provider": "trello", "board": "Platform"}
+    )
+    block = spawn._tickets_block(_repo_entry(cockpit_repo))
+    assert "trello" in block
+    assert "Platform" in block
+
+
+@pytest.mark.covers("prompts.ticket-scope-derived~1")
+def test_tickets_block_is_empty_without_a_provider(cockpit_repo):
+    import cockpit.spawn as spawn
+
+    assert spawn._tickets_block(_repo_entry(cockpit_repo)) == ""
+
+
+@pytest.mark.covers("prompts.ticket-scope-derived~1")
+def test_tickets_block_is_empty_for_an_undetermined_repo():
+    """A `--cwd` spawn with no `--repo` determines no repo, and guessing one from
+    the spawn process's cwd would state whichever repo the user was standing in
+    — the same reason `sidebar_tag` is resolved per routed branch."""
+    import cockpit.spawn as spawn
+
+    assert spawn._tickets_block(None) == ""
+
+
+@pytest.mark.covers("prompts.ticket-identity~1")
+def test_tickets_block_names_no_credential_env_var(cockpit_repo):
+    """`_bg_spawn_pr` strips every ticket credential from an auto-spawned
+    session's env, so naming one here would be untrue exactly where it is read.
+    The MCP connector carries its own auth."""
+    import cockpit.spawn as spawn
+
+    _set_config_key(
+        cockpit_repo,
+        "tickets",
+        {"provider": "linear", "keys": ["ACME"], "token_env": "LINEAR_TEST_TOKEN"},
+    )
+    assert "LINEAR_TEST_TOKEN" not in spawn._tickets_block(_repo_entry(cockpit_repo))
+
+
+def test_plan_only_prompt_carries_the_tickets_block(cockpit_repo):
+    import cockpit.spawn as spawn
+
+    _set_config_key(cockpit_repo, "tickets", {"provider": "linear", "keys": ["ACME"]})
+    p = spawn._plan_only_prompt(
+        "khivi/feature", None, repo_entry=_repo_entry(cockpit_repo)
+    )
+    assert "**Tickets**" in p
+    assert "linear" in p
+    assert "PLAN ONLY" in p  # the no-code gate still rides along
+
+
+def test_plan_only_prompt_carries_the_tickets_block_under_a_plan_command(cockpit_repo):
+    """A repo configuring `skills.plan` takes the command-seed shape instead of
+    `plan_only.txt`, and must not lose the block with it."""
+    import cockpit.spawn as spawn
+
+    _set_config_key(cockpit_repo, "tickets", {"provider": "linear", "keys": ["ACME"]})
+    p = spawn._plan_only_prompt(
+        "khivi/feature",
+        None,
+        command="/plan-pr",
+        repo_entry=_repo_entry(cockpit_repo),
+    )
+    assert p.startswith("/plan-pr")
+    assert "**Tickets**" in p
+
+
+def test_plan_only_prompt_omits_the_block_when_repo_entry_is_not_passed():
+    """Every pre-existing caller omitted it; the prompt must stay byte-identical
+    for them rather than growing an empty section."""
+    import cockpit.spawn as spawn
+
+    assert "**Tickets**" not in spawn._plan_only_prompt("khivi/feature", None)
+
+
+@pytest.mark.covers("prompts.ticket-mcp-server~1")
+def test_tickets_block_names_the_configured_mcp_server(cockpit_repo):
+    """One Linear key opens one workspace, so an account spanning two orgs has a
+    server per org — and which one this repo belongs to is a fact only cockpit's
+    config holds."""
+    import cockpit.spawn as spawn
+
+    _set_config_key(
+        cockpit_repo,
+        "tickets",
+        {"provider": "linear", "keys": ["ACME"], "mcp_server": "linear-acme"},
+    )
+    assert "`linear-acme` MCP server" in spawn._tickets_block(_repo_entry(cockpit_repo))
+
+
+@pytest.mark.covers("prompts.ticket-mcp-server~1")
+def test_tickets_block_falls_back_to_the_generic_connector(cockpit_repo):
+    """Unset is the ordinary case — one workspace, or a claude.ai-managed
+    connector, neither of which has a name to state."""
+    import cockpit.spawn as spawn
+
+    _set_config_key(cockpit_repo, "tickets", {"provider": "linear", "keys": ["ACME"]})
+    block = spawn._tickets_block(_repo_entry(cockpit_repo))
+    assert "MCP connector" in block
+    assert "MCP server" not in block
+
+
+@pytest.mark.covers("tickets.mcp-server-org~1")
+def test_tickets_block_inherits_the_mcp_server_from_an_org_block(cockpit_repo):
+    """The point of the field being a name: declared once on the org, every
+    member repo resolves it through the ordinary per-field merge, the same rung
+    `token_env` rides."""
+    import json
+
+    import cockpit.spawn as spawn
+
+    cfg_path = cockpit_repo.cockpit_home / "config.json"
+    data = json.loads(cfg_path.read_text())
+    data["repos"][0]["org"] = "acme"
+    data["orgs"] = {
+        "acme": {
+            "tickets": {
+                "provider": "linear",
+                "keys": ["ACME"],
+                "mcp_server": "linear-acme",
+            }
+        }
+    }
+    cfg_path.write_text(json.dumps(data))
+    assert "`linear-acme` MCP server" in spawn._tickets_block(_repo_entry(cockpit_repo))

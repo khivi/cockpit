@@ -341,6 +341,14 @@ From that link you get:
   worktree got cleaned up — so work ships even when the branch sticks around.
 - **A "work started" label** on GitHub issues at spawn time, if you want one
   (`start_label`).
+- **The agent knows where to file one.** A worktree cockpit starts is told its repo's
+  tracker and the team, project or board it files into, on its first turn — so an agent
+  opening a follow-up ticket doesn't guess a destination or stop to ask you which
+  workspace. `cockpit config tickets` prints the same answer on demand from inside any
+  worktree, which is what a session reaches for after a compact or a config change.
+  **Two Linear orgs work too**: one API key opens one workspace, so register an MCP
+  server per org and name it in `mcp_server` — on the `orgs` block, once, and every repo
+  in that org inherits it.
 
 Credentials are env vars, always — config stores the *name* of the variable, never a
 value. And spawned agents don't get them: an agent reads its tracker through the MCP

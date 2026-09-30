@@ -103,9 +103,13 @@ _FIELD_KINDS: dict[str, tuple[Callable[[object], bool], str]] = {
 # `inbox_states` is common because its meaning is provider-neutral (the state or
 # list names the ticket inbox shows); GitHub accepts it here and warns at
 # preflight instead (`_validate_inbox_states`) — issues are only open/closed.
+# `mcp_server` is common for the same reason: "which MCP server reaches this
+# repo's tracker" is one concept whatever the tracker is, so it stays a single
+# field rather than a per-provider split (the `token_env` rule).
 _COMMON_CONFIG_FIELDS: tuple[tuple[str, str], ...] = (
     ("close_on_merge", "bool"),
     ("inbox_states", "str_or_str_list"),
+    ("mcp_server", "str"),
 )
 
 _PROVIDER_CONFIG_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {

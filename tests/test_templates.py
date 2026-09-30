@@ -17,7 +17,7 @@ _TEMPLATES = {
     "slack_fetch": {"branch", "url", "plan_tail"},
     "slack_context": {"branch", "url", "plan_tail"},
     "trello": {"branch", "url", "plan_tail"},
-    "plan_only": {"branch", "source_block"},
+    "plan_only": {"branch", "source_block", "tickets_block"},
     "review": {"lead", "context"},
     "review_prose": set(),
     "command_seed": {"command", "context", "plan_tail"},

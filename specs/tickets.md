@@ -34,6 +34,16 @@
 - [tickets.credential-warning~1] Given a GitHub-provider repo with no
   credential env, preflight prints nothing — the provider declares its own
   (empty) variable set; there is no provider-name ternary in the warning.
+- [tickets.config-verb~1] `cockpit config tickets` names a credential's variable
+  and its set/unset state, never its value — the same constraint the operator
+  view carries, on the verb a session actually runs.
+
+## Inspection
+
+- [tickets.config-cwd~1] Given no repo named, `cockpit config tickets` answers
+  for the repo the cwd belongs to; a cwd outside every configured repo exits 2
+  rather than reporting an unconfigured tracker, since "cockpit does not manage
+  this directory" and "this repo has no tracker" are different facts.
 
 ## Routing
 
@@ -78,6 +88,9 @@
 - [orgs.not-persisted~1] Given an org-inherited value visible through
   `load_config`, the value never lands back in `config.json` on disk — the
   merge is in-memory only.
+- [tickets.mcp-server-org~1] An MCP server name declared on an org block resolves
+  for every member repo through the ordinary per-field merge — it is a name, not
+  a credential, so per-org routing needs no org-aware reader.
 - [orgs.transparent~1] (untested: design rationale) Nothing below
   `load_config` knows orgs exist — no org-aware reader, `org_*` field, or
   resolution helper.

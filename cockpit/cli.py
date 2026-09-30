@@ -15,6 +15,7 @@ Subcommands:
   nudge  [args]         manage nudge mutes
   broadcast <message>   send a line of text to every idle workspace
   config inspect [args] print the effective (post-org-merge) config
+  config tickets [args] print the cwd repo's resolved ticket provider + scope
 
 Config-invoked shims — dispatched exactly like the above, but never typed:
   statusline            Claude Code statusLine shim (reads stdin → renders)

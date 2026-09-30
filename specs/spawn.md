@@ -57,6 +57,20 @@
   write `plan.md` AND carry the never-stage line — cockpit's `.gitignore`
   does not travel to the repos it spawns into, so the prose is the only
   thing holding a tracked plan out of a squash merge there.
+- [prompts.ticket-identity~1] Given a repo with a resolved ticket provider, the
+  first-turn prompt states which tracker it files against and which team,
+  project or board it files into — the one fact a session standing in a worktree
+  cannot derive — and it names no credential env var, since a spawned session's
+  ticket credentials are stripped from its environment.
+- [prompts.ticket-scope-derived~1] The scope the prompt states comes off the
+  provider strategy rather than a `keys` read, so a Trello repo scoped by its
+  board states the board. A repo with no provider, and a spawn that determined
+  no repo at all, each state nothing.
+- [prompts.ticket-mcp-server~1] Given a repo declaring an MCP server name, the
+  first-turn prompt names that server rather than the provider's connector
+  generically — one credential opens one workspace, so an account spanning two
+  orgs of the same tracker must not be pointed at whichever one answers. Unset,
+  it states the connector generically and names no server.
 - [prompts.plan-unread~1] No tick, renderer or teardown depends on the plan
   artifact, which a session may never have written. Asserted structurally: no
   Python source under cockpit/ names it.

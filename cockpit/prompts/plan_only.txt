@@ -1,4 +1,4 @@
-You are starting a fresh task in a new worktree on branch `{branch}`.{source_block}
+You are starting a fresh task in a new worktree on branch `{branch}`.{source_block}{tickets_block}
 
 **HARD RULE — PLAN ONLY, NO CODE THIS TURN**:
 - DO NOT edit files, write code, run tests, or commit anything. The plan file
