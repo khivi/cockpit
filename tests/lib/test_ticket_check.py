@@ -198,11 +198,12 @@ def test_a_repo_declaring_no_mcp_server_never_probes(monkeypatch):
     probes: list = []
     monkeypatch.setattr(ticket_check, "provider_for", lambda cfg, repo: _Provider())
     monkeypatch.setattr(ticket_check, "ticket_mcp_server", lambda cfg, repo: "")
-    monkeypatch.setattr(
-        ticket_check,
-        "list_mcp_servers",
-        lambda *, repo_dir=None: probes.append(repo_dir) or {},
-    )
+
+    def _probe(*, repo_dir=None):
+        probes.append(repo_dir)
+        return {}
+
+    monkeypatch.setattr(ticket_check, "list_mcp_servers", _probe)
     body = format_report("acme", [check_repo(_cfg(), _repo("widgets"))])
     assert probes == []
     assert "mcp server: (none declared)" in body
@@ -216,11 +217,12 @@ def test_the_probe_is_shared_across_a_bucket_at_one_cwd(monkeypatch):
     probes: list = []
     monkeypatch.setattr(ticket_check, "provider_for", lambda cfg, repo: _Provider())
     monkeypatch.setattr(ticket_check, "ticket_mcp_server", lambda cfg, repo: "lin")
-    monkeypatch.setattr(
-        ticket_check,
-        "list_mcp_servers",
-        lambda *, repo_dir=None: probes.append(repo_dir) or {"lin": "connected"},
-    )
+
+    def _probe(*, repo_dir=None):
+        probes.append(repo_dir)
+        return {"lin": "connected"}
+
+    monkeypatch.setattr(ticket_check, "list_mcp_servers", _probe)
     cfg = _cfg(
         _repo("widgets", org="acme", path="/tmp/same"),
         _repo("gadgets", org="acme", path="/tmp/same"),

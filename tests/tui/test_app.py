@@ -4130,11 +4130,22 @@ async def test_footer_lists_the_inbox_key_next_to_new():
     assert order.index("ticket_inbox") == order.index("new_workspace") + 1
 
 
+def _recording_check(asked: list[str]):
+    """A `check_bucket` stand-in that records the bucket and reports nothing."""
+
+    def _check(cfg, bucket):
+        asked.append(bucket)
+        return []
+
+    return _check
+
+
 async def test_the_inbox_key_is_shift_t():
     """`T`, not `i`: `t` already opens the cursor row's ticket, so the inbox
     sits on the shifted sibling of the key that means "ticket"."""
+    keys = [b[0] if isinstance(b, tuple) else b.key for b in CockpitApp.BINDINGS]
     assert ("T", "ticket_inbox", "Tickets") in CockpitApp.BINDINGS
-    assert not [b for b in CockpitApp.BINDINGS if b[0] == "i"]
+    assert "i" not in keys
 
 
 async def test_c_in_the_inbox_checks_the_cursor_rows_org(monkeypatch):
@@ -4146,8 +4157,7 @@ async def test_c_in_the_inbox_checks_the_cursor_rows_org(monkeypatch):
     asked: list[str] = []
     shown: list = []
     monkeypatch.setattr(
-        "cockpit.lib.ticket_check.check_bucket",
-        lambda cfg, bucket: asked.append(bucket) or [],
+        "cockpit.lib.ticket_check.check_bucket", _recording_check(asked)
     )
     monkeypatch.setattr("cockpit.tui.app.load_config", lambda: {"repos": []})
     monkeypatch.setattr(
@@ -4196,8 +4206,7 @@ async def test_c_on_an_empty_inbox_checks_every_bucket(monkeypatch):
     app, _ = _make_app()
     asked: list[str] = []
     monkeypatch.setattr(
-        "cockpit.lib.ticket_check.check_bucket",
-        lambda cfg, bucket: asked.append(bucket) or [],
+        "cockpit.lib.ticket_check.check_bucket", _recording_check(asked)
     )
     monkeypatch.setattr(
         "cockpit.tui.app.load_config",
@@ -4230,8 +4239,7 @@ async def test_the_check_is_not_dry_gated(monkeypatch):
     app._publish_inventory = lambda: None  # type: ignore[method-assign]
     asked: list[str] = []
     monkeypatch.setattr(
-        "cockpit.lib.ticket_check.check_bucket",
-        lambda cfg, bucket: asked.append(bucket) or [],
+        "cockpit.lib.ticket_check.check_bucket", _recording_check(asked)
     )
     monkeypatch.setattr("cockpit.tui.app.load_config", lambda: {"repos": []})
     monkeypatch.setattr(

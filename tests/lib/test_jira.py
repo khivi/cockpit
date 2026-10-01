@@ -483,7 +483,13 @@ def test_verify_project_keys_asks_per_key_so_pagination_cannot_hide_one():
         urls.append(req.full_url)
         if req.full_url.endswith("/PROJ"):
             return _FakeResp({"key": "PROJ"})
-        raise urllib.error.HTTPError(req.full_url, 404, "nope", {}, BytesIO(b""))
+        raise urllib.error.HTTPError(
+            req.full_url,
+            404,
+            "nope",
+            {},  # type: ignore[arg-type]
+            BytesIO(b""),
+        )
 
     with patch("cockpit.lib.jira.urllib.request.urlopen", side_effect=fake_urlopen):
         out = verify_project_keys(
