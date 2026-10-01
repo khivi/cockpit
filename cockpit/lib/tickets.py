@@ -49,6 +49,7 @@ from .gh import pr_body
 from .github_issues import CONFIG_FIELDS as _GITHUB_CONFIG_FIELDS
 from .github_issues import fetch_issues, issue_url, parse_github_issue_refs
 from .github_issues import fetch_my_open as _github_fetch_my_open
+from .github_issues import viewer_login as _github_viewer_login
 from .jira import CONFIG_FIELDS as _JIRA_CONFIG_FIELDS
 from .jira import (
     fetch_issue_statuses,
@@ -57,6 +58,8 @@ from .jira import (
     parse_jira_footers,
 )
 from .jira import fetch_my_open as _jira_fetch_my_open
+from .jira import fetch_myself as _jira_fetch_myself
+from .jira import verify_project_keys as _jira_verify_keys
 from .linear import CONFIG_FIELDS as _LINEAR_CONFIG_FIELDS
 from .linear import fetch_my_open as _linear_fetch_my_open
 from .linear import (
@@ -66,6 +69,8 @@ from .linear import (
     parse_linear_footer_links,
     parse_linear_footers,
 )
+from .linear import fetch_viewer_id as _linear_fetch_viewer_id
+from .linear import verify_team_keys as _linear_verify_keys
 from .trello import CONFIG_FIELDS as _TRELLO_CONFIG_FIELDS
 from .trello import (
     card_short_link,
@@ -77,6 +82,8 @@ from .trello import (
     parse_trello_footers,
 )
 from .trello import fetch_my_open as _trello_fetch_my_open
+from .trello import fetch_myself as _trello_fetch_myself
+from .trello import verify_boards as _trello_verify_boards
 
 # ── config-field schema (drives preflight validation) ───────────────────────
 #
@@ -252,6 +259,27 @@ class TicketProvider:
     # `preflight` warns on the unset ones so a missing credential surfaces at
     # start rather than as a silently unresolved ticket cell cycles later.
     credential_envs: Callable[[dict, dict | None], list[str]]
+    # (cfg, repo_entry, repo_dir) → the identity the repo's resolved credential
+    # authenticates as ("me"), or None when the tracker could NOT be asked. The
+    # connection half of `lib/ticket_check.py`, and the one thing every other
+    # ticket read already depends on: each provider's own only-mine gate already
+    # fetches this (`linear.fetch_viewer_id`, the two `fetch_myself`s,
+    # `github_issues.viewer_login`), so this is an adapter rather than a new
+    # round-trip shape. `repo_dir` is GitHub's — `gh` derives the API host from
+    # the cwd's origin remote — and ignored by the other three, like
+    # `ticket_url`'s kwargs.
+    whoami: Callable[..., str | None]
+    # (scopes, cfg, repo_entry) → the subset of `scopes` the tracker confirms it
+    # knows: the Linear teams / Jira projects / Trello boards that actually
+    # exist under this credential. None when it couldn't be asked; `[]` when it
+    # recognised none. An empty `scopes` short-circuits to `[]` with no call.
+    #
+    # The scope check is what a connection check alone can't give: a typo'd
+    # `tickets.keys` or `tickets.board` authenticates fine and then answers with
+    # nothing, which is byte-identical to having no tickets assigned. GitHub
+    # declares no scopes (`inbox_scopes` is empty — an issue ref carries its own
+    # repo), so it has nothing to verify and never calls out.
+    verify_scopes: Callable[..., list[str] | None]
 
 
 def _github_fetch_states(
@@ -642,6 +670,90 @@ def _trello_my_open(
     return [c for c in cards if str(c.get("state") or "").casefold() in wanted]
 
 
+def _linear_whoami(
+    cfg: dict, repo_entry: dict | None = None, repo_dir: str | None = None
+) -> str | None:
+    """`whoami` for Linear: the API key's own user id. `repo_dir` unused."""
+    return _linear_fetch_viewer_id(api_key=linear_api_key(cfg, repo_entry) or None)
+
+
+def _jira_whoami(
+    cfg: dict, repo_entry: dict | None = None, repo_dir: str | None = None
+) -> str | None:
+    """`whoami` for Jira: the authenticated account id. `repo_dir` unused."""
+    site = jira_site_url(cfg, repo_entry)
+    email = jira_email(cfg, repo_entry)
+    if not site or not email:
+        return None
+    return _jira_fetch_myself(
+        site_url=site, email=email, token=jira_api_token(cfg, repo_entry) or None
+    )
+
+
+def _trello_whoami(
+    cfg: dict, repo_entry: dict | None = None, repo_dir: str | None = None
+) -> str | None:
+    """`whoami` for Trello: the authenticated member id. `repo_dir` unused."""
+    return _trello_fetch_myself(
+        key=trello_api_key(cfg, repo_entry) or None,
+        token=trello_api_token(cfg, repo_entry) or None,
+    )
+
+
+def _github_whoami(
+    cfg: dict, repo_entry: dict | None = None, repo_dir: str | None = None
+) -> str | None:
+    """`whoami` for GitHub: the `gh` login. `repo_dir` is the one provider that
+    needs it — `gh` derives the API host from the cwd's origin remote, so an
+    enterprise tenant answers only when the call is made inside the repo."""
+    return _github_viewer_login(repo_dir=repo_dir)
+
+
+def _linear_verify_scopes(
+    scopes: list[str], *, cfg: dict, repo_entry: dict | None = None
+) -> list[str] | None:
+    """`verify_scopes` for Linear: which declared `tickets.keys` name a team in
+    the workspace this credential opens."""
+    return _linear_verify_keys(scopes, api_key=linear_api_key(cfg, repo_entry) or None)
+
+
+def _jira_verify_scopes(
+    scopes: list[str], *, cfg: dict, repo_entry: dict | None = None
+) -> list[str] | None:
+    """`verify_scopes` for Jira: which declared `tickets.keys` name a project on
+    this site."""
+    site = jira_site_url(cfg, repo_entry)
+    email = jira_email(cfg, repo_entry)
+    if not site or not email:
+        return None
+    return _jira_verify_keys(
+        scopes,
+        site_url=site,
+        email=email,
+        token=jira_api_token(cfg, repo_entry) or None,
+    )
+
+
+def _trello_verify_scopes(
+    scopes: list[str], *, cfg: dict, repo_entry: dict | None = None
+) -> list[str] | None:
+    """`verify_scopes` for Trello: which declared `tickets.board` names an open
+    board on this account."""
+    return _trello_verify_boards(
+        scopes,
+        key=trello_api_key(cfg, repo_entry) or None,
+        token=trello_api_token(cfg, repo_entry) or None,
+    )
+
+
+def _no_verify_scopes(
+    scopes: list[str], *, cfg: dict, repo_entry: dict | None = None
+) -> list[str] | None:
+    """`verify_scopes` for GitHub, which declares no scope to verify — an issue
+    ref carries its own `owner/repo`. Reaches nothing."""
+    return []
+
+
 def _no_narrow(ref: str, candidates: list[dict], cfg: dict) -> list[dict]:
     """`narrow_repos` for a provider whose identifier already resolves the repo as
     far as it can: GitHub (the issue ref carries `owner/repo`, so routing never
@@ -788,6 +900,8 @@ LINEAR = TicketProvider(
     fetch_my_open=_linear_my_open,
     ticket_url=_linear_ticket_url,
     credential_envs=lambda cfg, repo: [linear_token_env(cfg, repo)],
+    whoami=_linear_whoami,
+    verify_scopes=_linear_verify_scopes,
 )
 
 JIRA = TicketProvider(
@@ -802,6 +916,8 @@ JIRA = TicketProvider(
     fetch_my_open=_jira_my_open,
     ticket_url=_jira_ticket_url,
     credential_envs=lambda cfg, repo: [jira_token_env(cfg, repo)],
+    whoami=_jira_whoami,
+    verify_scopes=_jira_verify_scopes,
 )
 
 GITHUB = TicketProvider(
@@ -817,6 +933,8 @@ GITHUB = TicketProvider(
     ticket_url=_github_ticket_url,
     # `gh` owns the auth; there is no cockpit-read env var to warn about.
     credential_envs=lambda _cfg, _repo: [],
+    whoami=_github_whoami,
+    verify_scopes=_no_verify_scopes,
 )
 
 TRELLO = TicketProvider(
@@ -834,6 +952,8 @@ TRELLO = TicketProvider(
         trello_key_env(cfg, repo),
         trello_token_env(cfg, repo),
     ],
+    whoami=_trello_whoami,
+    verify_scopes=_trello_verify_scopes,
 )
 
 _PROVIDERS: dict[str, TicketProvider] = {

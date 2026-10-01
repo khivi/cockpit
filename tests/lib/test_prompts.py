@@ -125,13 +125,16 @@ def test_no_launch_path_spells_the_agent_binary_inline():
     exactly what `_run_repo_skills`' `fast_skills` run was.
     """
     root = Path(__file__).resolve().parents[2] / "cockpit"
+    # `lib/mcp.py` names the binary to *query* it (`claude mcp list`), which is
+    # not a launch path — nothing there starts an agent session.
+    exempt = {"prompts.py", "mcp.py"}
     # A string literal that IS the binary, or leads a flag / slash command /
     # interpolation — never prose that merely opens with the word, of which
     # `config.py`'s "claude hooks unchanged" prints are the honest kind.
     invocation = re.compile(r"""["']claude(["']|\s+[-/{])""")
     offenders = []
     for path in root.rglob("*.py"):
-        if path.name == "prompts.py":
+        if path.name in exempt:
             continue
         for n, line in enumerate(path.read_text().splitlines(), 1):
             if invocation.search(line.split("#", 1)[0]):

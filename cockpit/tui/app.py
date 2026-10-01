@@ -277,7 +277,7 @@ class CockpitApp(App[None]):
         ("m", "mute_row", "Mute"),
         ("z", "snooze_row", "Snooze"),
         ("n", "new_workspace", "New"),
-        ("i", "ticket_inbox", "Tickets"),
+        ("T", "ticket_inbox", "Tickets"),
         ("h", "hide_repo", "Hide repo"),
         ("s", "sync", "Sync"),
         ("q", "quit", "Quit"),
@@ -1359,7 +1359,7 @@ class CockpitApp(App[None]):
         self._toggle_hidden_section()
 
     def action_ticket_inbox(self) -> None:
-        """`i` — the ticket inbox: what to start, as opposed to how work is going.
+        """`T` — the ticket inbox: what to start, as opposed to how work is going.
 
         Reads the payloads the slow tick wrote and nothing else: no fetch, no
         `git worktree list`, no config walk. A ticket already in flight
@@ -1385,6 +1385,42 @@ class CockpitApp(App[None]):
             if live:
                 buckets[bucket] = live
         self.push_screen(TicketsScreen(buckets, _ticket_routes(buckets)))
+
+    def on_tickets_screen_check(self, event: TicketsScreen.Check) -> None:
+        """`c` in the inbox — diagnose one org's tracker setup, or every org.
+
+        The inbox cannot explain an empty fold: a missing credential, a typo'd
+        team key or board name, and a genuinely empty queue all reach the screen
+        as the same absence. `lib/ticket_check.py` asks the questions the fetch
+        can't, per repo in the bucket.
+
+        Not `--dry` gated: it reads a tracker and writes nothing — no cell, no
+        pill, no tracker mutation. The gate covers the keys that reach outside
+        and *change* something.
+        """
+        self._run_ticket_check(event.bucket)
+
+    @work(thread=True, group="ticket-check", exit_on_error=False)
+    def _run_ticket_check(self, bucket: str) -> None:
+        """Run the check off the UI thread, then show it in a `ConfigScreen`.
+
+        Threaded for the same reason `_route_ticket` is: up to two round-trips
+        per repo. `""` means every configured bucket, which is what `c` on an
+        empty inbox asks for — a bucket the tracker answered nothing for has no
+        header row to stand on.
+        """
+        from cockpit.lib.ticket_check import all_buckets, check_bucket, format_report
+
+        cfg = load_config()
+        buckets = [bucket] if bucket else all_buckets(cfg)
+        try:
+            body = "\n\n".join(format_report(b, check_bucket(cfg, b)) for b in buckets)
+        except (OSError, RuntimeError) as e:
+            body = f"the check could not finish: {e}"
+        title = f"tickets check: {bucket}" if bucket else "tickets check: all orgs"
+        self.call_from_thread(
+            self.push_screen, ConfigScreen(title, body or "(nothing configured)")
+        )
 
     def on_tickets_screen_start(self, event: TicketsScreen.Start) -> None:
         """`enter` on a ticket row — the inbox stays open behind the spawn.

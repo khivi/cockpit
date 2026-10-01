@@ -338,6 +338,41 @@ def fetch_myself(*, site_url: str, email: str, token: str | None = None) -> str 
     return (data or {}).get("accountId") or None
 
 
+def verify_project_keys(
+    keys: list[str], *, site_url: str, email: str, token: str | None = None
+) -> list[str] | None:
+    """Which of `keys` this site has a project for, or None when it couldn't be
+    asked.
+
+    A `GET /project/{key}` per declared key rather than a `project/search` page:
+    the answer is then exact and cannot be truncated by pagination into a false
+    "that project doesn't exist", and `tickets.keys` holds a handful at most.
+    Returned in the caller's spelling; `[]` means the site recognised none.
+
+    A single key's failure is indistinguishable from a 404 here, so an
+    unreachable site reads as "no project" — which is why the caller pairs this
+    with `fetch_myself` and reports the connection separately.
+    """
+    wanted = [k for k in keys if k]
+    if not wanted:
+        return []
+    creds = _creds(email, token)
+    if not creds or not site_url:
+        return None
+    em, tok = creds
+    base = _base(site_url)
+    return [
+        k
+        for k in wanted
+        if _request(
+            "GET",
+            f"{base}/rest/api/3/project/{urllib.parse.quote(k)}",
+            email=em,
+            token=tok,
+        )
+    ]
+
+
 def fetch_issue_meta(
     key: str, *, site_url: str, email: str, token: str | None = None
 ) -> dict | None:

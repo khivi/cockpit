@@ -29,6 +29,7 @@ from cockpit.lib.trello import (
     parse_trello_footer_links,
     parse_trello_footers,
     trello_seed,
+    verify_boards,
 )
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -629,3 +630,39 @@ def test_fetch_my_open_unset_creds_is_empty_and_skips_network():
     ):
         assert fetch_my_open(None) == []
     urlopen.assert_not_called()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# verify_boards — the ticket check's scope half
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_verify_boards_matches_casefolded_and_answers_in_the_caller_spelling():
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen",
+        side_effect=lambda req, timeout=None: _FakeResp(_BOARDS),
+    ):
+        out = verify_boards(["engineering", "Nope"], key=KEY, token=TOKEN)
+    assert out == ["engineering"]
+
+
+def test_verify_boards_reports_an_archived_board_as_unseen():
+    """Its cards are dropped whatever list they sit in, so a declared archived
+    board is a misconfiguration rather than a working scope."""
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen",
+        side_effect=lambda req, timeout=None: _FakeResp(_BOARDS),
+    ):
+        assert verify_boards(["Engineering (2024)"], key=KEY, token=TOKEN) == []
+
+
+def test_verify_boards_distinguishes_couldnt_ask_from_matched_none():
+    with patch("cockpit.lib.trello.urllib.request.urlopen") as urlopen:
+        assert verify_boards([], key=KEY, token=TOKEN) == []
+        urlopen.assert_not_called()
+    assert verify_boards(["Engineering"], key=None, token=None) is None
+    with patch(
+        "cockpit.lib.trello.urllib.request.urlopen",
+        side_effect=urllib.error.URLError("down"),
+    ):
+        assert verify_boards(["Engineering"], key=KEY, token=TOKEN) is None

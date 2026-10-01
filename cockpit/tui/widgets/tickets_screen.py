@@ -43,6 +43,12 @@ why this is not a Repo column: the four columns already fill the modal, and
 key→repo is 1:1 for most configs, so a column would repeat one constant string
 down each fold.
 
+`c` posts a `Check` for the cursor row's org and the app diagnoses that org's
+tracker setup. It is a message for the same reason `Start` is: the check reaches
+the tracker, and this screen reaches nothing. An empty inbox has no row to stand
+on, so `c` there means every bucket — which is deliberate, since a bucket the
+tracker answered nothing for has no header row at all.
+
 The candidate names are computed by the app and handed in as `routes`, so this
 screen still reads no config: `find_repos_by_ticket_key` walks `load_config()`,
 and doing that per row per repaint is the disk hit `#header-repo` is careful to
@@ -151,6 +157,18 @@ class TicketsScreen(ModalScreen[None]):
             super().__init__()
             self.source = source
 
+    class Check(Message):
+        """`c` — diagnose the cursor row's org.
+
+        `bucket` is that org's header label, or `""` for "every configured
+        bucket" — which is what an *empty* inbox has to mean, since the fold
+        whose setup is broken is exactly the one with no row to stand on.
+        """
+
+        def __init__(self, bucket: str) -> None:
+            super().__init__()
+            self.bucket = bucket
+
     DEFAULT_CSS = """
     TicketsScreen { align: center middle; }
     TicketsScreen > Vertical {
@@ -169,6 +187,7 @@ class TicketsScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape,q", "cancel", "Close"),
         Binding("t", "open_ticket", "Open in browser"),
+        Binding("c", "check_org", "Check this org"),
     ]
 
     def __init__(
@@ -206,7 +225,8 @@ class TicketsScreen(ModalScreen[None]):
             yield DataTable(id="tk-table", cursor_type="row", zebra_stripes=False)
             yield Static(
                 "enter opens an org, or starts the highlighted ticket · "
-                "t opens it in the browser · esc to close",
+                "t opens it in the browser · c checks this org's tracker "
+                "setup · esc to close",
                 classes="tk-hint",
             )
             legend = self._legend()
@@ -391,6 +411,30 @@ class TicketsScreen(ModalScreen[None]):
             return
         self._started.discard(source)
         self._rebuild(cursor_key=self._cursor_key())
+
+    def _cursor_bucket(self) -> str:
+        """The org the cursor sits in — read off a header row or a ticket row
+        alike, since both keys are bucket-qualified. "" on an empty table."""
+        key = self._cursor_key() or ""
+        if key.startswith(HEADER_KEY_PREFIX):
+            return key.removeprefix(HEADER_KEY_PREFIX)
+        return key.split("\x00")[0] if "\x00" in key else ""
+
+    def action_check_org(self) -> None:
+        """`c` — ask the app to diagnose this org's ticket setup.
+
+        A message rather than the work: the check reaches the tracker, which a
+        read-only renderer never does. It works from a ticket row as well as the
+        org header, because "this fold is empty" is read *at* the header and
+        "this fold is missing something" is noticed from inside it.
+
+        With nothing on screen it checks every bucket. A bucket the tracker
+        answered nothing for is written empty and so has no header row at all
+        (a header with nothing under it reads as a failed fetch, which this
+        screen never shows) — so the one org a check is most wanted for is the
+        one the cursor cannot reach.
+        """
+        self.post_message(self.Check(self._cursor_bucket()))
 
     def action_open_ticket(self) -> None:
         ticket = self._selected()

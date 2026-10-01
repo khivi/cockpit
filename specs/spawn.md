@@ -74,8 +74,9 @@
 - [prompts.plan-unread~1] No tick, renderer or teardown depends on the plan
   artifact, which a session may never have written. Asserted structurally: no
   Python source under cockpit/ names it.
-- [slack.no-preflight~1] No provider's spawn gates its fetch on probing for an
+- [slack.no-preflight~2] No provider's spawn gates its fetch on probing for an
   MCP connector — a managed connector handshakes asynchronously and reports
   absent while live — so each provider prompt carries its own retry-then-STOP
-  step instead. Asserted structurally: no call under cockpit/ shells
-  `claude mcp list`, tree-wide and including the Linear spawn path at runtime.
+  step instead. Asserted structurally: the Linear spawn path shells no
+  `claude mcp list` at runtime, and tree-wide the only source that shells it is
+  the ticket check's own leaf, which no spawn, tick or gate imports.

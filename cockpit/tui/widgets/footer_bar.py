@@ -94,7 +94,7 @@ class FooterBar(Horizontal):
         # global keys.
         "hide_repo",
         "new_workspace",
-        # Beside `n` deliberately: both start work, and `i` is where you go when
+        # Beside `n` deliberately: both start work, and `T` is where you go when
         # you don't yet know what to type into `n`.
         "ticket_inbox",
         "sync",
@@ -180,7 +180,9 @@ class FooterBar(Horizontal):
         "ticket_inbox": (
             "Tickets assigned to you that have no worktree yet, grouped by org.\n"
             "Enter on one starts it: a worktree, a workspace and a session, the "
-            "same as typing its id into New."
+            "same as typing its id into New.\n"
+            "c in there checks an org's tracker setup — credentials, connection, "
+            "team or board names, declared MCP server."
         ),
         "sync": (
             "Reconcile every repo now instead of waiting for the tick — the "
@@ -400,7 +402,7 @@ class FooterBar(Horizontal):
         ):
             return True
         # Both ticket keys ride the same gate: with no repo tracking tickets,
-        # `t` has nothing to open and `i` has nothing to list. It is a config
+        # `t` has nothing to open and `T` has nothing to list. It is a config
         # fact, not a per-row one, so it is resolved once in `compose` rather
         # than re-read on every cursor move.
         if action in ("open_ticket", "ticket_inbox") and not self._show_tickets:

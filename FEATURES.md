@@ -127,7 +127,7 @@ terminal outside your registered repos shows no PR at all.
 | `m` | Mute / unmute this PR's nudges, indefinitely |
 | `z` | Snooze / wake — quiet until the PR actually changes |
 | `n` | Start something new |
-| `i` | The ticket inbox — what's assigned to you that you haven't started |
+| `T` | The ticket inbox — what's assigned to you that you haven't started |
 | `h` | Park / reveal / un-park a repo |
 | `s` | Reconcile every repo now |
 | `q` | Quit |
@@ -354,9 +354,9 @@ Credentials are env vars, always — config stores the *name* of the variable, n
 value. And spawned agents don't get them: an agent reads its tracker through the MCP
 connector, so the REST keys are stripped from every spawn's environment.
 
-### The ticket inbox — press `i`
+### The ticket inbox — press `T`
 
-Every row on the dashboard is work you've **started**. `i` opens the other half: tickets
+Every row on the dashboard is work you've **started**. `T` opens the other half: tickets
 assigned to you, in an active state, that have no worktree yet — grouped by org, newest
 first.
 
@@ -368,7 +368,8 @@ first.
 │ ? PE-430   Docs pass on the api    Progress 6h│
 │ ▸ widgets-co (1)                              │
 │                                               │
-│ enter opens an org, or starts a ticket · esc  │
+│ enter opens an org or starts a ticket · c     │
+│ checks this org's setup · esc to close        │
 │ ? several repos claim it — enter picks one    │
 └───────────────────────────────────────────────┘
 ```
@@ -402,7 +403,7 @@ Seven things make it stay useful rather than becoming a second tracker tab:
 
 - **It's the exact complement of the dashboard.** The moment a ticket has a worktree it
   leaves the inbox and becomes a row — within about 30 seconds, whether the worktree came
-  from `i`, from `n`, or from you running `git worktree add` by hand.
+  from `T`, from `n`, or from you running `git worktree add` by hand.
 - **Only what you'd plausibly start today.** Assigned to you and in an active state — Todo
   or In Progress. Backlog and triage are excluded, and so is anything finished. That's a
   state *category* in each tracker's own vocabulary, so renaming your columns doesn't
@@ -432,8 +433,41 @@ Seven things make it stay useful rather than becoming a second tracker tab:
   had rather than flashing empty and refilling a cycle later. Nothing you see is ever the
   shape of a failed fetch.
 
-`t` opens the highlighted ticket in the browser. There's nothing else: no close, no mute,
-no nudge — the inbox is a list and a way in, not a second place to manage work.
+`t` opens the highlighted ticket in the browser.
+
+**`c` checks an org's tracker setup** — the answer to "why is this org empty?". An empty
+fold has one appearance and several causes: an unset credential, a team key or board name
+that doesn't exist, a tracker that couldn't be reached, or genuinely nothing assigned to
+you. The check names which, per repo in the org:
+
+```text
+widgets
+  provider: linear
+  credential ACME_LINEAR_KEY: set
+  connection: ok
+  scope: PE, PLAT
+  scope names: FAIL — the tracker knows no PLAT
+  mcp server: linear-acme
+  mcp reachable: connected
+```
+
+A credential is reported by variable *name*, never by value. A failed connection
+suppresses the scope verdict rather than blaming your config — an unauthenticated
+credential looks exactly like a tracker that recognises none of your teams.
+
+The MCP server line is cockpit's one probe: it asks `claude mcp list`, in the repo's own
+directory since MCP scope is partly per project, and reports `connected`, whatever else
+Claude Code says about it (`needs authentication`), or that the listing doesn't name it.
+That last one is worded as a probable miss rather than a fact, because a claude.ai-managed
+connector handshakes asynchronously and can read as absent while it's live. Nothing in
+cockpit is gated on the answer — it's a line in a report you're reading, not a switch.
+
+Press `c` on an org header or on any ticket inside it. On an **empty** inbox it checks
+every org you've configured, which is the case it exists for: an org the tracker answered
+nothing for has no header row to stand on.
+
+There's nothing else: no close, no mute, no nudge — the inbox is a list and a way in, not
+a second place to manage work.
 
 It needs no config beyond the `tickets` block you already set up, and it appears only if
 some repo has a tracker.

@@ -527,7 +527,7 @@ each worktree into one `wt-cost` cell for the table's `$` column. It reads only
 The **ticket inbox** is the one payload keyed by neither branch, cwd nor session:
 an unstarted ticket has no worktree, so there is no cell key to give it. It is
 written per *org bucket* by the cross-repo pass at the end of `cycle_all` and
-read only by the TUI's `i` screen. The fast tick touches it for exactly one
+read only by the TUI's `T` screen. The fast tick touches it for exactly one
 thing — re-stamping each ticket's `in_flight` flag against the worktrees it just
 listed — which is what keeps the inbox the exact complement of the table without
 either surface reading the other.
