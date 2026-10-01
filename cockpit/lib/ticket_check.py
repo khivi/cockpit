@@ -32,6 +32,7 @@ the directory rather than of the repo entry.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -161,12 +162,24 @@ def _mcp_health(
     return listing.get(server, "")
 
 
-def check_bucket(cfg: dict, bucket: str) -> list[RepoCheck]:
-    """Every repo in `bucket`, in config order, sharing one MCP probe per cwd."""
+def check_bucket(
+    cfg: dict, bucket: str, *, on_repo: Callable[[str], None] | None = None
+) -> list[RepoCheck]:
+    """Every repo in `bucket`, in config order, sharing one MCP probe per cwd.
+
+    `on_repo` is called with each repo's label *before* it is checked — the repo
+    is the only unit a caller can report progress against, since one `check_repo`
+    is up to three round-trips with nothing observable between them. It is also
+    the cancellation seam: a callback that raises stops the run where it stands,
+    which is the only way to interrupt a blocking fetch cooperatively.
+    """
     mcp_cache: dict[str, dict[str, str] | None] = {}
-    return [
-        check_repo(cfg, repo, mcp_cache=mcp_cache) for repo in bucket_repos(cfg, bucket)
-    ]
+    checks = []
+    for repo in bucket_repos(cfg, bucket):
+        if on_repo is not None:
+            on_repo(_repo_label(repo))
+        checks.append(check_repo(cfg, repo, mcp_cache=mcp_cache))
+    return checks
 
 
 def _repo_lines(check: RepoCheck) -> list[str]:

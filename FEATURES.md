@@ -466,6 +466,11 @@ Press `c` on an org header or on any ticket inside it. On an **empty** inbox it 
 every org you've configured, which is the case it exists for: an org the tracker answered
 nothing for has no header row to stand on.
 
+While it runs you get a spinner and the name of the repo being asked about, and `esc`
+cancels. Cancelling shows no report at all: the check is several round-trips per repo, and
+a half-finished diagnosis reads as a verdict. The round-trip already in flight finishes
+and is thrown away, so an unreachable tracker still takes its own timeout to let go.
+
 There's nothing else: no close, no mute, no nudge — the inbox is a list and a way in, not
 a second place to manage work.
 
