@@ -28,6 +28,7 @@ from cockpit.lib.jira import (
     parse_jira_footer_links,
     parse_jira_footers,
     transition_issue,
+    verify_project_keys,
 )
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -468,3 +469,40 @@ def test_fetch_my_open_states_filter_client_side_casefolded():
             ["PROJ"], site_url=SITE, email=EMAIL, token=TOKEN, states=["IN REVIEW"]
         )
     assert _field(out) == ["PROJ-1", "PROJ-3"]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# verify_project_keys — the ticket check's scope half
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_verify_project_keys_asks_per_key_so_pagination_cannot_hide_one():
+    urls: list[str] = []
+
+    def fake_urlopen(req, timeout=None):
+        urls.append(req.full_url)
+        if req.full_url.endswith("/PROJ"):
+            return _FakeResp({"key": "PROJ"})
+        raise urllib.error.HTTPError(req.full_url, 404, "nope", {}, BytesIO(b""))
+
+    with patch("cockpit.lib.jira.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = verify_project_keys(
+            ["PROJ", "GONE"], site_url=SITE, email=EMAIL, token=TOKEN
+        )
+    assert out == ["PROJ"]
+    assert urls == [
+        f"{SITE}/rest/api/3/project/PROJ",
+        f"{SITE}/rest/api/3/project/GONE",
+    ]
+
+
+def test_verify_project_keys_distinguishes_couldnt_ask_from_matched_none():
+    with patch("cockpit.lib.jira.urllib.request.urlopen") as urlopen:
+        assert verify_project_keys([], site_url=SITE, email=EMAIL, token=TOKEN) == []
+        assert (
+            verify_project_keys(["PROJ"], site_url="", email=EMAIL, token=TOKEN) is None
+        )
+        assert (
+            verify_project_keys(["PROJ"], site_url=SITE, email="", token=TOKEN) is None
+        )
+        urlopen.assert_not_called()

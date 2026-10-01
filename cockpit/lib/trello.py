@@ -471,6 +471,35 @@ def fetch_myself(*, key: str | None = None, token: str | None = None) -> str | N
     return None
 
 
+def verify_boards(
+    boards: list[str], *, key: str | None = None, token: str | None = None
+) -> list[str] | None:
+    """Which of `boards` this account has an open board named, or None when it
+    couldn't be asked.
+
+    `tickets.board` is matched by *name*, casefolded, so a declared name the
+    account can't see contributes no cards and reads as an empty inbox. An
+    **archived** board is reported as unseen for the same reason the inbox drops
+    its cards: they stay open forever, so a retired board declared here is a
+    misconfiguration rather than a working scope.
+
+    Returned in the caller's spelling; `[]` means the account matched none.
+    """
+    wanted = [b for b in boards if b]
+    if not wanted:
+        return []
+    creds = _creds(key, token)
+    if not creds:
+        return None
+    names = _board_and_list_names(*creds)
+    if names is None:
+        return None
+    open_boards = {
+        name.casefold() for name, closed in names[0].values() if name and not closed
+    }
+    return [b for b in wanted if b.casefold() in open_boards]
+
+
 def fetch_card_meta(
     short_link: str, *, key: str | None = None, token: str | None = None
 ) -> dict | None:

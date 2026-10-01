@@ -463,7 +463,7 @@ def _validate_trello_boards(cfg: dict) -> None:
         name = repo.get("name") or repo.get("path", "?")
         print(
             f"{yellow('cockpit:')} repo {name!r} tracks Trello but declares no "
-            f"tickets.board — its cards stay out of the ticket inbox (`i`) and a "
+            f"tickets.board — its cards stay out of the ticket inbox (`T`) and a "
             f"card URL won't route to it. Set tickets.board to the board name, "
             f"or a list of them.",
             file=sys.stderr,
@@ -496,7 +496,7 @@ def _validate_inbox_states(cfg: dict) -> None:
         print(
             f"{yellow('cockpit:')} repo {name!r} tracks GitHub issues, which "
             f"have no named states — tickets.inbox_states is ignored there; the "
-            f"ticket inbox (`i`) keeps showing every open assigned issue.",
+            f"ticket inbox (`T`) keeps showing every open assigned issue.",
             file=sys.stderr,
             flush=True,
         )

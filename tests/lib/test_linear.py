@@ -10,6 +10,7 @@ dispatch. The daemon's direct Linear calls are exercised below with a mocked
 from __future__ import annotations
 
 import json
+import urllib.error
 from unittest.mock import patch
 
 from cockpit.lib.linear import (
@@ -27,6 +28,7 @@ from cockpit.lib.linear import (
     parse_linear_footer_links,
     parse_linear_footers,
     update_ticket_state,
+    verify_team_keys,
 )
 
 
@@ -738,3 +740,48 @@ def test_fetch_my_open_empty_states_keep_the_active_type_filter():
     for body in captured:
         assert 'state:{type:{in:["unstarted","started"]}}' in body["query"]
         assert "$states" not in body["query"]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# verify_team_keys — the ticket check's scope half
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_verify_team_keys_filters_by_the_asked_keys_not_a_full_listing():
+    """Listing every team would be paginated, so a key on page two would come
+    back as "that team doesn't exist"."""
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data.decode())
+        return _FakeResp({"data": {"teams": {"nodes": [{"key": "PE"}]}}})
+
+    with patch("cockpit.lib.linear.urllib.request.urlopen", side_effect=fake_urlopen):
+        out = verify_team_keys(["pe", "NOPE"], api_key="k")
+    assert out == ["pe"]
+    assert captured["body"]["variables"] == {"keys": ["PE", "NOPE"]}
+    assert "filter:{key:{in:$keys}}" in captured["body"]["query"]
+
+
+def test_verify_team_keys_distinguishes_couldnt_ask_from_matched_none():
+    with patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen:
+        assert verify_team_keys([], api_key="k") == []
+        urlopen.assert_not_called()
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("cockpit.lib.linear.urllib.request.urlopen") as urlopen,
+    ):
+        assert verify_team_keys(["PE"]) is None
+        urlopen.assert_not_called()
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        side_effect=urllib.error.URLError("down"),
+    ):
+        assert verify_team_keys(["PE"], api_key="k") is None
+    with patch(
+        "cockpit.lib.linear.urllib.request.urlopen",
+        side_effect=lambda req, timeout=None: _FakeResp(
+            {"data": {"teams": {"nodes": []}}}
+        ),
+    ):
+        assert verify_team_keys(["PE"], api_key="k") == []

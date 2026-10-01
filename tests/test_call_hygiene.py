@@ -305,21 +305,42 @@ def test_starship_is_a_strict_cache_reader() -> None:
 # ── slack.no-preflight ────────────────────────────────────────────────
 
 
-@pytest.mark.covers("slack.no-preflight~1")
-def test_no_source_shells_out_to_claude_mcp_list() -> None:
-    """`claude mcp list` health-checks by connecting, which false-negatives
-    on an async-handshaking managed connector — the exact setup this feature
-    targets. The ban is repo-wide and provider-neutral: Slack, Linear, Jira
-    and Trello all carry the same "retry-then-STOP, no pre-flight" rule.
+#: The one source allowed to shell `claude mcp list`. It decides nothing — the
+#: ticket check reports what it says to whoever pressed `c`.
+_MCP_PROBE = COCKPIT_ROOT / "lib" / "mcp.py"
+
+
+@pytest.mark.covers("slack.no-preflight~2")
+def test_only_the_diagnostic_leaf_shells_out_to_claude_mcp_list() -> None:
+    """`claude mcp list` health-checks by connecting, which false-negatives on
+    an async-handshaking managed connector — the exact setup the ticket feature
+    targets. So the ban is on a probe that *gates*, repo-wide and
+    provider-neutral: Slack, Linear, Jira and Trello all carry the same
+    "retry-then-STOP, no pre-flight" rule.
+
+    `lib/mcp.py` is the one exception and stays one by being unreachable from
+    anything that decides: only the ticket check imports it, so a spawn, a tick
+    or a gate cannot acquire a probe by calling something that calls it.
     `tests/test_spawn.py::test_spawn_never_shells_out_to_claude_mcp_list`
-    covers only the Linear spawn path at runtime; this is the tree-wide,
-    every-provider half."""
+    pins the Linear spawn path at runtime; this is the tree-wide half."""
     offenders: list[str] = []
     for path in sorted(COCKPIT_ROOT.rglob("*.py")):
+        if path == _MCP_PROBE:
+            continue
         for phrase in _call_argument_phrases(_parse(path)):
             if "claude mcp list" in phrase:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {phrase!r}")
     assert not offenders, f"shells out to claude mcp list: {offenders}"
+
+    importers = sorted(
+        str(path.relative_to(COCKPIT_ROOT))
+        for path in COCKPIT_ROOT.rglob("*.py")
+        if path != _MCP_PROBE
+        and any(p.endswith(".mcp") for p in _imported_module_paths(_parse(path)))
+    )
+    assert importers == [
+        "lib/ticket_check.py"
+    ], f"the MCP probe reached a second caller: {importers}"
 
 
 # ── events.cursor-file ─────────────────────────────────────

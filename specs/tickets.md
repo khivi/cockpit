@@ -80,6 +80,34 @@
   answer is a one-cell marker in the handle's ellipsis budget, never a Repo
   column.
 
+## The per-org check
+
+- [ticket-check.bucket~1] The check resolves a bucket to the repos whose org —
+  or whose own name, where they declare none — matches it, in config order.
+- [ticket-check.no-provider~1] A repo tracking no tickets reaches no tracker
+  and is reported as contributing none.
+- [ticket-check.credentials-by-name~1] A credential is reported as set or unset
+  by env var name; its value never reaches the report.
+- [ticket-check.connection-first~1] Given a credential that cannot
+  authenticate, the connection is reported failed and no scope verdict is
+  claimed — an unauthenticated scope answer is indistinguishable from the
+  tracker knowing none of them.
+- [ticket-check.scope-names~1] Given a declared scope the tracker does not
+  recognise, the check names that scope — the fault a connection check alone
+  cannot see, since a typo'd team key or board authenticates fine and then
+  answers with nothing.
+- [ticket-check.couldnt-ask~1] A scope the tracker could not be asked about is
+  reported as unchecked, never as fine.
+- [ticket-check.mcp-probe~1] A declared MCP server is probed through
+  `claude mcp list` and reported with its health; a repo declaring none is not
+  probed, and one probe is shared by every repo in the bucket at one cwd.
+- [ticket-check.mcp-probe-never-gates~1] The probe gates nothing, and "the
+  listing did not name it" stays distinct from "the probe could not be read" —
+  a managed connector has been reported absent while live, so the first is
+  reported as a probable miss and the second as unchecked.
+- [ticket-check.read-only~1] The check writes nothing: no cache cell, no
+  config, no tracker mutation.
+
 ## Orgs
 
 - [orgs.merge~1] Given an org block and a repo block both carrying the same

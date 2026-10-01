@@ -301,7 +301,7 @@ cockpit joins a PR to its worktree, workspace, row and cache **by head branch**,
 
 A Slack permalink classifies as `slack` mode, user-initiated only. Spawn synthesizes a codename branch seeded on the thread's **stable identity** (channel id + message ts), NOT the raw URL, so re-spawns stay idempotent. `_slack_prompt` delegates the read to the in-session MCP. **Never** add a `claude mcp list` pre-flight gate — the probe is unreliable for claude.ai-managed connectors, so a positive-detection gate would silently disable the feature; the prompt's own retry-then-STOP logic handles an absent connector.
 
-**This rule is repo-wide.** Linear's probe hit exactly that false-negative — `claude mcp list` health-checks by connecting, and a managed connector handshakes asynchronously — so it reported Linear absent while live and dropped the ticket fetch on precisely the setup the feature targets. Removed; `prompts/linear.txt` carries the same retry-then-STOP step as `prompts/jira.txt`. **Do not** reintroduce a pre-flight for any provider.
+**This rule is repo-wide, and bans a probe that *gates* rather than the probe itself** — the one sanctioned reader is the ticket check's `lib/mcp.py`, which decides nothing (see that section). Linear's probe hit exactly that false-negative — `claude mcp list` health-checks by connecting, and a managed connector handshakes asynchronously — so it reported Linear absent while live and dropped the ticket fetch on precisely the setup the feature targets. Removed; `prompts/linear.txt` carries the same retry-then-STOP step as `prompts/jira.txt`. **Do not** reintroduce a pre-flight for any provider.
 
 ### Prompt prose lives in packaged `cockpit/prompts/*.txt`, not Python string lists
 
@@ -516,7 +516,9 @@ A falsy/failed identity fetch is never cached; a failed write clears the marker 
 
 ### The ticket inbox — the one surface NOT derived from `git worktree list`
 
-`i` opens `TicketsScreen`: tickets assigned to me, in an active state, with no worktree.
+`T` opens `TicketsScreen`: tickets assigned to me, in an active state, with no worktree.
+It is `T` rather than `i` because `t` already opens the cursor row's ticket, so the inbox
+sits on the shifted sibling of the key that already means *ticket*.
 Every row in the main table is work already started; this is the complement, and defining
 it *as* the complement is what stops the two surfaces restating each other. Collected per
 repo by `cycle.py::_collect_ticket_inbox`, drained once by
@@ -700,8 +702,19 @@ repo by `cycle.py::_collect_ticket_inbox`, drained once by
   helper below `load_config`. `ticket_inbox.py` never reads it at all — the label is an
   argument.
 - **Passive: no cell the daemon derives, no send, no config field.** It does not approach
-  the three-automatic-sends bar. `i` itself is not `--dry` gated (it reads payloads);
+  the three-automatic-sends bar. `T` itself is not `--dry` gated (it reads payloads);
   `_start_ticket` is, like every other outward key.
+
+**`c` in the inbox diagnoses one bucket — `lib/ticket_check.py`, the only ticket surface that may ask a tracker a question the daemon never asks.** An empty fold has one appearance and four causes (unset credential, typo'd scope, unreachable tracker, nothing assigned), and the collector's `None`-vs-`[]` distinction separates only the third; every *configuration* fault arrives as the second. Eight rules:
+
+- **It asks through the `TicketProvider`, so nothing in it branches on a provider name** — two new fields, `whoami` (each provider's own only-mine identity fetch, which is the cheapest call that proves a credential works) and `verify_scopes` (which declared `tickets.keys` / `tickets.board` the tracker actually knows). GitHub's `verify_scopes` reaches nothing, since an issue ref carries its own repo and `inbox_scopes` is therefore empty.
+- **`verify_scopes` asks about the declared scopes, never for a listing.** `teams(filter:{key:{in:…}})`, a `GET /project/{key}` per key — a paginated "list everything" would truncate a scope onto page two and report it as nonexistent, which is the same lie the check exists to catch, inverted.
+- **A failed connection suppresses the scope verdict.** A scope answer from an unauthenticated credential is indistinguishable from "the tracker knows none of these", and blaming the config there sends the reader after the wrong thing. `whoami` therefore runs first and `verify_scopes` only on a pass.
+- **`None` and `[]` stay distinct all the way into the report** — `unknown_scopes is None` renders as *not checked*, never as *all fine*. The `fetch_my_open` rule, one layer up.
+- **A credential is reported by env var NAME.** `bool(os.environ.get(name))`, the `config_cmd` contract — a value never enters the report, which is rendered into a screen a bug report screenshots.
+- **The declared MCP server is PROBED, and this is cockpit's one probe — `lib/mcp.py` over `claude mcp list`.** It is the exception to the repo-wide no-pre-flight rule and does not weaken it, because that rule bans a probe that *gates*: the deleted pre-flight disabled the ticket fetch on a false negative, silently, on exactly the setup the feature targeted. A diagnostic gates nothing, and a wrong line costs a human reading the report a second look. Four sub-rules. The probe returns **None for "couldn't read it" and never `{}`** — collapsing those two is the paid-for bug itself, and `_mcp_verdict` keeps them apart on screen (*not checked* vs *does not name it*). **"Not listed" is reported as a probable miss, never as a verdict**, since a managed connector handshakes asynchronously and has read as absent while live. It runs **in the repo's cwd**, because MCP scope is partly per project. And it is **deduped per cwd across a bucket** (the one call here worth it — it connects to every server) and **skipped entirely for a repo declaring no server**. **Do not** let it reach a tick, a cell, or any gate.
+- **It is read-only and not `--dry` gated.** No cell, no pill, no `pill_state`, no tracker write — `broadcast`'s shape. The gate covers the row keys that reach outside and *change* something.
+- **Per repo, deliberately not per credential.** The inbox groups its fetch by credential because asking the wrong workspace answers about a different ticket; a check that did the same could not report a repo whose own `tickets` block overrides the org's, which is exactly the config most likely to be wrong. **`c` on an empty inbox checks every bucket**, since a bucket the tracker answered nothing for has no header row to stand on — the one org a check is most wanted for.
 
 ### `gh api` ignores the cwd — the host is stated per call, never process-wide
 

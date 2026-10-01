@@ -210,6 +210,13 @@ _VIEWER_QUERY = "query{viewer{id}}"
 # through this once per team.
 _TEAM_STATES_QUERY = "query($id:String!){team(id:$id){states{nodes{id name}}}}"
 
+# Which of the asked-about team keys this workspace actually has. Filtered by
+# the keys rather than listing every team, so the answer can't be truncated by
+# pagination into a false "that key doesn't exist".
+_TEAMS_BY_KEY_QUERY = (
+    "query($keys:[String!]!){teams(filter:{key:{in:$keys}}){nodes{key}}}"
+)
+
 # The one mutation in this module: move a ticket to a workflow state by UUID.
 _ISSUE_UPDATE_MUTATION = (
     "mutation($id:String!,$stateId:String!){"
@@ -501,6 +508,42 @@ def fetch_viewer_id(*, api_key: str | None = None) -> str | None:
         _VIEWER_QUERY, {}, api_key=key, timeout=_TICKET_STATE_TIMEOUT_SECONDS
     )
     return ((data or {}).get("viewer") or {}).get("id") or None
+
+
+def verify_team_keys(
+    keys: list[str], *, api_key: str | None = None
+) -> list[str] | None:
+    """Which of `keys` this workspace has a team for, or None when it couldn't
+    be asked.
+
+    A team key is workspace-scoped, so a `tickets.keys` entry the credential's
+    workspace doesn't know is a typo or a key belonging to another workspace —
+    either way the inbox fetch silently answers with nothing for it.
+
+    Matched case-insensitively against Linear's own canonical (uppercase) keys
+    and returned in the caller's spelling, so the answer names what the config
+    declared. None — never raises — on an unset key or any API failure; `[]`
+    means the workspace recognised none of them.
+    """
+    wanted = [k for k in keys if k]
+    if not wanted:
+        return []
+    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    if not key:
+        return None
+    data = _post_graphql(
+        _TEAMS_BY_KEY_QUERY,
+        {"keys": [k.upper() for k in wanted]},
+        api_key=key,
+        timeout=_TICKET_STATE_TIMEOUT_SECONDS,
+    )
+    if data is None:
+        return None
+    known = {
+        str(n.get("key") or "").casefold()
+        for n in ((data.get("teams") or {}).get("nodes") or [])
+    }
+    return [k for k in wanted if k.casefold() in known]
 
 
 def fetch_ticket_meta(ticket_id: str, *, api_key: str | None = None) -> dict | None:

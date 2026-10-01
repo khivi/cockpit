@@ -4128,3 +4128,117 @@ async def test_footer_lists_the_inbox_key_next_to_new():
 
     order = list(FooterBar.GLOBAL_ORDER)
     assert order.index("ticket_inbox") == order.index("new_workspace") + 1
+
+
+async def test_the_inbox_key_is_shift_t():
+    """`T`, not `i`: `t` already opens the cursor row's ticket, so the inbox
+    sits on the shifted sibling of the key that means "ticket"."""
+    assert ("T", "ticket_inbox", "Tickets") in CockpitApp.BINDINGS
+    assert not [b for b in CockpitApp.BINDINGS if b[0] == "i"]
+
+
+async def test_c_in_the_inbox_checks_the_cursor_rows_org(monkeypatch):
+    """The check is the app's: the screen reaches no tracker, so `c` posts a
+    message naming the bucket and nothing more."""
+    from cockpit.tui.widgets.config_screen import ConfigScreen
+
+    app, _ = _make_app()
+    asked: list[str] = []
+    shown: list = []
+    monkeypatch.setattr(
+        "cockpit.lib.ticket_check.check_bucket",
+        lambda cfg, bucket: asked.append(bucket) or [],
+    )
+    monkeypatch.setattr("cockpit.tui.app.load_config", lambda: {"repos": []})
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_ticket_inboxes", lambda: {"acme": [_inbox_ticket()]}
+    )
+    monkeypatch.setattr(
+        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    async with app.run_test() as pilot:
+        app.action_ticket_inbox()
+        await pilot.pause()
+        monkeypatch.setattr(
+            CockpitApp,
+            "push_screen",
+            lambda self, screen, cb=None: shown.append(screen),
+        )
+        await pilot.press("c")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert asked == ["acme"]
+        assert isinstance(shown[0], ConfigScreen)
+        assert "acme" in shown[0]._title
+
+
+async def test_c_from_inside_a_fold_still_names_that_org(monkeypatch):
+    """A ticket row's key is bucket-qualified, so the check works from inside
+    the fold as well as on its header."""
+    app, _ = _make_app()
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_ticket_inboxes", lambda: {"acme": [_inbox_ticket()]}
+    )
+    async with app.run_test() as pilot:
+        app.action_ticket_inbox()
+        await pilot.pause()
+        await pilot.press("down")
+        screen = app.screen
+        assert isinstance(screen, TicketsScreen)
+        assert screen._cursor_bucket() == "acme"
+
+
+async def test_c_on_an_empty_inbox_checks_every_bucket(monkeypatch):
+    """The fold whose setup is broken is the one with no header row: a bucket
+    the tracker answered nothing for is written empty, so there is nothing to
+    stand on."""
+    app, _ = _make_app()
+    asked: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.lib.ticket_check.check_bucket",
+        lambda cfg, bucket: asked.append(bucket) or [],
+    )
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [{"name": "widgets", "org": "acme"}, {"name": "solo"}]},
+    )
+    monkeypatch.setattr("cockpit.tui.app.load_ticket_inboxes", dict)
+    monkeypatch.setattr(
+        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    async with app.run_test() as pilot:
+        app.action_ticket_inbox()
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert asked == ["acme", "solo"]
+
+
+async def test_the_check_is_not_dry_gated(monkeypatch):
+    """It reads a tracker and mutates nothing — the gate covers the keys that
+    reach outside and change something."""
+    app = CockpitApp(
+        slow_tick=lambda *a, **k: None,
+        fast_tick=lambda: None,
+        slow_secs=300,
+        fast_secs=30,
+        dry=True,
+    )
+    app._publish_inventory = lambda: None  # type: ignore[method-assign]
+    asked: list[str] = []
+    monkeypatch.setattr(
+        "cockpit.lib.ticket_check.check_bucket",
+        lambda cfg, bucket: asked.append(bucket) or [],
+    )
+    monkeypatch.setattr("cockpit.tui.app.load_config", lambda: {"repos": []})
+    monkeypatch.setattr(
+        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    async with app.run_test() as pilot:
+        app.on_tickets_screen_check(TicketsScreen.Check("acme"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert asked == ["acme"]
