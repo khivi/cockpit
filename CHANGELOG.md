@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.14.0](https://github.com/khivi/cockpit/compare/v3.13.0...v3.14.0) (2026-10-01)
+
+
+### Features
+
+* **tui:** show the ticket check's progress, and let esc cancel it ([#559](https://github.com/khivi/cockpit/issues/559)) ([92459d3](https://github.com/khivi/cockpit/commit/92459d33e7de9b03e1870356a5b0f8e5afb33f9e))
+
 ## [3.13.0](https://github.com/khivi/cockpit/compare/v3.12.0...v3.13.0) (2026-10-01)
 
 
