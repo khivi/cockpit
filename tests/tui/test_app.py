@@ -4133,8 +4133,10 @@ async def test_footer_lists_the_inbox_key_next_to_new():
 def _recording_check(asked: list[str]):
     """A `check_bucket` stand-in that records the bucket and reports nothing."""
 
-    def _check(cfg, bucket):
+    def _check(cfg, bucket, *, on_repo=None):
         asked.append(bucket)
+        if on_repo is not None:
+            on_repo("widgets")
         return []
 
     return _check
@@ -4179,8 +4181,8 @@ async def test_c_in_the_inbox_checks_the_cursor_rows_org(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert asked == ["acme"]
-        assert isinstance(shown[0], ConfigScreen)
-        assert "acme" in shown[0]._title
+        report = [s for s in shown if isinstance(s, ConfigScreen)]
+        assert report and "acme" in report[0]._title
 
 
 async def test_c_from_inside_a_fold_still_names_that_org(monkeypatch):
@@ -4250,3 +4252,66 @@ async def test_the_check_is_not_dry_gated(monkeypatch):
         await pilot.pause()
         await app.workers.wait_for_complete()
         assert asked == ["acme"]
+
+
+async def test_the_check_shows_progress_while_it_runs(monkeypatch):
+    """The check reaches a tracker, so it can sit for seconds with nothing on
+    screen. The overlay goes up before the first round-trip and names the repo
+    being asked about."""
+    from cockpit.tui.widgets.check_progress_screen import CheckProgressScreen
+
+    app, _ = _make_app()
+    seen: list[str] = []
+
+    def _check(cfg, bucket, *, on_repo=None):
+        on_repo("widgets")
+        assert isinstance(app.screen, CheckProgressScreen)
+        seen.append(app.screen._status)
+        return []
+
+    monkeypatch.setattr("cockpit.lib.ticket_check.check_bucket", _check)
+    monkeypatch.setattr("cockpit.tui.app.load_config", lambda: {"repos": []})
+    monkeypatch.setattr(
+        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    async with app.run_test() as pilot:
+        app.on_tickets_screen_check(TicketsScreen.Check("acme"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert seen == ["acme · widgets"]
+        assert not isinstance(app.screen, CheckProgressScreen)
+
+
+async def test_escape_cancels_a_running_check_and_shows_no_report(monkeypatch):
+    """A thread worker can't be interrupted mid-fetch, so cancellation unwinds
+    at the repo boundary — and a half-finished diagnosis is never reported, since
+    it reads as a verdict."""
+    from cockpit.tui.widgets.check_progress_screen import CheckProgressScreen
+    from cockpit.tui.widgets.config_screen import ConfigScreen
+
+    app, _ = _make_app()
+    done: list[str] = []
+
+    def _check(cfg, bucket, *, on_repo=None):
+        on_repo("widgets")
+        done.append(bucket)
+        app.screen.cancelled = True  # the user presses escape during this bucket
+        return []
+
+    monkeypatch.setattr("cockpit.lib.ticket_check.check_bucket", _check)
+    monkeypatch.setattr(
+        "cockpit.tui.app.load_config",
+        lambda: {"repos": [{"name": "widgets", "org": "acme"}, {"name": "solo"}]},
+    )
+    monkeypatch.setattr(
+        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
+    )
+    async with app.run_test() as pilot:
+        app.on_tickets_screen_check(TicketsScreen.Check(""))
+        await pilot.pause()
+        assert isinstance(app.screen, CheckProgressScreen)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert done == ["acme"]
+        assert not isinstance(app.screen, ConfigScreen)

@@ -109,6 +109,7 @@ from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
 from cockpit.orchestrators.teardown import resolve_pr_state, worktree_state_blockers
 from cockpit.tui.widgets.ask_screen import AskScreen
+from cockpit.tui.widgets.check_progress_screen import CheckProgressScreen
 from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
@@ -145,6 +146,15 @@ RELEASE_NOTES_URL = "https://github.com/khivi/cockpit/releases"
 # `cockpit` package and intra-package imports die (`'cockpit' is not a package`).
 # Detached output lands in `spawn.log`.
 _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
+
+
+class _CheckCancelled(Exception):
+    """Raised out of the ticket check's `on_repo` hook when `escape` was pressed.
+
+    An exception rather than a return value because the hook sits between two
+    blocking fetches: a thread worker cannot be interrupted, so unwinding at the
+    one boundary the check offers is the whole of the cancellation.
+    """
 
 
 def _pr_from_payload(p: dict) -> PR:
@@ -1400,27 +1410,78 @@ class CockpitApp(App[None]):
         """
         self._run_ticket_check(event.bucket)
 
-    @work(thread=True, group="ticket-check", exit_on_error=False)
     def _run_ticket_check(self, bucket: str) -> None:
+        """Push the progress overlay, then run the check against it.
+
+        The overlay is pushed on the UI thread *before* the worker starts, so it
+        is on screen for the first round-trip rather than after it, and so the
+        worker has something to report into and read cancellation from.
+        """
+        title = f"tickets check: {bucket}" if bucket else "tickets check: all orgs"
+        progress = CheckProgressScreen(title)
+        self.push_screen(progress)
+        self._ticket_check_worker(bucket, title, progress)
+
+    @work(thread=True, group="ticket-check", exit_on_error=False)
+    def _ticket_check_worker(
+        self, bucket: str, title: str, progress: CheckProgressScreen
+    ) -> None:
         """Run the check off the UI thread, then show it in a `ConfigScreen`.
 
-        Threaded for the same reason `_route_ticket` is: up to two round-trips
+        Threaded for the same reason `_route_ticket` is: up to three round-trips
         per repo. `""` means every configured bucket, which is what `c` on an
         empty inbox asks for — a bucket the tracker answered nothing for has no
         header row to stand on.
+
+        `escape` cancels, and the cancellation is cooperative: a thread worker
+        cannot be interrupted mid-fetch, so the only honest seam is the repo
+        boundary `check_bucket`'s `on_repo` hook already marks. A cancelled run
+        pushes no report — the overlay has already dismissed itself, and a
+        half-finished diagnosis reads as a verdict.
         """
         from cockpit.lib.ticket_check import all_buckets, check_bucket, format_report
 
         cfg = load_config()
         buckets = [bucket] if bucket else all_buckets(cfg)
+        reports = []
         try:
-            body = "\n\n".join(format_report(b, check_bucket(cfg, b)) for b in buckets)
+            for b in buckets:
+                reports.append(
+                    format_report(
+                        b,
+                        check_bucket(cfg, b, on_repo=self._check_progress(progress, b)),
+                    )
+                )
+        except _CheckCancelled:
+            return
         except (OSError, RuntimeError) as e:
-            body = f"the check could not finish: {e}"
-        title = f"tickets check: {bucket}" if bucket else "tickets check: all orgs"
-        self.call_from_thread(
-            self.push_screen, ConfigScreen(title, body or "(nothing configured)")
-        )
+            reports = [f"the check could not finish: {e}"]
+        body = "\n\n".join(reports) or "(nothing configured)"
+        self.call_from_thread(self._show_check_report, progress, title, body)
+
+    def _show_check_report(
+        self, progress: CheckProgressScreen, title: str, body: str
+    ) -> None:
+        """Swap the overlay for the report (UI thread).
+
+        One hop rather than a dismiss and a push, so the two can't interleave
+        with anything the user pressed in between.
+        """
+        if progress in self.screen_stack:
+            progress.dismiss()
+        self.push_screen(ConfigScreen(title, body))
+
+    def _check_progress(
+        self, progress: CheckProgressScreen, bucket: str
+    ) -> Callable[[str], None]:
+        """The `on_repo` hook: repaint the overlay, or abort if it was cancelled."""
+
+        def report(repo: str) -> None:
+            if progress.cancelled:
+                raise _CheckCancelled
+            self.call_from_thread(progress.set_status, f"{bucket} · {repo}")
+
+        return report
 
     def on_tickets_screen_start(self, event: TicketsScreen.Start) -> None:
         """`enter` on a ticket row — the inbox stays open behind the spawn.

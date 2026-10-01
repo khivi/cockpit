@@ -239,6 +239,32 @@ def test_check_bucket_walks_the_bucket_in_config_order(_provider):
     assert [c.repo for c in check_bucket(cfg, "acme")] == ["widgets", "gadgets"]
 
 
+def test_on_repo_fires_before_each_repo_is_checked(_provider):
+    """The repo is the only unit with an observable boundary — one `check_repo`
+    is up to three round-trips with nothing between them."""
+    _provider(_Provider())
+    cfg = _cfg(_repo("widgets", org="acme"), _repo("gadgets", org="acme"))
+    seen: list[str] = []
+    check_bucket(cfg, "acme", on_repo=seen.append)
+    assert seen == ["widgets", "gadgets"]
+
+
+def test_a_raising_on_repo_stops_the_run_where_it_stands(_provider):
+    """The cancellation seam: a blocking fetch can only be interrupted between
+    repos, so the hook that reports progress is the hook that aborts."""
+    _provider(_Provider())
+    cfg = _cfg(_repo("widgets", org="acme"), _repo("gadgets", org="acme"))
+    seen: list[str] = []
+
+    def _stop(repo: str) -> None:
+        seen.append(repo)
+        raise RuntimeError("cancelled")
+
+    with pytest.raises(RuntimeError):
+        check_bucket(cfg, "acme", on_repo=_stop)
+    assert seen == ["widgets"]
+
+
 def test_an_unknown_bucket_says_what_a_bucket_is():
     body = format_report("typo", [])
     assert "typo" in body
