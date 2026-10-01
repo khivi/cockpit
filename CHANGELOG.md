@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.13.0](https://github.com/khivi/cockpit/compare/v3.12.0...v3.13.0) (2026-10-01)
+
+
+### Features
+
+* **tui:** check an org's ticket setup from the inbox, and move it to T ([#557](https://github.com/khivi/cockpit/issues/557)) ([0a5cdeb](https://github.com/khivi/cockpit/commit/0a5cdeb704d4b70fe93866bcebe7e9d1598c3dfb))
+
 ## [3.12.0](https://github.com/khivi/cockpit/compare/v3.11.0...v3.12.0) (2026-09-30)
 
 
