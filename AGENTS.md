@@ -65,7 +65,7 @@ Each cycle re-reads `git worktree list` and cmux's workspace list. Only PR paylo
   - **The stamp runs on carried blocks too, and always writes**, including `None`: it is pure string work over a body the cycle already fetched, and since the ticket *id* decides carry-vs-rebuild, a footer re-pointed at a new link under an unchanged id is only ever caught by writing unconditionally.
   - **A blank cell is never linked** — a hyperlink over blank padding is a click target with nothing in it, and the columns most often empty (`Author`, `CI`, `💬`) sit beside ones that aren't.
   - **No underline, and no click handler.** The terminal draws its own affordance and picks its own modifier; a `DataTable` click handler would need a single-click rule (so selecting a row launches a browser, since `PR` sits beside `Workspace`) or a double-click one colliding with Focus. The accepted cost is Apple Terminal, which has no OSC 8 support; `p`/`t` remain the keyboard route.
-  - **The hover tooltip names the destination** (`row_tooltips`) — an OSC 8 link is *invisible* until the pointer is on it with a modifier down, so the hover text is the only place a cell admits it goes somewhere. `test_links_survive_all_the_way_into_terminal_output` pins the one thing outside cockpit's control, that Textual still emits the escape.
+  - **The hover tooltip names the destination** (`row_tooltips`) — an OSC 8 link is *invisible* until the pointer is on it with a modifier down, so the hover text is the only place a cell admits it goes somewhere. `test_links_survive_all_the_way_into_terminal_output` pins the one thing outside cockpit's control, that Textual still emits the escape — Textual makes no public promise to.
 
 **Row actions** (`f p t a c C m z n`) live on the app and — except `n`/`f` and `m`/`z` — never touch cmux or the cache. Footer help is gated on three axes: the resolved **backend** (`a` cmux-only; `f` hides only on `none`), **workspace presence** (`a` needs one, except on a repo header; `f` does not, since it spawns first — the old `w` key is gone), and the **row's content** (`ACTION_REQUIRES` fed by `current_capabilities()`). `c`/`C` also hide on a workspace-only primary checkout with no workspace.
 
@@ -142,7 +142,7 @@ New cell → writer in `cache.py`, call site in the slow tick and/or fast tick. 
 - **It lives in `read_text`, the one seam every flat-cell renderer shares** — the TUI's cells and tooltips, and starship's field printers, which write into the shell prompt. **Do not** re-implement it per renderer, and **do not** move it to the writers: that would leave cells written by an older cockpit raw until the next slow tick.
 - **Whitespace is stripped first**, or a trailing newline renders as a visible U+FFFD.
 - **Control characters are replaced, never dropped** — a tampered value must stay visibly tampered rather than render as a plausible title, and one codepoint in must stay one codepoint out, since `_ellipsize` and the table's `_STATUS_SLOT` both count them.
-- **Payload-derived text needs its own call**, since it never passes a flat cell: `_ticket_ids` and the ticket half of `_cell_links`, whose URL comes out of the PR body's delivery footer and is as author-controlled as the title.
+- **Payload-derived text needs its own call**, since it never passes a flat cell: `_ticket_ids` and the ticket half of `_cell_links`, whose URL comes out of the PR body's delivery footer and is as author-controlled as the title. Diff-comment anchor text (`diff_comments.py`) takes the same call: it is repo content, and in a `review_prs` worktree a fork contributor's.
 
 **Every flat cell is keyed by worktree path (`cache.py::cwd_cache`) or session id — never by branch.** A branch name is unique inside one repo and nowhere else, so a branch key silently merges every repo holding a worktree of that name: three `khivi/ci-gatekeeper` worktrees shared one `pr-num`, `pr-snoozed` and `base-distance`, so all three rows rendered whichever repo's daemon wrote last, and `z` on any of them wrote a `NudgePref` under *its own* repo and *another* repo's PR number — a pref no cycle ever reads, so the row never folded. Four rules:
 
@@ -498,6 +498,7 @@ Removed along with that config key, its preflight validator, and the orphan_pref
 
 - **The identity caches key on the resolved secret, not the env var name** (`_secret_fingerprint`). Single-slot on one global env var, org B read org A's cached viewer id and then silently skipped *every* ticket.
 - **Spawned sessions never receive ticket credentials** — `_bg_spawn_pr` passes the env minus `config.credential_env_names(cfg)`, since spawn-time fetch is MCP-delegated and a `review_prs` session runs over an untrusted diff. Strip by *resolved name*, never a prefix guess, and touch nothing else (`PATH`, `COCKPIT_HOME`, `CMUX_*` must pass through). A warning, log line, or error message carries an env var **name**, never a value.
+- **The first-turn prompt states the repo's tracker identity** (`spawn.py::_tickets_block`) — which tracker, and which team, project or board — because a session inside a worktree cannot derive it. It names no credential env var, since those are stripped.
 - **An unset credential warns at startup, for *every* provider — `TicketProvider.credential_envs`** — otherwise it is a silent degrade whose only symptom is a bare id in the Ticket column. Three rules: **the provider names its own variables** (Trello returns **both** halves of its pair; GitHub **none**) — **do not** re-add a provider-name ternary, since the gate is `provider_for(...) is not None`; **resolution is the repo's**; and it stays a **warning**. It must stay in step with `credential_env_names`, pinned by a test.
 
 ### `devdone=` pill — the ticket provider is the one auxiliary (read-only) state source
@@ -811,7 +812,7 @@ pre-commit run zizmor --all-files
 
 `dev.sh` forces `--dry` onto **every** `watch` invocation, not just its no-args default. Its config scrub drops `fast_skills`/`slow_skills` and deliberately **keeps** `skills`, which holds only slash-command names.
 
-**`--dry` was fully plumbed through long before it was reachable** — `cockpit.py` hardcoded `dry=False`. **Do not** re-hardcode that call site, and **do not** add a second dev-only suppression path beside it.
+**`--dry` was fully plumbed through long before it was reachable** — `cockpit.py` hardcoded `dry=False`. A flag that lands in state but never reaches the cycle leaves `_maybe_autoclose` removing real worktrees. **Do not** re-hardcode that call site, and **do not** add a second dev-only suppression path beside it.
 
 `--dry` also suppresses the **cache writes**, which is why snapshot mode copies the real PR JSONs in. Every cmux-facing feature is **inert** under `tool: none`, so the sandbox is right for the table, cells, config, prompts and the cycle's decisions, and wrong for anything cmux-facing.
 
