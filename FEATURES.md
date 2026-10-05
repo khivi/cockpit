@@ -1,115 +1,99 @@
 # Features
 
-A tour of everything cockpit does, in the order you'd meet it. [`README.md`](README.md)
-is the two-minute version; this is the whole surface. Field-by-field settings live in
-[`docs/config.md`](docs/config.md).
+This is the user guide to cockpit. [`README.md`](README.md) covers install and first run.
+Every setting is in [`docs/config.md`](docs/config.md).
 
-Cockpit's whole premise: a change lives in four places at once — a git worktree, a GitHub
-PR, a ticket, and usually a Slack thread — and the only thing joining them is you
-remembering. Cockpit is that join, and every feature below is one more thing you stop
-having to remember.
+A change lives in four places at once: a git worktree, a GitHub PR, a ticket, and often a
+Slack thread. Cockpit joins them, so you stop keeping track of them yourself.
 
 | | |
 |---|---|
-| [**The dashboard**](#the-dashboard) | One row per change, every repo. Bands by whose turn it is, indents stacked PRs, parks repos you're not on |
-| [**Keys**](#keys) | The whole keymap, the table's links, and the `cockpit diff` review loop that hands your notes to the agent |
-| [**Starting work**](#starting-work-one-argument-any-source) | One argument — branch, PR, issue, ticket, Slack link, failed CI run — and the worktree, terminal, and context all exist |
-| [**The nudge**](#the-nudge) | Your PR goes red, the session gets told. Only when it's genuinely parked, only your own PRs, muteable and snoozeable |
-| [**Tickets**](#tickets) | Linear, Jira, GitHub Issues, Trello — live state in the row, a dev-done pill, and the ticket moved on merge |
-| [**Auto-review**](#reviewing-your-teams-prs) | A review waiting for you on each coworker PR. Dry-run, collaborators only, never posts on your behalf |
-| [**Closing up**](#closing-up) | Refuses to lose work. Merged PRs clean themselves up |
-| [**The statusline**](#the-statusline) | Where a session stands without leaving it — budget on one line, the change on the next |
-| [**Broadcast**](#reaching-every-session-at-once) | One line into every idle session at once, same safety gate as the nudge |
-| [**Config**](#config-that-scales-past-one-repo) | Sane defaults for one repo; an `orgs` block for fifteen |
-| [**Design**](#design-decisions-youll-feel) · [**Non-goals**](#what-it-deliberately-doesnt-do) | Why nothing drifts, why it degrades instead of dying, and what it refuses to do |
-| [**What it costs**](#what-it-costs) | Where the bookkeeping stops and your judgment starts — the trades you are actually making |
+| [**The dashboard**](#the-dashboard) | One row per change, across every repo, sorted by whose turn it is |
+| [**Keys**](#keys) | The keymap, the clickable table, and reviewing with `cockpit diff` |
+| [**Starting work**](#starting-work-one-argument-any-source) | One argument — branch, PR, issue, ticket, Slack link, failed CI run — gives you a worktree, a terminal, and a briefed agent |
+| [**The nudge**](#the-nudge) | When your PR goes red, the agent is told to fix it |
+| [**Tickets**](#tickets) | Linear, Jira, GitHub Issues and Trello in the table, plus an inbox of work you haven't started |
+| [**Reviewing**](#reviewing-your-teams-prs) | A review waiting for you on each coworker PR, never posted without you |
+| [**Closing up**](#closing-up) | Close a worktree without losing work. Merged PRs clean themselves up |
+| [**The statusline**](#the-statusline) | See where a session stands from inside it |
+| [**Broadcast**](#reaching-every-session-at-once) | Send one line to every idle session |
+| [**Config**](#config-that-scales-past-one-repo) | Defaults for one repo, and an `orgs` block for many |
+| [**Limits and trade-offs**](#limits-and-trade-offs) | What it costs you, and what it won't do |
 
 ---
 
 ## The dashboard
 
-`cockpit watch` gives you one row per change, across every repo you've registered.
+Run `cockpit watch`. You get one row per change, across every repo you've registered.
 
 ![cockpit watch — every worktree, workspace, and PR in one table](docs/cockpit-tui.png)
 
 **Columns.** Workspace · PR # · `✎` uncommitted files · `🔀` review state · CI · `💬`
-comment count (red `N/T` while threads await you, green `0/T` once they're all handled) ·
-Ticket + `📍` its tracker state · Author · Title · `$` session spend.
-The ticket pair appears only when some repo has a tracker configured; `$` only when your
-plan actually reports per-session cost — an absent number and a zero are different claims,
-so a row that can't tell them apart renders blank rather than lying.
+review threads · Ticket and `📍` its state · Author · Title · `$` session spend.
 
-**The row tells you whose turn it is.** `🔔` means this PR has something actionable
-waiting on you — failing CI, unresolved review threads, a merge conflict. `🔇` means
-muted, and it wins over the bell: a row can't advertise a nudge it won't ring. A snoozed
-row carries no glyph at all — it folds away behind `▸ N snoozed`, which says it once for
-the group rather than once per row. Rows sort into three bands per repo: your live queue
-first, coworkers' PRs you're reviewing next, snoozed ones last. Nothing is configured to
-make that happen; it's derived from the same data the row already shows.
+- `💬` is red `N/T` while threads wait on you, and green `0/T` once you've handled them all.
+- The ticket columns appear only when a repo has a tracker configured.
+- `$` appears only when your plan reports per-session cost. A blank means "not reported",
+  not zero.
 
-**Stacked PRs indent themselves.** GitHub exposes no stack id — the only signal is that
-each PR's base branch is the previous PR's head. Cockpit reads that and renders the chain
-contiguously under its tip with a `└`, and groups the same chain in your cmux sidebar. No
-`gh stack` state in the worktree needed, and it works on a coworker's stack too. A stack
-is one thing to attend to, so it snoozes as one: `z` on any row of a chain quiets the
-whole chain, and anything that wakes one member — a comment on the PR at the bottom —
-brings the whole chain back.
+**The row tells you whose turn it is.**
 
-**Park a repo you're not touching this week.** `h` drops it into a `▸ N repos hidden` row: it
-stops being polled entirely — no GitHub round-trip, no spawning, no nudges — and its idle
-terminals close. It stays in your config, untouched. Starting work there un-parks it
-automatically.
+- `🔔` — this PR needs you: failing CI, open review threads, or a merge conflict.
+- `🔇` — you muted it. Mute wins over the bell.
+- Snoozed rows fold away behind a `▸ N snoozed` row at the bottom of their repo.
 
-**Everything refreshes itself.** A full reconcile every 5 minutes and a network-free
-repaint every 30 seconds — both tunable — plus an instant repaint when a workspace opens or
-closes out from under you. `s` reconciles every repo on demand. **≡ Menu**, in the top right
-corner, opens a palette holding the daemon log, your resolved config, an editor for it, a
-theme picker that persists your choice, a link back to this guide, and the release notes for
-whatever `brew upgrade` last handed you. Click it, or press `ctrl+p`. The first launch on a
-new version says so once, and points at that entry — cockpit compares itself against its own
-last run, so it never goes looking for a version newer than the one you have.
+Each repo sorts into three bands: your own queue first, then coworkers' PRs you're
+reviewing, then snoozed PRs.
 
-**The top bar reads left to right as where you are, then how things are going.** It opens
-with the version you're running — dim, and a link to the release notes for it — then names
-the repo the highlighted row belongs to, in that repo's colour. Every repo heads its own
-group in the table, but that heading scrolls off the moment a repo holds more rows than fit,
-so on any real fleet the row under your cursor tells you nothing about which repo you're
-about to act on. The top bar can't scroll away. The two countdowns and the menu sit against
-the right edge, where a longer repo name can't shove them sideways as you move the cursor.
-🐢 counts down the full reconcile and 🐇 the network-free repaint; hover either for the
-sentence naming which is which and what it does.
+**Stacked PRs indent under their tip** with a `└`, and the same chain is grouped in your
+cmux sidebar. This works on a coworker's stack too. A stack snoozes as one unit: `z` on
+any row quiets the whole chain, and a comment on any member wakes it.
+
+**Park a repo you aren't working on.** Press `h` on its header. It moves into a
+`▸ N repos hidden` row and goes quiet: no polling, no new workspaces, no nudges, and its
+idle terminals close. It stays in your config. Press `h` again to bring it back, or just
+start work there — that un-parks it.
+
+**It keeps itself fresh.** A full refresh runs every 5 minutes and a quick local one every
+30 seconds; both are tunable. Opening or closing a workspace refreshes the table at once.
+Press `s` to refresh every repo now.
+
+**The top bar** shows, left to right:
+
+- the version you're running, linked to its release notes;
+- the repo of the highlighted row, in that repo's colour — useful once the repo's own
+  header has scrolled off screen;
+- two countdowns: 🐢 to the next full refresh, 🐇 to the next quick one (hover for which is
+  which);
+- **≡ Menu**.
+
+**≡ Menu** (or `ctrl+p`) holds the daemon log, your resolved config, an editor for it, a
+theme picker, this guide, and the release notes. After an upgrade, cockpit tells you once
+on first launch and points you at the release notes.
 
 ### The sidebar card
 
-Every workspace cockpit tracks carries its PR's state as pills in the cmux sidebar —
-uncommitted count, unresolved comments, merge conflict, approval, mute — plus the PR
-itself: `🟢 PR #332 open ✓`, `⚪ draft`, `🟣 merged`, `🔴 closed`, in GitHub's own colours.
+Each workspace card in the cmux sidebar shows its PR's state as pills: uncommitted files,
+unresolved comments, merge conflict, approval, and mute. The PR itself reads like
+`🟢 PR #332 open ✓`, `⚪ draft`, `🟣 merged` or `🔴 closed`, in GitHub's colours.
 
-**CI rides that same line**, as a trailing `✓` passing, `✗` failing, `•` pending, `?` errored
-— a card has few lines and CI never needs one of its own. A pill has a single colour, so a
-build that isn't passing takes it: a failing PR reads red whatever its state. The statusLine
-footer has room and keeps CI as its own pill.
+CI is the trailing mark on that line: `✓` passing, `✗` failing, `•` pending, `?` errored.
+A build that isn't passing turns the whole pill its colour, so a failing PR reads red.
 
-**Name the repo when colour runs out.** A workspace is named after its branch, and which
-repo it belongs to is carried by the card's tint — which stops scaling once you're watching
-enough repos to exhaust the sixteen colours cmux offers, or as soon as several of yours land
-on hues that don't read apart. Give the repo a [`sidebar_tag`](docs/config.md) and its
-workspaces read `infra·fix-retry`; an emoji reads as an icon rather than text, so it takes a
-space instead of the dot — `🎛️ fix-retry`. Off unless you set it.
+**Turn off cmux's own PR row** so you don't see two PR numbers on one card. Set
+`"sidebar": {"showPullRequests": false}` in `~/.config/cmux/cmux.json`, then run
+`cmux reload-config`. Cockpit's pill only appears on workspaces it tracks, so a terminal
+outside your registered repos shows no PR.
 
-The tag reaches the group headers too, where it buys back the most width. A stacked chain's
-header wears it like the rows underneath. The two piles at the bottom of the sidebar spell
-out the organisation they belong to — `Some Long Org snoozed (11)` — so a tag set on the
-*org* stands in for that name and leaves `♻️ snoozed (11)`. Set the tag on the org with the
-`{repo}` placeholder and you get both: each workspace named after its own repo, and the
-shared glyph alone on the fold. Repos with no tag read exactly as before.
+**Tag repos when colours run out.** Workspaces are named after their branch, and the card's
+tint tells you the repo. Past a handful of repos, the tints stop being distinguishable. Set
+a [`sidebar_tag`](docs/config.md) and the workspace reads `infra·fix-retry`. An emoji tag
+takes a space instead of the dot: `🎛️ fix-retry`.
 
-**Turn cmux's own PR row off when you use this** — `"sidebar": {"showPullRequests": false}`
-in `~/.config/cmux/cmux.json`, then `cmux reload-config`. cmux resolves a branch to a PR by
-name alone, so a branch that has carried more than one reads as the earlier, closed PR;
-cockpit's pill comes from the open PR it already tracks. Left on, you get both numbers on
-one card. The trade either way: cockpit's pill only reaches workspaces it tracks, so a
-terminal outside your registered repos shows no PR at all.
+Tags also label group headers. A stack's header wears its repo's tag. The two piles at the
+bottom of the sidebar are named after their org — `Some Long Org snoozed (11)` — and a tag
+set on the org replaces that name: `♻️ snoozed (11)`. Use `{repo}` in an org's tag to get
+both: each workspace named after its own repo, and the shared glyph on the piles.
 
 ---
 
@@ -117,88 +101,73 @@ terminal outside your registered repos shows no PR at all.
 
 | Key | Does |
 |---|---|
-| `f` | Focus this row's terminal — spawning one first if it doesn't have one yet |
-| `p` | Open the PR in a browser |
+| `f` | Focus this row's terminal, opening one if it has none |
+| `p` | Open the PR in your browser |
 | `t` | Open the linked ticket (Linear / Jira / GitHub / Trello) |
-| `a` | Ask — send a line to this row's session; on a repo header, to every session in it |
-| `A` | Ask the snoozed — send a line to every session in this repo's snoozed pile, without unfolding it |
-| `c` | Close the worktree + terminal |
-| `C` | Force close — overrides the open-PR refusal, never the ones that would lose work |
-| `m` | Mute / unmute this PR's nudges, indefinitely |
-| `z` | Snooze / wake — quiet until the PR actually changes |
+| `a` | Ask — send a line to this row's session; on a repo header, to every session in the repo |
+| `A` | Ask every session in this repo's snoozed pile, without unfolding it |
+| `c` | Close the worktree and terminal |
+| `C` | Force close — skips the open-PR check, never the checks that protect your work |
+| `m` | Mute / unmute this PR's nudges |
+| `z` | Snooze / wake — quiet until the PR changes |
 | `n` | Start something new |
-| `T` | The ticket inbox — what's assigned to you that you haven't started |
+| `T` | The ticket inbox — tickets assigned to you that you haven't started |
 | `h` | Park / reveal / un-park a repo |
-| `s` | Reconcile every repo now |
+| `s` | Refresh every repo now |
 | `q` | Quit |
 
-Footer hints follow the highlighted row. A row with no PR doesn't advertise `p`; a muted
-row's `m` reads **Unmute**; a backend that can't focus doesn't offer `f`. You never press
-a key that turns out to be meaningless here. Hovering a key explains it in a sentence —
-what it refuses and why, which is the part a one-word label can't carry. Everything that
-isn't a key lives behind **≡ Menu**.
+The footer shows only the keys that make sense for the highlighted row. A row with no PR
+doesn't offer `p`, and a muted row's `m` reads **Unmute**. Hover a key for a one-line
+explanation. Everything else is in **≡ Menu**.
 
-`a` never types into a session that is mid-turn or not provably at rest — that could
-answer a permission prompt instead of delivering your line. If the session is only busy,
-the line is queued and cockpit sends it the moment the session comes to rest, so you
-don't have to watch the row and press `a` again. The toast says why it waited; if it
-reads `Needs input`, the session may be waiting on you. A line still unsent after ten
-minutes is dropped, since the conversation has likely moved on. A parked session is not
-queued: its draft comes back on the next `a`.
+**Asking a busy session.** `a` never types into a session that is mid-turn or waiting on a
+prompt — your line could answer a permission question by accident. If the session is just
+busy, cockpit queues the line and sends it as soon as the session is free. The toast says
+why it waited. If it says `Needs input`, the session may be waiting on you. A queued line
+expires after ten minutes. If the session is not reachable at all, your draft is kept for
+the next `a`.
 
-**The table is also a page of links.** Every cell that names something on the web is a real
-terminal hyperlink — ⌘-click it (ctrl-click on Linux) and your browser opens. The PR number,
-its review state, the comment count and the title all go to the PR; **CI goes to the checks
-page**, because a red ✗ is the thing you want to open, not read; the ticket columns go to
-the ticket, in whichever tracker it lives; and an author's `@name` goes to their GitHub
-profile. The workspace name, the dirty count, the pending diff-notes count and `$` link
-nowhere — they're about this machine. Hover any of them and the tooltip tells you where it
-goes.
+**Click through the table.** Cells that name something on the web are links: ⌘-click
+(ctrl-click on Linux) to open them.
 
-This needs a terminal that supports hyperlinks: iTerm2, Ghostty, kitty and WezTerm all do,
-Apple's Terminal.app doesn't. `p` and `t` open the PR and the ticket from the keyboard
-either way.
+- PR number, review state, comments and title → the PR.
+- CI → the PR's checks page.
+- Ticket columns → the ticket.
+- `@author` → their GitHub profile.
 
-**`cockpit diff` is how you review your agent's work.** You read the diff where the work
-is — in the session's own terminal, not on the dashboard:
+Hover any cell to see where it goes. Links need a terminal that supports them — iTerm2,
+Ghostty, kitty and WezTerm do; Apple's Terminal.app doesn't. `p` and `t` work everywhere.
+
+### Reviewing your agent's work with `cockpit diff`
+
+Read the diff in the session's own terminal, not on the dashboard:
 
 ```bash
-cockpit diff              # this worktree's PR diff — with no PR, the branch diff,
-                          #   or the unstaged one on main/master
-cockpit diff --branch     # or ask for one directly: --branch, --staged,
-cockpit diff --staged     #   --unstaged, --last-turn (what changed since the agent's
-cockpit diff --last-turn  #   last turn), with --base to re-point --branch
+cockpit diff              # the PR diff; with no PR, the branch diff
+                          #   (or uncommitted changes on main/master)
+cockpit diff --branch     # or pick one: --branch, --staged, --unstaged,
+cockpit diff --staged     #   --last-turn (what the agent changed in its last turn),
+cockpit diff --last-turn  #   --base to change what --branch compares against
 cockpit diff --comments   # read the notes left on this work
-cockpit diff --ack        # retire them, once they're addressed
+cockpit diff --ack        # mark them done
 ```
 
-That opens as a **tab in the session you ran it from**, syntax-highlighted and the full
-width of the pane; click a line and leave a note. Switch back to the terminal tab whenever
-you want the session again — the diff stays where you left it.
+The diff opens as a full-width tab next to your terminal. Click a line to leave a note.
+Switch back to the terminal tab when you're done.
 
-**Then the session picks them up on its own.** Within ~30 seconds the daemon notices notes
-waiting on that worktree and hands them to the agent sitting in it — you leave the notes,
-switch back, and the work starts. It reads them, addresses them, and runs `--ack` to
-retire them, which also closes the diff tab: the notes it was open for are done with.
-Reading and acking are separate commands on purpose: a turn that ends early leaves the
-notes pending rather than losing review feedback that exists nowhere else, and a note the
-agent can't action stays unacked instead of being quietly cleared.
+**The agent picks up your notes by itself.** Within about 30 seconds, cockpit hands the
+notes to the session in that worktree. It addresses them, then runs `--ack`, which also
+closes the diff tab. A note the agent can't act on stays open rather than disappearing.
 
-That hand-over is the one automatic message cockpit sends that isn't about a PR, and it
-plays by the same rules: it goes only to a session genuinely parked at its prompt, never
-into one mid-turn. It ignores mute and snooze, though — those mean "stop telling me about
-this PR", and a note you just wrote is not cockpit nagging you, it's your own input. Each
-batch is handed over once; adding a note later sends again.
+This happens only when the session is idle at its prompt. Mute and snooze don't stop it —
+these are your own notes, not cockpit nagging. Each batch is sent once; new notes send
+again.
 
-The dashboard's 📝 column counts what's still unaddressed per worktree, so a glance tells
-you which session hasn't got to your notes yet.
+The `📝` column counts notes not yet addressed, so you can see which session hasn't got to
+them. Notes stay on your machine and never reach the PR — use `p` to comment there.
 
-The notes stay local; nothing reaches the PR, so use `p` for that.
-
-**There is no diff key on the dashboard, and that's deliberate.** The daemon can only open
-a split beside *itself* — which is a dashboard, not a session — so the diff kept landing in
-the wrong place. Running the command where the work is fixes that by construction, and it
-needs no cockpit config: any git repo will do.
+`cockpit diff` works in any git repo, registered or not. There is no diff key on the
+dashboard: you review from inside the workspace.
 
 ---
 
@@ -208,169 +177,130 @@ needs no cockpit config: any git repo will do.
 cockpit new <thing>
 ```
 
-`<thing>` is auto-detected, and each kind gets a worktree cut, a terminal opened in it,
-and a first turn seeded with the context it needs:
+Cockpit works out what `<thing>` is. Each kind gets a worktree, a terminal in it, and a
+first prompt with the context the agent needs:
 
-| You paste | You get |
+| You give it | You get |
 |---|---|
-| `fix-login` | Branch — checked out if it exists locally or on the remote, created from your base branch if not |
-| `#412` or a PR URL | The PR's head fetched into its own worktree, seeded with a plan-first prompt |
-| `i#88` or an issue URL | Branch `issue-88`, seeded to read the issue and **rename itself** to the issue's title |
-| `PE-1234` or a Linear URL | Branch `you/pe-1234`, seeded to fetch the ticket over MCP and rename itself to the ticket title |
-| `PROJ-123` or a Jira URL | Same, via the Atlassian connector |
-| A Trello card URL | Same, via the Trello connector |
-| A Slack permalink | A codename branch like `you/cosmic-otter`, seeded to read the thread and append a topic slug — `cosmic-otter-fix-oauth` |
-| An Actions run URL | Seeded to pull the failing step's logs and work out what broke |
-| nothing | Registers the repo you're standing in and opens a terminal in place — no worktree, no branch |
+| `fix-login` | That branch — checked out if it exists, created from your base branch if not |
+| `#412` or a PR URL | The PR in its own worktree, with a plan-first prompt |
+| `i#88` or an issue URL | Branch `issue-88`, told to read the issue and rename itself after it |
+| `PE-1234` or a Linear URL | Branch `you/pe-1234`, told to fetch the ticket and rename itself after it |
+| `PROJ-123` or a Jira URL | The same, through the Atlassian connector |
+| A Trello card URL | The same, through the Trello connector |
+| A Slack permalink | A codename branch like `you/cosmic-otter`, told to read the thread and add a topic — `cosmic-otter-fix-oauth` |
+| A GitHub Actions run URL | Told to read the failing step's logs and work out what broke |
+| nothing | Registers the repo you're in and opens a terminal there — no worktree, no branch |
 
-Two extras worth knowing. Append `-- some extra instructions` and it rides along into the
-seeded prompt. And `/cockpit-new --context` from inside a Claude session hands the new
-workspace what it needs from the conversation you're leaving, so it doesn't start cold —
-the goal, the decisions already made, the approaches already ruled out, the exact PR
-numbers and ticket keys and paths. Not a transcript: whatever the new workspace can read
-for itself out of the repo is left for it to read. Give the flag a value —
-`--context 'the auth refactor'` — and that text is kept as written and scopes what else
-comes with it.
+Press `n` on the dashboard to do the same from a picker.
 
-**A ticket key routes itself to the right repo.** `cockpit new PE-1234` finds the repo
-declaring that team prefix — free and offline. If several repos share the team (the
-many-small-services shape), cockpit resolves the ticket's *project* to break the tie, and
-only then, only on the ambiguity, at the cost of one fetch.
+**Add instructions.** Append `-- some extra instructions` and they go into the first
+prompt.
 
-A Trello card link carries no key at all, so there the **board** is the route: declare
-`tickets.board` and a card routes to the repo that owns its board. When two repos genuinely
-share one board — an app and its infrastructure, say — mark one repo's cards with a
-**label** (`tickets.label`) and leave its sibling declaring none. The labelled card goes to
-the repo claiming that label, everything else to the sibling. A label is worth using here
-rather than a dedicated list, because it rides alongside the card's normal column: the card
-still moves Accepted → Ongoing → Done and still lights the dev-done pill, while carrying
-which repo owns it the whole way.
+**Carry context from a conversation.** Inside a Claude session, `/cockpit-new --context`
+gives the new workspace what it needs from the current conversation: the goal, decisions
+made, approaches ruled out, and the exact PRs, tickets and paths. It leaves out anything
+the new session can read from the repo itself. Give it a value —
+`--context 'the auth refactor'` — to focus what it carries.
 
-**Seeded work is plan-first.** Spawns that inherit real context come up told to study and
-propose, not to start editing — the agent waits for your approval. A blank new branch gets
-no seeded prompt at all, because there's nothing to study.
+**Tickets find their repo.** `cockpit new PE-1234` goes to the repo that declares the `PE`
+team key. If several repos share that team, cockpit checks the ticket's project to pick
+one. If it still can't choose, it asks.
 
-**The seed is confirmed, not assumed.** A first turn is typed into the new terminal, and a
-session still booting can drop it — which used to leave you looking at an agent that knew
-nothing about the ticket you spawned it for, with nothing anywhere saying so. cockpit now
-checks the prompt actually reached the session before submitting it, and hands anything
-that didn't land to the daemon, which re-delivers it the moment that session is genuinely
-at rest. If it can't be delivered while it's still a *first* turn, it's dropped rather than
-fired into work you've since started by hand.
+Trello cards route by **board**: set `tickets.board` and a card goes to the repo that owns
+its board. When two repos share a board, set `tickets.label` on one of them. Cards with
+that label go there; everything else goes to the repo with no label. Cards keep moving
+through your normal lists either way.
 
-Once `cockpit setup` has installed `/cockpit-seed`, the prompt isn't typed at all: cockpit
-types a short `/cockpit-seed` command and the session loads the full prompt from a file.
-Long prompts arrive whole, with their line breaks.
+**Agents plan before they code.** A workspace started with real context comes up told to
+study and propose a plan, then wait for your approval. A plain new branch gets no prompt.
+The plan is also saved to `plan.md` in the worktree, so you can read it without opening the
+session, and it survives a crash or a close. Don't commit it.
 
-**And the plan is left behind as a file.** The session also writes it to `plan.md` in the
-worktree, so a compact, a crash or a session you closed doesn't take the reasoning with it
-— you can read what it intended to do without focusing the workspace, and whoever picks the
-branch up next starts from the plan rather than from the diff. It stays untracked: a plan
-committed once already leaked into `main` and rode along on every branch cut from it.
+**The first prompt always arrives.** Cockpit checks that the prompt reached the new session
+and resends it once the session is ready. If it can't deliver it within a few minutes, it
+drops it rather than type a "fresh task" prompt into work you've already started.
 
 ---
 
 ## The nudge
 
-The feature that makes the dashboard something you *don't* have to watch.
+When one of your PRs has failing CI, open review threads, or a merge conflict, cockpit
+tells that worktree's Claude session what to fix. You come back to work already in
+progress.
 
-When one of your PRs has something actionable — CI red, unresolved review threads, a merge
-conflict — cockpit types a message into that worktree's Claude session telling it what to
-fix. You come back to work already in progress.
+It is safe to leave on:
 
-What makes it safe to leave on:
+- **It only speaks to a session that is idle at its prompt** — never mid-turn, and never at
+  a permission prompt.
+- **Only your own PRs.** A coworker's PR shows its problems in the row but is never nudged.
+- **You can quiet it.**
+  - `m` mutes a PR indefinitely.
+  - `z` snoozes it until the PR changes: someone else comments or reviews, or there's new
+    work to do. Your own replies don't wake it. On a coworker's PR you're reviewing, a new
+    push wakes it too.
+- **Quiet only stops cockpit, not you.** Lines you type with `a` or `A` always go through.
+  `A` on the snoozed pile sends one line to every session in it; the rows stay snoozed.
 
-- **It only speaks into a session genuinely parked at its prompt.** Never mid-turn, and
-  never at a pending y/n permission prompt — where typing would answer the prompt rather
-  than deliver the message. That distinction is the single fussiest piece of machinery in
-  the codebase, and it exists so this feature can be trusted unattended.
-- **Only your own PRs.** A coworker's failing CI is not yours to fix, so a review row
-  shows the issue and never gets nudged about it.
-- **Rate-limited, and quiet on request.** `m` mutes indefinitely. `z` snoozes until the PR
-  *actually changes* — new review activity from someone else, or new work appearing — so
-  "I've read this, it's their turn" doesn't need a timer you'd have to guess at. Your own
-  replies can't wake your own snooze. On a coworker's PR you're reviewing, a push wakes it
-  too: you left notes, they answered, and nothing else about the PR would have said so.
-- **Quiet stops the nudge, not you.** Muting and snoozing silence what cockpit decides to
-  say on its own; a message you type always goes through. `A` on the snoozed fold — or on
-  the repo's header — sends one line to every session in it without unfolding first, which
-  is what you want when the answer to a whole pile is the same one. The rows stay snoozed.
-- **`cockpit nudge mute | unmute | snooze | wake | list | status | forget`** does the
-  same from a shell — including snoozing, so a session can quiet its own PR without
-  switching back to the TUI. It acts on the one PR you named, so on a stacked PR it
-  tells you which one further up the chain has to agree before the row moves: the
-  fold is decided by the stack's tip, and `z` is the key that takes the whole chain.
-  Running `snooze` twice is not a no-op — the second run repaints the row and pokes
-  the daemon, which is what you want when the screen and the pref disagree.
+From a shell, `cockpit nudge mute | unmute | snooze | wake | list | status | forget` does
+the same for one PR, so a session can quiet its own PR. In a stack, the row only moves
+when the stack's tip is snoozed; the command tells you which PR that is. Use `z` on the
+dashboard to snooze the whole chain. Running `snooze` again refreshes the row if the
+screen looks out of date.
 
 ### Keeping stale branches mergeable
 
-If your repo requires branches to be up to date before merging, a PR that was ready an
-hour ago stops being mergeable the moment someone else lands on the base. Turn on
-`update_stale_branches` and cockpit brings those branches forward for you.
+If your repo requires branches to be up to date before merging, a ready PR becomes
+unmergeable as soon as something else lands. Turn on `update_stale_branches` and cockpit
+updates those branches for you.
 
-- **Only the PRs nothing is happening on** — approved, or snoozed. Both mean no session is
-  mid-turn on that branch. A PR you're actively working on is left alone.
-- **Only your own**, like the nudge. A coworker's branch is never rewritten.
-- **GitHub does the update, not a local rebase.** It's the same "Update branch" button you
-  would click, so a conflict just reports back rather than leaving a half-finished rebase
-  in your worktree. If the branch moved since cockpit last looked, the update is refused
-  instead of overwriting the push it didn't see.
-- **It won't cost you an approval.** If the repo dismisses stale reviews when new commits
-  land, updating an approved PR would throw the approval away — so cockpit skips those and
-  says why. It checks both classic branch protection and rulesets, and if it can't find
-  out, it assumes the worst and leaves the PR alone.
-- **Your checkout is put back in sync.** `rebase` (the default) rewrites the branch, so
-  cockpit resets the local worktree to match — but only when it's clean and holds nothing
-  you haven't pushed. Anything else is left exactly as you had it, with a line in the log.
-  Prefer `update_branch_method: merge` and the worktree just fast-forwards.
+- **Only PRs nobody is working on** — approved or snoozed.
+- **Only your own.** A coworker's branch is never touched.
+- **GitHub does the update**, as if you'd clicked "Update branch". A conflict is reported,
+  never left half-done in your worktree. If the branch moved since cockpit last looked, it
+  doesn't update.
+- **It never costs you an approval.** If new commits would dismiss an approval, cockpit
+  skips that PR and logs why. If it can't tell, it skips.
+- **Your local checkout follows.** With `rebase` (the default), cockpit resets your
+  worktree to the updated branch — but only if it's clean and fully pushed. Otherwise it
+  leaves it alone and logs a line. With `update_branch_method: merge`, the worktree just
+  fast-forwards.
 
 ---
 
 ## Tickets
 
-Point a repo at **Linear, Jira, GitHub Issues, or Trello** and the tracker joins the row.
+Point a repo at **Linear, Jira, GitHub Issues, or Trello** and tickets join the dashboard.
 
-Cockpit reads delivery from one strict footer line in the PR body — `Linear: [PE-1234](…)`,
-`Closes #123`, `Jira: [PROJ-123](…)`, `Trello: [#122 title](…)`. Deliberately strict: a branch
-name that happens to contain a ticket id, or a passing mention in a comment, is not a
-delivery claim.
+A PR delivers a ticket through one footer line in its body: `Linear: [PE-1234](…)`,
+`Closes #123`, `Jira: [PROJ-123](…)`, or `Trello: [#122 title](…)`. A ticket id in a branch
+name or a comment doesn't count.
 
-From that link you get:
+With that line in place you get:
 
-- **The ticket and its live state in the table**, and on the workspace card. Every
-  provider shows the handle you'd say out loud — `PE-1234`, `PROJ-45`, `#123`, and for
-  Trello the card number `#122` rather than the opaque `trello.com/c/<id>` short link.
-  Refetched on a TTL, so it can trail the tracker by up to fifteen minutes.
-- **A `🏁` dev-done pill** when every ticket the PR delivers has reached your
-  dev-done state. Whatever your tracker calls that thing — a Linear state, a GitHub label,
-  a Jira status, a Trello list — it's one config field, `dev_done`.
-- **`t`** opens the right ticket, in the right tool, without a network call to figure out
-  which.
-- **Automatic transition on merge**, opt-in per repo (`close_on_merge`). The daemon moves
-  the ticket to Done, closes the issue, or slides the card to a list. It only ever touches
-  a ticket assigned to *you*, it's idempotent, and it fires independently of whether the
-  worktree got cleaned up — so work ships even when the branch sticks around.
-- **A "work started" label** on GitHub issues at spawn time, if you want one
-  (`start_label`).
-- **The agent knows where to file one.** A worktree cockpit starts is told its repo's
-  tracker and the team, project or board it files into, on its first turn — so an agent
-  opening a follow-up ticket doesn't guess a destination or stop to ask you which
-  workspace. `cockpit config tickets` prints the same answer on demand from inside any
-  worktree, which is what a session reaches for after a compact or a config change.
-  **Two Linear orgs work too**: one API key opens one workspace, so register an MCP
-  server per org and name it in `mcp_server` — on the `orgs` block, once, and every repo
-  in that org inherits it.
+- **The ticket and its state** in the table and on the sidebar card, by the handle you'd
+  say out loud — `PE-1234`, `PROJ-45`, `#123`, or a Trello card's `#122`. State can lag the
+  tracker by up to fifteen minutes.
+- **A `🏁` dev-done pill** once every delivered ticket reaches your "done" state. Set what
+  that means for your tracker in `dev_done`: a Linear state, GitHub label, Jira status, or
+  Trello list.
+- **`t`** opens the ticket in the right tool.
+- **Tickets move on merge**, if you turn on `close_on_merge`. Cockpit moves the ticket to
+  Done, closes the issue, or moves the card. It only touches tickets assigned to you.
+- **A "work started" label** on GitHub issues when you start one (`start_label`), if you
+  want it.
+- **The agent knows where to file tickets.** A new session is told its repo's tracker and
+  team, project or board. `cockpit config tickets` prints the same from any worktree.
+  Using two Linear workspaces? Register an MCP server for each and set `mcp_server` on each
+  org.
 
-Credentials are env vars, always — config stores the *name* of the variable, never a
-value. And spawned agents don't get them: an agent reads its tracker through the MCP
-connector, so the REST keys are stripped from every spawn's environment.
+Credentials always come from environment variables; config holds only the variable's
+name. Agents don't receive them — they read the tracker through their MCP connector.
 
 ### The ticket inbox — press `T`
 
-Every row on the dashboard is work you've **started**. `T` opens the other half: tickets
-assigned to you, in an active state, that have no worktree yet — grouped by org, newest
-first.
+The dashboard shows work you've started. `T` shows the rest: tickets assigned to you, in an
+active state, with no worktree yet. They're grouped by org, newest first.
 
 ```text
 ┌─ Tickets ─────────────────────────────────────┐
@@ -386,71 +316,36 @@ first.
 └───────────────────────────────────────────────┘
 ```
 
-**Each org folds.** `enter` on an org header opens or closes it; `enter` on a ticket
-starts it — the same worktree, workspace and seeded session you'd get by typing the ticket
-id into `n`. So the inbox isn't a second way to work; it's the list you reach for when you
-don't yet know what to type. Orgs start folded (unless there's only one), because one
-tracker with a hundred cards assigned to you shouldn't bury the org that has three.
+**Using it:**
 
-**Starting a ticket doesn't close the list.** The row says `starting…` and the inbox stays
-up, so you can start the next one — or three — and only then hit `esc`. The started row
-stops responding to `enter`, since a second press would cut a second worktree; it drops off
-the list within about 30 seconds, once its worktree shows up on the dashboard.
+- `enter` on an org opens or closes it. Orgs start closed, unless there is only one.
+- `enter` on a ticket starts it, exactly as `cockpit new <ticket>` would. The row shows
+  `starting…` and the inbox stays open, so you can start several. It leaves the list once
+  its worktree appears on the dashboard.
+- `t` opens the ticket in your browser.
+- `c` checks the org's tracker setup (see below).
+- `esc` closes the inbox.
 
-Seven things make it stay useful rather than becoming a second tracker tab:
+**Where will it land?** Most tickets go to exactly one repo and show no mark.
 
-- **It tells you where a ticket will land before you press enter.** Starting a ticket from
-  the inbox names no repo, so cockpit routes it the same way `cockpit new` does. Most
-  tickets route to exactly one repo and the row says nothing. The two that don't are marked
-  in the Ticket column: `?` when several repos claim the ticket's key, and `!` when none
-  does. Neither guesses — with nothing to route on, the worktree would land in whatever repo
-  the dashboard itself happens to be running from, which can be one that has nothing to do
-  with the ticket.
+- `?` — several repos claim it. `enter` asks you to pick one.
+- `!` — no repo claims it. Start it with `n` and choose the repo yourself.
 
-  On a `?` row, `enter` asks: a short list of the repos that claim it, and the one you pick
-  is the one the worktree is cut in. That's the shape where one team owns several repos —
-  each declaring the same `tickets.keys`, and a ticket genuinely spanning two of them, so
-  there's nothing left for cockpit to work out. On a `!` row it still refuses and points you
-  at `n`, because there's no candidate to offer.
+**What's listed:**
 
-- **It's the exact complement of the dashboard.** The moment a ticket has a worktree it
-  leaves the inbox and becomes a row — within about 30 seconds, whether the worktree came
-  from `T`, from `n`, or from you running `git worktree add` by hand.
-- **Only what you'd plausibly start today.** Assigned to you and in an active state — Todo
-  or In Progress. Backlog and triage are excluded, and so is anything finished. That's a
-  state *category* in each tracker's own vocabulary, so renaming your columns doesn't
-  break it. On top of that, anything sitting in your `dev_done` or `merge_done` column is
-  dropped: a workspace that files "In Review" and "Merged" as active states would otherwise
-  keep offering to start work that's already shipped. Trello cards show the number on the
-  card (`#122`) rather than their short link.
+- Tickets assigned to you in an active state, such as Todo or In Progress. Backlog,
+  triage, finished work, and anything in your `dev_done` or `merge_done` state are left
+  out.
+- If your team works from Backlog, or the default reads your workflow wrong, set
+  `tickets.inbox_states` to the exact states you want. Linear names are case-sensitive;
+  Jira and Trello aren't. GitHub issues have no states, so the setting doesn't apply there.
+- Only the teams, boards and repos your config names. Trello requires `tickets.board` (one
+  board or a list); without it, no Trello cards appear.
+- Nothing from archived Trello boards.
+- If a tracker can't be reached, the org keeps its last list rather than going empty.
 
-  And when that default reads your workflow wrong — a team that assigns work straight from
-  Backlog would see an empty inbox — name the columns yourself: `tickets.inbox_states`
-  (a state name or a list of them, on a repo or a whole org) replaces the filter outright.
-  Only tickets in a listed state appear, including one that matches `dev_done` — an
-  explicitly listed state is one you asked for. Linear names must match your workspace's
-  spelling exactly; Jira and Trello match case-insensitively. GitHub issues have no named
-  states, so there the setting is ignored (cockpit says so at startup).
-- **Nothing from an archived Trello board.** Archiving a board leaves every card on it
-  open, so a retired board otherwise arrives as dozens of live-looking cards.
-- **Only the boards, teams and repos your config names.** Linear and Jira are scoped by
-  `keys`, GitHub by your repo list, and Trello by `board` — which can be a list, since one
-  repo's work often spans several. Trello is the one that *requires* it: an account spans
-  every board you were ever added to, so with none declared the inbox asks for nothing
-  rather than showing you a client's planning board.
-- **One round-trip per workspace, not per repo.** Ten repos sharing one Linear workspace
-  cost one query. Two orgs on separate workspaces cost two, and neither is ever asked
-  about the other's tickets.
-- **A blip never empties it.** If a tracker can't be reached, that org keeps the list it
-  had rather than flashing empty and refilling a cycle later. Nothing you see is ever the
-  shape of a failed fetch.
-
-`t` opens the highlighted ticket in the browser.
-
-**`c` checks an org's tracker setup** — the answer to "why is this org empty?". An empty
-fold has one appearance and several causes: an unset credential, a team key or board name
-that doesn't exist, a tracker that couldn't be reached, or genuinely nothing assigned to
-you. The check names which, per repo in the org:
+**Why is an org empty?** Press `c`. Cockpit checks each repo in the org and reports what
+it finds:
 
 ```text
 widgets
@@ -463,247 +358,147 @@ widgets
   mcp reachable: connected
 ```
 
-A credential is reported by variable *name*, never by value. A failed connection
-suppresses the scope verdict rather than blaming your config — an unauthenticated
-credential looks exactly like a tracker that recognises none of your teams.
+- Credentials are shown by variable name, never by value.
+- If the connection fails, scopes aren't checked — the connection is the problem to fix
+  first.
+- `mcp reachable` reports what Claude Code says about the server. "Not listed" is a hint,
+  not proof: a claude.ai connector can show as missing while it's working.
+- On an empty inbox, `c` checks every org.
+- A spinner shows which repo is being checked. `esc` cancels and shows no report.
 
-The MCP server line is cockpit's one probe: it asks `claude mcp list`, in the repo's own
-directory since MCP scope is partly per project, and reports `connected`, whatever else
-Claude Code says about it (`needs authentication`), or that the listing doesn't name it.
-That last one is worded as a probable miss rather than a fact, because a claude.ai-managed
-connector handshakes asynchronously and can read as absent while it's live. Nothing in
-cockpit is gated on the answer — it's a line in a report you're reading, not a switch.
-
-Press `c` on an org header or on any ticket inside it. On an **empty** inbox it checks
-every org you've configured, which is the case it exists for: an org the tracker answered
-nothing for has no header row to stand on.
-
-While it runs you get a spinner and the name of the repo being asked about, and `esc`
-cancels. Cancelling shows no report at all: the check is several round-trips per repo, and
-a half-finished diagnosis reads as a verdict. The round-trip already in flight finishes
-and is thrown away, so an unreachable tracker still takes its own timeout to let go.
-
-There's nothing else: no close, no mute, no nudge — the inbox is a list and a way in, not
-a second place to manage work.
-
-It needs no config beyond the `tickets` block you already set up, and it appears only if
-some repo has a tracker.
+The inbox needs no setup beyond your `tickets` config. It appears when any repo has a
+tracker.
 
 ---
 
 ## Reviewing your team's PRs
 
-Set `review_prs: true` on a repo and every coworker PR gets its own worktree and its own
-Claude session, seeded with a review command — so a review is waiting for you rather than
-queued behind you opening it.
+Set `review_prs: true` on a repo. Every coworker PR then gets its own worktree and Claude
+session, already reviewing it when you arrive.
 
-The guardrails are the point:
+- **Nothing is posted without you.** The session reports its findings and asks before it
+  comments, approves, or requests changes.
+- **Collaborators only.** A PR from a fork is untrusted input for an agent that can run
+  commands. Set `review_external: true` only if you accept that.
+- **No Dependabot**, unless you set `"dependabot": true`.
+- **Review sessions stay reviewers.** They never get commit-and-push rights on the branch,
+  and they are never nudged.
 
-- **Dry-run, always.** The seeded session reports findings and asks before posting a
-  comment or submitting an approve / request-changes verdict. Cockpit never posts on your
-  behalf.
-- **Collaborators only, by default.** A fork PR's title, body, and diff are
-  attacker-controlled, and this spawns a Bash-capable agent. `review_external: true` opts
-  in deliberately.
-- **Dependabot excluded** unless you ask for it.
-- **Review mode all the way down.** A coworker's worktree never gets the commit-and-push
-  authority your own PRs' sessions get, and never gets nudged.
-
-Reviews also collect themselves out of your way: they fold into one collapsed
-`<org> reviews (N)` group at the bottom of your cmux sidebar, per organisation — one review
-queue for a team, however many repos it spans. Snoozed PRs get a second fold below it —
-including a whole stacked chain whose tip you snoozed, which gives up its own group and
-folds away with the rest of the pile, exactly as the dashboard folds those rows away.
-
-If a fold ever disappears — its header row goes and everything it held spills back into the
-sidebar as loose rows — it comes back on its own within about half a minute, rather than
-waiting for the next full refresh.
+In the cmux sidebar, reviews collect into one collapsed `<org> reviews (N)` group at the
+bottom, one per org however many repos it spans. Snoozed PRs collect into a second group
+below it, including whole snoozed stacks. If one of these groups disappears, it comes back
+within about 30 seconds.
 
 ---
 
 ## Closing up
 
-`c` on a row, or `cockpit close` from inside the worktree.
+Press `c` on a row, or run `cockpit close` inside the worktree. Clicking ✕ on a cmux
+workspace does the same.
 
-**It refuses to lose work.** Uncommitted changes block it. Commits that exist nowhere but
-here block it. An open PR blocks it too — that one's soft, and `C` / `--force` overrides
-it, but never the other two. Pushing doesn't count as landing: a pushed-but-unmerged
-branch keeps its worktree.
+**It won't lose your work.** Cockpit refuses to close when:
 
-The unlanded check is smarter than a diff against main. A cherry-picked commit reads as
-landed. Commits belonging to the branch you're *stacked on* don't count as yours. And a
-coworker's review worktree only checks for local fixups of your own, since their work is
-safe on their remote.
+- the worktree has uncommitted changes;
+- it has commits that exist nowhere else — pushed but unmerged still counts;
+- the PR is still open.
 
-**Merged PRs clean themselves up.** When a PR merges, its worktree and terminal come down
-on their own, subject to the same guards.
+`C` or `--force` overrides only the open-PR check. When cockpit refuses, it tells you why.
 
-**Clicking the ✕ on a cmux workspace means the same thing as `c`.** It routes to the same
-refusing gate, so a dirty tree survives and tells you why — instead of the terminal simply
-reopening on the next cycle, which is what used to happen.
+Cherry-picked commits count as landed, and commits from a branch you're stacked on aren't
+counted as yours. On a coworker's review worktree, only your own local commits block it.
+
+**Merged PRs clean up on their own.** When a PR merges, its worktree and terminal close,
+with the same checks.
 
 ---
 
 ## The statusline
 
-Cockpit can drive Claude Code's own statusLine, so a session shows where it stands without
-you switching to the dashboard. Budget on the first line, the change on the second:
+Cockpit can drive Claude Code's statusLine, so a session shows where it stands without
+switching to the dashboard. Budget on the first line, the change on the second:
 
 ```text
 🤖 Opus 4.7   🧠 7%/1M   ⌛ 4%/5h   khivi/fix-login   ✓ clean
 TICKET-123   APPROVED   #9999   ✓   Add login flow
 ```
 
-Model, context headroom, rate-limit budget, session cost, repo, branch, dirty state,
-permission mode, ticket, review state, PR number, comments, CI, title. Drop any of them
-with `statusline_hide`. Set `use_cship: true`, or accept the prompt during `cockpit setup`.
+Model, context used, rate-limit budget, session cost, repo, branch, uncommitted state,
+permission mode, ticket, review state, PR number, comments, CI, and title. Hide any of them
+with `statusline_hide`. Turn it on with `use_cship: true`, or accept the prompt in
+`cockpit setup`.
 
 ---
 
 ## Reaching every session at once
 
 ```bash
-cockpit broadcast /compact                    # --dry to preview
-cockpit broadcast --repo svc-auth /compact    # just that repo's sessions
-cockpit broadcast --worktree ~/src/fix /compact   # just that worktree's
+cockpit broadcast /compact                        # --dry to preview
+cockpit broadcast --repo svc-auth /compact        # one repo's sessions
+cockpit broadcast --worktree ~/src/fix /compact   # one worktree's session
 ```
 
-One line of text into every idle Claude session cockpit knows about. Same idle gate as the
-nudge, so a session mid-turn or sitting on a permission prompt is skipped and named, never
-interrupted. Handy for `/compact` across the board, or telling every session about a
-decision you just made.
+Sends one line to every idle Claude session cockpit can see. Sessions that are busy or at a
+permission prompt are skipped and listed. Use it to `/compact` everything, or to tell every
+session about a decision.
 
-`--repo` narrows it to one registered repo when the message only makes sense there. Name it
-the way the dashboard does, case-insensitively; a name it doesn't recognise lists the ones
-it has rather than broadcasting to everything. Scoping matches each session's directory
-against that repo's own worktrees, so a worktree parked in a sibling directory still counts
-and a different repo nested inside one never does.
+- `--repo` takes the repo name as the dashboard shows it, in any case. An unknown name
+  lists the valid ones instead of sending anywhere.
+- `--worktree` targets exactly the session in that directory — handy for trying a command
+  on one session before sending it everywhere.
 
-`--worktree` goes narrower still — the session sitting in exactly that directory, and
-nothing else. Reach for it when a message is meant for one session, or to smoke-test a
-slash command somewhere before sending it everywhere. A repo that happens to have one
-worktree open is not the same thing: it stops being one target as soon as you open a
-second.
-
-`/cockpit-new`, `/cockpit-close`, `/cockpit-broadcast`, `/cockpit-nudge` and
-`/cockpit-diff` are installed into Claude Code by `cockpit setup`, so you can drive all
-five from inside a session.
-
-`/cockpit-diff` opens the diff, and `/cockpit-diff apply` addresses the notes you left in
-it. You rarely have to type the second one: when notes are waiting, cockpit sends it to
-the session sitting in that worktree itself.
+`cockpit setup` installs `/cockpit-new`, `/cockpit-close`, `/cockpit-broadcast`,
+`/cockpit-nudge` and `/cockpit-diff` into Claude Code, so you can run all of these from
+inside a session. `/cockpit-diff apply` works through the notes left in the diff viewer;
+cockpit usually sends it for you.
 
 ---
 
 ## Config that scales past one repo
 
-Watching one big repo needs almost nothing — `cockpit new` registers repos for you, and
-every setting has a working default.
+One repo needs almost no config: `cockpit new` registers repos for you, and every setting
+has a working default.
 
-Watching fifteen small services owned by one team needs the **`orgs` block**: a named
-bundle of per-repo defaults. Declare colour, branch prefix, ticket provider, credential
-variable, and review policy once; every member repo inherits it. A repo can still override
-any single field. Its repos render adjacent in the table, share one sidebar tint, and share
-one review fold — and separate orgs on separate Linear workspaces each get their own
-credential, because the config stores env var *names*.
+Many repos owned by one team call for an **`orgs` block**: shared defaults for colour,
+branch prefix, ticket provider, credential variable, and review policy. Every member repo
+inherits them, and any repo can override a single field. An org's repos sit together in the
+table, share a sidebar tint, and share one review group. Each org can use its own tracker
+credentials.
 
-Mistyped settings hard-fail at startup with the valid options listed, rather than silently
-doing nothing. So do settings renamed in past versions — an ignored setting is a feature
-that goes dark without telling you.
+To see what a repo actually resolved to, run `cockpit config inspect`. It prints the
+merged config as JSON. `--repo NAME` narrows it to one repo and adds its ticket provider and
+the credential variables it needs, each marked set or unset.
 
-**GitHub Enterprise repos work alongside github.com ones, with nothing to configure.** Each
-repo's host comes from its own `origin` remote, so one dashboard can watch your company's
-enterprise tenant and your github.com side projects at once — PRs, CI, reviews, issues and
-the per-host login all resolve against the right server. The one thing worth knowing: run
-`gh auth login --hostname <your-host>` first. Without a token for that host the API answers
-with an empty result set rather than an error, so cockpit warns at startup instead of
-showing you a repo that looks like it has no PRs.
+A mistyped or retired setting stops cockpit at startup and lists the valid options, so a
+setting never silently does nothing.
 
-With an `orgs` block in play, what a given repo actually resolved to isn't visible just by
-reading `config.json` — `cockpit config inspect` prints it: the effective config, merged and
-expanded, as JSON. `--repo NAME` narrows it to one repo and also shows which ticket provider
-it resolved to and which credential env var names it needs, each flagged set or unset —
-never the value itself.
+**GitHub Enterprise works alongside github.com** with nothing to configure — each repo uses
+the host from its own `origin`. Run `gh auth login --hostname <your-host>` first. If you
+forget, cockpit warns at startup; otherwise that repo would just look like it has no PRs.
 
 ---
 
-## Design decisions you'll feel
+## Limits and trade-offs
 
-Underneath, cockpit asks exactly one question per worktree, once a cycle: **does anything
-need to happen here?** Three sources answer it — GitHub (is there a PR, is it open, is CI
-green, are threads unresolved?), your terminal backend (is a session open here, and is it
-idle or mid-turn?), and git (does the worktree exist, is it dirty, how far behind its
-base?). Cross those and exactly one path applies: spawn a workspace, nudge the agent, write
-a pill, tear the worktree down, or do nothing. Most cycles it is nothing.
+Cockpit takes the bookkeeping off you. It doesn't take the judgment.
 
-Four consequences you'll actually notice:
-
-**Nothing is stored, so nothing drifts.** All three sources are re-derived from scratch
-every cycle. There's no identity file to get out of sync with reality, which is why a row
-can't tell you about a worktree that isn't there or a PR state from twenty minutes ago. The
-one exception is ticket state. A ticket can move without anything in the PR changing, so the
-delivery block is cached and refetched when the PR's footer ids change or after
-`linear_state_ttl_seconds` (three slow ticks by default). It is the only field in the table
-that can be up to fifteen minutes behind.
-
-**One writer.** The daemon decides and writes; the table and statusline only read. A
-renderer that went and asked `git` itself could disagree with the field beside it in the
-same render — that's the bug class this eliminates, and it's why two surfaces never tell
-you different things about one PR.
-
-**It degrades instead of dying.** No terminal backend? The table and statusline still work;
-nothing can be spawned. Backend too old for a verb? A warning at startup naming what's
-lost, not a crash. GitHub unreachable for a cycle? Cockpit suspends the decisions that
-would be irreversible rather than acting on a partial picture.
-
-**It fails safe.** Every refusal above defaults to keeping your work. Every write to an
-external system — a ticket transition, a review comment — is either opt-in, gated to
-things assigned to you, or requires you to say yes.
+- **Review is still on you.** Ten rows means ten diffs to read. Five to ten live rows is
+  realistic; fifty is a queue you won't get through.
+- **No history.** Each row shows what's true now, not what changed since yesterday. The PR
+  has the history.
+- **A nudged agent may take shortcuts.** Red CI at 2am gets fixed while you sleep — and
+  occasionally by weakening a test. Read what it did. Use `m` and `z` where that isn't
+  worth it.
+- **You bring the terminal.** Cockpit drives cmux or limux; it doesn't install them.
+  Without one, the table and statusline still work, but nothing can open a terminal.
+- **It doesn't orchestrate agents.** It doesn't plan, split, assign, or decide work. If you
+  want a queue that runs overnight without you, this is the wrong tool.
+- **It doesn't post for you.** No auto-approvals, auto-comments, or auto-merges.
+- **It doesn't update itself.** Run `brew upgrade cockpit`. It never checks for newer
+  versions; it only tells you when the version you're running has changed.
+- **It doesn't phone home.** It talks to git, `gh`, your terminal, and — if you set one up —
+  your tracker.
 
 ---
 
-## What it costs
-
-Everything above removes bookkeeping. None of it removes judgment, and the difference is
-worth being explicit about.
-
-**The bottleneck moves, it doesn't clear.** Ten rows produce ten diffs, and you read diffs
-at the speed you always have. Cockpit removes lookup, not review. Five to ten live rows is
-honest; fifty is a review queue you're lying to yourself about.
-
-**Nothing stored means no history.** The rule that keeps the table from drifting also means
-it can't tell you what changed since yesterday. Every row is what is true right now. For the
-arc of a change, go read the PR.
-
-**A nudged session digs.** Red CI at 2am gets fixed while you're asleep, and once in a while
-it gets fixed by weakening the test. The nudge buys a shorter path to the review, never a
-shorter review — and sometimes it buys work you throw away. `m` and `z` exist for the
-branches where that trade isn't worth taking.
-
-**The backend is yours to install.** Cockpit drives terminals; it doesn't ship them. Without
-cmux or limux on `PATH`, the table and statusline still work and nothing can be spawned.
-
-**One human's attention is the ceiling.** Every refusal in this document exists to keep a
-decision in front of you. If what you want is a queue that runs itself overnight without
-you, this is the wrong tool.
-
----
-
-## What it deliberately doesn't do
-
-- **It doesn't orchestrate agents.** It doesn't plan work, split it up, assign it, or
-  decide anything. You do that. What it takes off you is the clerical half of working on
-  several things at once.
-- **It doesn't post for you.** No auto-approvals, no auto-comments, no auto-merges.
-- **It doesn't self-update.** `brew upgrade cockpit` — no in-process update check, and
-  nothing that tells you a newer version exists. The one thing it will say is that the
-  version *you are already running* changed since last launch, which it knows without
-  asking anyone.
-- **It doesn't phone anywhere.** git, `gh`, your terminal backend, and — only if you
-  configure a tracker — that tracker's API.
-
----
-
-Ready to try it? [`README.md`](README.md#install) has install and first run.
-Every setting: [`docs/config.md`](docs/config.md). How the daemon actually decides things:
-[`docs/state-machine.md`](docs/state-machine.md).
+Ready to try it? [`README.md`](README.md#install) has install and first run. Every setting:
+[`docs/config.md`](docs/config.md).
