@@ -12,12 +12,19 @@
   reassert writes the pill only when two conditions hold. The transcript shows
   no tool call in flight. The screen confirms the bare composer. The screen
   alone is never evidence of rest.
+- [idle-gate.pending-screen~1] Given a screen that shows any pending-choice
+  marker in any letter case, the no-native-state reassert writes no pill. The
+  markers include the permission, plan-approval, input-form and question-form
+  prompts.
 - [idle-gate.verdict~1] For every gate case, the verdict of
   `rest_skip_reason` matches whether `nudge_if_idle` would deliver. The display
   caller never disagrees with the decision.
 - [idle-pill.liveness~1] Given `CMUX_WORKSPACE_ID` absent from the id-carrying
   workspace listing, the hook exits silently. A mere prefix of a live id counts
   as absent. A live id passes through to the pill write.
+- [idle-pill.background~1] Given a `Stop` payload with a running `subagent` or
+  `workflow` background task, the hook clears `idle=`. A running `shell` task
+  or a finished task does not stop the pill write.
 
 ## Automatic sends
 

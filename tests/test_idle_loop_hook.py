@@ -254,6 +254,46 @@ def test_stop_without_loop_tools_sets_idle(fake_cmux, tmp_path):
     assert any("set-status idle idle" in c for c in calls), calls
 
 
+@pytest.mark.covers("idle-pill.background~1")
+@pytest.mark.parametrize("task_type", ["subagent", "workflow"])
+def test_stop_with_running_background_agent_clears_idle(fake_cmux, tmp_path, task_type):
+    # Shape of a real Claude Code Stop payload: the main turn ended while a
+    # background agent keeps working and will report back into the session.
+    transcript = _transcript_with(tmp_path, ["Agent"])
+    payload = json.dumps(
+        {
+            "hook_event_name": "Stop",
+            "transcript_path": str(transcript),
+            "background_tasks": [
+                {"id": "a1", "type": task_type, "status": "running"},
+            ],
+        }
+    )
+    subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
+    calls = _poll_lines(fake_cmux, expected=2)
+    assert any("clear-status idle" in c for c in calls), calls
+    assert not any("set-status idle" in c for c in calls), calls
+
+
+@pytest.mark.covers("idle-pill.background~1")
+@pytest.mark.parametrize(
+    "tasks",
+    [
+        [{"type": "shell", "status": "running", "command": "npm run dev"}],
+        [{"type": "subagent", "status": "completed"}],
+        [],
+    ],
+)
+def test_stop_with_no_running_background_agent_sets_idle(fake_cmux, tmp_path, tasks):
+    transcript = _transcript_with(tmp_path, ["Edit"])
+    payload = json.dumps(
+        {"transcript_path": str(transcript), "background_tasks": tasks}
+    )
+    subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
+    calls = _poll_lines(fake_cmux, expected=2)
+    assert any("set-status idle idle" in c for c in calls), calls
+
+
 def test_stop_with_missing_transcript_falls_through_to_idle(fake_cmux, tmp_path):
     payload = json.dumps({"transcript_path": str(tmp_path / "nope.jsonl")})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
