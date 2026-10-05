@@ -12,6 +12,7 @@ reports a number that is wrong in a way nobody notices.
     scope.py all             # every unwaived bullet
     scope.py --pr 539        # the same, scoped to a PR's diff
     scope.py --base <ref>    # compare against something other than origin/main
+    scope.py --style         # also lint in-scope bullets against the STE subset
 
 Reads only. Prints the inventory, then the in-scope ids.
 """
@@ -27,6 +28,14 @@ from pathlib import Path
 BULLET = re.compile(r"^- \[([a-z0-9.-]+~\d+)\]")
 MARKER = re.compile(r'covers\("([a-z0-9.-]+~\d+)"\)')
 WAIVED = "(untested:"
+
+# The ASD-STE100 subset docs/specs.md adopts: its descriptive-sentence cap, and
+# the connectives that mark a reason riding inside a promise. Not "otherwise":
+# claims use it, and avoiding it once rewrote a bullet into a different claim.
+# tests/test_invariant_coverage.py gates on this function.
+MAX_WORDS = 25
+RATIONALE = re.compile(r"\b(since|because|so that|which is why)\b|—", re.IGNORECASE)
+SENTENCE_END = re.compile(r'(?<=[.!?])\s+(?=[A-Z`"])')
 
 ROOT = Path(__file__).resolve().parents[3]
 SPECS = ROOT / "specs"
@@ -68,6 +77,23 @@ def parse_bullets() -> list[Bullet]:
             elif line.strip():
                 current.text += " " + line.strip()
                 current.end = n
+    return out
+
+
+def style_findings(b: Bullet) -> list[str]:
+    """Mechanical STE checks only; judging whether a split keeps the claim is
+    the auditor's job. A backticked span counts as one word, as STE treats a
+    technical name."""
+    body = BULLET.sub("", b.text)
+    body = re.sub(r"\(untested:[^)]*\)", "", body)
+    out = []
+    for sentence in SENTENCE_END.split(body.strip()):
+        n = len(re.sub(r"`[^`]*`", "X", sentence).split())
+        if n > MAX_WORDS:
+            out.append(f"{n} words: {sentence[:60]}…")
+    prose = re.sub(r"`[^`]*`", "X", body)
+    if hits := sorted({m.group(0).lower() for m in RATIONALE.finditer(prose)}):
+        out.append("rationale: " + ", ".join(hits))
     return out
 
 
@@ -148,6 +174,9 @@ def main() -> int:
     ap.add_argument("--pr", help="scope to a PR's diff instead of the branch")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--ids-only", action="store_true", help="just the id list")
+    ap.add_argument(
+        "--style", action="store_true", help="lint in-scope bullets against STE"
+    )
     args = ap.parse_args()
 
     bullets = parse_bullets()
@@ -188,6 +217,16 @@ def main() -> int:
             if m.group(1) == id_
         )
         print(f"  {id_:<40} {n} claiming test{'s' if n != 1 else ''}")
+
+    if args.style:
+        flagged = [
+            (b, f) for b in live if b.id in in_scope and (f := style_findings(b))
+        ]
+        print(f"\nstyle (STE subset): {len(flagged)} of {len(in_scope)} flagged")
+        for b, findings in flagged:
+            print(f"  {b.id}  {b.path.name}:{b.start}")
+            for f in findings:
+                print(f"      {f}")
     return 0
 
 

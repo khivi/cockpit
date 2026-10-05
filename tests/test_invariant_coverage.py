@@ -14,6 +14,7 @@ assert. Waivers are counted against a pinned total so they cannot quietly grow.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -126,4 +127,30 @@ def test_waivers_cannot_quietly_grow():
         f"waived bullets: {len(waived)}, pinned: {WAIVED_COUNT}. Adding a "
         "waiver is a deliberate act — bump WAIVED_COUNT in the same change, "
         "and only for a bullet nothing runnable can assert."
+    )
+
+
+def _scope_module():
+    """`scope.py` is a skill script, not a package module; loading it by path
+    keeps one style check shared by the gate and `/spec-audit`."""
+    path = REPO_ROOT / ".claude" / "skills" / "spec-audit" / "scope.py"
+    spec = importlib.util.spec_from_file_location("spec_audit_scope", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_every_bullet_follows_the_ste_subset():
+    """docs/specs.md's writing rules, the mechanical half: no sentence over the
+    word cap and no rationale connective inside a bullet."""
+    scope = _scope_module()
+    offenders = {
+        f"{b.path.name}:{b.start} {b.id}": findings
+        for b in scope.parse_bullets()
+        if (findings := scope.style_findings(b))
+    }
+    assert not offenders, (
+        "spec bullets outside the STE subset (docs/specs.md, 'Writing a "
+        f"bullet'): one fact per sentence, reasons in AGENTS.md: {offenders}"
     )

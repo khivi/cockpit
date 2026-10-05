@@ -118,6 +118,22 @@ something no test could falsify as worded, or two things at once). Report an
 unassertable bullet and stop — do not reword it and do not propose a waiver,
 both being the author's call, and an under-asserted bullet is not this verdict.
 
+## Style pass (`--style`)
+
+Run `scope.py --style` with the same scope to lint each in-scope bullet against
+the ASD-STE100 subset `docs/specs.md` adopts: one fact per sentence, at most 25
+words, no rationale inside the promise. CI already fails a bullet the script
+would flag, so on a green branch this pass is for a draft not yet committed.
+The script flags; it cannot rewrite.
+For each flagged bullet, propose a rewrite that keeps **every clause of the
+claim** and drops only the reason (point at where the reason belongs, usually
+AGENTS.md). A rewrite that keeps the meaning keeps its `~rev`. If the bullet
+cannot be split without changing what it claims, report that and stop.
+
+Style is a separate section of the report and never a pair verdict. A
+well-written bullet can still be unassertable, and a 40-word one can still be
+entailed.
+
 ## Never weaken
 
 Propose, never edit. Specifically banned, because "make the audit clean" is
@@ -140,4 +156,5 @@ assertion sketched as a snippet, entailed as a bare count. Open with
 `scope.py`'s denominator — *130 auditable, 5 in scope* — since "all entailed"
 means nothing without it. Cap findings at five and give the remainder as a
 number. When every pair holds, say "all entailed" — promoting a nit to fill the
-section is how the audit stops carrying signal.
+section is how the audit stops carrying signal. Style findings come last,
+under their own count, capped at five like the rest.
