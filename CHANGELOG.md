@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.14.1](https://github.com/khivi/cockpit/compare/v3.14.0...v3.14.1) (2026-10-05)
+
+
+### Documentation
+
+* **specs:** write spec bullets in an ASD-STE100 subset, and gate it ([#564](https://github.com/khivi/cockpit/issues/564)) ([ad168c1](https://github.com/khivi/cockpit/commit/ad168c1dfdbadfa65086d5a0ef4bd6a6bba973eb))
+
 ## [3.14.0](https://github.com/khivi/cockpit/compare/v3.13.0...v3.14.0) (2026-10-01)
 
 
