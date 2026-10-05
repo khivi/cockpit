@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.16.1](https://github.com/khivi/cockpit/compare/v3.16.0...v3.16.1) (2026-10-05)
+
+
+### Documentation
+
+* rewrite FEATURES.md as a user guide and resync state-machine.md ([#572](https://github.com/khivi/cockpit/issues/572)) ([2dfae37](https://github.com/khivi/cockpit/commit/2dfae375c45bc94df51b9ddef19ab5512b362c05))
+
 ## [3.16.0](https://github.com/khivi/cockpit/compare/v3.15.0...v3.16.0) (2026-10-05)
 
 
