@@ -29,18 +29,6 @@ Each `###` is one invariant: the rule and its enforcing `file::symbol`. Obey the
 - Updates are brew's job. **Do not** add a version check, a `u` key, a re-exec, or `cockpit update`.
 - A new `~/.claude` install target needs an inverse in `teardown_claude_integration`, or `cockpit teardown` leaves it behind.
 
-### Removed — do not re-add
-
-- The d key. The daemon is the wrong process to open a diff from. `cockpit diff` replaced it.
-- The N key. It fired canned author-mode nudges into coworkers' review sessions and healthy PRs.
-- The orphan nudge and orphan_nudge_grace_hours. It fired on healthy new branches, asked an agent to make the user's call, and could not be muted. The orphan pill replaces it.
-- The cockpit agent skill and its installer pair. It only bought description matching, which no gesture used. Restore install and uninstall together if ever needed.
-- `use_linear` and the flat `linear_*` keys. The `tickets` block replaced them. They hard-fail in preflight.
-- The `Stop` → `statusline` hook and three `loop=` hooks. Nothing read them.
-- move_workspace_group_to_start. It answered by position. Snoozed stacks now divert into the snoozed fold.
-- In-app self-update. Brew owns updates.
-- Headless watch. Non-TTY `watch` exits 2.
-
 ### Keep `docs/state-machine.md` in sync — a stale diagram is worse than none
 
 Any change to `match_worktrees`, `_spawn_missing_workspaces`, `nudge_if_idle`, `_track_dev_done`, `_maybe_autoclose`, the `cache.py` cell writers, tick cadence, or the spawn/teardown/nudge/devdone/color rules MUST update the matching diagram in the same PR.
@@ -76,146 +64,136 @@ Each cycle re-reads `git worktree list` and cmux's workspace list. Only PR paylo
 ### `cockpit watch` is a Textual TUI, and the TUI *is* the daemon (`cockpit/tui/`)
 
 - **No headless mode.** A non-TTY `watch` exits 2. The app owns the pidfile.
-- The fast tick calls `daemon.reassert_pidfile` when the pidfile goes missing, or every `cockpit close` reports "no daemon". `daemon._reclaim` must re-create the state directory, because a `$COCKPIT_HOME` wipe would make the write raise. **Do not** use `ensure_state_dirs()`, which also seeds a `config.json`.
-- Slow and fast ticks run in `@work(thread=True)` workers, lock-free, serialized by `_tick_lock` acquired inside the worker. Startup is slow-first.
+- `daemon._reclaim` (via `daemon.reassert_pidfile`) must re-create the state directory. **Do not** use `ensure_state_dirs()`, which also seeds a `config.json`.
+- Slow and fast ticks run in `@work(thread=True)` workers, serialized by `_tick_lock` acquired inside the worker.
 - **Never** let the slow tick's `on_repo_done` hook write a cell. Only the daemon writes.
 - Use `loop.add_signal_handler`. **Never** use `signal.signal`, which raises off the main thread.
-- Tick prints go through one `_QueueWriter`. **Never** use per-tick `redirect_stdout`, because the threads race.
+- Tick prints go through one `_QueueWriter`. **Never** use per-tick `redirect_stdout`.
 
 #### Table
 
-- The table is read-only (`worktree_table.py`), keyed by worktree path, grouped under header rows (`HEADER_KEY_PREFIX`, a NUL-led sentinel). Rendering alone carries the hierarchy: the dim `─` rule plus `ROW_INDENT`.
+- The table is read-only (`worktree_table.py`), keyed by worktree path, grouped under header rows (`HEADER_KEY_PREFIX`).
 - The status glyph sits in a fixed-width slot (`_STATUS_SLOT`), because 🔇/🔔 differ in ink width. **Do not** drop that padding.
-- An ellipsized cell **must** keep its full text on the hover tooltip (`row_tooltips`).
-- `current_path()` returns None on a header. `current_capabilities()` returns `{HEADER_CAP}`, which hides row-targeted keys.
-- Cells read (`cache.py::_write_pr_flat_cells`): `pr-muted` gives 🔇. `pr-nudge` gives 🔔 (mute wins) and is `PR.nudge_issue`. `pr-snoozed` gives fold membership, no glyph. `pr-author` gives `@login`. `pr-comments` + `pr-comments-total` give the 💬 ratio: red while threads are unaddressed, green `0/T` when all are handled, blank when others opened none. `pr-base` gives the `└` indent.
+- An ellipsized cell **must** keep its full text on its tooltip (`row_tooltips`).
+- `pr-nudge` gives 🔔 and is `PR.nudge_issue`, so bell and nudge cannot disagree. Mute (🔇) wins. `pr-snoozed` gives fold membership and no glyph.
 
 #### Links
 
-Every cell naming something on the web is an OSC 8 hyperlink (`worktree_table.py::_cell_links` / `_apply_links`). The terminal owns the gesture.
+Every cell naming something on the web is an OSC 8 hyperlink (`worktree_table.py::_cell_links` / `_apply_links`). `CI` links to `<pr-url>/checks`.
 
-- `PR`, `🔀`, `💬`, `Title` link to the PR. `Author` links to the profile. `Ticket` and `📍` link to the tracker. `CI` links to `<pr-url>/checks`. `Workspace`, `✎` and `$` stay unlinked.
-- The ticket URL **must** be cached. Three providers expose it only in the PR body's delivery footer (`tickets._footer_url`). The daemon writes it every cycle into the `ticket` block's `url` (`cycle._stamp_ticket_urls`). **Do not** resolve a missing link in `worktree_table.py`.
-- The stamp runs on carried blocks and always writes, including `None`, because the ticket id decides carry-versus-rebuild.
-- `t` reads the cached string first (`app._open_ticket_url`), then falls back to `provider.ticket_url`. Key and click must agree.
+- The ticket URL **must** be cached. The daemon writes it every cycle into the `ticket` block's `url` (`cycle._stamp_ticket_urls`), because three providers expose it only in the PR body's footer. **Do not** resolve a missing link in `worktree_table.py`.
+- The stamp always writes, including `None`, and runs on carried blocks, because the ticket id decides carry-versus-rebuild.
+- `t` reads the cached string first (`app._open_ticket_url`), so key and click agree.
 - **Never** link a blank cell.
-- **No underline and no click handler.** A `DataTable` handler would collide with row select or Focus. Apple Terminal lacks OSC 8, so `p` and `t` stay the keyboard route.
-- The tooltip names the destination, because a link is invisible until hovered. `test_links_survive_all_the_way_into_terminal_output` pins that Textual still emits the escape.
+- **No underline and no click handler.** A `DataTable` handler would collide with row select or Focus. `p` and `t` stay the keyboard route.
+- The tooltip names the destination. `test_links_survive_all_the_way_into_terminal_output` pins that Textual still emits the escape.
 
 #### Row actions
 
-- Keys `f p t a A c C m z n` live on the app. Except `n`, `f`, `m` and `z`, they never touch cmux or the cache.
-- Footer help is gated on backend (`a` cmux-only, `f` hides only on `none`), workspace presence (`a` needs one except on a repo header, `f` spawns first), and row content (`ACTION_REQUIRES` fed by `current_capabilities()`). `c`/`C` hide on a workspace-only primary checkout with no workspace.
-- Row caps are `{pr, ticket, muted, snoozed, workspace, primary}`. `workspace` comes from one `workspace_cwds()` read per refresh. `primary` is `wt.is_primary and wt.branch in MAIN_BRANCHES`, so a primary checkout on a feature branch lacks it. Caps `None` shows the full legend. Actions stay bound and self-guard.
-- `f` focus: ensure a workspace (spawn if missing), then `cmux focus`. `use_worktree: false` repos host several sessions at one cwd, so `f` resolves by repo name (`_workspace_ref_by_name`), then cwd, then spawn.
-- `p` opens the PR. `t` is provider-neutral via `TicketProvider.ticket_url`. GitHub builds it from ref and nwo. Linear reads the footer link.
-- `c` close: `probe_blockers`, enqueue a `TeardownRequest`, slow kick. The commit guard splits by ownership (`worktree_state_blockers`). Own branch: `git.count_unlanded` (patch-id against `origin/<default>`, reachable from no remote ref except `origin/<branch>`). Coworker's branch: `git.commits_only_local`. Pushing does not clear it. **Do not** collapse the two. **Do not** re-baseline `count_unlanded` on `origin/<branch>`.
-- `c` on a primary checkout: `teardown` always skips `git worktree remove`. On the default branch it closes the workspace only and the guard relaxes. On a feature branch it deletes the branch (HEAD moves back first) and the guard does not relax. `default is None` keeps it workspace-only. Checkout and delete are soft-fail.
+- Except `n`, `f`, `m` and `z`, row keys never touch cmux or the cache.
+- Footer help is gated by `ACTION_REQUIRES` fed by `current_capabilities()`. Actions stay bound and self-guard.
+- `f` ensures a workspace (spawn if missing), then focuses. `use_worktree: false` repos host several sessions at one cwd, so `f` resolves by repo name (`_workspace_ref_by_name`), then cwd, then spawn.
+- `c` runs `probe_blockers`, enqueues a `TeardownRequest`, slow-kicks. The commit guard splits by ownership (`worktree_state_blockers`). Own branch: `git.count_unlanded` (patch-id against `origin/<default>`, reachable from no remote ref except `origin/<branch>`). Coworker's branch: `git.commits_only_local`. **Do not** collapse the two. **Do not** re-baseline `count_unlanded` on `origin/<branch>`.
+- `c` on a primary checkout: `teardown` always skips `git worktree remove`. On the default branch it closes the workspace only and the guard relaxes. On a feature branch it deletes the branch and the guard does not relax.
 - `C` overrides the soft open-PR block but still refuses `worktree_state_blockers`. Closing never runs teardown inline. With no daemon the marker stays queued.
-- `m` mute writes a `NudgePref`, repaints via `_repaint_pref`, slow-kicks.
-- `m` and `z` repaint on the keypress (`app._repaint_pref` calls `cache.restamp_pref`), the one row-action cache write. It writes the flat cells and the snapshot, because `republish_pr_caches_from_disk` reverts cells alone. It is a no-op without a snapshot. **Do not** extend it to a cell the daemon derives.
-- `n` new: modal, then `cockpit new <source>` detached via `python -m cockpit.cli new`. **Do not** run `spawn.py` by path.
-- There is no `d` key (see Removed). **Do not** re-add a row key that pipes into `cmux diff`: under `cockpit watch` its inherited surface is the dashboard's, and it would add a second `render_diff` caller.
+- `m` and `z` repaint on the keypress (`app._repaint_pref` calls `cache.restamp_pref`), the one row-action cache write. It writes cells and snapshot, because `republish_pr_caches_from_disk` reverts cells alone. **Do not** extend it to a cell the daemon derives.
+- `n` launches `cockpit new <source>` detached via `python -m cockpit.cli new`. **Do not** run `spawn.py` by path.
+- **Do not** add a row key that pipes into `cmux diff`.
 
 #### `z` snooze
 
-- `z` writes `NudgePref.snoozed` plus three wake snapshots from the cached payload, resolved via `_cache_repo_name`. The config `name` matches no file and would wake the snooze at once. It silences the nudge (`quiet = muted or snoozed`) and sinks the row into the trailing fold.
+- `z` writes `NudgePref.snoozed` plus three wake snapshots from the cached payload, resolved via `_cache_repo_name`, because the config `name` matches no file.
 - Keep mute and snooze as separate fields, **never** one tri-state, or the CLI's mute would self-clear. `z` clears any mute it lands on.
-- `cycle.py::_resolve_prefs` wakes a snooze on: review activity (`wake_on`, from `total_from_others` not `unaddressed`); new work (`nudge_issue` differs from `wake_nudge` and is non-empty); a push to a PR I review (`head_oid` differs from `wake_head`, `not PR.mine` only). An empty snapshot on either side wakes nothing.
+- `cycle.py::_resolve_prefs` wakes a snooze on review activity (`wake_on`, from `total_from_others` not `unaddressed`), new work (`nudge_issue` differs from `wake_nudge` and is non-empty), or a push to a PR I review (`head_oid` differs from `wake_head`, `not PR.mine` only). An empty snapshot wakes nothing.
 - **Do not** fold `head_oid` into `wake_signature`, which my own PRs share. **Do not** give the snooze a time-based `until`.
-- A stacked chain snoozes and wakes as one unit, or a member below the tip shows no trace and a tip snooze leaves members nudged inside a shut fold.
+- A stacked chain snoozes and wakes as one unit.
   - The pressed row's direction applies to every member (`app._apply_snooze`).
-  - Membership comes from `worktree_table.chain_paths` (`_chain_groups`), read on the main thread in `action_snooze_row`. **Do not** re-derive it in the app.
-  - The wake half is `cycle.py::_wake_chains` over `find_stacks`. It fires on a wake, never on the chain existing.
-  - `cockpit nudge snooze <N>` stays per-PR.
+  - Membership comes from `worktree_table.chain_paths`, read on the main thread in `action_snooze_row` (render's own record, see Shared rules).
+  - The wake half is `cycle.py::_wake_chains`. It fires on a wake, never on the chain existing. `cockpit nudge snooze <N>` stays per-PR.
   - **Do not** give the snoozed row a glyph to fix a half-snoozed chain.
-- A bare `cockpit nudge snooze` warns instead (`nudge_cli._warn_split_chain`) and the write stays per-PR. The tip comes from `stacks.py::chain_tip`. **Do not** re-derive a chain in `nudge_cli.py`. The warning covers open PRs only and fails silent on an absent cache. A CLI `wake` can leave a woken row inside a shut fold, which `_wake_chains` cannot see.
-- Both CLI commands write unconditionally, with no "already snoozed" short-circuit, because `restamp_pref` plus `kick_running` converges a diverged pref and surface. Re-snoozing re-arms the snapshots from the cached payload, except with no payload, where blanking `wake_on` to `"0|"` would wake it next tick.
+- A bare `cockpit nudge snooze` warns (`nudge_cli._warn_split_chain`) and the write stays per-PR. The tip comes from `stacks.py::chain_tip`. **Do not** re-derive a chain in `nudge_cli.py`. The warning fails silent on an absent cache.
+- Both CLI commands write unconditionally, because `restamp_pref` plus `kick_running` converges a diverged pref and surface. Re-snoozing re-arms the snapshots from the cached payload, except with no payload: blanking `wake_on` to `"0|"` would wake it next tick.
 
 #### `a` ask and `A` ask-snoozed
 
-- `a` is the one manual send. `AskScreen` routes through `cmux.nudge_if_idle` with no `pref_key`, so it overrides mute and snooze but honours every idle guard. It reaches an existing workspace only and writes no cell or pill.
-- There is no manual nudge key (see Removed). **Do not** re-add one with a canned message.
+- `a` is the one manual send. `AskScreen` routes through `cmux.nudge_if_idle` with no `pref_key`, so it overrides mute and snooze but honours every idle guard. It writes no cell or pill.
+- **Do not** add a manual nudge key with a canned message.
 - The modal is an `Input`, **never** a `TextArea`, or a multi-line box submits several truncated prompts.
 - `a` carries the typed line and nothing else. **Do not** re-attach diff comments.
-- On a repo header `a` addresses the whole repo, only on the two `HEADER_CAP` rows that name a repo. The fan-out matches by cwd (see Shared rules) and excludes the daemon's own.
-- Delivery is partial by construction. Report the gate's own reasons. A partial send keeps the draft and the refs that missed, and the retry targets only those.
-- A refusal keeps the text and names its cause from `skips`. A merely busy session queues the line (see the queued-ask rule).
-- Outcomes: Enter with text sends, escape stashes, Enter on an emptied box drops. With comments pending and no draft, the box opens on `COMMENTS_LEAD`, and escape does not stash an untouched one.
-- The state hint fills asynchronously (`rest_skip_reason`). Push the modal first. The hint **never** blocks the submit. `nudge_if_idle` is the sole authority.
-- `A` is `a`'s fan-out aimed at one snoozed fold, scoped to the cursor row's repo. It is a separate key because on a repo header both readings are live. It shows only on rows carrying `FOLD_CAP`, hidden under unknown caps too. Membership comes from `snoozed_paths`, because `_split_snoozed` partitions at chain granularity. **Do not** pass a `pref_key`: snoozing silences the automatic nudge, never a typed line.
+- On a repo header `a` addresses the whole repo. The fan-out matches by cwd (see Shared rules) and excludes the daemon's own.
+- A partial send keeps the draft and the refs that missed, and the retry targets only those. A refusal keeps the text and names its cause from `skips`. A merely busy session queues the line (see the queued-ask rule).
+- The async state hint (`rest_skip_reason`) **never** blocks the submit. `nudge_if_idle` is the sole authority.
+- `A` is `a`'s fan-out aimed at one snoozed fold. Membership comes from `snoozed_paths` (see Shared rules). **Do not** pass a `pref_key`: snoozing silences the automatic nudge, never a typed line.
 
 #### Kicks
 
-- Row-action kicks are repo-scoped (`_kick_slow(<row's repo>)`) except `z`. The close queue is still drained. `s`, SIGUSR1, the interval and startup stay full-cycle. An unknown `only_repo` reconciles nothing.
-- `z` kicks full-cycle, because it changes fold membership and `cycle_all` builds `ReviewFolds` only when `only_repo is None`. **Do not** build `folds` under `only_repo`: a bucket with no ref from the scoped repo is dissolved, taking other orgs' folds. **Do not** move the pass to the fast tick, which would read absent payloads as "no reviews left".
+- Row-action kicks are repo-scoped (`_kick_slow(<row's repo>)`) except `z`. `s`, SIGUSR1, the interval and startup stay full-cycle.
+- `z` kicks full-cycle, because `cycle_all` builds `ReviewFolds` only when `only_repo is None`. **Do not** build `folds` under `only_repo`: a bucket with no ref from the scoped repo is dissolved. **Do not** move the pass to the fast tick, which would read absent payloads as "no reviews left".
 
 #### Global keys, palette and header
 
 - Global keys: `q`, `s` (in `GLOBAL_ORDER`, not `ROW_ACTIONS`) and the repo-scoped `h`. **Do not** give `action_show_output` a key back. **Do not** list sync in `COMMANDS` as well as binding it. Updates are brew's job (see Shared rules).
-- Docs discovery is the menu, not a key. "Feature guide" opens `open_url(FEATURE_GUIDE_URL)`. **Never** point it at a local path, since the wheel may not ship the file. "What's new" is `action_open_release_notes` to `RELEASE_NOTES_URL`, the releases index. Both URLs stay unpinned, because a dev build or an unreleased version has no tag.
-- `app._announce_upgrade` compares `version.upgraded_version()` against cockpit's own last run, from a marker in `COCKPIT_RUNTIME_DIR`. It uses no network. **Do not** widen it into a version check, a `u` key, or a re-exec. A first-ever run stamps and says nothing. An unresolvable `running_version()` stamps nothing. It fails open. It is not `--dry` gated.
-- `ConfigCommands` implements `discover` as well as `search`, because `discover()` fills the palette while the box is empty. Both walk the one `COMMANDS` tuple. **Do not** add an entry without a `discover` hit.
-- `COMMANDS` order is the menu: in-app overlays, then `$EDITOR`, then the browser pair; read before write, recent before reference. Do not append to the end.
-- `HeaderBar` names the cursor row's repo in `#header-repo`, fed by `app._refresh_footer_caps` via `WorktreeTable.current_repo_name` and `current_repo_color`. The colour comes from a `_repo_color` map filled by `update_inventory`. **Never** call `load_config()` there. It is its own `Static`, so arrow keys do not repaint the countdowns. It repeats `worktree_table._header_cells`' tint on purpose. **Do not** add a Repo column or use `DataTable.fixed_rows`.
+- "Feature guide" opens `open_url(FEATURE_GUIDE_URL)`. **Never** point it at a local path, since the wheel may not ship the file. "What's new" is `action_open_release_notes` to `RELEASE_NOTES_URL`. **Do not** pin either URL to a tag.
+- `app._announce_upgrade` compares `version.upgraded_version()` against cockpit's own last run, with no network. **Do not** widen it into a version check. A first-ever run and an unresolvable `running_version()` stamp nothing.
+- `ConfigCommands` implements `discover` as well as `search`, because the palette is empty until `discover()` fills it. **Do not** add an entry without a `discover` hit.
+- `COMMANDS` order is the menu: in-app overlays, then `$EDITOR`, then the browser pair. **Do not** append to the end.
+- `#header-repo` names the cursor row's repo, fed by `app._refresh_footer_caps`. The colour comes from a `_repo_color` map filled by `update_inventory`. **Never** call `load_config()` there. **Do not** add a Repo column or use `DataTable.fixed_rows`.
 - `#header-repo` owns the one `1fr` slot, so segments right of it stay right-anchored. `test_the_countdowns_do_not_move_when_the_cursor_changes_repo` pins it. **Do not** add a second growing segment.
-- `#header-brand` shows the running version, dim and linked, because a bug report is a screenshot. `brand_text` takes the URL as an argument, set from `RELEASE_NOTES_URL` onto the `version_url` reactive. **Do not** import the URL into the widget. **Do not** move the version into the menu. An unresolvable version renders the bare name.
-- The trailing `≡ Menu` (`#header-menu`) is the palette's one visible entry point and is unconditional, because `ctrl+p` cannot come from `BINDINGS`. **Do not** move it into `FooterBar`. **Do not** print the key beside it. Override `link-color` and `link-style` in CSS, not `color`, since themes underline `@click` spans. Use a single-cell glyph, because `☰` measures two cells but draws one.
-- The countdowns use a glyph in the bar and a word in the tooltip (`SLOW_GLYPH` / `FAST_GLYPH`, read by `status_text` and `_SLOW_DESC`/`_FAST_DESC`). **Do not** put a glyph in the bar that the tooltip does not spell out.
-- A footer key explains itself on hover through `TOOLTIPS`, matched off the segment's `@click` meta. The link wraps the whole segment. `c` and `C` share one tooltip. **Do not** rebuild the footer as a widget per key.
+- `#header-brand` shows the running version, dim and linked. `brand_text` takes the URL as an argument, set from `RELEASE_NOTES_URL` onto the `version_url` reactive. **Do not** import the URL into the widget. **Do not** move the version into the menu.
+- The trailing `≡ Menu` (`#header-menu`) is the palette's one visible entry point and is unconditional, because `ctrl+p` cannot come from `BINDINGS`. **Do not** move it into `FooterBar`. **Do not** print the key beside it. Override `link-color` and `link-style` in CSS, not `color`. Use a single-cell glyph
+- The countdowns use a glyph in the bar and a word in the tooltip (`SLOW_GLYPH` / `FAST_GLYPH`). **Do not** put a glyph in the bar that the tooltip does not spell out.
+- Footer keys explain themselves on hover through `TOOLTIPS`. **Do not** rebuild the footer as a widget per key.
 
 #### `h` parks a repo
 
 `h` is the one repo-scoped key and the only user state that stops the daemon polling.
 
 - One key, three meanings by cursor row: expand or collapse the hidden section, un-park a revealed repo, park the cursor row's repo. **Do not** add a second key for reveal.
-- On the hidden row a single click acts, and Enter opens the section. `on_click` **must** resolve the row from `event.style.meta`, never the cursor, because Textual runs it before `DataTable._on_click` moves the cursor.
-- Key by resolved path in `$COCKPIT_HOME/hidden-repos.json` (`lib/hidden.py`), never the config `name`. It fails open. The repo stays in `config.json`, and parking is not a config field.
-- A parked repo goes dormant: `cycle_all` filters it out, except when `only_repo` is set. The fast tick is untouched.
+- `on_click` on the hidden row **must** resolve the row from `event.style.meta`, never the cursor, because Textual runs it before the cursor moves.
+- Key by resolved path in `$COCKPIT_HOME/hidden-repos.json` (`lib/hidden.py`), never the config `name`. It fails open.
+- `cycle_all` filters a parked repo out, except when `only_repo` is set.
 - Parking closes the repo's cmux workspaces (`_park_workspaces`), workspace-only, matched by cwd (see Shared rules). It spares the daemon's own and any not `workspace_is_idle`.
-- Un-parking closes and respawns nothing. `h` re-renders via `_prime_table()`. Parking must never cost a fetch.
-- A spawn into a parked repo un-parks it in `spawn.py::_unhide_spawn_target`, one gate for every mode, after the spawn, keyed off `main_worktree_path(wt)`. The `load_hidden()` test comes first. **Do not** move it into a per-mode branch. **Do not** key it on the worktree path.
+- Un-parking closes and respawns nothing, and parking never costs a fetch.
+- A spawn into a parked repo un-parks it in `spawn.py::_unhide_spawn_target`, one gate for every mode, after the spawn, keyed off `main_worktree_path(wt)`. **Do not** move it into a per-mode branch. **Do not** key it on the worktree path.
 - `n`'s repo picker keeps parked repos, sunk and dimmed. `_spawn_new` un-parks before launching, redundant with the gate so the row repaints at once. **Do not** filter parked repos out. **Do not** delete either half as duplication.
-- Parked repos collapse into one trailing row (`HIDDEN_ROW_KEY`, under `HEADER_KEY_PREFIX`), session-only. The cursor-skip loop stops at `hidden_start`.
-- `h` shows in the footer's global group only on a repo-reading row (`HEADER_CAP`). The binding stays live everywhere.
+- Parked repos collapse into one trailing session-only row (`HIDDEN_ROW_KEY`). `h` shows in the footer only on a repo-reading row (`HEADER_CAP`). The binding stays live everywhere.
 
 ### Only the daemon writes the cache; renderers read
 
 `lib/starship.py` field printers are strictly read-only.
 
-- Slow tick (300s) — `cycle.py::cycle_all`: full reconcile (gh fetch, base-distance, per-PR JSON, PR flat cells, git-state cells, pills).
-- Fast tick (30s) — `cockpit.py::_fast_tick`: pidfile re-assert, then a network-free republish of git-state, per-worktree cost and PR cells, plus workspace-name and sidebar-colour reconcile, trailing-fold restore and the `idle=` pill re-assert. The last three write into live cmux and are `dry`-gated. It ends with the diff-comment hand-over and the seed-queue drain, each `dry`-gated through `nudge_if_idle`'s own `dry=`.
+- Slow tick (300s), `cycle.py::cycle_all`: full reconcile (gh fetch, base-distance, per-PR JSON, PR flat cells, git-state cells, pills).
+- Fast tick (30s), `cockpit.py::_fast_tick`: pidfile re-assert, then a network-free republish of git-state, cost and PR cells, plus name and colour reconcile, trailing-fold restore and the `idle=` pill re-assert. The last three write into live cmux and are `dry`-gated. It ends with the diff-comment hand-over and the seed-queue drain, each `dry`-gated through `nudge_if_idle`'s own `dry=`.
 
 A new cell needs a writer in `cache.py` and a call site in a tick. **Never** let a renderer read source state directly.
 
-Cell text is externally authored (PR titles, ticket ids, footer URLs, including fork contributors'), so `cache.py::strip_control` neutralizes it inside `read_text`. Rich's `Text` strips BEL but not ESC, so a title could otherwise inject its own OSC 8 link.
+Cell text is externally authored (PR titles, ticket ids, footer URLs). `cache.py::strip_control` neutralizes it inside `read_text`, because Rich's `Text` strips BEL but not ESC, so a title could inject its own OSC 8 link.
 
 - Keep it in `read_text`, the one seam every flat-cell renderer shares. **Do not** re-implement it per renderer or move it to the writers, which would leave older cells raw.
-- Strip whitespace first, then replace control characters one-for-one, never drop them. `_ellipsize` and `_STATUS_SLOT` count codepoints, and a tampered value must stay visible.
+- Strip whitespace first, then replace control characters one-for-one, never drop them. `_ellipsize` and `_STATUS_SLOT` count codepoints.
 - Payload-derived text never passes a flat cell and needs its own call: `_ticket_ids`, the ticket half of `_cell_links`, and anchor text in `diff_comments.py`.
 
-Key every flat cell by worktree path (`cache.py::cwd_cache`) or session id. **Never** key by branch: same-named worktrees in different repos would merge, and `z` would write a `NudgePref` under the wrong repo.
+Key every flat cell by worktree path (`cache.py::cwd_cache`) or session id. **Never** key by branch: same-named worktrees in different repos would merge.
 
-- Use the worktree, not repo+branch. Only the path is held by all three renderers (TUI, starship, `restamp_pref`), and starship has no `gh` to resolve the nwo.
-- The path travels in the PR payload (`write_pr_cache`'s `cwd`), because `republish_pr_caches_from_disk` has only the JSON. Dedup per worktree, not per branch.
-- A PR with no local worktree writes no cells. Its JSON snapshot is still written.
-- `find_pr_payload_for_cwd` prefers the snapshot stamped with this worktree and falls back to a branch match only for older payloads.
+- Use the worktree, not repo+branch. Only the path is held by all three renderers (TUI, starship, `restamp_pref`).
+- The path travels in the PR payload (`write_pr_cache`'s `cwd`), because `republish_pr_caches_from_disk` has only the JSON. Dedup per worktree.
+- A PR with no local worktree writes no cells, but its JSON snapshot is still written.
+- `find_pr_payload_for_cwd` prefers the snapshot stamped with this worktree, and falls back to a branch match only for older payloads.
 
 ### `cmux events` is a doorbell — it wakes a tick, it is never state
 
-`lib/events.py::watch_workspace_events` treats an event as a trigger only. It kicks the fast tick, which re-derives everything. The 30s interval is the correctness floor. Gate on `has_capability("events.v1")` plus `is_cmux()`, never a private `cmux capabilities` read. **Do not** feed an event into a decision, a cell, or the slow tick.
+`lib/events.py::watch_workspace_events` treats an event as a trigger only. It kicks the fast tick, which re-derives everything. Gate on `has_capability("events.v1")` plus `is_cmux()`. **Do not** feed an event into a decision, a cell, or the slow tick.
 
-- Subscribe to `workspace.created` and `workspace.closed` only. Subscribing to `sidebar.metadata.*` or `workspace.renamed` makes the daemon ring its own doorbell.
+- Subscribe to `workspace.created` and `workspace.closed` only. `sidebar.metadata.*` and `workspace.renamed` make the daemon ring its own doorbell.
 - Debounce in the app. An event during a fast tick sets `_events_pending`, and `_run_fast`'s `finally` kicks once more.
 - The cursor file is cmux's resume bookmark. **Do not** grow it into inventory or route it through `cache.py`.
-- `on_unmount` `killpg`s the child, because killing the leader leaves a grandchild holding the stdout pipe.
-- Give up after `_MAX_FAST_EXITS` quick exits.
+- `on_unmount` `killpg`s the child, because killing the leader leaves a grandchild holding the stdout pipe. Give up after `_MAX_FAST_EXITS` quick exits.
 
-The one payload read is the sidebar X, a gesture inventory cannot express. `_closed_workspace` passes `workspace_id` and `cwd` to an optional `on_closed` callback. Nothing caches the payload.
+The one payload read is the sidebar X. `_closed_workspace` passes `workspace_id` and `cwd` to an optional `on_closed` callback. Nothing caches the payload.
 
 - A raising `on_closed` handler is logged, not fatal.
 - Filter cockpit's own closes, or parking a repo tears down every worktree in it. `_note_self_close` records the UUID before the close and lives in `cmux_close_workspace_best_effort`. **Do not** re-implement it per call site. Key by UUID, not cwd.
-- Route the X to the refusing gate, never to force. **Do not** map it onto `C`. Refusals toast loudly. `quiet` suppresses only the missing-worktree toast.
+- Route the X to the refusing gate. **Do not** map it onto `C`. Refusals toast loudly. `quiet` suppresses only the missing-worktree toast.
 
 ### `sidebar_color` — cosmetic, cmux-only, per-repo
 
@@ -223,37 +201,36 @@ Applied slow-tick via `_apply_repo_colors` and fast-tick via `_tint_repo_workspa
 
 ### The `pr` pill replaces cmux's native sidebar PR row — which cockpit cannot set, and must not trust
 
-cmux resolves a branch to a PR by name alone, so it shows the first of several PRs and shows a draft as `open`. The user turns that row off (`sidebar.showPullRequests: false`, never written by cockpit). Cockpit renders its own from `ctx.prs`.
+cmux resolves a branch to a PR by name alone, so it shows the first of several PRs and a draft as `open`. The user turns that row off (`sidebar.showPullRequests: false`, never written by cockpit). Cockpit renders its own from `ctx.prs`.
 
 - The `pr` pill is the one pill that names the PR. `draft`, `state` and the four `ci_*` kinds are still emitted, but their `_CMUX_RENDERERS` entries are `None`. **Do not** re-enable any without turning the `pr` pill off.
 - CI rides the pill as a trailing glyph, and a non-passing build takes the colour. Keep `"ci"` in `ACTIONABLE_KEYS` although nothing writes it: it sweeps stale pills.
-- `PR_KEY` is in `_PR_PILL_CLEAR_KEYS` but not `ACTIONABLE_KEYS`. `apply_pills` writes it, so it must be cleared or `clear_pr_pills` strands it on a reused branch.
+- `PR_KEY` is in `_PR_PILL_CLEAR_KEYS` but not `ACTIONABLE_KEYS`, so `clear_pr_pills` clears what `apply_pills` wrote.
 - Put the emoji in the value, not `set-status --icon`. The renderer contract is a `(key, value, color)` 3-tuple.
 - Emit it for every state including OPEN, so no pill means no tracked PR. **Do not** spawn pills for untracked workspaces.
 
-A cmux card shows three rows before "Show more" and no setting changes that, so cockpit emits fewer pills: `wip` is dropped while `rebase` or `merge` is in flight, because it restates that pill. **Do not** fix a buried pill by reordering `KIND_ORDER`. Rank is how each surface reads urgency.
+A cmux card shows three rows before "Show more" and no setting changes that. Cockpit drops `wip` while `rebase` or `merge` is in flight, because it restates that pill. **Do not** fix a buried pill by reordering `KIND_ORDER`.
 
 ### `orgs` is a load-time defaults layer — nothing below `load_config` knows orgs exist
 
 `config.py::apply_org_defaults` merges an org block into each member inside `load_config()`, so the reader chain gains an org rung with no call-site changes. **Do not** add an org-aware reader, an `org_*` field, or a `repo_org(...)` helper.
 
 - One level deep, repo wins. A scalar the repo sets beats the org's, and a block unions per field. **Do not** make it recursive or a whole-block override. Rebuild each block into a fresh dict, never alias it.
-- **Do not** persist it or add a writer that serializes `load_config()`'s dict. The writers re-read `config.json`.
+- **Do not** persist it or add a writer that serializes `load_config()`'s dict.
 - Validate effective values: `_validate_orgs` first (an undefined org hard-fails), then the merge.
 - Orgs affect TUI ordering only. No org header row, no cross-repo workspace-group, no park-the-whole-org key.
 
 ### Stacked PRs: one cmux sidebar group + one indented TUI row — derived from `PR.base`, never stored
 
-GitHub has no stack id, so `lib/stacks.py::find_stacks` derives chains from `PR.base`. **Do not** shell out to `gh stack view` or persist a stack. Chains match on `PR.branch`. A fork yields one chain, because a workspace is in one group.
+`lib/stacks.py::find_stacks` derives chains from `PR.base`, matching on `PR.branch`. **Do not** shell out to `gh stack view` or persist a stack. A fork yields one chain, because a workspace is in one group.
 
-`cycle.py::_reconcile_sidebar_groups` renders each chain of two or more PRs with local workspaces as a collapsible group (`square.stack`). The header is `<tip> (N)`, the tip and **not** the root, with the repo's `sidebar_tag`. Members follow, tip first. cmux-only, best-effort, and cosmetic: it never spawns, closes, nudges or writes a cell.
+`cycle.py::_reconcile_sidebar_groups` renders each chain of two or more PRs with local workspaces as a collapsible group (`square.stack`). The header is `<tip> (N)`, the tip and **not** the root, with the repo's `sidebar_tag`. Members follow, tip first. It is cmux-only, best-effort and cosmetic: it never spawns, closes, nudges or writes a cell.
 
-- Reconcile against cmux's live `workspace-group list`, not a `pill_state` mirror.
-- Match by member ref, never name. Touch only groups overlapping this repo's refs.
-- The header is cmux's spawned anchor, never a member (anchoring on the root swallowed its row). Spawn it with `--cwd $HOME`, outside every registered repo, or `_reap_workspace_orphans` reaps it. Close it on dissolve, because `ungroup` leaves it as a loose row. Also sweep groups where `icon == square.stack` and `members <= {anchor}`.
-- The anchor must own a live shell (`_durable_anchor`). `create` spawns it with no command and no surface, so it dies silently. `create_workspace_group` swaps in an anchor spawned with `ANCHOR_KEEPALIVE_COMMAND` via `add` + `set-anchor`, then closes the husk through `cmux_close_workspace_best_effort`. **Never** use a raw close, which routes into teardown as a user X. **Do not** revert to the anchor `create` returns.
+- Reconcile against cmux's live `workspace-group list`, not a `pill_state` mirror. Match by member ref, never name. Touch only groups overlapping this repo's refs.
+- The header is cmux's spawned anchor, never a member. Spawn it with `--cwd $HOME`, outside every registered repo, or `_reap_workspace_orphans` reaps it. Close it on dissolve, because `ungroup` leaves it as a loose row. Also sweep groups where `icon == square.stack` and `members <= {anchor}`.
+- The anchor must own a live shell (`_durable_anchor`), because `create` spawns it with no command and it dies silently. `create_workspace_group` swaps in an anchor spawned with `ANCHOR_KEEPALIVE_COMMAND`, then closes the husk through `cmux_close_workspace_best_effort`. **Never** use a raw close, which routes into teardown as a user X. **Do not** revert to the anchor `create` returns.
 - Minimum fold size is one, so `create_workspace_group` refuses only an empty ref list. Callers set their own floor.
-- A stack whose tip is snoozed joins the `snoozed` fold whole and stays out of `desired`, because groups do not nest. Key on the tip. Gate the divert on `folds is not None`, or a repo-scoped kick strands members. **Do not** re-introduce a position-based answer (move_workspace_group_to_start is gone).
+- A stack whose tip is snoozed joins the `snoozed` fold whole and stays out of `desired`, because groups do not nest. Key on the tip. Gate the divert on `folds is not None`, or a repo-scoped kick strands members. **Do not** use a position-based answer.
 
 The TUI shows the stack as indentation from the flat cell `pr-base`. `stacks.py::stack_order` returns `(index, depth)` and `_stack_rows` sorts each chain under its tip. Nesting is one level. **Do not** restore the per-level cascade. Key by index, not branch, so a base cycle falls back to flat rows.
 
@@ -266,32 +243,31 @@ The snoozed band collapses behind a per-repo `▸ N snoozed` row, so a snoozed r
 - `z` opens it, as one key with three meanings like `h`. **Do not** hang this off `h` or a new key. Enter and a single click toggle it too.
 - The fold row carries `SNOOZED_CAP`, not `HEADER_CAP`, which would hide `z`. `_skip` suppresses every row key except `SNOOZED_ROW_ACTIONS`. Both drop their `ACTION_REQUIRES` entry via `req = None`, not an early return, which would skip `BACKEND_ACTIONS`.
 - The cursor-skip loop must stop on it. It keys off its own sentinel, not `HEADER_KEY_PREFIX`.
-- A snooze moves the cursor onto the fold that swallowed the row, because `update_inventory` restores by index. Ask the table, since a snooze below the tip folds nothing.
-- `_split_snoozed` partitions by chain, so `z` writes the whole chain's prefs.
-- A snoozed row keeps the 🔔 suppression: `_status_glyph` returns blanks for `snoozed`, but `pr-nudge` is never blanked. **Do not** drop the suppression with the glyph. `test_a_snoozed_row_shows_no_bell` pins it. 🔇 wins over snoozed.
+- A snooze moves the cursor onto the fold that swallowed the row. Ask the table, since a snooze below the tip folds nothing.
+- `_split_snoozed` partitions by chain, so `z` writes the whole chain's prefs. Membership is the render's own record (see Shared rules).
+- A snoozed row keeps the 🔔 suppression: `_status_glyph` returns blanks, but `pr-nudge` is never blanked. **Do not** drop the suppression with the glyph. 🔇 wins over snoozed.
 
 The TUI renders three bands per repo (`_row_band`): 0 my queue, 1 a coworker's PR I review, 2 snoozed. Snooze outranks review. The sort is stable. A chain bands by its tip. Mute is not a band, since 🔇 means "stop nudging me about a PR I'm working on".
 
-Coworker reviews fold into one trailing `<org> reviews (N)` group, the one fold that spans repos. `not PR.mine` workspaces get the `eyeglasses` icon and are re-parked at the bottom every cycle (`--to-index 9999`, unconditional because `workspace-group list` reports no index). The key is the repo's `org`, else its `name`. A bucket with a `sidebar_tag` is named by the glyph (`_fold_tag`).
+Coworker reviews fold into one trailing `<org> reviews (N)` group, the one fold that spans repos. `not PR.mine` workspaces get the `eyeglasses` icon and are re-parked at the bottom every cycle (`--to-index 9999`, since `workspace-group list` reports no index). The key is the repo's `org`, else its `name`. A bucket with a `sidebar_tag` is named by the glyph (`_fold_tag`).
 
 - It has its own pass, because one repo cannot see sibling reviews. `_reconcile_sidebar_groups` only collects into a `ReviewFolds` accumulator, and `_reconcile_review_groups` drains it once after every repo.
 - Ownership splits by icon. The per-repo pass filters review-iconed groups out.
 - Stacks win overlap. A lone review folds too. The drop-departed-members loop guards on `folds.owned`, not the bucket, because a hand-added workspace is the user's. **Do not** persist a "this is a review" marker.
-- An incomplete cycle suspends the dissolve (`ReviewFolds.partial`), the one irreversible step (it closes the anchor). A repo that never reported leaves its bucket absent, which looks like "no reviews". Re-park, rename and re-member still run. **Do not** key this on the bucket being empty instead of the cycle being complete.
+- An incomplete cycle suspends the dissolve (`ReviewFolds.partial`), the one irreversible step, because a repo that never reported leaves its bucket absent, which looks like "no reviews". Re-park, rename and re-member still run. **Do not** key this on the bucket being empty instead of the cycle being complete.
 
 Snoozed PRs fold into a second trailing `<org> snoozed (N)` group below reviews, through the same accumulator and pass walking `_TRAILING_FOLDS`. Membership is `NudgePref.snoozed`, mine included.
 
 - Precedence on overlap: stacks, then snoozed, then reviews.
 - Order comes from pass order, not a rank field. **Do not** reorder that tuple expecting names to sort it.
-- Match the two families separately, or one claims the other's fold.
-- The per-repo pass filters both icons out of `all_groups`, or it dissolves a snooze-iconed group every cycle.
+- Match the two families separately, or one claims the other's fold. The per-repo pass filters both icons out of `all_groups`, or it dissolves a snooze-iconed group every cycle.
 
 Both piles are born collapsed, at create time only, since cmux creates groups expanded. Only `_reconcile_review_groups` passes `collapsed=True`. A stack stays open. **Do not** re-assert collapse per cycle, which would slam shut a fold the user opened, and **do not** read `is_collapsed` back.
 
 `cycle.restore_trailing_folds` rebuilds a fold lost mid-interval on the fast tick. It replays the slow pass's `(name, refs)` record from `pill_state` and is not a second authority.
 
-- It can only create: no dissolve, rename, member change or re-park. That is what permits 30s. `test_restore_can_only_create` pins it.
-- Read `read_workspace_groups`, never `list_workspace_groups`, which flattens a failed read to `[]`. **Do not** re-merge them.
+- It can only create: no dissolve, rename, member change or re-park. That is what permits 30s.
+- Read `read_workspace_groups`, never `list_workspace_groups`, which flattens a failed read to `[]` (see Shared rules). **Do not** re-merge them.
 - A live group of the same icon sharing any member means the fold exists. Match by overlap, not name.
 - Filter refs against live workspaces. If all are gone, skip and leave the record.
 - Keep the record in `pill_state`, never on disk. With no records, make no cmux call.
@@ -308,10 +284,10 @@ Whatever destroys the folds is still unidentified. **Do not** treat it as solved
 - Expand `{repo}` once at load time (`config.py::expand_sidebar_tags`), right after the org merge, so an org can declare a tag and all five `repo_entry.get("sidebar_tag", "")` readers see the result. **Do not** teach `tag_workspace_name` the token. The value is the repo's `name`, else path basename, as in `broadcast._repo_label`. Never persist it.
 - Apply the tag in both naming halves, or a fresh workspace is renamed a tick later: `Worktree.sidebar_tag` for the daemon, `spawn.py`'s `ws_name` for `cockpit new`. **Do not** add a third naming site.
 - `spawn.py` resolves the tag after every routing hop, since routing rewrites `args.repo`. With no determined repo (`--cwd` alone), apply no tag. **Do not** fall back to `discover_repo()`.
-- Pass the tag only at call sites that read `workspace_name`: the fast tick's rename pass, `cycle_all`, the orphan reap's `wt_by_name`, and the TUI's `_resolve_worktree`. Cwd-matched passes are unaffected.
-- The primary checkout takes no tag. Its name is the repo name, and a tag would double it and break `_workspace_ref_by_name`.
-- A stack header takes the tag through `cycle.py::_stack_group_name` and `tag_workspace_name`. A trailing fold spans repos, so `cycle.py::_fold_tag` reads the bucket's own declaration (the `orgs` block, or the repo entry for an org-less pile) and substitutes it for the bucket name. It reaches the cross-repo pass in `ReviewFolds.tags`, since that pass sees no config. **Do not** feed a member's merged tag into a fold header: `{repo}` is already one repo there. In a fold `{repo}` expands to nothing, and empty falls back to the bucket name. Keep the state word, or the two folds and a stack header look alike.
-- A tag ending in a non-alphanumeric takes a space, not `SIDEBAR_TAG_SEP`, because after a glyph the `·` renders as a stray dot. Test the last character, not for an emoji. A `{repo}`-expanded tag ends in the repo name and keeps the separator.
+- Pass the tag only at call sites that read `workspace_name`: the fast tick's rename pass, `cycle_all`, the orphan reap's `wt_by_name`, and the TUI's `_resolve_worktree`.
+- The primary checkout takes no tag. A tag would double its repo name and break `_workspace_ref_by_name`.
+- A stack header takes the tag through `cycle.py::_stack_group_name` and `tag_workspace_name`. A trailing fold spans repos, so `cycle.py::_fold_tag` reads the bucket's own declaration (the `orgs` block, or the repo entry for an org-less pile) and substitutes it for the bucket name. It reaches the cross-repo pass in `ReviewFolds.tags`. **Do not** feed a member's merged tag into a fold header: `{repo}` is already one repo there. In a fold `{repo}` expands to nothing, and empty falls back to the bucket name. Keep the state word, or the two folds and a stack header look alike.
+- A tag ending in a non-alphanumeric takes a space, not `SIDEBAR_TAG_SEP`, because after a glyph the `·` renders as a stray dot. Test the last character, not for an emoji.
 
 ### The daemon creates worktrees in the background — never blocking the tick on `git`
 
@@ -322,26 +298,25 @@ Whatever destroys the folds is still unidentified. **Do not** treat it as solved
 
 The seeded first turn is the configurable `skills.review`, run dry: report findings, ask before posting. `skills.plan` and `skills.actions` are sibling seams, each followed by the shared `plan_tail.txt` gate.
 
-All four `skills` fields default to unset and fall back to prose cockpit ships. A command default (even built-in `/review`) puts behaviour in a definition outside the wheel that can contradict `review.txt`'s dry-run rule. The fallback is `review_prose.txt`, rendered into `review.txt`'s `{lead}` slot by `prompts.py::review_lead`, the one resolver for `spawn._review_prompt` and `build_pr_prompt`'s coworker branch. **Do not** re-add a default naming any command. **Do not** copy the dry-run tail into `review_prose.txt`.
+All four `skills` fields default to unset and fall back to prose cockpit ships, because a command default (even built-in `/review`) lives outside the wheel and can contradict `review.txt`'s dry-run rule. The fallback is `review_prose.txt`, rendered into `review.txt`'s `{lead}` slot by `prompts.py::review_lead`, the one resolver for `spawn._review_prompt` and `build_pr_prompt`'s coworker branch. **Do not** re-add a default naming any command. **Do not** copy the dry-run tail into `review_prose.txt`.
 
 `_bg_spawn_pr` guards in-flight launches in `pill_state` and logs to `$COCKPIT_HOME/spawn.log`.
 
-A worktree younger than `_SPAWN_ADOPT_GRACE_SECONDS` (120s) is not adopted (`_too_young_to_adopt`), because `cockpit new` creates worktree and workspace in two steps and a poll between them spawns a second Claude.
+`_too_young_to_adopt` refuses a worktree younger than `_SPAWN_ADOPT_GRACE_SECONDS` (120s), because `cockpit new` creates worktree and workspace in two steps and a poll between them spawns a second Claude.
 
 - Guard both attach paths. The `--pr` form races too.
-- Use age, not a lock or spawn-side registration (cross-process state, stale locks).
-- Fail open: an unstattable path reads as old. **Do not** invert that.
-- Not configurable. The creating paths have no worktree to age, and their in-flight guard is process-local.
+- Use age, not a lock or spawn-side registration.
+- Fail open: an unstattable path reads as old. **Do not** invert that. Not configurable.
 
 A coworker's PR is review-mode, never author-mode. `PR.mine` defaults to true. `nudge_issue` requires `mine`, which also quiets the 🔔, while pills, cells and the Issue column still show the issue. `build_pr_prompt` branches on `mine`, so a coworker's PR gets `review.txt`, not `pr_authority.txt`'s force-push grant. **Do not** add a nudge or authority grant keyed on the worktree's existence alone.
 
-`use_worktree: false` repos opt out of all of the above. It defaults to true. `_spawn_missing_workspaces` early-returns for them. The row shows only while a workspace is open on it, and `n` starts one. Registration is idempotent, and `n` branches on it. **GOTCHA:** read it as `not repo.get("use_worktree", True)`, since a bare `.get()` treats an unconfigured repo as opted out. **Do not** let these repos reach any auto-spawn.
+`use_worktree: false` repos opt out of all of the above. It defaults to true. `_spawn_missing_workspaces` early-returns for them. The row shows only while a workspace is open on it, and `n` starts one. Read it as `not repo.get("use_worktree", True)`: a bare `.get()` treats an unconfigured repo as opted out. **Do not** let these repos reach any auto-spawn.
 
 ### The live PR list carries at most one PR per head branch
 
-Cockpit joins PR to worktree, workspace, row and cache by head branch. With two PRs on one head, a `{pr.branch: pr}` comprehension is last-wins while `match_worktrees` emits both, so a workspace is spawned and `_dedupe_workspaces` closes it every cycle. `gh.list_relevant_prs` collapses through `gh._one_pr_per_branch`, and `cache.prune_superseded_pr_caches` is the disk half. **Do not** harden one reader instead. Fix it at the producer.
+Cockpit joins PR to worktree, workspace, row and cache by head branch. With two PRs on one head, `{pr.branch: pr}` is last-wins while `match_worktrees` emits both, so a workspace is spawned and `_dedupe_workspaces` closes it every cycle. `gh.list_relevant_prs` collapses through `gh._one_pr_per_branch`, and `cache.prune_superseded_pr_caches` is the disk half. **Do not** harden one reader instead. Fix it at the producer.
 
-Both fetch legs can collide, and the per-branch alias returns the newest PR in any state. `gh._pr_rank` therefore prefers OPEN before `updated_at` and number, matching `cache._pr_payload_rank`. **Do not** rank by number alone.
+The per-branch alias returns the newest PR in any state, so `gh._pr_rank` prefers OPEN before `updated_at` and number, matching `cache._pr_payload_rank`. **Do not** rank by number alone.
 
 ### Trunk-headed PRs get a synthesized branch — `main`/`master` heads never become the worktree branch
 
@@ -349,13 +324,13 @@ Both fetch legs can collide, and the per-branch alias returns the newest PR in a
 
 ### Slack thread source — codename branch, MCP-delegated fetch, no `claude mcp list` probe
 
-A Slack permalink classifies as `slack` mode, user-initiated only. Spawn synthesizes a codename branch seeded on the thread's identity (channel id + message ts), not the URL, so re-spawns are idempotent. `_slack_prompt` delegates the read to the in-session MCP. **Never** add a `claude mcp list` pre-flight gate. It reads managed connectors as absent while they handshake, so it would silently disable the feature. The prompt's retry-then-STOP logic handles an absent connector. `prompts/linear.txt` carries the same step as `prompts/jira.txt`. **Do not** reintroduce a gating pre-flight for any provider. The one sanctioned reader is `lib/mcp.py`, which decides nothing.
+A Slack permalink classifies as `slack` mode, user-initiated only. Spawn synthesizes a codename branch seeded on the thread's identity (channel id + message ts), not the URL, so re-spawns are idempotent. `_slack_prompt` delegates the read to the in-session MCP. **Never** add a `claude mcp list` pre-flight gate: it reads managed connectors as absent while they handshake and would silently disable the feature. The prompt's retry-then-STOP logic handles an absent connector, in `prompts/linear.txt` as in `prompts/jira.txt`. **Do not** reintroduce a gating pre-flight for any provider. The one sanctioned reader is `lib/mcp.py`, which decides nothing.
 
 ### Prompt prose lives in packaged `cockpit/prompts/*.txt`, not Python string lists
 
-Prompts render via `templates.render(name, **slots)`. Templates hold static prose and `{slots}` only. The Python builder owns control flow, picks the template and builds conditional blocks as slots. A missing slot raises `KeyError`. **Do not** re-inline prose into Python lists or add conditionals to a `.txt`. hatchling ships only VCS-tracked files, so `git add` new templates. `tests/test_templates.py` asserts every template resolves.
+Prompts render via `templates.render(name, **slots)`. Templates hold static prose and `{slots}` only. The Python builder owns control flow, picks the template and builds conditional blocks as slots. A missing slot raises `KeyError`. **Do not** re-inline prose into Python lists or add conditionals to a `.txt`. hatchling ships only VCS-tracked files, so `git add` new templates.
 
-The plan gate leaves an untracked artifact: `plan_tail.txt` and the `plan_only.txt` fallback tell the session to write `plan.md` in the worktree root. The gate's no-code rule must carve that file out, or the lines contradict. **Do not** teach it to commit the file. Spawned repos lack our `.gitignore`, so the template's never-stage line is the only guard. **Do not** promote it to a cache cell, config field, or anything the daemon reads. No tick, renderer or teardown may depend on a file a session might not have written.
+`plan_tail.txt` and the `plan_only.txt` fallback tell the session to write `plan.md` in the worktree root. The gate's no-code rule must carve that file out, or the two lines contradict. **Do not** teach it to commit the file. Spawned repos lack our `.gitignore`, so the template's never-stage line is the only guard. **Do not** promote it to a cache cell, config field, or anything the daemon reads, because a session might not have written it.
 
 ### The one cache exception: session-scoped cells (written outside the daemon)
 
@@ -386,7 +361,7 @@ The `$` column totals what every session at a worktree has spent. Sessions are k
 
 ### `cockpit diff` is the ONLY diff entry point — a CLI, because the daemon cannot be one
 
-`cockpit/diff.py` replaced the TUI `d` key (see Removed). `cmux diff` defaults to the caller's own workspace and surface, which a daemon cannot supply. **Do not** re-add a row key that pipes into `cmux diff`.
+`cmux diff` defaults to the caller's own workspace and surface, which a daemon cannot supply, so the entry point is the `cockpit/diff.py` CLI. **Do not** add a TUI row key that pipes into `cmux diff`.
 
 - `cmux.py::render_diff` has one caller. It names neither `--workspace` nor `--surface` and passes the environment untouched. **Do not** add a `workspace=`/`keep_surface=` pair.
 - It takes exactly one of `patch=` (stdin, the only way to show a PR) or `source=` (cmux's `unstaged`/`staged`/`branch`/`last-turn`). **Do not** reimplement a git source, add an in-overlay renderer or add a `delta` dependency.
@@ -410,7 +385,7 @@ The `$` column totals what every session at a worktree has spent. Sessions are k
 
 ### The daemon makes exactly THREE automatic sends, and only one of them is a new message
 
-The set is closed: the PR nudge (`cycle.py`, slow tick, `PR.nudge_issue`, silenced by `m`/`z` via `pref_key`), the diff-comment hand-over, and the seed retry (`cockpit.py::_drain_seed_queue`). Everything else is typed by the user (`a`, `A`, `cockpit broadcast`) and passes no `pref_key`. A fourth must derive from an actionable defect the session can fix. Judge it by whether it originates with cockpit or finishes something the user started. There is no orphan nudge; see Removed.
+The set is closed: the PR nudge (`cycle.py`, slow tick, `PR.nudge_issue`, silenced by `m`/`z` via `pref_key`), the diff-comment hand-over, and the seed retry (`cockpit.py::_drain_seed_queue`). Everything else is typed by the user (`a`, `A`, `cockpit broadcast`) and passes no `pref_key`. A fourth must derive from an actionable defect the session can fix. Judge it by whether it originates with cockpit or finishes something the user started.
 
 - Queued ask (`lib/ask_queue.py`, `cockpit.py::_drain_ask_queue`): when `a`/`A` meets a session refused only as busy (`cmux.rest_pending`, never `parked`), queue the line and re-offer it through `nudge_if_idle` on the fast tick. Use its own directory, not the seed queue's, since both key on ref. Drain after the seed drain. The marker pins the cwd at enqueue and is dropped if the ref moved. A queued ref leaves the retry set (`_ask_misses`). The toast keeps the gate's reason. `STALE_SECONDS` is 600 and is correctness. A failed enqueue keeps the draft.
 - Diff-comment hand-over (`cockpit.py::_nudge_diff_comments`): sends `DIFF_COMMENTS_NUDGE` through `nudge_if_idle` to the session in a worktree with pending notes. **Do not** give it a second send path or generalise it into a fan-out. Pass no `pref_key`, since a note the user wrote is not noise. Dedup on the comment-id set, not the worktree. Record only on an accepted send. Run after `reassert_idle_pills`. Gate `dry` through the gate's own `dry=`.
@@ -465,7 +440,7 @@ The set is closed: the PR nudge (`cycle.py`, slow tick, `PR.nudge_issue`, silenc
 
 `cockpit/lib/config.py` is the authoritative reader. Two mirrors drift silently: `cockpit/config.example.json` (documentation only, never installed) and `docs/config.md`. Any change to a config field MUST update all three in the same PR. Provider ticket fields also flow through the provider's `CONFIG_FIELDS`.
 
-### `tickets` config — the one provider selector (replaced the `use_linear` bool)
+### `tickets` config — the one provider selector
 
 `tickets` is an object: `{provider, close_on_merge, dev_done, merge_done}` plus per-provider extras. A bare string is shorthand for `{provider: …}`. Fields and defaults live in `docs/config.md`.
 
