@@ -3,8 +3,8 @@ name: tag
 # When a version bump lands on `main`, push the matching `v<version>` tag and
 # cut the GitHub Release for it. That tag is what fires release.yml (Homebrew
 # tap bump) and publish.yml (PyPI), so a merged `chore(main): release <version>`
-# PR ships on its own — no manual `git tag && git push`. See AGENTS.md "Release
-# versioning".
+# PR ships on its own — no manual `git tag && git push`. See
+# docs/releasing.md.
 #
 # The tag is pushed with COCKPIT_GITHUB_API_TOKEN, NOT the default GITHUB_TOKEN:
 # a ref pushed by GITHUB_TOKEN does not trigger other workflows (GitHub's

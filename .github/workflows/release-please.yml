@@ -6,7 +6,7 @@ name: release-please
 # Merging that PR bumps `[project] version` in pyproject.toml — which is exactly
 # the trigger tag.yml already watches — so the tag, the Homebrew tap bump
 # (release.yml) and the PyPI upload (publish.yml) all follow unchanged. The one
-# human step is merging the release PR. See AGENTS.md "Release versioning".
+# human step is merging the release PR. See docs/releasing.md.
 #
 # `skip-github-release: true` is load-bearing, for the same reason tag.yml
 # exists in the shape it does. Left to default, release-please would push the
