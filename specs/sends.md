@@ -36,6 +36,22 @@
   fan-out.
 - [seed-queue.stale~1] Given a queued seed body older than `STALE_SECONDS`,
   the prune drops it unsent. A fresh marker survives.
+- [ask-queue.queue~1] Given an `a` refusal that `rest_pending` reads as busy,
+  the app queues the line for that workspace and drops the draft. The toast
+  names the gate's reason. A `parked` refusal queues nothing and keeps the
+  draft.
+- [ask-queue.fan-out~1] Given a header or snoozed-fold fan-out with busy
+  sessions, the app queues the line for each busy ref. A queued ref leaves the
+  retry set. Other misses stay in it.
+- [ask-queue.deliver~1] Given a queued line, the fast tick sends it through
+  `nudge_if_idle` with no `pref_key`. An accepted send retires the marker. A
+  refused or dry send keeps it.
+- [ask-queue.ref-moved~1] Given a queued line whose ref is gone or now sits at
+  a different cwd, the drain drops the line unsent.
+- [ask-queue.separate~1] Given a pending seed body and a queued line for the
+  same ref, each queue keeps its own marker.
+- [ask-queue.stale~1] Given a queued line older than `ask_queue.STALE_SECONDS`,
+  the prune drops it unsent. A fresh marker survives.
 - [orphan.no-nudge~1] Given a worktree with no PR, the orphan refresh applies
   its pills and sends nothing. No orphan nudge exists. No config key for one
   exists.

@@ -16,9 +16,10 @@ funnel, but the input widget is the place the constraint is actually honest:
 one line in, one prompt out. **Do not** swap in a `TextArea` without first
 re-probing whether `cmux send` has grown a bracketed-paste mode.
 
-Like the rest of the TUI this screen never writes a cell — the send is a
-one-shot gesture with no cache cell, pill or retry, exactly like
-`cockpit broadcast`.
+Like the rest of the TUI this screen never writes a cell. The app reports a
+fourth, delivery-side outcome after dismissal: a session that is only busy gets
+the line queued (`lib/ask_queue.py`) for the daemon to send once it is at rest,
+and the toast names the gate's reason so a `Needs input` stall stays visible.
 """
 
 from __future__ import annotations

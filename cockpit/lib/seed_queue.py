@@ -27,6 +27,10 @@ so the marker is dropped rather than held.
 
 One marker per workspace, keyed by ref: a second spawn onto the same workspace
 supersedes the first, which is what the user asked for by spawning again.
+
+Every function takes an optional `state_dir`/`stale_seconds` so `ask_queue`
+can run the same machine against its own directory. Defaults resolve at call
+time, so a test patching `STATE_DIR` still redirects every call.
 """
 
 from __future__ import annotations
@@ -57,7 +61,7 @@ def _safe_filename(ref: str) -> str:
     return ref.replace("/", "_").replace(":", "_") + ".json"
 
 
-def enqueue(req: SeedRequest) -> Path | None:
+def enqueue(req: SeedRequest, *, state_dir: Path | None = None) -> Path | None:
     """Atomically write a pending-seed marker; the path, or None if it couldn't
     be written.
 
@@ -65,9 +69,10 @@ def enqueue(req: SeedRequest) -> Path | None:
     that has already gone wrong, and a read-only runtime dir must cost the retry,
     never the spawn — the worktree and workspace are both fine at this point.
     """
+    root = state_dir or STATE_DIR
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        path = STATE_DIR / _safe_filename(req.ref)
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / _safe_filename(req.ref)
         payload = {
             "ref": req.ref,
             "text": req.text,
@@ -82,7 +87,7 @@ def enqueue(req: SeedRequest) -> Path | None:
         tmp.write_text(json.dumps(payload, indent=2))
         tmp.replace(path)
     except OSError as e:
-        print(f"cockpit: cannot queue seed retry for {req.ref}: {e}", file=sys.stderr)
+        print(f"cockpit: cannot queue {root.name} for {req.ref}: {e}", file=sys.stderr)
         return None
     return path
 
@@ -99,12 +104,13 @@ def _read_marker(path: Path) -> SeedRequest | None:
     return SeedRequest(ref=str(ref), text=str(text), cwd=data.get("cwd"))
 
 
-def iter_pending() -> list[tuple[Path, SeedRequest]]:
+def iter_pending(*, state_dir: Path | None = None) -> list[tuple[Path, SeedRequest]]:
     """Every readable pending marker, oldest filename first."""
-    if not STATE_DIR.is_dir():
+    root = state_dir or STATE_DIR
+    if not root.is_dir():
         return []
     out: list[tuple[Path, SeedRequest]] = []
-    for path in sorted(STATE_DIR.glob("*.json")):
+    for path in sorted(root.glob("*.json")):
         req = _read_marker(path)
         if req is not None:
             out.append((path, req))
@@ -116,13 +122,20 @@ def pop(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
-def prune_stale(*, now: float | None = None) -> list[Path]:
+def prune_stale(
+    *,
+    now: float | None = None,
+    state_dir: Path | None = None,
+    stale_seconds: float | None = None,
+) -> list[Path]:
     """Delete markers past `STALE_SECONDS`; returns the paths pruned."""
-    cutoff = (now if now is not None else time.time()) - STALE_SECONDS
+    window = STALE_SECONDS if stale_seconds is None else stale_seconds
+    cutoff = (now if now is not None else time.time()) - window
+    root = state_dir or STATE_DIR
     pruned: list[Path] = []
-    if not STATE_DIR.is_dir():
+    if not root.is_dir():
         return pruned
-    for path in STATE_DIR.glob("*.json"):
+    for path in root.glob("*.json"):
         try:
             data = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):

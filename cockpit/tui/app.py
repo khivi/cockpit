@@ -37,7 +37,7 @@ import subprocess
 import threading
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ClassVar
 
@@ -46,7 +46,7 @@ from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.css.query import NoMatches
 
-from cockpit.lib import version
+from cockpit.lib import ask_queue, version
 from cockpit.lib.cache import (
     cost_reporting_available,
     cwd_cache,
@@ -64,6 +64,7 @@ from cockpit.lib.cmux import (
     cmux_close_workspace_best_effort,
     nudge_if_idle,
     refs_at,
+    rest_pending,
     rest_skip_reason,
     select_workspace,
     skip_summary,
@@ -1181,7 +1182,8 @@ class CockpitApp(App[None]):
         try:
             # Self-excluded twice over: `workspace_cwds` drops $CMUX_WORKSPACE_ID
             # and `exclude` drops the ref we resolved — never ask our own TUI.
-            live = refs_at(workspace_cwds(), paths, exclude=self._self_ws)
+            listing = workspace_cwds()
+            live = refs_at(listing, paths, exclude=self._self_ws)
         except (CmuxUnavailable, RuntimeError, OSError) as e:
             self._notify(f"ask: could not enumerate workspaces: {e}", severity="error")
             return
@@ -1205,10 +1207,25 @@ class CockpitApp(App[None]):
             return
         skips: dict[str, str] = {}
         sent = sum(1 for ref in refs if nudge_if_idle(ref, text, tag=tag, skips=skips))
+        # A busy session's miss is queued rather than left for a retry, and so
+        # leaves `skips`: the retry filter must never reach a ref the queue will
+        # also deliver to.
+        queued = [
+            ref
+            for ref, reason in skips.items()
+            if rest_pending(reason) and self._queue_ask(ref, text, listing)
+        ]
+        for ref in queued:
+            del skips[ref]
+        tail = f" · {len(queued)} queued until idle" if queued else ""
         if sent == len(refs):
             self._ask_drafts.pop(key, None)
             self._ask_misses.pop(key, None)
             self._notify(f"sent to all {sent} session(s) in {target}")
+        elif not skips:
+            self._ask_drafts.pop(key, None)
+            self._ask_misses.pop(key, None)
+            self._notify(f"{target}: sent to {sent} of {len(refs)}{tail}")
         else:
             # Record the misses alongside the draft; the retry filter above
             # reads them.
@@ -1221,7 +1238,7 @@ class CockpitApp(App[None]):
             # has no room for the refs themselves, which is the only difference.
             why = ", ".join(f"{len(r)}× {reason}" for reason, r in skip_summary(skips))
             self._notify(
-                f"{target}: sent to {sent} of {len(refs)} — {why}"
+                f"{target}: sent to {sent} of {len(refs)}{tail} — {why}"
                 f" · press {retry_key} to retry",
                 severity="warning",
             )
@@ -1250,7 +1267,8 @@ class CockpitApp(App[None]):
         if reason is None:
             msg, warn = f"{who} is idle — ready", False
         else:
-            msg, warn = f"{who} is {reason} — this will be refused", True
+            outcome = "queued until idle" if rest_pending(reason) else "refused"
+            msg, warn = f"{who} is {reason} — this will be {outcome}", True
         # The user may have escaped out while cmux was being read.
         if screen.is_attached:
             self.call_from_thread(screen.set_state_hint, msg, warn=warn)
@@ -2188,19 +2206,43 @@ class CockpitApp(App[None]):
         # responses, and only the first tells you the session needs a turn
         # completed by hand before `a` can ever reach it.
         skips: dict[str, str] = {}
+        who = wt.label or wt.short
         if nudge_if_idle(ref, text, tag="ask", skips=skips):
             self._ask_drafts.pop(path_str, None)
-            self._notify(f"sent to {wt.label or wt.short}")
+            self._notify(f"sent to {who}")
+            return
+        why = skips.get(ref, "not idle")
+        # A session that is only *busy* gets the line queued for the fast tick
+        # (`lib/ask_queue.py`); the cause stays in the toast, since
+        # "not at rest (Needs input)" may be a permission waiting on you.
+        if rest_pending(why) and self._queue_ask(ref, text):
+            self._ask_drafts.pop(path_str, None)
+            self._notify(f"queued for {who}: {why} — will send when idle")
         else:
             # Keep the text. The refusal is transient (a turn ends, a permission
             # is answered), so throwing away what the user typed would make them
             # retype it verbatim — `a` restores this draft.
             self._ask_drafts[path_str] = text
-            why = skips.get(ref, "not idle")
             self._notify(
-                f"ask skipped {wt.label or wt.short}: {why} — press a to retry",
+                f"ask skipped {who}: {why} — press a to retry",
                 severity="warning",
             )
+
+    def _queue_ask(
+        self, ref: str, text: str, cwds: Mapping[str, Path] | None = None
+    ) -> bool:
+        """Hand a refused line to `ask_queue`, pinned to the cwd cmux reports
+        for `ref` now — the drain drops it if the ref later moves. False when
+        that cwd can't be read or the marker can't be written; the caller then
+        keeps the draft exactly as before the queue existed."""
+        try:
+            listing = cwds if cwds is not None else workspace_cwds()
+        except (CmuxUnavailable, RuntimeError, OSError):
+            return False
+        cwd = listing.get(ref)
+        if cwd is None:
+            return False
+        return ask_queue.enqueue(ref, text, str(Path(cwd).resolve())) is not None
 
     @work(thread=True, group="new", exit_on_error=False)
     def _launch_spawn(self, source: str, cwd: str | None) -> None:

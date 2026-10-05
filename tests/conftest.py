@@ -147,6 +147,7 @@ def _isolate_runtime_dir(tmp_path):
     Same shape as `_hermetic_git_env` above, including not requesting
     `monkeypatch` — see `_isolate_hidden_repos` for why that ordering matters.
     """
+    import cockpit.lib.ask_queue as ask_mod
     import cockpit.lib.config as config_mod
     import cockpit.lib.daemon_signal as signal_mod
     import cockpit.lib.seed_bodies as bodies_mod
@@ -163,6 +164,7 @@ def _isolate_runtime_dir(tmp_path):
         seed_mod.STATE_DIR,
         bodies_mod.STATE_DIR,
         bodies_mod.COMMAND_PATH,
+        ask_mod.STATE_DIR,
     )
     config_mod.COCKPIT_RUNTIME_DIR = runtime
     config_mod.PID_FILE = runtime / "cockpit.pid"
@@ -177,6 +179,9 @@ def _isolate_runtime_dir(tmp_path):
     # real queue and the next live fast tick types that body into whatever
     # workspace now holds the ref.
     seed_mod.STATE_DIR = runtime / "seed-requests"
+    # Same by-value binding: a TUI test whose `a` is refused queues a line the
+    # live fast tick would type into whatever workspace holds that ref.
+    ask_mod.STATE_DIR = runtime / "ask-requests"
     bodies_mod.STATE_DIR = runtime / "seed-bodies"
     # Absent by default, so a developer who ran `cockpit setup` doesn't flip
     # every `deliver_followup` test onto the token path.
@@ -190,6 +195,7 @@ def _isolate_runtime_dir(tmp_path):
         seed_mod.STATE_DIR,
         bodies_mod.STATE_DIR,
         bodies_mod.COMMAND_PATH,
+        ask_mod.STATE_DIR,
     ) = prev
     if prev_env is None:
         os.environ.pop("COCKPIT_RUNTIME_DIR", None)

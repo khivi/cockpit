@@ -138,6 +138,14 @@ a key that turns out to be meaningless here. Hovering a key explains it in a sen
 what it refuses and why, which is the part a one-word label can't carry. Everything that
 isn't a key lives behind **≡ Menu**.
 
+`a` never types into a session that is mid-turn or not provably at rest — that could
+answer a permission prompt instead of delivering your line. If the session is only busy,
+the line is queued and cockpit sends it the moment the session comes to rest, so you
+don't have to watch the row and press `a` again. The toast says why it waited; if it
+reads `Needs input`, the session may be waiting on you. A line still unsent after ten
+minutes is dropped, since the conversation has likely moved on. A parked session is not
+queued: its draft comes back on the next `a`.
+
 **The table is also a page of links.** Every cell that names something on the web is a real
 terminal hyperlink — ⌘-click it (ctrl-click on Linux) and your browser opens. The PR number,
 its review state, the comment count and the title all go to the PR; **CI goes to the checks

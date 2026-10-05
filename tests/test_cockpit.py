@@ -1123,6 +1123,43 @@ def test_the_drain_costs_nothing_when_the_queue_is_empty(monkeypatch):
     assert sends == []
 
 
+@pytest.mark.covers("ask-queue.deliver~1")
+@pytest.mark.parametrize(
+    ("accepted", "dry", "retired"),
+    [(True, False, True), (False, False, False), (True, True, False)],
+)
+def test_a_queued_ask_is_delivered_and_retired_only_on_acceptance(
+    monkeypatch, tmp_path, accepted, dry, retired
+):
+    from cockpit.lib import ask_queue
+
+    cockpit, sends = _drain_fixture(monkeypatch, accepted=accepted)
+    ask_queue.enqueue("workspace:1", "rebase please", str(tmp_path.resolve()))
+
+    out = cockpit._drain_ask_queue({"workspace:1": tmp_path}, dry=dry)
+
+    assert out == (["workspace:1"] if retired else [])
+    assert sends[0][:2] == ("workspace:1", "rebase please")
+    assert "pref_key" not in sends[0][2]
+    assert (ask_queue.iter_pending() == []) is retired
+
+
+@pytest.mark.covers("ask-queue.ref-moved~1")
+@pytest.mark.parametrize("listing", [{}, {"workspace:1": "elsewhere"}])
+def test_a_queued_ask_whose_ref_moved_is_dropped_unsent(monkeypatch, tmp_path, listing):
+    """cmux reuses refs: a line typed for one worktree must never reach
+    whatever now holds its ref."""
+    from cockpit.lib import ask_queue
+
+    cockpit, sends = _drain_fixture(monkeypatch)
+    ask_queue.enqueue("workspace:1", "rebase please", str(tmp_path.resolve()))
+    cwds = {r: tmp_path / p for r, p in listing.items()}
+
+    assert cockpit._drain_ask_queue(cwds, dry=False) == []
+    assert sends == []
+    assert ask_queue.iter_pending() == []
+
+
 # ---- --watch poll-interval validation ---------------------------------------
 
 

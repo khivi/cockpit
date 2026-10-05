@@ -57,7 +57,7 @@ def test_enqueue_fails_open_when_the_runtime_dir_is_unwritable(monkeypatch, caps
         seed_queue.Path, "mkdir", lambda *a, **k: (_ for _ in ()).throw(OSError("ro"))
     )
     assert seed_queue.enqueue(_req()) is None
-    assert "cannot queue seed retry" in capsys.readouterr().err
+    assert "cannot queue seed-requests" in capsys.readouterr().err
 
 
 @pytest.mark.covers("seed-queue.stale~1")
