@@ -49,14 +49,9 @@ Coming from the old Claude Code plugin? See [`MIGRATION.md`](MIGRATION.md), and 
 
 ## Use
 
-Start a task (auto-registers the repo), then open the dashboard:
-
 ```bash
-cockpit new <branch | PR | url>   # or press `n` in the TUI; full flags: cockpit new --help
-cockpit watch                     # needs a TTY; run under tmux/cmux to persist
+cockpit watch   # needs a TTY; run under tmux/cmux to persist
 ```
-
-The argument is auto-detected: a branch name, `#N` for a PR, `i#N` for an issue, a ticket key like `PE-1234`, or a URL — GitHub PR / issue / Actions run, Linear, Jira, Trello card, or a Slack permalink. Anything unrecognised becomes a new branch. ([What each source seeds →](FEATURES.md#starting-work-one-argument-any-source))
 
 Drive the table by keystroke — footer hints adapt to the highlighted row's state, its workspace, and your backend:
 
@@ -67,7 +62,7 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 | `a` | Send a line to the row's session (on a repo header, to every session in it) |
 | `c` · `C` | Close the worktree + workspace — [never discards work](FEATURES.md#closing-up) |
 | `m` · `z` | Mute indefinitely · [snooze until the PR changes](FEATURES.md#the-nudge) |
-| `n` · `h` | Start something new · park the row's repo, or reveal / un-park a parked one |
+| `n` · `h` | [Start something new](FEATURES.md#starting-work-one-argument-any-source) · park the row's repo, or reveal / un-park a parked one |
 | `s` · `q` | Reconcile every repo now · quit |
 
 Hover any footer key for a sentence on what it does. **≡ Menu**, top right, holds logs, config, theme, the [feature guide](FEATURES.md), and the [release notes](https://github.com/khivi/cockpit/releases) — click it, or press `ctrl+p`.
@@ -76,7 +71,7 @@ Reading a diff is the one thing you do *inside* a session rather than on the das
 
 ## Configuration
 
-`~/.config/cockpit/config.json` holds managed repos + tunables; `cockpit new` auto-registers repos. Minimal:
+`~/.config/cockpit/config.json` holds managed repos + tunables; starting a task auto-registers its repo. Minimal:
 
 ```json
 {"repos": [{"name": "myrepo", "path": "/abs/path", "branch_prefix": "you/", "default_base": "main"}]}
