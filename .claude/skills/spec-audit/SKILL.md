@@ -122,7 +122,9 @@ both being the author's call, and an under-asserted bullet is not this verdict.
 
 Run `scope.py --style` with the same scope to lint each in-scope bullet against
 the ASD-STE100 subset `docs/specs.md` adopts: one fact per sentence, at most 25
-words, no rationale inside the promise. The script flags; it cannot rewrite.
+words, no rationale inside the promise. CI already fails a bullet the script
+would flag, so on a green branch this pass is for a draft not yet committed.
+The script flags; it cannot rewrite.
 For each flagged bullet, propose a rewrite that keeps **every clause of the
 claim** and drops only the reason (point at where the reason belongs, usually
 AGENTS.md). A rewrite that keeps the meaning keeps its `~rev`. If the bullet

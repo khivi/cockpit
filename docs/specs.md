@@ -47,8 +47,10 @@ writing rules and leave out its controlled dictionary:
 - One term for one thing across the whole ledger.
 - Two shapes: `Given X, <actor> <verb> Y.` and `<actor> never <verb> Y.`
 
-`scope.py --style` flags long sentences and rationale words. It is advisory and
-does not gate a merge. A rewrite that keeps the meaning keeps its `~rev`.
+`tests/test_invariant_coverage.py` gates the length cap and the rationale words,
+using the same check as `scope.py --style`. Whether a rewrite keeps the claim is
+`/spec-audit`'s question, not the gate's. A rewrite that keeps the meaning keeps
+its `~rev`.
 
 ## Bullets asserted by the code's shape
 

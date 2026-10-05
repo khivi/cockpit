@@ -30,11 +30,11 @@ MARKER = re.compile(r'covers\("([a-z0-9.-]+~\d+)"\)')
 WAIVED = "(untested:"
 
 # The ASD-STE100 subset docs/specs.md adopts: its descriptive-sentence cap, and
-# the connectives that mark a reason riding inside a promise.
+# the connectives that mark a reason riding inside a promise. Not "otherwise":
+# claims use it, and avoiding it once rewrote a bullet into a different claim.
+# tests/test_invariant_coverage.py gates on this function.
 MAX_WORDS = 25
-RATIONALE = re.compile(
-    r"\b(since|because|so that|which is why|otherwise)\b|—", re.IGNORECASE
-)
+RATIONALE = re.compile(r"\b(since|because|so that|which is why)\b|—", re.IGNORECASE)
 SENTENCE_END = re.compile(r'(?<=[.!?])\s+(?=[A-Z`"])')
 
 ROOT = Path(__file__).resolve().parents[3]
