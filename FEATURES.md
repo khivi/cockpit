@@ -250,6 +250,10 @@ that didn't land to the daemon, which re-delivers it the moment that session is 
 at rest. If it can't be delivered while it's still a *first* turn, it's dropped rather than
 fired into work you've since started by hand.
 
+Once `cockpit setup` has installed `/cockpit-seed`, the prompt isn't typed at all: cockpit
+types a short `/cockpit-seed` command and the session loads the full prompt from a file.
+Long prompts arrive whole, with their line breaks.
+
 **And the plan is left behind as a file.** The session also writes it to `plan.md` in the
 worktree, so a compact, a crash or a session you closed doesn't take the reasoning with it
 — you can read what it intended to do without focusing the workspace, and whoever picks the

@@ -33,6 +33,14 @@
   first characters. Delivery reads loss past them from Claude Code's own
   transcript, never from the screen. Nothing is re-queued. An absent record is
   never read as corruption. A caller that passes no worktree forgoes the check.
+- [spawn.seed-token~1] Given the installed `/cockpit-seed` template, delivery
+  writes the body to a file and types only `/cockpit-seed <id>`. The body keeps
+  its newlines. Without the template, or with an unwritable store, delivery
+  types the body as before. A failed token delivery queues the token. The
+  garble check compares the transcript with the body, never with the token.
+- [spawn.seed-id~1] Given an id that `seed_bodies.write` did not mint,
+  `cockpit seed` reads no file. A miss prints a reason, never an empty turn. A
+  read never deletes the body.
 - [spawn.ticket-prompt~1] Given a repo that declares a Linear team key and no
   global `tickets` block at all, its bare ticket id still routes to it. The
   routing gate asks the matched candidates about their provider. It never asks

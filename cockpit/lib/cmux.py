@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from . import run, seed_queue, tool, transcript
+from . import run, seed_bodies, seed_queue, tool, transcript
 from .colors import CMUX_COLOR_ANSI, bold, dim
 from .constants import MAIN_BRANCHES
 from .gh import PR
@@ -899,8 +899,15 @@ def deliver_followup(ref: str, text: str, *, cwd: Path | None = None) -> bool:
     the exact bug the existing-workspace call site was added to fix. The prefix
     flow also *wants* mid-turn delivery: its first turn is the slash command
     still running, and the body is meant to queue behind it.
+
+    With the `/cockpit-seed` template installed, only its token is typed and
+    the body travels by file (`seed_bodies`), so it keeps its newlines and
+    skips the keystroke path entirely. Everything below — echo check, retry
+    queue, Enter — then operates on the token.
     """
-    text = one_line(text)
+    body = text
+    seed_id = seed_bodies.write(text) if seed_bodies.command_installed() else None
+    text = one_line(seed_bodies.token(seed_id) if seed_id else text)
     deadline = time.monotonic() + _FOLLOWUP_READY_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if _claude_ready(ref):
@@ -953,7 +960,7 @@ def deliver_followup(ref: str, text: str, *, cwd: Path | None = None) -> bool:
             flush=True,
         )
         return False
-    _warn_if_body_garbled(ref, text, cwd)
+    _warn_if_body_garbled(ref, body if seed_id else text, cwd)
     return True
 
 
@@ -979,7 +986,8 @@ def _warn_if_body_garbled(ref: str, text: str, cwd: Path | None) -> None:
         landed = transcript.submitted_body(cwd, prefix)
         if landed is None:
             continue
-        if landed != text:
+        # rstrip: a template expansion may add or drop a trailing newline.
+        if landed.rstrip() != text.rstrip():
             print(
                 f"  warn: followup body reached {ref} garbled — sent "
                 f"{len(text)} chars, session received {len(landed)}. "
