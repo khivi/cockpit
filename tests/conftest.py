@@ -149,6 +149,7 @@ def _isolate_runtime_dir(tmp_path):
     """
     import cockpit.lib.config as config_mod
     import cockpit.lib.daemon_signal as signal_mod
+    import cockpit.lib.seed_bodies as bodies_mod
     import cockpit.lib.seed_queue as seed_mod
 
     runtime = tmp_path / "runtime"
@@ -160,6 +161,8 @@ def _isolate_runtime_dir(tmp_path):
         signal_mod.STATE_DIR,
         signal_mod.PID_FILE,
         seed_mod.STATE_DIR,
+        bodies_mod.STATE_DIR,
+        bodies_mod.COMMAND_PATH,
     )
     config_mod.COCKPIT_RUNTIME_DIR = runtime
     config_mod.PID_FILE = runtime / "cockpit.pid"
@@ -174,6 +177,10 @@ def _isolate_runtime_dir(tmp_path):
     # real queue and the next live fast tick types that body into whatever
     # workspace now holds the ref.
     seed_mod.STATE_DIR = runtime / "seed-requests"
+    bodies_mod.STATE_DIR = runtime / "seed-bodies"
+    # Absent by default, so a developer who ran `cockpit setup` doesn't flip
+    # every `deliver_followup` test onto the token path.
+    bodies_mod.COMMAND_PATH = tmp_path / "claude-commands" / "cockpit-seed.md"
     yield
     (
         config_mod.COCKPIT_RUNTIME_DIR,
@@ -181,6 +188,8 @@ def _isolate_runtime_dir(tmp_path):
         signal_mod.STATE_DIR,
         signal_mod.PID_FILE,
         seed_mod.STATE_DIR,
+        bodies_mod.STATE_DIR,
+        bodies_mod.COMMAND_PATH,
     ) = prev
     if prev_env is None:
         os.environ.pop("COCKPIT_RUNTIME_DIR", None)

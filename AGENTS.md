@@ -351,6 +351,14 @@ It only ever feeds this one self-heal, never the send-time gate — a false posi
 
   **What is unidentified is which link drops the bytes**, since only the two ends of the chain are observable: cockpit knows the string it passed to `cmux send`, and the transcript records what the composer stored. Between them sit cmux's keystroke synthesis, the pty, and Claude Code's own input handling, and nothing here separates the three — doing so needs a capture of what cmux writes to the pty against what the composer receives, which has not been built. Two are ruled out: `one_line` only substitutes whitespace and cannot delete a chunk mid-word, and an argv limit truncates the *tail* while the observed gaps are interior. Four probes (919 and 2860 chars, mid-turn delivery, and the real prompt's character classes at 3284) all delivered byte-identical, so it does not reproduce on demand. The gap *sizes* are also unmeasured — the pre-loss prompt was never re-rendered, so only the 1006 chars that arrived are known.
 
+**With the `/cockpit-seed` template installed, the body never crosses the keystroke path — `lib/seed_bodies.py`.** `deliver_followup` writes the body under `$COCKPIT_RUNTIME_DIR/seed-bodies/` and types only `/cockpit-seed <id>`; the template's `!` injection runs `cockpit seed <id>`, so the body reaches the session as command output, newlines intact. This sidesteps the unidentified link above rather than identifying it. Five rules:
+
+- **The switch lives inside `deliver_followup`**, so every caller and the seed retry change at once; the echo check, retry queue and Enter all operate on the token. **Do not** add a second token path at a call site.
+- **An absent template falls back to typing the body.** The check is a stat of the installed file, not a probe of Claude Code — a user who upgraded without re-running `cockpit setup` would otherwise get "Unknown command" and lose the body silently. An unwritable store falls back the same way.
+- **A read never deletes**, since a retried token must still resolve; `write` prunes on `RETAIN_SECONDS`, well past `seed_queue.STALE_SECONDS`.
+- **The id is validated before it names a file** — it arrives from `$ARGUMENTS`.
+- **The template carries no lead line.** Without one, the transcript's expanded record starts with the body, which is what lets `_warn_if_body_garbled` compare against the body (not the token) through the unchanged `submitted_body`. A haiku probe acted on the bare body as its task in six runs of six.
+
 ### `cockpit diff` is the ONLY diff entry point — a CLI, because the daemon cannot be one
 
 `cockpit/diff.py`, for the same reason `cockpit close` exists: a session parked inside a worktree should not have to reach for the dashboard to read its own work. It **replaced** the TUI's `d` key rather than joining it (see the row-actions bullet for why the daemon could never do this correctly).

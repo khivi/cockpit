@@ -1714,6 +1714,7 @@ def test_install_claude_commands_writes_expected_files(tmp_path):
         "cockpit-broadcast.md",
         "cockpit-nudge.md",
         "cockpit-diff.md",
+        "cockpit-seed.md",
     }
     assert "cockpit new $ARGUMENTS" in (commands_dir / "cockpit-new.md").read_text()
     assert "cockpit close $ARGUMENTS" in (commands_dir / "cockpit-close.md").read_text()
@@ -1723,6 +1724,7 @@ def test_install_claude_commands_writes_expected_files(tmp_path):
     )
     assert "cockpit nudge $ARGUMENTS" in (commands_dir / "cockpit-nudge.md").read_text()
     assert "cockpit diff $ARGUMENTS" in (commands_dir / "cockpit-diff.md").read_text()
+    assert "cockpit seed $ARGUMENTS" in (commands_dir / "cockpit-seed.md").read_text()
 
 
 def test_the_diff_command_carries_the_string_the_daemon_sends(tmp_path):

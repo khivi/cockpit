@@ -48,6 +48,7 @@ _SHIM_SUBCOMMANDS = (
     "statusline",
     "starship",
     "idle-pill",
+    "seed",
 )
 
 
@@ -115,6 +116,12 @@ def main(argv: list[str] | None = None) -> int:
         # the hook on a fresh brew install.
         os.execvp("bash", ["bash", str(script), *rest])  # noqa: S606
         return 0  # type: ignore[unreachable]  # execvp replaces the process
+
+    # Run by the `/cockpit-seed` template's `!` injection, never typed.
+    if sub == "seed":
+        from cockpit.lib.seed_bodies import main as seed_main
+
+        return seed_main(rest)
 
     if sub == "close":
         from cockpit.close import main as close_main

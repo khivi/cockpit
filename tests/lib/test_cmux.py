@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 import cockpit.lib.cmux as cmux_mod
-from cockpit.lib import seed_queue
+from cockpit.lib import seed_bodies, seed_queue
 from cockpit.lib.cmux import (
     ACTIONABLE_KEYS,
     COCKPIT_KEY,
@@ -3364,3 +3364,110 @@ def test_a_garbled_body_is_not_queued_for_retry(capsys):
     ):
         assert deliver_followup("workspace:1", sent, cwd=Path("/wt")) is True
     enqueue.assert_not_called()
+
+
+# ── seed body by command token (`seed_bodies`) ───────────────────────────────
+
+
+def _echoing_cmux(calls, *, send_lands=True):
+    """A `cmux` stub whose composer shows whatever was last sent."""
+    composer = [""]
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        if args[0] == "list-status":
+            return "claude_code=Idle icon=x color=#fff\n"
+        if args[0] == "send" and send_lands:
+            composer[0] = args[-1]
+        if args[0] == "read-screen":
+            return f"❯ {composer[0]}\n"
+        return ""
+
+    return fake_cmux
+
+
+def _install_seed_command():
+    seed_bodies.COMMAND_PATH.parent.mkdir(parents=True, exist_ok=True)
+    seed_bodies.COMMAND_PATH.write_text("x")
+
+
+def _deliver_with(stub, text, **kwargs):
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=stub),
+        patch("cockpit.lib.tool.resolve_tool", return_value="cmux"),
+        patch("cockpit.lib.tool.is_cmux", return_value=True),
+        patch("cockpit.lib.cmux.time.sleep"),
+    ):
+        return deliver_followup("workspace:1", text, **kwargs)
+
+
+@pytest.mark.covers("spawn.seed-token~1")
+def test_with_the_template_installed_only_the_token_is_typed():
+    """The body travels by file, so the keystroke path carries a few dozen
+    characters and the body keeps the newlines `one_line` would flatten."""
+    _install_seed_command()
+    calls: list[tuple] = []
+    body = "You are starting a fresh task.\n\n- step one\n- step two"
+
+    assert _deliver_with(_echoing_cmux(calls), body) is True
+
+    sends = [c[-1] for c in calls if c[0] == "send"]
+    assert len(sends) == 1
+    assert sends[0].startswith("/cockpit-seed ")
+    seed_id = sends[0].removeprefix("/cockpit-seed ")
+    assert seed_bodies.read(seed_id) == body
+    assert any(c[0] == "send-key" and "enter" in c for c in calls)
+
+
+@pytest.mark.covers("spawn.seed-token~1")
+def test_without_the_template_the_body_is_typed_as_before():
+    """A user who upgraded without re-running `cockpit setup` would get
+    "Unknown command" for a token, losing the body silently."""
+    calls: list[tuple] = []
+    assert _deliver_with(_echoing_cmux(calls), "do X\ndo Y") is True
+    sends = [c[-1] for c in calls if c[0] == "send"]
+    assert sends == ["do X do Y"]
+    assert not list(seed_bodies.STATE_DIR.glob("*.txt"))
+
+
+@pytest.mark.covers("spawn.seed-token~1")
+def test_an_unwritable_store_falls_back_to_typing_the_body(tmp_path):
+    _install_seed_command()
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")
+    seed_bodies.STATE_DIR = blocker / "seed-bodies"
+    calls: list[tuple] = []
+    assert _deliver_with(_echoing_cmux(calls), "do the thing") is True
+    assert [c[-1] for c in calls if c[0] == "send"] == ["do the thing"]
+
+
+@pytest.mark.covers("spawn.seed-token~1")
+def test_an_undelivered_token_is_what_gets_queued():
+    """The retry re-sends the token through `nudge_if_idle`; the body file is
+    still there because a read never consumes it."""
+    _install_seed_command()
+    calls: list[tuple] = []
+    assert _deliver_with(_echoing_cmux(calls, send_lands=False), "a body") is False
+
+    [(_p, req)] = seed_queue.iter_pending()
+    assert req.text.startswith("/cockpit-seed ")
+    assert seed_bodies.read(req.text.removeprefix("/cockpit-seed ")) == "a body"
+
+
+@pytest.mark.covers("spawn.seed-garbled~1", "spawn.seed-token~1")
+def test_the_garble_check_compares_the_body_not_the_token(capsys):
+    """The transcript records the expanded body, so comparing it to the typed
+    token would report every token delivery as garbled."""
+    _install_seed_command()
+    body = "You are starting a fresh task on branch dat-340.\nRename it."
+    calls: list[tuple] = []
+    with patch(
+        "cockpit.lib.cmux.transcript.submitted_body", return_value=body + "\n"
+    ) as probe:
+        assert _deliver_with(_echoing_cmux(calls), body, cwd=Path("/wt")) is True
+    assert probe.call_args.args[1] == body[: cmux_mod._FOLLOWUP_ECHO_PREFIX_CHARS]
+    assert "garbled" not in capsys.readouterr().out
+
+    with patch("cockpit.lib.cmux.transcript.submitted_body", return_value=body[:30]):
+        assert _deliver_with(_echoing_cmux(calls), body, cwd=Path("/wt")) is True
+    assert "garbled" in capsys.readouterr().out
