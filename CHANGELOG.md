@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.17.0](https://github.com/khivi/cockpit/compare/v3.16.1...v3.17.0) (2026-10-05)
+
+
+### Features
+
+* **setup:** turn off cmux's native sidebar PR row, restore it on teardown ([#575](https://github.com/khivi/cockpit/issues/575)) ([fd0f522](https://github.com/khivi/cockpit/commit/fd0f522459110770c15886c8efaa7636a1ba274d))
+
+
+### Documentation
+
+* rewrite AGENTS.md for density and one idea per sentence ([#577](https://github.com/khivi/cockpit/issues/577)) ([61a8213](https://github.com/khivi/cockpit/commit/61a8213330241350e3c6fd7ca6e6462c48cffc49))
+* trim README Use section to cockpit watch ([#574](https://github.com/khivi/cockpit/issues/574)) ([043c437](https://github.com/khivi/cockpit/commit/043c437df94f77f0e7067c802bc47b9686630ee5))
+
 ## [3.16.1](https://github.com/khivi/cockpit/compare/v3.16.0...v3.16.1) (2026-10-05)
 
 
