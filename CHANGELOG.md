@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.16.0](https://github.com/khivi/cockpit/compare/v3.15.0...v3.16.0) (2026-10-05)
+
+
+### Features
+
+* **tui:** queue an ask refused by a busy session until it is idle ([#570](https://github.com/khivi/cockpit/issues/570)) ([cb85495](https://github.com/khivi/cockpit/commit/cb854958fa7f2e1f1a75d06c889882a3e741ab7a))
+
+
+### Bug Fixes
+
+* **idle:** withhold idle= while a background agent runs; widen pending-choice markers ([#568](https://github.com/khivi/cockpit/issues/568)) ([f2a1ef0](https://github.com/khivi/cockpit/commit/f2a1ef036e1bf1321104e8e582d97c84104fc2b9))
+
 ## [3.15.0](https://github.com/khivi/cockpit/compare/v3.14.1...v3.15.0) (2026-10-05)
 
 
