@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.15.0](https://github.com/khivi/cockpit/compare/v3.14.1...v3.15.0) (2026-10-05)
+
+
+### Features
+
+* **spawn:** deliver seed bodies through a /cockpit-seed command token ([#566](https://github.com/khivi/cockpit/issues/566)) ([5c338c9](https://github.com/khivi/cockpit/commit/5c338c9052c7136281e180fbbffaa32ea2eeb36e))
+
 ## [3.14.1](https://github.com/khivi/cockpit/compare/v3.14.0...v3.14.1) (2026-10-05)
 
 
