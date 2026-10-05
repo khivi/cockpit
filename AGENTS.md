@@ -31,7 +31,7 @@ Each `###` is one invariant: the rule and its enforcing `file::symbol`. Obey the
 
 ### Keep `docs/state-machine.md` in sync — a stale diagram is worse than none
 
-Any change to `match_worktrees`, `_spawn_missing_workspaces`, `nudge_if_idle`, `_track_dev_done`, `_maybe_autoclose`, the `cache.py` cell writers, tick cadence, or the spawn/teardown/nudge/devdone/color rules MUST update the matching diagram in the same PR.
+When you change `match_worktrees`, `_spawn_missing_workspaces`, `nudge_if_idle`, `_track_dev_done`, `_maybe_autoclose`, the `cache.py` cell writers, tick cadence, or the spawn/teardown/nudge/devdone/color rules, update the matching diagram in the same PR.
 
 ### Docs have four altitudes — put a fact at exactly one of them
 
@@ -442,7 +442,7 @@ The set is closed: the PR nudge (`cycle.py`, slow tick, `PR.nudge_issue`, silenc
 
 ### Config surface has three faces — keep them in sync
 
-`cockpit/lib/config.py` is the authoritative reader. Two mirrors drift silently: `cockpit/config.example.json` (documentation only, never installed) and `docs/config.md`. Any change to a config field MUST update all three in the same PR. Provider ticket fields also flow through the provider's `CONFIG_FIELDS`.
+`cockpit/lib/config.py` is the authoritative reader. Two mirrors drift silently: `cockpit/config.example.json` (documentation only, never installed) and `docs/config.md`. When you change a config field, update all three in the same PR. Provider ticket fields also flow through the provider's `CONFIG_FIELDS`.
 
 ### `tickets` config — the one provider selector
 
@@ -514,7 +514,7 @@ Never cache a failed identity fetch. A failed write clears the marker to retry. 
 - The collector never branches on a provider name. `inbox_scopes` is a `TicketProvider` field.
 - An empty scope means "ask about everything" except for Trello, where it means "ask about nothing" (`tickets._trello_my_open`), because a Trello account spans every board its owner joined. `tickets.board` is required here and takes a list (`config.py::trello_boards`). Undeclared returns `[]`, not None.
 - The inbox is a payload, never a flat cell (`cache.py::write_ticket_inbox`), because an unstarted ticket has no worktree path or session id. It has no TTL.
-- Stamp `in_flight` on BOTH ticks and always write it, including `False` (the `_stamp_ticket_urls` rule). `publish` stamps on the slow tick and `cache.py::stamp_inbox_in_flight` on the fast tick, both through `ticket_inbox.py::active_ids`, which takes its inputs and fetches nothing (see Shared rules).
+- Stamp `in_flight` on both ticks and always write it, including `False` (the `_stamp_ticket_urls` rule). `publish` stamps on the slow tick and `cache.py::stamp_inbox_in_flight` on the fast tick, both through `ticket_inbox.py::active_ids`, which takes its inputs and fetches nothing (see Shared rules).
 - `ticket_inbox.py::_drop_done` drops tickets whose `state` matches `TicketProvider.done_values`, casefolded. Those are the user's own `dev_done` and `merge_done`, so it takes **no config field of its own**. A bucket it empties is still written, because `[]` is an answer.
 - `tickets.inbox_states`, when set, IS the whole filter and skips `_drop_done`. Half-replacing would re-hide a state the user listed. `config.ticket_inbox_states` resolves per repo and a fetch group takes the union. Linear filters server-side and case-exact. **Do not** add client-side casefolding for Linear. Jira and Trello filter client-side, casefolded. GitHub ignores it, and `preflight._validate_inbox_states` warns.
 - `trello.py::_board_and_list_names` resolves names, because `/members/me/cards` returns ids and ignores `board=true` / `list=true`. A failed names call returns **None**, not partial cards. Archived boards drop their cards. An unknown board id is not archived. A Trello row shows `#<idShort>` as `handle`, and `id` stays the key for every join, dedup and `in_flight` match.
@@ -592,7 +592,7 @@ Opt-in, slow-tick `_update_stale_branches`.
 # Run the test suite serially — right for a single test or a small selection:
 pytest tests/test_spawn.py::test_linear_key_routes_to_matching_repo_without_repo_flag
 
-# Run the WHOLE suite — always pass -n auto (near-linear parallel speedup).
+# Run the whole suite with -n auto (near-linear parallel speedup).
 # `addopts` omits it because worker boot is pure tax on the single-test line above:
 pytest -n auto
 
@@ -603,14 +603,14 @@ pytest -n auto --cov --cov-report=term-missing
 # Type-check:
 mypy cockpit/
 
-# Lint + format — ALWAYS via the pinned pre-commit hook, scoped to your files:
+# Lint + format via the pinned pre-commit hook, scoped to your files:
 pre-commit run ruff ruff-format --files <changed paths>
 
 # Audit the workflows for security issues after touching .github/:
 pre-commit run zizmor --all-files
 ```
 
-**Never lint/format with `uvx ruff` (or a globally-installed `ruff`).** `uvx` pulls the latest ruff, whose rules drift from the pinned version and rewrite files you never touched. The pinned hook is what CI enforces.
+**Never** lint or format with `uvx ruff` or a global `ruff`. `uvx` pulls the latest ruff, whose rules drift from the pinned version and rewrite files you never touched. The pinned hook is what CI enforces.
 
 ### `./dev.sh` — five isolation axes, and none of them is optional
 
