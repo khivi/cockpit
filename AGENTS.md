@@ -51,7 +51,7 @@ Each cycle re-reads `git worktree list` and cmux's workspace list. Only PR paylo
 - **`teardown`** (`config.teardown_claude_integration`) inverts the `~/.claude` writes of `setup`. Run it *before* `brew uninstall`.
 - **Distribution:** a brew formula whose single source of truth is the tap repo `khivi/homebrew-cockpit`. **Do not** vendor it here. There is no plugin, marketplace, or self-update path.
 - **Version:** static in `pyproject.toml`, read via `importlib.metadata`. `preflight._warn_cockpit_not_on_path` only warns.
-- **Claude footprint:** `cockpit setup` idempotently writes the statusLine command, idle-pill hooks, and command templates under `~/.claude/commands/`. Each has an inverse in `teardown_claude_integration`.
+- **Claude footprint:** `cockpit setup` idempotently writes the statusLine command, idle-pill hooks, command templates under `~/.claude/commands/`, and cmux's `sidebar.showPullRequests` (see the `pr` pill section). Each has an inverse in `teardown_claude_integration`.
 - **`_COCKPIT_HOOKS` is exactly two hooks:** `Stop` → `idle-pill stop` and `UserPromptSubmit` → `idle-pill prompt`. Only those have a reader; **do not** add one without a reader. The drop pass in `install_claude_hooks` sweeps every event in the file, since a retired hook sits under an event the template no longer names. An event left with no groups is deleted. `_COCKPIT_HOOK_CMD_RE` still matches `statusline` to clean older installs.
 - **`{python}` pin:** starship configs use `{python} -m cockpit.cli <sub>`, pinned to `sys.executable` at setup. **Never run setup from inside a worktree venv**, because it bakes in an ephemeral `.venv/bin/python` that dies on cleanup.
 - **Pin self-heals:** `cockpit watch` re-pins at startup via `config.repin_interpreter_if_stale`, rewriting only the interpreter prefix.
@@ -201,13 +201,17 @@ Applied slow-tick via `_apply_repo_colors` and fast-tick via `_tint_repo_workspa
 
 ### The `pr` pill replaces cmux's native sidebar PR row — which cockpit cannot set, and must not trust
 
-cmux resolves a branch to a PR by name alone, so it shows the first of several PRs and a draft as `open`. The user turns that row off (`sidebar.showPullRequests: false`, never written by cockpit). Cockpit renders its own from `ctx.prs`.
+cmux resolves a branch to a PR by name alone, so it shows the first of several PRs and a draft as `open`. `cockpit setup` turns that row off (`sidebar.showPullRequests: false`). Cockpit renders its own from `ctx.prs`.
 
 - The `pr` pill is the one pill that names the PR. `draft`, `state` and the four `ci_*` kinds are still emitted, but their `_CMUX_RENDERERS` entries are `None`. **Do not** re-enable any without turning the `pr` pill off.
 - CI rides the pill as a trailing glyph, and a non-passing build takes the colour. Keep `"ci"` in `ACTIONABLE_KEYS` although nothing writes it: it sweeps stale pills.
 - `PR_KEY` is in `_PR_PILL_CLEAR_KEYS` but not `ACTIONABLE_KEYS`, so `clear_pr_pills` clears what `apply_pills` wrote.
 - Put the emoji in the value, not `set-status --icon`. The renderer contract is a `(key, value, color)` 3-tuple.
 - Emit it for every state including OPEN, so no pill means no tracked PR. **Do not** spawn pills for untracked workspaces.
+- `lib/cmux_config.py` makes cockpit's one write into another tool's config. It edits `~/.config/cmux/cmux.json` as text, because the file is JSONC and a `json` round-trip strips its comments, and no `cmux config set` key covers this setting. A trailing `MARKER` comment owns the line, so `teardown` undoes only its own edit with no stored state.
+- A file that already reads `false` is the user's. It gets no marker, so teardown never turns their choice back on.
+- Skip any layout the line edit cannot prove by re-parsing, and print a by-hand instruction. Never guess.
+- The write is setup-only and gated on `is_cmux()`. **Do not** move it to `watch` startup, which would override a user who turned the row back on.
 
 A cmux card shows three rows before "Show more" and no setting changes that. Cockpit drops `wip` while `rebase` or `merge` is in flight, because it restates that pill. **Do not** fix a buried pill by reordering `KIND_ORDER`.
 
