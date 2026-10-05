@@ -4048,9 +4048,6 @@ async def test_enter_in_the_inbox_spawns_and_leaves_the_inbox_open(monkeypatch):
     monkeypatch.setattr(
         "cockpit.tui.app.load_ticket_inboxes", lambda: {"acme": [_inbox_ticket()]}
     )
-    monkeypatch.setattr(
-        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
-    )
     async with app.run_test() as pilot:
         app.action_ticket_inbox()
         await pilot.pause()
@@ -4072,9 +4069,6 @@ async def test_a_refused_ticket_gives_its_row_back(monkeypatch):
     monkeypatch.setattr("cockpit.spawn.route_ticket_repos", lambda source: [])
     monkeypatch.setattr(
         "cockpit.tui.app.load_ticket_inboxes", lambda: {"acme": [_inbox_ticket()]}
-    )
-    monkeypatch.setattr(
-        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
     )
     async with app.run_test() as pilot:
         app.action_ticket_inbox()
@@ -4228,9 +4222,6 @@ async def test_c_in_the_inbox_checks_the_cursor_rows_org(monkeypatch):
     monkeypatch.setattr(
         "cockpit.tui.app.load_ticket_inboxes", lambda: {"acme": [_inbox_ticket()]}
     )
-    monkeypatch.setattr(
-        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
-    )
     async with app.run_test() as pilot:
         app.action_ticket_inbox()
         await pilot.pause()
@@ -4278,9 +4269,6 @@ async def test_c_on_an_empty_inbox_checks_every_bucket(monkeypatch):
         lambda: {"repos": [{"name": "widgets", "org": "acme"}, {"name": "solo"}]},
     )
     monkeypatch.setattr("cockpit.tui.app.load_ticket_inboxes", dict)
-    monkeypatch.setattr(
-        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
-    )
     async with app.run_test() as pilot:
         app.action_ticket_inbox()
         await pilot.pause()
@@ -4307,9 +4295,6 @@ async def test_the_check_is_not_dry_gated(monkeypatch):
         "cockpit.lib.ticket_check.check_bucket", _recording_check(asked)
     )
     monkeypatch.setattr("cockpit.tui.app.load_config", lambda: {"repos": []})
-    monkeypatch.setattr(
-        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
-    )
     async with app.run_test() as pilot:
         app.on_tickets_screen_check(TicketsScreen.Check("acme"))
         await pilot.pause()
@@ -4334,9 +4319,6 @@ async def test_the_check_shows_progress_while_it_runs(monkeypatch):
 
     monkeypatch.setattr("cockpit.lib.ticket_check.check_bucket", _check)
     monkeypatch.setattr("cockpit.tui.app.load_config", lambda: {"repos": []})
-    monkeypatch.setattr(
-        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
-    )
     async with app.run_test() as pilot:
         app.on_tickets_screen_check(TicketsScreen.Check("acme"))
         await pilot.pause()
@@ -4366,9 +4348,6 @@ async def test_escape_cancels_a_running_check_and_shows_no_report(monkeypatch):
     monkeypatch.setattr(
         "cockpit.tui.app.load_config",
         lambda: {"repos": [{"name": "widgets", "org": "acme"}, {"name": "solo"}]},
-    )
-    monkeypatch.setattr(
-        CockpitApp, "call_from_thread", lambda self, fn, *a, **k: fn(*a, **k)
     )
     async with app.run_test() as pilot:
         app.on_tickets_screen_check(TicketsScreen.Check(""))
