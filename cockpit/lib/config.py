@@ -1508,13 +1508,16 @@ def teardown_claude_integration() -> None:
     `brew uninstall cockpit` removes only the Cellar binary; the `~/.claude`
     entries setup wrote live outside the brew prefix and would otherwise dangle
     (hooks/statusLine invoking a missing `cockpit`). This drops those, plus the
-    bundled slash commands. It deliberately does **not** touch the
+    bundled slash commands, and turns cmux's native sidebar PR row back on. It deliberately does **not** touch the
     `~/.config/{cship,starship}.toml` seeds (user-editable, inert without the
     binary) or `~/.config/cockpit` state — those are reported for manual removal.
     """
     changed = uninstall_claude_hooks()
     changed = clear_cockpit_statusline() or changed
     changed = uninstall_claude_commands() or changed
+    from .cmux_config import restore_native_pr_row
+
+    changed = restore_native_pr_row() or changed
     if not changed:
         print("no cockpit claude integration found — nothing to remove")
     print(
