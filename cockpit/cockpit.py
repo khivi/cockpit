@@ -51,6 +51,7 @@ from cockpit.lib.cmux import (
     set_workspace_color,
     workspace_state,
 )
+from cockpit.lib.cmux_config import disable_native_pr_row
 from cockpit.lib.config import (
     claude_integration_present,
     ensure_state_dirs,
@@ -68,6 +69,7 @@ from cockpit.lib.daemon import reassert_pidfile
 from cockpit.lib.gh import gh_self_user, require_gh
 from cockpit.lib.git import Worktree, require_git, worktrees
 from cockpit.lib.preflight import preflight
+from cockpit.lib.tool import is_cmux
 from cockpit.orchestrators.cycle import cycle_all, restore_trailing_folds
 from cockpit.orchestrators.ticket_inbox import active_ids as active_ticket_ids
 
@@ -624,6 +626,8 @@ def main(argv: list[str] | None = None) -> int:
         install_cship_statusline_if_configured(_statusline_command())
         install_claude_hooks()
         install_claude_commands()
+        if is_cmux():
+            disable_native_pr_row()
         _report_backend()
         if not load_config().get("use_cship"):
             print(

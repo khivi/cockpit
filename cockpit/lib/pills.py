@@ -24,8 +24,8 @@ exists because cmux's *native* sidebar PR row resolves a branch to the wrong PR
 when that branch has carried more than one: a second PR on a reused branch
 renders as the first, closed one. That row is not settable from cockpit (it is
 cmux's own GitHub integration — no `pr` key in `list-status`, no field on
-`workspace.list`), so the only fix is to turn it off (`sidebar.showPullRequests:
-false` in `~/.config/cmux/cmux.json`) and render our own from `ctx.prs`, which
+`workspace.list`), so the only fix is to turn it off (`cockpit setup` sets
+`sidebar.showPullRequests: false` via `cmux_config.py`) and render our own from `ctx.prs`, which
 is `is:open`-scoped and so cannot pick a stale PR. Draftness rides here too —
 which is why cmux drops the separate `draft` pill, and why turning
 `showPullRequests` back on double-renders both PR number and draft state.

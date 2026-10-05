@@ -59,6 +59,9 @@
 - [pills.pr-coverage~1] (untested: design rationale) The `pr` pill reaches
   only tracked workspaces. The daemon spawns no pill for an untracked
   workspace.
+- [pills.native-row-off~1] `cockpit setup` turns cmux's native sidebar PR row
+  off, keeping every comment in `~/.config/cmux/cmux.json`. `cockpit teardown` restores the
+  file byte for byte. A row the user already turned off is never claimed.
 
 ## Sidebar tags
 

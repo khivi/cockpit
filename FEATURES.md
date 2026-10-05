@@ -32,7 +32,7 @@ Run `cockpit watch`. You get one row per change, across every repo you've regist
 review threads · Ticket and `📍` its state · Author · Title · `$` session spend.
 
 - `💬` is red `N/T` while threads wait on you, and green `0/T` once you've handled them all.
-- The ticket columns appear only when a repo has a tracker configured.
+- The ticket columns appear only when a repo has a [ticket tracker](#tickets) configured.
 - `$` appears only when your plan reports per-session cost. A blank means "not reported",
   not zero.
 
@@ -80,10 +80,11 @@ unresolved comments, merge conflict, approval, and mute. The PR itself reads lik
 CI is the trailing mark on that line: `✓` passing, `✗` failing, `•` pending, `?` errored.
 A build that isn't passing turns the whole pill its colour, so a failing PR reads red.
 
-**Turn off cmux's own PR row** so you don't see two PR numbers on one card. Set
-`"sidebar": {"showPullRequests": false}` in `~/.config/cmux/cmux.json`, then run
-`cmux reload-config`. Cockpit's pill only appears on workspaces it tracks, so a terminal
-outside your registered repos shows no PR.
+**cmux's own PR row is turned off for you.** `cockpit setup` sets
+`"sidebar": {"showPullRequests": false}` in `~/.config/cmux/cmux.json` and reloads cmux, so
+one card never shows two PR numbers. `cockpit teardown` turns it back on. Cockpit's pill
+only appears on workspaces it tracks, so a terminal outside your registered repos shows
+no PR.
 
 **Tag repos when colours run out.** Workspaces are named after their branch, and the card's
 tint tells you the repo. Past a handful of repos, the tints stop being distinguishable. Set
@@ -271,6 +272,23 @@ updates those branches for you.
 ## Tickets
 
 Point a repo at **Linear, Jira, GitHub Issues, or Trello** and tickets join the dashboard.
+That tool is the repo's *ticket tracker*. Each repo has at most one, and with none set the
+ticket columns, pills and inbox stay off.
+
+**Set it up** with a `tickets` block on the repo in `~/.config/cockpit/config.json`. Put it
+on an [`orgs`](docs/config.md) block instead to cover every repo of a team at once.
+
+| Tracker | Minimal block | Credential env vars |
+|---|---|---|
+| GitHub Issues | `{"provider": "github"}` | none, uses `gh` |
+| Linear | `{"provider": "linear", "keys": ["PE"]}` | `LINEAR_API_KEY` |
+| Jira | `{"provider": "jira", "keys": ["PROJ"], "site_url": "https://you.atlassian.net", "email": "you@example.com"}` | `JIRA_API_TOKEN` |
+| Trello | `{"provider": "trello", "board": "Engineering"}` | `TRELLO_API_KEY`, `TRELLO_API_TOKEN` |
+
+`keys` is the ticket-id prefix (`PE` in `PE-1234`). `board` names the Trello board this
+repo's cards live on. Cockpit warns at start when a credential variable is unset. Every
+other field, such as `dev_done` and `close_on_merge`, is in
+[`docs/config.md`](docs/config.md#tickets-block).
 
 A PR delivers a ticket through one footer line in its body: `Linear: [PE-1234](…)`,
 `Closes #123`, `Jira: [PROJ-123](…)`, or `Trello: [#122 title](…)`. A ticket id in a branch
