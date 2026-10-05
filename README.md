@@ -72,7 +72,7 @@ Drive the table by keystroke — footer hints adapt to the highlighted row's sta
 
 Hover any footer key for a sentence on what it does. **≡ Menu**, top right, holds logs, config, theme, the [feature guide](FEATURES.md), and the [release notes](https://github.com/khivi/cockpit/releases) — click it, or press `ctrl+p`.
 
-Reading a diff is the one thing you do *inside* a session rather than on the dashboard — [`cockpit diff`](FEATURES.md#keys) opens it in a browser split beside you, and `cockpit diff --comments` collects the line notes left on it.
+Reading a diff is the one thing you do *inside* a session rather than on the dashboard — [`cockpit diff`](FEATURES.md#reviewing-your-agents-work-with-cockpit-diff) opens it as a tab beside your terminal, and `cockpit diff --comments` collects the line notes left on it.
 
 ## Configuration
 

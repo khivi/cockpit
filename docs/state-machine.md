@@ -34,7 +34,7 @@ this design exists to eliminate.
 **The four diagrams:** [orientation map](#1-orientation-map-l0) — sources to
 decisions to actions · [reconcile tree](#2-reconcile-decision-tree-slow-tick) —
 which path a PR × worktree pair takes ·
-[nudge gate](#3-nudge-idle-gate-nudge_if_idle-cmuxpy) — the five guards before a
+[nudge gate](#3-nudge-idle-gate-nudge_if_idle-cmuxpy) — the four guards before a
 `send` · [cell data-flow](#4-cell-data-flow--ownership) — who writes what.
 
 ## The state sources
@@ -44,7 +44,7 @@ which path a PR × worktree pair takes ·
 | **GitHub PR** | `gh` API → PR cache JSON (`cache.py`) | `state` ∈ {`OPEN`,`MERGED`,`CLOSED`} × `ci` × `unaddressed` × `review_decision` × `isDraft` × `mergeable` |
 | **Claude session** | cmux native `claude_code=` + statusline stdin (`claude.py`) | `Running` / `Idle` / `Needs input`; context %, rate-limit, model, cost |
 | **cmux workspace** | cmux pills + in-memory `pill_state` dict | `idle=` `devdone=` `parked=` `ci=` `comments=` `merge=` `wip=` `draft=` `approved=` `stale=` `loop=` + *does a worktree exist?* |
-| **Tickets** (aux) | the `tickets` provider (`tickets.py` → `linear.py` GraphQL or `github_issues.py` `gh`) | Linear ticket `state.name` (`Dev Done`) or GitHub issue label/state — read-only, drives the `devdone=` pill (and the opt-in done-on-merge write) |
+| **Tickets** (aux) | the `tickets` provider (`tickets.py` → `linear.py` GraphQL, `jira.py`, `trello.py` or `github_issues.py` `gh`) | Linear/Jira ticket state name (`Dev Done`), Trello list name, or GitHub issue label/state — read-only, drives the `devdone=` pill (and the opt-in done-on-merge write) |
 
 The decision functions consume these and emit actions. Everything below is a
 drill-down of one node in the orientation map.
@@ -61,9 +61,10 @@ flowchart LR
     GH["GitHub PR state<br/>gh API → PR cache JSON"]
     CL["Claude session<br/>cmux native + statusline"]
     CM["cmux workspace<br/>pills + worktree-exists?"]
-    LIN["Tickets (aux)<br/>Linear GraphQL / GitHub gh<br/>via tickets.py provider"]
+    LIN["Tickets (aux)<br/>Linear · Jira · Trello · GitHub<br/>via tickets.py provider"]
     SQ["Undelivered seed bodies<br/>$COCKPIT_RUNTIME_DIR/seed-requests/<br/>written by a spawn, not the daemon"]
     AQ["Queued ask lines<br/>$COCKPIT_RUNTIME_DIR/ask-requests/<br/>written by the TUI's a / A"]
+    DC["Pending diff-viewer notes<br/>written by cmux, read via diff_comments"]
   end
 
   subgraph DEC["Decision functions"]
@@ -90,6 +91,7 @@ flowchart LR
   CL --> NI
   SQ --> NI
   AQ --> NI
+  DC --> NI
   LIN --> DD
 
   MW --> SM
@@ -118,6 +120,12 @@ fast tick drains it right after the seed queue (`_drain_ask_queue`), so a fresh
 workspace's first turn lands before anything typed at it. A marker is also
 dropped when its ref now sits at a different cwd, and expires after
 `ask_queue.STALE_SECONDS`.
+
+Pending diff-viewer notes are the third input on that edge: cmux writes them,
+and the fast tick (`_nudge_diff_comments`) hands the session in that worktree
+`/cockpit-diff apply` through `nudge_if_idle`, once per batch of comment ids.
+With the seed retry and the PR nudge these are the daemon's only automatic
+sends; the queued ask is a deferred line the user typed.
 
 ---
 
@@ -164,7 +172,7 @@ flowchart TD
   WT -->|no| WHO{"author?"}
   WHO -->|mine| SP["bg spawn --pr N<br/>(plan-only first turn)"]
   WHO -->|coworker| RV{"review_prs<br/>set?"}
-  RV -->|yes| SPR["bg spawn --pr N --review<br/>(/review, uncapped)"]
+  RV -->|yes| SPR["bg spawn --pr N --review<br/>(review_command or built-in review prose)"]
   RV -->|no| IG["ignore (PR invisible)"]
 ```
 
@@ -175,8 +183,8 @@ flowchart TD
   C["Worktree / workspace cleanup"] --> K{"state?"}
 
   K -->|"MERGED / branch gone"| AC{"autoclose<br/>blockers?"}
-  AC -->|"dirty · draft ·<br/>ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
-  AC -->|"clean & merged"| TD["teardown(worktree_path=…):<br/>workspace → worktree → branch → cache"]
+  AC -->|"dirty · open PR (reused branch) ·<br/>draft · ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
+  AC -->|"clean & merged"| TD["teardown(worktree_path=…):<br/>workspace → worktree → branch* → cache"]
 
   K -->|"no open PR"| OP["orphan: pills only<br/>(no nudge, no close)"]
 
@@ -190,7 +198,13 @@ flowchart TD
   BR -->|"unique local commits ·<br/>open PR · main/default · has worktree"| BK["keep ref"]
 ```
 
-Key gates (all from `cycle.py`):
+Key gates (all from `cycle.py`). `branch*`: the autoclose teardown deletes the
+branch ref only when HEAD sits at the merged head with nothing on top.
+
+- **A clean non-primary worktree on a main branch is swept too** — one
+  fast-forwarded onto `main` with no unlanded commits (`_is_orphan_main_sibling`)
+  has lost the branch name `merged_branches` keys on, so this is the only signal
+  left. With uncommitted work it is kept and gets a `wip=` pill instead.
 
 - **Merged/closed PRs are never actionable**: a tracked worktree can map to a
   non-OPEN PR (autoclose keeps a merged-with-red-CI worktree for inspection —
@@ -223,13 +237,15 @@ Key gates (all from `cycle.py`):
   that closes (dedup, `h` parking, anchor swap, fold dissolve) calls the first
   directly and is recoverable with `f`. Rules in AGENTS.md.
 - **Autoclose hard blocker** (never overridden): uncommitted files.
-- **Autoclose smart-skip**: even when merged & clean, skip if draft, CI not green,
-  or unaddressed review threads remain.
-- **Unlanded commits / open-PR are NOT autoclose blockers** — `_maybe_autoclose`
+- **Autoclose smart-skip**: even when merged & clean, skip if the branch has an
+  OPEN PR (a reused branch — tearing it down would fight
+  `_spawn_missing_workspaces`, which re-creates the worktree), or if the PR is
+  draft, CI not green, or has unaddressed review threads.
+- **Unlanded commits are NOT an autoclose blocker** — `_maybe_autoclose`
   only fires on a merged PR and tears down with `forced=True`; unlanded commits
-  merely preserve the local branch ref. The unlanded / open-PR gate lives in
-  `probe_blockers` (the TUI `c` close path), where `C` force overrides the open-PR
-  soft block but never uncommitted/unlanded work.
+  merely preserve the local branch ref. The unlanded / open-PR gate for the manual
+  path lives in `probe_blockers` (the TUI `c` close path), where `C` force
+  overrides the open-PR soft block but never uncommitted/unlanded work.
 - **The hard commit gate is ownership-split** (`worktree_state_blockers`) —
   **our** branch uses `git.count_unlanded`: commits flagged by BOTH a patch-id
   check against `origin/<default>` (`git cherry`, so a cherry-picked commit reads
@@ -294,8 +310,8 @@ Key gates (all from `cycle.py`):
   landing between them sees a worktree no workspace covers and attaches a second
   one — two Claude sessions on one worktree, same seeded task. Both attach paths
   (`spawn_pr_workspace` on a matched PR, `spawn_orphan_workspace`) therefore skip
-  a worktree whose filesystem age (`git.worktree_age_seconds`, the same
-  birthtime read as the orphan-nudge grace) is under the window. Only the
+  a worktree whose age (`git.worktree_age_seconds`, a filesystem
+  birthtime read) is under the window. Only the
   *attach* is deferred; pills, cells and tracking are untouched. An unstattable
   path reads `inf` and spawns — it fails open.
 - **Orphan auto-spawn is `<self_user>/`-prefix gated**: review worktrees are
@@ -369,7 +385,7 @@ Key gates (all from `cycle.py`):
 
 ## 3. Nudge idle-gate (`nudge_if_idle`, `cmux.py`)
 
-Five sequential guards decide whether it is safe to `send` a nudge. The subtle
+Four sequential guards decide whether it is safe to `send` a nudge. The subtle
 rule: cmux native `Needs input` is **deliberately untrusted** — it is the same
 value cmux shows for a pending y/n permission prompt, and nudging there would
 type into the confirmation. Do not "simplify" the gate to trust it.
@@ -393,6 +409,15 @@ flowchart TD
   HEAL -->|no| FIRE
   SELFHEAL --> FIRE["one_line(msg)<br/>→ dry? return False (records nothing)<br/>→ send + send-key enter<br/>→ record_nudge(pref_key) → return True<br/>(send raises → skips: send failed)"]
 ```
+
+**The `idle=` pill is written by the Stop hook and withheld on purpose.** The
+hook (`cmux-idle-pill.sh`) clears it instead of setting it while a `/loop`
+wakeup is armed or `background_tasks` lists a running subagent or workflow, since
+the session is still waiting on that work. A running shell task still counts as
+at rest. The fast tick's `reassert_idle_pills` only ever *writes* the pill, for
+a ref at native `Idle`; for a ref with no native state it falls back to
+`_screen_signals_idle` (transcript says no turn is in flight, screen shows no
+pending-choice marker and an empty composer). That fallback never gates a send.
 
 **The three middle guards live in `cmux._idle_skip_reason`**, not inline: a
 caller that wants to *report* the verdict (`cockpit broadcast`'s per-workspace
@@ -422,11 +447,14 @@ fires), so collapsing is the only faithful delivery. It sits inside
 `nudge_if_idle` — the single send funnel every caller already goes through — and
 runs *before* the `dry` print, so `--dry` reports what would actually land.
 
-Three callers reach this gate, all through the same door: the slow tick's PR
-nudge (`cycle.py`, the only one passing `pref_key`), `cockpit broadcast`, and
-the TUI's `a` (user-typed text, per row or per repo). The last two pass no
-`pref_key`, so a deliberate gesture overrides mute/snooze while still honouring
-every guard above. There is deliberately no manual *nudge* key: `N` sent a
+Callers all reach this gate through the same door: the slow tick's PR nudge
+(`cycle.py`, the only one passing `pref_key`); on the fast tick the diff-comment
+hand-over, the seed retry and the queued-ask drain (`cockpit.py`); and the
+user's own gestures, `cockpit broadcast` and the TUI's `a`/`A` (typed text, per
+row or per repo). Everything but the PR nudge passes no `pref_key`, so mute and
+snooze do not silence it, while every guard above still applies. The daemon's
+automatic sends are exactly three — the PR nudge, the diff-comment hand-over and
+the seed retry; the queued ask only defers a line the user typed. There is deliberately no manual *nudge* key: `N` sent a
 canned catch-all through this same path and was removed — `a` already did
 everything it added, and its preset was wrong on review rows, PR-less rows and
 healthy ones (see the row-actions invariant in AGENTS.md).
@@ -489,9 +517,9 @@ flowchart LR
   TRK["ticket trackers<br/>Linear · Jira · GitHub · Trello"] --> SLOW
   SLOW --> INBOX[("ticket inbox<br/>&lt;org&gt;__tickets.json")]
   FAST -.re-stamp in_flight only.-> INBOX
-  INBOX --> IKEY["TUI i — TicketsScreen"]
+  INBOX --> IKEY["TUI T — TicketsScreen"]
 
-  SLOW --> CELLS["daemon cells<br/>pr-state · git-state · base-dist · wt-cost"]
+  SLOW --> CELLS["daemon cells<br/>pr-* · git-* · base-distance/ahead · wt-cost · diff-comments"]
   FAST --> CELLS
 
   STDIN["Claude statusLine"] --> SESS["session cells<br/>context · model · cost · rate-limit"]
@@ -563,19 +591,28 @@ Why two ticks:
   finished repo surfaces while later repos still round-trip `gh`, rather than all
   repos appearing at tick end. The hook is read-only (re-gather worktrees +
   re-render); it writes no cell.
-- **Fast tick** is network-free: it re-derives git-state cells for every
-  worktree, reconciles each workspace's name to its branch-derived label
-  (`reconcile_workspace_names`) and its sidebar colour to the repo's
-  `sidebar_color` (`_tint_repo_workspaces`), sums each worktree's session spend
-  into its `wt-cost` cell (`write_worktree_cost_cache`), republishes PR flat
-  cells from the persistent JSON, and rebuilds a trailing sidebar fold that has
-  vanished since the slow pass built it (`restore_trailing_folds` — a replay of
-  that pass's recorded `(name, refs)`, create-only, never a fold derived here),
-  so a `git checkout`, a drifted workspace name,
-  a freshly spawned workspace's colour, a running agent's cost, a lost `<org>
-  reviews (N)` / `<org> snoozed (N)` group, or an OS tmpdir
-  wipe recovers on the next fast tick rather than waiting out a slow one. That
-  interval is the *floor*, not the only trigger: the
+- **Fast tick** is network-free, and its steps run in this order:
+  1. re-assert the pidfile (`reassert_pidfile`);
+  2. per repo, write the diff-comment cells, then (cmux only, not `--dry`)
+     reconcile each workspace's name to its branch-derived label
+     (`reconcile_workspace_names`) and its sidebar colour to the repo's
+     `sidebar_color` (`_tint_repo_workspaces`);
+  3. rebuild a trailing sidebar fold that has vanished since the slow pass built
+     it (`restore_trailing_folds` — a replay of that pass's recorded
+     `(name, refs)`, create-only, never a fold derived here);
+  4. record `idle=` for sessions at rest (`reassert_idle_pills`), before any send
+     so the sessions it heals are reachable;
+  5. the three sends, each through `nudge_if_idle`'s own `dry=`: the diff-comment
+     hand-over, the seed-queue drain, then the ask-queue drain;
+  6. write each worktree's git-state and `wt-cost` cells
+     (`write_git_state_cache`, `write_worktree_cost_cache`), then republish PR
+     flat cells from the persistent JSON (`republish_pr_caches_from_disk`);
+  7. re-stamp the ticket inbox's `in_flight` flags (`stamp_inbox_in_flight`).
+
+  So a `git checkout`, a drifted workspace name, a freshly spawned workspace's
+  colour, a running agent's cost, a lost `<org> reviews (N)` / `<org> snoozed (N)`
+  group, or an OS tmpdir wipe recovers on the next fast tick rather than waiting
+  out a slow one. That interval is the *floor*, not the only trigger: the
   `cmux events` doorbell (`lib/events.py`, cmux-only) kicks it the moment a
   workspace is created or closed, so a spawn or close lands immediately. The
   event carries **no state** — it only wakes the tick, which re-derives
