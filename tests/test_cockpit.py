@@ -549,6 +549,26 @@ def test_setup_reset_tears_down_and_resets_use_cship(tmp_path, monkeypatch):
     assert cockpit.load_config().get("use_cship") is False
 
 
+@pytest.mark.parametrize(
+    ("tool", "edits_cmux_config"),
+    [("cmux", True), ("limux", False), ("none", False)],
+)
+def test_setup_turns_off_the_native_pr_row_only_on_cmux(
+    tmp_path, monkeypatch, tool, edits_cmux_config
+):
+    """limux has no `pr` pill to replace the row with, so its sidebar keeps it."""
+    _setup_cockpit_config(tmp_path, monkeypatch, {"repos": [], "tool": tool})
+    _make_bin_on_path(tmp_path, monkeypatch, "gh", "git")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cockpit = _reload_cockpit()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        cockpit, "disable_native_pr_row", lambda: calls.append("disable")
+    )
+    assert cockpit.main(["--setup"]) == 0
+    assert calls == (["disable"] if edits_cmux_config else [])
+
+
 def test_fast_tick_writes_a_cost_cell_per_worktree(tmp_path, monkeypatch):
     """`wt-cost` rides the fast tick, not the slow one: it only moves while a
     session is live, so the 300s cadence would lag visibly behind the work."""
