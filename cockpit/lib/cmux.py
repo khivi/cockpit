@@ -1356,7 +1356,16 @@ def workspace_is_idle(ref: str) -> bool:
 # prompt) — both render as a boxed list ending in one of these, never as the
 # bare composer. Their presence anywhere in the read refuses, on the same
 # "when in doubt, don't" bias as `_native_claude_state`'s own ambiguity note.
-_PENDING_SCREEN_MARKERS = ("Enter to select", "Esc to cancel", "to navigate")
+# Matched casefolded: extra markers and looser matching can only refuse more.
+_PENDING_SCREEN_MARKERS = (
+    "enter to select",
+    "esc to cancel",
+    "to navigate",
+    "do you want to proceed",  # y/n permission
+    "would you like to proceed",  # plan approval
+    "requests your input",  # MCP elicitation form
+    "enter to submit",  # question form
+)
 
 # Claude Code's own insert-mode indicator, shown in the composer's border while
 # it has focus. It says the composer is available for typing; it does NOT say
@@ -1397,7 +1406,7 @@ def _screen_signals_idle(ref: str, cwd: Path | None = None, *, lines: int = 12) 
     if cwd is None or transcript.turn_in_flight(cwd) is not False:
         return False
     screen = cmux("read-screen", "--workspace", ref, "--lines", str(lines), check=False)
-    if not screen or any(m in screen for m in _PENDING_SCREEN_MARKERS):
+    if not screen or any(m in screen.casefold() for m in _PENDING_SCREEN_MARKERS):
         return False
     if _IDLE_SCREEN_MARKER not in screen:
         return False

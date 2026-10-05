@@ -169,12 +169,31 @@ sys.exit(0 if last_tools and any(t in LOOP_TOOLS for t in last_tools) else 1)
 PY
 }
 
+background_agent_running() {
+  # Exits 0 iff the Stop payload ($1) lists a running subagent or workflow in
+  # `background_tasks`: the main turn ended but work continues and will report
+  # back. A running `shell` task (a dev server) does not count.
+  python3 - "$1" 2>/dev/null <<'PY'
+import json, sys
+try:
+    tasks = json.loads(sys.argv[1]).get("background_tasks") or []
+except Exception:
+    sys.exit(1)
+sys.exit(0 if any(
+    isinstance(t, dict) and t.get("type") in ("subagent", "workflow")
+    and t.get("status") == "running"
+    for t in tasks
+) else 1)
+PY
+}
+
 case "${1:-}" in
   stop)
     hook_input="$(cat)"
-    if [ -n "$hook_input" ] && loop_active_in_transcript "$hook_input"; then
-      # /loop iteration just scheduled another wakeup — keep `idle=` cleared,
-      # we are *not* at rest.
+    if [ -n "$hook_input" ] && { loop_active_in_transcript "$hook_input" \
+         || background_agent_running "$hook_input"; }; then
+      # A /loop wakeup is armed or a background agent is still running — keep
+      # `idle=` cleared, we are *not* at rest.
       cmux_clear_verify idle
       exit 0
     fi

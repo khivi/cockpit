@@ -2113,6 +2113,7 @@ def test_reassert_refuses_a_mid_turn_session_the_screen_calls_idle(in_flight):
     assert writes == []
 
 
+@pytest.mark.covers("idle-gate.pending-screen~1")
 @pytest.mark.parametrize(
     "screen",
     [
@@ -2120,6 +2121,10 @@ def test_reassert_refuses_a_mid_turn_session_the_screen_calls_idle(in_flight):
         "─────\n❯  \n─────\nbranch\nno insert-mode marker here",  # missing indicator
         "─────\n❯ half-typed text\n─────\n-- INSERT --",  # not an empty prompt
         _IDLE_SCREEN + "\n1. Yes\n2. No\nEnter to select · Esc to cancel",
+        _IDLE_SCREEN + "\nDo you want to proceed?\n❯ 1. Yes",
+        _IDLE_SCREEN + "\nWould you like to proceed?",
+        _IDLE_SCREEN + "\nslack requests your input",
+        _IDLE_SCREEN + "\nENTER TO SUBMIT",
     ],
 )
 def test_reassert_refuses_no_native_state_on_inconclusive_or_pending_screen(screen):
