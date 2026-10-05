@@ -34,6 +34,22 @@ top to bottom by people, not just grepped.
 Write the bullet as an **observable scenario**, not a rule. "A trailing fold is
 created collapsed" can be tested; "folds should be unobtrusive" cannot.
 
+## Writing a bullet — the STE subset
+
+Bullets follow a subset of ASD-STE100 (Simplified Technical English). Take its
+writing rules and leave out its controlled dictionary:
+
+- One fact per sentence, 25 words at most. A backticked name counts as one word.
+- Active voice, present tense, with a named actor: "preflight exits 2", not
+  "the config is rejected".
+- No rationale. `since`, `because`, `so that` and a trailing `—` clause carry the
+  *why*, and the why belongs in AGENTS.md.
+- One term for one thing across the whole ledger.
+- Two shapes: `Given X, <actor> <verb> Y.` and `<actor> never <verb> Y.`
+
+`scope.py --style` flags long sentences and rationale words. It is advisory and
+does not gate a merge. A rewrite that keeps the meaning keeps its `~rev`.
+
 ## Bullets asserted by the code's shape
 
 Some invariants are negative — nothing calls this, nothing imports that — and
