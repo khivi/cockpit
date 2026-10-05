@@ -140,7 +140,7 @@ Every cell naming something on the web is an OSC 8 hyperlink (`worktree_table.py
 - `#header-repo` names the cursor row's repo, fed by `app._refresh_footer_caps`. The colour comes from a `_repo_color` map filled by `update_inventory`. **Never** call `load_config()` there. **Do not** add a Repo column or use `DataTable.fixed_rows`.
 - `#header-repo` owns the one `1fr` slot, so segments right of it stay right-anchored. `test_the_countdowns_do_not_move_when_the_cursor_changes_repo` pins it. **Do not** add a second growing segment.
 - `#header-brand` shows the running version, dim and linked. `brand_text` takes the URL as an argument, set from `RELEASE_NOTES_URL` onto the `version_url` reactive. **Do not** import the URL into the widget. **Do not** move the version into the menu.
-- The trailing `≡ Menu` (`#header-menu`) is the palette's one visible entry point and is unconditional, because `ctrl+p` cannot come from `BINDINGS`. **Do not** move it into `FooterBar`. **Do not** print the key beside it. Override `link-color` and `link-style` in CSS, not `color`. Use a single-cell glyph
+- The trailing `≡ Menu` (`#header-menu`) is the palette's one visible entry point and is unconditional, because `ctrl+p` cannot come from `BINDINGS`. **Do not** move it into `FooterBar`. **Do not** print the key beside it. Override `link-color` and `link-style` in CSS, not `color`. Use a single-cell glyph, because `☰` measures two cells but draws one.
 - The countdowns use a glyph in the bar and a word in the tooltip (`SLOW_GLYPH` / `FAST_GLYPH`). **Do not** put a glyph in the bar that the tooltip does not spell out.
 - Footer keys explain themselves on hover through `TOOLTIPS`. **Do not** rebuild the footer as a widget per key.
 
@@ -389,7 +389,7 @@ The `$` column totals what every session at a worktree has spent. Sessions are k
 
 ### The daemon makes exactly THREE automatic sends, and only one of them is a new message
 
-The set is closed: the PR nudge (`cycle.py`, slow tick, `PR.nudge_issue`, silenced by `m`/`z` via `pref_key`), the diff-comment hand-over, and the seed retry (`cockpit.py::_drain_seed_queue`). Everything else is typed by the user (`a`, `A`, `cockpit broadcast`) and passes no `pref_key`. A fourth must derive from an actionable defect the session can fix. Judge it by whether it originates with cockpit or finishes something the user started.
+The set is closed: the PR nudge (`cycle.py`, slow tick, `PR.nudge_issue`, silenced by `m`/`z` via `pref_key`), the diff-comment hand-over, and the seed retry (`cockpit.py::_drain_seed_queue`). Everything else is typed by the user (`a`, `A`, `cockpit broadcast`) and passes no `pref_key`. A fourth must derive from an actionable defect the session can fix. Judge it by whether it originates with cockpit or finishes something the user started. The queued ask below is a retry of a typed line, not a fourth send.
 
 - Queued ask (`lib/ask_queue.py`, `cockpit.py::_drain_ask_queue`): when `a`/`A` meets a session refused only as busy (`cmux.rest_pending`, never `parked`), queue the line and re-offer it through `nudge_if_idle` on the fast tick. Use its own directory, not the seed queue's, since both key on ref. Drain after the seed drain. The marker pins the cwd at enqueue and is dropped if the ref moved. A queued ref leaves the retry set (`_ask_misses`). The toast keeps the gate's reason. `STALE_SECONDS` is 600 and is correctness. A failed enqueue keeps the draft.
 - Diff-comment hand-over (`cockpit.py::_nudge_diff_comments`): sends `DIFF_COMMENTS_NUDGE` through `nudge_if_idle` to the session in a worktree with pending notes. **Do not** give it a second send path or generalise it into a fan-out. Pass no `pref_key`, since a note the user wrote is not noise. Dedup on the comment-id set, not the worktree. Record only on an accepted send. Run after `reassert_idle_pills`. Gate `dry` through the gate's own `dry=`.
@@ -585,9 +585,8 @@ Opt-in, slow-tick `_update_stale_branches`.
 # One-time after cloning — wires pre-commit hooks for commit + push stages:
 ./setup.sh
 
-# Run THIS worktree's build against a throwaway sandbox (never `uv run cockpit
-
-# watch`, which shares state with the installed daemon — see below):
+# Run THIS worktree's build against a throwaway sandbox (never `uv run cockpit watch`,
+# which shares state with the installed daemon — see below):
 ./dev.sh
 
 # Run the test suite serially — right for a single test or a small selection:
