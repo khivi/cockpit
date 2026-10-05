@@ -63,6 +63,7 @@ flowchart LR
     CM["cmux workspace<br/>pills + worktree-exists?"]
     LIN["Tickets (aux)<br/>Linear GraphQL / GitHub gh<br/>via tickets.py provider"]
     SQ["Undelivered seed bodies<br/>$COCKPIT_RUNTIME_DIR/seed-requests/<br/>written by a spawn, not the daemon"]
+    AQ["Queued ask lines<br/>$COCKPIT_RUNTIME_DIR/ask-requests/<br/>written by the TUI's a / A"]
   end
 
   subgraph DEC["Decision functions"]
@@ -88,6 +89,7 @@ flowchart LR
   CM --> MW & NI
   CL --> NI
   SQ --> NI
+  AQ --> NI
   LIN --> DD
 
   MW --> SM
@@ -109,6 +111,13 @@ which is why it feeds `nudge_if_idle` and nothing else — the retry re-sends th
 user's own prompt rather than deciding anything. It is not stored inventory: a
 marker is retired on the first accepted send, dropped when its workspace is gone,
 and expired after `seed_queue.STALE_SECONDS`.
+
+The ask queue has the same shape and the same single edge. The TUI writes it
+when `a` or `A` meets a session that is only busy (`cmux.rest_pending`); the
+fast tick drains it right after the seed queue (`_drain_ask_queue`), so a fresh
+workspace's first turn lands before anything typed at it. A marker is also
+dropped when its ref now sits at a different cwd, and expires after
+`ask_queue.STALE_SECONDS`.
 
 ---
 

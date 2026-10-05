@@ -1085,6 +1085,15 @@ def _idle_skip_reason(status_lines: list[str]) -> str | None:
     return None
 
 
+def rest_pending(reason: str | None) -> bool:
+    """True when `_idle_skip_reason`'s verdict only means "not yet" — the
+    session is mid-turn or not provably at rest, which ends on its own.
+    `parked` is the user's own done-waiting marker and is not."""
+    return reason is not None and (
+        reason == "mid-turn" or reason.startswith("not at rest")
+    )
+
+
 def one_line(text: str) -> str:
     r"""Collapse `text` to a single line so `cmux send` delivers it as one prompt.
 

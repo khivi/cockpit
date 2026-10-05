@@ -30,11 +30,11 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from cockpit.lib import diff_comments, seed_queue
+from cockpit.lib import ask_queue, diff_comments, seed_queue
 from cockpit.lib.cache import (
     delivered_ticket_ids,
     republish_pr_caches_from_disk,
@@ -265,6 +265,34 @@ def _drain_seed_queue(live_refs: set[str], *, dry: bool) -> list[str]:
     return sent
 
 
+def _drain_ask_queue(cwds: Mapping[str, Path], *, dry: bool) -> list[str]:
+    """Deliver `a`/`A` lines a busy session refused (`lib/ask_queue.py`).
+
+    Not a fourth automatic send: like the seed retry it carries no text of
+    cockpit's own — the user typed the line and chose the workspace, and this
+    only picks the moment, through the same gate `a` would have used. No
+    `pref_key` for the same reason `a` has none.
+
+    Runs after `_drain_seed_queue`, so a fresh workspace's first-turn body lands
+    before anything typed at it. Dropped unsent when the ref is gone *or* now
+    sits at a different cwd, since cmux reuses refs. Retired only on an
+    accepted send, so a dry run keeps the queue.
+    """
+    for path in ask_queue.prune_stale():
+        print(f"  queued ask expired unsent: {path.name}", flush=True)
+    sent = []
+    for path, req in ask_queue.iter_pending():
+        live = cwds.get(req.ref)
+        if live is None or (req.cwd and Path(live).resolve() != Path(req.cwd)):
+            ask_queue.pop(path)
+            print(f"  queued ask dropped, workspace gone: {req.ref}", flush=True)
+            continue
+        if nudge_if_idle(req.ref, req.text, dry=dry, tag="ask-queued"):
+            ask_queue.pop(path)
+            sent.append(req.ref)
+    return sent
+
+
 def _write_worktree_cells(wts: Iterable[Worktree]) -> None:
     """Write the two per-worktree flat cells for every worktree, concurrently.
 
@@ -390,6 +418,8 @@ def _fast_tick(state: dict) -> None:
         print(f"  diff comments handed to {ref}", flush=True)
     for ref in _drain_seed_queue(set(cwds), dry=state.get("dry", False)):
         print(f"  seed prompt re-delivered to {ref}", flush=True)
+    for ref in _drain_ask_queue(cwds, dry=state.get("dry", False)):
+        print(f"  queued ask delivered to {ref}", flush=True)
     _write_worktree_cells(pending)
     republish_pr_caches_from_disk()
     # The inbox's `in_flight` flags, re-derived from the worktrees this tick just

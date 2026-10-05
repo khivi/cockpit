@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 from textual.widgets import Input, Static
 
-from cockpit.lib import diff_comments
+from cockpit.lib import ask_queue, diff_comments
 from cockpit.lib.config import apply_org_defaults
 from cockpit.lib.git import Worktree
 from cockpit.tui.app import CockpitApp
@@ -2933,15 +2933,13 @@ async def test_ask_key_cancelled_sends_nothing(monkeypatch, tmp_path):
 
 
 async def test_ask_key_reports_skip_when_not_idle(monkeypatch, tmp_path):
-    """A refusal names the gate's own reason. "not at rest (Needs input)" and
-    "mid-turn" call for different responses — only the first means the session
-    needs a turn completed by hand before `a` can ever reach it — so listing
-    every cause it might have been is no help."""
+    """A refusal that won't end on its own names the gate's reason and keeps
+    the draft — `parked` is the user's marker, so it is never queued."""
     wt = _seed_one_worktree(monkeypatch, tmp_path)
     monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
 
     def _refuse(ref, msg, **k):
-        k["skips"][ref] = "not at rest (Needs input)"
+        k["skips"][ref] = "parked"
         return False
 
     monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _refuse)
@@ -2957,8 +2955,43 @@ async def test_ask_key_reports_skip_when_not_idle(monkeypatch, tmp_path):
         app.screen.query_one(Input).value = "hello"
         await pilot.press("enter")
         await pilot.pause(0.6)
-    assert any("not at rest (Needs input)" in t for t in toasts)
+    assert any("skipped" in t and "parked" in t for t in toasts)
     assert app._ask_drafts[str(wt.path)] == "hello"
+    assert ask_queue.iter_pending() == []
+
+
+@pytest.mark.covers("ask-queue.queue~1")
+@pytest.mark.parametrize("reason", ["mid-turn", "not at rest (Needs input)"])
+async def test_ask_key_queues_a_line_refused_by_a_busy_session(
+    monkeypatch, tmp_path, reason
+):
+    """A busy session's refusal ends on its own, so the line is queued for the
+    fast tick rather than left for a second `a`. The toast still carries the
+    gate's reason: `Needs input` may be a permission waiting on you."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+
+    def _refuse(ref, msg, **k):
+        k["skips"][ref] = reason
+        return False
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _refuse)
+    toasts: list[str] = []
+    app, _ = _make_app()
+    monkeypatch.setattr(app, "notify", lambda msg, **k: toasts.append(msg))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_table([("repo", "repo", None, "none", [wt])])
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "hello"
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+    assert any("queued" in t and reason in t for t in toasts)
+    assert str(wt.path) not in app._ask_drafts
+    [(_p, req)] = ask_queue.iter_pending()
+    assert (req.ref, req.text, req.cwd) == ("ws1", "hello", str(wt.path.resolve()))
 
 
 async def test_ask_key_skip_falls_back_when_the_gate_names_no_reason(
@@ -3200,17 +3233,47 @@ async def test_ask_on_header_reports_partial_delivery_and_keeps_the_draft(
         if ref == "ws1":
             return True
         if skips is not None:
-            skips[ref] = "mid-turn"
+            skips[ref] = "parked"
         return False
 
     monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake)
     toasts: list[str] = []
     app = await _press_a_on_header(monkeypatch, wt, "please rebase", toasts)
-    # The toast names the gate's own reason, not a bare count — "1× mid-turn"
+    # The toast names the gate's own reason, not a bare count — "1× parked"
     # tells you whether to retry now or later.
-    assert any("sent to 1 of 2" in t and "1× mid-turn" in t for t in toasts)
+    assert any("sent to 1 of 2" in t and "1× parked" in t for t in toasts)
     key = f"repo:{tmp_path.resolve()}"
     assert app._ask_drafts[key] == "please rebase"  # retry reaches the misses
+
+
+@pytest.mark.covers("ask-queue.fan-out~1")
+async def test_ask_on_header_queues_busy_sessions_and_retries_only_the_rest(
+    monkeypatch, tmp_path
+):
+    """A busy ref is queued and leaves the retry set, or a retry would hand it
+    the line a second time when the queue also delivers it."""
+    wt = _seed_one_worktree(monkeypatch, tmp_path)
+    monkeypatch.setattr("cockpit.tui.app.is_cmux", lambda: True)
+    monkeypatch.setattr("cockpit.tui.app.worktrees", lambda *a, **k: [wt])
+    monkeypatch.setattr(
+        "cockpit.tui.app.workspace_cwds",
+        lambda *, include_self=False: {"ws1": wt.path, "ws2": wt.path, "ws3": wt.path},
+    )
+    reasons = {"ws2": "mid-turn", "ws3": "parked"}
+
+    def _fake(ref, msg, *, skips=None, **k):
+        if ref in reasons:
+            skips[ref] = reasons[ref]
+            return False
+        return True
+
+    monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake)
+    toasts: list[str] = []
+    app = await _press_a_on_header(monkeypatch, wt, "please rebase", toasts)
+    assert any("sent to 1 of 3" in t and "1 queued" in t for t in toasts)
+    key = f"repo:{tmp_path.resolve()}"
+    assert app._ask_misses[key] == frozenset({"ws3"})
+    assert [r.ref for _p, r in ask_queue.iter_pending()] == ["ws2"]
 
 
 async def test_ask_on_header_warns_when_the_repo_has_no_sessions(monkeypatch, tmp_path):
@@ -3335,13 +3398,13 @@ async def test_A_reports_partial_delivery_and_keeps_the_draft(monkeypatch, tmp_p
         if ref == "ws1":
             return True
         if skips is not None:
-            skips[ref] = "mid-turn"
+            skips[ref] = "parked"
         return False
 
     monkeypatch.setattr("cockpit.tui.app.nudge_if_idle", _fake)
     toasts: list[str] = []
     app = await _press_A(monkeypatch, inv, 1, "please rebase", toasts)
-    assert any("sent to 1 of 2" in t and "1× mid-turn" in t for t in toasts)
+    assert any("sent to 1 of 2" in t and "1× parked" in t for t in toasts)
     # The retry key named in the toast is the one that reaches the misses.
     assert any("press A to retry" in t for t in toasts)
     assert app._ask_drafts["snoozed:alpha"] == "please rebase"
@@ -3413,7 +3476,7 @@ async def test_repo_retry_reaches_only_the_sessions_that_missed(monkeypatch, tmp
         seen.append(ref)
         if ref in busy:
             if skips is not None:
-                skips[ref] = "mid-turn"
+                skips[ref] = "parked"
             return False
         return True
 
@@ -3432,7 +3495,7 @@ async def test_repo_retry_reaches_only_the_sessions_that_missed(monkeypatch, tmp
             app.screen.query_one(Input).value = "rebase onto main"
             await pilot.press("enter")
             await pilot.pause(0.6)
-            busy.clear()  # ws2 frees up before the retry
+            busy.clear()  # ws2 is un-parked before the retry
 
     assert seen == ["ws1", "ws2", "ws2"]  # ws1 delivered ONCE, not twice
     assert f"repo:{tmp_path.resolve()}" not in app._ask_drafts  # retry completed

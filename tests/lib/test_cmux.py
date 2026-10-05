@@ -3471,3 +3471,20 @@ def test_the_garble_check_compares_the_body_not_the_token(capsys):
     with patch("cockpit.lib.cmux.transcript.submitted_body", return_value=body[:30]):
         assert _deliver_with(_echoing_cmux(calls), body, cwd=Path("/wt")) is True
     assert "garbled" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("reason", "pending"),
+    [
+        (None, False),
+        ("mid-turn", True),
+        ("not at rest (Needs input)", True),
+        ("not at rest (no Claude session)", True),
+        ("parked", False),
+        ("muted or snoozed", False),
+    ],
+)
+def test_rest_pending_is_true_only_for_a_wait_that_ends_on_its_own(reason, pending):
+    from cockpit.lib.cmux import rest_pending
+
+    assert rest_pending(reason) is pending
