@@ -2442,6 +2442,44 @@ def test_spawn_missing_orphan_skips_worktree_still_settling(tmp_path, capsys):
     assert "orphan-spawn schemagen — worktree is 2s old" in capsys.readouterr().out
 
 
+def test_spawn_missing_orphan_skips_merged_branch(tmp_path, capsys):
+    """A PR-less worktree whose branch already merged (merge head still
+    reachable from HEAD) is awaiting autoclose, so adopting it would open a
+    workspace on work that is about to be torn down."""
+    orphan_wt = tmp_path / "done"
+    orphan_wt.mkdir()
+    ctx = _spawn_ctx(tmp_path, wts=[Worktree(path=orphan_wt, branch="khivi/done")])
+    ctx.merged_branches = {"khivi/done": "deadbeef"}
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace"),
+        patch.object(cycle, "spawn_orphan_workspace") as orphan,
+        patch.object(cycle, "is_ancestor", return_value=True),
+        _aged(),
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    orphan.assert_not_called()
+    assert "branch khivi/done has merged PR" in capsys.readouterr().out
+
+
+def test_spawn_missing_orphan_spawns_when_merge_head_diverged(tmp_path):
+    """Contrast: the branch name was reused for new work (merge head no longer an
+    ancestor of HEAD), so the worktree is live and is adopted."""
+    orphan_wt = tmp_path / "reused"
+    orphan_wt.mkdir()
+    ctx = _spawn_ctx(tmp_path, wts=[Worktree(path=orphan_wt, branch="khivi/reused")])
+    ctx.merged_branches = {"khivi/reused": "deadbeef"}
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace"),
+        patch.object(cycle, "spawn_orphan_workspace") as orphan,
+        patch.object(cycle, "is_ancestor", return_value=False),
+        _aged(),
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    orphan.assert_called_once()
+
+
 def test_spawn_missing_orphan_spawns_once_grace_elapsed(tmp_path):
     """The grace defers adoption, it never disables it: the same orphan past
     `_SPAWN_ADOPT_GRACE_SECONDS` is spawned as before."""
@@ -2937,6 +2975,61 @@ def test_refresh_orphan_renames_drifted_workspace(tmp_path):
         cycle._refresh_orphan(ctx, "workspace:7", wt, "stale-name")
 
     rn.assert_called_once_with("workspace:7", "feat", "stale-name", dry=False)
+
+
+def test_refresh_orphan_merged_worktree_returns_before_rename_and_pills(
+    tmp_path, capsys
+):
+    """A merged orphan is autoclose's business: no rename, no orphan/wip/stale
+    pill writes."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path, branch="khivi/feat", dirty_count=0, branch_prefix="khivi/"
+    )
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.base_distance = {}
+    ctx.merged_branches = {"khivi/feat": "deadbeef"}
+
+    with (
+        patch.object(cycle, "cmux") as cmux_mock,
+        patch.object(cycle, "apply_wip_pill") as wip,
+        patch.object(cycle, "apply_stale_pill") as stale,
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "rename_workspace_if_needed") as rn,
+    ):
+        cycle._refresh_orphan(ctx, "workspace:7", wt, "stale-name")
+
+    rn.assert_not_called()
+    cmux_mock.assert_not_called()
+    wip.assert_not_called()
+    stale.assert_not_called()
+    assert "merged — autoclose may handle" in capsys.readouterr().out
+
+
+def test_refresh_orphan_unmerged_worktree_is_renamed_and_pilled(tmp_path):
+    """Contrast: a merge head that is no longer an ancestor (branch reused) is
+    live work and gets the rename and pills."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path, branch="khivi/feat", dirty_count=0, branch_prefix="khivi/"
+    )
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.base_distance = {}
+    ctx.merged_branches = {"khivi/feat": "deadbeef"}
+
+    with (
+        patch.object(cycle, "cmux"),
+        patch.object(cycle, "apply_wip_pill") as wip,
+        patch.object(cycle, "apply_stale_pill"),
+        patch.object(cycle, "is_ancestor", return_value=False),
+        patch.object(cycle, "rename_workspace_if_needed", return_value=False) as rn,
+    ):
+        cycle._refresh_orphan(ctx, "workspace:7", wt, "stale-name")
+
+    rn.assert_called_once()
+    wip.assert_called_once()
 
 
 def test_handle_orphans_never_closes(tmp_path):

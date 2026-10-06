@@ -494,6 +494,31 @@ def test_list_relevant_prs_returns_one_pr_per_branch():
     assert [pr.number for pr in prs] == [335]
 
 
+def test_list_relevant_prs_evicts_cached_prs_the_light_phase_no_longer_returns():
+    kept = _issue_pr(number=1, branch="khivi/kept", updated_at="a")
+    gone = _issue_pr(number=2, branch="khivi/gone", updated_at="b")
+    cache = {1: (kept, "a"), 2: (gone, "b")}
+    with patch("cockpit.lib.gh._fetch_light_phase", return_value={1: "a"}):
+        prs = list_relevant_prs("o", "n", "khivi", ["khivi/kept"], cache=cache)
+    assert [pr.number for pr in prs] == [1]
+    assert set(cache) == {1}
+
+
+def test_list_relevant_prs_without_a_cache_hydrates_everything():
+    fresh = _issue_pr(number=7, branch="khivi/new", updated_at="a")
+
+    def hydrate(owner, name, self_user, stale, light, cache, host=""):
+        for num in stale:
+            cache[num] = (fresh, light[num])
+
+    with (
+        patch("cockpit.lib.gh._fetch_light_phase", return_value={7: "a"}),
+        patch("cockpit.lib.gh._hydrate_stale", side_effect=hydrate),
+    ):
+        prs = list_relevant_prs("o", "n", "khivi", ["khivi/new"])
+    assert prs == [fresh]
+
+
 # ── PR.nudge_issue — single source for the nudge decision + TUI 🔔 ──────────
 
 
