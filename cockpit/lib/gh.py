@@ -267,8 +267,8 @@ def list_open_pr_heads(owner: str, name: str, *, host: str = "") -> list[OpenPRH
     1 000 results, so the loop always terminates without a page ceiling.
 
     A null author (bot/Copilot) is reported as "" so the caller can skip or
-    include it explicitly. Empty list on gh failure — review-spawn does nothing
-    that cycle rather than aborting the whole reconcile.
+    include it explicitly. Raises RuntimeError on a failed or malformed fetch;
+    the caller warns and spawns nothing that cycle.
     """
     search = f"repo:{owner}/{name} is:pr is:open"
     out: list[OpenPRHead] = []
@@ -277,10 +277,7 @@ def list_open_pr_heads(owner: str, name: str, *, host: str = "") -> list[OpenPRH
         variables: dict[str, str] = {"search": search}
         if cursor:
             variables["cursor"] = cursor
-        try:
-            data = _graphql(_OPEN_PR_HEADS_QUERY, variables, host)
-        except RuntimeError:
-            return []
+        data = _graphql(_OPEN_PR_HEADS_QUERY, variables, host)
         try:
             page = data["data"]["search"]
             for node in page["nodes"]:
@@ -296,8 +293,8 @@ def list_open_pr_heads(owner: str, name: str, *, host: str = "") -> list[OpenPRH
             if not info["hasNextPage"]:
                 break
             cursor = info["endCursor"]
-        except (KeyError, TypeError):
-            return []
+        except (KeyError, TypeError) as e:
+            raise RuntimeError(f"malformed open-PR response: {e!r}") from e
     return out
 
 

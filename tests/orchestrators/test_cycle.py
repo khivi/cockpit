@@ -1132,6 +1132,46 @@ def test_prepare_cycle_prunes_worktrees_before_listing(tmp_path, monkeypatch):
     assert calls[:2] == ["prune", "list"], f"prune must precede list; got {calls}"
 
 
+def test_prepare_cycle_warns_when_review_prs_fetch_fails(tmp_path, monkeypatch, capsys):
+    """A failed open-PR fetch is reported, not read as "no coworker PRs"."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_entry = {"path": str(repo_path), "name": "repo", "review_prs": True}
+
+    monkeypatch.setattr(cycle, "repo_nwo", lambda _p: ("ai-needl", "repo"))
+    monkeypatch.setattr(
+        cycle, "worktrees", lambda _p, _prefix="", _name="", _tag="": []
+    )
+    monkeypatch.setattr(cycle, "workspace_state", lambda: ({}, {}))
+    monkeypatch.setattr(cycle, "fetch_merged_branches", lambda *_a, **_k: {})
+    monkeypatch.setattr(cycle, "has_workspace_backend", lambda: True)
+    monkeypatch.setattr(cycle, "list_relevant_prs", lambda *_a, **_k: [])
+
+    def _fail(*_a, **_k):
+        raise RuntimeError("HTTP 401")
+
+    monkeypatch.setattr(cycle, "list_open_pr_heads", _fail)
+
+    def _stop(*_a, **_k):
+        raise LookupError("stop")
+
+    monkeypatch.setattr(cycle, "find_cockpit_workspaces", _stop)
+
+    with pytest.raises(LookupError):
+        cycle._prepare_cycle(
+            repo_entry,
+            "khivi",
+            cfg={},
+            pr_cache={},
+            pill_state={},
+            dry=False,
+        )
+
+    err = capsys.readouterr().err
+    assert "review_prs open-PR fetch failed" in err
+    assert "HTTP 401" in err
+
+
 def test_refresh_base_distance_short_circuits_when_no_feature_worktrees(tmp_path):
     from cockpit.lib.git import Worktree
 
