@@ -189,6 +189,90 @@ def test_run_repo_skills_empty_config(tmp_path):
         mock_run.assert_not_called()
 
 
+def _slow_skill_repo(tmp_path, monkeypatch, name="nudge-reviewers"):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    skill_dir = tmp_path / ".claude" / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text(f"# {name}")
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    return repo_path, {"path": str(repo_path), "slow_skills": [name]}
+
+
+def test_run_repo_skills_slow_missing_skill_skips(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo_entry = {"path": str(tmp_path), "slow_skills": ["ghost-skill"]}
+
+    with (
+        patch.object(cycle, "workspace_names", return_value={}),
+        patch.object(cycle, "spawn_workspace") as mock_spawn,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+        mock_spawn.assert_not_called()
+
+    out = capsys.readouterr().out
+    assert "skip slow_skill" in out.replace("\x1b[33m", "").replace("\x1b[0m", "")
+    assert "ghost-skill" in out
+
+
+def test_run_repo_skills_slow_dry_run_spawns_nothing(tmp_path, monkeypatch, capsys):
+    _repo_path, repo_entry = _slow_skill_repo(tmp_path, monkeypatch)
+
+    with (
+        patch.object(cycle, "workspace_names", return_value={}),
+        patch.object(cycle, "split_prompt_prefix", return_value=("/x", "body")),
+        patch.object(cycle, "spawn_workspace") as mock_spawn,
+        patch.object(cycle, "deliver_followup") as mock_follow,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=True)
+        mock_spawn.assert_not_called()
+        mock_follow.assert_not_called()
+
+    out = capsys.readouterr().out
+    assert "dry: spawn workspace 'skill-nudge-reviewers'" in out
+    assert "followup 'body'" in out
+
+
+def test_run_repo_skills_slow_delivers_followup(tmp_path, monkeypatch):
+    repo_path, repo_entry = _slow_skill_repo(tmp_path, monkeypatch)
+
+    with (
+        patch.object(cycle, "workspace_names", return_value={}),
+        patch.object(cycle, "split_prompt_prefix", return_value=("/x", "body")),
+        patch.object(cycle, "spawn_workspace", return_value="workspace:7") as spawn,
+        patch.object(cycle, "deliver_followup") as follow,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+
+    spawn.assert_called_once_with("skill-nudge-reviewers", repo_path, ANY)
+    follow.assert_called_once_with("workspace:7", "body", cwd=repo_path)
+
+
+def test_run_repo_skills_slow_no_followup_when_spawn_fails(tmp_path, monkeypatch):
+    _repo_path, repo_entry = _slow_skill_repo(tmp_path, monkeypatch)
+
+    with (
+        patch.object(cycle, "workspace_names", return_value={}),
+        patch.object(cycle, "split_prompt_prefix", return_value=("/x", "body")),
+        patch.object(cycle, "spawn_workspace", return_value=None),
+        patch.object(cycle, "deliver_followup") as follow,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+
+    follow.assert_not_called()
+
+
+def test_run_repo_skills_slow_cmux_unavailable_returns_early(tmp_path, monkeypatch):
+    _repo_path, repo_entry = _slow_skill_repo(tmp_path, monkeypatch)
+
+    with (
+        patch.object(cycle, "workspace_names", side_effect=cycle.CmuxUnavailable("x")),
+        patch.object(cycle, "spawn_workspace") as mock_spawn,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+        mock_spawn.assert_not_called()
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # _maybe_autoclose: cmux workspace MUST close before worktree removal,
 # otherwise the cwd is yanked out from under a live Claude Code session and
@@ -1434,6 +1518,37 @@ def test_cycle_repo_phase_order(tmp_path):
         "transition",
         "teardown",
     ]
+
+
+def test_reconcile_worktree_lifecycle_autocloses_then_reaps_branch_refs(tmp_path):
+    ctx = _stub_repo_cycle(tmp_path)
+    calls: list[str] = []
+
+    with (
+        patch.object(
+            cycle,
+            "_maybe_autoclose",
+            side_effect=lambda *_a, **_kw: calls.append("autoclose"),
+        ) as autoclose,
+        patch.object(
+            cycle,
+            "_reap_branch_refs",
+            side_effect=lambda *_a, **_kw: calls.append("reap"),
+        ) as reap,
+    ):
+        cycle._reconcile_worktree_lifecycle(ctx, dry=True)
+
+    autoclose.assert_called_once_with(
+        ctx.repo_path,
+        ctx.name,
+        ctx.wts,
+        ctx.merged_branches,
+        ctx.cwds,
+        prs=ctx.prs,
+        dry=True,
+    )
+    reap.assert_called_once_with(ctx)
+    assert calls == ["autoclose", "reap"]
 
 
 @pytest.mark.covers("folds.partial~1")
