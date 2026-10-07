@@ -606,7 +606,9 @@ Why two ticks:
      hand-over, the seed-queue drain, then the ask-queue drain;
   6. write each worktree's git-state and `wt-cost` cells
      (`write_git_state_cache`, `write_worktree_cost_cache`), then republish PR
-     flat cells from the persistent JSON (`republish_pr_caches_from_disk`);
+     flat cells from the persistent JSON (`republish_pr_caches_from_disk`),
+     skipping any snapshot stamped with a worktree that now holds another
+     branch;
   7. re-stamp the ticket inbox's `in_flight` flags (`stamp_inbox_in_flight`).
 
   So a `git checkout`, a drifted workspace name, a freshly spawned workspace's

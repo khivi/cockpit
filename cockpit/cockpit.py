@@ -423,7 +423,7 @@ def _fast_tick(state: dict) -> None:
     for ref in _drain_ask_queue(cwds, dry=state.get("dry", False)):
         print(f"  queued ask delivered to {ref}", flush=True)
     _write_worktree_cells(pending)
-    republish_pr_caches_from_disk()
+    republish_pr_caches_from_disk({str(wt.path): wt.branch for wt in pending})
     # The inbox's `in_flight` flags, re-derived from the worktrees this tick just
     # listed plus the PR snapshots on disk. Local and free — the *fetch* that
     # fills the inbox is the slow tick's, but a ticket's worktree can appear at

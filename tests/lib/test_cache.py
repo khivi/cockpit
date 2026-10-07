@@ -609,7 +609,7 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(json_cache):
         "pr-nudge",
     ):
         cache_mod.cwd_cache(stem, _WT_PATH).unlink(missing_ok=True)
-    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.republish_pr_caches_from_disk({})
 
     flat = cache_mod.FLAT_CACHE_DIR
     assert (flat / f"pr-state-{_KEY}").read_text() == "APPROVED"
@@ -631,7 +631,7 @@ def test_pr_payload_carries_base_for_the_stack_indent(json_cache):
     assert payload["base"] == "khivi/root"
 
     cache_mod.cwd_cache("pr-base", _WT_PATH).unlink(missing_ok=True)
-    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.republish_pr_caches_from_disk({})
     assert cache_mod.cwd_cache("pr-base", _WT_PATH).read_text() == "khivi/root"
 
 
@@ -644,7 +644,7 @@ def test_republish_pr_caches_no_cache_dir_is_noop(tmp_path, monkeypatch):
 
     importlib.reload(cockpit_config)
     importlib.reload(cache_mod)
-    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.republish_pr_caches_from_disk({})
 
 
 def test_write_git_state_cache_outside_repo_writes_empty(
@@ -924,7 +924,7 @@ def test_load_pr_payloads_by_branch_matches_find_pr_payload(json_cache):
 def test_republish_picks_winner_for_reused_branch(json_cache):
     _snapshot(json_cache, "cockpit", 91, "khivi/side", state="MERGED")
     _snapshot(json_cache, "cockpit", 126, "khivi/side", state="OPEN", review="APPROVED")
-    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.republish_pr_caches_from_disk({})
     flat = cache_mod.FLAT_CACHE_DIR
     assert (flat / f"pr-num-{_KEY}").read_text() == "126"
     assert (flat / f"pr-state-{_KEY}").read_text() == "APPROVED"
@@ -944,7 +944,7 @@ def test_republish_keeps_two_repos_on_one_branch_apart(json_cache):
         state="OPEN",
         cwd=str(other),
     )
-    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.republish_pr_caches_from_disk({})
     flat = cache_mod.FLAT_CACHE_DIR
     assert (flat / f"pr-num-{_KEY}").read_text() == "82"
     assert (flat / f"pr-num-{cache_mod._cwd_key(other)}").read_text() == "20"
@@ -955,10 +955,61 @@ def test_republish_skips_a_pr_with_no_worktree(json_cache):
     """No worktree → no row, no session, nowhere to key a cell. The JSON
     snapshot is still written; only the flat republish sits it out."""
     snapshot = _snapshot(json_cache, "cockpit", 5, "khivi/remote-only", cwd="")
-    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.republish_pr_caches_from_disk({})
     assert not any(cache_mod.FLAT_CACHE_DIR.glob("pr-num-*"))
     assert snapshot.exists()
     served = cache_mod.find_pr_payload("khivi/remote-only", "cockpit")
+    assert served is not None and served["number"] == 5
+
+
+@pytest.mark.covers("cache.stale-stamp~1")
+def test_republish_clears_a_stamp_the_worktree_has_left(json_cache):
+    """A coworker's branch checked out in the primary checkout, then left: no
+    worktree tracks it any more, so nothing rewrites its stamp, and the row on
+    `main` kept showing that PR while `p` found none for `main`."""
+    _snapshot(json_cache, "cockpit", 7, "coworker/fix")
+    cache_mod.cwd_cache("pr-num", _WT_PATH).write_text("7")
+    cache_mod.republish_pr_caches_from_disk({str(_WT_PATH): "main"})
+    assert cache_mod.cwd_cache("pr-num", _WT_PATH).read_text() == ""
+    assert cache_mod.cwd_cache("pr-title", _WT_PATH).read_text() == ""
+
+
+@pytest.mark.covers("cache.stale-stamp~1")
+def test_republish_prefers_the_held_branch_over_a_higher_ranked_stale_stamp(
+    json_cache,
+):
+    _snapshot(json_cache, "cockpit", 7, "coworker/fix", updatedAt="2030-01-01")
+    _snapshot(json_cache, "cockpit", 3, "khivi/feature", updatedAt="2020-01-01")
+    cache_mod.republish_pr_caches_from_disk({str(_WT_PATH): "khivi/feature"})
+    assert cache_mod.cwd_cache("pr-num", _WT_PATH).read_text() == "3"
+
+
+def test_republish_trusts_the_stamp_of_an_unlisted_worktree(json_cache):
+    _snapshot(json_cache, "cockpit", 7, "coworker/fix")
+    cache_mod.republish_pr_caches_from_disk({})
+    assert cache_mod.cwd_cache("pr-num", _WT_PATH).read_text() == "7"
+
+
+@pytest.mark.covers("cache.stale-stamp~1")
+def test_find_pr_payload_for_cwd_skips_a_stamp_for_another_branch(json_cache):
+    _snapshot(json_cache, "cockpit", 7, "coworker/fix")
+    assert cache_mod.find_pr_payload_for_cwd(_WT_PATH, "main") is None
+    served = cache_mod.find_pr_payload_for_cwd(_WT_PATH, "coworker/fix")
+    assert served is not None and served["number"] == 7
+
+
+@pytest.mark.covers("cache.stamp-fallback~1")
+def test_find_pr_payload_for_cwd_falls_back_only_to_unstamped_snapshots(
+    json_cache, tmp_path
+):
+    """Two repos each with a `fix` worktree: repo B's PR is stamped with B's
+    worktree, so A's worktree must not borrow it — the fast tick blanks A's
+    row, and the two readers would disagree."""
+    _snapshot(json_cache, "repoB", 20, "fix", cwd=str(tmp_path / "repoB-fix"))
+    assert cache_mod.find_pr_payload_for_cwd(_WT_PATH, "fix") is None
+
+    _snapshot(json_cache, "repoA", 5, "fix", cwd="")
+    served = cache_mod.find_pr_payload_for_cwd(_WT_PATH, "fix")
     assert served is not None and served["number"] == 5
 
 
@@ -1072,7 +1123,7 @@ def test_republish_blanks_reused_branch(json_cache):
     _snapshot(
         json_cache, "cockpit", 86, "khivi/side", state="MERGED", reusedBranch=True
     )
-    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.republish_pr_caches_from_disk({})
     flat = cache_mod.FLAT_CACHE_DIR
     assert (flat / f"pr-num-{_KEY}").read_text() == ""
     assert (flat / f"pr-state-{_KEY}").read_text() == ""
@@ -1085,7 +1136,7 @@ def test_republish_open_pr_wins_over_reused_merged_sibling(json_cache):
         json_cache, "cockpit", 86, "khivi/side", state="MERGED", reusedBranch=True
     )
     _snapshot(json_cache, "cockpit", 99, "khivi/side", state="OPEN", review="APPROVED")
-    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.republish_pr_caches_from_disk({})
     flat = cache_mod.FLAT_CACHE_DIR
     assert (flat / f"pr-num-{_KEY}").read_text() == "99"
     assert (flat / f"pr-state-{_KEY}").read_text() == "APPROVED"
@@ -1186,7 +1237,7 @@ def test_restamp_pref_writes_the_cells_and_survives_a_republish(json_cache):
     payload = json.loads((json_cache / "cockpit__pr-7.json").read_text())
     assert payload["snoozed"] == "snoozed"
 
-    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.republish_pr_caches_from_disk({})
     assert (flat / f"pr-snoozed-{_KEY}").read_text() == "snoozed"
 
 
@@ -1234,7 +1285,7 @@ def test_restamp_pref_touches_only_its_own_cells(json_cache):
     # Daemon-derived cells: the ordinary republish (writes pr-* + pr-checks for
     # every cached snapshot's cwd) plus a diff-comments write for PR #7's own
     # worktree — a cell restamp_pref's cwd-scoped write path never reaches.
-    cache_mod.republish_pr_caches_from_disk()
+    cache_mod.republish_pr_caches_from_disk({})
     cache_mod.write_diff_comments_cache(_WT_PATH, 3)
 
     before = _read_tree(cache=cache_dir, flat=flat)
