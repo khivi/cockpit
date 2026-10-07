@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.17.2](https://github.com/khivi/cockpit/compare/v3.17.1...v3.17.2) (2026-10-07)
+
+
+### Bug Fixes
+
+* **cycle:** muted PR holds its worktree against autoclose ([#581](https://github.com/khivi/cockpit/issues/581)) ([3e3d33a](https://github.com/khivi/cockpit/commit/3e3d33a26584b12a0f041f484042506aa377b08a))
+
 ## [3.17.1](https://github.com/khivi/cockpit/compare/v3.17.0...v3.17.1) (2026-10-07)
 
 
