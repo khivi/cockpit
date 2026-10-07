@@ -384,6 +384,7 @@ The `$` column totals what every session at a worktree has spent. Sessions are k
 - `teardown.py::teardown(TeardownRequest)` closes the workspace, removes the worktree, deletes the branch and drops the PR cache. It owns the self-close ledger.
 - `TeardownRequest.worktree_path` is the whole difference. Autoclose and `c`/`C`/`cockpit close` pass it. `_reap_workspace_orphans` passes `None` and gets a workspace-only close plus a delete of a `<login>/` branch ref. One path removes a worktree, guarded once: a dirty tree or unlanded commits refuse both `c` and `C`.
 - A new destructive trigger builds a `TeardownRequest`. It does not open a third path.
+- Autoclose skips a muted PR, mine or a coworker's, reading `ctx.prefs`. **Do not** extend the hold to snooze: a merge ends the turn a snooze waits on.
 - **Never** call `cmux("close-workspace", …)` raw. The `workspace.closed` event looks like the user's sidebar X and routes into teardown.
 - The stale-branch-ref reaper is the one destructive action outside both. **Do not** copy it as a precedent.
 

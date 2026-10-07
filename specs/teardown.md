@@ -10,6 +10,9 @@
   guard blocks via `count_unlanded`. It never consults the coworker baseline.
   Given a coworker's branch whose commits exist only locally, the guard blocks
   via `commits_only_local`. Pushing clears neither block.
+- [teardown.mute-holds~1] Given a clean worktree whose PR merged, autoclose
+  skips it while the PR is muted, mine or a coworker's, and logs the skip. A
+  snoozed PR, or one with no pref, is torn down as before.
 
 ## cockpit diff
 

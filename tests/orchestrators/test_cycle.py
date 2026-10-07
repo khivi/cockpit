@@ -348,6 +348,51 @@ def test_autoclose_dry_run_calls_neither(tmp_path):
     remove_mock.assert_not_called()
 
 
+def _autoclose_with_prefs(tmp_path, prefs):
+    """Run `_maybe_autoclose` on one clean merged worktree (PR #1); return the
+    `_teardown_worktree` mock."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+    with (
+        patch.object(cycle, "_teardown_worktree") as teardown_mock,
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "has_unique_commits", return_value=False),
+    ):
+        cycle._maybe_autoclose(
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={},
+            prs=[_pr("khivi/feat")],
+            prefs=prefs,
+            dry=False,
+        )
+    return teardown_mock
+
+
+@pytest.mark.covers("teardown.mute-holds~1")
+def test_autoclose_skips_muted_merged_pr(tmp_path, capsys):
+    teardown_mock = _autoclose_with_prefs(tmp_path, {1: NudgePref(muted=True)})
+    teardown_mock.assert_not_called()
+    assert "skipped (muted #1)" in capsys.readouterr().out
+
+
+@pytest.mark.covers("teardown.mute-holds~1")
+@pytest.mark.parametrize(
+    "prefs",
+    [
+        pytest.param({1: NudgePref(snoozed=True)}, id="snoozed"),
+        pytest.param({}, id="no-pref"),
+        pytest.param({2: NudgePref(muted=True)}, id="other-pr-muted"),
+        pytest.param(None, id="prefs-omitted"),
+    ],
+)
+def test_autoclose_tears_down_when_not_muted(tmp_path, prefs):
+    _autoclose_with_prefs(tmp_path, prefs).assert_called_once()
+
+
 def test_autoclose_remove_failure_still_closes_cmux_and_skips_cache_delete(tmp_path):
     """If remove_worktree fails, cmux close has already run (correct), and
     we skip delete_pr_caches_for_branch (preserves prior gating behavior)."""
@@ -1545,6 +1590,7 @@ def test_reconcile_worktree_lifecycle_autocloses_then_reaps_branch_refs(tmp_path
         ctx.merged_branches,
         ctx.cwds,
         prs=ctx.prs,
+        prefs=ctx.prefs,
         dry=True,
     )
     reap.assert_called_once_with(ctx)
