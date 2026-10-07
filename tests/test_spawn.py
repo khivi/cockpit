@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -2801,3 +2802,79 @@ def test_tickets_block_inherits_the_mcp_server_from_an_org_block(cockpit_repo):
     }
     cfg_path.write_text(json.dumps(data))
     assert "`linear-acme` MCP server" in spawn._tickets_block(_repo_entry(cockpit_repo))
+
+
+# ── URL nwo hint routes to the configured repo ─────────────────────────────
+
+
+def test_issue_url_nwo_routes_to_matching_repo(
+    spawn_main, cockpit_repo, monkeypatch, tmp_path
+):
+    """A GitHub issue URL with no --repo spawns into the configured repo whose
+    origin matches the URL's owner/name."""
+    import cockpit.spawn as spawn
+
+    asked: list[str] = []
+
+    def fake_find(nwo):
+        asked.append(nwo)
+        return {"name": "testrepo", "path": str(cockpit_repo.repo)}
+
+    monkeypatch.setattr(spawn, "find_repo_by_nwo", fake_find)
+    monkeypatch.chdir(tmp_path)  # cwd discovery must not be what resolved it
+    code, _out, err = spawn_main(["https://github.com/o/r/issues/42"])
+    assert code == 0, err
+    assert asked == ["o/r"]
+    assert "no configured repo matches" not in err
+    cwd = _cmux_kwarg(spawn_main.cmux_calls[0], "cwd")
+    assert "issue-42" in cwd
+    common = subprocess.run(
+        ["git", "-C", cwd, "rev-parse", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    repo_common = subprocess.run(
+        ["git", "-C", str(cockpit_repo.repo), "rev-parse", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert (Path(cwd) / common).resolve() == (
+        Path(cockpit_repo.repo) / repo_common
+    ).resolve()
+
+
+def test_issue_url_without_matching_repo_notes_and_falls_back_to_cwd(
+    spawn_main, cockpit_repo, monkeypatch
+):
+    """No configured repo owns the URL's nwo: say so on stderr, then resolve the
+    repo from the cwd as if no URL hint existed."""
+    import cockpit.spawn as spawn
+
+    monkeypatch.setattr(spawn, "find_repo_by_nwo", lambda nwo: None)
+    monkeypatch.chdir(cockpit_repo.repo)
+    code, _out, err = spawn_main(["https://github.com/o/r/issues/42"])
+    assert (
+        "note: URL points to o/r but no configured repo matches; "
+        "falling back to cwd-based discovery" in err
+    )
+    assert code == 0, err
+    cwd = _cmux_kwarg(spawn_main.cmux_calls[0], "cwd")
+    assert "issue-42" in cwd
+
+
+def test_explicit_repo_wins_over_url_nwo_hint(spawn_main, cockpit_repo, monkeypatch):
+    """--repo is authoritative: the nwo hint is not even looked up."""
+    import cockpit.spawn as spawn
+
+    def boom(nwo):
+        raise AssertionError("find_repo_by_nwo must not be consulted")
+
+    monkeypatch.setattr(spawn, "find_repo_by_nwo", boom)
+    code, _out, err = spawn_main(
+        ["https://github.com/o/r/issues/42", "--repo", "testrepo"]
+    )
+    assert code == 0, err
+    assert "no configured repo matches" not in err
+    assert spawn_main.cmux_calls

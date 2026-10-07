@@ -579,17 +579,10 @@ def test_write_git_state_cache_writes_repo_name(_clean_git_env, cache_dir, tmp_p
     assert (cache_dir / f"git-repo-{slug}").read_text() == ""
 
 
-def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch):
+def test_republish_pr_caches_from_disk_rewrites_flat_cells(json_cache):
     """Daemon-side fast-tick republisher: walks the per-PR JSON snapshots and
     re-writes pr-state / pr-num / pr-title / pr-muted / pr-checks. Replaces
     the old renderer-spawned `*-refresh` path."""
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import cockpit.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
 
     # Write a PR JSON snapshot first (daemon side).
     pr = _pr(
@@ -630,16 +623,9 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     assert (flat / f"pr-nudge-{_KEY}").read_text() == "comments"
 
 
-def test_pr_payload_carries_base_for_the_stack_indent(tmp_path, monkeypatch):
+def test_pr_payload_carries_base_for_the_stack_indent(json_cache):
     # The TUI indents a stacked row off the `pr-base` cell, so the base has to
     # survive in the JSON snapshot the fast tick republishes from.
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import cockpit.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
 
     payload = cache_mod.write_pr_cache("testrepo", _pr(base="khivi/root"), _wt())
     assert payload["base"] == "khivi/root"
@@ -680,15 +666,7 @@ def test_write_git_state_cache_outside_repo_writes_empty(
 # ── write_pr_cache pill round-trip (lib.cache) ─────────────────────────────
 
 
-def test_write_pr_cache_includes_pills(tmp_path, monkeypatch):
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import cockpit.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
-
+def test_write_pr_cache_includes_pills(json_cache):
     pr = _pr(ci="failed:lint", review_decision="APPROVED")
     wt = _wt(dirty=2)
     payload = cache_mod.write_pr_cache("testrepo", pr, wt)
@@ -769,15 +747,7 @@ def test_refresh_pr_data_clears_muted_on_no_pr(cache_dir):
     assert (cache_dir / f"pr-muted-{_KEY}").read_text() == ""
 
 
-def test_write_pr_cache_bakes_muted_into_json(tmp_path, monkeypatch):
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import cockpit.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
-
+def test_write_pr_cache_bakes_muted_into_json(json_cache):
     pr = _pr()
     wt = _wt()
     pref = NudgePref(muted=True)
@@ -1600,3 +1570,51 @@ def test_delivered_ticket_ids_reads_the_pr_snapshots(json_cache):
 def test_delivered_ticket_ids_ignores_a_snapshot_with_no_ticket_block(json_cache):
     _snapshot(json_cache, "acme_widgets", 7, "khivi/feature")
     assert cache_mod.delivered_ticket_ids() == []
+
+
+# ── delete_pr_caches_for_branch (real files) ────────────────────────────────
+
+
+def _names(json_cache: Path) -> set[str]:
+    return {p.name for p in json_cache.glob("*.json")}
+
+
+def test_delete_pr_caches_for_branch_removes_only_matching_repo_and_branch(json_cache):
+    _snapshot(json_cache, "acme_widgets", 1, "khivi/gone")
+    _snapshot(json_cache, "acme_widgets", 2, "khivi/other")
+    _snapshot(json_cache, "acme_gadgets", 3, "khivi/gone")
+
+    cache_mod.delete_pr_caches_for_branch("acme/widgets", "khivi/gone")
+
+    assert _names(json_cache) == {
+        "acme_widgets__pr-2.json",
+        "acme_gadgets__pr-3.json",
+    }
+
+
+def test_delete_pr_caches_for_branch_removes_every_pr_on_the_branch(json_cache):
+    _snapshot(json_cache, "acme_widgets", 1, "khivi/reused")
+    _snapshot(json_cache, "acme_widgets", 5, "khivi/reused")
+    _snapshot(json_cache, "acme_widgets", 6, "khivi/keep")
+
+    cache_mod.delete_pr_caches_for_branch("acme/widgets", "khivi/reused")
+
+    assert _names(json_cache) == {"acme_widgets__pr-6.json"}
+
+
+def test_delete_pr_caches_for_branch_without_match_is_a_noop(json_cache):
+    _snapshot(json_cache, "acme_widgets", 1, "khivi/keep")
+
+    cache_mod.delete_pr_caches_for_branch("acme/widgets", "khivi/missing")
+    cache_mod.delete_pr_caches_for_branch("acme/nothing", "khivi/keep")
+
+    assert _names(json_cache) == {"acme_widgets__pr-1.json"}
+
+
+def test_delete_pr_caches_for_branch_does_not_overmatch_prefix_repo_names(json_cache):
+    _snapshot(json_cache, "foo", 1, "khivi/x")
+    _snapshot(json_cache, "foo-bar", 2, "khivi/x")
+
+    cache_mod.delete_pr_caches_for_branch("foo", "khivi/x")
+
+    assert _names(json_cache) == {"foo-bar__pr-2.json"}

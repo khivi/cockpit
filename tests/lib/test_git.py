@@ -1537,3 +1537,91 @@ def _repo_with_origin(tmp_path, url: str, name: str = "r"):
 )
 def test_origin_host_reads_the_remote(tmp_path, url, expected):
     assert gitlib.origin_host(_repo_with_origin(tmp_path, url)) == expected
+
+
+# ── mid-rebase / detached worktrees in worktrees_basic ───────────────────────
+
+
+def _stop_mid_rebase(repo, tmp_path, *rebase_args):
+    """Linked worktree on `feat` stopped on a conflicting `git rebase`."""
+    wt = tmp_path / "wt-feat"
+    _run(repo, "worktree", "add", "-b", "feat", str(wt))
+    (wt / "README.md").write_text("feat side\n")
+    _run(wt, "commit", "-qam", "feat change")
+    (repo / "README.md").write_text("main side\n")
+    _run(repo, "commit", "-qam", "main change")
+    res = subprocess.run(
+        ["git", "-C", str(wt), "rebase", *rebase_args, "main"],
+        capture_output=True,
+        text=True,
+        env=_committer_env(),
+    )
+    assert res.returncode != 0, "precondition: the rebase must stop on a conflict"
+    return wt
+
+
+@pytest.mark.parametrize(
+    "rebase_args, state_dir",
+    [((), "rebase-merge"), (("--apply",), "rebase-apply")],
+)
+def test_worktrees_basic_names_a_mid_rebase_worktree_by_its_branch(
+    cockpit_repo, tmp_path, rebase_args, state_dir
+) -> None:
+    """Git lists a mid-rebase worktree as `detached`; the branch survives only
+    in `<gitdir>/rebase-*/head-name`, which `_rebase_head_name` reads."""
+    repo = cockpit_repo.repo
+    wt = _stop_mid_rebase(repo, tmp_path, *rebase_args)
+    gitdir = gitlib._gitdir(wt)
+    assert gitdir is not None and (gitdir / state_dir / "head-name").exists()
+
+    for lister in (worktrees_basic, worktrees):
+        found = {w.path.resolve(): w for w in lister(repo)}
+        got = found[wt.resolve()]
+        assert got.branch == "feat"
+        assert got.rebasing is True
+        assert got.is_primary is False
+        assert found[repo.resolve()].rebasing is False
+
+
+def test_worktrees_basic_skips_a_plain_detached_worktree(
+    cockpit_repo, tmp_path
+) -> None:
+    """Detached with no rebase in flight has no branch to report → omitted."""
+    repo = cockpit_repo.repo
+    wt = tmp_path / "wt-detached"
+    _run(repo, "worktree", "add", "--detach", str(wt))
+
+    paths = {w.path.resolve() for w in worktrees_basic(repo)}
+    assert wt.resolve() not in paths
+    assert repo.resolve() in paths
+
+
+def test_rebase_head_name_ignores_a_non_branch_ref(tmp_path) -> None:
+    """A head-name that is not `refs/heads/...` (e.g. `detached HEAD`) → None."""
+    (tmp_path / "rebase-merge").mkdir()
+    (tmp_path / "rebase-merge" / "head-name").write_text("detached HEAD\n")
+    assert gitlib._rebase_head_name(tmp_path) is None
+
+
+def test_worktrees_basic_flags_a_mid_merge_worktree(cockpit_repo, tmp_path) -> None:
+    """A conflicted `git merge` leaves MERGE_HEAD in the gitdir → merging=True,
+    with the branch still reported (a merge does not detach HEAD)."""
+    repo = cockpit_repo.repo
+    wt = tmp_path / "wt-merge"
+    _run(repo, "worktree", "add", "-b", "feat", str(wt))
+    (wt / "README.md").write_text("feat side\n")
+    _run(wt, "commit", "-qam", "feat change")
+    (repo / "README.md").write_text("main side\n")
+    _run(repo, "commit", "-qam", "main change")
+    res = subprocess.run(
+        ["git", "-C", str(wt), "merge", "main"],
+        capture_output=True,
+        text=True,
+        env=_committer_env(),
+    )
+    assert res.returncode != 0, "precondition: the merge must stop on a conflict"
+
+    got = {w.path.resolve(): w for w in worktrees_basic(repo)}[wt.resolve()]
+    assert got.branch == "feat"
+    assert got.merging is True
+    assert got.rebasing is False

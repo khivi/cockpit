@@ -253,6 +253,25 @@ def test_list_open_pr_heads_paginates_until_no_next_page():
     assert m.call_args_list[2].args[1]["cursor"] == "c2"
 
 
+def test_list_open_pr_heads_raises_on_gh_failure():
+    """A failure must reach the caller's warning, not read as "no open PRs".
+    `_graphql` raises RuntimeError on a `gh` failure, which `_prepare_cycle`
+    catches so the repo cycle continues."""
+    with (
+        patch("cockpit.lib.gh._graphql", side_effect=RuntimeError("HTTP 401")),
+        pytest.raises(RuntimeError, match="HTTP 401"),
+    ):
+        list_open_pr_heads("o", "n")
+
+
+def test_list_open_pr_heads_raises_on_malformed_response():
+    with (
+        patch("cockpit.lib.gh._graphql", return_value={"data": {}}),
+        pytest.raises(RuntimeError, match="malformed"),
+    ):
+        list_open_pr_heads("o", "n")
+
+
 def test_list_open_pr_heads_null_author_becomes_empty_string():
     """Bots (Copilot/dependabot) return author=null — reported as "" so the
     caller can decide to skip or include them explicitly."""
@@ -290,23 +309,9 @@ def test_list_open_pr_heads_missing_author_association_becomes_empty_string():
     assert result == [OpenPRHead(6, "coworker/c", "coworker", "")]
 
 
-def test_list_open_pr_heads_empty_on_graphql_failure():
-    """Degrades per its documented contract. The call chain (`_graphql` →
-    `gh_json` → `run()`) raises RuntimeError on a `gh` failure, never
-    CalledProcessError — the except clause must match what's actually raised
-    or this degrade path is dead and a transient gh failure aborts the whole
-    repo cycle instead.
-    """
-    with patch(
-        "cockpit.lib.gh._graphql",
-        side_effect=RuntimeError("gh api graphql failed"),
-    ):
-        assert list_open_pr_heads("o", "n") == []
-
-
 def test_fetch_merged_branches_graphql_failure_returns_empty_map():
-    """Same dead-path concern as list_open_pr_heads: `run()` raises
-    RuntimeError, so that's what fetch_merged_branches must catch."""
+    """`run()` raises RuntimeError on a `gh` failure, never CalledProcessError,
+    so that's what fetch_merged_branches must catch."""
     with patch(
         "cockpit.lib.gh._graphql", side_effect=RuntimeError("gh api graphql failed")
     ):
@@ -492,6 +497,31 @@ def test_list_relevant_prs_returns_one_pr_per_branch():
     with patch("cockpit.lib.gh._fetch_light_phase", return_value={335: "a", 336: "b"}):
         prs = list_relevant_prs("o", "n", "khivi", ["khivi/feature"], cache=cache)
     assert [pr.number for pr in prs] == [335]
+
+
+def test_list_relevant_prs_evicts_cached_prs_the_light_phase_no_longer_returns():
+    kept = _issue_pr(number=1, branch="khivi/kept", updated_at="a")
+    gone = _issue_pr(number=2, branch="khivi/gone", updated_at="b")
+    cache = {1: (kept, "a"), 2: (gone, "b")}
+    with patch("cockpit.lib.gh._fetch_light_phase", return_value={1: "a"}):
+        prs = list_relevant_prs("o", "n", "khivi", ["khivi/kept"], cache=cache)
+    assert [pr.number for pr in prs] == [1]
+    assert set(cache) == {1}
+
+
+def test_list_relevant_prs_without_a_cache_hydrates_everything():
+    fresh = _issue_pr(number=7, branch="khivi/new", updated_at="a")
+
+    def hydrate(owner, name, self_user, stale, light, cache, host=""):
+        for num in stale:
+            cache[num] = (fresh, light[num])
+
+    with (
+        patch("cockpit.lib.gh._fetch_light_phase", return_value={7: "a"}),
+        patch("cockpit.lib.gh._hydrate_stale", side_effect=hydrate),
+    ):
+        prs = list_relevant_prs("o", "n", "khivi", ["khivi/new"])
+    assert prs == [fresh]
 
 
 # ── PR.nudge_issue — single source for the nudge decision + TUI 🔔 ──────────

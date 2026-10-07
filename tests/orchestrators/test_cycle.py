@@ -189,6 +189,90 @@ def test_run_repo_skills_empty_config(tmp_path):
         mock_run.assert_not_called()
 
 
+def _slow_skill_repo(tmp_path, monkeypatch, name="nudge-reviewers"):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    skill_dir = tmp_path / ".claude" / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text(f"# {name}")
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    return repo_path, {"path": str(repo_path), "slow_skills": [name]}
+
+
+def test_run_repo_skills_slow_missing_skill_skips(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo_entry = {"path": str(tmp_path), "slow_skills": ["ghost-skill"]}
+
+    with (
+        patch.object(cycle, "workspace_names", return_value={}),
+        patch.object(cycle, "spawn_workspace") as mock_spawn,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+        mock_spawn.assert_not_called()
+
+    out = capsys.readouterr().out
+    assert "skip slow_skill" in out.replace("\x1b[33m", "").replace("\x1b[0m", "")
+    assert "ghost-skill" in out
+
+
+def test_run_repo_skills_slow_dry_run_spawns_nothing(tmp_path, monkeypatch, capsys):
+    _repo_path, repo_entry = _slow_skill_repo(tmp_path, monkeypatch)
+
+    with (
+        patch.object(cycle, "workspace_names", return_value={}),
+        patch.object(cycle, "split_prompt_prefix", return_value=("/x", "body")),
+        patch.object(cycle, "spawn_workspace") as mock_spawn,
+        patch.object(cycle, "deliver_followup") as mock_follow,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=True)
+        mock_spawn.assert_not_called()
+        mock_follow.assert_not_called()
+
+    out = capsys.readouterr().out
+    assert "dry: spawn workspace 'skill-nudge-reviewers'" in out
+    assert "followup 'body'" in out
+
+
+def test_run_repo_skills_slow_delivers_followup(tmp_path, monkeypatch):
+    repo_path, repo_entry = _slow_skill_repo(tmp_path, monkeypatch)
+
+    with (
+        patch.object(cycle, "workspace_names", return_value={}),
+        patch.object(cycle, "split_prompt_prefix", return_value=("/x", "body")),
+        patch.object(cycle, "spawn_workspace", return_value="workspace:7") as spawn,
+        patch.object(cycle, "deliver_followup") as follow,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+
+    spawn.assert_called_once_with("skill-nudge-reviewers", repo_path, ANY)
+    follow.assert_called_once_with("workspace:7", "body", cwd=repo_path)
+
+
+def test_run_repo_skills_slow_no_followup_when_spawn_fails(tmp_path, monkeypatch):
+    _repo_path, repo_entry = _slow_skill_repo(tmp_path, monkeypatch)
+
+    with (
+        patch.object(cycle, "workspace_names", return_value={}),
+        patch.object(cycle, "split_prompt_prefix", return_value=("/x", "body")),
+        patch.object(cycle, "spawn_workspace", return_value=None),
+        patch.object(cycle, "deliver_followup") as follow,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+
+    follow.assert_not_called()
+
+
+def test_run_repo_skills_slow_cmux_unavailable_returns_early(tmp_path, monkeypatch):
+    _repo_path, repo_entry = _slow_skill_repo(tmp_path, monkeypatch)
+
+    with (
+        patch.object(cycle, "workspace_names", side_effect=cycle.CmuxUnavailable("x")),
+        patch.object(cycle, "spawn_workspace") as mock_spawn,
+    ):
+        cycle._run_repo_skills(repo_entry, dry=False)
+        mock_spawn.assert_not_called()
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # _maybe_autoclose: cmux workspace MUST close before worktree removal,
 # otherwise the cwd is yanked out from under a live Claude Code session and
@@ -1132,6 +1216,46 @@ def test_prepare_cycle_prunes_worktrees_before_listing(tmp_path, monkeypatch):
     assert calls[:2] == ["prune", "list"], f"prune must precede list; got {calls}"
 
 
+def test_prepare_cycle_warns_when_review_prs_fetch_fails(tmp_path, monkeypatch, capsys):
+    """A failed open-PR fetch is reported, not read as "no coworker PRs"."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_entry = {"path": str(repo_path), "name": "repo", "review_prs": True}
+
+    monkeypatch.setattr(cycle, "repo_nwo", lambda _p: ("ai-needl", "repo"))
+    monkeypatch.setattr(
+        cycle, "worktrees", lambda _p, _prefix="", _name="", _tag="": []
+    )
+    monkeypatch.setattr(cycle, "workspace_state", lambda: ({}, {}))
+    monkeypatch.setattr(cycle, "fetch_merged_branches", lambda *_a, **_k: {})
+    monkeypatch.setattr(cycle, "has_workspace_backend", lambda: True)
+    monkeypatch.setattr(cycle, "list_relevant_prs", lambda *_a, **_k: [])
+
+    def _fail(*_a, **_k):
+        raise RuntimeError("HTTP 401")
+
+    monkeypatch.setattr(cycle, "list_open_pr_heads", _fail)
+
+    def _stop(*_a, **_k):
+        raise LookupError("stop")
+
+    monkeypatch.setattr(cycle, "find_cockpit_workspaces", _stop)
+
+    with pytest.raises(LookupError):
+        cycle._prepare_cycle(
+            repo_entry,
+            "khivi",
+            cfg={},
+            pr_cache={},
+            pill_state={},
+            dry=False,
+        )
+
+    err = capsys.readouterr().err
+    assert "review_prs open-PR fetch failed" in err
+    assert "HTTP 401" in err
+
+
 def test_refresh_base_distance_short_circuits_when_no_feature_worktrees(tmp_path):
     from cockpit.lib.git import Worktree
 
@@ -1394,6 +1518,37 @@ def test_cycle_repo_phase_order(tmp_path):
         "transition",
         "teardown",
     ]
+
+
+def test_reconcile_worktree_lifecycle_autocloses_then_reaps_branch_refs(tmp_path):
+    ctx = _stub_repo_cycle(tmp_path)
+    calls: list[str] = []
+
+    with (
+        patch.object(
+            cycle,
+            "_maybe_autoclose",
+            side_effect=lambda *_a, **_kw: calls.append("autoclose"),
+        ) as autoclose,
+        patch.object(
+            cycle,
+            "_reap_branch_refs",
+            side_effect=lambda *_a, **_kw: calls.append("reap"),
+        ) as reap,
+    ):
+        cycle._reconcile_worktree_lifecycle(ctx, dry=True)
+
+    autoclose.assert_called_once_with(
+        ctx.repo_path,
+        ctx.name,
+        ctx.wts,
+        ctx.merged_branches,
+        ctx.cwds,
+        prs=ctx.prs,
+        dry=True,
+    )
+    reap.assert_called_once_with(ctx)
+    assert calls == ["autoclose", "reap"]
 
 
 @pytest.mark.covers("folds.partial~1")
@@ -2442,6 +2597,44 @@ def test_spawn_missing_orphan_skips_worktree_still_settling(tmp_path, capsys):
     assert "orphan-spawn schemagen — worktree is 2s old" in capsys.readouterr().out
 
 
+def test_spawn_missing_orphan_skips_merged_branch(tmp_path, capsys):
+    """A PR-less worktree whose branch already merged (merge head still
+    reachable from HEAD) is awaiting autoclose, so adopting it would open a
+    workspace on work that is about to be torn down."""
+    orphan_wt = tmp_path / "done"
+    orphan_wt.mkdir()
+    ctx = _spawn_ctx(tmp_path, wts=[Worktree(path=orphan_wt, branch="khivi/done")])
+    ctx.merged_branches = {"khivi/done": "deadbeef"}
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace"),
+        patch.object(cycle, "spawn_orphan_workspace") as orphan,
+        patch.object(cycle, "is_ancestor", return_value=True),
+        _aged(),
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    orphan.assert_not_called()
+    assert "branch khivi/done has merged PR" in capsys.readouterr().out
+
+
+def test_spawn_missing_orphan_spawns_when_merge_head_diverged(tmp_path):
+    """Contrast: the branch name was reused for new work (merge head no longer an
+    ancestor of HEAD), so the worktree is live and is adopted."""
+    orphan_wt = tmp_path / "reused"
+    orphan_wt.mkdir()
+    ctx = _spawn_ctx(tmp_path, wts=[Worktree(path=orphan_wt, branch="khivi/reused")])
+    ctx.merged_branches = {"khivi/reused": "deadbeef"}
+    with (
+        patch.object(cycle, "_bg_spawn_pr"),
+        patch.object(cycle, "spawn_pr_workspace"),
+        patch.object(cycle, "spawn_orphan_workspace") as orphan,
+        patch.object(cycle, "is_ancestor", return_value=False),
+        _aged(),
+    ):
+        cycle._spawn_missing_workspaces(ctx, {"name": "n"})
+    orphan.assert_called_once()
+
+
 def test_spawn_missing_orphan_spawns_once_grace_elapsed(tmp_path):
     """The grace defers adoption, it never disables it: the same orphan past
     `_SPAWN_ADOPT_GRACE_SECONDS` is spawned as before."""
@@ -2937,6 +3130,61 @@ def test_refresh_orphan_renames_drifted_workspace(tmp_path):
         cycle._refresh_orphan(ctx, "workspace:7", wt, "stale-name")
 
     rn.assert_called_once_with("workspace:7", "feat", "stale-name", dry=False)
+
+
+def test_refresh_orphan_merged_worktree_returns_before_rename_and_pills(
+    tmp_path, capsys
+):
+    """A merged orphan is autoclose's business: no rename, no orphan/wip/stale
+    pill writes."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path, branch="khivi/feat", dirty_count=0, branch_prefix="khivi/"
+    )
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.base_distance = {}
+    ctx.merged_branches = {"khivi/feat": "deadbeef"}
+
+    with (
+        patch.object(cycle, "cmux") as cmux_mock,
+        patch.object(cycle, "apply_wip_pill") as wip,
+        patch.object(cycle, "apply_stale_pill") as stale,
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "rename_workspace_if_needed") as rn,
+    ):
+        cycle._refresh_orphan(ctx, "workspace:7", wt, "stale-name")
+
+    rn.assert_not_called()
+    cmux_mock.assert_not_called()
+    wip.assert_not_called()
+    stale.assert_not_called()
+    assert "merged — autoclose may handle" in capsys.readouterr().out
+
+
+def test_refresh_orphan_unmerged_worktree_is_renamed_and_pilled(tmp_path):
+    """Contrast: a merge head that is no longer an ancestor (branch reused) is
+    live work and gets the rename and pills."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(
+        path=wt_path, branch="khivi/feat", dirty_count=0, branch_prefix="khivi/"
+    )
+    ctx = _stub_repo_cycle(tmp_path)
+    ctx.base_distance = {}
+    ctx.merged_branches = {"khivi/feat": "deadbeef"}
+
+    with (
+        patch.object(cycle, "cmux"),
+        patch.object(cycle, "apply_wip_pill") as wip,
+        patch.object(cycle, "apply_stale_pill"),
+        patch.object(cycle, "is_ancestor", return_value=False),
+        patch.object(cycle, "rename_workspace_if_needed", return_value=False) as rn,
+    ):
+        cycle._refresh_orphan(ctx, "workspace:7", wt, "stale-name")
+
+    rn.assert_called_once()
+    wip.assert_called_once()
 
 
 def test_handle_orphans_never_closes(tmp_path):

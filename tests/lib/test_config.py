@@ -1846,6 +1846,81 @@ def test_clear_cockpit_statusline_keeps_user_statusline(tmp_path):
     }
 
 
+_CMUX_ROW_ON = '{\n  "sidebar": {\n    "showPullRequests": true\n  }\n}\n'
+
+
+@pytest.fixture
+def tmp_home(tmp_path, monkeypatch):
+    """Point `Path.home()` at a tmp dir so teardown's default paths land in it."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    # cmux's `reload-config` shells out; keep it from reaching a live backend.
+    monkeypatch.setattr("cockpit.lib.cmux_config._reload", lambda: None)
+    return home
+
+
+@pytest.mark.covers("pills.native-row-off~1")
+def test_teardown_claude_integration_inverts_every_setup_write(tmp_home, capsys):
+    from cockpit.lib.cmux_config import cmux_config_path, disable_native_pr_row
+
+    claude = tmp_home / ".claude"
+    settings = claude / "settings.json"
+    cmux_json = cmux_config_path()
+    cmux_json.parent.mkdir(parents=True)
+    cmux_json.write_text(_CMUX_ROW_ON)
+
+    config_mod._write_statusline(settings, "/x/py -m cockpit.cli statusline")
+    config_mod.install_claude_hooks()
+    config_mod.install_claude_commands()
+    assert disable_native_pr_row() is True
+    assert (claude / "commands" / "cockpit-new.md").exists()
+    capsys.readouterr()
+
+    config_mod.teardown_claude_integration()
+
+    out = capsys.readouterr().out
+    data = json.loads(settings.read_text())
+    assert "statusLine" not in data
+    assert "hooks" not in data
+    assert not list((claude / "commands").glob("cockpit-*.md"))
+    assert cmux_json.read_text() == _CMUX_ROW_ON
+    assert "nothing to remove" not in out
+    assert "removed cockpit slash commands" in out
+    assert (
+        "left in place (remove by hand if wanted): "
+        "~/.config/cship.toml, ~/.config/starship.toml, ~/.config/cockpit"
+    ) in out
+
+
+def test_teardown_claude_integration_with_nothing_installed(tmp_home, capsys):
+    config_mod.teardown_claude_integration()
+
+    out = capsys.readouterr().out
+    assert "no cockpit claude integration found — nothing to remove" in out
+    assert "left in place (remove by hand if wanted)" in out
+    assert not (tmp_home / ".claude" / "settings.json").exists()
+
+
+def test_teardown_claude_integration_restores_native_pr_row(tmp_home, capsys):
+    from cockpit.lib.cmux_config import MARKER, cmux_config_path, disable_native_pr_row
+
+    cmux_json = cmux_config_path()
+    cmux_json.parent.mkdir(parents=True)
+    cmux_json.write_text(_CMUX_ROW_ON)
+    disable_native_pr_row()
+    assert MARKER in cmux_json.read_text()
+    capsys.readouterr()
+
+    config_mod.teardown_claude_integration()
+
+    out = capsys.readouterr().out
+    assert MARKER not in cmux_json.read_text()
+    assert '"showPullRequests": true' in cmux_json.read_text()
+    assert "restored cmux's native sidebar PR row" in out
+    assert "nothing to remove" not in out
+
+
 # ---- repin_interpreter_if_stale (brew-upgrade self-heal on watch startup) ----
 
 

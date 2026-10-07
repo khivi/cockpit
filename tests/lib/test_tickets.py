@@ -936,3 +936,146 @@ def test_github_inbox_accepts_and_ignores_states():
             [], nwos=["acme/svc"], cfg={}, repo_entry={}, states=["Backlog"]
         )
     fetch.assert_called_once_with(["acme/svc"])
+
+
+_JIRA_CFG = {"tickets": {"provider": "jira", "site_url": "https://g.atlassian.net"}}
+
+
+@pytest.mark.parametrize(
+    "cfg",
+    [
+        {"tickets": {"provider": "jira", "email": "me@x.com"}},
+        {"tickets": {"provider": "jira", "site_url": "https://x.atlassian.net"}},
+        {"tickets": {"provider": "jira"}},
+    ],
+)
+def test_jira_adapters_are_off_without_site_or_email(cfg):
+    with (
+        patch.object(tickets, "_jira_fetch_myself") as me,
+        patch.object(tickets, "_jira_verify_keys") as verify,
+        patch.object(tickets, "fetch_issue_summaries") as titles,
+    ):
+        assert tickets.JIRA.whoami(cfg, None, "/r") is None
+        assert tickets.JIRA.verify_scopes(["PROJ"], cfg=cfg, repo_entry=None) is None
+        assert tickets.JIRA.fetch_titles(
+            ["A-1", "A-2"], repo_nwo="o/r", repo_dir="/", cfg=cfg, repo_entry=None
+        ) == {"A-1": None, "A-2": None}
+    me.assert_not_called()
+    verify.assert_not_called()
+    titles.assert_not_called()
+
+
+def test_jira_adapters_forward_repo_override_over_global(monkeypatch):
+    monkeypatch.setenv("JIRA_ACME", "jira_secret")
+    repo = {
+        "tickets": {
+            "site_url": "https://repo.atlassian.net/",
+            "email": "me@x.com",
+            "token_env": "JIRA_ACME",
+        }
+    }
+    want = {
+        "site_url": "https://repo.atlassian.net",
+        "email": "me@x.com",
+        "token": "jira_secret",
+    }
+    with (
+        patch.object(tickets, "_jira_fetch_myself", return_value="acct") as me,
+        patch.object(tickets, "_jira_verify_keys", return_value=[]) as verify,
+        patch.object(tickets, "fetch_issue_summaries", return_value={}) as titles,
+    ):
+        assert tickets.JIRA.whoami(_JIRA_CFG, repo, "/r") == "acct"
+        assert tickets.JIRA.verify_scopes(["P"], cfg=_JIRA_CFG, repo_entry=repo) == []
+        tickets.JIRA.fetch_titles(
+            ["P-1"], repo_nwo="o/r", repo_dir="/", cfg=_JIRA_CFG, repo_entry=repo
+        )
+    me.assert_called_once_with(**want)
+    verify.assert_called_once_with(["P"], **want)
+    titles.assert_called_once_with(["P-1"], **want)
+
+
+def test_jira_adapters_pass_none_token_when_env_unset(monkeypatch):
+    monkeypatch.delenv("JIRA_API_TOKEN", raising=False)
+    cfg = {
+        "tickets": {
+            "provider": "jira",
+            "site_url": "https://x.atlassian.net",
+            "email": "me@x.com",
+        }
+    }
+    with patch.object(tickets, "_jira_fetch_myself", return_value=None) as me:
+        assert tickets.JIRA.whoami(cfg, None, None) is None
+    assert me.call_args.kwargs["token"] is None
+
+
+def test_linear_whoami_and_verify_scopes_forward_the_resolved_key(monkeypatch):
+    monkeypatch.setenv("LIN_ACME", "lin_secret")
+    repo = {"tickets": {"provider": "linear", "token_env": "LIN_ACME"}}
+    with (
+        patch.object(tickets, "_linear_fetch_viewer_id", return_value="u1") as me,
+        patch.object(tickets, "_linear_verify_keys", return_value=["X"]) as verify,
+    ):
+        assert tickets.LINEAR.whoami({}, repo, "/r") == "u1"
+        assert tickets.LINEAR.verify_scopes(["PE", "X"], cfg={}, repo_entry=repo) == [
+            "X"
+        ]
+    me.assert_called_once_with(api_key="lin_secret")
+    verify.assert_called_once_with(["PE", "X"], api_key="lin_secret")
+
+
+def test_linear_adapters_pass_none_when_the_named_var_is_unset(monkeypatch):
+    monkeypatch.delenv("LIN_MISSING", raising=False)
+    repo = {"tickets": {"provider": "linear", "token_env": "LIN_MISSING"}}
+    with (
+        patch.object(tickets, "_linear_fetch_viewer_id", return_value=None) as me,
+        patch.object(tickets, "_linear_verify_keys", return_value=None) as verify,
+    ):
+        assert tickets.LINEAR.whoami({}, repo, None) is None
+        assert tickets.LINEAR.verify_scopes(["PE"], cfg={}, repo_entry=repo) is None
+    me.assert_called_once_with(api_key=None)
+    verify.assert_called_once_with(["PE"], api_key=None)
+
+
+def test_trello_whoami_and_verify_scopes_forward_key_and_token(monkeypatch):
+    monkeypatch.setenv("TRELLO_K", "k1")
+    monkeypatch.setenv("TRELLO_T", "t1")
+    repo = {
+        "tickets": {
+            "provider": "trello",
+            "key_env": "TRELLO_K",
+            "token_env": "TRELLO_T",
+        }
+    }
+    with (
+        patch.object(tickets, "_trello_fetch_myself", return_value="m1") as me,
+        patch.object(tickets, "_trello_verify_boards", return_value=[]) as verify,
+    ):
+        assert tickets.TRELLO.whoami({}, repo, "/r") == "m1"
+        assert tickets.TRELLO.verify_scopes(["B"], cfg={}, repo_entry=repo) == []
+    me.assert_called_once_with(key="k1", token="t1")
+    verify.assert_called_once_with(["B"], key="k1", token="t1")
+
+
+def test_trello_adapters_pass_none_when_credentials_unset(monkeypatch):
+    for name in ("TRELLO_API_KEY", "TRELLO_API_TOKEN", "TRELLO_KEY", "TRELLO_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    cfg = {
+        "tickets": {"provider": "trello", "key_env": "NOPE_K", "token_env": "NOPE_T"}
+    }
+    monkeypatch.delenv("NOPE_K", raising=False)
+    monkeypatch.delenv("NOPE_T", raising=False)
+    with patch.object(tickets, "_trello_fetch_myself", return_value=None) as me:
+        assert tickets.TRELLO.whoami(cfg, None, None) is None
+    me.assert_called_once_with(key=None, token=None)
+
+
+def test_github_whoami_passes_repo_dir_through():
+    with patch.object(tickets, "_github_viewer_login", return_value="khivi") as f:
+        assert tickets.GITHUB.whoami({}, {}, "/some/repo") == "khivi"
+    f.assert_called_once_with(repo_dir="/some/repo")
+
+
+def test_github_verify_scopes_is_empty_not_none_and_reaches_nothing():
+    result = tickets.GITHUB.verify_scopes(["acme/svc"], cfg={}, repo_entry={})
+    assert result == []
+    assert result is not None
