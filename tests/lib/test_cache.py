@@ -579,17 +579,10 @@ def test_write_git_state_cache_writes_repo_name(_clean_git_env, cache_dir, tmp_p
     assert (cache_dir / f"git-repo-{slug}").read_text() == ""
 
 
-def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch):
+def test_republish_pr_caches_from_disk_rewrites_flat_cells(json_cache):
     """Daemon-side fast-tick republisher: walks the per-PR JSON snapshots and
     re-writes pr-state / pr-num / pr-title / pr-muted / pr-checks. Replaces
     the old renderer-spawned `*-refresh` path."""
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import cockpit.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
 
     # Write a PR JSON snapshot first (daemon side).
     pr = _pr(
@@ -630,16 +623,9 @@ def test_republish_pr_caches_from_disk_rewrites_flat_cells(tmp_path, monkeypatch
     assert (flat / f"pr-nudge-{_KEY}").read_text() == "comments"
 
 
-def test_pr_payload_carries_base_for_the_stack_indent(tmp_path, monkeypatch):
+def test_pr_payload_carries_base_for_the_stack_indent(json_cache):
     # The TUI indents a stacked row off the `pr-base` cell, so the base has to
     # survive in the JSON snapshot the fast tick republishes from.
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import cockpit.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
 
     payload = cache_mod.write_pr_cache("testrepo", _pr(base="khivi/root"), _wt())
     assert payload["base"] == "khivi/root"
@@ -680,15 +666,7 @@ def test_write_git_state_cache_outside_repo_writes_empty(
 # ── write_pr_cache pill round-trip (lib.cache) ─────────────────────────────
 
 
-def test_write_pr_cache_includes_pills(tmp_path, monkeypatch):
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import cockpit.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
-
+def test_write_pr_cache_includes_pills(json_cache):
     pr = _pr(ci="failed:lint", review_decision="APPROVED")
     wt = _wt(dirty=2)
     payload = cache_mod.write_pr_cache("testrepo", pr, wt)
@@ -769,15 +747,7 @@ def test_refresh_pr_data_clears_muted_on_no_pr(cache_dir):
     assert (cache_dir / f"pr-muted-{_KEY}").read_text() == ""
 
 
-def test_write_pr_cache_bakes_muted_into_json(tmp_path, monkeypatch):
-    import importlib
-
-    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
-    import cockpit.lib.config as cockpit_config
-
-    importlib.reload(cockpit_config)
-    importlib.reload(cache_mod)
-
+def test_write_pr_cache_bakes_muted_into_json(json_cache):
     pr = _pr()
     wt = _wt()
     pref = NudgePref(muted=True)
