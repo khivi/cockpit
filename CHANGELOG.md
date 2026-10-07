@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.17.1](https://github.com/khivi/cockpit/compare/v3.17.0...v3.17.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **gh:** surface review_prs fetch failures and close nightly coverage gaps ([#579](https://github.com/khivi/cockpit/issues/579)) ([67280ea](https://github.com/khivi/cockpit/commit/67280ea76067cff20e89f4a705d931f391767aeb))
+
 ## [3.17.0](https://github.com/khivi/cockpit/compare/v3.16.1...v3.17.0) (2026-10-05)
 
 
