@@ -4,7 +4,8 @@ One JSON file per PR at `$COCKPIT_HOME/cache/nudges/<repo>__<pr-number>.json`
 (`pref_key` — a PR number alone is not unique across repos). Holds both the
 daemon-set `last_nudge_at` timestamp (for rate limiting) and the user-set
 `muted` / `until` mute (set via `cockpit nudge mute`). A mute is all-or-nothing
-— it silences every nudge for the PR.
+— it silences every nudge for the PR, and it holds a merged PR's worktree against
+autoclose (`cycle._maybe_autoclose`); a snooze does not.
 
 `snoozed` is the *separate* "I've read this, it's someone else's turn" state
 (TUI `z`). It silences nudges like a mute, and additionally sinks the PR to the

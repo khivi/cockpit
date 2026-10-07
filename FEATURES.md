@@ -426,7 +426,8 @@ Cherry-picked commits count as landed, and commits from a branch you're stacked 
 counted as yours. On a coworker's review worktree, only your own local commits block it.
 
 **Merged PRs clean up on their own.** When a PR merges, its worktree and terminal close,
-with the same checks.
+with the same checks. Mute the PR (`m`, or `cockpit nudge mute <N>`) to keep it; snoozing
+does not.
 
 ---
 

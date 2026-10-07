@@ -183,7 +183,7 @@ flowchart TD
   C["Worktree / workspace cleanup"] --> K{"state?"}
 
   K -->|"MERGED / branch gone"| AC{"autoclose<br/>blockers?"}
-  AC -->|"dirty · open PR (reused branch) ·<br/>draft · ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
+  AC -->|"dirty · open PR (reused branch) · muted ·<br/>draft · ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
   AC -->|"clean & merged"| TD["teardown(worktree_path=…):<br/>workspace → worktree → branch* → cache"]
 
   K -->|"no open PR"| OP["orphan: pills only<br/>(no nudge, no close)"]

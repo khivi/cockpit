@@ -1244,6 +1244,7 @@ def _maybe_autoclose(
     cwds: dict[str, Path],
     *,
     prs: list[PR] | None = None,
+    prefs: dict[int, NudgePref] | None = None,
     dry: bool,
 ) -> None:
     """Remove worktrees + workspaces for merged branches that are clean.
@@ -1269,7 +1270,10 @@ def _maybe_autoclose(
     a fresh lineage. So the squash-then-pull-main worktree still cleans up.
 
     Smart-skip on PR signals the author likely still wants to revisit before
-    cleanup: draft, CI not passing, or unaddressed review threads.
+    cleanup: draft, CI not passing, or unaddressed review threads. A muted PR
+    (`cockpit nudge mute`, TUI `m`) is held too, mine or a coworker's: mute is
+    the user's explicit "leave this alone". Snooze does not hold — a merge ends
+    the "someone else's turn" it waits on.
 
     Teardown delegates to `orchestrators.teardown.teardown` (forced=True since we've
     already validated merge-state-clean above).
@@ -1324,6 +1328,13 @@ def _maybe_autoclose(
             print(
                 f"  {verb('autoclose')} "
                 f"{dim(f'skipped (PR #{pr.number} open) {wt.short}')}",
+                flush=True,
+            )
+            continue
+        if pr is not None and (prefs or {}).get(pr.number, NudgePref()).muted:
+            print(
+                f"  {verb('autoclose')} "
+                f"{dim(f'skipped (muted #{pr.number}) {wt.short}')}",
                 flush=True,
             )
             continue
@@ -3108,6 +3119,7 @@ def _reconcile_worktree_lifecycle(ctx: RepoCycle, *, dry: bool) -> None:
         ctx.merged_branches,
         ctx.cwds,
         prs=ctx.prs,
+        prefs=ctx.prefs,
         dry=dry,
     )
     _reap_branch_refs(ctx)
