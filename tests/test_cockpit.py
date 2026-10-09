@@ -223,7 +223,7 @@ def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
         "reconcile_workspace_names",
         lambda n, c, w: reconcile_calls.append((n, c, w)),
     )
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
 
     cockpit._fast_tick({})
 
@@ -263,14 +263,13 @@ def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
         "reconcile_workspace_names",
         lambda *a: reconcile_calls.append(a),
     )
-    monkeypatch.setattr(
-        cockpit, "republish_pr_caches_from_disk", lambda: republished.append(True)
-    )
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", republished.append)
 
     cockpit._fast_tick({})
 
     assert reconcile_calls == []  # empty cwds → no reconcile attempted
-    assert republished == [True]  # tick completed
+    # Tick completed, handing the republish the branch each worktree holds.
+    assert republished == [{str(wt.path): "khivi/feat"}]
 
 
 def test_fast_tick_tints_spawned_workspace(tmp_path, monkeypatch):
@@ -307,7 +306,7 @@ def test_fast_tick_tints_spawned_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "set_workspace_color", lambda ref, color: tinted.append((ref, color))
     )
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
 
     state: dict = {"pill_state": {}}
     cockpit._fast_tick(state)
@@ -351,7 +350,7 @@ def test_fast_tick_skips_color_without_sidebar_color(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "set_workspace_color", lambda ref, color: tinted.append((ref, color))
     )
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
 
     cockpit._fast_tick({})
 
@@ -593,7 +592,7 @@ def test_fast_tick_writes_a_cost_cell_per_worktree(tmp_path, monkeypatch):
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", costed.append)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
     monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
 
     cockpit._fast_tick({})
@@ -628,7 +627,7 @@ def test_fast_tick_writes_cells_for_every_repos_worktrees(tmp_path, monkeypatch)
     )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
     monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
 
     cockpit._fast_tick({})
@@ -659,7 +658,7 @@ def test_fast_tick_writes_a_diff_comments_cell_per_worktree(tmp_path, monkeypatc
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
 
     feat_root = str((repo / "feat").resolve())
     monkeypatch.setattr(
@@ -709,7 +708,7 @@ def test_fast_tick_folds_a_root_shared_with_the_repo_checkout_into_every_worktre
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
 
     repo_root = str(repo.resolve())
     monkeypatch.setattr(
@@ -785,7 +784,7 @@ def test_fast_tick_does_not_touch_cmux_under_dry(tmp_path, monkeypatch):
     )
     republished: list[bool] = []
     monkeypatch.setattr(
-        cockpit, "republish_pr_caches_from_disk", lambda: republished.append(True)
+        cockpit, "republish_pr_caches_from_disk", lambda _b: republished.append(True)
     )
     monkeypatch.setattr(
         cockpit,
@@ -824,7 +823,7 @@ def test_fast_tick_restores_a_lost_trailing_fold(tmp_path, monkeypatch):
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": []
     )
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
     monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda ps: seen.append(ps))
     monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
 
@@ -851,7 +850,7 @@ def test_fast_tick_does_not_restore_folds_under_dry(tmp_path, monkeypatch):
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": []
     )
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
     monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda ps: seen.append(ps))
     monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
 
@@ -885,7 +884,7 @@ def _fast_tick_env(tmp_path, monkeypatch):
         cockpit, "workspace_state", lambda: ({}, {"workspace:1": repo / "feat"})
     )
     monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda n, c, w: None)
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
     monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda _s: None)
 
     def _record(refs) -> list:
@@ -937,7 +936,7 @@ def _nudge_fixture(tmp_path, monkeypatch, *, pending, workspace=True):
     monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _c: None)
-    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda: None)
+    monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
     monkeypatch.setattr(cockpit, "reassert_idle_pills", lambda _c: [])
     monkeypatch.setattr(cockpit, "restore_trailing_folds", lambda _s: None)
     monkeypatch.setattr(cockpit, "reconcile_workspace_names", lambda *a: None)

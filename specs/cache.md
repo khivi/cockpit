@@ -16,6 +16,13 @@ and the rationale behind each rule.
 - [cache.no-worktree-no-cells~1] Given a PR snapshot stamped with no local
   worktree, the flat republish writes no cell for it. The republish still
   writes and serves the JSON snapshot.
+- [cache.stale-stamp~1] Given a PR snapshot stamped with a worktree that now
+  holds another branch, the flat republish writes none of its
+  cells. It clears that worktree's PR cells when no snapshot for the branch
+  it now holds is stamped there. `find_pr_payload_for_cwd` does not serve it.
+- [cache.stamp-fallback~1] Given no snapshot stamped with a worktree for its
+  branch, `find_pr_payload_for_cwd` serves an unstamped snapshot on that
+  branch. It never serves a snapshot stamped with another worktree.
 - [cache.strip-control~1] Given a `pr-title` cell that carries its own OSC 8
   escape sequence, `read_text` returns it with no ESC byte. It returns one
   replacement character per control byte. The codepoint count stays the same.

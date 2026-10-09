@@ -41,6 +41,8 @@ from .pills import ci_glyph as _ci_glyph
 from .pills import decide_pills
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from .gh import PR
     from .git import Worktree
     from .nudges import NudgePref
@@ -265,20 +267,30 @@ def find_pr_payload_for_cwd(cwd: os.PathLike[str] | str, branch: str) -> dict | 
 
     Prefers the snapshot the daemon stamped with this exact worktree path, which
     is unambiguous even when several repos hold a worktree on `branch`. Falls
-    back to a branch match for a snapshot written before the `cwd` field existed
-    (or by a `gh`-less prewarm that never saw a worktree) — a payload from the
-    wrong repo is still better than a blank card, and the next slow tick
-    overwrites it with a stamped one.
+    back to a branch match among unstamped snapshots, written before the `cwd`
+    field existed (or by a `gh`-less prewarm that never saw a worktree) — a
+    payload from the wrong repo is still better than a blank card, and the next
+    slow tick overwrites it with a stamped one. A snapshot stamped with another
+    worktree belongs to that worktree and is never served here.
+
+    A stamp counts only while the worktree still holds the snapshot's branch.
+    The stamp outlives a checkout: switch a primary checkout onto a coworker's
+    branch and back, and that PR's snapshot keeps the path with nothing left
+    to rewrite it, since no worktree tracks the branch any more.
     """
     target = str(Path(cwd).resolve())
-    by_cwd: list[dict] = [
-        payload
-        for _, payload in _iter_cache("*__pr-*.json")
-        if payload.get("cwd") and str(Path(payload["cwd"]).resolve()) == target
-    ]
-    if by_cwd:
-        return max(by_cwd, key=_pr_payload_rank)
-    return find_pr_payload(branch)
+    here: list[dict] = []
+    unstamped: list[dict] = []
+    for _, payload in _iter_cache("*__pr-*.json"):
+        if payload.get("branch") != branch:
+            continue
+        stamp = payload.get("cwd")
+        if not stamp:
+            unstamped.append(payload)
+        elif str(Path(stamp).resolve()) == target:
+            here.append(payload)
+    candidates = here or unstamped
+    return max(candidates, key=_pr_payload_rank) if candidates else None
 
 
 def load_pr_payloads_by_branch(repo_name: str) -> dict[str, dict]:
@@ -1001,7 +1013,7 @@ def clear_pr_flat_cells(cwd: os.PathLike[str] | str) -> None:
         atomic_write(cwd_cache(stem, cwd), "")
 
 
-def republish_pr_caches_from_disk() -> None:
+def republish_pr_caches_from_disk(branch_by_cwd: Mapping[str, str]) -> None:
     """Re-publish every cached PR JSON snapshot to its worktree's flat cells.
 
     Daemon-side replacement for the old renderer-spawned `*-refresh`
@@ -1025,22 +1037,32 @@ def republish_pr_caches_from_disk() -> None:
     no row and no session, so nothing reads a cell for it. Dedup is per worktree
     rather than per branch, since two repos' worktrees can answer to one branch
     and each owns its own cells.
+
+    `branch_by_cwd` is the branch each worktree the caller just listed has
+    checked out. A snapshot stamped with a listed worktree that has since moved
+    to another branch is stale (see `find_pr_payload_for_cwd`): it publishes
+    nothing, and a worktree left with only stale stamps has its cells cleared.
+    An unlisted path keeps its stamp, since nothing says it moved.
     """
     if not CACHE_DIR.is_dir():
         return
-    best_by_cwd: dict[str, dict] = {}
+    best_by_cwd: dict[str, dict | None] = {}
     for _, payload in _iter_cache("*__pr-*.json"):
         cwd = payload.get("cwd")
         if not cwd:
+            continue
+        held = branch_by_cwd.get(cwd)
+        if held is not None and held != payload.get("branch"):
+            best_by_cwd.setdefault(cwd, None)
             continue
         cur = best_by_cwd.get(cwd)
         if cur is None or _pr_payload_rank(payload) > _pr_payload_rank(cur):
             best_by_cwd[cwd] = payload
     for cwd, payload in best_by_cwd.items():
-        if payload.get("reusedBranch"):
-            # Branch reused after its PR merged/closed — no PR to show. Clear
-            # the flat cells so the OS-tmpdir-wipe recovery path doesn't
-            # republish a stale merged state.
+        if payload is None or payload.get("reusedBranch"):
+            # No live stamp, or the branch was reused after its PR
+            # merged/closed — no PR to show. Clear the flat cells so the
+            # OS-tmpdir-wipe recovery path doesn't republish a stale state.
             clear_pr_flat_cells(cwd)
             continue
         _publish_pr_cells(cwd, payload)
