@@ -36,7 +36,7 @@ from pathlib import Path
 from .cache import find_pr_payload_for_cwd, load_pr_payloads_by_branch, restamp_pref
 from .daemon_signal import kick_running
 from .gh import repo_nwo
-from .git import current_branch
+from .git import current_branch, worktree_root
 from .nudges import (
     NudgePref,
     delete_pref,
@@ -206,11 +206,17 @@ def _warn_split_chain(repo: str, pr: int, branch: str, *, snoozing: bool) -> Non
     )
 
 
+def _worktree_cwd() -> Path:
+    # Snapshots and cells are keyed by the worktree root; a subdirectory misses both.
+    cwd = Path.cwd()
+    return worktree_root(cwd) or cwd
+
+
 def _cmd_snooze(args: argparse.Namespace) -> int:
     pr, repo, key = _resolve_pr(args.pr)
     pref = load_pref(key)
     was_snoozed = pref.snoozed
-    cwd = Path.cwd()
+    cwd = _worktree_cwd()
     branch = current_branch(cwd)
     payload = (find_pr_payload_for_cwd(cwd, branch) if branch else None) or {}
     pref.snoozed = True
@@ -244,7 +250,7 @@ def _cmd_wake(args: argparse.Namespace) -> int:
     pr, repo, key = _resolve_pr(args.pr)
     pref = load_pref(key)
     was_snoozed = pref.snoozed
-    cwd = Path.cwd()
+    cwd = _worktree_cwd()
     pref.snoozed = False
     pref.wake_on = ""
     pref.wake_nudge = ""

@@ -178,7 +178,7 @@ Key every flat cell by worktree path (`cache.py::cwd_cache`) or session id. **Ne
 - Use the worktree, not repo+branch. Only the path is held by all three renderers (TUI, starship, `restamp_pref`).
 - The path travels in the PR payload (`write_pr_cache`'s `cwd`), because `republish_pr_caches_from_disk` has only the JSON. Dedup per worktree.
 - A PR with no local worktree writes no cells, but its JSON snapshot is still written.
-- `find_pr_payload_for_cwd` prefers the snapshot stamped with this worktree, and falls back to a branch match only among unstamped payloads. A snapshot stamped with another worktree is that worktree's.
+- `find_pr_payload_for_cwd` prefers the snapshot stamped with this worktree, and falls back to a branch match only among unstamped payloads. A snapshot stamped with another worktree is that worktree's. Callers pass the worktree root, never the shell cwd.
 - A stamp is live only while the worktree holds the snapshot's branch. A checkout away leaves it behind with nothing to rewrite it, so both readers match the branch too, and the fast tick hands `republish_pr_caches_from_disk` the branch each listed worktree holds. **Never** trust a `cwd` stamp alone.
 
 ### `cmux events` is a doorbell — it wakes a tick, it is never state
