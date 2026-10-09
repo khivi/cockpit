@@ -1076,9 +1076,9 @@ def warm_all(branch: str | None = None) -> None:
     transcript-path from the latest project JSONL if Claude Code hasn't yet
     fed one via statusLine input.
     """
-    from .git import current_branch
+    from .git import current_branch, worktree_root
 
-    cwd = Path.cwd()
+    cwd = worktree_root(Path.cwd()) or Path.cwd()
     branch = branch or current_branch(cwd)
     if not branch:
         return

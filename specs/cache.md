@@ -23,6 +23,9 @@ and the rationale behind each rule.
 - [cache.stamp-fallback~1] Given no snapshot stamped with a worktree for its
   branch, `find_pr_payload_for_cwd` serves an unstamped snapshot on that
   branch. It never serves a snapshot stamped with another worktree.
+- [cache.root-before-lookup~1] Given a CLI run from a subdirectory of a
+  worktree, the snapshot lookup resolves the worktree root first. It serves
+  the snapshot stamped with that worktree and writes that worktree's cells.
 - [cache.strip-control~1] Given a `pr-title` cell that carries its own OSC 8
   escape sequence, `read_text` returns it with no ESC byte. It returns one
   replacement character per control byte. The codepoint count stays the same.

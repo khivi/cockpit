@@ -1669,3 +1669,17 @@ def test_delete_pr_caches_for_branch_does_not_overmatch_prefix_repo_names(json_c
     cache_mod.delete_pr_caches_for_branch("foo", "khivi/x")
 
     assert _names(json_cache) == {"foo-bar__pr-2.json"}
+
+
+@pytest.mark.covers("cache.root-before-lookup~1")
+def test_warm_all_from_a_subdirectory_reads_the_worktree_snapshot(
+    cockpit_repo, json_cache, monkeypatch
+):
+    root = cockpit_repo.repo.resolve()
+    _snapshot(json_cache, "testrepo", 9, "main", cwd=str(root))
+    sub = root / "sub"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+    monkeypatch.setattr(cache_mod, "_seed_transcript_from_project_dir", lambda: None)
+    cache_mod.warm_all()
+    assert cache_mod.cwd_cache("pr-num", root).read_text() == "9"

@@ -405,3 +405,70 @@ def test_no_subcommand_errors():
     with pytest.raises(SystemExit) as exc:
         nudge_cli.main([])
     assert exc.value.code == 2  # required=True subparsers reject a bare invocation
+
+
+@pytest.fixture
+def stamped_subdir(cockpit_repo, tmp_path, monkeypatch):
+    """A real worktree on `main` whose PR snapshot is stamped with its root;
+    the shell stands in a subdirectory of it."""
+    import json
+
+    import cockpit.lib.cache as cache_mod
+
+    root = cockpit_repo.repo.resolve()
+    cache_dir = tmp_path / "pr-cache"
+    cache_dir.mkdir()
+    monkeypatch.setattr(cache_mod, "CACHE_DIR", cache_dir)
+    (cache_dir / "testrepo__pr-7.json").write_text(
+        json.dumps(
+            {
+                "number": 7,
+                "branch": "main",
+                "state": "OPEN",
+                "total": 3,
+                "review": "APPROVED",
+                "nudge": "ci",
+                "headRefOid": "cafe",
+                "cwd": str(root),
+            }
+        )
+    )
+    sub = root / "sub"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+    return root
+
+
+@pytest.mark.covers("cache.root-before-lookup~1")
+def test_snooze_from_a_subdirectory_arms_from_the_worktree_snapshot(stamped_subdir):
+    with (
+        patch.object(
+            nudge_cli, "_resolve_pr", lambda arg: (7, "testrepo", "testrepo__7")
+        ),
+        patch.object(nudge_cli, "load_pref", lambda key: NudgePref()),
+        patch.object(nudge_cli, "load_pr_payloads_by_branch", lambda repo: {}),
+        patch.object(nudge_cli, "save_pref") as save_pref,
+        patch.object(nudge_cli, "restamp_pref") as restamp_pref,
+        patch.object(nudge_cli, "kick_running"),
+    ):
+        assert nudge_cli._cmd_snooze(Namespace(pr=None)) == 0
+    saved = save_pref.call_args[0][1]
+    assert saved.wake_on == "3|APPROVED"
+    assert saved.wake_head == "cafe"
+    assert restamp_pref.call_args[0][2] == stamped_subdir
+
+
+@pytest.mark.covers("cache.root-before-lookup~1")
+def test_wake_from_a_subdirectory_restamps_the_worktree_root(stamped_subdir):
+    with (
+        patch.object(
+            nudge_cli, "_resolve_pr", lambda arg: (7, "testrepo", "testrepo__7")
+        ),
+        patch.object(nudge_cli, "load_pref", lambda key: NudgePref(snoozed=True)),
+        patch.object(nudge_cli, "load_pr_payloads_by_branch", lambda repo: {}),
+        patch.object(nudge_cli, "save_pref"),
+        patch.object(nudge_cli, "restamp_pref") as restamp_pref,
+        patch.object(nudge_cli, "kick_running"),
+    ):
+        assert nudge_cli._cmd_wake(Namespace(pr=None)) == 0
+    assert restamp_pref.call_args[0][2] == stamped_subdir
