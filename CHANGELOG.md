@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.17.3](https://github.com/khivi/cockpit/compare/v3.17.2...v3.17.3) (2026-10-09)
+
+
+### Bug Fixes
+
+* **cache:** ignore a PR stamp the worktree has left ([#583](https://github.com/khivi/cockpit/issues/583)) ([37e5e1d](https://github.com/khivi/cockpit/commit/37e5e1d2e1bfaf698fb3432f00b2f86f95e40252))
+* **cache:** resolve the worktree root before a PR snapshot lookup ([#585](https://github.com/khivi/cockpit/issues/585)) ([19404d7](https://github.com/khivi/cockpit/commit/19404d7c5748439603cf98ac410b174c098b1cff))
+
 ## [3.17.2](https://github.com/khivi/cockpit/compare/v3.17.1...v3.17.2) (2026-10-07)
 
 
