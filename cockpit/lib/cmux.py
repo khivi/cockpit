@@ -1706,8 +1706,19 @@ def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:
     """
     _note_self_close(short_or_ref)
     cmux("close-workspace", "--workspace", short_or_ref, check=False)
-    after = cmux("list-workspaces", check=False)
-    return short_or_ref not in after
+    if not _workspace_listed(short_or_ref):
+        return True
+    # cmux 0.65 refuses to close a workspace with a live process
+    # (confirmation_required) unless `--force`; older cmux rejects the flag,
+    # so it is only a retry. Every caller has already run its own safety gate.
+    cmux("close-workspace", "--workspace", short_or_ref, "--force", check=False)
+    return not _workspace_listed(short_or_ref)
+
+
+def _workspace_listed(short_or_ref: str) -> bool:
+    # Token match: a substring test reads `workspace:1` as present while
+    # `workspace:10` is.
+    return short_or_ref in cmux("list-workspaces", check=False).split()
 
 
 def spawn_pr_workspace(
@@ -1788,7 +1799,14 @@ def close_gone_cwd_workspaces(*, dry: bool = False) -> list[str]:
             f"  {verb(action)} {dim(f'closing workspace {ws_name} ({ref}) — cwd missing: {cwd}')}",
             flush=True,
         )
-        if not dry:
-            cmux_close_workspace_best_effort(ref)
+        if dry:
+            continue
+        if cmux_close_workspace_best_effort(ref):
             closed.append(ref)
+        else:
+            print(
+                f"  warn: could not close workspace {ws_name} ({ref})",
+                file=sys.stderr,
+                flush=True,
+            )
     return closed

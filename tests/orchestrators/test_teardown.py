@@ -274,6 +274,32 @@ def test_teardown_remove_failure_returns_error(tmp_path):
     cache_mock.assert_not_called()
 
 
+def test_teardown_failed_close_keeps_the_worktree(tmp_path):
+    """A session still open in the workspace would be stranded in a deleted cwd."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    req = TeardownRequest(
+        ref="ws:1",
+        worktree_path=wt,
+        branch="khivi/x",
+        repo_path=tmp_path,
+        repo_name="repo",
+        forced=True,
+    )
+    with (
+        patch.object(
+            teardown_mod, "cmux_close_workspace_best_effort", return_value=False
+        ),
+        patch.object(teardown_mod, "remove_worktree") as rm_mock,
+        patch.object(teardown_mod, "delete_pr_caches_for_branch") as cache_mock,
+    ):
+        ok, blockers = teardown(req)
+    assert not ok
+    assert any("could not close workspace" in b for b in blockers)
+    rm_mock.assert_not_called()
+    cache_mock.assert_not_called()
+
+
 def test_teardown_advances_default_branch_worktree(tmp_path, capsys):
     """Successful teardown fast-forwards any worktree on the default branch."""
     wt = tmp_path / "wt"

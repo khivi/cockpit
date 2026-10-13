@@ -231,7 +231,9 @@ branch ref only when HEAD sits at the merged head with nothing on top.
 - **Two destructive primitives, one of which removes a worktree.**
   `cmux_close_workspace_best_effort` closes a *session* and touches nothing on
   disk; `teardown` calls it, then removes the worktree, deletes the branch and
-  drops the PR cache. Which one a trigger gets is decided by a single field —
+  drops the PR cache. A workspace that survives the close (retried with
+  `--force` for a live process) stops the teardown, so no session is left in a
+  deleted cwd. Which one a trigger gets is decided by a single field —
   `TeardownRequest.worktree_path` — so the two `teardown(...)` nodes above are
   the same function with different requests, not two code paths. Everything else
   that closes (dedup, `h` parking, anchor swap, fold dissolve) calls the first

@@ -970,6 +970,39 @@ def test_close_workspace_best_effort_passes_workspace_flag():
     assert "workspace:abc-123-def" in close_call
 
 
+def _close_against(listings: list[str]):
+    """Close against a cmux whose successive `list-workspaces` return `listings`."""
+    calls: list[tuple] = []
+    it = iter(listings)
+
+    def fake_cmux(*args, **_kwargs):
+        calls.append(args)
+        return next(it) if args[0] == "list-workspaces" else ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        ok = cmux_close_workspace_best_effort("workspace:1")
+    return ok, [c for c in calls if c[0] == "close-workspace"]
+
+
+def test_close_does_not_force_when_the_plain_close_lands():
+    """Older cmux rejects `--force` as an unknown option."""
+    ok, closes = _close_against(["workspace:10 other\n"])
+    assert ok
+    assert closes == [("close-workspace", "--workspace", "workspace:1")]
+
+
+def test_close_retries_with_force_when_cmux_refuses_a_running_process():
+    ok, closes = _close_against(["workspace:1 x\n", ""])
+    assert ok
+    assert closes[1] == ("close-workspace", "--workspace", "workspace:1", "--force")
+
+
+def test_close_reports_failure_when_the_workspace_survives_force():
+    ok, closes = _close_against(["workspace:1 x\n", "workspace:1 x\n"])
+    assert not ok
+    assert len(closes) == 2
+
+
 # ── self-close ledger ───────────────────────────────────────────────────────
 #
 # The TUI treats a `workspace.closed` event as the user clicking cmux's X, which
@@ -2764,6 +2797,21 @@ def test_close_gone_cwd_workspaces_uses_best_effort_not_raw_cmux(tmp_path):
     mock_close.assert_called_once_with("workspace:1")
     mock_cmux.assert_not_called()
     assert result == ["workspace:1"]
+
+
+def test_close_gone_cwd_workspaces_does_not_report_a_failed_close(tmp_path, capsys):
+    missing = tmp_path / "gone"
+    with (
+        patch(
+            "cockpit.lib.cmux.workspace_state",
+            return_value=({}, {"workspace:1": missing}),
+        ),
+        patch("cockpit.lib.cmux.cmux_close_workspace_best_effort", return_value=False),
+    ):
+        result = cmux_mod.close_gone_cwd_workspaces()
+
+    assert result == []
+    assert "could not close workspace" in capsys.readouterr().err
 
 
 def test_close_gone_cwd_workspaces_dry_run_prints_and_closes_nothing(capsys):
