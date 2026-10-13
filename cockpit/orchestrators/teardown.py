@@ -246,7 +246,13 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
     if dry:
         return True, []
 
-    cmux_close_workspace_best_effort(req.ref)
+    # Removing the worktree under a session that is still open strands it in a
+    # deleted cwd.
+    if not cmux_close_workspace_best_effort(req.ref):
+        print(
+            f"  warn: could not close workspace {req.ref}", file=sys.stderr, flush=True
+        )
+        return False, [f"could not close workspace {req.ref}"]
 
     if (
         not is_primary
