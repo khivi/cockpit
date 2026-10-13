@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.17.4](https://github.com/khivi/cockpit/compare/v3.17.3...v3.17.4) (2026-10-13)
+
+
+### Bug Fixes
+
+* **cmux:** force-close a workspace cmux 0.65 refuses for a live process ([#586](https://github.com/khivi/cockpit/issues/586)) ([b72cff0](https://github.com/khivi/cockpit/commit/b72cff085ca31f64d8674f77a5f526d3f9541aaa))
+
 ## [3.17.3](https://github.com/khivi/cockpit/compare/v3.17.2...v3.17.3) (2026-10-09)
 
 
