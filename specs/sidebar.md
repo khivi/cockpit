@@ -2,9 +2,10 @@
 
 ## Trailing folds
 
-- [folds.anchor~1] The reconcile re-anchors a fold onto a workspace that owns a
+- [folds.anchor~2] The reconcile re-anchors a fold onto a workspace that owns a
   live shell. The reconcile closes the husk through the self-close funnel. It
-  never uses a raw close.
+  never uses a raw close. When cmux anchored the fold on one of its own
+  members, the reconcile keeps that member open and in the fold.
 - [folds.born-collapsed~1] The reconcile creates a trailing fold collapsed. It
   re-parks an already-standing fold without a collapse re-assert. A fold that
   the user expanded stays expanded.
