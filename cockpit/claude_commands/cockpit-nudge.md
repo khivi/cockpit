@@ -10,6 +10,10 @@ Invoke the Bash tool with this exact command, then paste its stdout verbatim:
 cockpit nudge $ARGUMENTS
 ```
 
+Pass every token as typed except a `--reason` value, which is free text: put
+it in single quotes, each embedded `'` written as `'\''`
+(`--reason 'waiting on the reviewer'\''s call'`).
+
 Prefs persist as one JSON file per PR under
 `~/.config/cockpit/cache/nudges/<repo>__<number>.json`. They are keyed **per
 repo**, so run this inside the repo's checkout: the PR number can be passed

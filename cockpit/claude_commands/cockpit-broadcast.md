@@ -8,12 +8,14 @@ Invoke the Bash tool with this command, then paste its stdout/stderr verbatim
 — it already reports sent vs. skipped, or the unavailable-backend error:
 
 ```bash
-cockpit broadcast "$ARGUMENTS"
+cockpit broadcast '<message>'
 ```
 
-The message is a **single positional argument**, so keep it quoted. If
+The message is `$ARGUMENTS`, passed as a **single positional argument** in
+single quotes, each embedded `'` written as `'\''`. Double quotes are not
+enough: the shell still expands backticks and `$(...)` inside them. If
 `$ARGUMENTS` starts with `--dry`, `--repo NAME` or `--worktree PATH`, move
-those outside the quotes (`cockpit broadcast --dry --repo svc-auth "<rest>"`);
+those outside the quotes (`cockpit broadcast --dry --repo svc-auth '<rest>'`);
 everything else is the message.
 
 Don't reimplement the fan-out loop or the idle check in bash —

@@ -1719,12 +1719,23 @@ def test_install_claude_commands_writes_expected_files(tmp_path):
     assert "cockpit new $ARGUMENTS" in (commands_dir / "cockpit-new.md").read_text()
     assert "cockpit close $ARGUMENTS" in (commands_dir / "cockpit-close.md").read_text()
     assert (
-        'cockpit broadcast "$ARGUMENTS"'
+        "cockpit broadcast '<message>'"
         in (commands_dir / "cockpit-broadcast.md").read_text()
     )
     assert "cockpit nudge $ARGUMENTS" in (commands_dir / "cockpit-nudge.md").read_text()
     assert "cockpit diff $ARGUMENTS" in (commands_dir / "cockpit-diff.md").read_text()
     assert "cockpit seed $ARGUMENTS" in (commands_dir / "cockpit-seed.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "name", ["cockpit-new.md", "cockpit-broadcast.md", "cockpit-nudge.md"]
+)
+def test_free_text_commands_tell_the_agent_to_single_quote_it(tmp_path, name):
+    """`$ARGUMENTS` is substituted raw, so a template taking free text must
+    say how to quote it, or backticks and `$(...)` in it run in the shell."""
+    commands_dir = tmp_path / "commands"
+    config_mod.install_claude_commands(commands_dir)
+    assert "'\\''" in (commands_dir / name).read_text()
 
 
 def test_the_diff_command_carries_the_string_the_daemon_sends(tmp_path):
