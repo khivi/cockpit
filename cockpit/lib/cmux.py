@@ -237,10 +237,10 @@ class WorkspaceGroup:
     """A cmux sidebar group: a collapsible fold over member workspaces.
 
     `ref` is a `workspace_group:N` handle (window-scoped, like `workspace:N`).
-    `anchor` is the member whose sidebar row *is* the group header — so cockpit
-    keeps the group on a dedicated workspace of its own rather than on a stack
-    member, leaving every member visible as its own row below (see
-    `create_workspace_group` and `_durable_anchor`).
+    `anchor` is the workspace whose sidebar row *is* the group header — so
+    cockpit re-anchors the group onto a dedicated workspace of its own, leaving
+    every member visible as its own row below (see `create_workspace_group` and
+    `_durable_anchor`).
     """
 
     ref: str
@@ -298,11 +298,12 @@ def create_workspace_group(
 ) -> WorkspaceGroup | None:
     """Fold `refs` into one sidebar group named `name`, headed by its own row.
 
-    `cmux workspace-group create` always spawns a *fresh* workspace to own the
-    group, and the anchor's sidebar row **is** the group header. Anchoring the
-    group on a stack member would therefore swallow that member's row — a
-    four-PR stack rendering three rows under a header that says four. So the
-    spawned anchor is kept as a dedicated header instead: the fold reads
+    The anchor's sidebar row **is** the group header. `cmux workspace-group
+    create` may spawn a fresh workspace to own the group, or (cmux 0.65) anchor
+    it on one of the `--from` refs. Leaving the group anchored on a member
+    would swallow that member's row — a four-PR stack rendering three rows
+    under a header that says four. So cockpit gives the group a dedicated
+    header workspace instead: the fold reads
     `<tip> (N)` with all N members listed below it.
 
     The anchor is spawned in `$HOME`, outside every registered repo, so
@@ -310,8 +311,8 @@ def create_workspace_group(
     a repo) never reaps it out from under the group. It is cockpit's to close
     when the stack dissolves — see `_reconcile_sidebar_groups`.
 
-    The anchor cmux spawns is then **swapped for one that owns a live shell**
-    (`_durable_anchor`); the workspace `create` makes has no command and so no
+    Either way the anchor is then **swapped for one that owns a live shell**
+    (`_durable_anchor`); a workspace `create` spawns has no command and so no
     terminal, and does not survive. That swap is what stops the fold churning.
 
     **One member is a valid group.** cmux drops a group only when the *anchor*
@@ -355,10 +356,12 @@ def create_workspace_group(
     _set_group_icon(group.ref, icon)
     if collapsed:
         cmux("workspace-group", "collapse", group.ref, check=False)
-    return _durable_anchor(group, name)
+    return _durable_anchor(group, name, refs)
 
 
-def _durable_anchor(group: WorkspaceGroup, name: str) -> WorkspaceGroup:
+def _durable_anchor(
+    group: WorkspaceGroup, name: str, refs: list[str]
+) -> WorkspaceGroup:
     """Re-anchor `group` onto a workspace that owns a live shell.
 
     `workspace-group create` spawns its anchor with **no command**, and cmux
@@ -375,6 +378,12 @@ def _durable_anchor(group: WorkspaceGroup, name: str) -> WorkspaceGroup:
     passes a command, so the fix is to spawn the anchor the same way and
     `set-anchor` onto it. `create` gives no way to seed its own anchor with a
     command, hence the swap rather than a flag.
+
+    The old anchor is closed only when it is a husk `create` spawned. When cmux
+    anchored on one of `refs` it is a real member (a review or stack
+    workspace): closing it would tear down the session it folds, and the next
+    cycle respawns it — a loop. It is re-added as a member instead, in case
+    `set-anchor` dropped it.
 
     Fails **open**: if the spawn or the re-anchor fails, the throwaway anchor
     cmux made is left in place and the caller gets exactly the previous
@@ -406,10 +415,22 @@ def _durable_anchor(group: WorkspaceGroup, name: str) -> WorkspaceGroup:
         anchor,
         check=False,
     )
-    # Routed through the shared funnel, never a raw close: it records the UUID
-    # via `_note_self_close`, without which the `workspace.closed` event reads
-    # as the user clicking cmux's ✕ and gets routed into teardown.
-    cmux_close_workspace_best_effort(group.anchor)
+    if group.anchor in refs:
+        cmux(
+            "workspace-group",
+            "add",
+            "--group",
+            group.ref,
+            "--workspace",
+            group.anchor,
+            check=False,
+        )
+    else:
+        # Routed through the shared funnel, never a raw close: it records the
+        # UUID via `_note_self_close`, without which the `workspace.closed`
+        # event reads as the user clicking cmux's ✕ and gets routed into
+        # teardown.
+        cmux_close_workspace_best_effort(group.anchor)
     return replace(group, anchor=anchor)
 
 

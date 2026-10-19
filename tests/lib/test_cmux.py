@@ -1637,9 +1637,9 @@ def test_list_workspace_groups_survives_garbage():
 class _FakeCmux:
     """Stand-in for the cmux CLI covering group creation.
 
-    `cmux workspace-group create` always spawns a fresh workspace to own the
-    group, so the fake mirrors that: the created group is anchored on a
-    workspace the caller never asked for.
+    By default `create` anchors the group on a fresh workspace the caller
+    never asked for. Set `anchor` to a passed ref to mirror cmux 0.65, which
+    can anchor on one of the `--from` members instead.
     """
 
     def __init__(self):
@@ -1715,7 +1715,7 @@ def test_create_workspace_group_spawns_the_anchor_outside_every_repo():
     assert create[create.index("--cwd") + 1] == str(Path.home())
 
 
-@pytest.mark.covers("folds.anchor~1")
+@pytest.mark.covers("folds.anchor~2")
 @pytest.mark.covers("stacks.anchor~1")
 def test_create_workspace_group_reanchors_onto_a_workspace_with_a_live_shell():
     # `workspace-group create` spawns its anchor with no command, and a
@@ -1743,7 +1743,7 @@ def test_create_workspace_group_reanchors_onto_a_workspace_with_a_live_shell():
     assert spawn[spawn.index("--cwd") + 1] == str(Path.home())
 
 
-@pytest.mark.covers("folds.anchor~1")
+@pytest.mark.covers("folds.anchor~2")
 def test_create_workspace_group_closes_the_husk_anchor_through_the_self_close_funnel():
     # A raw `close-workspace` would leave the resulting `workspace.closed` event
     # looking like the user clicking cmux's ✕, which routes into teardown.
@@ -1756,6 +1756,32 @@ def test_create_workspace_group_closes_the_husk_anchor_through_the_self_close_fu
         create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
 
     close.assert_called_once_with("workspace:99")
+
+
+@pytest.mark.covers("folds.anchor~2")
+def test_create_workspace_group_never_closes_a_member_cmux_anchored_on():
+    # cmux 0.65 can anchor `create --from` on a passed ref. Closing that
+    # "husk" closed a real review workspace every cycle, and the daemon
+    # respawned it the next — a loop.
+    fake = _FakeCmux()
+    fake.anchor = "workspace:1"
+    fake.members = ["workspace:2", "workspace:1"]
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake):
+        group = create_workspace_group("auth (2)", ["workspace:1", "workspace:2"])
+
+    assert group is not None
+    assert group.anchor == "workspace:500"
+    assert [a for a in fake.calls if a[0] == "close-workspace"] == []
+    assert "workspace:1" in fake.workspaces
+    assert (
+        "workspace-group",
+        "add",
+        "--group",
+        "workspace_group:5",
+        "--workspace",
+        "workspace:1",
+    ) in fake.calls
 
 
 def test_create_workspace_group_keeps_the_husk_anchor_when_the_respawn_fails():
