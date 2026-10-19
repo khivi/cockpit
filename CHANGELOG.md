@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.17.6](https://github.com/khivi/cockpit/compare/v3.17.5...v3.17.6) (2026-10-19)
+
+
+### Bug Fixes
+
+* **cmux:** never close a fold member cmux picked as the group anchor ([#590](https://github.com/khivi/cockpit/issues/590)) ([c148f0c](https://github.com/khivi/cockpit/commit/c148f0c235cd2267acba3c645d6ff7c97531b8a5))
+
 ## [3.17.5](https://github.com/khivi/cockpit/compare/v3.17.4...v3.17.5) (2026-10-19)
 
 
