@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.17.5](https://github.com/khivi/cockpit/compare/v3.17.4...v3.17.5) (2026-10-19)
+
+
+### Bug Fixes
+
+* **commands:** single-quote free text in slash-command templates ([#588](https://github.com/khivi/cockpit/issues/588)) ([f2d2a30](https://github.com/khivi/cockpit/commit/f2d2a30c5c5591f63b85b7c7cb363f61317adcc6))
+
 ## [3.17.4](https://github.com/khivi/cockpit/compare/v3.17.3...v3.17.4) (2026-10-13)
 
 
