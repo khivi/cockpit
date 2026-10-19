@@ -13,13 +13,19 @@ line in the output):
 cockpit new $ARGUMENTS
 ```
 
+**Quote free text; pass everything else as typed.** Flags and identifier
+tokens (branch, PR, URL, ticket key, repo, name, skill, path) go in verbatim.
+Free text — everything after `--`, and any `--context` value — goes in single
+quotes, each embedded `'` written as `'\''`, so the shell never expands
+backticks, `$(...)`, `;`, `#` or globs in it:
+`cockpit new feat-x -- 'don'\''t touch $HOME'`.
+
 **Bare `--context` is the one exception to "invoke verbatim"** — it means "hand
 over what the new workspace needs", which only you can do. If `--context`
 appears with no value after it, write that hand-over before calling Bash and
-pass it as the flag's value — `--context '<text>'`, single-quoted, embedded
-quotes escaped as `'\''`. Print nothing before the Bash call; it is an
-argument, not a message to the user. The CLI errors on a bare `--context`, so
-the substitution is not optional.
+pass it as the flag's value, quoted as above (`--context '<text>'`). Print
+nothing before the Bash call; it is an argument, not a message to the user.
+The CLI errors on a bare `--context`, so the substitution is not optional.
 
 **Select, don't summarize.** The new workspace is starting one task, not
 resuming this conversation. Carry only what it cannot re-derive from the repo
