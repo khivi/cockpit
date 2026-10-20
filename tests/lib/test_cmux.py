@@ -972,14 +972,21 @@ def test_close_workspace_best_effort_passes_workspace_flag():
 
 def _close_against(listings: list[str]):
     """Close against a cmux whose successive `list-workspaces` return `listings`."""
+    """The last listing repeats, and the force-close poll runs without sleeping."""
     calls: list[tuple] = []
-    it = iter(listings)
+    remaining = list(listings)
 
     def fake_cmux(*args, **_kwargs):
         calls.append(args)
-        return next(it) if args[0] == "list-workspaces" else ""
+        if args[0] != "list-workspaces":
+            return ""
+        return remaining.pop(0) if len(remaining) > 1 else remaining[0]
 
-    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+    with (
+        patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux),
+        patch("cockpit.lib.cmux.time.sleep"),
+        patch.object(cmux_mod, "_FORCE_CLOSE_TIMEOUT_SECONDS", 0.05),
+    ):
         ok = cmux_close_workspace_best_effort("workspace:1")
     return ok, [c for c in calls if c[0] == "close-workspace"]
 
@@ -995,6 +1002,13 @@ def test_close_retries_with_force_when_cmux_refuses_a_running_process():
     ok, closes = _close_against(["workspace:1 x\n", ""])
     assert ok
     assert closes[1] == ("close-workspace", "--workspace", "workspace:1", "--force")
+
+
+def test_close_waits_for_an_async_force_close():
+    """cmux 0.65 acknowledges `--force` before the workspace leaves the list."""
+    ok, closes = _close_against(["workspace:1 x\n"] * 4 + [""])
+    assert ok
+    assert len(closes) == 2
 
 
 def test_close_reports_failure_when_the_workspace_survives_force():
