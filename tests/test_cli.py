@@ -51,6 +51,17 @@ def test_shims_dispatch_despite_being_off_the_usage_line(monkeypatch, sub, capsy
     assert "unknown subcommand" not in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("argv", "code"), [(["--help"], 0), (["-h"], 0), (["--hepl"], 2)]
+)
+def test_teardown_with_arguments_never_uninstalls(monkeypatch, argv, code):
+    def boom():
+        raise AssertionError("teardown ran")
+
+    monkeypatch.setattr("cockpit.lib.config.teardown_claude_integration", boom)
+    assert cli.main(["teardown", *argv]) == code
+
+
 def test_version_flag_prints_version(capsys):
     assert cli.main(["--version"]) == 0
     out = capsys.readouterr().out

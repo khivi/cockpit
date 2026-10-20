@@ -1733,7 +1733,18 @@ def cmux_close_workspace_best_effort(short_or_ref: str) -> bool:
     # (confirmation_required) unless `--force`; older cmux rejects the flag,
     # so it is only a retry. Every caller has already run its own safety gate.
     cmux("close-workspace", "--workspace", short_or_ref, "--force", check=False)
-    return not _workspace_listed(short_or_ref)
+    # `--force` returns before the process dies, so the workspace lingers in
+    # the listing for a moment; an immediate check aborts teardown.
+    deadline = time.monotonic() + _FORCE_CLOSE_TIMEOUT_SECONDS
+    while _workspace_listed(short_or_ref):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_FORCE_CLOSE_POLL_SECONDS)
+    return True
+
+
+_FORCE_CLOSE_TIMEOUT_SECONDS = 5.0
+_FORCE_CLOSE_POLL_SECONDS = 0.25
 
 
 def _workspace_listed(short_or_ref: str) -> bool:

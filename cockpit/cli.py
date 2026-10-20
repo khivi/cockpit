@@ -86,6 +86,13 @@ def main(argv: list[str] | None = None) -> int:
     # statusline + starship are the hot render path — route straight to the
     # leaf module, skipping the daemon preflight that setup/starship never run.
     if sub == "teardown":
+        # No argparse here, so an ignored `--help` would run the uninstall.
+        if rest in (["-h"], ["--help"]):
+            print("usage: cockpit teardown  (reverse setup's ~/.claude writes)")
+            return 0
+        if rest:
+            print(f"cockpit teardown takes no arguments: {rest}", file=sys.stderr)
+            return 2
         from cockpit.lib.config import teardown_claude_integration
 
         teardown_claude_integration()
