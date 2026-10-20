@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.17.7](https://github.com/khivi/cockpit/compare/v3.17.6...v3.17.7) (2026-10-20)
+
+
+### Bug Fixes
+
+* **cmux:** wait for an async --force close before reporting failure ([#592](https://github.com/khivi/cockpit/issues/592)) ([3ce458d](https://github.com/khivi/cockpit/commit/3ce458d6c62b88ce836302ee030bda52dad60c87))
+
 ## [3.17.6](https://github.com/khivi/cockpit/compare/v3.17.5...v3.17.6) (2026-10-19)
 
 
