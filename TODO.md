@@ -2,6 +2,14 @@
 
 ## Open
 
+- **Regenerate `docs/cockpit-tui.png` from a script.** It is hand-captured, so every
+  UI change leaves the README showing an old table. Render the TUI headlessly from
+  fixture data (`App.run_test()` with injected ticks and `load_config`, as
+  `tests/tui/` already does) and save the frame with Textual's `save_screenshot`.
+  No vhs or tmux needed. Fixtures must be fake (no real repo names or PR titles),
+  since the image ships in a public README. SVG is native; a PNG needs a converter,
+  so decide whether the README can take the SVG.
+
 - **Per-row context headroom** (branch `khivi/stale` on origin, no local worktree,
   nothing committed) — show, per table row, how close that agent is to needing a
   `/compact`.
