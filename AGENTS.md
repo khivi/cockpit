@@ -444,7 +444,7 @@ The set is closed: the PR nudge (`cycle.py`, slow tick, `PR.nudge_issue`, silenc
 
 ### Config surface has three faces — keep them in sync
 
-`cockpit/lib/config.py` is the authoritative reader. Two mirrors drift silently: `cockpit/config.example.json` (documentation only, never installed) and `docs/config.md`. When you change a config field, update all three in the same PR. Provider ticket fields also flow through the provider's `CONFIG_FIELDS`.
+`cockpit/lib/config.py` is the authoritative reader. It has two mirrors: `cockpit/config.example.json` (documentation only, never installed) and `docs/config.md`. When you change a config field, update all three in the same PR. `tests/test_config_faces.py` fails on a key `config.py` reads, or a `CONFIG_FIELDS` entry, with no `docs/config.md` row. Prose and the example's coverage stay unchecked. Provider ticket fields also flow through the provider's `CONFIG_FIELDS`.
 
 ### `tickets` config — the one provider selector
 

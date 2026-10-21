@@ -16,6 +16,7 @@ make this a test people edit to pass.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -57,6 +58,60 @@ def test_every_declared_ticket_field_is_documented():
         "A config change updates all three faces in the same PR — the reader, "
         "config.example.json, and the operator doc."
     )
+
+
+CONFIG_PY = Path(__file__).resolve().parent.parent / "cockpit" / "lib" / "config.py"
+
+# String keys `config.py` touches that are not cockpit config: `cockpit setup`
+# edits Claude Code's own settings.json through the same module.
+NOT_COCKPIT_CONFIG: frozenset[str] = frozenset({"statusLine", "hooks", "command"})
+
+
+def _keys_read_by(source: str) -> dict[str, int]:
+    """`{key: first line}` for every literal `x.get("key")` and `x["key"]` in
+    `source`, minus environment-variable lookups."""
+    out: dict[str, int] = {}
+    for node in ast.walk(ast.parse(source)):
+        keys: list[ast.expr] = []
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+            and "environ" not in ast.unparse(node.func.value)
+        ):
+            keys = [node.args[0]]
+        elif isinstance(node, ast.Subscript) and "environ" not in ast.unparse(
+            node.value
+        ):
+            keys = [node.slice]
+        for key in keys:
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                out.setdefault(key.value, key.lineno)
+    return out
+
+
+def test_every_key_config_py_reads_is_documented():
+    documented = _documented_fields()
+    missing = sorted(
+        f"{key} (config.py:{line})"
+        for key, line in _keys_read_by(CONFIG_PY.read_text()).items()
+        if key not in documented
+        and key not in NOT_COCKPIT_CONFIG
+        and key not in UNDOCUMENTED_BY_DESIGN
+    )
+    assert not missing, (
+        f"read by lib/config.py but absent from docs/config.md: {missing}. "
+        "A config change updates all three faces in the same PR — the reader, "
+        "config.example.json, and the operator doc."
+    )
+
+
+def test_the_reader_scan_would_catch_an_undocumented_key():
+    keys = _keys_read_by(
+        'cfg.get("a_key_nobody_documented")\nos.environ.get("HOME")\n' 'repo["sub"]\n'
+    )
+    assert set(keys) == {"a_key_nobody_documented", "sub"}
 
 
 def test_the_guard_would_catch_an_undocumented_field(monkeypatch):
