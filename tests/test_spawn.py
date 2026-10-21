@@ -385,6 +385,7 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
     directly — the attach path goes through `deliver_followup`, which is the
     one funnel for a send that skips the idle gate.
     """
+    import cockpit.lib.registry as registry
     import cockpit.spawn as spawn
 
     cmux_calls: list[tuple] = []
@@ -412,6 +413,13 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
     monkeypatch.setattr(spawn, "workspace_cwds", lambda *, include_self=False: {})
     monkeypatch.setattr(spawn, "kick_running", lambda *a, **kw: None)
     monkeypatch.setattr(spawn, "require_workspace_binary", lambda: None)
+    # Each of these runs a real `gh` against the developer's own GitHub login.
+    # The suite guard lets `gh` through, so stub them here: the fixture repo's
+    # origin is a local path, and these answers match what CI's tokenless `gh`
+    # returns for it.
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
+    monkeypatch.setattr(registry, "gh_self_user", lambda: "")
+    monkeypatch.setattr(registry, "default_branch", lambda _r: "main")
 
     def _run(argv: list[str]) -> tuple[int, str, str]:
         monkeypatch.setattr(sys, "argv", ["spawn", *argv])
@@ -598,9 +606,6 @@ def _spawn_named_branch(spawn_main, cockpit_repo, monkeypatch, push_branch):
 
 
 def _spawn_existing_branch(spawn_main, cockpit_repo, monkeypatch, push_branch):
-    import cockpit.spawn as spawn
-
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     push_branch("khivi/parked-target")
     return spawn_main(["--branch", "khivi/parked-target", "--repo", "testrepo"])
 
@@ -635,9 +640,6 @@ def _spawn_pr(spawn_main, cockpit_repo, monkeypatch, push_branch):
 
 
 def _spawn_ticket_ref(spawn_main, cockpit_repo, monkeypatch, push_branch):
-    import cockpit.spawn as spawn
-
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     return spawn_main(["PE-1234", "--repo", "testrepo"])
 
 
@@ -953,9 +955,6 @@ def test_plan_only_branch_mode_falls_back_to_builtin_when_skills_plan_unset(
 def test_review_branch_mode_seeds_custom_review_command(
     spawn_main, push_branch, monkeypatch
 ):
-    import cockpit.spawn as spawn
-
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     push_branch("khivi/reviewme")
     code, _out, _err = spawn_main(
         [
@@ -976,9 +975,6 @@ def test_review_branch_mode_seeds_custom_review_command(
 def test_review_branch_mode_seeds_bundled_prose_by_default(
     spawn_main, push_branch, monkeypatch
 ):
-    import cockpit.spawn as spawn
-
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     push_branch("khivi/reviewme")
     code, _out, _err = spawn_main(
         ["--branch", "khivi/reviewme", "--repo", "testrepo", "--review"]
@@ -1048,7 +1044,6 @@ def test_actions_url_creates_fresh_investigation_branch(spawn_main, monkeypatch)
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
 
     code, out, _err = spawn_main(
         [
@@ -1072,7 +1067,6 @@ def test_actions_url_on_master_does_not_attach_to_main_worktree(
     monkeypatch.setattr(
         spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info(branch="main")
     )
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
 
     code, out, _err = spawn_main(
         [
@@ -1091,7 +1085,6 @@ def test_actions_url_seeds_log_failed_prompt(spawn_main, monkeypatch):
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
 
     spawn_main(
         [
@@ -1113,7 +1106,6 @@ def test_actions_run_short_name_uses_workflow_and_title(spawn_main, monkeypatch)
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
 
     spawn_main(
         [
@@ -1133,7 +1125,6 @@ def test_actions_job_url_short_name_uses_job_name(spawn_main, monkeypatch):
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
 
     spawn_main(
         [
@@ -1208,7 +1199,6 @@ def test_actions_branch_mode_seeds_configured_skills_actions_command(
 
     _set_config_key(cockpit_repo, "skills", {"actions": "/actions-pr"})
     monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
 
     code, _out, _err = spawn_main(
         ["https://github.com/owner/repo/actions/runs/12345", "--repo", "testrepo"]
@@ -1226,7 +1216,6 @@ def test_actions_branch_mode_falls_back_to_builtin_when_skills_actions_unset(
     import cockpit.spawn as spawn
 
     monkeypatch.setattr(spawn, "fetch_run_info", lambda *a, **kw: _actions_run_info())
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
 
     code, _out, _err = spawn_main(
         ["https://github.com/owner/repo/actions/runs/12345", "--repo", "testrepo"]
@@ -1592,9 +1581,7 @@ def test_trailing_addendum_is_appended_to_seeded_prompt(
 def test_trailing_addendum_alone_becomes_prompt(spawn_main, cockpit_repo, monkeypatch):
     """`-- <text>` on an otherwise-blank spawn is context, so it flips the
     spawn into plan-only and the text appends to the plan prompt."""
-    import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     spawn_main(["fresh-feat", "--repo", "testrepo", "--", "do thing X"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "do thing X" in cmd
@@ -1605,9 +1592,7 @@ def test_blank_spawn_seeds_no_plan_prompt(spawn_main, monkeypatch):
     """A blank `<name> --repo <repo>` spawn (no PR / Linear / Actions, no
     --context, no `-- text`) is ready to work on — no plan-only guidance is
     seeded; the workspace just starts `claude`."""
-    import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     code, out, _err = spawn_main(["fresh-feat", "--repo", "testrepo"])
     assert code == 0
     assert "spawned" in out
@@ -1621,10 +1606,8 @@ def test_blank_spawn_still_applies_prompt_prefix(spawn_main, cockpit_repo, monke
     """Dropping the plan prompt for a blank spawn must NOT drop a configured
     `prompt_prefix` (e.g. a session-setup slash command) — it rides via
     claude_command()."""
-    import cockpit.spawn as spawn
 
     _set_config_key(cockpit_repo, "skills", {"session": "/session-coordination"})
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     spawn_main(["fresh-feat", "--repo", "testrepo"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "/session-coordination" in cmd
@@ -1712,9 +1695,7 @@ def test_pr_spawn_still_seeds_plan_prompt(spawn_main, monkeypatch):
 def test_context_injected_into_seeded_prompt(spawn_main, monkeypatch):
     """`--context <text>` is folded into the seeded prompt under a labeled
     heading, without clobbering the plan-only guard."""
-    import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     spawn_main(["ctx-feat", "--repo", "testrepo", "--context", "goal: fix X"])
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "Caller session context" in cmd
@@ -1746,7 +1727,6 @@ def test_attach_delivers_prompt_via_cmux_send(spawn_main, monkeypatch):
     and not create a second workspace."""
     import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         spawn, "workspace_names", lambda: {"workspace:7": "attach-only"}
     )
@@ -1772,7 +1752,6 @@ def test_blank_attach_delivers_nothing(spawn_main, monkeypatch):
     cmux send), and spawn just reports the attach."""
     import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         spawn, "workspace_names", lambda: {"workspace:7": "attach-only"}
     )
@@ -1789,7 +1768,6 @@ def test_attach_delivers_addendum_and_context(spawn_main, monkeypatch):
     the running session via cmux send, same as a fresh spawn's --command."""
     import cockpit.spawn as spawn
 
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     monkeypatch.setattr(spawn, "workspace_names", lambda: {"workspace:9": "ctx-attach"})
     spawn_main(
         [
@@ -2460,7 +2438,6 @@ def test_path_fallback_attaches_when_name_mismatches(
     wt_path = cockpit_repo.repo.parent / "path-fallback"
     wt_path.mkdir(exist_ok=True)
 
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         spawn,
         "resolve_worktree",
@@ -2502,7 +2479,6 @@ def test_path_fallback_not_triggered_when_name_matches(
         cwds_called.append(1)
         return {}
 
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         spawn,
         "resolve_worktree",
@@ -2545,7 +2521,6 @@ def test_path_fallback_exception_is_swallowed(spawn_main, monkeypatch, cockpit_r
     wt_path = cockpit_repo.repo.parent / "cwds-error"
     wt_path.mkdir(exist_ok=True)
 
-    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         spawn,
         "resolve_worktree",
