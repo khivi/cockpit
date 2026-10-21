@@ -1310,7 +1310,7 @@ def test_refresh_base_distance_short_circuits_when_no_feature_worktrees(tmp_path
 
     with (
         patch.object(cycle, "origin_head_branch") as ohb,
-        patch.object(cycle.subprocess, "run") as run,
+        patch.object(cycle, "fetch") as run,
         patch.object(cycle, "write_base_distance") as wbd,
         patch.object(cycle, "write_base_ahead") as wba,
     ):
@@ -1333,8 +1333,8 @@ def test_refresh_base_distance_invalidates_on_fetch_nonzero(tmp_path, capsys):
     with (
         patch.object(cycle, "origin_head_branch", return_value="main"),
         patch.object(
-            cycle.subprocess,
-            "run",
+            cycle,
+            "fetch",
             return_value=type(
                 "Res",
                 (),
@@ -1367,7 +1367,7 @@ def test_refresh_base_distance_uses_per_pr_base_and_remote(tmp_path):
 
     ok = type("Res", (), {"returncode": 0, "stderr": "", "stdout": ""})()
     with (
-        patch.object(cycle.subprocess, "run", return_value=ok) as run,
+        patch.object(cycle, "fetch", return_value=ok) as run,
         patch.object(cycle, "behind_of_base", return_value=1) as bob,
         patch.object(cycle, "ahead_of_base", return_value=2) as aob,
         patch.object(cycle, "write_base_distance") as wbd,
@@ -1383,15 +1383,7 @@ def test_refresh_base_distance_uses_per_pr_base_and_remote(tmp_path):
 
     assert distances == {"khivi/feat": 1}
     # Fetched upstream/stage, not origin/main.
-    assert run.call_args.args[0] == [
-        "git",
-        "-C",
-        str(repo_path),
-        "fetch",
-        "--quiet",
-        "upstream",
-        "stage",
-    ]
+    assert run.call_args.args == (repo_path, "--quiet", "upstream", "stage")
     bob.assert_called_once_with(wt.path, "stage", remote="upstream")
     aob.assert_called_once_with(wt.path, "stage", remote="upstream")
     wbd.assert_called_once_with(wt.path, 1)
@@ -1409,7 +1401,7 @@ def test_refresh_base_distance_falls_back_to_default_without_pr(tmp_path):
 
     ok = type("Res", (), {"returncode": 0, "stderr": "", "stdout": ""})()
     with (
-        patch.object(cycle.subprocess, "run", return_value=ok) as run,
+        patch.object(cycle, "fetch", return_value=ok) as run,
         patch.object(cycle, "behind_of_base", return_value=0),
         patch.object(cycle, "ahead_of_base", return_value=5),
         patch.object(cycle, "write_base_distance"),
@@ -1417,7 +1409,7 @@ def test_refresh_base_distance_falls_back_to_default_without_pr(tmp_path):
     ):
         cycle._refresh_base_distance(repo_path, [wt], "main")
 
-    assert run.call_args.args[0][-2:] == ["origin", "main"]
+    assert run.call_args.args[-2:] == ("origin", "main")
     wba.assert_called_once_with(wt.path, 5)
 
 
@@ -1431,13 +1423,13 @@ def test_refresh_base_distance_invalidates_only_failing_base(tmp_path):
     good = Worktree(path=tmp_path / "g", branch="khivi/good")
     bad = Worktree(path=tmp_path / "b", branch="khivi/bad")
 
-    def _run(cmd, **kw):
-        base = cmd[-1]
+    def _run(*args):
+        base = args[-1]
         rc = 128 if base == "prod" else 0
         return type("Res", (), {"returncode": rc, "stderr": "nope", "stdout": ""})()
 
     with (
-        patch.object(cycle.subprocess, "run", side_effect=_run),
+        patch.object(cycle, "fetch", side_effect=_run),
         patch.object(cycle, "behind_of_base", return_value=1),
         patch.object(cycle, "ahead_of_base", return_value=1),
         patch.object(cycle, "write_base_distance") as wbd,

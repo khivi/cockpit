@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -34,11 +35,46 @@ def require_git() -> None:
         sys.exit(2)
 
 
+_NETWORK_VERBS = frozenset({"fetch", "ls-remote", "pull", "push"})
+_NETWORK_TIMEOUT_SECONDS = 120.0
+
+
 def _git(repo: str | os.PathLike, *args: str) -> subprocess.CompletedProcess:
-    """`git -C <repo> <args>` capturing stdout/stderr as text; never raises."""
-    return subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True
+    """`git -C <repo> <args>` capturing stdout/stderr as text; never raises.
+
+    A network verb that outlives `_NETWORK_TIMEOUT_SECONDS` returns rc 124: an
+    unanswered ssh otherwise holds the slow tick, and every queued close behind
+    it, forever. The whole process group is killed because the ssh grandchild
+    keeps the stdout pipe open past git's own death.
+    """
+    cmd = ["git", "-C", str(repo), *args]
+    if not args or args[0] not in _NETWORK_VERBS:
+        return subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
     )
+    try:
+        out, err = proc.communicate(timeout=_NETWORK_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        proc.communicate()
+        return subprocess.CompletedProcess(
+            cmd, 124, "", f"git {args[0]} timed out after {_NETWORK_TIMEOUT_SECONDS:g}s"
+        )
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def fetch(repo: str | os.PathLike, *args: str) -> subprocess.CompletedProcess:
+    """`git fetch <args>` under `_git`'s network timeout; never raises."""
+    return _git(repo, "fetch", *args)
 
 
 SIDEBAR_TAG_SEP = "·"
@@ -597,7 +633,11 @@ def _fetch_remote_branch(repo: Path, branch: str) -> bool:
         == 0
     )
     if exists:
-        run(["git", "-C", str(repo), "fetch", "origin", f"{branch}:{branch}"])
+        res = fetch(repo, "origin", f"{branch}:{branch}")
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"git fetch origin {branch} failed: {res.stderr.strip()}"
+            )
     return exists
 
 
