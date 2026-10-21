@@ -1625,3 +1625,24 @@ def test_worktrees_basic_flags_a_mid_merge_worktree(cockpit_repo, tmp_path) -> N
     assert got.branch == "feat"
     assert got.merging is True
     assert got.rebasing is False
+
+
+def test_hung_network_git_times_out_and_kills_its_ssh_grandchild(tmp_path, monkeypatch):
+    """An ssh that never answers must not hold the slow tick: the grandchild
+    keeps stdout open, so only a process-group kill lets `_git` return."""
+    import time
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake = bindir / "git"
+    fake.write_text("#!/bin/sh\nsleep 60 &\nsleep 60\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+    monkeypatch.setattr(gitlib, "_NETWORK_TIMEOUT_SECONDS", 0.5)
+
+    start = time.monotonic()
+    res = gitlib._git(tmp_path, "ls-remote", "origin")
+
+    assert time.monotonic() - start < 10
+    assert res.returncode == 124
+    assert "timed out" in res.stderr

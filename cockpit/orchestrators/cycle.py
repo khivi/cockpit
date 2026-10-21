@@ -126,6 +126,7 @@ from cockpit.lib.git import (
     behind_of_base,
     branch_commits_ahead,
     delete_local_branch,
+    fetch,
     ff_default_branch_worktrees,
     has_remote_branch,
     has_unique_commits,
@@ -1508,14 +1509,8 @@ def _refresh_base_distance(
 
     for base, group in by_base.items():
         try:
-            res = subprocess.run(
-                ["git", "-C", str(repo_path), "fetch", "--quiet", base_remote, base],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except (OSError, subprocess.SubprocessError) as e:
+            res = fetch(repo_path, "--quiet", base_remote, base)
+        except OSError as e:
             print(
                 f"  {yellow('skip')} base-distance refresh for {repo_path.name}: {e}",
                 file=sys.stderr,
