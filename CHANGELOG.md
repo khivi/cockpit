@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.17.8](https://github.com/khivi/cockpit/compare/v3.17.7...v3.17.8) (2026-10-21)
+
+
+### Bug Fixes
+
+* **git:** time out hung network git calls ([#594](https://github.com/khivi/cockpit/issues/594)) ([4bbcb24](https://github.com/khivi/cockpit/commit/4bbcb246ad9a3cda7334453bc3a4affb2f160057))
+
 ## [3.17.7](https://github.com/khivi/cockpit/compare/v3.17.6...v3.17.7) (2026-10-20)
 
 
