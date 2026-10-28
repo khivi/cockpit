@@ -1,7 +1,8 @@
 ---
 description: "Send a line of text (often a slash command like /compact) to every idle Claude session cockpit knows about."
 argument-hint: "[--dry] [--repo NAME | --worktree PATH] <message>"
-allowed-tools: Bash
+allowed-tools: Bash(cockpit broadcast:*)
+disable-model-invocation: true
 ---
 
 Invoke the Bash tool with this command, then paste its stdout/stderr verbatim
