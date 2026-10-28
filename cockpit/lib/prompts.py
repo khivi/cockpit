@@ -8,6 +8,7 @@ authority block applies. Mirrors the spawn first-turn prompts.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from .config import prompt_prefix, review_command
@@ -44,7 +45,12 @@ def split_prompt_prefix(prompt: str | None) -> tuple[str | None, str | None]:
     return prompt, None
 
 
-def claude_command(prompt: str | None, *, print_mode: bool = False) -> str:
+def claude_command(
+    prompt: str | None,
+    *,
+    print_mode: bool = False,
+    strip_env: Iterable[str] = (),
+) -> str:
     """Build the `claude [prompt]` shell command for the *initial* turn.
 
     Prefix handling lives in `split_prompt_prefix` — pass it the ``initial``
@@ -52,15 +58,22 @@ def claude_command(prompt: str | None, *, print_mode: bool = False) -> str:
     yields a bare `claude`. `print_mode` adds `-p`, for a caller that wants the
     turn to complete and exit rather than land in an interactive session.
 
+    `strip_env` names variables to remove from the session's environment, as an
+    `env -u NAME` prefix on the command itself. A launched terminal's env is
+    cmux's to decide, so scrubbing the caller's env does not confine the session.
+    Callers pass `config.credential_env_names(cfg)`: the helper fetches nothing.
+
     This is the **only** place the agent binary is named. Every launch path
     routes through it — the workspace spawns in `cmux.py` and `_run_repo_skills`'
     blocking `fast_skills` run — so swapping the agent stays a one-function
     change. An inline `claude ...` at a call site quietly costs that.
     """
     flag = " -p" if print_mode else ""
+    names = sorted(set(strip_env))
+    env = f"env {' '.join(f'-u {shell_quote(n)}' for n in names)} " if names else ""
     if prompt is None:
-        return f"claude{flag}"
-    return f"claude{flag} {shell_quote(prompt)}"
+        return f"{env}claude{flag}"
+    return f"{env}claude{flag} {shell_quote(prompt)}"
 
 
 # Maps a PR's `display_issue` onto its action template (`pr_action_*.txt`) and

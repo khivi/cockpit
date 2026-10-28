@@ -78,6 +78,7 @@ from cockpit.lib.cmux import (
 from cockpit.lib.config import (
     COCKPIT_HOME,
     CONFIG_PATH,
+    credential_env_names,
     ensure_state_dirs,
     load_config,
     repo_tickets,
@@ -1826,10 +1827,13 @@ class CockpitApp(App[None]):
         if payload:
             pr = _pr_from_payload(payload)
             new_ref = spawn_pr_workspace(
-                pr, wt, pref=load_pref(pref_key(self._cache_repo_name(repo), pr.number))
+                pr,
+                wt,
+                pref=load_pref(pref_key(self._cache_repo_name(repo), pr.number)),
+                strip_env=credential_env_names(),
             )
         else:
-            new_ref = spawn_orphan_workspace(wt)
+            new_ref = spawn_orphan_workspace(wt, strip_env=credential_env_names())
         if new_ref is None:
             self._notify(f"open failed: {wt.label or wt.short}", severity="error")
             return
