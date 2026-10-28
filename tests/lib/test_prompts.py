@@ -112,9 +112,9 @@ def test_claude_command_none_is_bare_claude():
     assert claude_command(None) == "claude"
 
 
-def test_claude_command_review_skips_project_settings_and_mcp():
+def test_claude_command_review_loads_only_user_settings():
     cmd = claude_command("hi", review=True)
-    assert cmd == "claude --setting-sources user --strict-mcp-config 'hi'"
+    assert cmd == "claude --setting-sources user 'hi'"
     assert "--setting-sources" not in claude_command("hi")
 
 
