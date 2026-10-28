@@ -3226,7 +3226,8 @@ def _drain_close_requests(dry: bool) -> None:
     """Process pending close markers (enqueued by the TUI's `c`/`C` actions and
     autoclose) through the shared teardown.
 
-    Refused markers (blockers reappeared between probe and drain) are dropped
+    Refused markers (a dirty tree reappeared between probe and drain; a
+    non-forced marker also re-checks unlanded commits and an open PR) are dropped
     with a log line — the user re-presses `C` in the TUI to force-retry.
     """
     daemon_signal.prune_stale()

@@ -2540,3 +2540,15 @@ def test_ensure_state_dirs_creates_the_runtime_dir(tmp_path, monkeypatch):
     finally:
         monkeypatch.undo()
         importlib.reload(config_mod)
+
+
+@pytest.mark.parametrize("sub", ["new", "close", "broadcast", "nudge", "diff", "seed"])
+def test_commands_grant_only_their_own_subcommand_and_are_user_invoked(tmp_path, sub):
+    """A bare `Bash` grant would let a model-invoked command run any shell;
+    every template narrows to its subcommand and is typed by the user (or the
+    daemon), never invoked by the model."""
+    commands_dir = tmp_path / "commands"
+    config_mod.install_claude_commands(commands_dir)
+    head = (commands_dir / f"cockpit-{sub}.md").read_text().split("---")[1]
+    assert f"allowed-tools: Bash(cockpit {sub}:*)\n" in head
+    assert "disable-model-invocation: true" in head

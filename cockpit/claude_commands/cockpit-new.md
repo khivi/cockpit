@@ -1,7 +1,8 @@
 ---
 description: "Create a git worktree + workspace for a new branch, existing PR, or Slack thread."
 argument-hint: "<branch|PR|url> | --pr N | --branch X | --cwd P | --skill S [--repo R] [--name X] [--context] [-- <text...>]"
-allowed-tools: Bash
+allowed-tools: Bash(cockpit new:*)
+disable-model-invocation: true
 ---
 
 Invoke the Bash tool with this exact command, then paste its stdout verbatim

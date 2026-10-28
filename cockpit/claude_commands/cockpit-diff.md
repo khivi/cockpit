@@ -1,7 +1,8 @@
 ---
 description: "Open the current worktree's diff in cmux's viewer, or address the line notes a reviewer left in it."
 argument-hint: "apply | [--branch|--staged|--unstaged|--last-turn] [--base REF]"
-allowed-tools: Bash
+allowed-tools: Bash(cockpit diff:*)
+disable-model-invocation: true
 ---
 
 If `$ARGUMENTS` is `apply`, follow **Addressing notes** below. Otherwise invoke

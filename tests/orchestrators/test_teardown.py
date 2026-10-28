@@ -182,7 +182,7 @@ def test_teardown_forced_bypasses_blockers(tmp_path):
         repo_name="repo",
         forced=True,
     )
-    p1, p2, p3, p4 = _patch_all(dirty=99, unlanded=99, pr_state="OPEN")
+    p1, p2, p3, p4 = _patch_all(dirty=0, unlanded=99, pr_state="OPEN")
     with (
         p1,
         p2,
@@ -204,6 +204,24 @@ def test_teardown_forced_bypasses_blockers(tmp_path):
     rm_mock.assert_called_once()
     cache_mock.assert_called_once_with("repo", "khivi/x")
     ff_mock.assert_called_once()
+
+
+def test_teardown_forced_refuses_tree_dirtied_after_enqueue(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    req = TeardownRequest(
+        ref="ws:1", worktree_path=wt, branch="khivi/x", repo_path=tmp_path, forced=True
+    )
+    with (
+        patch.object(teardown_mod, "count_dirty", return_value=2),
+        patch.object(teardown_mod, "cmux_close_workspace_best_effort") as close_mock,
+        patch.object(teardown_mod, "remove_worktree") as rm_mock,
+    ):
+        ok, blockers = teardown(req)
+    assert not ok
+    assert any("uncommitted" in b for b in blockers)
+    close_mock.assert_not_called()
+    rm_mock.assert_not_called()
 
 
 def test_teardown_no_worktree_skips_remove(tmp_path):

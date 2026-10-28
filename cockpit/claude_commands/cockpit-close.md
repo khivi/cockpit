@@ -1,7 +1,8 @@
 ---
 description: "Queue a cockpit worktree + workspace teardown for the daemon (defaults to the current workspace)."
 argument-hint: "[branch|slug|path] [--force] [--dry-run]"
-allowed-tools: Bash
+allowed-tools: Bash(cockpit close:*)
+disable-model-invocation: true
 ---
 
 Invoke the Bash tool with this exact command, then paste its stdout verbatim:

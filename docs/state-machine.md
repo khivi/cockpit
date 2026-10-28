@@ -184,7 +184,7 @@ flowchart TD
 
   K -->|"MERGED / branch gone"| AC{"autoclose<br/>blockers?"}
   AC -->|"dirty · open PR (reused branch) · muted ·<br/>draft · ci≠green · unaddressed"| SK["skip (log reason),<br/>keep worktree"]
-  AC -->|"clean & merged"| TD["teardown(worktree_path=…):<br/>workspace → worktree → branch* → cache"]
+  AC -->|"clean & merged"| TD["teardown(worktree_path=…):<br/>workspace → worktree → branch* → cache<br/>(re-reads dirty at removal)"]
 
   K -->|"no open PR"| OP["orphan: pills only<br/>(no nudge, no close)"]
 

@@ -1,7 +1,8 @@
 ---
 description: "Inspect or change cockpit's nudge mutes/snoozes for a PR (mute, unmute, snooze, wake, list, status, forget)."
 argument-hint: "mute|unmute|snooze|wake|list|status|forget [pr] [--until 2h] [--reason ...]"
-allowed-tools: Bash
+allowed-tools: Bash(cockpit nudge:*)
+disable-model-invocation: true
 ---
 
 Invoke the Bash tool with this exact command, then paste its stdout verbatim:

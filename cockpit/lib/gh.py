@@ -744,7 +744,7 @@ class PR:
 
 _PR_FIELDS = """
   id number title body url isDraft headRefName baseRefName headRefOid mergeable reviewDecision updatedAt state
-  mergeStateStatus viewerCanUpdateBranch
+  mergeStateStatus viewerCanUpdateBranch isCrossRepository
   author { login __typename }
   baseRef { branchProtectionRule { requiredStatusChecks { context } dismissesStaleReviews } }
   reviewThreads(first: 100) {
@@ -877,6 +877,14 @@ def _review_decision(pr_node: dict, pr_author: str) -> str:
 def _pr_from_node(n: dict, self_user: str = "") -> PR | None:
     author = (n.get("author") or {}).get("login")
     if not author:
+        return None
+    # The per-branch alias matches on head ref *name* alone, so a fork PR whose
+    # head ref equals a local branch would join that worktree and spawn a
+    # review session past the `review_prs` / `review_external` gates. A
+    # cross-repo PR is admitted only when it is mine (my own fork contribution);
+    # a coworker's fork PR reaches cockpit through `list_open_pr_heads`, which
+    # carries those gates.
+    if n.get("isCrossRepository") and self_user and author != self_user:
         return None
     commit = (n["commits"]["nodes"] or [{}])[0].get("commit") or {}
     # `checkSuites` is a non-null connection type in GH's GraphQL schema, so an
