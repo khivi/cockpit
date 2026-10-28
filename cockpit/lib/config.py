@@ -1124,7 +1124,9 @@ def credential_env_names(cfg: dict | None = None) -> set[str]:
 
     The daemon holds these; spawned agent sessions must not (they read trackers
     through their MCP connectors), so `_bg_spawn_pr` strips exactly this set from
-    the child environment. Names only — a value never leaves `os.environ`.
+    the child environment, and every claude launch carries the same set as an
+    `env -u` prefix (`prompts.claude_command(strip_env=...)`). Names only — a
+    value never leaves `os.environ`.
     """
     cfg = cfg if cfg is not None else load_config()
     sources: list[dict | None] = [None]
