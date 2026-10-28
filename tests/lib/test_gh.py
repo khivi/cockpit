@@ -442,6 +442,25 @@ def test_pr_fields_query_includes_head_ref_oid():
     assert "headRefOid" in _PR_FIELDS
 
 
+def test_pr_from_node_drops_foreign_fork_pr_but_keeps_my_own():
+    """A fork PR sharing a head ref name with a local branch must not join the
+    worktree (it would bypass the review_prs/review_external gates)."""
+    from cockpit.lib.gh import _pr_from_node
+
+    fork = _full_pr_node(author={"login": "mallory"}, isCrossRepository=True)
+    assert _pr_from_node(fork, "khivi") is None
+    mine = _full_pr_node(author={"login": "khivi"}, isCrossRepository=True)
+    assert _pr_from_node(mine, "khivi") is not None
+    same_repo = _full_pr_node(author={"login": "alice"}, isCrossRepository=False)
+    assert _pr_from_node(same_repo, "khivi") is not None
+
+
+def test_pr_fields_query_includes_is_cross_repository():
+    from cockpit.lib.gh import _PR_FIELDS
+
+    assert "isCrossRepository" in _PR_FIELDS
+
+
 # ── _identify_stale — force a refetch on cached ci="unknown" ────────────────
 
 
