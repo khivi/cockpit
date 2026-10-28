@@ -70,3 +70,14 @@ def test_tag_consumers_require_main_ancestry_before_secrets(name: str) -> None:
     assert body.index(check) < min(
         body.index(m) for m in ("secrets.", "uv build") if m in body
     ), f"{name} checks ancestry after a secret or build step"
+
+
+def test_bump_tap_job_declares_an_environment() -> None:
+    """The tap PAT is only gateable by a deployment-tag policy if the job that
+    reads it names an environment."""
+    body = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    job = re.search(r"\n  bump-tap:\n(.*?)(?=\n  \S|\Z)", body, re.S)
+    assert job, "release.yml has no bump-tap job"
+    assert re.search(
+        r"^    environment: \S+", job.group(1), re.M
+    ), "bump-tap names no environment, so HOMEBREW_TAP_TOKEN has no deployment gate"

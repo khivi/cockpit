@@ -36,6 +36,7 @@ permissions:
 jobs:
   bump-tap:
     runs-on: ubuntu-latest
+    environment: homebrew
     steps:
       - uses: actions/checkout@v7
         with:
