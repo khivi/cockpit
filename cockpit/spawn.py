@@ -1299,7 +1299,11 @@ def main(argv: list[str] | None = None) -> int:
         # slash-command line.
         initial, followup = split_prompt_prefix(prompt)
         new_ref = spawn_workspace(
-            ws_name, wt, claude_command(initial, strip_env=credential_env_names())
+            ws_name,
+            wt,
+            claude_command(
+                initial, strip_env=credential_env_names(), review=bool(args.review)
+            ),
         )
         if new_ref is not None and followup:
             deliver_followup(new_ref, followup, cwd=wt)

@@ -112,6 +112,17 @@ def test_claude_command_none_is_bare_claude():
     assert claude_command(None) == "claude"
 
 
+def test_claude_command_review_loads_only_user_settings():
+    cmd = claude_command("hi", review=True)
+    assert cmd == "claude --setting-sources user 'hi'"
+    assert "--setting-sources" not in claude_command("hi")
+
+
+def test_claude_command_combines_env_strip_and_review_flags():
+    cmd = claude_command("hi", strip_env=["X"], review=True)
+    assert cmd == "env -u 'X' claude --setting-sources user 'hi'"
+
+
 def test_claude_command_print_mode_adds_the_flag():
     assert claude_command("hi there", print_mode=True) == "claude -p 'hi there'"
     assert claude_command(None, print_mode=True) == "claude -p"
@@ -131,7 +142,7 @@ def test_pr_workspace_spawn_launches_claude_without_credentials():
     from cockpit.lib import cmux as cmux_mod
 
     wt = type("W", (), {"workspace_name": "n", "path": "/x", "short": "s"})()
-    pr = type("P", (), {"number": 1, "display_issue": None})()
+    pr = type("P", (), {"number": 1, "display_issue": None, "mine": True})()
     with (
         patch.object(cmux_mod, "build_pr_prompt", return_value="p"),
         patch.object(cmux_mod, "spawn_workspace", return_value=None) as sw,

@@ -3581,3 +3581,18 @@ def test_rest_pending_is_true_only_for_a_wait_that_ends_on_its_own(reason, pendi
     from cockpit.lib.cmux import rest_pending
 
     assert rest_pending(reason) is pending
+
+
+@pytest.mark.parametrize(("mine", "review"), [(True, False), (False, True)])
+def test_spawn_pr_workspace_restricts_claude_only_on_a_coworkers_pr(mine, review):
+    ctx, _ = _patched_pr_spawn(followup=None)
+    with (
+        ctx[0],
+        ctx[1],
+        patch("cockpit.lib.cmux.claude_command", return_value="claude initial") as cc,
+        ctx[3],
+        ctx[4],
+        ctx[5],
+    ):
+        cmux_mod.spawn_pr_workspace(_pr(mine=mine), _wt())
+    assert cc.call_args.kwargs["review"] is review

@@ -1773,7 +1773,9 @@ def spawn_pr_workspace(
         return None
     initial, followup = split_prompt_prefix(build_pr_prompt(pr))
     ref = spawn_workspace(
-        wt.workspace_name, wt.path, claude_command(initial, strip_env=strip_env)
+        wt.workspace_name,
+        wt.path,
+        claude_command(initial, strip_env=strip_env, review=not pr.mine),
     )
     if ref is None:
         print(

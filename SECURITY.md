@@ -36,5 +36,12 @@ Two per-repo gates guard that, both defaulting to `false`
   reaches PRs from non-collaborators. Leave it off unless you accept
   exposing fork-PR content to an auto-spawned agent.
 
+Review sessions (a PR that is not yours) start `claude` with
+`--setting-sources user`, so your own settings, hooks, permissions, MCP servers,
+skills and commands load, while the PR tree's `.claude/settings.json` and
+`settings.local.json` (hooks, permissions) do not. Not covered: a `.mcp.json`,
+`CLAUDE.md`, skills or commands shipped in the tree may still load, and Claude
+Code's own trust prompt for the directory still applies.
+
 Auto-review is dry-run: it never auto-posts comments or submits an
 approve/request-changes verdict. A human authorizes any of that.

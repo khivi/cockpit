@@ -45,11 +45,19 @@ def split_prompt_prefix(prompt: str | None) -> tuple[str | None, str | None]:
     return prompt, None
 
 
+# A review session runs in a checkout of someone else's PR head. Loading only
+# the user's settings keeps that tree's project/local settings (hooks,
+# permissions) out while the owner's own setup still applies. The tree's
+# .mcp.json, CLAUDE.md, skills and commands are NOT covered.
+REVIEW_CLAUDE_FLAGS = "--setting-sources user"
+
+
 def claude_command(
     prompt: str | None,
     *,
     print_mode: bool = False,
     strip_env: Iterable[str] = (),
+    review: bool = False,
 ) -> str:
     """Build the `claude [prompt]` shell command for the *initial* turn.
 
@@ -67,8 +75,12 @@ def claude_command(
     routes through it — the workspace spawns in `cmux.py` and `_run_repo_skills`'
     blocking `fast_skills` run — so swapping the agent stays a one-function
     change. An inline `claude ...` at a call site quietly costs that.
+    `review` adds `REVIEW_CLAUDE_FLAGS`, for a session on a PR head that is not
+    the user's own.
     """
     flag = " -p" if print_mode else ""
+    if review:
+        flag += f" {REVIEW_CLAUDE_FLAGS}"
     names = sorted(set(strip_env))
     env = f"env {' '.join(f'-u {shell_quote(n)}' for n in names)} " if names else ""
     if prompt is None:
