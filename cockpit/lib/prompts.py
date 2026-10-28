@@ -56,7 +56,7 @@ def claude_command(
     prompt: str | None,
     *,
     print_mode: bool = False,
-    strip_env: Iterable[str] = (),
+    strip_env: Iterable[str],
     review: bool = False,
 ) -> str:
     """Build the `claude [prompt]` shell command for the *initial* turn.
@@ -69,7 +69,9 @@ def claude_command(
     `strip_env` names variables to remove from the session's environment, as an
     `env -u NAME` prefix on the command itself. A launched terminal's env is
     cmux's to decide, so scrubbing the caller's env does not confine the session.
-    Callers pass `config.credential_env_names(cfg)`: the helper fetches nothing.
+    Required, so a launch path cannot forget it: a caller with nothing to strip
+    passes `()`. Callers pass `config.credential_env_names(cfg)`: the helper
+    fetches nothing.
 
     This is the **only** place the agent binary is named. Every launch path
     routes through it — the workspace spawns in `cmux.py` and `_run_repo_skills`'
