@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .config import (
     github_dev_done,
@@ -356,7 +357,9 @@ def _footer_url(
         if not repo_dir or not pr_number:
             return None
         body = pr_body(Path(repo_dir), pr_number)
-    return dict(parse(body)).get(ref)
+    url = dict(parse(body)).get(ref)
+    # A PR body is author-controlled; only a web URL may reach `open_url`.
+    return url if url and urlsplit(url).scheme.lower() in ("http", "https") else None
 
 
 def _linear_ticket_url(

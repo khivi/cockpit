@@ -40,6 +40,7 @@ from collections import deque
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ClassVar
+from urllib.parse import urlsplit
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -1771,6 +1772,14 @@ class CockpitApp(App[None]):
     @staticmethod
     def _workspace_ref_by_name(name: str) -> str | None:
         return next((ref for ref, n in workspace_names().items() if n == name), None)
+
+    def open_url(self, url: str, *, new_tab: bool = True) -> None:
+        # Cached strings can predate the footer scheme check; never hand a
+        # non-web scheme (file:, custom handlers) to the OS opener.
+        if urlsplit(url).scheme.lower() not in ("http", "https"):
+            self.notify("refusing to open a non-http(s) URL", severity="warning")
+            return
+        super().open_url(url, new_tab=new_tab)
 
     def _notify(self, message: str, *, severity: str = "information") -> None:
         """Toast feedback, safe from a worker thread. The log pane is removed,
