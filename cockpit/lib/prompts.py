@@ -47,7 +47,7 @@ def split_prompt_prefix(prompt: str | None) -> tuple[str | None, str | None]:
 # A review session runs in a checkout of someone else's PR head. Loading only
 # the user's settings keeps that tree's project/local settings (hooks,
 # permissions) out while the owner's own setup still applies. The tree's
-# `.mcp.json`, CLAUDE.md, skills and commands are NOT covered.
+# .mcp.json, CLAUDE.md, skills and commands are NOT covered.
 REVIEW_CLAUDE_FLAGS = "--setting-sources user"
 
 
