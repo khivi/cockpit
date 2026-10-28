@@ -332,14 +332,14 @@ def test_linear_fetch_titles_threads_the_resolved_key(monkeypatch):
     f.assert_called_once_with(["PE-1"], api_key="lin_secret")
 
 
-def test_linear_fetch_states_passes_none_when_the_named_var_is_unset(monkeypatch):
+def test_linear_fetch_states_passes_empty_when_the_named_var_is_unset(monkeypatch):
     monkeypatch.delenv("LIN_MISSING", raising=False)
     repo = {"tickets": {"provider": "linear", "token_env": "LIN_MISSING"}}
     with patch.object(tickets, "fetch_ticket_states", return_value={}) as f:
         tickets.LINEAR.fetch_states(
             ["PE-1"], repo_nwo="o/r", repo_dir="/", cfg={}, repo_entry=repo
         )
-    f.assert_called_once_with(["PE-1"], api_key=None)
+    f.assert_called_once_with(["PE-1"], api_key="")
 
 
 def test_jira_fetch_states_threads_the_resolved_token(monkeypatch):
@@ -994,7 +994,7 @@ def test_jira_adapters_forward_repo_override_over_global(monkeypatch):
     titles.assert_called_once_with(["P-1"], **want)
 
 
-def test_jira_adapters_pass_none_token_when_env_unset(monkeypatch):
+def test_jira_adapters_pass_empty_token_when_env_unset(monkeypatch):
     monkeypatch.delenv("JIRA_API_TOKEN", raising=False)
     cfg = {
         "tickets": {
@@ -1005,7 +1005,7 @@ def test_jira_adapters_pass_none_token_when_env_unset(monkeypatch):
     }
     with patch.object(tickets, "_jira_fetch_myself", return_value=None) as me:
         assert tickets.JIRA.whoami(cfg, None, None) is None
-    assert me.call_args.kwargs["token"] is None
+    assert me.call_args.kwargs["token"] == ""
 
 
 def test_linear_whoami_and_verify_scopes_forward_the_resolved_key(monkeypatch):
@@ -1023,7 +1023,7 @@ def test_linear_whoami_and_verify_scopes_forward_the_resolved_key(monkeypatch):
     verify.assert_called_once_with(["PE", "X"], api_key="lin_secret")
 
 
-def test_linear_adapters_pass_none_when_the_named_var_is_unset(monkeypatch):
+def test_linear_adapters_pass_empty_when_the_named_var_is_unset(monkeypatch):
     monkeypatch.delenv("LIN_MISSING", raising=False)
     repo = {"tickets": {"provider": "linear", "token_env": "LIN_MISSING"}}
     with (
@@ -1032,8 +1032,8 @@ def test_linear_adapters_pass_none_when_the_named_var_is_unset(monkeypatch):
     ):
         assert tickets.LINEAR.whoami({}, repo, None) is None
         assert tickets.LINEAR.verify_scopes(["PE"], cfg={}, repo_entry=repo) is None
-    me.assert_called_once_with(api_key=None)
-    verify.assert_called_once_with(["PE"], api_key=None)
+    me.assert_called_once_with(api_key="")
+    verify.assert_called_once_with(["PE"], api_key="")
 
 
 def test_trello_whoami_and_verify_scopes_forward_key_and_token(monkeypatch):
@@ -1056,7 +1056,7 @@ def test_trello_whoami_and_verify_scopes_forward_key_and_token(monkeypatch):
     verify.assert_called_once_with(["B"], key="k1", token="t1")
 
 
-def test_trello_adapters_pass_none_when_credentials_unset(monkeypatch):
+def test_trello_adapters_pass_empty_when_credentials_unset(monkeypatch):
     for name in ("TRELLO_API_KEY", "TRELLO_API_TOKEN", "TRELLO_KEY", "TRELLO_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     cfg = {
@@ -1066,7 +1066,7 @@ def test_trello_adapters_pass_none_when_credentials_unset(monkeypatch):
     monkeypatch.delenv("NOPE_T", raising=False)
     with patch.object(tickets, "_trello_fetch_myself", return_value=None) as me:
         assert tickets.TRELLO.whoami(cfg, None, None) is None
-    me.assert_called_once_with(key=None, token=None)
+    me.assert_called_once_with(key="", token="")
 
 
 def test_github_whoami_passes_repo_dir_through():
