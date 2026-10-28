@@ -6845,3 +6845,9 @@ def test_reap_falls_back_to_the_process_login_when_the_host_cannot_answer(
     _, req = cr.iter_pending()[0]
     assert req.ref == "workspace:99"  # still reaped — only the ref delete is gated
     assert req.branch is None
+
+
+@pytest.fixture(autouse=True)
+def _teardown_dirty_check_clean(monkeypatch):
+    """Tmp dirs here are not git repos; strict `count_dirty` would read them as unknown."""
+    monkeypatch.setattr(teardown_mod, "count_dirty", lambda *_a, **_kw: 0)

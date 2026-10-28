@@ -104,8 +104,10 @@ def worktree_state_blockers(
     blockers: list[str] = []
     if worktree_path is None or not worktree_path.is_dir():
         return blockers
-    dirty = count_dirty(worktree_path)
-    if dirty > 0:
+    dirty = count_dirty(worktree_path, strict=True)
+    if dirty is None:
+        blockers.append("could not verify commit state")
+    elif dirty > 0:
         blockers.append(f"{dirty} uncommitted file(s)")
     if pr_merged:
         return blockers
@@ -244,7 +246,9 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
         # `forced` overrides only the soft open-PR blocker. The dirty tree is
         # re-read here, at removal time, because the enqueue-time check can be
         # up to `STALE_SECONDS` old and autoclose's is a cycle-start snapshot.
-        dirty = count_dirty(req.worktree_path)
+        dirty = count_dirty(req.worktree_path, strict=True)
+        if dirty is None:
+            return False, ["could not verify commit state"]
         if dirty > 0:
             return False, [f"{dirty} uncommitted file(s)"]
 

@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple, overload
 
 from . import run
 
@@ -199,14 +199,20 @@ def worktree_age_seconds(path: Path, *, now: float | None = None) -> float:
     return max(0.0, ref - created)
 
 
-def count_dirty(wt_path: Path) -> int:
+@overload
+def count_dirty(wt_path: Path, *, strict: Literal[False] = False) -> int: ...
+@overload
+def count_dirty(wt_path: Path, *, strict: Literal[True]) -> int | None: ...
+def count_dirty(wt_path: Path, *, strict: bool = False) -> int | None:
     """Count uncommitted entries (modified/added/deleted/untracked).
 
-    Returns 0 on git failure so a transient error doesn't promote clean → WIP.
+    On git failure returns 0 so a transient error doesn't promote clean → WIP
+    (display callers). Destructive guards pass `strict=True`, which returns
+    None ("couldn't ask") instead, so an unknown state refuses.
     """
     res = _git(wt_path, "status", "--porcelain")
     if res.returncode != 0:
-        return 0
+        return None if strict else 0
     return sum(1 for line in res.stdout.splitlines() if line.strip())
 
 
@@ -963,7 +969,8 @@ def resync_to_origin(wt_path: Path, branch: str, *, expected_head: str) -> bool:
     """
     if not branch or not expected_head:
         return False
-    if count_dirty(wt_path) > 0:
+    dirty = count_dirty(wt_path, strict=True)
+    if dirty is None or dirty > 0:
         return False
     if head_oid(wt_path) != expected_head:
         return False
