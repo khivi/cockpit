@@ -1398,8 +1398,55 @@ def test_create_worktree_pr_num_short_circuits_the_other_four_paths(
     )
 
     assert branch == "feature-34"
-    assert calls == []
+    assert not any("fetch" in c for c in calls)
     assert _run(repo, "rev-parse", branch) == pr_sha
+
+
+def test_create_worktree_pr_num_fast_forwards_a_stale_local_branch(
+    cockpit_repo, tmp_path
+) -> None:
+    repo = cockpit_repo.repo
+    old = _run(repo, "rev-parse", "main")
+    _run(repo, "branch", "feature-41", "main")
+    pr_sha = _push_as_pr_head(repo, "41", "pr-change.txt", "pr content\n")
+
+    create_worktree(repo, "feature-41", tmp_path / "wt", base="main", pr_num="41")
+
+    assert old != pr_sha
+    assert _run(repo, "rev-parse", "feature-41") == pr_sha
+
+
+def test_create_worktree_pr_num_keeps_local_commits_ahead_of_pr_head(
+    cockpit_repo, tmp_path
+) -> None:
+    repo = cockpit_repo.repo
+    pr_sha = _push_as_pr_head(repo, "42", "pr-change.txt", "pr content\n")
+    _run(repo, "branch", "feature-42", pr_sha)
+    _run(repo, "checkout", "-q", "feature-42")
+    _commit(repo, "local.txt", "unpushed\n")
+    local = _run(repo, "rev-parse", "HEAD")
+    _run(repo, "checkout", "-q", "main")
+
+    create_worktree(repo, "feature-42", tmp_path / "wt", base="main", pr_num="42")
+
+    assert _run(repo, "rev-parse", "feature-42") == local
+
+
+def test_create_worktree_pr_num_refuses_to_overwrite_a_diverged_local_branch(
+    cockpit_repo, tmp_path
+) -> None:
+    repo = cockpit_repo.repo
+    _run(repo, "checkout", "-q", "-b", "feature-43")
+    _commit(repo, "local.txt", "unpushed\n")
+    local = _run(repo, "rev-parse", "HEAD")
+    _run(repo, "checkout", "-q", "main")
+    _push_as_pr_head(repo, "43", "pr-change.txt", "pr content\n")
+
+    with pytest.raises(RuntimeError, match="diverged"):
+        create_worktree(repo, "feature-43", tmp_path / "wt", base="main", pr_num="43")
+
+    assert _run(repo, "rev-parse", "feature-43") == local
+    assert not (tmp_path / "wt").exists()
 
 
 # ── worktree_root: sibling of main_worktree_path ─────────────────────────────
