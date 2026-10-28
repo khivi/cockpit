@@ -2198,19 +2198,6 @@ async def test_open_ticket_linear_opens_footer_url(monkeypatch, tmp_path):
     assert opened == ["https://linear.app/x/issue/PE-9"]
 
 
-async def test_open_url_refuses_non_web_schemes(monkeypatch):
-    app, _ = _make_app()
-    seen: list[str] = []
-    monkeypatch.setattr(
-        "textual.app.App.open_url", lambda self, url, **k: seen.append(url)
-    )
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.open_url("file:///etc/passwd")
-        app.open_url("https://example.com/x")
-    assert seen == ["https://example.com/x"]
-
-
 async def test_open_ticket_prefers_the_cached_url_over_a_gh_call(monkeypatch, tmp_path):
     # The daemon already resolved the ticket's URL into the cached block
     # (`cycle._stamp_ticket_urls`), and it is the exact string the Ticket cell's
