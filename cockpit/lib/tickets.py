@@ -394,7 +394,7 @@ def _linear_fetch_states(
     by `tickets.token_env`), so two orgs can use different Linear workspaces.
     repo_nwo/repo_dir are unused, kept for a uniform `fetch_states` signature.
     """
-    return fetch_ticket_states(ids, api_key=linear_api_key(cfg, repo_entry) or None)
+    return fetch_ticket_states(ids, api_key=linear_api_key(cfg, repo_entry))
 
 
 def _linear_fetch_titles(
@@ -408,7 +408,7 @@ def _linear_fetch_titles(
     """`{id: title}` via the batched Linear query (one per team). Same per-repo
     key resolution as `_linear_fetch_states`; repo_nwo/repo_dir unused, kept for
     the uniform `fetch_titles` signature."""
-    return fetch_ticket_titles(ids, api_key=linear_api_key(cfg, repo_entry) or None)
+    return fetch_ticket_titles(ids, api_key=linear_api_key(cfg, repo_entry))
 
 
 def _jira_fetch_states(
@@ -430,7 +430,7 @@ def _jira_fetch_states(
     if not site or not email:
         return {i: None for i in ids}
     return fetch_issue_statuses(
-        ids, site_url=site, email=email, token=jira_api_token(cfg, repo_entry) or None
+        ids, site_url=site, email=email, token=jira_api_token(cfg, repo_entry)
     )
 
 
@@ -449,7 +449,7 @@ def _jira_fetch_titles(
     if not site or not email:
         return {i: None for i in ids}
     return fetch_issue_summaries(
-        ids, site_url=site, email=email, token=jira_api_token(cfg, repo_entry) or None
+        ids, site_url=site, email=email, token=jira_api_token(cfg, repo_entry)
     )
 
 
@@ -491,8 +491,8 @@ def _trello_fetch_states(
     unset (feature off)."""
     return fetch_card_lists(
         ids,
-        key=trello_api_key(cfg, repo_entry) or None,
-        token=trello_api_token(cfg, repo_entry) or None,
+        key=trello_api_key(cfg, repo_entry),
+        token=trello_api_token(cfg, repo_entry),
     )
 
 
@@ -510,8 +510,8 @@ def _trello_fetch_titles(
     All ids map to None when creds are unset (feature off)."""
     return fetch_card_handles(
         ids,
-        key=trello_api_key(cfg, repo_entry) or None,
-        token=trello_api_token(cfg, repo_entry) or None,
+        key=trello_api_key(cfg, repo_entry),
+        token=trello_api_token(cfg, repo_entry),
     )
 
 
@@ -587,7 +587,7 @@ def _linear_my_open(
     exactly those states (`tickets.inbox_states`, case-exact). `nwos` unused —
     Linear scopes by team key, not by repo."""
     return _linear_fetch_my_open(
-        scopes, api_key=linear_api_key(cfg, repo_entry) or None, states=states
+        scopes, api_key=linear_api_key(cfg, repo_entry), states=states
     )
 
 
@@ -610,7 +610,7 @@ def _jira_my_open(
         scopes,
         site_url=site,
         email=email,
-        token=jira_api_token(cfg, repo_entry) or None,
+        token=jira_api_token(cfg, repo_entry),
         states=states,
     )
 
@@ -661,8 +661,8 @@ def _trello_my_open(
         return []
     cards = _trello_fetch_my_open(
         scopes,
-        key=trello_api_key(cfg, repo_entry) or None,
-        token=trello_api_token(cfg, repo_entry) or None,
+        key=trello_api_key(cfg, repo_entry),
+        token=trello_api_token(cfg, repo_entry),
     )
     if cards is None or not states:
         return cards
@@ -674,7 +674,7 @@ def _linear_whoami(
     cfg: dict, repo_entry: dict | None = None, repo_dir: str | None = None
 ) -> str | None:
     """`whoami` for Linear: the API key's own user id. `repo_dir` unused."""
-    return _linear_fetch_viewer_id(api_key=linear_api_key(cfg, repo_entry) or None)
+    return _linear_fetch_viewer_id(api_key=linear_api_key(cfg, repo_entry))
 
 
 def _jira_whoami(
@@ -686,7 +686,7 @@ def _jira_whoami(
     if not site or not email:
         return None
     return _jira_fetch_myself(
-        site_url=site, email=email, token=jira_api_token(cfg, repo_entry) or None
+        site_url=site, email=email, token=jira_api_token(cfg, repo_entry)
     )
 
 
@@ -695,8 +695,8 @@ def _trello_whoami(
 ) -> str | None:
     """`whoami` for Trello: the authenticated member id. `repo_dir` unused."""
     return _trello_fetch_myself(
-        key=trello_api_key(cfg, repo_entry) or None,
-        token=trello_api_token(cfg, repo_entry) or None,
+        key=trello_api_key(cfg, repo_entry),
+        token=trello_api_token(cfg, repo_entry),
     )
 
 
@@ -714,7 +714,7 @@ def _linear_verify_scopes(
 ) -> list[str] | None:
     """`verify_scopes` for Linear: which declared `tickets.keys` name a team in
     the workspace this credential opens."""
-    return _linear_verify_keys(scopes, api_key=linear_api_key(cfg, repo_entry) or None)
+    return _linear_verify_keys(scopes, api_key=linear_api_key(cfg, repo_entry))
 
 
 def _jira_verify_scopes(
@@ -730,7 +730,7 @@ def _jira_verify_scopes(
         scopes,
         site_url=site,
         email=email,
-        token=jira_api_token(cfg, repo_entry) or None,
+        token=jira_api_token(cfg, repo_entry),
     )
 
 
@@ -741,8 +741,8 @@ def _trello_verify_scopes(
     board on this account."""
     return _trello_verify_boards(
         scopes,
-        key=trello_api_key(cfg, repo_entry) or None,
-        token=trello_api_token(cfg, repo_entry) or None,
+        key=trello_api_key(cfg, repo_entry),
+        token=trello_api_token(cfg, repo_entry),
     )
 
 
