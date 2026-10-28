@@ -798,7 +798,7 @@ def _linear_narrow_repos(ref: str, candidates: list[dict], cfg: dict) -> list[di
         if linear_project(cfg, repo):
             by_env.setdefault(linear_token_env(cfg, repo), []).append(repo)
     for group in by_env.values():
-        key = linear_api_key(cfg, group[0]) or None
+        key = linear_api_key(cfg, group[0])
         if not key:
             continue
         project = fetch_ticket_project(ref, api_key=key)
@@ -840,8 +840,8 @@ def _trello_narrow_repos(ref: str, candidates: list[dict], cfg: dict) -> list[di
             creds = (trello_key_env(cfg, repo), trello_token_env(cfg, repo))
             by_creds.setdefault(creds, []).append(repo)
     for group in by_creds.values():
-        key = trello_api_key(cfg, group[0]) or None
-        token = trello_api_token(cfg, group[0]) or None
+        key = trello_api_key(cfg, group[0])
+        token = trello_api_token(cfg, group[0])
         if not key or not token:
             continue
         board = fetch_card_board(short, key=key, token=token)
