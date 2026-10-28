@@ -126,10 +126,12 @@ def _auth_header(email: str, token: str) -> str:
 
 
 def _creds(email: str | None, token: str | None) -> tuple[str, str] | None:
-    """`(email, token)` with `token` defaulting to `$JIRA_API_TOKEN`, or None
+    """`(email, token)` with `token` defaulting to `$JIRA_API_TOKEN` only when None
+    (an empty string is a resolved "no credential", never replaced), or None
     when either is missing — the "feature is off" short-circuit before any call.
     """
-    token = token or os.environ.get(JIRA_API_TOKEN_ENV)
+    if token is None:
+        token = os.environ.get(JIRA_API_TOKEN_ENV)
     if not email or not token:
         return None
     return email, token

@@ -921,6 +921,23 @@ async def test_hover_sets_header_and_value_tooltips(cache_dir, monkeypatch):
         )
 
 
+@pytest.mark.asyncio
+async def test_hover_tooltip_is_literal_not_markup(cache_dir):
+    from textual.content import Content
+    from textual.coordinate import Coordinate
+
+    wt = _wt(path="hovermarkup", branch="khivi/hover")
+    app = _Host()
+    async with app.run_test() as pilot:
+        table = app.query_one(WorktreeTable)
+        table.update_inventory([("R", "R", None, "none", [wt])])
+        await pilot.pause()
+        table._cell_tooltips[str(wt.path)] = ["https://x.example/[/a]"] * 20
+        table.watch_hover_coordinate(Coordinate(0, 0), Coordinate(1, 0))
+        assert isinstance(table.tooltip, Content)
+        assert table.tooltip.plain == "https://x.example/[/a]"
+
+
 class _Host(App[None]):
     def compose(self) -> ComposeResult:
         yield WorktreeTable(id="table")

@@ -306,7 +306,7 @@ def fetch_ticket_states(
     their fetched states). Never raises.
     """
     out: dict[str, str | None] = {tid: None for tid in ticket_ids}
-    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    key = os.environ.get(LINEAR_API_KEY_ENV) if api_key is None else api_key
     if not key:
         return out
 
@@ -355,7 +355,7 @@ def fetch_ticket_titles(
     workflow state. Never raises.
     """
     out: dict[str, str | None] = {tid: None for tid in ticket_ids}
-    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    key = os.environ.get(LINEAR_API_KEY_ENV) if api_key is None else api_key
     if not key:
         return out
 
@@ -417,7 +417,7 @@ def fetch_my_open(
     the feature is deterministically off, not transiently unreachable. Never
     raises.
     """
-    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    key = os.environ.get(LINEAR_API_KEY_ENV) if api_key is None else api_key
     if not key:
         return []
     wanted = [k.upper() for k in (keys or []) if k]
@@ -470,7 +470,7 @@ def fetch_ticket_project(ticket_id: str, *, api_key: str | None = None) -> str |
     outside any project (`Issue.project` is nullable), or any API failure. Every
     None case simply leaves the caller's candidate set un-narrowed.
     """
-    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    key = os.environ.get(LINEAR_API_KEY_ENV) if api_key is None else api_key
     if not key:
         return None
     if not LINEAR_RE_CI.fullmatch(ticket_id or ""):
@@ -501,7 +501,7 @@ def fetch_viewer_id(*, api_key: str | None = None) -> str | None:
     the caller then transitions nothing (fail-safe: never touch a ticket we
     can't confirm is ours).
     """
-    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    key = os.environ.get(LINEAR_API_KEY_ENV) if api_key is None else api_key
     if not key:
         return None
     data = _post_graphql(
@@ -528,7 +528,7 @@ def verify_team_keys(
     wanted = [k for k in keys if k]
     if not wanted:
         return []
-    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    key = os.environ.get(LINEAR_API_KEY_ENV) if api_key is None else api_key
     if not key:
         return None
     data = _post_graphql(
@@ -557,7 +557,7 @@ def fetch_ticket_meta(ticket_id: str, *, api_key: str | None = None) -> dict | N
 
     None — never raises — on missing key, an unparsable id, or any API failure.
     """
-    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    key = os.environ.get(LINEAR_API_KEY_ENV) if api_key is None else api_key
     if not key:
         return None
     if not LINEAR_RE_CI.fullmatch(ticket_id or ""):
@@ -595,7 +595,7 @@ def fetch_team_states(team_id: str, *, api_key: str | None = None) -> dict | Non
     Casefolded keys mirror the case-insensitive matching the dev-done pill uses.
     None on missing key or API failure.
     """
-    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    key = os.environ.get(LINEAR_API_KEY_ENV) if api_key is None else api_key
     if not key or not team_id:
         return None
     data = _post_graphql(
@@ -626,7 +626,7 @@ def update_ticket_state(
     Never raises. Callers (cycle._transition_merged_tickets) own the policy of
     *whether* to call this — this just performs the mutation.
     """
-    key = api_key or os.environ.get(LINEAR_API_KEY_ENV)
+    key = os.environ.get(LINEAR_API_KEY_ENV) if api_key is None else api_key
     if not key or not issue_uuid or not state_id:
         return False
     data = _post_graphql(

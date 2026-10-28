@@ -142,8 +142,10 @@ def _creds(key: str | None = None, token: str | None = None) -> tuple[str, str] 
     """`(key, token)` defaulting to `$TRELLO_API_KEY` / `$TRELLO_API_TOKEN`, or
     None when either is missing — the "feature is off" short-circuit before any
     call."""
-    key = key or os.environ.get(TRELLO_API_KEY_ENV)
-    token = token or os.environ.get(TRELLO_API_TOKEN_ENV)
+    if key is None:
+        key = os.environ.get(TRELLO_API_KEY_ENV)
+    if token is None:
+        token = os.environ.get(TRELLO_API_TOKEN_ENV)
     if not key or not token:
         return None
     return key, token
