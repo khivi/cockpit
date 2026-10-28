@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -2391,6 +2391,7 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
                 self_user=ctx.self_user,
                 pref=ctx.prefs.get(pr.number),
                 dry=ctx.dry,
+                strip_env=credential_env_names(ctx.cfg),
             )
     if ctx.review_candidates:
         # Dependabot PRs are coworker-authored, so they'd flow through the
@@ -2455,7 +2456,7 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
             continue
         if _too_young_to_adopt(wt, "orphan-spawn"):
             continue
-        spawn_orphan_workspace(wt, dry=ctx.dry)
+        spawn_orphan_workspace(wt, dry=ctx.dry, strip_env=credential_env_names(ctx.cfg))
 
 
 def _resolve_skill_prompt(name: str, repo_path: Path) -> str | None:
@@ -2477,7 +2478,9 @@ def _resolve_skill_prompt(name: str, repo_path: Path) -> str | None:
     return None
 
 
-def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
+def _run_repo_skills(
+    repo_entry: dict, *, dry: bool, strip_env: Iterable[str] = ()
+) -> None:
     """Run fast_skills (blocking, non-interactive) and slow_skills (workspace spawn)
     configured on the repo entry.
 
@@ -2494,7 +2497,7 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
                 flush=True,
             )
             continue
-        command = claude_command(prompt, print_mode=True)
+        command = claude_command(prompt, print_mode=True, strip_env=strip_env)
         if dry:
             print(f"  dry: {command} in {repo_path}", flush=True)
             continue
@@ -2528,7 +2531,9 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool) -> None:
                 flush=True,
             )
             continue
-        ref = spawn_workspace(ws_name, repo_path, claude_command(initial))
+        ref = spawn_workspace(
+            ws_name, repo_path, claude_command(initial, strip_env=strip_env)
+        )
         if ref is not None and followup:
             deliver_followup(ref, followup, cwd=repo_path)
 
@@ -3219,7 +3224,7 @@ def cycle_repo(
         dry=dry,
     )
     if workspaces_ready:
-        _run_repo_skills(repo_entry, dry=dry)
+        _run_repo_skills(repo_entry, dry=dry, strip_env=credential_env_names(ctx.cfg))
 
 
 def _drain_close_requests(dry: bool) -> None:

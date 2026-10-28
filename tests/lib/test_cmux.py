@@ -3595,4 +3595,4 @@ def test_spawn_pr_workspace_restricts_claude_only_on_a_coworkers_pr(mine, review
         ctx[5],
     ):
         cmux_mod.spawn_pr_workspace(_pr(mine=mine), _wt())
-    assert cc.call_args.kwargs == {"review": review}
+    assert cc.call_args.kwargs["review"] is review
