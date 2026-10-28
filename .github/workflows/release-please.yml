@@ -45,7 +45,7 @@ name: release-please
 # here. cut-release.sh commits `chore(release): <version>` — a different prefix,
 # so a manual release still triggers a run, which is right: it tags out of band.
 #
-# It runs under COCKPIT_GITHUB_API_TOKEN rather than the default GITHUB_TOKEN
+# It runs under HOMEBREW_TAP_TOKEN rather than the default GITHUB_TOKEN
 # for the other half of that recursion rule: a pull request opened by
 # GITHUB_TOKEN does not trigger workflows, so the release PR would sit forever
 # with none of `main`'s required checks (ci, pre-commit, lint-pr-title) ever
@@ -85,7 +85,7 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          token: ${{ secrets.COCKPIT_GITHUB_API_TOKEN }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-release: true

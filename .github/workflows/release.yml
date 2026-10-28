@@ -21,7 +21,7 @@ name: release
 # branch, so v1.5.1 and v1.6.0 silently never reached the tap. The ruleset only
 # blocks deletion + non-fast-forward, so a direct commit is allowed.
 #
-# Requires an Actions secret `COCKPIT_GITHUB_API_TOKEN`: a PAT with Contents
+# Requires an Actions secret `HOMEBREW_TAP_TOKEN`: a PAT with Contents
 # write on khivi/homebrew-cockpit (the default GITHUB_TOKEN can't write to a
 # different repo).
 
@@ -62,4 +62,4 @@ jobs:
           # Commit straight onto the tap's main — see the note above.
           create-branch: false
         env:
-          COMMITTER_TOKEN: ${{ secrets.COCKPIT_GITHUB_API_TOKEN }}
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
