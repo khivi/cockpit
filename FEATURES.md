@@ -467,7 +467,8 @@ session about a decision.
 
 `cockpit setup` installs `/cockpit-new`, `/cockpit-close`, `/cockpit-broadcast`,
 `/cockpit-nudge` and `/cockpit-diff` into Claude Code, so you can run all of these from
-inside a session. `/cockpit-diff apply` works through the notes left in the diff viewer;
+inside a session. Only you can invoke them: Claude cannot call them on its own, and each
+one can run only its own `cockpit` subcommand. `/cockpit-diff apply` works through the notes left in the diff viewer;
 cockpit usually sends it for you.
 
 ---

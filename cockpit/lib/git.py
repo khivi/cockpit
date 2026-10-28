@@ -690,6 +690,35 @@ def origin_base_resolves(repo: Path, base: str) -> bool:
     )
 
 
+def _fetch_pr_head(repo: Path, pr_num: str, branch: str) -> None:
+    """Fetch `refs/pull/{pr_num}/head` into local `branch` without losing work.
+
+    A forced fetch into an existing local branch would repoint it and drop any
+    unpushed commits (or hijack an unrelated branch that shares a fork PR's head
+    name). With a local branch present, fetch to FETCH_HEAD and only fast-forward
+    it; keep it if it already contains the PR head; refuse if the two diverge.
+    """
+    src = f"refs/pull/{pr_num}/head"
+    if not _has_local_branch(repo, branch):
+        run(["git", "-C", str(repo), "fetch", "origin", f"+{src}:refs/heads/{branch}"])
+        return
+    run(["git", "-C", str(repo), "fetch", "origin", src])
+    head = _git(repo, "rev-parse", "FETCH_HEAD").stdout.strip()
+
+    def anc(a: str, b: str) -> bool:
+        return _git(repo, "merge-base", "--is-ancestor", a, b).returncode == 0
+
+    if anc(head, branch):
+        return
+    if anc(branch, head):
+        run(["git", "-C", str(repo), "update-ref", f"refs/heads/{branch}", head])
+        return
+    raise RuntimeError(
+        f"local branch {branch!r} has diverged from PR #{pr_num}; "
+        "refusing to overwrite it"
+    )
+
+
 def create_worktree(
     repo: Path,
     branch: str,
@@ -711,16 +740,7 @@ def create_worktree(
       5. new            → create from origin/{base} (prefix applied to short names)
     """
     if pr_num:
-        run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "fetch",
-                "origin",
-                f"+refs/pull/{pr_num}/head:refs/heads/{branch}",
-            ]
-        )
+        _fetch_pr_head(repo, pr_num, branch)
         run(["git", "-C", str(repo), "worktree", "add", str(wt_path), branch])
         return branch
 

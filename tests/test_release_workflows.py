@@ -56,3 +56,17 @@ def test_tag_yml_keeps_its_artipacked_exemption() -> None:
     assert (
         "- tag.yml" in section.group()
     ), f"zizmor.yml no longer exempts tag.yml from artipacked: {section.group()!r}"
+
+
+@pytest.mark.covers("release.main-provenance~1")
+@pytest.mark.parametrize("name", ["release.yml", "publish.yml"])
+def test_tag_consumers_require_main_ancestry_before_secrets(name: str) -> None:
+    """A pushed v* tag alone must not release: the tagged commit has to be on
+    main, checked before the first step that touches a secret or OIDC."""
+    body = (WORKFLOWS_DIR / name).read_text(encoding="utf-8")
+    check = 'git merge-base --is-ancestor "$SHA" origin/main'
+    assert check in body, f"{name} does not check main ancestry"
+    assert "fetch-depth: 0" in body
+    assert body.index(check) < min(
+        body.index(m) for m in ("secrets.", "uv build") if m in body
+    ), f"{name} checks ancestry after a secret or build step"

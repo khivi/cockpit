@@ -46,6 +46,9 @@
 - [release.tag-yml~1] `tag.yml`'s checkout never sets
   `persist-credentials: false`. `zizmor.yml` keeps `tag.yml` on the
   `artipacked` ignore list.
+- [release.main-provenance~1] `release.yml` and `publish.yml` fail before
+  any secret or OIDC use unless the tagged commit is an ancestor of
+  `origin/main`.
 - [release.please-guard~1] (untested: process rule) The release-please skip
   guard keys off the commit subject. The title pattern and the guard change
   together.
