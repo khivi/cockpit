@@ -112,6 +112,12 @@ def test_claude_command_none_is_bare_claude():
     assert claude_command(None) == "claude"
 
 
+def test_claude_command_review_skips_project_settings_and_mcp():
+    cmd = claude_command("hi", review=True)
+    assert cmd == "claude --setting-sources user --strict-mcp-config 'hi'"
+    assert "--setting-sources" not in claude_command("hi")
+
+
 def test_claude_command_print_mode_adds_the_flag():
     assert claude_command("hi there", print_mode=True) == "claude -p 'hi there'"
     assert claude_command(None, print_mode=True) == "claude -p"

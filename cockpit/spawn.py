@@ -1297,7 +1297,9 @@ def main(argv: list[str] | None = None) -> int:
         # a SEPARATE second submission so the two don't collapse onto one
         # slash-command line.
         initial, followup = split_prompt_prefix(prompt)
-        new_ref = spawn_workspace(ws_name, wt, claude_command(initial))
+        new_ref = spawn_workspace(
+            ws_name, wt, claude_command(initial, review=bool(args.review))
+        )
         if new_ref is not None and followup:
             deliver_followup(new_ref, followup, cwd=wt)
     elif prompt:

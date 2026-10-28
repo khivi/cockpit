@@ -44,7 +44,16 @@ def split_prompt_prefix(prompt: str | None) -> tuple[str | None, str | None]:
     return prompt, None
 
 
-def claude_command(prompt: str | None, *, print_mode: bool = False) -> str:
+# A review session runs in a checkout of someone else's PR head. These flags
+# keep that tree's project/local settings (hooks, permissions) and `.mcp.json`
+# servers from loading. CLAUDE.md, skills and commands from the tree are NOT
+# covered. `--strict-mcp-config` also drops the user's own MCP servers.
+REVIEW_CLAUDE_FLAGS = "--setting-sources user --strict-mcp-config"
+
+
+def claude_command(
+    prompt: str | None, *, print_mode: bool = False, review: bool = False
+) -> str:
     """Build the `claude [prompt]` shell command for the *initial* turn.
 
     Prefix handling lives in `split_prompt_prefix` — pass it the ``initial``
@@ -56,8 +65,12 @@ def claude_command(prompt: str | None, *, print_mode: bool = False) -> str:
     routes through it — the workspace spawns in `cmux.py` and `_run_repo_skills`'
     blocking `fast_skills` run — so swapping the agent stays a one-function
     change. An inline `claude ...` at a call site quietly costs that.
+    `review` adds `REVIEW_CLAUDE_FLAGS`, for a session on a PR head that is not
+    the user's own.
     """
     flag = " -p" if print_mode else ""
+    if review:
+        flag += f" {REVIEW_CLAUDE_FLAGS}"
     if prompt is None:
         return f"claude{flag}"
     return f"claude{flag} {shell_quote(prompt)}"

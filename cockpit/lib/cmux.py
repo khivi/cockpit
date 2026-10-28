@@ -1768,7 +1768,9 @@ def spawn_pr_workspace(
             print(f"  [dry]   pill {key}={value}", flush=True)
         return None
     initial, followup = split_prompt_prefix(build_pr_prompt(pr))
-    ref = spawn_workspace(wt.workspace_name, wt.path, claude_command(initial))
+    ref = spawn_workspace(
+        wt.workspace_name, wt.path, claude_command(initial, review=not pr.mine)
+    )
     if ref is None:
         print(
             f"  warn: could not resolve new workspace ref for {wt.short}",
