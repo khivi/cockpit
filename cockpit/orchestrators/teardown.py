@@ -4,7 +4,8 @@ One callable is the single teardown sequence, driven by the daemon for both
 enqueued `cockpit close` requests (`cycle._drain_close_requests`) and
 autoclose-on-merge (`cycle._maybe_autoclose`). Order, every time:
 
-  1. Re-check blockers (dirty / unlanded / open PR) unless `forced`.
+  1. Re-check blockers (dirty / unlanded / open PR); `forced` skips all but
+     the dirty re-check.
   2. Close the cmux workspace.
   3. Remove the worktree if `worktree_path` exists on disk.
   4. Delete the local branch ref if `delete_branch` is set (and the branch is
@@ -239,6 +240,13 @@ def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str
         )
         if blockers:
             return False, blockers
+    elif req.worktree_path is not None and req.worktree_path.is_dir():
+        # `forced` overrides only the soft open-PR blocker. The dirty tree is
+        # re-read here, at removal time, because the enqueue-time check can be
+        # up to `STALE_SECONDS` old and autoclose's is a cycle-start snapshot.
+        dirty = count_dirty(req.worktree_path)
+        if dirty > 0:
+            return False, [f"{dirty} uncommitted file(s)"]
 
     action = "[dry] teardown" if dry else "teardown"
     detail = f"branch={req.branch}" if req.branch else f"cwd={req.worktree_path}"
