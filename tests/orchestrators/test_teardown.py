@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from cockpit.lib.git import count_dirty as real_count_dirty
 from cockpit.orchestrators import teardown as teardown_mod
 from cockpit.orchestrators.teardown import (
     TeardownRequest,
@@ -838,3 +839,39 @@ def test_teardown_primary_feature_checkout_failure_skips_delete(tmp_path, capsys
     assert ok  # non-fatal
     del_mock.assert_not_called()
     assert "git checkout main failed" in capsys.readouterr().err
+
+
+def test_probe_blockers_refuses_when_dirty_state_unknown(tmp_path, monkeypatch) -> None:
+    """A non-repo dir makes `git status` fail; that must block, not read clean."""
+    monkeypatch.setattr(teardown_mod, "count_dirty", real_count_dirty)
+    d = tmp_path / "wt"
+    d.mkdir()
+    blockers = teardown_mod.probe_blockers(d, "b", "r", is_primary=True)
+    assert blockers == ["could not verify commit state"]
+
+
+def test_forced_teardown_refuses_when_dirty_state_unknown(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(teardown_mod, "count_dirty", real_count_dirty)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    req = TeardownRequest(
+        ref="ws:1",
+        worktree_path=wt,
+        branch="khivi/x",
+        repo_path=tmp_path,
+        repo_name="repo",
+        forced=True,
+    )
+    with patch.object(teardown_mod, "remove_worktree") as rm:
+        ok, blockers = teardown(req)
+    assert not ok
+    assert blockers == ["could not verify commit state"]
+    rm.assert_not_called()
+
+
+@pytest.fixture(autouse=True)
+def _clean_by_default(monkeypatch):
+    """Tmp dirs here are not git repos; strict `count_dirty` would read them as unknown."""
+    monkeypatch.setattr(teardown_mod, "count_dirty", lambda *_a, **_kw: 0)

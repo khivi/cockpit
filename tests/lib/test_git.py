@@ -1693,3 +1693,24 @@ def test_hung_network_git_times_out_and_kills_its_ssh_grandchild(tmp_path, monke
     assert time.monotonic() - start < 10
     assert res.returncode == 124
     assert "timed out" in res.stderr
+
+
+def test_count_dirty_git_failure_is_zero_by_default_none_when_strict(tmp_path) -> None:
+    """Display callers keep 0; destructive guards (`strict=True`) get None."""
+    notrepo = tmp_path / "not-a-repo"
+    notrepo.mkdir()
+    assert gitlib.count_dirty(notrepo) == 0
+    assert gitlib.count_dirty(notrepo, strict=True) is None
+
+
+def test_count_dirty_strict_counts_real_changes(cockpit_repo) -> None:
+    repo = cockpit_repo.repo
+    assert gitlib.count_dirty(repo, strict=True) == 0
+    (repo / "new.txt").write_text("x")
+    assert gitlib.count_dirty(repo, strict=True) == 1
+
+
+def test_resync_to_origin_refuses_when_dirty_state_unknown(tmp_path) -> None:
+    notrepo = tmp_path / "not-a-repo"
+    notrepo.mkdir()
+    assert gitlib.resync_to_origin(notrepo, "b", expected_head="abc") is False
