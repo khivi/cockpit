@@ -117,6 +117,29 @@ def test_claude_command_print_mode_adds_the_flag():
     assert claude_command(None, print_mode=True) == "claude -p"
 
 
+def test_claude_command_strips_named_env_from_the_session():
+    cmd = claude_command("hi", strip_env={"LINEAR_API_KEY", "JIRA_API_TOKEN"})
+    assert cmd == "env -u 'JIRA_API_TOKEN' -u 'LINEAR_API_KEY' claude 'hi'"
+    assert claude_command(None, strip_env=["X"]) == "env -u 'X' claude"
+
+
+def test_pr_workspace_spawn_launches_claude_without_credentials():
+    """The daemon's adoption path launches through cmux, whose terminal env is
+    cmux's to decide: the strip must ride the command itself."""
+    from unittest.mock import patch
+
+    from cockpit.lib import cmux as cmux_mod
+
+    wt = type("W", (), {"workspace_name": "n", "path": "/x", "short": "s"})()
+    pr = type("P", (), {"number": 1, "display_issue": None})()
+    with (
+        patch.object(cmux_mod, "build_pr_prompt", return_value="p"),
+        patch.object(cmux_mod, "spawn_workspace", return_value=None) as sw,
+    ):
+        cmux_mod.spawn_pr_workspace(pr, wt, strip_env={"LINEAR_API_KEY"})
+    assert sw.call_args.args[2].startswith("env -u 'LINEAR_API_KEY' claude")
+
+
 def test_no_launch_path_spells_the_agent_binary_inline():
     """`claude_command` is the only place the agent binary is named.
 

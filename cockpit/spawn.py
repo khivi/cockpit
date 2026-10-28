@@ -118,6 +118,7 @@ from cockpit.lib.cmux import (
 from cockpit.lib.codename import codename
 from cockpit.lib.config import (
     actions_command,
+    credential_env_names,
     discover_repo,
     find_repo_by_name,
     find_repo_by_nwo,
@@ -1297,7 +1298,9 @@ def main(argv: list[str] | None = None) -> int:
         # a SEPARATE second submission so the two don't collapse onto one
         # slash-command line.
         initial, followup = split_prompt_prefix(prompt)
-        new_ref = spawn_workspace(ws_name, wt, claude_command(initial))
+        new_ref = spawn_workspace(
+            ws_name, wt, claude_command(initial, strip_env=credential_env_names())
+        )
         if new_ref is not None and followup:
             deliver_followup(new_ref, followup, cwd=wt)
     elif prompt:

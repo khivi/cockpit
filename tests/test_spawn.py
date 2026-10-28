@@ -1599,7 +1599,10 @@ def test_blank_spawn_seeds_no_plan_prompt(spawn_main, monkeypatch):
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     assert "PLAN ONLY" not in cmd
     assert "fresh task" not in cmd
-    assert cmd == "claude"  # no prompt_prefix configured → bare claude
+    assert (
+        cmd
+        == "env -u 'JIRA_API_TOKEN' -u 'LINEAR_API_KEY' -u 'TRELLO_API_KEY' -u 'TRELLO_API_TOKEN' claude"
+    )  # no prompt_prefix configured → bare claude
 
 
 def test_blank_spawn_still_applies_prompt_prefix(spawn_main, cockpit_repo, monkeypatch):
@@ -1636,7 +1639,10 @@ def test_prefix_and_body_split_into_two_sends(spawn_main, cockpit_repo, monkeypa
 
     cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
     # Initial command is the prefix alone — body text is NOT collapsed onto it.
-    assert cmd == "claude '/session-coordination'"
+    assert (
+        cmd
+        == "env -u 'JIRA_API_TOKEN' -u 'LINEAR_API_KEY' -u 'TRELLO_API_KEY' -u 'TRELLO_API_TOKEN' claude '/session-coordination'"
+    )
     assert "PLAN ONLY" not in cmd
     assert "#99" not in cmd
     # The body arrives as a single separate follow-up send.

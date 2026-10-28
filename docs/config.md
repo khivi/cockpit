@@ -199,7 +199,9 @@ Trello accounts) each get their own credential: set `token_env` once in the
 ```
 
 Credentials are **daemon-only**: `cockpit new` processes the daemon spawns get an
-environment with every configured credential var stripped. A spawned agent reads
+environment with every configured credential var stripped, and every Claude
+session cockpit launches starts under `env -u` for each of those names, so the
+result does not depend on which environment cmux gives a new terminal. A spawned agent reads
 its tracker through the Linear/Jira/Trello MCP connector, not the REST key.
 
 A repo whose provider is configured but whose credential variable is **unset**
