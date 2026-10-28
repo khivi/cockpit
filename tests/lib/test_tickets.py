@@ -121,6 +121,14 @@ def test_linear_ticket_url_reads_footer_link():
     pb.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    "url", ["file:///etc/passwd", "javascript:alert(1)", "ssh://h/x", "//evil/x"]
+)
+def test_footer_url_rejects_non_web_schemes(url):
+    body = f"Linear: [PE-9]({url})"
+    assert tickets.LINEAR.ticket_url("PE-9", body=body) is None
+
+
 def test_linear_ticket_url_none_without_pr_context():
     # No repo_dir / pr_number → can't fetch the body → no URL (no network call).
     with patch.object(tickets, "pr_body") as pb:
