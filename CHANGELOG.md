@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.17.9](https://github.com/khivi/cockpit/compare/v3.17.8...v3.17.9) (2026-10-28)
+
+
+### Bug Fixes
+
+* **ci:** require tagged commit on main before release and publish ([#607](https://github.com/khivi/cockpit/issues/607)) ([c95a7ad](https://github.com/khivi/cockpit/commit/c95a7ad7fa1d670bd45c92c6b79d6da8ec9a5d35))
+* **commands:** narrow slash-command Bash grants and make them user-invoked ([#600](https://github.com/khivi/cockpit/issues/600)) ([4c0d554](https://github.com/khivi/cockpit/commit/4c0d554744762d6d4322470be1b8f9feb57ff1a3))
+* **gh:** ignore foreign fork PRs in the head-branch join ([#601](https://github.com/khivi/cockpit/issues/601)) ([1404cb9](https://github.com/khivi/cockpit/commit/1404cb903ed6971984c016391491864aedde51e8))
+* **git:** fail closed when dirty state is unknown before destructive ops ([#614](https://github.com/khivi/cockpit/issues/614)) ([6abdf8c](https://github.com/khivi/cockpit/commit/6abdf8cc916bef1becc2c6c1b4d865ab6a3020a1))
+* **git:** stop PR fetch from overwriting a diverged local branch ([#606](https://github.com/khivi/cockpit/issues/606)) ([92d517c](https://github.com/khivi/cockpit/commit/92d517c9c9c50111686c1e147afaf47b87a1c7e5))
+* **prompts:** frame PR comment and CI text as data in the push-authorized prompt ([#599](https://github.com/khivi/cockpit/issues/599)) ([f164c93](https://github.com/khivi/cockpit/commit/f164c93315f6e48653adac9f93147db9865eaf24))
+* **spawn:** keep a PR tree's project settings and MCP out of review sessions ([#603](https://github.com/khivi/cockpit/issues/603)) ([7d977f7](https://github.com/khivi/cockpit/commit/7d977f7d3137913efbe31b963cd4a27f84640179))
+* **spawn:** launch every claude session under env -u for ticket credentials ([#604](https://github.com/khivi/cockpit/issues/604)) ([1562991](https://github.com/khivi/cockpit/commit/156299120ccc023e71f4eacc9379f9f10e04f03b))
+* **teardown:** re-check the dirty tree before a forced worktree removal ([#608](https://github.com/khivi/cockpit/issues/608)) ([4ceb741](https://github.com/khivi/cockpit/commit/4ceb741554d1d6efd9fc3e4fadbc0dcf66744ddf))
+* **tickets:** open only http(s) ticket URLs ([#602](https://github.com/khivi/cockpit/issues/602)) ([0446c1b](https://github.com/khivi/cockpit/commit/0446c1b67318b5582dfb1863fcf89011af004bba))
+* **tickets:** treat an empty resolved credential as no credential ([#609](https://github.com/khivi/cockpit/issues/609)) ([9ebc524](https://github.com/khivi/cockpit/commit/9ebc524a302a4f9b21cd21b36557b0d79f67cba9))
+* **tui:** render hover tooltips as literal text ([#605](https://github.com/khivi/cockpit/issues/605)) ([3a55573](https://github.com/khivi/cockpit/commit/3a55573c1f4459ac80847e9db52a1a78fcce62fa))
+
+
+### Documentation
+
+* **config:** note the env -u prefix on every claude launch in credential_env_names ([#611](https://github.com/khivi/cockpit/issues/611)) ([ef8ab95](https://github.com/khivi/cockpit/commit/ef8ab95d34f9fdab382ff421dfde1bdd38da235e))
+
 ## [3.17.8](https://github.com/khivi/cockpit/compare/v3.17.7...v3.17.8) (2026-10-21)
 
 
