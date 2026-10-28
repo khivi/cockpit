@@ -91,6 +91,7 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual import events
 from textual.binding import Binding, BindingType
+from textual.content import Content
 from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.widgets import DataTable
@@ -1313,7 +1314,10 @@ class WorktreeTable(DataTable):
         # `hover_coordinate` to `(row, column)` for a body cell and `(-1, column)`
         # for the column header, so one watcher covers both.
         super().watch_hover_coordinate(old, value)
-        self.tooltip = self._tooltip_for(value)
+        # `Content(...)` is literal: a bare str is parsed as markup, and cell
+        # text (URLs, titles, ticket states) is externally authored.
+        tip = self._tooltip_for(value)
+        self.tooltip = None if tip is None else Content(tip)
 
     def _tooltip_for(self, coord: Coordinate) -> str | None:
         """Hover hint for a coordinate: the column meaning on the header row
