@@ -2478,9 +2478,7 @@ def _resolve_skill_prompt(name: str, repo_path: Path) -> str | None:
     return None
 
 
-def _run_repo_skills(
-    repo_entry: dict, *, dry: bool, strip_env: Iterable[str] = ()
-) -> None:
+def _run_repo_skills(repo_entry: dict, *, dry: bool, strip_env: Iterable[str]) -> None:
     """Run fast_skills (blocking, non-interactive) and slow_skills (workspace spawn)
     configured on the repo entry.
 
@@ -2527,7 +2525,7 @@ def _run_repo_skills(
             extra = f" + followup {followup!r}" if followup else ""
             print(
                 f"  dry: spawn workspace {ws_name!r} with "
-                f"{claude_command(initial)!r}{extra}",
+                f"{claude_command(initial, strip_env=strip_env)!r}{extra}",
                 flush=True,
             )
             continue

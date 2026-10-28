@@ -1760,7 +1760,7 @@ def spawn_pr_workspace(
     self_user: str | None = None,
     pref: NudgePref | None = None,
     dry: bool = False,
-    strip_env: Iterable[str] = (),
+    strip_env: Iterable[str],
 ) -> str | None:
     """Spawn the tracked cmux workspace for a PR; apply pills, log to stdout.
 
@@ -1796,7 +1796,7 @@ def spawn_pr_workspace(
 
 
 def spawn_orphan_workspace(
-    wt: Worktree, *, dry: bool = False, strip_env: Iterable[str] = ()
+    wt: Worktree, *, dry: bool = False, strip_env: Iterable[str]
 ) -> str | None:
     """Spawn an orphan-worktree workspace (no PR); apply orphan + WIP pills."""
     if dry:

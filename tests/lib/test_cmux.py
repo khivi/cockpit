@@ -2568,7 +2568,7 @@ def test_spawn_pr_workspace_dry_run_prints_pills_and_calls_nothing():
             side_effect=lambda *a, **k: calls.append(("apply_pills", a, k)),
         ),
     ):
-        result = cmux_mod.spawn_pr_workspace(_pr(), _wt(), dry=True)
+        result = cmux_mod.spawn_pr_workspace(_pr(), _wt(), dry=True, strip_env=())
 
     assert result is None
     assert calls == []
@@ -2577,7 +2577,7 @@ def test_spawn_pr_workspace_dry_run_prints_pills_and_calls_nothing():
 def test_spawn_pr_workspace_dry_run_prints_one_pill_line_per_pill(capsys):
     pills = [("wip", "1 dirty", "#ff9500"), ("pr", "PR #1", "#16a34a")]
     with patch("cockpit.lib.cmux.status_pills", return_value=pills):
-        result = cmux_mod.spawn_pr_workspace(_pr(), _wt(), dry=True)
+        result = cmux_mod.spawn_pr_workspace(_pr(), _wt(), dry=True, strip_env=())
 
     assert result is None
     out = capsys.readouterr().out
@@ -2610,7 +2610,7 @@ def test_spawn_orphan_workspace_dry_run_prints_line_and_calls_nothing():
             side_effect=lambda *a, **k: calls.append(("apply_wip_pill", a, k)),
         ),
     ):
-        result = cmux_mod.spawn_orphan_workspace(_wt(), dry=True)
+        result = cmux_mod.spawn_orphan_workspace(_wt(), dry=True, strip_env=())
 
     assert result is None
     assert calls == []
@@ -2651,7 +2651,7 @@ def _patched_pr_spawn(
 def test_spawn_pr_workspace_delivers_followup_when_prompt_splits_in_two():
     ctx, calls = _patched_pr_spawn(followup="do the task")
     with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
-        result = cmux_mod.spawn_pr_workspace(_pr(), _wt())
+        result = cmux_mod.spawn_pr_workspace(_pr(), _wt(), strip_env=())
 
     assert result == "workspace:new"
     delivered = [c for c in calls if c[0] == "deliver_followup"]
@@ -2661,7 +2661,7 @@ def test_spawn_pr_workspace_delivers_followup_when_prompt_splits_in_two():
 def test_spawn_pr_workspace_skips_delivery_when_followup_is_empty():
     ctx, calls = _patched_pr_spawn(followup=None)
     with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
-        result = cmux_mod.spawn_pr_workspace(_pr(), _wt())
+        result = cmux_mod.spawn_pr_workspace(_pr(), _wt(), strip_env=())
 
     assert result == "workspace:new"
     assert [c for c in calls if c[0] == "deliver_followup"] == []
@@ -2670,7 +2670,7 @@ def test_spawn_pr_workspace_skips_delivery_when_followup_is_empty():
 def test_spawn_pr_workspace_followup_delivered_before_pills_are_applied():
     ctx, calls = _patched_pr_spawn(followup="do the task")
     with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
-        cmux_mod.spawn_pr_workspace(_pr(), _wt())
+        cmux_mod.spawn_pr_workspace(_pr(), _wt(), strip_env=())
 
     kinds = [c[0] for c in calls]
     assert kinds == ["deliver_followup", "apply_pills"]
@@ -2679,7 +2679,7 @@ def test_spawn_pr_workspace_followup_delivered_before_pills_are_applied():
 def test_spawn_pr_workspace_none_ref_warns_and_skips_pills_and_followup(capsys):
     ctx, calls = _patched_pr_spawn(followup="do the task", spawned_ref=None)
     with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
-        result = cmux_mod.spawn_pr_workspace(_pr(), _wt())
+        result = cmux_mod.spawn_pr_workspace(_pr(), _wt(), strip_env=())
 
     assert result is None
     assert calls == []
@@ -2723,7 +2723,7 @@ def _patched_orphan_spawn(
 def test_spawn_orphan_workspace_delivers_followup_when_prompt_splits_in_two():
     ctx, calls = _patched_orphan_spawn(followup="fresh worktree, no PR yet")
     with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
-        result = cmux_mod.spawn_orphan_workspace(_wt())
+        result = cmux_mod.spawn_orphan_workspace(_wt(), strip_env=())
 
     assert result == "workspace:orphan"
     delivered = [c for c in calls if c[0] == "deliver_followup"]
@@ -2735,7 +2735,7 @@ def test_spawn_orphan_workspace_delivers_followup_when_prompt_splits_in_two():
 def test_spawn_orphan_workspace_skips_delivery_when_followup_is_empty():
     ctx, calls = _patched_orphan_spawn(followup=None)
     with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
-        result = cmux_mod.spawn_orphan_workspace(_wt())
+        result = cmux_mod.spawn_orphan_workspace(_wt(), strip_env=())
 
     assert result == "workspace:orphan"
     assert [c for c in calls if c[0] == "deliver_followup"] == []
@@ -2745,7 +2745,7 @@ def test_spawn_orphan_workspace_sets_orphan_status_and_wip_pill_from_dirty_count
     ctx, calls = _patched_orphan_spawn(followup=None)
     wt = _wt(dirty=3)
     with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
-        result = cmux_mod.spawn_orphan_workspace(wt)
+        result = cmux_mod.spawn_orphan_workspace(wt, strip_env=())
 
     assert result == "workspace:orphan"
     status_calls = [c for c in calls if c[0] == "_set_status"]
@@ -2770,7 +2770,7 @@ def test_spawn_orphan_workspace_none_ref_warns_and_skips_everything(capsys):
         followup="fresh worktree, no PR yet", spawned_ref=None
     )
     with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
-        result = cmux_mod.spawn_orphan_workspace(_wt())
+        result = cmux_mod.spawn_orphan_workspace(_wt(), strip_env=())
 
     assert result is None
     assert calls == []
@@ -3594,5 +3594,5 @@ def test_spawn_pr_workspace_restricts_claude_only_on_a_coworkers_pr(mine, review
         ctx[4],
         ctx[5],
     ):
-        cmux_mod.spawn_pr_workspace(_pr(mine=mine), _wt())
+        cmux_mod.spawn_pr_workspace(_pr(mine=mine), _wt(), strip_env=())
     assert cc.call_args.kwargs["review"] is review
