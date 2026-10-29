@@ -27,6 +27,10 @@ Config-invoked shims — dispatched exactly like the above, but never typed:
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import argparse
 
 _SUBCOMMANDS = (
     "watch",
@@ -60,6 +64,32 @@ def _usage() -> str:
         "  (no subcommand defaults to watch)\n"
         "config-invoked shims: " + " | ".join(_SHIM_SUBCOMMANDS)
     )
+
+
+def parsers() -> dict[str, argparse.ArgumentParser | None]:
+    """Each subcommand's argparse parser, `None` where it takes no flags.
+
+    Read by `scripts/check_doc_cli_drift.py`. Imports every subcommand module,
+    so it stays off the dispatch path.
+    """
+    from cockpit import broadcast, close, config_cmd, diff, spawn
+    from cockpit import cockpit as daemon
+    from cockpit.lib import nudge_cli
+
+    daemon_parser = daemon.build_parser()
+    table: dict[str, argparse.ArgumentParser | None] = {
+        "watch": daemon_parser,
+        "setup": daemon_parser,
+        "new": spawn.build_parser(),
+        "close": close.build_parser(),
+        "diff": diff.build_parser(),
+        "nudge": nudge_cli.build_parser(),
+        "broadcast": broadcast.build_parser(),
+        "config": config_cmd.build_parser(),
+    }
+    for sub in (*_SUBCOMMANDS, *_SHIM_SUBCOMMANDS):
+        table.setdefault(sub, None)
+    return table
 
 
 def main(argv: list[str] | None = None) -> int:

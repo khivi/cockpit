@@ -569,7 +569,7 @@ def _report_backend() -> None:
         print(f"workspace backend: {tool}")
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument(
@@ -607,6 +607,11 @@ def main(argv: list[str] | None = None) -> int:
         "tool=none and a sandbox COCKPIT_HOME; the table then renders from "
         "seeded cache only.",
     )
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = build_parser()
     args = p.parse_args(argv)
 
     require_git()

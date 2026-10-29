@@ -297,7 +297,7 @@ def _unknown_repo_msg(name: str) -> str:
     )
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cockpit new",
         description=__doc__,
@@ -339,6 +339,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "calling agent can, so `/cockpit-new` expands it to `--context <text>` "
         "before invoking the CLI; reaching the CLI bare is an error.",
     )
+    return p
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = build_parser()
     raw = sys.argv[1:] if argv is None else argv
     if "--" in raw:
         idx = raw.index("--")

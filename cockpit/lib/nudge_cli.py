@@ -294,7 +294,7 @@ def _cmd_forget(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cockpit nudge",
         description="Manage cockpit nudge mutes (persisted under ~/.config/cockpit/cache/nudges/).",
@@ -339,6 +339,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     forget.add_argument("pr", type=int, nargs="?")
     forget.set_defaults(func=_cmd_forget)
+    return p
 
+
+def main(argv: list[str] | None = None) -> int:
+    p = build_parser()
     args = p.parse_args(argv)
     return int(args.func(args))
