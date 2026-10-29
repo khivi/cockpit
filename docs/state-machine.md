@@ -304,7 +304,10 @@ branch ref only when HEAD sits at the merged head with nothing on top.
   in `pill_state` with a `time.monotonic()` stamp; a second spawn within
   `_SPAWN_INFLIGHT_TTL_SECONDS` (600s) is skipped, so a manual slow-tick kick
   (the `s` key, or a `cockpit close`/`new` SIGUSR1) can't double-launch
-  mid-creation.
+  mid-creation. A relaunch means the worktree never appeared, so
+  `_spawn_wait_seconds` doubles the wait per launch (`spawn-n:` count in
+  `pill_state`), capped at `_SPAWN_BACKOFF_CAP_SECONDS` (6h). The count is
+  daemon-process-local and resets on restart.
 - **Adoption grace** (`_too_young_to_adopt`, `_SPAWN_ADOPT_GRACE_SECONDS` = 120s,
   not configurable): the in-flight guard above is a daemon-process-local dict, so
   it cannot see a *user-typed* `cockpit new` at all. That command creates the

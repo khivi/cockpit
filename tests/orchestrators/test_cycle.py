@@ -2881,6 +2881,35 @@ def test_bg_spawn_pr_retries_after_ttl(tmp_path, monkeypatch):
     popen.assert_called_once()
 
 
+def test_spawn_wait_doubles_per_relaunch_up_to_the_cap():
+    ttl = cycle._SPAWN_INFLIGHT_TTL_SECONDS
+    assert [cycle._spawn_wait_seconds(n) for n in (0, 1, 2, 3)] == [
+        ttl, ttl, 2 * ttl, 4 * ttl,
+    ]  # fmt: skip
+    assert cycle._spawn_wait_seconds(50) == cycle._SPAWN_BACKOFF_CAP_SECONDS
+
+
+def test_bg_spawn_pr_backs_off_a_spawn_that_keeps_failing(tmp_path, monkeypatch):
+    """The worktree never appears, so each relaunch waits twice as long."""
+    monkeypatch.setattr(cycle, "_SPAWN_LOG", tmp_path / "spawn.log")
+    ttl = cycle._SPAWN_INFLIGHT_TTL_SECONDS
+    ctx = _spawn_ctx(tmp_path)
+    clock = [0.0]
+    with (
+        patch.object(cycle.subprocess, "Popen") as popen,
+        patch.object(cycle.time, "monotonic", side_effect=lambda: clock[0]),
+    ):
+        launched = []
+        # Launch at 0; relaunch past 1x; then 2x must elapse, so 3x is too soon.
+        for t in (0, ttl + 1, 3 * ttl, 3 * ttl + 1):
+            clock[0] = float(t)
+            before = popen.call_count
+            cycle._bg_spawn_pr(ctx, "n", 9, "khivi/x", review=False)
+            launched.append(popen.call_count > before)
+    assert launched == [True, True, False, True]
+    assert ctx.pill_state["spawn-n:o/n:khivi/x"] == 3
+
+
 def test_bg_spawn_pr_omits_repo_flag_without_name(tmp_path, monkeypatch):
     """No config name → omit --repo and let the child discover by cwd."""
     monkeypatch.setattr(cycle, "_SPAWN_LOG", tmp_path / "spawn.log")

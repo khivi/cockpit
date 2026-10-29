@@ -2221,6 +2221,17 @@ _SPAWN_LOG = COCKPIT_HOME / "spawn.log"
 # so a manual SIGUSR1 kick can't double-launch while a `git fetch` +
 # worktree add is still in flight. Expires so a failed creation is retried.
 _SPAWN_INFLIGHT_TTL_SECONDS = 600
+# Each relaunch that finds the worktree still missing doubles the wait, so a
+# spawn that always fails stops relaunching every 10 minutes forever.
+_SPAWN_BACKOFF_CAP_SECONDS = 6 * 3600
+
+
+def _spawn_wait_seconds(launches: int) -> float:
+    """600s after the first launch, doubling per relaunch, capped at 6h."""
+    return min(
+        _SPAWN_INFLIGHT_TTL_SECONDS * (1 << max(0, launches - 1)),
+        _SPAWN_BACKOFF_CAP_SECONDS,
+    )
 
 
 def _bg_spawn_pr(
@@ -2255,9 +2266,12 @@ def _bg_spawn_pr(
     `CMUX_*`) — the child is a full `cockpit new`.
     """
     key = f"spawn:{ctx.owner}/{ctx.name}:{branch}"
+    count_key = f"spawn-n:{ctx.owner}/{ctx.name}:{branch}"
     last = ctx.pill_state.get(key)
+    n = ctx.pill_state.get(count_key)
+    launches = n if isinstance(n, int) else 0
     now = time.monotonic()
-    if isinstance(last, float) and (now - last) < _SPAWN_INFLIGHT_TTL_SECONDS:
+    if isinstance(last, float) and (now - last) < _spawn_wait_seconds(launches):
         return
     label = "bg-review" if review else "bg-spawn"
     if ctx.dry:
@@ -2304,6 +2318,7 @@ def _bg_spawn_pr(
         if logfile is not None:
             logfile.close()
     ctx.pill_state[key] = now
+    ctx.pill_state[count_key] = launches + 1
     action_log.record(
         "spawn",
         actor="daemon",
