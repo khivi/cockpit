@@ -88,12 +88,6 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `tickets` | object\|string | `{}` | Ticket-provider block (below). Bare string `"github"` == `{"provider": "github"}`. |
 | `org` | string | unset | Name of an entry in the top-level `orgs` object whose defaults this repo inherits (below). Must be defined there — a dangling reference hard-fails at start. |
 
-The flat `linear_keys` / `linear_dev_done_state` / `linear_merge_done_state` /
-`linear_done_on_merge` keys are **gone**, superseded by the `tickets` block's
-`keys` / `dev_done` / `merge_done` / `close_on_merge`. A leftover
-hard-fails at start with the field to move it to, rather than being ignored —
-each one silently disables a feature when it stops being read.
-
 ## `orgs` block
 
 A named bundle of **per-repo defaults**, for when you watch several small repos
@@ -174,18 +168,6 @@ export `CONFIG_FIELDS`); preflight rejects a field belonging to another provider
 | `token_env` | linear, jira, trello | `LINEAR_API_KEY` / `JIRA_API_TOKEN` / `TRELLO_API_TOKEN` | **Name** of the env var holding this provider's credential (the provider decides the default). |
 | `key_env` | trello | `TRELLO_API_KEY` | **Name** of the env var holding the Trello API key. Trello authenticates with a key *and* a token, so it is the one provider with two credential fields. |
 
-**Superseded spellings — rename them.** `dev_done` and `merge_done` replaced one
-name per provider, and `token_env` replaced Linear's `api_key_env`. The old names
-are **not** read: a leftover hard-fails at start naming its replacement, rather
-than being silently ignored (an ignored `dev_done_list` is a dev-done pill that
-goes dark with nothing said).
-
-| Rename this | To |
-|---|---|
-| `dev_done_state` (linear) · `dev_done_label` (github) · `dev_done_status` (jira) · `dev_done_list` (trello) | `dev_done` |
-| `merge_done_state` (linear) · `merge_done_status` (jira) · `merge_done_list` (trello) | `merge_done` |
-| `api_key_env` (linear) | `token_env` |
-
 Secrets are **env-only**, never config: `LINEAR_API_KEY`, `JIRA_API_TOKEN`,
 `TRELLO_API_KEY`, `TRELLO_API_TOKEN`. The `*_env` fields above store an env var
 *name*, never a value — which is how two orgs on separate Linear workspaces (or
@@ -255,5 +237,5 @@ bundled in the wheel, never to a command whose behaviour lives elsewhere.
 | `tui_theme` | string | `textual-dark` | Textual theme for the `cockpit watch` TUI chrome only. Persisted from the TUI theme picker. |
 | `statusline_hide` | list | `[]` | Statusline fields to hide from the footer. Any of: `model`, `context`, `rate-limit`, `repo`, `branch-identity`, `worktree-status`, `permission-mode`, `cost`, `session-time`, `ticket`, `pr-state`, `pr-num`, `pr-comments`, `pr-checks`, `pr-title`, `pr-muted`. |
 
-Global `tickets`, `skills`, and the legacy flat `linear_*` keys may also appear
+Global `tickets` and `skills` may also appear
 at top level as defaults inherited by repos that omit them.

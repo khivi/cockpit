@@ -338,63 +338,6 @@ def test_preflight_exits_on_unknown_skills_field(tmp_path, monkeypatch, capsys):
     assert "'bogus'" in err
 
 
-def test_preflight_exits_on_leftover_flat_review_command_global(
-    tmp_path, monkeypatch, capsys
-):
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "repos": [], "review_command": "/review"})
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "review_command" in err
-    assert "skills.review" in err
-
-
-def test_preflight_exits_on_leftover_flat_review_command_repo(
-    tmp_path, monkeypatch, capsys
-):
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight(
-            {"tool": "cmux", "repos": [{"name": "r", "review_command": "/review"}]}
-        )
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "review_command" in err
-    assert "skills.review" in err
-
-
-def test_preflight_exits_on_leftover_flat_prompt_prefix_global(
-    tmp_path, monkeypatch, capsys
-):
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight(
-            {"tool": "cmux", "repos": [], "prompt_prefix": "/session-coordination"}
-        )
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "prompt_prefix" in err
-    assert "skills.session" in err
-
-
-def test_preflight_exits_on_leftover_flat_prompt_prefix_repo(
-    tmp_path, monkeypatch, capsys
-):
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight(
-            {
-                "tool": "cmux",
-                "repos": [{"name": "r", "prompt_prefix": "/session-coordination"}],
-            }
-        )
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "prompt_prefix" in err
-    assert "skills.session" in err
-
-
 def test_preflight_exits_on_blank_base_remote_repo(tmp_path, monkeypatch, capsys):
     _all_required(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as exc:
@@ -585,151 +528,6 @@ def test_preflight_exits_on_provider_specific_field_without_provider_key(
         preflight({"tool": "cmux", "tickets": {"dev_done": "x"}})
     assert exc.value.code == 2
     assert "dev_done" in capsys.readouterr().err
-
-
-def test_preflight_exits_on_leftover_use_linear(tmp_path, monkeypatch, capsys):
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "use_linear": True})
-    assert exc.value.code == 2
-    assert "use_linear" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    ("legacy", "new"),
-    [
-        ("linear_keys", "tickets.keys"),
-        ("linear_dev_done_state", "tickets.dev_done"),
-        ("linear_done_on_merge", "tickets.close_on_merge"),
-        ("linear_merge_done_state", "tickets.merge_done"),
-    ],
-)
-def test_preflight_exits_on_leftover_flat_linear_key(
-    tmp_path, monkeypatch, capsys, legacy, new
-):
-    """Each removed flat key hard-fails naming its replacement. Ignoring one
-    instead would silently disable whatever it used to enable."""
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", legacy: True})
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert legacy in err
-    assert new in err
-
-
-@pytest.mark.parametrize(
-    ("legacy", "new"),
-    [
-        ("linear_keys", "tickets.keys"),
-        ("linear_done_on_merge", "tickets.close_on_merge"),
-    ],
-)
-def test_preflight_exits_on_leftover_flat_linear_key_per_repo(
-    tmp_path, monkeypatch, capsys, legacy, new
-):
-    """Checked per repo too, and the message names which repo."""
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "repos": [{"name": "r", legacy: True}]})
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert legacy in err
-    assert new in err
-    assert "'r'" in err
-
-
-@pytest.mark.parametrize(
-    ("legacy", "new", "provider"),
-    [
-        ("dev_done_state", "dev_done", "linear"),
-        ("merge_done_state", "merge_done", "linear"),
-        ("dev_done_label", "dev_done", "github"),
-        ("dev_done_status", "dev_done", "jira"),
-        ("merge_done_status", "merge_done", "jira"),
-        ("dev_done_list", "dev_done", "trello"),
-        ("merge_done_list", "merge_done", "trello"),
-        ("api_key_env", "token_env", "linear"),
-    ],
-)
-@pytest.mark.covers("tickets.legacy~1")
-def test_preflight_exits_on_superseded_tickets_field(
-    tmp_path, monkeypatch, capsys, legacy, new, provider
-):
-    """The per-provider spellings `dev_done`/`merge_done`/`token_env` unified are
-    rejected *by name*, with the replacement in the message. Accepting them
-    silently would keep the effective schema at twice the documented one."""
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight({"tool": "cmux", "tickets": {"provider": provider, legacy: "x"}})
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert legacy in err
-    assert new in err
-
-
-def test_superseded_field_reports_the_rename_not_an_unknown_field(
-    tmp_path, monkeypatch, capsys
-):
-    """A superseded spelling is *also* an unknown field for its provider, so the
-    migration check has to run before the schema check — otherwise the user is
-    told "unknown field 'dev_done_label'" when the actionable answer is "it is
-    now `dev_done`". Both are true; only one says what to do."""
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit):
-        preflight(
-            {"tool": "cmux", "tickets": {"provider": "github", "dev_done_label": "x"}}
-        )
-    err = capsys.readouterr().err
-    assert "is now `tickets.dev_done`" in err
-    assert "unknown field" not in err
-
-
-def test_preflight_exits_on_superseded_tickets_field_per_repo(
-    tmp_path, monkeypatch, capsys
-):
-    """Checked inside a repo's block too, naming the repo."""
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        preflight(
-            {
-                "tool": "cmux",
-                "repos": [
-                    {
-                        "name": "r",
-                        "tickets": {"provider": "trello", "dev_done_list": "Review"},
-                    }
-                ],
-            }
-        )
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "dev_done_list" in err
-    assert "dev_done" in err
-    assert "'r'" in err
-
-
-def test_preflight_exits_on_superseded_field_inherited_from_an_org(
-    tmp_path, monkeypatch, capsys
-):
-    """`validate_config` merges org defaults before validating, so a superseded
-    spelling on a shared `orgs` block is caught on every member repo — which is
-    exactly where a many-repos-one-team config would leave one behind."""
-    _all_required(tmp_path, monkeypatch)
-    with pytest.raises(SystemExit) as exc:
-        validate_config(
-            {
-                "tool": "cmux",
-                "orgs": {
-                    "acme": {"tickets": {"provider": "linear", "dev_done_state": "QA"}}
-                },
-                "repos": [{"name": "r", "path": "/x", "org": "acme"}],
-            }
-        )
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "dev_done_state" in err
-    assert "dev_done" in err
 
 
 def test_preflight_passes_on_valid_tickets_string(tmp_path, monkeypatch, capsys):
@@ -1333,7 +1131,7 @@ def test_preflight_rejects_a_credential_field_for_the_wrong_provider(
 
 def test_config_example_passes_validation():
     # config.example.json is the documented schema users copy settings from, so
-    # a key the daemon rejects (e.g. the removed `use_linear`) turns the docs
+    # a key the daemon rejects turns the docs
     # into a trap. Running it through the real validators here makes that drift
     # a CI failure, not a bug report.
     cfg = json.loads(CONFIG_EXAMPLE.read_text())
@@ -1341,10 +1139,10 @@ def test_config_example_passes_validation():
 
 
 def test_config_example_would_catch_a_dead_key():
-    # Guard the guard: prove validate_config actually rejects the key we removed,
-    # so a future re-introduction of `use_linear` (or similar) can't slip past.
+    # Guard the guard: prove validate_config actually rejects a field the
+    # provider doesn't declare, or the test above passes on anything.
     cfg = json.loads(CONFIG_EXAMPLE.read_text())
-    cfg["use_linear"] = False
+    cfg["tickets"] = {"provider": "linear", "dev_done_list": "Review"}
     with pytest.raises(SystemExit):
         validate_config(cfg)
 

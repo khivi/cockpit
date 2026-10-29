@@ -292,9 +292,6 @@ def test_canonical_workflow_fields_are_accepted_by_every_provider():
 
 
 def test_superseded_workflow_spellings_are_no_longer_in_the_schema():
-    # They are rejected here as unknown-for-the-provider; `preflight._check_legacy`
-    # is what turns that into a message naming the replacement, since this
-    # function can't tell a rename from a typo.
     for field, provider in [
         ("dev_done_state", "linear"),
         ("merge_done_state", "linear"),
