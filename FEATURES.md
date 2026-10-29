@@ -254,6 +254,11 @@ screen looks out of date.
 seed prompts, queued asks and queued close requests, each with its age. It only reads;
 an expired entry is shown, and the daemon drops it on its own.
 
+`cockpit ports` answers "why won't my database start?". List the ports a repo binds in
+its config `ports`, and it names whatever holds each one: a docker container, another
+worktree's dev server, or an ssh tunnel. It exits 1 when any port is taken, so a script
+can check before running `act`. `--all` checks every repo. It never stops anything.
+
 ### Keeping stale branches mergeable
 
 If your repo requires branches to be up to date before merging, a ready PR becomes

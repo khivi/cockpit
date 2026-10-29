@@ -58,3 +58,43 @@ def test_no_lsof_means_could_not_ask_and_no_warning(monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", str(tmp_path))
     assert ports.listeners_under(tmp_path) is None
     assert ports.close_warning(tmp_path) is None
+
+
+def _l(pid: int, port: str, cwd: str | None, command: str = "node") -> ports.Listener:
+    return ports.Listener(pid, command, port, Path(cwd) if cwd else None)
+
+
+@pytest.mark.covers("ports.holder~1")
+def test_holders_name_docker_worktree_or_process():
+    wts = {Path("/r"): "repo/main", Path("/r/feat"): "repo/feat"}
+    listeners = [
+        _l(1, "3000", "/r/feat/web"),
+        _l(1, "3000", "/r/feat/web"),
+        _l(2, "3306", "/", "ssh"),
+        _l(3, "5432", None, "com.docker.backend"),
+    ]
+    docker = {"5432": "pg-local"}
+    assert ports.holders(3000, listeners, wts, docker) == [
+        "worktree repo/feat (node, pid 1)"
+    ]
+    assert ports.holders(3306, listeners, wts, docker) == ["ssh (pid 2)"]
+    assert ports.holders(5432, listeners, wts, docker) == ["docker pg-local"]
+    assert ports.holders(6379, listeners, wts, docker) == []
+
+
+@pytest.mark.covers("ports.holder~1")
+def test_docker_published_maps_host_port_to_container(monkeypatch, tmp_path):
+    fake = tmp_path / "docker"
+    fake.write_text(
+        "#!/bin/sh\n"
+        "printf 'mysql-local\\t0.0.0.0:3306->3306/tcp, :::3306->3306/tcp\\n'\n"
+        "printf 'worker\\t\\n'\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert ports.docker_published() == {"3306": "mysql-local"}
+
+
+def test_docker_absent_is_empty(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert ports.docker_published() == {}

@@ -1,4 +1,4 @@
-"""Listening TCP processes running from inside a worktree, for the close warning.
+"""Listening TCP processes: who runs from a worktree, and who holds a declared port.
 
 A dev server outlives the session that started it and is reparented to
 launchd, so a process-tree walk loses it on exactly the case that matters. The
@@ -9,6 +9,8 @@ Read-only: it reports, never kills.
 
 from __future__ import annotations
 
+import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +21,7 @@ class Listener:
     pid: int
     command: str
     port: str
+    cwd: Path | None = None
 
 
 def _lsof(args: list[str], *, partial_ok: bool = False) -> str | None:
@@ -51,10 +54,10 @@ def _fields(out: str) -> list[dict[str, list[str]]]:
     return procs
 
 
-def listeners_under(root: Path) -> list[Listener] | None:
-    """Listening sockets whose process cwd is `root` or below it.
+def all_listeners() -> list[Listener] | None:
+    """Every listening socket, with its process cwd when lsof may read it.
 
-    None means lsof could not be asked; [] means nothing is listening there.
+    None means lsof could not be asked; [] means nothing is listening.
     """
     out = _lsof(["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"])
     if out is None:
@@ -73,18 +76,88 @@ def listeners_under(root: Path) -> list[Listener] | None:
     )
     if cwd_out is None:
         return None
-    root = root.resolve()
-    found: list[Listener] = []
+    cwds: dict[str, Path] = {}
     for p in _fields(cwd_out):
-        pid = p["p"][0]
         cwd = Path(p.get("n", [""])[0])
-        if pid not in sockets or not cwd.is_absolute():
+        if cwd.is_absolute():
+            cwds[p["p"][0]] = cwd
+    return [
+        Listener(int(pid), command, port, cwds.get(pid))
+        for pid, (command, ports) in sockets.items()
+        for port in ports
+    ]
+
+
+def _within(path: Path | None, root: Path) -> bool:
+    return path is not None and (path == root or root in path.parents)
+
+
+def listeners_under(root: Path) -> list[Listener] | None:
+    """Listening sockets whose process cwd is `root` or below it.
+
+    None means lsof could not be asked; [] means nothing is listening there.
+    """
+    found = all_listeners()
+    if found is None:
+        return None
+    root = root.resolve()
+    return [x for x in found if _within(x.cwd, root)]
+
+
+_PUBLISHED = re.compile(r":(\d+)->")
+
+
+def docker_published() -> dict[str, str]:
+    """Host port -> container name for every running container's published ports.
+
+    Docker Desktop and OrbStack listen through a backend proxy, so lsof alone
+    names the proxy, never the container. {} when docker is absent or fails.
+    """
+    if not shutil.which("docker"):
+        return {}
+    try:
+        proc = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}\t{{.Ports}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if proc.returncode != 0:
+        return {}
+    out: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        name, _, published = line.partition("\t")
+        for port in _PUBLISHED.findall(published):
+            out.setdefault(port, name)
+    return out
+
+
+def holders(
+    port: int,
+    listeners: list[Listener],
+    worktrees: dict[Path, str],
+    docker: dict[str, str],
+) -> list[str]:
+    """Who holds `port`: a docker container, a worktree by label, or a process."""
+    key = str(port)
+    if key in docker:
+        return [f"docker {docker[key]}"]
+    deepest_first = sorted(worktrees.items(), key=lambda kv: -len(kv[0].parts))
+    labels: list[str] = []
+    for x in listeners:
+        if x.port != key:
             continue
-        if cwd != root and root not in cwd.parents:
-            continue
-        command, ports = sockets[pid]
-        found.extend(Listener(int(pid), command, port) for port in ports)
-    return found
+        owner = next((lbl for p, lbl in deepest_first if _within(x.cwd, p)), None)
+        if owner is not None:
+            label = f"worktree {owner} ({x.command}, pid {x.pid})"
+        else:
+            label = f"{x.command} (pid {x.pid})"
+        if label not in labels:
+            labels.append(label)
+    return labels
 
 
 def describe(listeners: list[Listener]) -> str:
