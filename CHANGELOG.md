@@ -1,5 +1,32 @@
 # Changelog
 
+## [4.0.0](https://github.com/khivi/cockpit/compare/v3.17.10...v4.0.0) (2026-10-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** a config still using a retired top-level key is silently ignored instead of failing at startup.
+
+### Features
+
+* append-only action log of sends, skips, teardowns and spawns ([#618](https://github.com/khivi/cockpit/issues/618)) ([58712b5](https://github.com/khivi/cockpit/commit/58712b551a244070806a99bd7acc1f244fe72b69))
+* append-only actions.jsonl log of sends, skips, teardowns and spawns ([58712b5](https://github.com/khivi/cockpit/commit/58712b551a244070806a99bd7acc1f244fe72b69))
+* **cli:** add read-only cockpit status for parked repos and queued retries ([#617](https://github.com/khivi/cockpit/issues/617)) ([9370053](https://github.com/khivi/cockpit/commit/937005386dabe92be254e7345cd2e2037958ab85))
+* **spawn:** deny_tools config and keep review PRs' MCP servers off ([#620](https://github.com/khivi/cockpit/issues/620)) ([422504d](https://github.com/khivi/cockpit/commit/422504d697943800fbe510d959dcce27a1b3a4b8))
+* **tui:** show failed background spawns and why ([#624](https://github.com/khivi/cockpit/issues/624)) ([ca3bac8](https://github.com/khivi/cockpit/commit/ca3bac89dfc1e26a1c3e1abe6d1e2fb08a7ed6c6))
+
+
+### Bug Fixes
+
+* **config:** drop old-name config errors and fail on documented keys nothing reads ([#625](https://github.com/khivi/cockpit/issues/625)) ([701fd35](https://github.com/khivi/cockpit/commit/701fd35e9e6d15a7a3ffe3f851ee1fc85563adb3))
+* **cycle:** back off a background spawn that keeps failing ([#623](https://github.com/khivi/cockpit/issues/623)) ([44673e1](https://github.com/khivi/cockpit/commit/44673e1396dfe3eca2b59a84a4cd6624bdfac0db))
+* **log:** log a repeated skip once until its reason changes ([#621](https://github.com/khivi/cockpit/issues/621)) ([42ba4ab](https://github.com/khivi/cockpit/commit/42ba4abdbaa9928cbccb3813810aba6030f748eb))
+
+
+### Documentation
+
+* **todo:** evaluate tuicr as a better diff viewer ([#622](https://github.com/khivi/cockpit/issues/622)) ([7508515](https://github.com/khivi/cockpit/commit/7508515eba79e337d60394fa629082228d1194dc))
+
 ## [3.17.10](https://github.com/khivi/cockpit/compare/v3.17.9...v3.17.10) (2026-10-29)
 
 
