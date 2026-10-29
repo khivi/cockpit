@@ -101,6 +101,25 @@
   - **Do not** close any of these by rewording its bullet down to what the test asserts,
     or by waiving it — under-asserted is not unassertable.
 
+- **A better diff viewer than `cmux diff`** — evaluate [tuicr](https://tuicr.dev/) as
+  the viewer behind `cockpit diff`. It has one continuous scroll, vim keys, expandable
+  context, line/range/file comments, `tuicr pr <N>`, and a `tuicr review` CLI that
+  lists saved comments without opening the TUI. It also works off cmux (limux,
+  `tool: none`, ssh).
+  - **First, name what is wrong with `cmux diff`** (rendering, navigation, one-line
+    comments, cmux lock-in). If it is only the comment UX, inspect `tuicr review`'s
+    output first, because the integration depends on it.
+  - **Shape if built**: swap the viewer and keep the hand-over. `tuicr review` becomes
+    a second pending source behind `/cockpit-diff apply`. It adds no new send.
+    `_move_diff_to_caller_pane` is cmux-only.
+  - Read structured fields (file, line, text), never the markdown export, which embeds
+    hunks that `strip_control` mangles. This is the same reason `diff_comments.py` skips
+    `submissionText`.
+  - It contradicts AGENTS.md's "`cmux diff` is the viewer, no in-overlay renderer"
+    rule. Change that rule deliberately, in its own edit.
+  - Rejected: Rune-style edit-the-patch review in `$EDITOR`. The ask is a better
+    viewer, not an editor round-trip.
+
 ## Closed unbuilt
 
 - **A generated `SPEC.md`** — rejected. The `covers()` markers now claim hand-owned
