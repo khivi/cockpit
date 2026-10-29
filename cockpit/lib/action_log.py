@@ -23,6 +23,10 @@ from . import config
 LOG_NAME = "actions.jsonl"
 MAX_BYTES = 5 * 1024 * 1024
 
+# The fast-tick drains re-offer a busy session every 30s, so an unchanged
+# refusal would repeat ~120 lines/hour and rotate real sends out.
+_last_skip: dict[tuple[str, str | None], Any] = {}
+
 
 def record(
     action: str,
@@ -34,6 +38,13 @@ def record(
     detail: Any = None,
 ) -> None:
     """Append one JSON line. Never raises: a log failure must not break the action."""
+    key = (actor, ref)
+    if action == "skip":
+        if _last_skip.get(key) == detail:
+            return
+        _last_skip[key] = detail
+    else:
+        _last_skip.pop(key, None)
     path = config.COCKPIT_RUNTIME_DIR / LOG_NAME
     line = json.dumps(
         {
