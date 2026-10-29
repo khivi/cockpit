@@ -41,6 +41,7 @@ from cockpit.lib.git import (
     origin_head_branch,
     worktrees,
 )
+from cockpit.lib.ports import close_warning
 from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.orchestrators.teardown import resolve_pr_state, worktree_state_blockers
 
@@ -225,6 +226,9 @@ def main(argv: list[str] | None = None) -> int:
         # branch (workspace-only closes on the default branch keep the branch).
         delete_branch=pr_is_merged or (wt.is_primary and not on_default),
     )
+
+    if warning := close_warning(wt.path):
+        print(f"warn: {label}: {warning}", file=sys.stderr)
 
     if args.dry_run:
         print(f"close OK (dry-run) {label}: would queue teardown of {wt.path}")
