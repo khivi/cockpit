@@ -440,6 +440,9 @@ workspace does the same.
 
 `C` or `--force` overrides only the open-PR check. When cockpit refuses, it tells you why.
 
+If a dev server is still listening from the worktree, the close names its port and pid.
+Cockpit doesn't stop it, so stop it yourself if you don't want it running.
+
 Cherry-picked commits count as landed, and commits from a branch you're stacked on aren't
 counted as yours. On a coworker's review worktree, only your own local commits block it.
 

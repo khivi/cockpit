@@ -13,6 +13,10 @@
 - [teardown.mute-holds~1] Given a clean worktree whose PR merged, autoclose
   skips it while the PR is muted, mine or a coworker's, and logs the skip. A
   snoozed PR, or one with no pref, is torn down as before.
+- [teardown.port-warning~1] Given a TCP listener whose cwd is inside the
+  worktree, `c` and `cockpit close` name its port, command and pid. The warning never refuses the close and never kills
+  the process. A worktree beside it is not blamed. When lsof cannot be asked,
+  no warning shows.
 
 ## cockpit diff
 

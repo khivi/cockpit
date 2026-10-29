@@ -108,6 +108,7 @@ from cockpit.lib.nudges import (
     save_pref,
     wake_signature,
 )
+from cockpit.lib.ports import close_warning
 from cockpit.lib.teardown_types import TeardownRequest
 from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
@@ -2009,6 +2010,8 @@ class CockpitApp(App[None]):
         )
         enqueue(req)
         self._notify(f"queued {'force-' if force else ''}close: {wt.label or wt.short}")
+        if warning := close_warning(wt.path):
+            self._notify(f"{wt.label or wt.short}: {warning}", severity="warning")
         self.call_from_thread(self._kick_slow, str(repo_dir))
 
     def _resolve_row_pref(
