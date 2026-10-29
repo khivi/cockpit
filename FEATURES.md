@@ -249,6 +249,10 @@ when the stack's tip is snoozed; the command tells you which PR that is. Use `z`
 dashboard to snooze the whole chain. Running `snooze` again refreshes the row if the
 screen looks out of date.
 
+`cockpit status` lists what cockpit remembers beyond mutes: parked repos, undelivered
+seed prompts, queued asks and queued close requests, each with its age. It only reads;
+an expired entry is shown, and the daemon drops it on its own.
+
 ### Keeping stale branches mergeable
 
 If your repo requires branches to be up to date before merging, a ready PR becomes

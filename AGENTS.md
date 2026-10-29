@@ -47,7 +47,7 @@ Each cycle re-reads `git worktree list` and cmux's workspace list. Only PR paylo
 
 ### Packaged as the `cockpit` console script — invoke by subcommand, never by file path
 
-- **Dispatch:** `cli.py` routes `watch / setup / teardown / statusline / starship / idle-pill / new / close / diff / nudge` and `--version`. **Add entry points as `cockpit <sub>` in `cli.py`**, not as file-path invocations.
+- **Dispatch:** `cli.py` routes `watch / setup / teardown / statusline / starship / idle-pill / new / close / diff / nudge / status` and `--version`. **Add entry points as `cockpit <sub>` in `cli.py`**, not as file-path invocations.
 - **`teardown`** (`config.teardown_claude_integration`) inverts the `~/.claude` writes of `setup`. Run it *before* `brew uninstall`.
 - **Distribution:** a brew formula whose single source of truth is the tap repo `khivi/homebrew-cockpit`. **Do not** vendor it here. There is no plugin, marketplace, or self-update path.
 - **Version:** static in `pyproject.toml`, read via `importlib.metadata`. `preflight._warn_cockpit_not_on_path` only warns.

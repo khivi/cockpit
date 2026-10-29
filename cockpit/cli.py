@@ -13,6 +13,7 @@ Subcommands:
   close  [args]         queue a worktree + workspace teardown for the daemon
   diff   [args]         open the cwd worktree's diff in cmux's viewer
   nudge  [args]         manage nudge mutes
+  status                list parked repos and queued retries (read-only)
   broadcast <message>   send a line of text to every idle workspace
   config inspect [args] print the effective (post-org-merge) config
   config tickets [args] print the cwd repo's resolved ticket provider + scope
@@ -35,6 +36,7 @@ _SUBCOMMANDS = (
     "close",
     "diff",
     "nudge",
+    "status",
     "broadcast",
     "config",
 )
@@ -144,6 +146,11 @@ def main(argv: list[str] | None = None) -> int:
         from cockpit.lib.nudge_cli import main as nudge_main
 
         return nudge_main(rest)
+
+    if sub == "status":
+        from cockpit.status import main as status_main
+
+        return status_main(rest)
 
     if sub == "broadcast":
         from cockpit.broadcast import main as broadcast_main
