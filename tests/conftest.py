@@ -488,6 +488,7 @@ def _isolate_cockpit_home():
     A test that genuinely wants the real home does not exist; there is no opt
     out on purpose.
     """
+    import cockpit.lib.cache as cache_mod
     import cockpit.lib.config as config_mod
 
     # Its own temp dir rather than a child of `tmp_path`: a fixture that plants
@@ -502,6 +503,10 @@ def _isolate_cockpit_home():
     config_mod.COCKPIT_HOME = home
     config_mod.CONFIG_PATH = home / "config.json"
     config_mod.CACHE_DIR = home / "cache"
+    # `cache.py` imports `CACHE_DIR` by name, so patching `config` alone leaves
+    # every payload writer there pointed at the real home.
+    prev_cache_dir = cache_mod.CACHE_DIR
+    cache_mod.CACHE_DIR = config_mod.CACHE_DIR
 
     real_write = config_mod._atomic_write_text
 
@@ -521,6 +526,7 @@ def _isolate_cockpit_home():
     finally:
         shutil.rmtree(home, ignore_errors=True)
         config_mod._atomic_write_text = real_write
+        cache_mod.CACHE_DIR = prev_cache_dir
         (
             config_mod.COCKPIT_HOME,
             config_mod.CONFIG_PATH,

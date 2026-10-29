@@ -3498,7 +3498,15 @@ def cycle_all(
                 flush=True,
             )
     if spawn_failures is not None:
-        publish_spawn_failures(spawn_failures, dry=dry)
+        try:
+            publish_spawn_failures(spawn_failures, dry=dry)
+        except OSError as e:
+            ts = datetime.now().isoformat(timespec="seconds")
+            print(
+                f"[{ts}] {yellow('skip')} spawn failures: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
     if folds is not None and not _cache_only(cfg):
         try:
             _reconcile_review_groups(folds, dry=dry, pill_state=pill_state)
