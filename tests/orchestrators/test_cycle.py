@@ -24,6 +24,7 @@ from cockpit.lib.git import Worktree
 from cockpit.lib.hidden import toggle_hidden
 from cockpit.lib.nudges import NudgePref
 from cockpit.orchestrators import teardown as teardown_mod
+from tests.asserts import read_actions
 
 
 def _pr(
@@ -2847,6 +2848,9 @@ def test_bg_spawn_pr_launches_records_and_guards(tmp_path, monkeypatch):
     # the child falls back to the same bundled prose.
     assert argv[4:] == ["--pr", "9", "--repo", "n", "--review"]
     assert ctx.pill_state["spawn:o/n:coworker/x"] == 100.0
+    [row] = read_actions()  # the suppressed second call logs nothing
+    assert (row["action"], row["actor"]) == ("spawn", "daemon")
+    assert row["detail"]["pr"] == 9
 
 
 def test_bg_spawn_pr_passes_custom_review_command(tmp_path, monkeypatch):

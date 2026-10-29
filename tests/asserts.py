@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+import json
+
+from cockpit.lib import action_log, config
+
+
+def read_actions() -> list[dict]:
+    """Parsed lines of this test's isolated `actions.jsonl`."""
+    path = config.COCKPIT_RUNTIME_DIR / action_log.LOG_NAME
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
 
 def expected_starship(cockpit_config) -> str:
     """starship.toml after install-time placeholder substitution.

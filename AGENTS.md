@@ -398,6 +398,17 @@ The set is closed: the PR nudge (`cycle.py`, slow tick, `PR.nudge_issue`, silenc
 - Seed retry (`lib/seed_queue.py`): one durable JSON marker per workspace under `$COCKPIT_RUNTIME_DIR/seed-requests/`. Queue only where the body did not reach the composer, never on a failed Enter, which would type a second copy. `cmux.py::_queue_retry` is the one writer and always returns False. Key by ref, so a respawn supersedes. `STALE_SECONDS` is 300 and is correctness. **Do not** lengthen it. Drop a marker whose ref is not live. Retire only on an accepted send. Isolate `seed_queue.STATE_DIR` in `tests/conftest.py::_isolate_runtime_dir`, since it binds `COCKPIT_RUNTIME_DIR` at import.
 - The 📝 column is a cue, never an input. Nothing reads the cell back.
 
+### `actions.jsonl` — an append-only log nothing reads back
+
+`lib/action_log.py::record` appends one JSON line to `$COCKPIT_RUNTIME_DIR/actions.jsonl` for "why didn't it nudge me" and "who closed this". It is a log like `spawn.log`, not cache.
+
+- **Never** read it back: no cell, pill, decision or TUI row. It is not inventory.
+- Runtime dir, **not** `$COCKPIT_HOME`: a `ref` is machine-local and the home may be synced.
+- Three choke points call it: `cmux.nudge_if_idle` (`send` or `skip` with the gate's reason, actor from `tag`), `teardown.teardown` and the spawn path (`cycle._bg_spawn_pr`, `spawn.py`). **Do not** add a call site per caller.
+- Dry runs log nothing, because nothing happened.
+- It never raises (`OSError` is swallowed), one `O_APPEND` write per line, one `.1` rotation past `MAX_BYTES`.
+- `session` is filled only when the caller already holds it. **Do not** look it up in the logger.
+
 ### `cockpit broadcast` reuses the nudge gate — no second send path, no cache cell
 
 `cockpit/broadcast.py` is a one-shot gesture: no cell, pill or `pill_state`, and skipped refs are printed, never queued. **Do not** give it its own send path, idle check or cache cell. Extend `nudge_if_idle`.

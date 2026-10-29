@@ -22,6 +22,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from cockpit.lib import action_log
 from cockpit.lib.cache import delete_pr_caches_for_branch, find_pr_payload
 from cockpit.lib.cmux import cmux_close_workspace_best_effort
 from cockpit.lib.colors import dim
@@ -202,6 +203,25 @@ def probe_blockers(
 
 
 def teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str]]:
+    """`_teardown`, plus one `action_log` line for a real (non-dry) run."""
+    ok, blockers = _teardown(req, dry=dry)
+    if not dry:
+        action_log.record(
+            "teardown",
+            actor="daemon",
+            ref=req.ref,
+            cwd=str(req.worktree_path) if req.worktree_path else None,
+            detail={
+                "branch": req.branch,
+                "worktree": req.worktree_path is not None,
+                "outcome": "ok" if ok else "refused",
+                "blockers": blockers,
+            },
+        )
+    return ok, blockers
+
+
+def _teardown(req: TeardownRequest, *, dry: bool = False) -> tuple[bool, list[str]]:
     """Close workspace, remove worktree, delete cache.
 
     Returns `(ok, blockers)`. On `ok=False`, `blockers` is non-empty and

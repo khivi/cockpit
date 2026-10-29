@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import IO, cast
 
 import cockpit.lib.daemon_signal as daemon_signal
+from cockpit.lib import action_log
 from cockpit.lib.cache import (
     clear_pr_flat_cells,
     find_pr_payload,
@@ -2302,6 +2303,12 @@ def _bg_spawn_pr(
         if logfile is not None:
             logfile.close()
     ctx.pill_state[key] = now
+    action_log.record(
+        "spawn",
+        actor="daemon",
+        cwd=str(ctx.repo_path),
+        detail={"pr": number, "repo": repo_name, "branch": branch, "review": review},
+    )
     print(
         f"  {verb(label)} {bold(branch)}  #{number}"
         + (f"  {dim('(review)')}" if review else ""),

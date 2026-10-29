@@ -515,6 +515,9 @@ Cockpit takes the bookkeeping off you. It doesn't take the judgment.
 - **It doesn't post for you.** No auto-approvals, auto-comments, or auto-merges.
 - **It doesn't update itself.** Run `brew upgrade cockpit`. It never checks for newer
   versions; it only tells you when the version you're running has changed.
+- **It keeps a local action log.** Every send, skipped send, teardown and spawn adds one line to
+  `actions.jsonl` in cockpit's runtime directory (`~/.local/state/cockpit` by default), so you
+  can ask afterwards why a session was or wasn't nudged. Cockpit never reads it back.
 - **It doesn't phone home.** It talks to git, `gh`, your terminal, and — if you set one up —
   your tracker.
 
