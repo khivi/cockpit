@@ -14,6 +14,7 @@ Subcommands:
   diff   [args]         open the cwd worktree's diff in cmux's viewer
   nudge  [args]         manage nudge mutes
   status                list parked repos and queued retries (read-only)
+  ports  [--all]        show who holds each port a repo declares (read-only)
   broadcast <message>   send a line of text to every idle workspace
   config inspect [args] print the effective (post-org-merge) config
   config tickets [args] print the cwd repo's resolved ticket provider + scope
@@ -41,6 +42,7 @@ _SUBCOMMANDS = (
     "diff",
     "nudge",
     "status",
+    "ports",
     "broadcast",
     "config",
 )
@@ -72,7 +74,7 @@ def parsers() -> dict[str, argparse.ArgumentParser | None]:
     Read by `scripts/check_doc_cli_drift.py`. Imports every subcommand module,
     so it stays off the dispatch path.
     """
-    from cockpit import broadcast, close, config_cmd, diff, spawn
+    from cockpit import broadcast, close, config_cmd, diff, ports_cmd, spawn
     from cockpit import cockpit as daemon
     from cockpit.lib import nudge_cli
 
@@ -85,6 +87,7 @@ def parsers() -> dict[str, argparse.ArgumentParser | None]:
         "diff": diff.build_parser(),
         "nudge": nudge_cli.build_parser(),
         "broadcast": broadcast.build_parser(),
+        "ports": ports_cmd.build_parser(),
         "config": config_cmd.build_parser(),
     }
     for sub in (*_SUBCOMMANDS, *_SHIM_SUBCOMMANDS):
@@ -181,6 +184,11 @@ def main(argv: list[str] | None = None) -> int:
         from cockpit.status import main as status_main
 
         return status_main(rest)
+
+    if sub == "ports":
+        from cockpit.ports_cmd import main as ports_main
+
+        return ports_main(rest)
 
     if sub == "broadcast":
         from cockpit.broadcast import main as broadcast_main

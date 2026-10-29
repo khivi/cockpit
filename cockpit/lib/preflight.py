@@ -119,6 +119,20 @@ def _validate_repo_bool(cfg: dict, key: str) -> None:
             _die(f"repo {name!r}: {key} must be true or false, got {repo[key]!r}.")
 
 
+def _validate_ports(cfg: dict) -> None:
+    """Hard-fail on a repo `ports` that isn't a list of TCP port numbers."""
+    for repo in cfg.get("repos", []):
+        if "ports" not in repo:
+            continue
+        ports = repo["ports"]
+        if not isinstance(ports, list) or not all(
+            isinstance(p, int) and not isinstance(p, bool) and 0 < p < 65536
+            for p in ports
+        ):
+            name = repo.get("name") or repo.get("path", "?")
+            _die(f"repo {name!r}: ports must be a list of port numbers, got {ports!r}.")
+
+
 _UPDATE_BRANCH_METHODS = ("rebase", "merge")
 
 
@@ -784,6 +798,7 @@ def validate_config(cfg: dict) -> None:
     _validate_repo_bool(cfg, "review_external")
     _validate_repo_bool(cfg, "update_stale_branches")
     _validate_update_branch_method(cfg)
+    _validate_ports(cfg)
     _validate_skills(cfg)
     _validate_base_remote(cfg)
     _validate_global_bool(cfg, "use_slack")

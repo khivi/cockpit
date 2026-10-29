@@ -15,6 +15,7 @@
       "dependabot": false,
       "update_stale_branches": false,
       "deny_tools": ["WebFetch"],
+      "ports": [3306, 6379],
       "update_branch_method": "rebase",
       "tickets": {
         "provider": "linear",
