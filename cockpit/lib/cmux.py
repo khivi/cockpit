@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from . import run, seed_bodies, seed_queue, tool, transcript
+from . import action_log, run, seed_bodies, seed_queue, tool, transcript
 from .colors import CMUX_COLOR_ANSI, bold, dim
 from .constants import MAIN_BRANCHES
 from .gh import PR
@@ -1205,6 +1205,10 @@ def nudge_if_idle(
         if not nudges.should_nudge(pref_key):
             if skips is not None:
                 skips[ref] = "muted or snoozed"
+            if not dry:
+                action_log.record(
+                    "skip", actor=tag or "cockpit", ref=ref, detail="muted or snoozed"
+                )
             return False
     status_lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
     native = _native_claude_state(status_lines)
@@ -1212,6 +1216,8 @@ def nudge_if_idle(
     if reason is not None:
         if skips is not None:
             skips[ref] = reason
+        if not dry:
+            action_log.record("skip", actor=tag or "cockpit", ref=ref, detail=reason)
         return False
     has_idle_pill = _has_pill(status_lines, "idle")
     if native == "Idle" and not has_idle_pill and not dry:
@@ -1230,7 +1236,9 @@ def nudge_if_idle(
         print(f"  warn: {tool.resolve_tool()} send failed for {ref}: {e}", flush=True)
         if skips is not None:
             skips[ref] = "send failed"
+        action_log.record("skip", actor=tag or "cockpit", ref=ref, detail="send failed")
         return False
+    action_log.record("send", actor=tag or "cockpit", ref=ref, detail=message[:200])
     if pref_key is not None:
         from . import nudges
 

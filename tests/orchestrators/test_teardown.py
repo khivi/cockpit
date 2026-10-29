@@ -17,6 +17,7 @@ from cockpit.orchestrators.teardown import (
     teardown,
     worktree_state_blockers,
 )
+from tests.asserts import read_actions
 
 
 def _patch_all(*, dirty=0, unlanded=0, pr_state=None, live=None):
@@ -238,6 +239,10 @@ def test_teardown_no_worktree_skips_remove(tmp_path):
     close_mock.assert_called_once()
     rm_mock.assert_not_called()
     cache_mock.assert_not_called()
+    [row] = read_actions()
+    assert (row["action"], row["ref"]) == ("teardown", "ws:1")
+    assert row["detail"]["outcome"] == "ok"
+    assert row["detail"]["worktree"] is False
 
 
 def test_teardown_primary_checkout_closes_workspace_only(tmp_path):

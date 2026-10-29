@@ -86,3 +86,8 @@
 - [nudge-cli.split-chain~1] Given a bare `cockpit nudge snooze` on a branch
   stacked below an unsnoozed tip, the write stays per-PR. The warning names the
   tip that has to agree before the row moves.
+
+- [actions.log~1] Given a send, a gate refusal, a teardown or a spawn, one JSON
+  line lands in `actions.jsonl` under the runtime dir. The line names the actor
+  and the action. A failed log write never fails the action, and nothing reads
+  the log back.

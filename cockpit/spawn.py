@@ -108,6 +108,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from cockpit.lib import action_log
 from cockpit.lib.cmux import (
     deliver_followup,
     require_workspace_binary,
@@ -1305,6 +1306,14 @@ def main(argv: list[str] | None = None) -> int:
                 initial, strip_env=credential_env_names(), review=bool(args.review)
             ),
         )
+        if new_ref is not None:
+            action_log.record(
+                "spawn",
+                actor="cli",
+                ref=new_ref,
+                cwd=str(wt),
+                detail={"name": ws_name, "branch": branch_display},
+            )
         if new_ref is not None and followup:
             deliver_followup(new_ref, followup, cwd=wt)
     elif prompt:

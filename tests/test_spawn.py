@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from cockpit.spawn import detect_source
+from tests.asserts import read_actions
 
 
 def _set_config_key(cockpit_repo, key: str, value) -> None:
@@ -508,6 +509,8 @@ def test_cwd_alone_with_existing_dir(spawn_main, tmp_path):
     call = spawn_main.cmux_calls[0]
     assert _cmux_kwarg(call, "cwd") == str(target)
     assert _cmux_kwarg(call, "name") == "freestanding"
+    [row] = read_actions()
+    assert (row["action"], row["actor"], row["ref"]) == ("spawn", "cli", "ws:test")
 
 
 # ── bare `cockpit new` (no args): register cwd repo + in-place workspace ─────

@@ -57,6 +57,7 @@ from cockpit.lib.cmux import (
 from cockpit.lib.gh import PR
 from cockpit.lib.git import Worktree
 from cockpit.lib.nudges import NudgePref
+from tests.asserts import read_actions
 
 
 def test_select_workspace_uses_select_workspace_verb():
@@ -1318,6 +1319,9 @@ def test_nudge_if_idle_returns_true_on_success(capsys):
     assert len(sent) == 1
     assert sent[0][3] == "fix CI"
     assert capsys.readouterr().out == ""
+    assert [(r["action"], r["actor"], r["ref"]) for r in read_actions()] == [
+        ("send", "feat-x", "workspace:1")
+    ]
 
 
 def test_nudge_if_idle_prints_error_and_returns_false_on_send_failure(capsys):
@@ -1337,6 +1341,7 @@ def test_nudge_if_idle_prints_error_and_returns_false_on_send_failure(capsys):
     assert "workspace:1" in out
 
 
+@pytest.mark.covers("actions.log~1")
 def test_nudge_if_idle_skips_when_not_idle():
     def fake_cmux(*args, **_kwargs):
         if args[0] == "list-status":
@@ -1347,6 +1352,25 @@ def test_nudge_if_idle_skips_when_not_idle():
         result = nudge_if_idle("workspace:1", "fix CI", tag="feat-x")
 
     assert result is False
+    [row] = read_actions()
+    assert (row["action"], row["actor"], row["ref"]) == (
+        "skip",
+        "feat-x",
+        "workspace:1",
+    )
+    assert row["detail"].startswith("not at rest")
+
+
+def test_nudge_if_idle_dry_skip_logs_nothing():
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "list-status":
+            return "claude_code=Running\n"
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        assert nudge_if_idle("workspace:1", "fix CI", tag="feat-x", dry=True) is False
+
+    assert read_actions() == []
 
 
 def test_nudge_if_idle_skips_when_parked():
