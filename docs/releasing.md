@@ -26,6 +26,8 @@ Both workflows also fail unless the tagged commit is an ancestor of `origin/main
 
 **`create-branch: false` in `release.yml` is what makes that direct commit happen, and removing it re-breaks releases silently** — the tap's `main` is ruleset-protected, so left to default the action branches and then `POST /pulls` 403s *after* pushing a correct-looking branch, which is the v1.5.1/v1.6.0 failure mode where both formulas were right and neither reached the tap. When a release job fails, **check the tap for an orphaned `update-cockpit.rb-*` branch before re-cutting anything**. The formula's `resource` blocks are **not** touched — regenerate them by hand on a dependency bump.
 
+**`bump-tap` deliberately has no GitHub environment.** A deployment gate protects only a secret stored nowhere else. `HOMEBREW_TAP_TOKEN` is a repo secret that `tag.yml` and `release-please.yml` also read, so `environment:` alone gates nothing. A real gate needs a second tap PAT and four manual settings steps, and `bump-tap` itself still holds a tap-write token. Fork PRs get no secrets, and only the owner pushes `main` or tags, so the extra token isn't worth rotating. Keep `HOMEBREW_TAP_TOKEN` scoped to these two repos instead.
+
 ## PyPI is the second tag consumer — trusted publishing
 
 The same tag fires `publish.yml`, uploading as **`cmux-cockpit`** (bare `cockpit` collides with Red Hat's Cockpit; the import package and console script are unchanged). It runs *independently* of `release.yml`, so a green tap PR is not evidence PyPI succeeded — check both.
