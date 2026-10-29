@@ -79,6 +79,7 @@ from cockpit.lib.config import (
     COCKPIT_HOME,
     CONFIG_PATH,
     credential_env_names,
+    deny_tools,
     ensure_state_dirs,
     load_config,
     repo_tickets,
@@ -1831,9 +1832,12 @@ class CockpitApp(App[None]):
                 wt,
                 pref=load_pref(pref_key(self._cache_repo_name(repo), pr.number)),
                 strip_env=credential_env_names(),
+                deny=deny_tools(repo_entry=repo),
             )
         else:
-            new_ref = spawn_orphan_workspace(wt, strip_env=credential_env_names())
+            new_ref = spawn_orphan_workspace(
+                wt, strip_env=credential_env_names(), deny=deny_tools(repo_entry=repo)
+            )
         if new_ref is None:
             self._notify(f"open failed: {wt.label or wt.short}", severity="error")
             return

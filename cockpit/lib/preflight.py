@@ -180,6 +180,28 @@ def _validate_statusline_hide(cfg: dict) -> None:
             )
 
 
+def _validate_deny_tools(cfg: dict) -> None:
+    """Hard-fail on a global or per-repo `deny_tools` that isn't a list of
+    non-empty strings. A bare string would be read as one rule per character and
+    deny nothing the operator meant, so a security setting fails loud instead.
+    """
+    sources = [("deny_tools", cfg)] + [
+        (f"repo {r.get('name') or r.get('path', '?')!r}: deny_tools", r)
+        for r in cfg.get("repos", [])
+    ]
+    for label, src in sources:
+        raw = src.get("deny_tools")
+        if raw is None:
+            continue
+        if not isinstance(raw, list) or not all(
+            isinstance(rule, str) and rule.strip() for rule in raw
+        ):
+            _die(
+                f"{label} must be a list of Claude Code permission rules "
+                f'(e.g. ["mcp__slack", "WebFetch"]), got {raw!r}.'
+            )
+
+
 def _validate_field(
     cfg: dict,
     key: str,
@@ -848,6 +870,7 @@ def validate_config(cfg: dict) -> None:
     _validate_global_bool(cfg, "use_slack")
     _validate_global_bool(cfg, "update_stale_branches")
     _validate_statusline_hide(cfg)
+    _validate_deny_tools(cfg)
     _validate_tickets(cfg)
     _validate_ticket_credentials(cfg)
     _validate_trello_boards(cfg)

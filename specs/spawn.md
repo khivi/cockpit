@@ -49,6 +49,14 @@
   existing branch, a named branch, a ticket ref), one shared gate un-parks it.
   The gate keys on the resolved repo root. It never keys on the new worktree's
   own path.
+- [spawn.review-mcp~1] Given a review launch (a coworker's or external PR
+  head), the command carries `enableAllProjectMcpServers: false` as flag
+  settings. A user-level auto-enable never starts a server the PR tree's own
+  .mcp.json declares.
+- [spawn.deny-tools~1] Given `deny_tools` rules globally and on the repo, every
+  claude launch carries their union as `permissions.deny` flag settings. A
+  repo's list never drops a global rule. Every launch path must pass a deny
+  list; there is no default.
 - [spawn.opt-out~2] Given a `use_worktree: false` repo with an open PR that a
   default repo would spawn for, `_spawn_missing_workspaces` spawns nothing. It
   makes no background create, no PR workspace and no orphan workspace.

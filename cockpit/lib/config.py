@@ -804,6 +804,24 @@ def review_external(repo_entry: dict) -> bool:
     return bool(repo_entry.get("review_external"))
 
 
+def deny_tools(cfg: dict | None = None, repo_entry: dict | None = None) -> list[str]:
+    """Claude Code permission rules (`mcp__<server>`, `WebFetch`, `Bash(curl *)`)
+    denied in every session cockpit launches for this repo.
+
+    The global list and the repo's are **unioned**, unlike every other repo-over-
+    global field: a deny is a floor, and a repo setting its own list must not
+    re-enable what the global one keeps off. An org's list still sits in the
+    repo rung, so a repo's own list replaces it (`apply_org_defaults`).
+    """
+    cfg = cfg if cfg is not None else load_config()
+    rules: list[str] = []
+    for src in (cfg, repo_entry or {}):
+        for rule in src.get("deny_tools") or []:
+            if isinstance(rule, str) and rule.strip() and rule.strip() not in rules:
+                rules.append(rule.strip())
+    return rules
+
+
 def update_stale_branches(cfg: dict, repo_entry: dict | None = None) -> bool:
     """Whether the slow tick may bring my own stale PR branches up to date with
     their base (default: False — opt in per repo, or globally).

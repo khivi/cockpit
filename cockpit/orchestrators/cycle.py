@@ -91,6 +91,7 @@ from cockpit.lib.config import (
     REPO_TAG_TOKEN,
     base_remote,
     credential_env_names,
+    deny_tools,
     ensure_state_dirs,
     jira_api_token,
     jira_email,
@@ -2399,6 +2400,7 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
                 pref=ctx.prefs.get(pr.number),
                 dry=ctx.dry,
                 strip_env=credential_env_names(ctx.cfg),
+                deny=deny_tools(ctx.cfg, repo_entry),
             )
     if ctx.review_candidates:
         # Dependabot PRs are coworker-authored, so they'd flow through the
@@ -2463,7 +2465,12 @@ def _spawn_missing_workspaces(ctx: RepoCycle, repo_entry: dict) -> None:
             continue
         if _too_young_to_adopt(wt, "orphan-spawn"):
             continue
-        spawn_orphan_workspace(wt, dry=ctx.dry, strip_env=credential_env_names(ctx.cfg))
+        spawn_orphan_workspace(
+            wt,
+            dry=ctx.dry,
+            strip_env=credential_env_names(ctx.cfg),
+            deny=deny_tools(ctx.cfg, repo_entry),
+        )
 
 
 def _resolve_skill_prompt(name: str, repo_path: Path) -> str | None:
@@ -2485,7 +2492,9 @@ def _resolve_skill_prompt(name: str, repo_path: Path) -> str | None:
     return None
 
 
-def _run_repo_skills(repo_entry: dict, *, dry: bool, strip_env: Iterable[str]) -> None:
+def _run_repo_skills(
+    repo_entry: dict, *, dry: bool, strip_env: Iterable[str], deny: Iterable[str]
+) -> None:
     """Run fast_skills (blocking, non-interactive) and slow_skills (workspace spawn)
     configured on the repo entry.
 
@@ -2502,7 +2511,9 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool, strip_env: Iterable[str]) -
                 flush=True,
             )
             continue
-        command = claude_command(prompt, print_mode=True, strip_env=strip_env)
+        command = claude_command(
+            prompt, print_mode=True, strip_env=strip_env, deny=deny
+        )
         if dry:
             print(f"  dry: {command} in {repo_path}", flush=True)
             continue
@@ -2532,12 +2543,12 @@ def _run_repo_skills(repo_entry: dict, *, dry: bool, strip_env: Iterable[str]) -
             extra = f" + followup {followup!r}" if followup else ""
             print(
                 f"  dry: spawn workspace {ws_name!r} with "
-                f"{claude_command(initial, strip_env=strip_env)!r}{extra}",
+                f"{claude_command(initial, strip_env=strip_env, deny=deny)!r}{extra}",
                 flush=True,
             )
             continue
         ref = spawn_workspace(
-            ws_name, repo_path, claude_command(initial, strip_env=strip_env)
+            ws_name, repo_path, claude_command(initial, strip_env=strip_env, deny=deny)
         )
         if ref is not None and followup:
             deliver_followup(ref, followup, cwd=repo_path)
@@ -3229,7 +3240,12 @@ def cycle_repo(
         dry=dry,
     )
     if workspaces_ready:
-        _run_repo_skills(repo_entry, dry=dry, strip_env=credential_env_names(ctx.cfg))
+        _run_repo_skills(
+            repo_entry,
+            dry=dry,
+            strip_env=credential_env_names(ctx.cfg),
+            deny=deny_tools(ctx.cfg, repo_entry),
+        )
 
 
 def _drain_close_requests(dry: bool) -> None:

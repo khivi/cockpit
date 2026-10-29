@@ -97,7 +97,7 @@ def test_run_repo_skills_fast_runs_subprocess(tmp_path, monkeypatch):
     with patch.object(
         cycle.subprocess, "run", side_effect=lambda *a, **kw: calls.append((a, kw))
     ):
-        cycle._run_repo_skills(repo_entry, dry=False, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=False, strip_env=(), deny=())
 
     assert len(calls) == 1
     cmd = calls[0][0][0]
@@ -117,7 +117,7 @@ def test_run_repo_skills_fast_dry_run(tmp_path, monkeypatch, capsys):
     repo_entry = {"path": str(repo_path), "fast_skills": ["cleanup-worktrees"]}
 
     with patch.object(cycle.subprocess, "run") as mock_run:
-        cycle._run_repo_skills(repo_entry, dry=True, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=True, strip_env=(), deny=())
         mock_run.assert_not_called()
 
     out = capsys.readouterr().out
@@ -129,7 +129,7 @@ def test_run_repo_skills_fast_missing_skill_skips(tmp_path, monkeypatch, capsys)
     repo_entry = {"path": str(tmp_path), "fast_skills": ["ghost-skill"]}
 
     with patch.object(cycle.subprocess, "run") as mock_run:
-        cycle._run_repo_skills(repo_entry, dry=False, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=False, strip_env=(), deny=())
         mock_run.assert_not_called()
 
     out = capsys.readouterr().out
@@ -155,7 +155,7 @@ def test_run_repo_skills_slow_spawns_workspace(tmp_path, monkeypatch):
             side_effect=lambda *a, **kw: spawn_calls.append(a),
         ),
     ):
-        cycle._run_repo_skills(repo_entry, dry=False, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=False, strip_env=(), deny=())
 
     assert len(spawn_calls) == 1
     name, cwd, _command = spawn_calls[0]
@@ -179,14 +179,14 @@ def test_run_repo_skills_slow_idempotent(tmp_path, monkeypatch):
         ),
         patch.object(cycle, "spawn_workspace") as mock_spawn,
     ):
-        cycle._run_repo_skills(repo_entry, dry=False, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=False, strip_env=(), deny=())
         mock_spawn.assert_not_called()
 
 
 def test_run_repo_skills_empty_config(tmp_path):
     repo_entry = {"path": str(tmp_path)}
     with patch.object(cycle.subprocess, "run") as mock_run:
-        cycle._run_repo_skills(repo_entry, dry=False, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=False, strip_env=(), deny=())
         mock_run.assert_not_called()
 
 
@@ -208,7 +208,7 @@ def test_run_repo_skills_slow_missing_skill_skips(tmp_path, monkeypatch, capsys)
         patch.object(cycle, "workspace_names", return_value={}),
         patch.object(cycle, "spawn_workspace") as mock_spawn,
     ):
-        cycle._run_repo_skills(repo_entry, dry=False, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=False, strip_env=(), deny=())
         mock_spawn.assert_not_called()
 
     out = capsys.readouterr().out
@@ -225,7 +225,7 @@ def test_run_repo_skills_slow_dry_run_spawns_nothing(tmp_path, monkeypatch, caps
         patch.object(cycle, "spawn_workspace") as mock_spawn,
         patch.object(cycle, "deliver_followup") as mock_follow,
     ):
-        cycle._run_repo_skills(repo_entry, dry=True, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=True, strip_env=(), deny=())
         mock_spawn.assert_not_called()
         mock_follow.assert_not_called()
 
@@ -243,7 +243,7 @@ def test_run_repo_skills_slow_delivers_followup(tmp_path, monkeypatch):
         patch.object(cycle, "spawn_workspace", return_value="workspace:7") as spawn,
         patch.object(cycle, "deliver_followup") as follow,
     ):
-        cycle._run_repo_skills(repo_entry, dry=False, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=False, strip_env=(), deny=())
 
     spawn.assert_called_once_with("skill-nudge-reviewers", repo_path, ANY)
     follow.assert_called_once_with("workspace:7", "body", cwd=repo_path)
@@ -258,7 +258,7 @@ def test_run_repo_skills_slow_no_followup_when_spawn_fails(tmp_path, monkeypatch
         patch.object(cycle, "spawn_workspace", return_value=None),
         patch.object(cycle, "deliver_followup") as follow,
     ):
-        cycle._run_repo_skills(repo_entry, dry=False, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=False, strip_env=(), deny=())
 
     follow.assert_not_called()
 
@@ -270,7 +270,7 @@ def test_run_repo_skills_slow_cmux_unavailable_returns_early(tmp_path, monkeypat
         patch.object(cycle, "workspace_names", side_effect=cycle.CmuxUnavailable("x")),
         patch.object(cycle, "spawn_workspace") as mock_spawn,
     ):
-        cycle._run_repo_skills(repo_entry, dry=False, strip_env=())
+        cycle._run_repo_skills(repo_entry, dry=False, strip_env=(), deny=())
         mock_spawn.assert_not_called()
 
 

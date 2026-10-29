@@ -2552,3 +2552,12 @@ def test_commands_grant_only_their_own_subcommand_and_are_user_invoked(tmp_path,
     head = (commands_dir / f"cockpit-{sub}.md").read_text().split("---")[1]
     assert f"allowed-tools: Bash(cockpit {sub}:*)\n" in head
     assert "disable-model-invocation: true" in head
+
+
+@pytest.mark.covers("spawn.deny-tools~1")
+def test_deny_tools_unions_global_and_repo_so_a_repo_cannot_reenable():
+    cfg = {"deny_tools": ["mcp__slack", " "], "repos": []}
+    repo = {"deny_tools": ["WebFetch", "mcp__slack"]}
+    assert config_mod.deny_tools(cfg, repo) == ["mcp__slack", "WebFetch"]
+    assert config_mod.deny_tools(cfg, None) == ["mcp__slack"]
+    assert config_mod.deny_tools({}, {}) == []

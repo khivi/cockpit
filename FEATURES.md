@@ -401,6 +401,10 @@ session, already reviewing it when you arrive.
 - **No Dependabot**, unless you set `"dependabot": true`.
 - **Review sessions stay reviewers.** They never get commit-and-push rights on the branch,
   and they are never nudged.
+- **The PR's own MCP servers stay off.** A server the PR's `.mcp.json` declares never
+  starts on its own. Claude Code asks you first, even if you auto-enable project servers.
+- **Keep tools off everywhere.** List permission rules in `deny_tools`, such as
+  `["mcp__slack"]`, globally or per repo. Every session cockpit starts denies them.
 
 In the cmux sidebar, reviews collect into one collapsed `<org> reviews (N)` group at the
 bottom, one per org however many repos it spans. Snoozed PRs collect into a second group
