@@ -161,7 +161,7 @@ def _ack_comments(root: Path) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cockpit diff",
         description=__doc__,
@@ -193,6 +193,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="REF",
         help="Base ref for --branch (default: cmux's origin/HEAD or main).",
     )
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = build_parser()
     args = p.parse_args(argv)
 
     root = worktree_root()

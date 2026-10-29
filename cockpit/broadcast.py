@@ -90,7 +90,7 @@ def _repo_paths(name: str) -> set[Path]:
     raise LookupError(f"unknown repo {name!r}; configured: {known or '(none)'}")
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cockpit broadcast",
         description=__doc__,
@@ -118,6 +118,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Only send to the session(s) rooted at this worktree, matched by "
         "exact directory. The narrowest scope there is.",
     )
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = build_parser()
     args = p.parse_args(argv)
 
     try:

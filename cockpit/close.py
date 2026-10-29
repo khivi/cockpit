@@ -120,7 +120,7 @@ def _workspace_name(ref: str | None) -> str:
         return ""
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cockpit close",
         description=__doc__,
@@ -144,6 +144,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Report blockers and the resolved target without enqueuing.",
     )
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = build_parser()
     args = p.parse_args(argv)
 
     resolved = _resolve_target(args.query)

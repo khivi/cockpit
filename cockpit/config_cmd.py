@@ -163,7 +163,7 @@ def _cmd_tickets(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     # A short description of its own rather than `__doc__`: the module docstring
     # is written for whoever maintains this and names the functions it describes,
     # and `--help` is user-facing, where a name that a refactor can invalidate
@@ -201,7 +201,11 @@ def main(argv: list[str] | None = None) -> int:
         "Default: the repo the cwd belongs to.",
     )
     tickets.set_defaults(func=_cmd_tickets)
+    return p
 
+
+def main(argv: list[str] | None = None) -> int:
+    p = build_parser()
     args = p.parse_args(argv)
     return int(args.func(args))
 

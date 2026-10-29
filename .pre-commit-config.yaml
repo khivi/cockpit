@@ -77,6 +77,15 @@ repos:
 
   - repo: local
     hooks:
+      # Also fires on a parser change and scans every doc, so removing a flag
+      # fails even when no doc was touched.
+      - id: doc-cli-drift
+        name: docs name only CLI subcommands/flags that exist
+        entry: uv run python scripts/check_doc_cli_drift.py
+        language: system
+        files: ^((README|FEATURES)\.md|(docs|specs)/.*\.md|cockpit/(cli|cockpit|spawn|close|diff|broadcast|config_cmd|lib/nudge_cli)\.py|scripts/check_doc_cli_drift\.py)$
+        pass_filenames: false
+
       - id: pytest
         name: pytest
         entry: pytest
