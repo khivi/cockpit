@@ -51,6 +51,7 @@ from cockpit.lib.cache import (
     cost_reporting_available,
     cwd_cache,
     find_pr_payload,
+    load_spawn_failures,
     load_ticket_inboxes,
     read_text,
     restamp_pref,
@@ -117,6 +118,7 @@ from cockpit.tui.widgets.footer_bar import FooterBar
 from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
 from cockpit.tui.widgets.repo_pick_screen import RepoPickScreen
+from cockpit.tui.widgets.spawn_failures_screen import SpawnFailuresScreen
 from cockpit.tui.widgets.tickets_screen import TicketsScreen
 from cockpit.tui.widgets.worktree_table import (
     HEADER_CAP,
@@ -290,6 +292,7 @@ class CockpitApp(App[None]):
         ("z", "snooze_row", "Snooze"),
         ("n", "new_workspace", "New"),
         ("T", "ticket_inbox", "Tickets"),
+        ("F", "spawn_failures", "Failed spawns"),
         ("h", "hide_repo", "Hide repo"),
         ("s", "sync", "Sync"),
         ("q", "quit", "Quit"),
@@ -805,6 +808,10 @@ class CockpitApp(App[None]):
             expanded=self._show_hidden,
             expanded_snoozed=self._show_snoozed,
         )
+        # Fed here, not in `_refresh_footer_caps`: that runs on every arrow key
+        # and this is a file read. The payload only changes on a slow tick.
+        with contextlib.suppress(Exception):
+            self.query_one(HeaderBar).spawn_failures = len(load_spawn_failures())
         # A refresh can change the highlighted row's state (PR/ticket/mute) or
         # the row set, so re-gate the footer's row keys to the current row.
         self._refresh_footer_caps()
@@ -1386,6 +1393,11 @@ class CockpitApp(App[None]):
     ) -> None:
         """Click on the `▸ N repos hidden` disclosure row → same as `h` there."""
         self._toggle_hidden_section()
+
+    def action_spawn_failures(self) -> None:
+        """`F` / the header segment -- failed background spawns, from the payload
+        the slow tick wrote. Reads nothing else."""
+        self.push_screen(SpawnFailuresScreen(load_spawn_failures()))
 
     def action_ticket_inbox(self) -> None:
         """`T` — the ticket inbox: what to start, as opposed to how work is going.

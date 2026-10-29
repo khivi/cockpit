@@ -517,7 +517,19 @@ Opt-in via `tickets.close_on_merge`. `_transition_merged_tickets` dispatches on 
 
 Never cache a failed identity fetch. A failed write clears the marker to retry. Any future daemon tracker write must be opt-in, viewer-gated, idempotent and logged.
 
-### The ticket inbox — the one surface NOT derived from `git worktree list`
+### Failed background spawns — the other surface NOT derived from `git worktree list`
+
+A PR whose daemon-launched `cockpit new --pr` child failed has no worktree, hence no row. The child records why; the daemon publishes it; the TUI shows it.
+
+- **The child writes its own verdict.** `spawn.py::main` wraps `_run` for `--pr` only. A non-zero exit or an unexpected exception writes `$COCKPIT_RUNTIME_DIR/spawn-results/<repo>__<N>.json` (`lib/spawn_results.py`) with a consecutive `failures` count. A success deletes it. **Do not** write one for another source mode.
+- **Key by the repo's nwo plus the PR number**, as `NudgePref` does. The config `name` is only the fallback when `gh` cannot say, so the daemon matches either. **Do not** key by number alone.
+- **Machine-local**, in the runtime dir and never `$COCKPIT_HOME`, for the `seed_queue` reason. `tests/conftest.py::_isolate_runtime_dir` redirects `spawn_results.STATE_DIR`.
+- **Only the daemon writes the cache and retires markers.** `orchestrators/spawn_failures.py` is shaped like `ticket_inbox`: the per-repo pass `add()`s, `publish()` drains once, and only when `only_repo is None`. The title comes from `ctx.prs`. **Do not** add a network call.
+- **Retire** a marker when its PR is no longer open or its branch has a worktree. A repo that did not report keeps its markers. `iter_pending` returns `None` for "couldn't list" and `[]` for none, and `None` writes nothing. `SpawnFailures.partial` suppresses the write, as `TicketInbox.partial` does.
+- **`SpawnFailuresScreen` and the `#header-failures` segment read the payload only.** The segment is auto-width and absent at zero, so **do not** give it a `1fr` or place it right of `#header-status`. The count is fed from `app._render_table`, never from `_refresh_footer_caps`, which runs on every arrow key. Text passes `strip_control`.
+- **Do not** add a retry or back-off here. That is `_bg_spawn_pr`'s in-flight guard.
+
+### The ticket inbox — one of two surfaces NOT derived from `git worktree list`
 
 `T` opens `TicketsScreen`: tickets assigned to me, in an active state, with no worktree. `cycle.py::_collect_ticket_inbox` collects per repo, `orchestrators/ticket_inbox.py::publish` drains once, and `cockpit/tui/widgets/tickets_screen.py` renders.
 

@@ -455,6 +455,38 @@ def stamp_inbox_in_flight(active_ids: set[str]) -> None:
         _atomic_write_json(path, payload)
 
 
+# ── spawn failures payload (one for the whole fleet) ───────────────────────
+#
+# Background `cockpit new --pr` spawns that failed and still have no worktree.
+# A payload rather than a flat cell for the ticket inbox's reason: the PR has no
+# worktree path. The child writes result markers (`lib/spawn_results.py`); the
+# daemon folds them in here, joining the PR title it already fetched.
+
+
+def _spawn_failures_path() -> Path:
+    return CACHE_DIR / "spawn-failures.json"
+
+
+def write_spawn_failures(failures: list[dict]) -> None:
+    """Persist the whole list, replacing what was there. `[]` is an answer; the
+    caller must not reach here with a failed read (`None`) -- see
+    `orchestrators/spawn_failures.publish`."""
+    ensure_state_dirs()
+    _atomic_write_json(
+        _spawn_failures_path(), {"failures": failures, "fetched_at": time.time()}
+    )
+
+
+def load_spawn_failures() -> list[dict]:
+    """The cached failures, or [] when the payload is missing/unreadable."""
+    try:
+        payload = json.loads(_spawn_failures_path().read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    failures = payload.get("failures")
+    return failures if isinstance(failures, list) else []
+
+
 def _ensure_flat_cache_dir() -> Path:
     FLAT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return FLAT_CACHE_DIR

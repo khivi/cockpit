@@ -64,6 +64,7 @@ flowchart LR
     LIN["Tickets (aux)<br/>Linear · Jira · Trello · GitHub<br/>via tickets.py provider"]
     SQ["Undelivered seed bodies<br/>$COCKPIT_RUNTIME_DIR/seed-requests/<br/>written by a spawn, not the daemon"]
     AQ["Queued ask lines<br/>$COCKPIT_RUNTIME_DIR/ask-requests/<br/>written by the TUI's a / A"]
+    SF["Failed spawn results<br/>$COCKPIT_RUNTIME_DIR/spawn-results/<br/>written by the bg spawn child"]
     DC["Pending diff-viewer notes<br/>written by cmux, read via diff_comments"]
   end
 
@@ -92,6 +93,7 @@ flowchart LR
   SQ --> NI
   AQ --> NI
   DC --> NI
+  A1 -.->|child writes on failure| SF
   LIN --> DD
 
   MW --> SM
@@ -113,6 +115,12 @@ which is why it feeds `nudge_if_idle` and nothing else — the retry re-sends th
 user's own prompt rather than deciding anything. It is not stored inventory: a
 marker is retired on the first accepted send, dropped when its workspace is gone,
 and expired after `seed_queue.STALE_SECONDS`.
+
+The spawn-result markers are written by the `A1` child itself on a non-zero
+exit (`spawn.main`, `--pr` only) and cleared by its later success. They feed no
+decision: the slow tick only folds them into a payload for the TUI
+(`orchestrators/spawn_failures.py`), retiring a marker whose PR has closed or
+gained a worktree.
 
 The ask queue has the same shape and the same single edge. The TUI writes it
 when `a` or `A` meets a session that is only busy (`cmux.rest_pending`); the

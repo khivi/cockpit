@@ -168,6 +168,9 @@ async def test_discovered_entries_invoke_their_app_action():
         def action_show_full_config(self) -> None:
             called.append("show")
 
+        def action_spawn_failures(self) -> None:
+            called.append("failures")
+
         def action_edit_config(self) -> None:
             called.append("edit")
 
@@ -183,7 +186,7 @@ async def test_discovered_entries_invoke_their_app_action():
         provider = ConfigCommands(app.screen)
         async for hit in provider.discover():
             hit.command()
-    assert called == ["output", "show", "edit", "news", "guide"]
+    assert called == ["output", "show", "failures", "edit", "news", "guide"]
 
 
 @pytest.mark.covers("palette.order~1")

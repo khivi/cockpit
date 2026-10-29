@@ -113,6 +113,7 @@ both: each workspace named after its own repo, and the shared glyph on the piles
 | `z` | Snooze / wake — quiet until the PR changes |
 | `n` | Start something new |
 | `T` | The ticket inbox — tickets assigned to you that you haven't started |
+| `F` | Failed spawns — PRs whose background worktree could not be created, and why |
 | `h` | Park / reveal / un-park a repo |
 | `s` | Refresh every repo now |
 | `q` | Quit |
@@ -386,6 +387,15 @@ widgets
 
 The inbox needs no setup beyond your `tickets` config. It appears when any repo has a
 tracker.
+
+### When a background spawn fails
+
+cockpit creates worktrees for your open PRs in the background. If that fails, the PR has no
+worktree and so no row. A dim `N spawns failed` appears in the header bar. Click it, or press
+`F`, to see each PR, how many times it failed, how long ago, and the error. Hover the error
+for its full text.
+
+The entry clears itself once the PR has a worktree or is no longer open.
 
 ---
 

@@ -2862,3 +2862,87 @@ def test_explicit_repo_wins_over_url_nwo_hint(spawn_main, cockpit_repo, monkeypa
     assert code == 0, err
     assert "no configured repo matches" not in err
     assert spawn_main.cmux_calls
+
+
+# ── background-spawn result marker ──────────────────────────────────────────
+
+
+@pytest.fixture
+def _no_gh_nwo(monkeypatch):
+    import cockpit.spawn as spawn
+
+    def boom(_dir):
+        raise RuntimeError("no gh")
+
+    monkeypatch.setattr(spawn, "repo_nwo", boom)
+
+
+@pytest.mark.covers("spawn.failure-marker~1")
+def test_failed_pr_spawn_writes_a_marker_and_a_later_success_clears_it(
+    spawn_main, monkeypatch, cockpit_repo, tmp_path, _no_gh_nwo
+):
+    import cockpit.spawn as spawn
+    from cockpit.lib import spawn_results
+
+    def fail(*_a, **_kw):
+        raise RuntimeError("could not fetch refs/pull/9/head")
+
+    monkeypatch.setattr(spawn, "resolve_worktree", fail)
+    code, _out, _err = spawn_main(["--pr", "9", "--repo", "testrepo"])
+    assert code == 2
+    [res] = spawn_results.iter_pending() or []
+    assert (res.repo, res.pr, res.rc) == ("testrepo", 9, 2)
+    assert "could not fetch" in res.error
+    spawn_main(["--pr", "9", "--repo", "testrepo"])
+    assert (spawn_results.iter_pending() or [])[0].failures == 2
+
+    wt = tmp_path / "wt9"
+    wt.mkdir()
+    monkeypatch.setattr(
+        spawn, "resolve_worktree", lambda *a, **kw: (wt, "khivi/pr-9", False)
+    )
+    code, _out, _err = spawn_main(["--pr", "9", "--repo", "testrepo"])
+    assert code == 0
+    assert spawn_results.iter_pending() == []
+
+
+@pytest.mark.covers("spawn.failure-marker~1")
+def test_unexpected_exception_is_recorded_and_reraised(
+    monkeypatch, cockpit_repo, _no_gh_nwo
+):
+    import cockpit.spawn as spawn
+    from cockpit.lib import spawn_results
+
+    def boom(*_a, **_kw):
+        raise KeyError("surprise")
+
+    monkeypatch.setattr(spawn, "resolve_worktree", boom)
+    with pytest.raises(KeyError):
+        spawn.main(["--pr", "9", "--repo", "testrepo"])
+    [res] = spawn_results.iter_pending() or []
+    assert "KeyError" in res.error
+
+
+@pytest.mark.covers("spawn.failure-marker~1")
+def test_a_bare_sys_exit_counts_as_success(monkeypatch, cockpit_repo, _no_gh_nwo):
+    import cockpit.spawn as spawn
+    from cockpit.lib import spawn_results
+
+    spawn_results.record_failure("testrepo", 9, 2, "earlier")
+
+    def done(_args):
+        sys.exit()
+
+    monkeypatch.setattr(spawn, "_run", done)
+    with pytest.raises(SystemExit):
+        spawn.main(["--pr", "9", "--repo", "testrepo"])
+    assert spawn_results.iter_pending() == []
+
+
+@pytest.mark.covers("spawn.failure-marker~1")
+def test_non_pr_spawn_writes_no_marker(spawn_main, _no_gh_nwo):
+    from cockpit.lib import spawn_results
+
+    code, _o, _e = spawn_main(["--name", "foo", "--repo", "nonexistent"])
+    assert code == 1
+    assert spawn_results.iter_pending() == []
