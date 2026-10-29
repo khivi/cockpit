@@ -62,3 +62,21 @@ def test_oserror_is_swallowed(monkeypatch):
 
     monkeypatch.setattr(action_log.os, "open", boom)
     action_log.record("send", actor="t")  # must not raise
+
+
+def test_a_repeated_skip_logs_once_until_the_reason_or_a_send_changes_it():
+    for _ in range(3):
+        action_log.record("skip", actor="ask", ref="workspace:1", detail="mid-turn")
+    action_log.record("skip", actor="ask", ref="workspace:1", detail="parked")
+    action_log.record("skip", actor="seed-retry", ref="workspace:1", detail="parked")
+    action_log.record("send", actor="ask", ref="workspace:1", detail="hi")
+    action_log.record("skip", actor="ask", ref="workspace:1", detail="parked")
+
+    rows = read_actions()
+    assert [(r["actor"], r["action"], r["detail"]) for r in rows] == [
+        ("ask", "skip", "mid-turn"),
+        ("ask", "skip", "parked"),
+        ("seed-retry", "skip", "parked"),
+        ("ask", "send", "hi"),
+        ("ask", "skip", "parked"),
+    ]

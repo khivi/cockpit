@@ -406,6 +406,7 @@ The set is closed: the PR nudge (`cycle.py`, slow tick, `PR.nudge_issue`, silenc
 - Runtime dir, **not** `$COCKPIT_HOME`: a `ref` is machine-local and the home may be synced.
 - Three choke points call it: `cmux.nudge_if_idle` (`send` or `skip` with the gate's reason, actor from `tag`), `teardown.teardown` and the spawn path (`cycle._bg_spawn_pr`, `spawn.py`). **Do not** add a call site per caller.
 - Dry runs log nothing, because nothing happened.
+- A `skip` logs only when its reason changes for that `(actor, ref)` (`_last_skip`), because the fast-tick drains re-offer a busy session every 30s. **Do not** drop the dedup: unchanged refusals rotate real sends out.
 - It never raises (`OSError` is swallowed), one `O_APPEND` write per line, one `.1` rotation past `MAX_BYTES`.
 - `session` is filled only when the caller already holds it. **Do not** look it up in the logger.
 

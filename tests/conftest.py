@@ -123,6 +123,14 @@ def _isolate_pidfile(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _reset_action_log_dedup():
+    """`action_log._last_skip` is process state; a prior test's skip would mute this one's."""
+    from cockpit.lib import action_log
+
+    action_log._last_skip.clear()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_runtime_dir(tmp_path):
     """Point `$COCKPIT_RUNTIME_DIR` — the pidfile, close-request queue and
     seed-retry queue — at a per-test tmp path.
