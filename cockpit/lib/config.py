@@ -543,15 +543,8 @@ def _tickets_field(
     `close_on_merge` — still applies to a repo whose own `tickets` block omits
     that field but sets others.
 
-    There is deliberately **no** alias/fallback parameter. The superseded
-    per-provider spellings (`dev_done_state` / `_label` / `_status` / `_list`,
-    `merge_done_state` / `_status` / `_list`, Linear's `api_key_env`) are not
-    read here — they hard-fail in `preflight._check_legacy`, which names the
-    canonical field to move to. Accepting both spellings silently would mean a
-    config that reads as configured while a typo'd canonical name falls through
-    to the legacy one, and it would make the *effective* schema permanently
-    twice the documented one. **Do not** re-add an alias arg; add a migration
-    entry to `_LEGACY_TICKET_KEYS` instead.
+    There is deliberately **no** alias/fallback parameter: one name per field,
+    or the effective schema drifts from the documented one. **Do not** re-add one.
     """
     rb = _tickets_block(repo_entry)
     if field in rb:
@@ -567,8 +560,7 @@ def _tickets_field(
 def tickets(cfg: dict | None = None) -> str:
     """Return the *global* ticket provider: ``"none" | "linear" | "github"``.
 
-    The single selector that replaced the old boolean ``use_linear``. Reads the
-    global ``tickets`` block's ``provider`` (or the bare-string shorthand). Names
+    Reads the global ``tickets`` block's ``provider`` (or the bare-string shorthand). Names
     which tracker cockpit integrates: the spawn fetch/rename prompt, the
     `devdone=` pill, and the done-on-merge writer. Unset/unrecognized →
     ``"none"``. Use `repo_tickets` to resolve the provider for a specific repo.

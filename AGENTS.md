@@ -463,7 +463,7 @@ The set is closed: the PR nudge (`cycle.py`, slow tick, `PR.nudge_issue`, silenc
 `tickets` is an object: `{provider, close_on_merge, dev_done, merge_done}` plus per-provider extras. A bare string is shorthand for `{provider: …}`. Fields and defaults live in `docs/config.md`.
 
 - One field per concept across providers. **Do not** re-split `dev_done`/`merge_done`/`token_env` per provider. `project` and `board` stay distinct. Trello keeps `key_env` and `token_env`. GitHub rejects `merge_done`.
-- Superseded spellings (`use_linear`, flat `linear_*`) hard-fail in `preflight._check_legacy` (`_LEGACY_TICKET_FIELDS`), naming the replacement. `tickets_field_errors` can't tell a rename from a typo. **Do not** re-add an alias arg or a "guess the provider from a sibling field" fallback.
+- One name per field. **Do not** re-add an alias arg or a "guess the provider from a sibling field" fallback.
 - Resolve per field: repo block, global block, default. Provider selection uses `_tickets_block`, where the repo's whole block wins.
 - `tickets::provider_for(cfg, repo_entry)` returns the `TicketProvider`, the single source of truth for `dev_done_value`, `parse_footers`, `fetch_states`, `fetch_titles` and `narrow_repos`. **Do not** add `provider == "github" ? …` ternaries. Add a `TicketProvider` field.
 - `spawn.py` picks the prompt from a `(mode, provider)` table (`_TICKET_PROMPTS`). Add a provider by adding its pair. It reads `repo_tickets`, **never** the global `tickets()`. It runs **after** every routing hop, or it resolves the cwd's repo, not the target's. The ticket-key routing gate is per-repo for the same reason. With no matching pair, it falls to `_plan_only_prompt(..., source=…)`. **Do not** drop the `source` slot.

@@ -5,9 +5,6 @@
 - [tickets.fields~1] `dev_done` and `merge_done` validate on Linear, Jira and
   Trello alike. Each concept has one field, never one per provider. GitHub
   accepts `dev_done` and rejects `merge_done`.
-- [tickets.legacy~1] Given a superseded per-provider spelling in the tickets
-  block, preflight exits 2. The error names the legacy field and its
-  replacement. Preflight never ignores the spelling silently.
 - [tickets.schema-composed~1] `token_env` validates for Linear. `key_env`
   validates for Trello and not for Jira. The allowed field set comes from the
   active provider's declarations, never from one merged dict.

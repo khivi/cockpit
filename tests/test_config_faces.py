@@ -9,6 +9,9 @@ added to a provider's `CONFIG_FIELDS` shipped documented or not depending on
 whether the author remembered — and an undocumented field is worse than a
 missing one, since the operator's only reference says it doesn't exist.
 
+It also runs the other way: a key the doc or the example names must be read
+somewhere in the package, so a removed reader can't leave its row behind.
+
 The assertion is deliberately weak: a field must *appear* as a table row, not
 that its prose is right. Prose can't be checked and pretending otherwise would
 make this a test people edit to pass.
@@ -17,6 +20,7 @@ make this a test people edit to pass.
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
 
@@ -69,7 +73,8 @@ NOT_COCKPIT_CONFIG: frozenset[str] = frozenset({"statusLine", "hooks", "command"
 
 def _keys_read_by(source: str) -> dict[str, int]:
     """`{key: first line}` for every literal `x.get("key")` and `x["key"]` in
-    `source`, minus environment-variable lookups."""
+    `source`, plus the key argument of a `*_field(...)` resolver, minus
+    environment-variable lookups."""
     out: dict[str, int] = {}
     for node in ast.walk(ast.parse(source)):
         keys: list[ast.expr] = []
@@ -85,6 +90,14 @@ def _keys_read_by(source: str) -> dict[str, int]:
             node.value
         ):
             keys = [node.slice]
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id.endswith("_field")
+            and node.args
+        ):
+            # `_skills_field(cfg, repo, "plan")`: the key is the last argument.
+            keys = [node.args[-1]]
         for key in keys:
             if isinstance(key, ast.Constant) and isinstance(key.value, str):
                 out.setdefault(key.value, key.lineno)
@@ -109,9 +122,65 @@ def test_every_key_config_py_reads_is_documented():
 
 def test_the_reader_scan_would_catch_an_undocumented_key():
     keys = _keys_read_by(
-        'cfg.get("a_key_nobody_documented")\nos.environ.get("HOME")\n' 'repo["sub"]\n'
+        'cfg.get("a_key_nobody_documented")\nos.environ.get("HOME")\n'
+        'repo["sub"]\n_skills_field(cfg, repo, "plan")\n'
     )
-    assert set(keys) == {"a_key_nobody_documented", "sub"}
+    assert set(keys) == {"a_key_nobody_documented", "sub", "plan"}
+
+
+PACKAGE = CONFIG_PY.parent.parent
+CONFIG_EXAMPLE = PACKAGE / "config.example.json"
+
+
+def _keys_read_anywhere() -> set[str]:
+    """Every key the package reads or a provider declares. Package-wide, not
+    `config.py` alone: many per-repo keys are read where they are used."""
+    out = set(_declared_fields())
+    for path in PACKAGE.rglob("*.py"):
+        out |= set(_keys_read_by(path.read_text()))
+    return out
+
+
+def _example_keys(node: object, parent: str = "") -> set[str]:
+    """Every object key in the example, minus the children of `orgs`, which are
+    org names rather than fields."""
+    out: set[str] = set()
+    if isinstance(node, dict):
+        for key, val in node.items():
+            if parent != "orgs":
+                out.add(key)
+            out |= _example_keys(val, key)
+    elif isinstance(node, list):
+        for item in node:
+            out |= _example_keys(item, parent)
+    return out
+
+
+def _unread(names: set[str], readers: set[str]) -> list[str]:
+    return sorted(names - readers)
+
+
+def test_every_documented_key_is_read():
+    stale = _unread(_documented_fields(), _keys_read_anywhere())
+    assert not stale, (
+        f"documented in docs/config.md but read nowhere in cockpit/: {stale}. "
+        "Drop the row, or the reader went missing."
+    )
+
+
+def test_every_example_key_is_read():
+    example = json.loads(CONFIG_EXAMPLE.read_text())
+    stale = _unread(_example_keys(example), _keys_read_anywhere())
+    assert not stale, (
+        f"set in config.example.json but read nowhere in cockpit/: {stale}. "
+        "Drop the key, or the reader went missing."
+    )
+
+
+def test_the_reverse_scan_would_catch_a_stale_key():
+    readers = _keys_read_anywhere()
+    example = {"orgs": {"an-org-name": {}}, "a_key_nothing_reads": 1}
+    assert _unread(_example_keys(example), readers) == ["a_key_nothing_reads"]
 
 
 def test_the_guard_would_catch_an_undocumented_field(monkeypatch):
