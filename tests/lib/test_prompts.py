@@ -8,7 +8,9 @@ quotes the *initial* half into a `claude '<prompt>'` shell command.
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -101,40 +103,83 @@ def test_split_prefix_never_embeds_body(prefix):
 
 
 def test_claude_command_quotes_prompt():
-    assert claude_command("hi there", strip_env=()) == "claude 'hi there'"
+    assert claude_command("hi there", strip_env=(), deny=()) == "claude 'hi there'"
 
 
 def test_claude_command_escapes_single_quotes():
-    assert claude_command("it's fine", strip_env=()) == "claude 'it'\\''s fine'"
+    assert (
+        claude_command("it's fine", strip_env=(), deny=()) == "claude 'it'\\''s fine'"
+    )
 
 
 def test_claude_command_none_is_bare_claude():
-    assert claude_command(None, strip_env=()) == "claude"
+    assert claude_command(None, strip_env=(), deny=()) == "claude"
 
 
 def test_claude_command_review_loads_only_user_settings():
-    cmd = claude_command("hi", review=True, strip_env=())
-    assert cmd == "claude --setting-sources user 'hi'"
-    assert "--setting-sources" not in claude_command("hi", strip_env=())
+    cmd = claude_command("hi", review=True, strip_env=(), deny=())
+    assert (
+        cmd
+        == "claude --setting-sources user --settings '{\"enableAllProjectMcpServers\":false}' 'hi'"
+    )
+    plain = claude_command("hi", strip_env=(), deny=())
+    assert "--setting-sources" not in plain
+    assert "--settings" not in plain
+
+
+@pytest.mark.covers("spawn.review-mcp~1")
+def test_claude_command_review_keeps_the_trees_mcp_servers_off():
+    """A user-level `enableAllProjectMcpServers: true` would auto-start whatever
+    the PR's own .mcp.json declares; `--settings` outranks it."""
+    cmd = claude_command("hi", review=True, strip_env=(), deny=())
+    flag = cmd.split("--settings ", 1)[1].rsplit(" ", 1)[0]
+    assert json.loads(flag.strip("'")) == {"enableAllProjectMcpServers": False}
+
+
+@pytest.mark.covers("spawn.deny-tools~1")
+def test_claude_command_passes_deny_rules_as_flag_settings():
+    cmd = claude_command(
+        "hi", strip_env=(), deny=["mcp__slack", "WebFetch", "mcp__slack"], review=True
+    )
+    flag = cmd.split("--settings ", 1)[1].rsplit(" ", 1)[0]
+    assert json.loads(flag.strip("'")) == {
+        "enableAllProjectMcpServers": False,
+        "permissions": {"deny": ["mcp__slack", "WebFetch"]},
+    }
+
+
+def test_claude_command_shell_quotes_a_deny_rule_with_a_quote():
+    cmd = claude_command(None, strip_env=(), deny=["Bash(echo 'x')"])
+    out = subprocess.run(
+        f"printf '%s' {cmd.split('--settings ', 1)[1]}",
+        shell=True,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert json.loads(out) == {"permissions": {"deny": ["Bash(echo 'x')"]}}
 
 
 def test_claude_command_combines_env_strip_and_review_flags():
-    cmd = claude_command("hi", strip_env=["X"], review=True)
-    assert cmd == "env -u 'X' claude --setting-sources user 'hi'"
+    cmd = claude_command("hi", strip_env=["X"], review=True, deny=())
+    assert (
+        cmd
+        == "env -u 'X' claude --setting-sources user --settings '{\"enableAllProjectMcpServers\":false}' 'hi'"
+    )
 
 
 def test_claude_command_print_mode_adds_the_flag():
     assert (
-        claude_command("hi there", print_mode=True, strip_env=())
+        claude_command("hi there", print_mode=True, strip_env=(), deny=())
         == "claude -p 'hi there'"
     )
-    assert claude_command(None, print_mode=True, strip_env=()) == "claude -p"
+    assert claude_command(None, print_mode=True, strip_env=(), deny=()) == "claude -p"
 
 
 def test_claude_command_strips_named_env_from_the_session():
-    cmd = claude_command("hi", strip_env={"LINEAR_API_KEY", "JIRA_API_TOKEN"})
+    cmd = claude_command("hi", strip_env={"LINEAR_API_KEY", "JIRA_API_TOKEN"}, deny=())
     assert cmd == "env -u 'JIRA_API_TOKEN' -u 'LINEAR_API_KEY' claude 'hi'"
-    assert claude_command(None, strip_env=["X"]) == "env -u 'X' claude"
+    assert claude_command(None, strip_env=["X"], deny=()) == "env -u 'X' claude"
 
 
 def test_pr_workspace_spawn_launches_claude_without_credentials():
@@ -150,7 +195,7 @@ def test_pr_workspace_spawn_launches_claude_without_credentials():
         patch.object(cmux_mod, "build_pr_prompt", return_value="p"),
         patch.object(cmux_mod, "spawn_workspace", return_value=None) as sw,
     ):
-        cmux_mod.spawn_pr_workspace(pr, wt, strip_env={"LINEAR_API_KEY"})
+        cmux_mod.spawn_pr_workspace(pr, wt, strip_env={"LINEAR_API_KEY"}, deny=())
     assert sw.call_args.args[2].startswith("env -u 'LINEAR_API_KEY' claude")
 
 

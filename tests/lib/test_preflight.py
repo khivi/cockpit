@@ -1801,3 +1801,28 @@ def test_warn_unauthenticated_hosts_never_asks_about_github_com(tmp_path, capsys
     with patch("cockpit.lib.preflight.subprocess.run", side_effect=_fail):
         _warn_unauthenticated_hosts(cfg)
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "cfg",
+    [
+        {"deny_tools": "mcp__slack"},
+        {"deny_tools": ["mcp__slack", ""]},
+        {"repos": [{"name": "r", "path": "/r", "deny_tools": [1]}]},
+    ],
+)
+def test_validate_config_exits_on_malformed_deny_tools(cfg, capsys):
+    with pytest.raises(SystemExit) as exc:
+        validate_config(cfg)
+    assert exc.value.code == 2
+    assert "deny_tools must be a list" in capsys.readouterr().err
+
+
+def test_validate_config_accepts_deny_tools_lists(capsys):
+    validate_config(
+        {
+            "deny_tools": ["mcp__slack"],
+            "repos": [{"name": "r", "path": "/r", "deny_tools": ["WebFetch"]}],
+        }
+    )
+    assert capsys.readouterr().err == ""

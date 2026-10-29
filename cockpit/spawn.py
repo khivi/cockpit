@@ -120,6 +120,7 @@ from cockpit.lib.codename import codename
 from cockpit.lib.config import (
     actions_command,
     credential_env_names,
+    deny_tools,
     discover_repo,
     find_repo_by_name,
     find_repo_by_nwo,
@@ -1303,7 +1304,10 @@ def main(argv: list[str] | None = None) -> int:
             ws_name,
             wt,
             claude_command(
-                initial, strip_env=credential_env_names(), review=bool(args.review)
+                initial,
+                strip_env=credential_env_names(),
+                deny=deny_tools(repo_entry=_repo_entry_or_none(args.repo)),
+                review=bool(args.review),
             ),
         )
         if new_ref is not None:

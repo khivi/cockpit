@@ -8,6 +8,7 @@ authority block applies. Mirrors the spawn first-turn prompts.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -48,8 +49,14 @@ def split_prompt_prefix(prompt: str | None) -> tuple[str | None, str | None]:
 # A review session runs in a checkout of someone else's PR head. Loading only
 # the user's settings keeps that tree's project/local settings (hooks,
 # permissions) out while the owner's own setup still applies. The tree's
-# .mcp.json, CLAUDE.md, skills and commands are NOT covered.
+# .mcp.json, CLAUDE.md, skills and commands are NOT covered here; the tree's
+# .mcp.json is held off by `REVIEW_SETTINGS` instead.
 REVIEW_CLAUDE_FLAGS = "--setting-sources user"
+
+# `--settings` outranks user settings, so a user-level
+# `enableAllProjectMcpServers: true` cannot auto-start a server the PR's own
+# .mcp.json declares; Claude Code prompts a human for it instead.
+REVIEW_SETTINGS = {"enableAllProjectMcpServers": False}
 
 
 def claude_command(
@@ -57,6 +64,7 @@ def claude_command(
     *,
     print_mode: bool = False,
     strip_env: Iterable[str],
+    deny: Iterable[str],
     review: bool = False,
 ) -> str:
     """Build the `claude [prompt]` shell command for the *initial* turn.
@@ -77,12 +85,25 @@ def claude_command(
     routes through it — the workspace spawns in `cmux.py` and `_run_repo_skills`'
     blocking `fast_skills` run — so swapping the agent stays a one-function
     change. An inline `claude ...` at a call site quietly costs that.
-    `review` adds `REVIEW_CLAUDE_FLAGS`, for a session on a PR head that is not
-    the user's own.
+    `review` adds `REVIEW_CLAUDE_FLAGS` and `REVIEW_SETTINGS`, for a session on
+    a PR head that is not the user's own.
+
+    `deny` is Claude Code permission rules (`config.deny_tools`) passed as
+    `permissions.deny` in one `--settings` JSON. Required for the same reason
+    as `strip_env`; a caller with nothing to deny passes `()`.
     """
     flag = " -p" if print_mode else ""
+    settings: dict = {}
     if review:
         flag += f" {REVIEW_CLAUDE_FLAGS}"
+        settings.update(REVIEW_SETTINGS)
+    rules = list(dict.fromkeys(deny))
+    if rules:
+        settings["permissions"] = {"deny": rules}
+    if settings:
+        flag += (
+            f" --settings {shell_quote(json.dumps(settings, separators=(',', ':')))}"
+        )
     names = sorted(set(strip_env))
     env = f"env {' '.join(f'-u {shell_quote(n)}' for n in names)} " if names else ""
     if prompt is None:

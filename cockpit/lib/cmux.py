@@ -1769,11 +1769,11 @@ def spawn_pr_workspace(
     pref: NudgePref | None = None,
     dry: bool = False,
     strip_env: Iterable[str],
+    deny: Iterable[str],
 ) -> str | None:
     """Spawn the tracked cmux workspace for a PR; apply pills, log to stdout.
 
-    `strip_env` is the credential names to keep out of the session (see
-    `claude_command`)."""
+    `strip_env` and `deny` pass through to `claude_command`."""
     if dry:
         print(f"  [dry] spawn {wt.short}  #{pr.number}  cwd={wt.path}", flush=True)
         for key, value, _ in status_pills(pr, wt, self_user, pref):
@@ -1783,7 +1783,7 @@ def spawn_pr_workspace(
     ref = spawn_workspace(
         wt.workspace_name,
         wt.path,
-        claude_command(initial, strip_env=strip_env, review=not pr.mine),
+        claude_command(initial, strip_env=strip_env, deny=deny, review=not pr.mine),
     )
     if ref is None:
         print(
@@ -1804,7 +1804,7 @@ def spawn_pr_workspace(
 
 
 def spawn_orphan_workspace(
-    wt: Worktree, *, dry: bool = False, strip_env: Iterable[str]
+    wt: Worktree, *, dry: bool = False, strip_env: Iterable[str], deny: Iterable[str]
 ) -> str | None:
     """Spawn an orphan-worktree workspace (no PR); apply orphan + WIP pills."""
     if dry:
@@ -1812,7 +1812,9 @@ def spawn_orphan_workspace(
         return None
     initial, followup = split_prompt_prefix(build_orphan_prompt(wt))
     ref = spawn_workspace(
-        wt.workspace_name, wt.path, claude_command(initial, strip_env=strip_env)
+        wt.workspace_name,
+        wt.path,
+        claude_command(initial, strip_env=strip_env, deny=deny),
     )
     if ref is None:
         print(

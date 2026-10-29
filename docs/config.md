@@ -84,6 +84,7 @@ Each entry in the `repos` array. Ticket fields live in the nested `tickets` obje
 | `use_worktree` | bool | `true` | When `false`, the user works directly in the main checkout and cockpit never spawns PR/review/orphan worktrees for the repo (and `n` on its row creates a single named workspace on the checkout, no worktree). Absent = `true` = normal worktree-managed repo. Set to `false` by bare `cockpit new`. |
 | `update_stale_branches` | bool | `false` | Bring my own **approved or snoozed** PR branches up to date with their base when GitHub reports them `BEHIND` (i.e. the repo requires up-to-date branches before merging). Server-side via GitHub's "Update branch" — never a local rebase. Skips an approved PR whose base dismisses stale reviews, since updating it would discard the approval. Also a top-level default. |
 | `update_branch_method` | string | `"rebase"` | `rebase` or `merge` for the above. `rebase` keeps history linear but rewrites the head, so cockpit resyncs the local worktree (clean + unmodified only); `merge` adds a merge commit and the worktree fast-forwards on its own. Also a top-level default. |
+| `deny_tools` | list | `[]` | Claude Code permission rules denied in every session cockpit launches for this repo, e.g. `["mcp__slack", "WebFetch"]`. Unioned with the top-level list, so a repo can add rules but never lift a global one. An org's list sits in the repo rung, so a repo's own list replaces it. |
 | `tickets` | object\|string | `{}` | Ticket-provider block (below). Bare string `"github"` == `{"provider": "github"}`. |
 | `org` | string | unset | Name of an entry in the top-level `orgs` object whose defaults this repo inherits (below). Must be defined there — a dangling reference hard-fails at start. |
 
@@ -246,6 +247,7 @@ bundled in the wheel, never to a command whose behaviour lives elsewhere.
 | `linear_state_ttl_seconds` | number | `3 × slow` (900) | Backstop staleness for the cached Linear delivery block. |
 | `linear_identity_ttl_seconds` | number | `12 × slow` (3600) | Cache lifetime for Linear viewer id + team state maps. |
 | `skills` | object | `{}` | Slash-command overrides (above). |
+| `deny_tools` | list | `[]` | Permission rules denied in every cockpit-launched session, in every repo (`mcp__<server>` keeps an MCP server's tools off). Covers only sessions cockpit starts; for every Claude Code session, put the rule in `~/.claude/settings.json` `permissions.deny`. |
 | `use_cship` | bool | `false` | Install/point the statusLine at cship; seed `cship.toml`/`starship.toml` (via `cockpit setup` only). Turn it back off with `cockpit setup --reset`: setting it false by hand leaves the statusLine and `starship.toml` pins on disk, and no later `cockpit setup` clears them. |
 | `use_slack` | bool | `false` | Enable the Slack-MCP fetch+rename prompt for Slack-thread spawn sources. |
 | `tool` | string | `auto` | Workspace backend: `auto` \| `cmux` \| `limux` \| `none`. |

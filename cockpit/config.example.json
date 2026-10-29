@@ -14,6 +14,7 @@
       "review_external": false,
       "dependabot": false,
       "update_stale_branches": false,
+      "deny_tools": ["WebFetch"],
       "update_branch_method": "rebase",
       "tickets": {
         "provider": "linear",
@@ -126,5 +127,6 @@
   "tool": "auto",
   "theme": "dark",
   "tui_theme": "textual-dark",
-  "statusline_hide": ["cost", "session-time"]
+  "statusline_hide": ["cost", "session-time"],
+  "deny_tools": ["mcp__slack"]
 }
