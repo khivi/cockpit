@@ -185,6 +185,8 @@ from cockpit.lib.trello import (
 from cockpit.lib.trello import (
     move_card as trello_move_card,
 )
+from cockpit.orchestrators.spawn_failures import SpawnFailures
+from cockpit.orchestrators.spawn_failures import publish as publish_spawn_failures
 from cockpit.orchestrators.teardown import TeardownRequest, teardown
 from cockpit.orchestrators.ticket_inbox import TicketInbox
 from cockpit.orchestrators.ticket_inbox import active_ids as active_ticket_ids
@@ -3201,6 +3203,7 @@ def cycle_repo(
     cfg: dict,
     folds: ReviewFolds | None = None,
     inbox: TicketInbox | None = None,
+    spawn_failures: SpawnFailures | None = None,
 ) -> None:
     ctx = _prepare_cycle(
         repo_entry,
@@ -3219,8 +3222,16 @@ def cycle_repo(
             folds.partial = True
         if inbox is not None:
             inbox.partial = True
+        if spawn_failures is not None:
+            spawn_failures.partial = True
         return
     _write_pr_caches(ctx)
+    if spawn_failures is not None:
+        spawn_failures.add(
+            [f"{ctx.owner}/{ctx.name}", str(repo_entry.get("name") or "")],
+            {p.number: (p.title, p.branch) for p in ctx.prs if p.state == "OPEN"},
+            {wt.branch for wt in ctx.wts},
+        )
     # After `_write_pr_caches`, which is what resolves the `ticket` blocks the
     # in-flight half reads.
     if inbox is not None:
@@ -3458,6 +3469,8 @@ def cycle_all(
     # across repos — so like the fold it can only be drained after every repo has
     # reported, and a scoped run skips it.
     inbox = TicketInbox() if only_repo is None else None
+    # Failed background spawns: same shape, same scoping.
+    spawn_failures = SpawnFailures() if only_repo is None else None
     for repo_entry in repos:
         try:
             cycle_repo(
@@ -3469,6 +3482,7 @@ def cycle_all(
                 cfg=cfg,
                 folds=folds,
                 inbox=inbox,
+                spawn_failures=spawn_failures,
             )
         except (RuntimeError, subprocess.SubprocessError, OSError) as e:
             # The repo may have raised before folding, so its buckets can't be
@@ -3478,6 +3492,8 @@ def cycle_all(
                 folds.partial = True
             if inbox is not None:
                 inbox.partial = True
+            if spawn_failures is not None:
+                spawn_failures.partial = True
             ts = datetime.now().isoformat(timespec="seconds")
             print(
                 f"[{ts}] cycle error for {repo_entry.get('name')}: {e}\n"
@@ -3509,6 +3525,16 @@ def cycle_all(
             ts = datetime.now().isoformat(timespec="seconds")
             print(
                 f"[{ts}] {yellow('skip')} ticket inbox: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
+    if spawn_failures is not None:
+        try:
+            publish_spawn_failures(spawn_failures, dry=dry)
+        except OSError as e:
+            ts = datetime.now().isoformat(timespec="seconds")
+            print(
+                f"[{ts}] {yellow('skip')} spawn failures: {e}",
                 file=sys.stderr,
                 flush=True,
             )

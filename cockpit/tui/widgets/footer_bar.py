@@ -97,6 +97,7 @@ class FooterBar(Horizontal):
         # Beside `n` deliberately: both start work, and `T` is where you go when
         # you don't yet know what to type into `n`.
         "ticket_inbox",
+        "spawn_failures",
         "sync",
         "quit",
     )
@@ -116,6 +117,7 @@ class FooterBar(Horizontal):
         "ask_snoozed": "Ask snoozed",
         "new_workspace": "New",
         "ticket_inbox": "Tickets",
+        "spawn_failures": "Failed",
         "hide_repo": "Hide",
         "sync": "Sync",
         "quit": "Quit",
@@ -183,6 +185,11 @@ class FooterBar(Horizontal):
             "same as typing its id into New.\n"
             "c in there checks an org's tracker setup — credentials, connection, "
             "team or board names, declared MCP server."
+        ),
+        "spawn_failures": (
+            "PRs whose background worktree spawn failed, with the error. Such a "
+            "PR has no worktree and so no row.\n"
+            "The header shows a count whenever there are any."
         ),
         "sync": (
             "Reconcile every repo now instead of waiting for the tick — the "

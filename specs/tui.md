@@ -18,6 +18,9 @@
 - [header.countdowns~1] Given the cursor row's repo name growing much longer,
   the countdown segment's painted x-position does not move. `#header-repo`
   owns the bar's one flexible slot.
+- [header.failures~1] The `N spawns failed` segment shows only above zero and
+  moves no countdown when it appears. The failures overlay lists each failed
+  spawn with its error and reads only the payload.
 - [header.brand~1] `brand_text` links the version to exactly the URL it is
   handed. It carries no link at all when the URL is empty. The bar never
   drifts off the destination the palette's "What's new" opens.

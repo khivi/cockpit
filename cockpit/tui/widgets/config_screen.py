@@ -87,6 +87,11 @@ class ConfigCommands(Provider):
             "Show the full cockpit config (all repos + globals)",
         ),
         (
+            "Spawn failures: background spawns that failed",
+            "action_spawn_failures",
+            "Show PRs whose background worktree spawn failed, and why",
+        ),
+        (
             "Edit config: open in $EDITOR",
             "action_edit_config",
             "Edit config.json in $EDITOR (changes apply on restart)",

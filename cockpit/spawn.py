@@ -108,7 +108,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from cockpit.lib import action_log
+from cockpit.lib import action_log, spawn_results
 from cockpit.lib.cmux import (
     deliver_followup,
     require_workspace_binary,
@@ -140,6 +140,7 @@ from cockpit.lib.gh import (
     fetch_pr_info,
     fetch_run_info,
     pr_for_branch,
+    repo_nwo,
     resolve_pr_branch,
 )
 from cockpit.lib.git import (
@@ -929,9 +930,85 @@ def _actions_prompt(
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+class _StderrTail:
+    """Tees stderr and remembers the last meaningful line, for the result marker."""
 
+    def __init__(self, real: object) -> None:
+        self._real = real
+        self.lines: list[str] = []
+
+    def write(self, s: str) -> int:
+        self.lines += [ln.strip() for ln in s.splitlines() if ln.strip()]
+        return self._real.write(s)  # type: ignore[attr-defined, no-any-return]
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._real, name)
+
+    def error(self) -> str:
+        for ln in reversed(self.lines):
+            if ln.startswith("ERROR:"):
+                return ln.removeprefix("ERROR:").strip()
+        return self.lines[-1] if self.lines else ""
+
+
+def _result_repo_key(repo_name: str | None) -> str | None:
+    """The repo's nwo (the key `NudgePref` and the PR cache use), else its config
+    name; None when neither resolves."""
+    entry = _repo_entry_or_none(repo_name)
+    try:
+        owner, name = repo_nwo(
+            Path(entry["path"]).expanduser() if entry else Path.cwd()
+        )
+        return f"{owner}/{name}"
+    except (RuntimeError, OSError, KeyError, ValueError):
+        return repo_name
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run `cockpit new`. For `--pr` (the daemon's background spawn) also leave a
+    result marker: a failure writes one (`lib/spawn_results.py`), a success
+    clears it, so a PR that never got a worktree can say why."""
+    args = parse_args(argv)
+    if not args.pr:
+        return _run(args)
+    tail = _StderrTail(sys.stderr)
+    real_stderr, sys.stderr = sys.stderr, tail
+    rc, error = 1, ""
+    try:
+        rc = _run(args)
+    except SystemExit as e:
+        # `sys.exit()` carries None, which is success.
+        rc = 0 if e.code is None else e.code if isinstance(e.code, int) else 1
+        raise
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+        raise
+    finally:
+        sys.stderr = real_stderr
+        _record_result(args, rc, error or tail.error())
+    return rc
+
+
+def _record_result(args: argparse.Namespace, rc: int, error: str) -> None:
+    try:
+        repo = _result_repo_key(args.repo)
+        pr = int(args.pr)
+    except (TypeError, ValueError):
+        return
+    if not repo:
+        return
+    if rc == 0:
+        spawn_results.clear(repo, pr)
+        return
+    spawn_results.record_failure(repo, pr, rc, error)
+    action_log.record(
+        "spawn-failed",
+        actor="cli",
+        detail={"pr": pr, "repo": repo, "rc": rc, "error": error},
+    )
+
+
+def _run(args: argparse.Namespace) -> int:
     if args.repo is not None and find_repo_by_name(args.repo) is None:
         return _die(_unknown_repo_msg(args.repo))
 

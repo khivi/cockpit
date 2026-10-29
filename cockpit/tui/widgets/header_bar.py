@@ -130,6 +130,10 @@ def brand_text(version_text: str, url: str) -> Text:
     return text
 
 
+def failures_label(n: int) -> str:
+    return f"{n} spawn{'s' if n != 1 else ''} failed"
+
+
 def status_text(slow_remaining: int, fast_remaining: int) -> str:
     """The tick countdowns, as Textual markup."""
     text = f"{SLOW_GLYPH} {_fmt(slow_remaining)}"
@@ -159,6 +163,15 @@ class HeaderBar(Horizontal):
     HeaderBar > #header-repo {
         width: 1fr;
         content-align: left middle;
+    }
+    /* Auto width and absent at zero, so it never takes the repo's `1fr` and the
+       countdowns, anchored right of it, don't move when the cursor does. */
+    HeaderBar > #header-failures {
+        width: auto;
+        content-align: right middle;
+        padding-right: 2;
+        link-color: $text-muted;
+        link-style: none;
     }
     HeaderBar > #header-status {
         width: auto;
@@ -202,6 +215,10 @@ class HeaderBar(Horizontal):
         "The repo owning the highlighted row — the same name and colour as its\n"
         "group header, kept on screen once the header has scrolled away."
     )
+    FAILURES_TOOLTIP = (
+        "Background spawns that failed -- those PRs have no worktree, so no row.\n"
+        "Click, or press F, for the error."
+    )
     BRAND_TOOLTIP = (
         "The cockpit version this process is running.\n"
         "Opens the release notes; updates ship through brew, not from here."
@@ -215,10 +232,13 @@ class HeaderBar(Horizontal):
     # once-a-second tick countdowns through a repaint with it.
     repo_name: reactive[str] = reactive("")
     repo_color: reactive[str | None] = reactive(None)
+    # Failed background spawns; the segment shows only above zero.
+    spawn_failures: reactive[int] = reactive(0)
 
     def compose(self) -> ComposeResult:
         yield Static("", id="header-brand")
         yield Static("", id="header-repo")
+        yield Static("", id="header-failures")
         yield Static("", id="header-status")
         yield Static(
             f"[@click=app.command_palette]{self.MENU_LABEL}[/]", id="header-menu"
@@ -234,6 +254,11 @@ class HeaderBar(Horizontal):
         self._repaint()
         self._repaint_repo()
         self._repaint_brand()
+        self._repaint_failures()
+        self.query_one("#header-failures", Static).tooltip = self.FAILURES_TOOLTIP
+
+    def watch_spawn_failures(self, spawn_failures: int) -> None:
+        self._repaint_failures()
 
     def watch_version_text(self, version_text: str) -> None:
         self._repaint_brand()
@@ -278,6 +303,16 @@ class HeaderBar(Horizontal):
         cell = self._cell("#header-repo")
         if cell is not None:
             cell.update(repo_text(self.repo_name, self.repo_color))
+
+    def _repaint_failures(self) -> None:
+        cell = self._cell("#header-failures")
+        if cell is None:
+            return
+        n = self.spawn_failures
+        cell.display = n > 0
+        cell.update(
+            f"[@click=app.spawn_failures]{failures_label(n)}[/]" if n > 0 else ""
+        )
 
     def _repaint_brand(self) -> None:
         cell = self._cell("#header-brand")

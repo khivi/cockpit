@@ -160,6 +160,7 @@ def _isolate_runtime_dir(tmp_path):
     import cockpit.lib.daemon_signal as signal_mod
     import cockpit.lib.seed_bodies as bodies_mod
     import cockpit.lib.seed_queue as seed_mod
+    import cockpit.lib.spawn_results as results_mod
 
     runtime = tmp_path / "runtime"
     prev_env = os.environ.get("COCKPIT_RUNTIME_DIR")
@@ -173,6 +174,7 @@ def _isolate_runtime_dir(tmp_path):
         bodies_mod.STATE_DIR,
         bodies_mod.COMMAND_PATH,
         ask_mod.STATE_DIR,
+        results_mod.STATE_DIR,
     )
     config_mod.COCKPIT_RUNTIME_DIR = runtime
     config_mod.PID_FILE = runtime / "cockpit.pid"
@@ -190,6 +192,9 @@ def _isolate_runtime_dir(tmp_path):
     # Same by-value binding: a TUI test whose `a` is refused queues a line the
     # live fast tick would type into whatever workspace holds that ref.
     ask_mod.STATE_DIR = runtime / "ask-requests"
+    # Same by-value binding: a `--pr` spawn test that fails would otherwise drop
+    # a marker the real daemon then surfaces as a failed spawn.
+    results_mod.STATE_DIR = runtime / "spawn-results"
     bodies_mod.STATE_DIR = runtime / "seed-bodies"
     # Absent by default, so a developer who ran `cockpit setup` doesn't flip
     # every `deliver_followup` test onto the token path.
@@ -204,6 +209,7 @@ def _isolate_runtime_dir(tmp_path):
         bodies_mod.STATE_DIR,
         bodies_mod.COMMAND_PATH,
         ask_mod.STATE_DIR,
+        results_mod.STATE_DIR,
     ) = prev
     if prev_env is None:
         os.environ.pop("COCKPIT_RUNTIME_DIR", None)
@@ -490,6 +496,7 @@ def _isolate_cockpit_home():
     A test that genuinely wants the real home does not exist; there is no opt
     out on purpose.
     """
+    import cockpit.lib.cache as cache_mod
     import cockpit.lib.config as config_mod
 
     # Its own temp dir rather than a child of `tmp_path`: a fixture that plants
@@ -504,6 +511,10 @@ def _isolate_cockpit_home():
     config_mod.COCKPIT_HOME = home
     config_mod.CONFIG_PATH = home / "config.json"
     config_mod.CACHE_DIR = home / "cache"
+    # `cache.py` imports `CACHE_DIR` by name, so patching `config` alone leaves
+    # every payload writer there pointed at the real home.
+    prev_cache_dir = cache_mod.CACHE_DIR
+    cache_mod.CACHE_DIR = config_mod.CACHE_DIR
 
     real_write = config_mod._atomic_write_text
 
@@ -523,6 +534,7 @@ def _isolate_cockpit_home():
     finally:
         shutil.rmtree(home, ignore_errors=True)
         config_mod._atomic_write_text = real_write
+        cache_mod.CACHE_DIR = prev_cache_dir
         (
             config_mod.COCKPIT_HOME,
             config_mod.CONFIG_PATH,

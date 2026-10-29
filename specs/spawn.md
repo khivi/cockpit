@@ -19,6 +19,14 @@
   matches, the fallback plan-only prompt carries the ref (`o/r#42`) in its
   Source slot. One such source is a GitHub issue URL with no ticket provider
   configured. The prompt never seeds a bare branch name.
+- [spawn.failure-marker~1] Given a `--pr` spawn that exits non-zero, the child
+  writes a marker keyed by repo and PR number. The marker carries the error and
+  a failure count. A later success deletes it. A spawn without `--pr` writes
+  none.
+- [spawn.failure-payload~1] The slow tick folds the markers into one payload.
+  The PR title comes from the list it already holds. A marker whose PR is
+  closed or has a worktree is deleted. A repo that did not report keeps its
+  markers. An unreadable marker directory writes nothing.
 - [spawn.review-default~1] Given no configured review command, a coworker-PR
   seed leads with cockpit's packaged review prose. The seed never names a
   command cockpit does not ship.
