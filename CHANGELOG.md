@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.17.10](https://github.com/khivi/cockpit/compare/v3.17.9...v3.17.10) (2026-10-29)
+
+
+### Documentation
+
+* **release:** record why bump-tap has no deployment environment ([#615](https://github.com/khivi/cockpit/issues/615)) ([641954f](https://github.com/khivi/cockpit/commit/641954ffa813eb9a46748644e4e1b9e2782a8766))
+
 ## [3.17.9](https://github.com/khivi/cockpit/compare/v3.17.8...v3.17.9) (2026-10-28)
 
 
