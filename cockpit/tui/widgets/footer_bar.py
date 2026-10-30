@@ -219,7 +219,9 @@ class FooterBar(Horizontal):
     SNOOZED_ROW_ACTIONS = frozenset({"snooze_row", "ask_snoozed"})
 
     # Actions never shown in the footer (handled implicitly / not key-hint worthy).
-    HIDDEN_ACTIONS = frozenset({"dismiss_overlay"})
+    # `b` is bound but footerless: the footer is already full at 80 columns,
+    # so it is reached from ≡ Menu instead.
+    HIDDEN_ACTIONS = frozenset({"dismiss_overlay", "brief"})
 
     # Row actions that only work on one backend — rendered only when the resolved
     # backend ("cmux" | "limux" | "none") is in the action's set. `f` (focus)

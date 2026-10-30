@@ -156,6 +156,7 @@ def _isolate_runtime_dir(tmp_path):
     `monkeypatch` — see `_isolate_hidden_repos` for why that ordering matters.
     """
     import cockpit.lib.ask_queue as ask_mod
+    import cockpit.lib.brief as brief_mod
     import cockpit.lib.config as config_mod
     import cockpit.lib.daemon_signal as signal_mod
     import cockpit.lib.seed_bodies as bodies_mod
@@ -175,6 +176,7 @@ def _isolate_runtime_dir(tmp_path):
         bodies_mod.COMMAND_PATH,
         ask_mod.STATE_DIR,
         results_mod.STATE_DIR,
+        brief_mod.STATE_PATH,
     )
     config_mod.COCKPIT_RUNTIME_DIR = runtime
     config_mod.PID_FILE = runtime / "cockpit.pid"
@@ -196,6 +198,8 @@ def _isolate_runtime_dir(tmp_path):
     # a marker the real daemon then surfaces as a failed spawn.
     results_mod.STATE_DIR = runtime / "spawn-results"
     bodies_mod.STATE_DIR = runtime / "seed-bodies"
+    # Same by-value binding: a cycle test would roll the real brief baseline.
+    brief_mod.STATE_PATH = runtime / "brief.json"
     # Absent by default, so a developer who ran `cockpit setup` doesn't flip
     # every `deliver_followup` test onto the token path.
     bodies_mod.COMMAND_PATH = tmp_path / "claude-commands" / "cockpit-seed.md"
@@ -210,6 +214,7 @@ def _isolate_runtime_dir(tmp_path):
         bodies_mod.COMMAND_PATH,
         ask_mod.STATE_DIR,
         results_mod.STATE_DIR,
+        brief_mod.STATE_PATH,
     ) = prev
     if prev_env is None:
         os.environ.pop("COCKPIT_RUNTIME_DIR", None)

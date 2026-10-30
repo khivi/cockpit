@@ -114,6 +114,7 @@ both: each workspace named after its own repo, and the shared glyph on the piles
 | `n` | Start something new |
 | `T` | The ticket inbox — tickets assigned to you that you haven't started |
 | `F` | Failed spawns — PRs whose background worktree could not be created, and why |
+| `b` | The brief — what needs you, and what changed since yesterday |
 | `h` | Park / reveal / un-park a repo |
 | `s` | Refresh every repo now |
 | `q` | Quit |
@@ -406,6 +407,18 @@ worktree and so no row. A dim `N spawns failed` appears in the header bar. Click
 for its full text.
 
 The entry clears itself once the PR has a worktree or is no longer open.
+
+### The brief — press `b`
+
+`b` opens a one-screen summary, any time of day. It has three parts:
+
+- **Needs you.** Every PR that shows 🔔, grouped by repo, with the reason.
+- **Changed since yesterday.** New and gone PRs, CI and review changes, new review comments,
+  and snoozes that woke. "Yesterday" is the state at cockpit's last refresh on the previous
+  day, so changes while cockpit was quit overnight count too. It stays the same all day.
+- **Elsewhere.** Counts for the ticket inbox, failed spawns, snoozed PRs and parked repos.
+
+On the first day there is nothing to compare against, so only **Needs you** shows.
 
 ---
 

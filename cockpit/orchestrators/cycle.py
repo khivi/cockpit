@@ -22,10 +22,11 @@ from pathlib import Path
 from typing import IO, cast
 
 import cockpit.lib.daemon_signal as daemon_signal
-from cockpit.lib import action_log
+from cockpit.lib import action_log, brief
 from cockpit.lib.cache import (
     clear_pr_flat_cells,
     find_pr_payload,
+    load_pr_payloads,
     load_pr_payloads_by_branch,
     muted_payload,
     prune_superseded_pr_caches,
@@ -3538,6 +3539,12 @@ def cycle_all(
                 file=sys.stderr,
                 flush=True,
             )
+    if only_repo is None and not dry:
+        try:
+            brief.record(load_pr_payloads(), datetime.now().date().isoformat())
+        except OSError as e:
+            ts = datetime.now().isoformat(timespec="seconds")
+            print(f"[{ts}] {yellow('skip')} brief: {e}", file=sys.stderr, flush=True)
     if folds is not None and not _cache_only(cfg):
         try:
             _reconcile_review_groups(folds, dry=dry, pill_state=pill_state)

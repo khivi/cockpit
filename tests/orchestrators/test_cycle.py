@@ -6884,3 +6884,28 @@ def test_reap_falls_back_to_the_process_login_when_the_host_cannot_answer(
 def _teardown_dirty_check_clean(monkeypatch):
     """Tmp dirs here are not git repos; strict `count_dirty` would read them as unknown."""
     monkeypatch.setattr(teardown_mod, "count_dirty", lambda *_a, **_kw: 0)
+
+
+@pytest.mark.parametrize(
+    ("only_repo", "dry", "records"),
+    [(None, False, True), ("/a", False, False), (None, True, False)],
+)
+@pytest.mark.covers("brief.baseline~1")
+def test_cycle_all_records_the_brief_only_on_a_full_live_cycle(only_repo, dry, records):
+    cfg = {"repos": [{"name": "a", "path": "/a"}]}
+    calls: list[str] = []
+    patches = _patch_cycle_all_collaborators()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patch.object(cycle, "cycle_repo", lambda *_a, **_k: None),
+        patch.object(cycle, "_cache_only", lambda _cfg: True),
+        patch.object(cycle.brief, "record", lambda _p, today: calls.append(today)),
+    ):
+        cycle.cycle_all(
+            cfg, "khivi", dry=dry, pr_cache={}, pill_state={}, only_repo=only_repo
+        )
+
+    assert bool(calls) is records

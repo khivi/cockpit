@@ -21,6 +21,15 @@
 - [header.failures~1] The `N spawns failed` segment shows only above zero and
   moves no countdown when it appears. The failures overlay lists each failed
   spawn with its error and reads only the payload.
+- [brief.baseline~1] Records roll `last` into `baseline` once per day, on the
+  first record of a new date. Only a full, non-dry cycle records.
+- [brief.diff~1] The brief diff names new and gone PRs, `state`, `ci` and
+  `review` flips, a rise in review comments, and a snooze that woke. It names
+  nothing for an unchanged PR.
+- [brief.needs-you~1] "Needs you" lists open PRs with a nudge issue that are
+  neither muted nor snoozed.
+- [brief.screen~1] The brief overlay groups rows by repo, strips control
+  characters from titles, and says so when no baseline exists yet.
 - [header.brand~1] `brand_text` links the version to exactly the URL it is
   handed. It carries no link at all when the URL is empty. The bar never
   drifts off the destination the palette's "What's new" opens.
