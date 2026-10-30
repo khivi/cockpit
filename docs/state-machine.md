@@ -604,6 +604,13 @@ differ e.g. label `Envesya` vs repo `beta`). The TUI memoizes the nwo per repo
 (`app._cache_repo_name`) since `repo_nwo` shells out to `gh`. Keying by the label
 misses every file → blank Ticket/Status cells and no-op row actions.
 
+A snapshot leaves disk three ways: teardown drops its branch's
+(`cache.delete_pr_caches_for_branch`), a reused branch drops the loser
+(`cache.prune_superseded_pr_caches`), and a full, live slow cycle whose fetch
+succeeded drops every PR absent from the live list with no worktree branch
+(`cache.prune_closed_pr_caches`). Without the third, a PR that leaves the
+`is:open` search with no worktree is never fetched again and freezes at OPEN.
+
 Why two ticks:
 
 - **Slow tick** owns every decision (spawn, nudge, devdone, teardown,

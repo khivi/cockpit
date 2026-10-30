@@ -29,6 +29,7 @@ from cockpit.lib.cache import (
     load_pr_payloads,
     load_pr_payloads_by_branch,
     muted_payload,
+    prune_closed_pr_caches,
     prune_superseded_pr_caches,
     snoozed_payload,
     ticket_display,
@@ -3205,6 +3206,7 @@ def cycle_repo(
     folds: ReviewFolds | None = None,
     inbox: TicketInbox | None = None,
     spawn_failures: SpawnFailures | None = None,
+    full_cycle: bool = False,
 ) -> None:
     ctx = _prepare_cycle(
         repo_entry,
@@ -3227,6 +3229,12 @@ def cycle_repo(
             spawn_failures.partial = True
         return
     _write_pr_caches(ctx)
+    # Reached only after a successful fetch: `_prepare_cycle` returns None on a
+    # failed one, so an absent PR here means closed, never "couldn't ask".
+    if full_cycle and not ctx.dry:
+        prune_closed_pr_caches(
+            ctx.name, {p.number for p in ctx.prs}, {wt.branch for wt in ctx.wts}
+        )
     if spawn_failures is not None:
         spawn_failures.add(
             [f"{ctx.owner}/{ctx.name}", str(repo_entry.get("name") or "")],
@@ -3484,6 +3492,7 @@ def cycle_all(
                 folds=folds,
                 inbox=inbox,
                 spawn_failures=spawn_failures,
+                full_cycle=only_repo is None,
             )
         except (RuntimeError, subprocess.SubprocessError, OSError) as e:
             # The repo may have raised before folding, so its buckets can't be
@@ -3539,9 +3548,13 @@ def cycle_all(
                 file=sys.stderr,
                 flush=True,
             )
-    if only_repo is None and not dry:
+    if spawn_failures is not None and not spawn_failures.partial and not dry:
+        live = brief.open_keys(spawn_failures.open_prs)
         try:
-            brief.record(load_pr_payloads(), datetime.now().date().isoformat())
+            brief.record(
+                {k: p for k, p in load_pr_payloads().items() if k in live},
+                datetime.now().date().isoformat(),
+            )
         except OSError as e:
             ts = datetime.now().isoformat(timespec="seconds")
             print(f"[{ts}] {yellow('skip')} brief: {e}", file=sys.stderr, flush=True)

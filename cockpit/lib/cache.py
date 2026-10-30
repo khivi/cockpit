@@ -360,6 +360,26 @@ def prune_superseded_pr_caches(repo_name: str) -> list[Path]:
     return pruned
 
 
+def prune_closed_pr_caches(
+    repo_name: str, live: set[int], wt_branches: set[str]
+) -> list[Path]:
+    """Unlink `repo_name`'s snapshots for PRs absent from the live list and on no
+    worktree branch, returning the paths removed.
+
+    A PR that leaves the `is:open` search with no worktree is never fetched
+    again, so its snapshot would freeze at OPEN. A worktree's PR stays: the
+    per-branch fetch keeps rewriting it through MERGED/CLOSED for teardown.
+    Call only after a successful fetch, never on a failed one.
+    """
+    pruned: list[Path] = []
+    for path, payload in _iter_cache(f"{_repo_slug(repo_name)}__pr-*.json"):
+        if payload.get("number") in live or payload.get("branch") in wt_branches:
+            continue
+        path.unlink(missing_ok=True)
+        pruned.append(path)
+    return pruned
+
+
 # ── flat-file render cache (read by starship field printers) ───────────────
 
 
