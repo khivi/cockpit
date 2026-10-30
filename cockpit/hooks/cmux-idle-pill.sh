@@ -34,6 +34,15 @@
 # Hook wiring (Claude Code event → arg):
 #   Stop               → stop
 #   UserPromptSubmit   → prompt
+#   PermissionRequest  → blocked
+#
+# blocked=permission — a permission dialog is up. It fires before the dialog,
+# with no delay (the `Notification` `permission_prompt` matcher waits ~6s).
+# `nudge_if_idle` refuses while it is set, whatever native state or `idle=`
+# say. Cleared at Stop and prompt. Denying the dialog or pressing Esc
+# interrupts the turn without a Stop, so the pill stays until the next prompt;
+# native state stays `Running` then too, so it withholds nothing new.
+# Must print nothing: PermissionRequest reads stdout as a decision.
 
 set -eu
 
@@ -98,6 +107,7 @@ cmux_set_verify() {
   # genuinely-parked workspace with no `idle=` pill — so nudge_if_idle could not
   # tell it was safe to ping and the actionable nudge never fired. The whole
   # loop runs in a backgrounded subshell, so the hook still returns in <1ms.
+  # Its stdio is detached so Claude Code is not left waiting on our stdout.
   key="$1"; value="$2"; color="$3"
   (
     i=0
@@ -112,7 +122,7 @@ cmux_set_verify() {
       [ "$i" -lt "$CMUX_VERIFY_TRIES" ] && sleep "$CMUX_VERIFY_SLEEP"
     done
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [${CMUX_WORKSPACE_ID}] WARN: ${key}= not confirmed after ${CMUX_VERIFY_TRIES} tries" >>"$LOG"
-  ) &
+  ) </dev/null >/dev/null 2>&1 &
 }
 
 cmux_clear_verify() {
@@ -134,7 +144,7 @@ cmux_clear_verify() {
       [ "$i" -lt "$CMUX_VERIFY_TRIES" ] && sleep "$CMUX_VERIFY_SLEEP"
     done
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [${CMUX_WORKSPACE_ID}] WARN: ${key}= still present after ${CMUX_VERIFY_TRIES} tries" >>"$LOG"
-  ) &
+  ) </dev/null >/dev/null 2>&1 &
 }
 
 loop_active_in_transcript() {
@@ -189,6 +199,7 @@ PY
 
 case "${1:-}" in
   stop)
+    cmux_clear_verify blocked
     hook_input="$(cat)"
     if [ -n "$hook_input" ] && { loop_active_in_transcript "$hook_input" \
          || background_agent_running "$hook_input"; }; then
@@ -202,7 +213,14 @@ case "${1:-}" in
     # bug this hook exists to prevent (a parked workspace never gets nudged).
     cmux_set_verify idle idle "#6b7280"
     ;;
-  prompt) cmux_clear_verify idle ;;
+  prompt)
+    cmux_clear_verify idle
+    cmux_clear_verify blocked
+    ;;
+  blocked)
+    cmux_clear_verify idle
+    cmux_set_verify blocked permission "#f59e0b"
+    ;;
 esac
 
 exit 0

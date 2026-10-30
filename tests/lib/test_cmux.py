@@ -1525,6 +1525,41 @@ def test_nudge_suppressed_on_bare_needs_input():
     assert sends == []
 
 
+@pytest.mark.covers("idle-gate.blocked~1")
+@pytest.mark.parametrize("native", ["Idle", "Needs input", None])
+def test_nudge_refused_while_blocked_pill_set(native):
+    """A permission dialog is up: no `idle=` pill or native `Idle` overrides it."""
+    from cockpit.lib.cmux import rest_pending
+
+    lines = ["idle=idle", "blocked=permission"]
+    if native:
+        lines.append(_native_line(native))
+    sends: list[tuple] = []
+    skips: dict[str, str] = {}
+
+    def fake_cmux(*args, **_kwargs):
+        if args[0] == "send":
+            sends.append(args)
+        if args[0] == "list-status":
+            return "\n".join(lines)
+        return ""
+
+    with patch("cockpit.lib.cmux.cmux", side_effect=fake_cmux):
+        assert nudge_if_idle("workspace:1", "fix CI", tag="t", skips=skips) is False
+    assert sends == []
+    assert skips == {"workspace:1": "awaiting permission"}
+    assert rest_pending(skips["workspace:1"])
+
+
+@pytest.mark.covers("idle-gate.blocked~1")
+def test_reassert_writes_no_idle_pill_over_blocked():
+    healed, writes = _reassert_calls(
+        {"workspace:1": f"blocked=permission\n{_native_line('Idle')}"}
+    )
+    assert healed == []
+    assert writes == []
+
+
 def test_nudge_fires_when_idle_pill_present_even_if_native_needs_input():
     """The persistent `idle=` pill (set only at Stop, never mid-permission) is a
     trusted safe signal. `Needs input` alongside it is genuine idle-at-prompt."""

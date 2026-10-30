@@ -62,6 +62,10 @@ COCKPIT_KEY = "cockpit_pr"
 PARKED_KEY = "parked"
 PARKED_ICON = "💤"
 
+# Set by the `PermissionRequest` hook, cleared at `Stop` / `UserPromptSubmit`:
+# the one positive "a dialog is up" signal, which native `Needs input` is not.
+BLOCKED_KEY = "blocked"
+
 LOOP_KEY = "loop"
 LOOP_ICON = "🔁"
 
@@ -1097,6 +1101,8 @@ def _idle_skip_reason(status_lines: list[str]) -> str | None:
     native = _native_claude_state(status_lines)
     if native == "Running":
         return "mid-turn"
+    if _has_pill(status_lines, BLOCKED_KEY):
+        return "awaiting permission"
     if not (_has_pill(status_lines, "idle") or native == "Idle"):
         # `Needs input` is the ambiguous one — a pending y/n permission looks
         # exactly like a session parked at the composer, so both land here.
@@ -1111,7 +1117,8 @@ def rest_pending(reason: str | None) -> bool:
     session is mid-turn or not provably at rest, which ends on its own.
     `parked` is the user's own done-waiting marker and is not."""
     return reason is not None and (
-        reason == "mid-turn" or reason.startswith("not at rest")
+        reason in ("mid-turn", "awaiting permission")
+        or reason.startswith("not at rest")
     )
 
 
@@ -1482,7 +1489,7 @@ def reassert_idle_pills(cwds: Mapping[str, Path]) -> list[str]:
 
     def _one(ref: str) -> str | None:
         lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
-        if _has_pill(lines, "idle"):
+        if _has_pill(lines, "idle") or _has_pill(lines, BLOCKED_KEY):
             return None
         native = _native_claude_state(lines)
         if native != "Idle" and not (
