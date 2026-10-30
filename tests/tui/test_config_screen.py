@@ -162,6 +162,9 @@ async def test_discovered_entries_invoke_their_app_action():
     called: list[str] = []
 
     class _Recorder(_Host):
+        def action_brief(self) -> None:
+            called.append("brief")
+
         def action_show_output(self) -> None:
             called.append("output")
 
@@ -186,7 +189,7 @@ async def test_discovered_entries_invoke_their_app_action():
         provider = ConfigCommands(app.screen)
         async for hit in provider.discover():
             hit.command()
-    assert called == ["output", "show", "failures", "edit", "news", "guide"]
+    assert called == ["brief", "output", "show", "failures", "edit", "news", "guide"]
 
 
 @pytest.mark.covers("palette.order~1")

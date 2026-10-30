@@ -46,11 +46,12 @@ from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.css.query import NoMatches
 
-from cockpit.lib import ask_queue, version
+from cockpit.lib import ask_queue, brief, version
 from cockpit.lib.cache import (
     cost_reporting_available,
     cwd_cache,
     find_pr_payload,
+    load_pr_payloads,
     load_spawn_failures,
     load_ticket_inboxes,
     read_text,
@@ -114,6 +115,7 @@ from cockpit.lib.tickets import provider_for
 from cockpit.lib.tool import is_cmux, resolve_tool
 from cockpit.orchestrators.teardown import resolve_pr_state, worktree_state_blockers
 from cockpit.tui.widgets.ask_screen import AskScreen
+from cockpit.tui.widgets.brief_screen import BriefScreen
 from cockpit.tui.widgets.check_progress_screen import CheckProgressScreen
 from cockpit.tui.widgets.config_screen import ConfigCommands, ConfigScreen
 from cockpit.tui.widgets.footer_bar import FooterBar
@@ -295,6 +297,7 @@ class CockpitApp(App[None]):
         ("n", "new_workspace", "New"),
         ("T", "ticket_inbox", "Tickets"),
         ("F", "spawn_failures", "Failed spawns"),
+        ("b", "brief", "Brief"),
         ("h", "hide_repo", "Hide repo"),
         ("s", "sync", "Sync"),
         ("q", "quit", "Quit"),
@@ -1400,6 +1403,40 @@ class CockpitApp(App[None]):
         """`F` / the header segment -- failed background spawns, from the payload
         the slow tick wrote. Reads nothing else."""
         self.push_screen(SpawnFailuresScreen(load_spawn_failures()))
+
+    def action_brief(self) -> None:
+        """`b` -- what needs you and what changed since yesterday, from the PR
+        payloads and the daemon's baseline. Reads only; never re-baselines."""
+        payloads = load_pr_payloads()
+        baseline = brief.load().get("baseline")
+        if not isinstance(baseline, dict):
+            baseline = None
+        inbox = sum(
+            1
+            for tickets in load_ticket_inboxes().values()
+            for t in tickets
+            if not t.get("in_flight")
+        )
+        counts = (
+            (inbox, "ticket{s} in the inbox (T)"),
+            (len(load_spawn_failures()), "failed spawn{s} (F)"),
+            (sum(1 for p in payloads.values() if p.get("snoozed")), "snoozed PR{s}"),
+            (len(load_hidden()), "parked repo{s} (h)"),
+        )
+        self.push_screen(
+            BriefScreen(
+                since=baseline.get("date") if baseline else None,
+                needs=brief.needs_you(payloads),
+                changes=brief.diff(baseline.get("prs") or {}, brief.digest(payloads))
+                if baseline
+                else [],
+                elsewhere=[
+                    f"{n} " + label.format(s="s" if n != 1 else "")
+                    for n, label in counts
+                    if n
+                ],
+            )
+        )
 
     def action_ticket_inbox(self) -> None:
         """`T` — the ticket inbox: what to start, as opposed to how work is going.

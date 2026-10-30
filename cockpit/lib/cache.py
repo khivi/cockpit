@@ -312,6 +312,11 @@ def load_pr_payloads_by_branch(repo_name: str) -> dict[str, dict]:
     return best
 
 
+def load_pr_payloads() -> dict[str, dict]:
+    """Every cached PR snapshot, keyed by file stem (`<repo-slug>__pr-<N>`)."""
+    return {path.stem: payload for path, payload in _iter_cache("*__pr-*.json")}
+
+
 def delete_pr_caches_for_branch(repo_name: str, branch: str) -> None:
     """Remove cached PR snapshots for `repo_name` whose payload `branch` matches."""
     prefix = _repo_slug(repo_name)

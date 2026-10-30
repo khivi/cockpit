@@ -530,6 +530,16 @@ A PR whose daemon-launched `cockpit new --pr` child failed has no worktree, henc
 - **`SpawnFailuresScreen` and the `#header-failures` segment read the payload only.** The segment is auto-width and absent at zero, so **do not** give it a `1fr` or place it right of `#header-status`. The count is fed from `app._render_table`, never from `_refresh_footer_caps`, which runs on every arrow key. Text passes `strip_control`.
 - **Do not** add a retry or back-off here. That is `_bg_spawn_pr`'s in-flight guard.
 
+### The brief (`b`) — a diff baseline nothing else reads
+
+`cockpit/lib/brief.py` keeps brief.json under `$COCKPIT_RUNTIME_DIR`. `cycle_all` calls `brief.record` on a full, non-dry cycle. On the first record of a new day, the previous `last` becomes `baseline`. `BriefScreen` diffs `baseline` against the live PR payloads.
+
+- **Never** let a decision, cell, pill or send read brief.json. It is a diff baseline only.
+- **Never** re-baseline on `b`. The baseline moves only on a day change, so the brief stays the same all day.
+- **Do not** record under `only_repo`. A scoped cycle is a keypress, not a tick.
+- **Do not** auto-open it or add a send. It is pull-only.
+- Isolate `brief.STATE_PATH` in `tests/conftest.py::_isolate_runtime_dir`, since it binds at import.
+
 ### The ticket inbox — one of two surfaces NOT derived from `git worktree list`
 
 `T` opens `TicketsScreen`: tickets assigned to me, in an active state, with no worktree. `cycle.py::_collect_ticket_inbox` collects per repo, `orchestrators/ticket_inbox.py::publish` drains once, and `cockpit/tui/widgets/tickets_screen.py` renders.
