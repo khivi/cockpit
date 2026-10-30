@@ -1407,8 +1407,9 @@ class CockpitApp(App[None]):
     def action_brief(self) -> None:
         """`b` -- what needs you and what changed since yesterday, from the PR
         payloads and the daemon's baseline. Reads only; never re-baselines."""
-        payloads = load_pr_payloads()
-        baseline = brief.load().get("baseline")
+        state = brief.load()
+        payloads = brief.live(load_pr_payloads(), state)
+        baseline = state.get("baseline")
         if not isinstance(baseline, dict):
             baseline = None
         inbox = sum(

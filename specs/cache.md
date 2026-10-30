@@ -8,6 +8,10 @@ and the rationale behind each rule.
   inventory every cycle from `git worktree list` and the workspace list. It
   caches only network round-trips. No stored identity file exists.
 
+- [cache.prune-closed~1] A full, live cycle deletes a repo's PR snapshots
+  that are neither in the fetched PR list nor on a worktree branch. A failed fetch, a scoped cycle or a dry run
+  deletes nothing, and another repo's snapshots are untouched.
+
 ## Flat cells
 
 - [cache.flat-cells~2] Given two worktrees in different repos on the same

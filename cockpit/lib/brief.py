@@ -60,6 +60,27 @@ def record(payloads: dict[str, dict], today: str, path: Path | None = None) -> N
     _atomic_write_text(path, json.dumps(state))
 
 
+def live(payloads: dict[str, dict], state: dict) -> dict[str, dict]:
+    """The payloads the last full cycle saw open in a configured repo. The disk
+    cache also holds merged PRs and repos since dropped or parked."""
+    last = state.get("last")
+    prs = last.get("prs") if isinstance(last, dict) else None
+    if not isinstance(prs, dict):
+        return payloads
+    return {k: p for k, p in payloads.items() if k in prs}
+
+
+def open_keys(open_prs: dict[str, dict[int, str]]) -> set[str]:
+    """Cache-file stems for `{owner/name: {number: title}}`. Files are named by
+    the bare repo name; keys without an owner are config labels and skipped."""
+    return {
+        f"{r.partition('/')[2]}__pr-{n}"
+        for r, prs in open_prs.items()
+        if "/" in r
+        for n in prs
+    }
+
+
 def needs_you(payloads: dict[str, dict]) -> list[tuple[str, dict]]:
     """Open PRs carrying a nudge issue that you have not muted or snoozed — the
     rows that show 🔔."""

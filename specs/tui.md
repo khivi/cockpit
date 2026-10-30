@@ -26,6 +26,9 @@
 - [brief.diff~1] The brief diff names new and gone PRs, `state`, `ci` and
   `review` flips, a rise in review comments, and a snooze that woke. It names
   nothing for an unchanged PR.
+- [brief.live~1] The brief shows only PRs the last full cycle saw open in a
+  configured, unparked repo. A stale snapshot on disk never reaches it, and a
+  cycle where any repo failed to report records nothing.
 - [brief.needs-you~1] "Needs you" lists open PRs with a nudge issue that are
   neither muted nor snoozed.
 - [brief.screen~1] The brief overlay groups rows by repo, strips control
