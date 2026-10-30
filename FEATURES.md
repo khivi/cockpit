@@ -533,8 +533,9 @@ Cockpit takes the bookkeeping off you. It doesn't take the judgment.
 - **No history.** Each row shows what's true now, not what changed since yesterday. The PR
   has the history.
 - **A nudged agent may take shortcuts.** Red CI at 2am gets fixed while you sleep — and
-  occasionally by weakening a test. Read what it did. Use `m` and `z` where that isn't
-  worth it.
+  occasionally by weakening a test. Read what it did. A Claude Code `PreToolUse` hook
+  that blocks edits to test files and linter or type-checker configs closes the gap. Use
+  `m` and `z` where that isn't worth it.
 - **You bring the terminal.** Cockpit drives cmux or limux; it doesn't install them.
   Without one, the table and statusline still work, but nothing can open a terminal.
 - **It doesn't orchestrate agents.** It doesn't plan, split, assign, or decide work. If you
