@@ -1564,14 +1564,15 @@ def test_install_claude_hooks_writes_expected_events(tmp_path):
     settings = tmp_path / "settings.json"
     config_mod.install_claude_hooks(settings)
     data = json.loads(settings.read_text())
-    # Exactly the two hooks that drive the `idle=` pill. The retired ones — the
+    # Exactly the three hooks that drive the `idle=` and `blocked=` pills. The retired ones — the
     # Stop-time `cockpit statusline` duplicate write and the three `loop=` hooks
     # nothing read — must not come back without a reader to justify them.
-    assert set(_events(data)) == {"Stop", "UserPromptSubmit"}
+    assert set(_events(data)) == {"Stop", "UserPromptSubmit", "PermissionRequest"}
     # No self-update SessionStart hook — it was retired with the update subsystem.
     assert "SessionStart" not in _events(data)
     assert _cmds(data, "Stop") == ["cockpit idle-pill stop || true"]
     assert _cmds(data, "UserPromptSubmit") == ["cockpit idle-pill prompt || true"]
+    assert _cmds(data, "PermissionRequest") == ["cockpit idle-pill blocked || true"]
 
 
 def test_install_claude_hooks_sweeps_retired_cockpit_hooks(tmp_path):

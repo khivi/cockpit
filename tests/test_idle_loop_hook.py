@@ -137,6 +137,26 @@ def test_prompt_clears_idle_pill(fake_cmux):
     assert any("clear-status idle" in c for c in calls), calls
 
 
+@pytest.mark.covers("idle-pill.blocked~1")
+def test_blocked_sets_blocked_pill_clears_idle_and_prints_nothing(fake_cmux):
+    out = subprocess.run(
+        [str(HOOK), "blocked"], input="{}", text=True, capture_output=True, check=True
+    )
+    # PermissionRequest reads hook stdout as a permission decision.
+    assert out.stdout == ""
+    calls = _poll_lines(fake_cmux, expected=2)
+    assert any(c.startswith("set-status blocked permission") for c in calls), calls
+    assert any("clear-status idle" in c for c in calls), calls
+
+
+@pytest.mark.covers("idle-pill.blocked~1")
+@pytest.mark.parametrize("phase", ["prompt", "stop"])
+def test_prompt_and_stop_clear_blocked_pill(fake_cmux, phase):
+    subprocess.run([str(HOOK), phase], input="", text=True, check=True)
+    calls = _poll_lines(fake_cmux, expected=2)
+    assert any("clear-status blocked" in c for c in calls), calls
+
+
 def _plant_verify_shim(tmp_path: Path, monkeypatch, *, set_succeeds_on: int) -> Path:
     """Stateful cmux shim: `list-status` reports `idle=idle` only on/after the
     `set_succeeds_on`-th `set-status idle` call. Models a daemon that drops the
@@ -227,7 +247,7 @@ def test_stop_with_schedulewakeup_clears_idle(fake_cmux, tmp_path):
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
     # Two async lines: the verified idle clear emits `clear-status idle` and
     # its `list-status` readback.
-    calls = _poll_lines(fake_cmux, expected=2)
+    calls = _poll_lines(fake_cmux, expected=4)
     assert any("clear-status idle" in c for c in calls), calls
     # Withholding the pill is the whole /loop suppression mechanism — a session
     # waiting on its own next wakeup is not at rest and must not read as idle.
@@ -238,7 +258,7 @@ def test_stop_with_croncreate_clears_idle(fake_cmux, tmp_path):
     transcript = _transcript_with(tmp_path, ["Edit", "CronCreate"])
     payload = json.dumps({"transcript_path": str(transcript)})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    calls = _poll_lines(fake_cmux, expected=2)
+    calls = _poll_lines(fake_cmux, expected=4)
     assert any("clear-status idle" in c for c in calls), calls
     assert not any("set-status idle" in c for c in calls), calls
 
@@ -248,7 +268,7 @@ def test_stop_without_loop_tools_sets_idle(fake_cmux, tmp_path):
     payload = json.dumps({"transcript_path": str(transcript)})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
     # The verified idle set: `set-status idle` + its `list-status` readback.
-    calls = _poll_lines(fake_cmux, expected=2)
+    calls = _poll_lines(fake_cmux, expected=4)
     # Value must be the literal `idle`: cmux >=0.64.10 rejects empty values,
     # so any change away from a non-empty marker silently breaks nudge_if_idle.
     assert any("set-status idle idle" in c for c in calls), calls
@@ -270,7 +290,7 @@ def test_stop_with_running_background_agent_clears_idle(fake_cmux, tmp_path, tas
         }
     )
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    calls = _poll_lines(fake_cmux, expected=2)
+    calls = _poll_lines(fake_cmux, expected=4)
     assert any("clear-status idle" in c for c in calls), calls
     assert not any("set-status idle" in c for c in calls), calls
 
@@ -290,14 +310,14 @@ def test_stop_with_no_running_background_agent_sets_idle(fake_cmux, tmp_path, ta
         {"transcript_path": str(transcript), "background_tasks": tasks}
     )
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    calls = _poll_lines(fake_cmux, expected=2)
+    calls = _poll_lines(fake_cmux, expected=4)
     assert any("set-status idle idle" in c for c in calls), calls
 
 
 def test_stop_with_missing_transcript_falls_through_to_idle(fake_cmux, tmp_path):
     payload = json.dumps({"transcript_path": str(tmp_path / "nope.jsonl")})
     subprocess.run([str(HOOK), "stop"], input=payload, text=True, check=True)
-    calls = _poll_lines(fake_cmux, expected=2)
+    calls = _poll_lines(fake_cmux, expected=4)
     assert any("set-status idle idle" in c for c in calls), calls
 
 

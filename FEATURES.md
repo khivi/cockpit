@@ -234,7 +234,8 @@ progress.
 It is safe to leave on:
 
 - **It only speaks to a session that is idle at its prompt** — never mid-turn, and never at
-  a permission prompt.
+  a permission prompt. A session waiting on a permission dialog shows a `blocked` pill in the
+  sidebar until it moves on.
 - **Only your own PRs.** A coworker's PR shows its problems in the row but is never nudged.
 - **You can quiet it.**
   - `m` mutes a PR indefinitely.

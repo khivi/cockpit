@@ -43,7 +43,7 @@ which path a PR × worktree pair takes ·
 |---|---|---|
 | **GitHub PR** | `gh` API → PR cache JSON (`cache.py`) | `state` ∈ {`OPEN`,`MERGED`,`CLOSED`} × `ci` × `unaddressed` × `review_decision` × `isDraft` × `mergeable` |
 | **Claude session** | cmux native `claude_code=` + statusline stdin (`claude.py`) | `Running` / `Idle` / `Needs input`; context %, rate-limit, model, cost |
-| **cmux workspace** | cmux pills + in-memory `pill_state` dict | `idle=` `devdone=` `parked=` `ci=` `comments=` `merge=` `wip=` `draft=` `approved=` `stale=` `loop=` + *does a worktree exist?* |
+| **cmux workspace** | cmux pills + in-memory `pill_state` dict | `idle=` `blocked=` `devdone=` `parked=` `ci=` `comments=` `merge=` `wip=` `draft=` `approved=` `stale=` `loop=` + *does a worktree exist?* |
 | **Tickets** (aux) | the `tickets` provider (`tickets.py` → `linear.py` GraphQL, `jira.py`, `trello.py` or `github_issues.py` `gh`) | Linear/Jira ticket state name (`Dev Done`), Trello list name, or GitHub issue label/state — read-only, drives the `devdone=` pill (and the opt-in done-on-merge write) |
 
 The decision functions consume these and emit actions. Everything below is a
@@ -398,7 +398,7 @@ branch ref only when HEAD sits at the merged head with nothing on top.
 
 ## 3. Nudge idle-gate (`nudge_if_idle`, `cmux.py`)
 
-Four sequential guards decide whether it is safe to `send` a nudge. The subtle
+Five sequential guards decide whether it is safe to `send` a nudge. The subtle
 rule: cmux native `Needs input` is **deliberately untrusted** — it is the same
 value cmux shows for a pending y/n permission prompt, and nudging there would
 type into the confirmation. Do not "simplify" the gate to trust it.
@@ -410,7 +410,9 @@ flowchart TD
   G1 -->|"no / no pref_key"| G2{"native ==<br/>Running?"}
 
   G2 -->|yes| F2["return False · skips: mid-turn<br/>(also catches a stale<br/>idle= on a live session)"]
-  G2 -->|no| G3{"idle= pill present<br/>OR native == Idle?"}
+  G2 -->|no| GB{"blocked= pill<br/>present?"}
+  GB -->|yes| FB["return False · skips: awaiting permission<br/>(PermissionRequest hook)"]
+  GB -->|no| G3{"idle= pill present<br/>OR native == Idle?"}
 
   G3 -->|no| F3["return False · skips: not at rest (native)<br/>(Needs input / None = not at rest)"]
   G3 -->|yes| G4{"parked= pill<br/>present?"}
@@ -432,11 +434,18 @@ a ref at native `Idle`; for a ref with no native state it falls back to
 `_screen_signals_idle` (transcript says no turn is in flight, screen shows no
 pending-choice marker and an empty composer). That fallback never gates a send.
 
-**The three middle guards live in `cmux._idle_skip_reason`**, not inline: a
+**The `blocked=` pill is the positive half.** The `PermissionRequest` hook sets
+it, and clears `idle=`, before the dialog draws; `Stop` and `UserPromptSubmit`
+clear it. It outranks `idle=` and native `Idle`, so a pill left over from the
+previous `Stop` cannot open the gate onto a dialog. The reassert never writes
+`idle=` over it. A denied or interrupted dialog fires no `Stop`, so the pill
+stays until the next prompt. cmux's native state stays `Running` there as well.
+
+**The four middle guards live in `cmux._idle_skip_reason`**, not inline: a
 caller that wants to *report* the verdict (`cockpit broadcast`'s per-workspace
 summary) must not re-derive it from a second `list-status` — that would be both a
 wasted round-trip and a second copy of a rule that must never drift from this
-one. Its guard order is the diagram's: `Running` outranks the at-rest check,
+one. Its guard order is the diagram's: `Running` outranks `blocked=`, which outranks the at-rest check,
 which outranks `parked=`, so a mid-turn parked workspace reports `mid-turn`.
 
 **`skips` is an optional out-dict** — on a gate skip it gets `{ref: reason}`,
@@ -491,6 +500,7 @@ so a half-snoozed chain hides rows that still nudge.
 | native | `idle=` | `parked=` | quiet | result |
 |---|---|---|---|---|
 | `Running` | any | any | any | **no** (guard 2) |
+| any but `Running` | any | any | any | **no** if `blocked=` is set (guard 2b) |
 | `Idle` | T | F | F | **NUDGE** |
 | `Idle` | F | F | F | **NUDGE** (+ self-heal `idle=`) |
 | `Idle` | any | T | — | **no** (guard 4) |

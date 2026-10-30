@@ -7,6 +7,9 @@
   plain message passes through untouched.
 - [idle-gate.needs-input~1] Given native `Needs input` and no `idle=` pill,
   `nudge_if_idle` refuses the send.
+- [idle-gate.blocked~1] Given a `blocked=` pill, `nudge_if_idle` refuses the
+  send with reason "awaiting permission", even alongside an `idle=` pill or
+  native `Idle`. The fast-tick reassert writes no `idle=` pill over it.
 - [idle-gate.reassert~2] Given any native state short of unambiguous `Idle`,
   the fast-tick reassert writes no pill. Given a ref with no native state, the
   reassert writes the pill only when two conditions hold. The transcript shows
@@ -22,6 +25,9 @@
 - [idle-pill.liveness~1] Given `CMUX_WORKSPACE_ID` absent from the id-carrying
   workspace listing, the hook exits silently. A mere prefix of a live id counts
   as absent. A live id passes through to the pill write.
+- [idle-pill.blocked~1] Given the `blocked` phase, the hook sets `blocked=`
+  and clears `idle=`. The `prompt` and `stop` phases clear `blocked=`. The
+  `blocked` phase prints nothing to stdout.
 - [idle-pill.background~1] Given a `Stop` payload with a running `subagent` or
   `workflow` background task, the hook clears `idle=`. A running `shell` task
   or a finished task does not stop the pill write.

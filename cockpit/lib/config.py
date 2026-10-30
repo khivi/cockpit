@@ -1178,9 +1178,9 @@ def _write_statusline(settings_path: Path, statusline_command: str) -> None:
     print(f"wrote claude statusLine -> {statusline_command}")
 
 
-# Claude Code hooks cockpit owns — exactly the two that drive the `idle=` pill
-# `nudge_if_idle` reads. Commands resolve off PATH (the installed `cockpit`
-# console script); there is no plugin root to interpolate.
+# Claude Code hooks cockpit owns — exactly the three that drive the `idle=` and
+# `blocked=` pills `nudge_if_idle` reads. Commands resolve off PATH (the
+# installed `cockpit` console script); there is no plugin root to interpolate.
 #
 # Deliberately NOT here, and do not re-add without a reader to point at:
 #   - `Stop -> cockpit statusline`. That command is `statusline.py::main`:
@@ -1210,6 +1210,14 @@ _COCKPIT_HOOKS: dict[str, list[dict]] = {
             "matcher": "",
             "hooks": [
                 {"type": "command", "command": "cockpit idle-pill prompt || true"}
+            ],
+        }
+    ],
+    "PermissionRequest": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill blocked || true"}
             ],
         }
     ],
