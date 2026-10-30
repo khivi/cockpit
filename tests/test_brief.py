@@ -92,3 +92,12 @@ def test_repo_and_number_restores_the_owner_slash():
         "my-org/some_repo",
         "12",
     )
+
+
+@pytest.mark.covers("brief.live~1")
+def test_live_keeps_only_payloads_the_last_cycle_saw_open():
+    payloads = {"o_r__pr-1": _pr(), "o_r__pr-2": _pr(), "gone_x__pr-9": _pr()}
+    keys = brief.open_keys({"x/o_r": {1: "t"}, "o_r": {2: "t"}})
+    state: dict = {"last": {"prs": {k: {} for k in keys}}}
+    assert list(brief.live(payloads, state)) == ["o_r__pr-1"]
+    assert brief.live(payloads, {}) == payloads

@@ -1023,6 +1023,17 @@ def test_prune_superseded_drops_loser_keeps_winner(json_cache):
     assert live.exists()
 
 
+@pytest.mark.covers("cache.prune-closed~1")
+def test_prune_closed_drops_only_absent_prs_on_no_worktree(json_cache):
+    live = _snapshot(json_cache, "cockpit", 1, "khivi/live")
+    on_wt = _snapshot(json_cache, "cockpit", 2, "khivi/wt", state="MERGED")
+    frozen = _snapshot(json_cache, "cockpit", 3, "release", state="OPEN")
+    other = _snapshot(json_cache, "beta", 3, "release", state="OPEN")
+    pruned = cache_mod.prune_closed_pr_caches("cockpit", {1}, {"khivi/wt"})
+    assert pruned == [frozen]
+    assert live.exists() and on_wt.exists() and other.exists()
+
+
 def test_prune_superseded_keeps_lone_snapshot(json_cache):
     # A merged PR with no reused-branch sibling must survive — find_pr_payload
     # still serves it until the worktree tears down.

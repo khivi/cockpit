@@ -1610,6 +1610,40 @@ def test_cycle_repo_marks_folds_partial_when_the_repo_is_skipped():
     assert folds.partial is True
 
 
+@pytest.mark.parametrize(
+    ("full_cycle", "dry", "fetched", "prunes"),
+    [
+        (True, False, True, True),
+        (False, False, True, False),
+        (True, True, True, False),
+        (True, False, False, False),
+    ],
+)
+@pytest.mark.covers("cache.prune-closed~1")
+def test_cycle_repo_prunes_closed_pr_caches_only_after_a_full_live_fetch(
+    tmp_path, full_cycle, dry, fetched, prunes
+):
+    import dataclasses
+
+    ctx = dataclasses.replace(_stub_repo_cycle(tmp_path), dry=dry)
+    with (
+        _enter_all(_cycle_patches(tmp_path, [])),
+        patch.object(cycle, "_prepare_cycle", return_value=ctx if fetched else None),
+        patch.object(cycle, "prune_closed_pr_caches") as prune,
+    ):
+        cycle.cycle_repo(
+            repo_entry={"name": "n", "path": "/tmp"},
+            self_user="khivi",
+            dry=dry,
+            pr_cache={},
+            pill_state={},
+            cfg={},
+            full_cycle=full_cycle,
+        )
+
+    assert prune.called is prunes
+
+
 def test_cycle_repo_skipped_without_folds_does_not_explode():
     # A repo-scoped kick passes folds=None (no cross-repo fold pass to protect).
     with patch.object(cycle, "_prepare_cycle", return_value=None):
@@ -6884,6 +6918,38 @@ def test_reap_falls_back_to_the_process_login_when_the_host_cannot_answer(
 def _teardown_dirty_check_clean(monkeypatch):
     """Tmp dirs here are not git repos; strict `count_dirty` would read them as unknown."""
     monkeypatch.setattr(teardown_mod, "count_dirty", lambda *_a, **_kw: 0)
+
+
+@pytest.mark.parametrize(
+    ("partial", "recorded"), [(False, ["o_r__pr-1"]), (True, None)]
+)
+@pytest.mark.covers("brief.live~1")
+def test_cycle_all_records_only_prs_a_configured_repo_reported_open(partial, recorded):
+    cfg = {"repos": [{"name": "a", "path": "/a"}]}
+    calls: list[list[str]] = []
+
+    def repo(*_a, spawn_failures, **_k):
+        spawn_failures.add(["x/o_r", "o_r"], {1: ("t", "b")}, set())
+        spawn_failures.partial = partial
+
+    patches = _patch_cycle_all_collaborators()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patch.object(cycle, "cycle_repo", repo),
+        patch.object(cycle, "_cache_only", lambda _cfg: True),
+        patch.object(
+            cycle,
+            "load_pr_payloads",
+            lambda: {"o_r__pr-1": {}, "o_r__pr-2": {}, "old_x__pr-3": {}},
+        ),
+        patch.object(cycle.brief, "record", lambda p, _today: calls.append(list(p))),
+    ):
+        cycle.cycle_all(cfg, "khivi", dry=False, pr_cache={}, pill_state={})
+
+    assert (calls[0] if calls else None) == recorded
 
 
 @pytest.mark.parametrize(
