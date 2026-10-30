@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.1.1](https://github.com/khivi/cockpit/compare/v4.1.0...v4.1.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **cache:** prune PR snapshots that left the live list with no worktree ([#633](https://github.com/khivi/cockpit/issues/633)) ([68e8fa5](https://github.com/khivi/cockpit/commit/68e8fa53f1849e90b8294208b40dd38aea06b6f0))
+* **test:** wait for every idle-pill hook call before asserting ([#635](https://github.com/khivi/cockpit/issues/635)) ([99dd34b](https://github.com/khivi/cockpit/commit/99dd34bb9631b89ac2c91d9d3ccb54ffcae461ab))
+
 ## [4.1.0](https://github.com/khivi/cockpit/compare/v4.0.0...v4.1.0) (2026-10-30)
 
 
