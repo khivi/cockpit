@@ -133,7 +133,7 @@ def test_hook_never_touches_a_loop_pill(fake_cmux, tmp_path):
 
 def test_prompt_clears_idle_pill(fake_cmux):
     subprocess.run([str(HOOK), "prompt"], check=True)
-    calls = _poll_lines(fake_cmux, expected=1)
+    calls = _poll_lines(fake_cmux, expected=4)
     assert any("clear-status idle" in c for c in calls), calls
 
 
@@ -144,7 +144,7 @@ def test_blocked_sets_blocked_pill_clears_idle_and_prints_nothing(fake_cmux):
     )
     # PermissionRequest reads hook stdout as a permission decision.
     assert out.stdout == ""
-    calls = _poll_lines(fake_cmux, expected=2)
+    calls = _poll_lines(fake_cmux, expected=4)
     assert any(c.startswith("set-status blocked permission") for c in calls), calls
     assert any("clear-status idle" in c for c in calls), calls
 
@@ -153,7 +153,7 @@ def test_blocked_sets_blocked_pill_clears_idle_and_prints_nothing(fake_cmux):
 @pytest.mark.parametrize("phase", ["prompt", "stop"])
 def test_prompt_and_stop_clear_blocked_pill(fake_cmux, phase):
     subprocess.run([str(HOOK), phase], input="", text=True, check=True)
-    calls = _poll_lines(fake_cmux, expected=2)
+    calls = _poll_lines(fake_cmux, expected=4)
     assert any("clear-status blocked" in c for c in calls), calls
 
 
@@ -356,7 +356,7 @@ def test_live_workspace_passes_through(fake_cmux):
     # Sanity: fake_cmux registers LIVE_WS as live, so the phase must reach
     # the cmux call. (Companion to test_dead_workspace_is_noop.)
     subprocess.run([str(HOOK), "prompt"], check=True)
-    calls = _poll_lines(fake_cmux, expected=1)
+    calls = _poll_lines(fake_cmux, expected=4)
     assert any("clear-status idle" in c for c in calls), calls
 
 
