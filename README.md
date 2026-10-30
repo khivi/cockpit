@@ -77,11 +77,12 @@ Reading a diff is the one thing you do *inside* a session rather than on the das
 {"repos": [{"name": "myrepo", "path": "/abs/path", "branch_prefix": "you/", "default_base": "main"}]}
 ```
 
-Everything else has a sane default. Three worth turning on:
+Everything else has a sane default. Four worth turning on:
 
 - **[Tickets](FEATURES.md#tickets)** — `tickets` links each PR to Linear / Jira / GitHub Issues / Trello, and transitions it on merge.
 - **[Auto-review](FEATURES.md#reviewing-your-teams-prs)** — `review_prs: true` spawns a review agent per coworker PR. Collaborators only; `review_external` opts in fork PRs — untrusted content reaching a Bash-capable agent, so enable deliberately.
 - **Skills** — `skills.{session,review,plan,actions}` seed your own slash command as a spawn's first turn, e.g. `"skills": {"review": "/pr-review"}`. Unset fields fall back to cockpit's built-in prose.
+- **[Deny tools](docs/config.md#per-repo-fields-repos)** — `deny_tools` denies permission rules in every session cockpit launches, per repo or per org. E.g. `["mcp__linear-<workspace>"]` keeps one client's Linear MCP out of another client's sessions.
 
 Full field reference: [`docs/config.md`](docs/config.md) (and [`cockpit/config.example.json`](cockpit/config.example.json)). Only the statusline is prompted for at `cockpit setup` (it installs binaries); every other setting is a plain `config.json` edit, validated at startup.
 
