@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.1.0](https://github.com/khivi/cockpit/compare/v4.0.0...v4.1.0) (2026-10-30)
+
+
+### Features
+
+* **close:** warn when a server is still listening from the worktree ([#627](https://github.com/khivi/cockpit/issues/627)) ([55742cb](https://github.com/khivi/cockpit/commit/55742cb7965a4bd18af0fed834373d5049771104))
+* **idle-gate:** refuse sends while a permission dialog is up ([#630](https://github.com/khivi/cockpit/issues/630)) ([38ce612](https://github.com/khivi/cockpit/commit/38ce612820b76a158c8122f48b15d70470cd0fa3))
+* **ports:** show who holds the ports a repo declares ([#629](https://github.com/khivi/cockpit/issues/629)) ([562a8b5](https://github.com/khivi/cockpit/commit/562a8b58ea6a5f0d0cfb62d79536332a07853155))
+* **tui:** add b brief — what needs you and what changed since yesterday ([#632](https://github.com/khivi/cockpit/issues/632)) ([057d48b](https://github.com/khivi/cockpit/commit/057d48b97ec01b7f6e7632ce3de77b5d0a2a6b8b))
+
+
+### Documentation
+
+* surface deny_tools in README and add a mitigation for weakened tests ([#631](https://github.com/khivi/cockpit/issues/631)) ([60601d7](https://github.com/khivi/cockpit/commit/60601d7de10b95bebf31050ea6fafa75e4f12745))
+
 ## [4.0.0](https://github.com/khivi/cockpit/compare/v3.17.10...v4.0.0) (2026-10-29)
 
 
