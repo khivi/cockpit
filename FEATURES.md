@@ -436,6 +436,9 @@ session, already reviewing it when you arrive.
   and they are never nudged.
 - **The PR's own MCP servers stay off.** A server the PR's `.mcp.json` declares never
   starts on its own. Claude Code asks you first, even if you auto-enable project servers.
+- **Someone else's PR never runs its own hooks.** A session on a PR you didn't author
+  ignores that branch's `.claude/` settings and hooks. This also covers `cockpit new`
+  on a coworker's PR without `--review`.
 - **Keep tools off everywhere.** List permission rules in `deny_tools`, such as
   `["mcp__slack"]`, globally or per repo. Every session cockpit starts denies them.
 

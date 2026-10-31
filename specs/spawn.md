@@ -61,6 +61,10 @@
   head), the command carries `enableAllProjectMcpServers: false` as flag
   settings. A user-level auto-enable never starts a server the PR tree's own
   .mcp.json declares.
+- [spawn.foreign-head~1] Given `cockpit new` on a PR head whose author is not
+  the user, the launch loads only user settings, with or without `--review`. A
+  login that cannot be resolved, or a `--pr` whose fetch failed, counts as
+  someone else's.
 - [spawn.deny-tools~1] Given `deny_tools` rules globally and on the repo, every
   claude launch carries their union as `permissions.deny` flag settings. A
   repo's list never drops a global rule. Every launch path must pass a deny
