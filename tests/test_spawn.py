@@ -421,6 +421,7 @@ def spawn_main(cockpit_repo, monkeypatch, capsys):
     monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: None)
     monkeypatch.setattr(registry, "gh_self_user", lambda: "")
     monkeypatch.setattr(registry, "default_branch", lambda _r: "main")
+    monkeypatch.setattr(spawn, "self_user_for_host", lambda _h: "me")
 
     def _run(argv: list[str]) -> tuple[int, str, str]:
         monkeypatch.setattr(sys, "argv", ["spawn", *argv])
@@ -987,6 +988,66 @@ def test_review_branch_mode_seeds_bundled_prose_by_default(
     # --review-command omitted → cockpit's own prose, no slash command seeded.
     assert "Review the pull request checked out in this worktree." in cmd
     assert "PLAN ONLY" not in cmd
+
+
+def _stub_pr(monkeypatch, author: str | None) -> None:
+    import cockpit.spawn as spawn
+
+    info = None
+    if author is not None:
+        info = {
+            "number": 7,
+            "title": "t",
+            "author": {"login": author},
+            "url": "https://github.com/o/r/pull/7",
+        }
+    monkeypatch.setattr(spawn, "pr_for_branch", lambda *_a, **_kw: info)
+
+
+@pytest.mark.covers("spawn.foreign-head~1")
+@pytest.mark.parametrize(
+    ("author", "me", "hardened"),
+    [
+        pytest.param("coworker", "me", True, id="coworker"),
+        pytest.param("ME", "me", False, id="mine-any-case"),
+        pytest.param("me", "", True, id="login-unresolved"),
+        pytest.param(None, "", False, id="no-pr"),
+    ],
+)
+def test_someone_elses_pr_head_loads_only_user_settings(
+    spawn_main, push_branch, monkeypatch, author, me, hardened
+):
+    """`cockpit new` on another author's PR head must not load that head's
+    project `.claude/` settings, whose hooks would run with the user's
+    credentials. It applies without `--review`."""
+    import cockpit.spawn as spawn
+
+    _stub_pr(monkeypatch, author)
+    monkeypatch.setattr(spawn, "self_user_for_host", lambda _h: me)
+    push_branch("khivi/theirs")
+    code, _out, _err = spawn_main(["--branch", "khivi/theirs", "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert ("--setting-sources user" in cmd) is hardened
+
+
+@pytest.mark.covers("spawn.foreign-head~1")
+def test_pr_spawn_whose_fetch_failed_loads_only_user_settings(
+    spawn_main, cockpit_repo, monkeypatch, push_branch
+):
+    import cockpit.spawn as spawn
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("gh down")
+
+    _spawn_pr(spawn_main, cockpit_repo, monkeypatch, push_branch)
+    spawn_main.cmux_calls.clear()
+    monkeypatch.setattr(spawn, "resolve_pr_branch", lambda *_a, **_kw: "pr-98-branch")
+    monkeypatch.setattr(spawn, "fetch_pr_info", boom)
+    code, _out, _err = spawn_main(["--pr", "98", "--repo", "testrepo"])
+    assert code == 0
+    cmd = _cmux_kwarg(spawn_main.cmux_calls[0], "command")
+    assert "--setting-sources user" in cmd
 
 
 def test_review_with_skill_is_error(spawn_main):
@@ -1634,7 +1695,7 @@ def test_prefix_and_body_split_into_two_sends(spawn_main, cockpit_repo, monkeypa
         lambda *_a, **_kw: {
             "number": 99,
             "title": "fix the thing",
-            "author": {"login": "someone"},
+            "author": {"login": "me"},
             "url": "https://github.com/owner/repo/pull/99",
         },
     )

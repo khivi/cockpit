@@ -142,6 +142,7 @@ from cockpit.lib.gh import (
     pr_for_branch,
     repo_nwo,
     resolve_pr_branch,
+    self_user_for_host,
 )
 from cockpit.lib.git import (
     branch_exists,
@@ -150,6 +151,7 @@ from cockpit.lib.git import (
     create_new_branch_worktree,
     create_worktree,
     main_worktree_path,
+    origin_host,
     slugify,
     tag_workspace_name,
     worktree_for_branch,
@@ -430,6 +432,18 @@ def _pr_author(pr_info: dict) -> str:
     nested lookup rather than assuming a dict.
     """
     return str((pr_info.get("author") or {}).get("login", "unknown"))
+
+
+def _untrusted_head(pr_info: dict | None, me: str) -> bool:
+    """Whether the checked-out PR head is someone else's, so its project
+    `.claude/` settings and hooks must not load.
+
+    Fails closed: an empty `me` (login unresolvable) counts as untrusted,
+    because a wrong "mine" runs the head's hooks with the user's credentials.
+    """
+    if pr_info is None:
+        return False
+    return not me or _pr_author(pr_info).casefold() != me.casefold()
 
 
 def _pr_fields(pr_info: dict) -> tuple[str, int, str]:
@@ -1246,6 +1260,7 @@ def _run(args: argparse.Namespace) -> int:
     # and guessing one from the spawn process's cwd would tag the workspace with
     # whichever repo the user happened to be standing in.
     sidebar_tag = ""
+    untrusted = False
     if skill:
         try:
             wt, skill_prompt = resolve_skill(skill, args.repo)
@@ -1309,6 +1324,12 @@ def _run(args: argparse.Namespace) -> int:
                     f"@{author} ({pr_info.get('url', '')})",
                     file=sys.stderr,
                 )
+
+        # A `--pr` whose fetch failed has an unknown author: treat it as foreign.
+        if pr_num and pr_info is None:
+            untrusted = True
+        elif pr_info is not None:
+            untrusted = _untrusted_head(pr_info, self_user_for_host(origin_host(wt)))
 
         if actions_run_info is not None:
             prompt = _actions_prompt(
@@ -1389,7 +1410,7 @@ def _run(args: argparse.Namespace) -> int:
                 initial,
                 strip_env=credential_env_names(),
                 deny=deny_tools(repo_entry=_repo_entry_or_none(args.repo)),
-                review=bool(args.review),
+                review=bool(args.review) or untrusted,
             ),
         )
         if new_ref is not None:
