@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.2](https://github.com/khivi/cockpit/compare/v4.1.1...v4.1.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* **spawn:** load only user settings on someone else's PR head ([#636](https://github.com/khivi/cockpit/issues/636)) ([2262086](https://github.com/khivi/cockpit/commit/2262086aadfe79fb71ff81be0f3e23c0658edf36))
+
 ## [4.1.1](https://github.com/khivi/cockpit/compare/v4.1.0...v4.1.1) (2026-10-30)
 
 
