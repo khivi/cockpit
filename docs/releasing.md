@@ -4,7 +4,7 @@ The version is **static** in `pyproject.toml`, read at runtime via `importlib.me
 
 **Every merge to `main` that ships user-visible behaviour gets a release** — brew is the only delivery path. The semver bump is derived from the conventional-commit types `pr-title.yml` enforces.
 
-**The release PR writes itself.** `release-please.yml` keeps one rolling `chore(main): release <version>` PR open and maintains `CHANGELOG.md`. **Merging that PR is the only human step** — it bumps `[project] version`, which is what `tag.yml` watches, so tag → tap → PyPI follow. Several merges batch into one release, which matters because PyPI refuses a re-upload.
+**The release PR writes itself.** `release-please.yml` keeps one rolling `chore(main): release <version>` PR open and maintains `CHANGELOG.md`. **The same run merges it** (`gh pr merge --squash --admin`), so every merge to `main` ships. The merge bumps `[project] version`, which is what `tag.yml` watches, so tag → tap → PyPI follow. Several merges batch into one release, which matters because PyPI refuses a re-upload.
 
 Five settings there are load-bearing:
 
