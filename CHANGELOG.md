@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.0](https://github.com/khivi/cockpit/compare/v4.1.2...v4.2.0) (2026-11-02)
+
+
+### Features
+
+* **sidebar:** fold snoozed PRs per repo instead of per org ([#644](https://github.com/khivi/cockpit/issues/644)) ([6bd371e](https://github.com/khivi/cockpit/commit/6bd371e76a8502cc129a38692386964db8d2b96f))
+
 ## [4.1.2](https://github.com/khivi/cockpit/compare/v4.1.1...v4.1.2) (2026-11-02)
 
 
