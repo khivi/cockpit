@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.1](https://github.com/khivi/cockpit/compare/v4.2.0...v4.2.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **ci:** skip the release auto-merge when no release PR was opened ([#647](https://github.com/khivi/cockpit/issues/647)) ([570ef95](https://github.com/khivi/cockpit/commit/570ef95bc34da335778c627416e7b80d41b83a4c))
+
 ## [4.2.0](https://github.com/khivi/cockpit/compare/v4.1.2...v4.2.0) (2026-11-02)
 
 
