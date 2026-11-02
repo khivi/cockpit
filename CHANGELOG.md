@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.1.2](https://github.com/khivi/cockpit/compare/v4.1.1...v4.1.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* **spawn:** git-ignore the seeded plan.md so it never blocks a close ([#643](https://github.com/khivi/cockpit/issues/643)) ([8cd29d8](https://github.com/khivi/cockpit/commit/8cd29d8ab1eaa79fb6423f281cafe84dbbaa897b))
+* **spawn:** load only user settings on someone else's PR head ([#636](https://github.com/khivi/cockpit/issues/636)) ([2262086](https://github.com/khivi/cockpit/commit/2262086aadfe79fb71ff81be0f3e23c0658edf36))
+
 ## [4.1.1](https://github.com/khivi/cockpit/compare/v4.1.0...v4.1.1) (2026-10-30)
 
 
