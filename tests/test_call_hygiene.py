@@ -254,13 +254,17 @@ _BANNED_SUBSTRING_CASES: tuple[tuple[Path, str, str], ...] = (
 )
 
 
+# `exclude_plan_file` names it to write an ignore rule; it never reads the file.
+_BANNED_SUBSTRING_EXEMPT = {"plan.md": {COCKPIT_ROOT / "lib" / "git.py"}}
+
+
 def _files_for(target: Path) -> list[Path]:
     return [target] if target.is_file() else sorted(target.rglob("*.py"))
 
 
 @pytest.mark.covers("tui.signals~1")
 @pytest.mark.covers("tui.diff-key~1")
-@pytest.mark.covers("prompts.plan-unread~1")
+@pytest.mark.covers("prompts.plan-unread~2")
 @pytest.mark.covers("stdout.queue-writer~1")
 @pytest.mark.covers("table.ticket-link~1")
 @pytest.mark.covers("ticket-inbox.screen~1")
@@ -272,6 +276,7 @@ def test_banned_substring_absent(target: Path, needle: str, why: str) -> None:
         str(path.relative_to(REPO_ROOT))
         for path in _files_for(target)
         if needle in path.read_text()
+        and path not in _BANNED_SUBSTRING_EXEMPT.get(needle, set())
     ]
     assert not offenders, f"{why}\nfound {needle!r} in: {offenders}"
 
