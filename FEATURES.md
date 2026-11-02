@@ -91,10 +91,12 @@ tint tells you the repo. Past a handful of repos, the tints stop being distingui
 a [`sidebar_tag`](docs/config.md) and the workspace reads `infra·fix-retry`. An emoji tag
 takes a space instead of the dot: `🎛️ fix-retry`.
 
-Tags also label group headers. A stack's header wears its repo's tag. The two piles at the
-bottom of the sidebar are named after their org — `Some Long Org snoozed (11)` — and a tag
-set on the org replaces that name: `♻️ snoozed (11)`. Use `{repo}` in an org's tag to get
-both: each workspace named after its own repo, and the shared glyph on the piles.
+Tags also label group headers. A stack's header wears its repo's tag. The reviews pile at
+the bottom of the sidebar is named after its org — `Some Long Org reviews (11)` — and a tag
+set on the org replaces that name: `♻️ reviews (11)`. Snoozed PRs pile per repo below it,
+named after the repo with the org's tag in front: `♻️ infra snoozed (3)`. Use `{repo}` in
+an org's tag to get both: each workspace named after its own repo, and the shared glyph on
+the piles.
 
 ---
 

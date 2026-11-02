@@ -5289,7 +5289,46 @@ def test_a_tagged_bucket_names_its_folds_by_the_glyph(tmp_path):
 
     assert [c.args[0] for c in create.call_args_list] == [
         "🛡️ reviews (1)",
-        "🛡️ snoozed (1)",
+        "🛡️ mlops snoozed (1)",
+    ]
+
+
+def test_snoozed_folds_split_per_repo_while_reviews_share_the_org(tmp_path):
+    # One org-wide snoozed pile hid which repo a snooze belonged to; reviews
+    # stay one queue per org.
+    org = {"orgs": {"Acme": {"sidebar_tag": "🛡️ {repo}"}}}
+    a = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "khivi/b", "main")],
+        coworkers=("workspace:1",),
+        snoozed=("workspace:2",),
+        repo_entry={"name": "mlops", "org": "Acme", "sidebar_tag": "🛡️ mlops"},
+        repo_dir="a",
+        cfg=org,
+    )
+    b = _stack_ctx(
+        tmp_path,
+        [("workspace:3", "them/c", "main"), ("workspace:4", "khivi/d", "main")],
+        coworkers=("workspace:3",),
+        snoozed=("workspace:4",),
+        repo_entry={"name": "infra", "org": "Acme", "sidebar_tag": "🛡️ infra"},
+        repo_dir="b",
+        cfg=org,
+    )
+    folds = _folds(
+        (a, {"workspace:1", "workspace:2"}), (b, {"workspace:3", "workspace:4"})
+    )
+
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(cycle, "create_workspace_group", return_value=None) as create,
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    assert [(c.args[0], c.args[1]) for c in create.call_args_list] == [
+        ("🛡️ reviews (2)", ["workspace:1", "workspace:3"]),
+        ("🛡️ infra snoozed (1)", ["workspace:4"]),
+        ("🛡️ mlops snoozed (1)", ["workspace:2"]),
     ]
 
 
@@ -5745,7 +5784,7 @@ def _snoozed_stack(tmp_path, snoozed, folds=None):
 @pytest.mark.covers("stacks.snoozed~1")
 def test_a_stack_with_a_snoozed_tip_joins_the_snoozed_pile_whole(tmp_path):
     # A workspace lives in exactly one group, so the chain gives up its own to
-    # fold away inside `<org> snoozed (N)` — where the table already files it
+    # fold away inside `<repo> snoozed (N)` — where the table already files it
     # (`_split_snoozed` swallows a snoozed chain whole). Tip first, contiguous,
     # so the pile reads in the order the table renders.
     ctx = _stack_ctx(
@@ -5892,7 +5931,7 @@ def test_reconcile_review_groups_order_follows_the_tuples_walk_order(tmp_path):
 def test_a_snoozed_chain_folds_with_the_rest_of_the_pile(tmp_path):
     # End to end across both passes: the chain's members are ordinary snoozed
     # refs by the time the cross-repo pass runs, so they land in the one
-    # `<org> snoozed (N)` fold with the loose snooze rather than beside it.
+    # `<repo> snoozed (N)` fold with the loose snooze rather than beside it.
     ctx = _stack_ctx(
         tmp_path,
         [

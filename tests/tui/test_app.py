@@ -2667,7 +2667,7 @@ async def test_snooze_kicks_full_cycle_so_the_sidebar_fold_lands(monkeypatch, tm
     # `z` is the one row key that changes sidebar *fold* membership, and
     # `cycle_all` builds `folds` only when `only_repo is None`. A repo-scoped
     # kick therefore skipped `_reconcile_review_groups` entirely and the
-    # `<org> snoozed (N)` fold waited for the next periodic full cycle.
+    # `<repo> snoozed (N)` fold waited for the next periodic full cycle.
     from cockpit.lib.nudges import NudgePref
 
     app, _ = _make_app()
