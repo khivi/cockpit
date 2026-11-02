@@ -28,15 +28,18 @@ from cockpit.lib.git import (
     branch_label,
     checkout_branch,
     collision_free,
+    count_dirty,
     create_worktree,
     current_branch,
     delete_local_branch,
+    exclude_plan_file,
     has_remote_branch,
     is_ancestor,
     list_local_branches,
     main_worktree_path,
     origin_base_resolves,
     prune_worktrees,
+    remove_worktree,
     require_git,
     slugify,
     tag_workspace_name,
@@ -1714,3 +1717,55 @@ def test_resync_to_origin_refuses_when_dirty_state_unknown(tmp_path) -> None:
     notrepo = tmp_path / "not-a-repo"
     notrepo.mkdir()
     assert gitlib.resync_to_origin(notrepo, "b", expected_head="abc") is False
+
+
+# ── exclude_plan_file: the seeded plan never blocks a close ────────────────
+
+
+@pytest.mark.covers("spawn.plan-excluded~1")
+def test_excluded_plan_file_leaves_the_worktree_closable(cockpit_repo):
+    repo = cockpit_repo.repo
+    wt_path = repo.parent / "planned"
+    create_worktree(repo, "planned", wt_path, base="main")
+    exclude_plan_file(repo)
+    (wt_path / "plan.md").write_text("# plan\n")
+
+    assert count_dirty(wt_path, strict=True) == 0
+    ok, err = remove_worktree(repo, wt_path)
+    assert ok, err
+    assert not wt_path.exists()
+
+
+@pytest.mark.covers("spawn.plan-excluded~1")
+def test_exclude_plan_file_writes_the_rule_once(cockpit_repo):
+    repo = cockpit_repo.repo
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.write_text("*.log")
+    exclude_plan_file(repo)
+    exclude_plan_file(repo)
+    assert exclude.read_text().splitlines() == ["*.log", "/plan.md"]
+
+
+@pytest.mark.covers("spawn.plan-excluded~1")
+def test_excluded_plan_file_does_not_hide_a_tracked_plan(cockpit_repo):
+    repo = cockpit_repo.repo
+    (repo / "plan.md").write_text("tracked\n")
+    subprocess.run(["git", "-C", str(repo), "add", "plan.md"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "plan",
+        ],
+        check=True,
+    )
+    exclude_plan_file(repo)
+    (repo / "plan.md").write_text("edited\n")
+    assert count_dirty(repo, strict=True) == 1

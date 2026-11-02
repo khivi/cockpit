@@ -83,6 +83,10 @@
   carries control flow.
 - [prompts.plan-untracked~1] Both plan-gate spellings tell the session to
   write `plan.md`. Both spellings carry the never-stage line.
+- [spawn.plan-excluded~1] Every `cockpit new` writes a root-anchored `plan.md` line into the
+  repo's local `info/exclude`, once. An untracked `plan.md` then counts as no
+  uncommitted file, and the worktree removes without `--force`. A tracked
+  `plan.md` is still guarded.
 - [prompts.ticket-identity~1] Given a repo with a resolved ticket provider, the
   first-turn prompt states which tracker it files against. It states which
   team, project or board it files into. It names no credential env var.
@@ -94,8 +98,9 @@
   the first-turn prompt names that server. It never names the provider's
   connector generically. Given no server name, the prompt states the connector
   generically and names no server.
-- [prompts.plan-unread~1] No tick, renderer or teardown depends on the plan
-  artifact. Asserted structurally: no Python source under cockpit/ names it.
+- [prompts.plan-unread~2] No tick, renderer or teardown depends on the plan
+  artifact. Asserted structurally: no Python source under cockpit/ names it,
+  except `cockpit/lib/git.py`, whose spawn-time ignore rule never reads it.
 - [slack.no-preflight~2] No provider's spawn gates its fetch on probing for an
   MCP connector. Each provider prompt carries its own retry-then-STOP step.
   Asserted structurally: the Linear spawn path shells no `claude mcp list` at
