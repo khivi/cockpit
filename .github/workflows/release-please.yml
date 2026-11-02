@@ -6,7 +6,7 @@ name: release-please
 # Merging that PR bumps `[project] version` in pyproject.toml — which is exactly
 # the trigger tag.yml already watches — so the tag, the Homebrew tap bump
 # (release.yml) and the PyPI upload (publish.yml) all follow unchanged. The one
-# human step is merging the release PR. See docs/releasing.md.
+# workflow then merges the release PR itself. See docs/releasing.md.
 #
 # `skip-github-release: true` is load-bearing, for the same reason tag.yml
 # exists in the shape it does. Left to default, release-please would push the
@@ -83,10 +83,19 @@ jobs:
     if: "!startsWith(github.event.head_commit.message, 'chore(main): release')"
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+      - id: rp
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-release: true
           skip-labeling: true
+      # Every merge ships: merge the release PR this run just wrote. `--admin`
+      # because the ruleset requires an approval a solo author cannot give.
+      - if: steps.rp.outputs.pr
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ fromJSON(steps.rp.outputs.pr).number }}
+        run: gh pr merge "$PR_NUMBER" --squash --admin
