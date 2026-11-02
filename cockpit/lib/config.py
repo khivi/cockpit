@@ -105,13 +105,26 @@ CSHIP_DEFAULT_TOML = Path(__file__).resolve().parent.parent / "defaults" / "cshi
 STARSHIP_DEFAULT_TOML = (
     Path(__file__).resolve().parent.parent / "defaults" / "starship.toml"
 )
+
+
+def stable_python(executable: str = sys.executable) -> str:
+    """The interpreter path to bake into on-disk configs. A brew install runs
+    from `<prefix>/Cellar/<formula>/<version>/...`, which `brew upgrade` deletes;
+    `<prefix>/opt/<formula>/...` is brew's version-independent symlink to it."""
+    m = re.match(r"(.*)/Cellar/([^/]+)/[^/]+/(.+)", executable)
+    if not m:
+        return executable
+    prefix, formula, rest = m.groups()
+    opt = f"{prefix}/opt/{formula}/{rest}"
+    return opt if Path(opt).exists() else executable
+
+
 # Render command substituted for __COCKPIT_STARSHIP__ in the seeded
 # starship.toml. Uses the running interpreter + module dispatch so it resolves
 # regardless of whether `cockpit` is on PATH in starship's render environment.
-# Invoked the normal way (the brew-installed `cockpit` console script),
-# `sys.executable` is the stable installed interpreter; re-run `cockpit setup`
-# to re-pin if it ever points at a stale (e.g. removed worktree venv) interpreter.
-STARSHIP_CMD = f"{sys.executable} -m cockpit.cli starship"
+# Re-run `cockpit setup` to re-pin if it ever points at a stale (e.g. removed
+# worktree venv) interpreter.
+STARSHIP_CMD = f"{stable_python()} -m cockpit.cli starship"
 STARSHIP_PLACEHOLDER = "__COCKPIT_STARSHIP__"
 STARSHIP_THEME_PLACEHOLDER = "__COCKPIT_THEME__"
 VALID_THEMES = ("dark", "light")
@@ -1452,7 +1465,7 @@ _COCKPIT_PIN_RE = re.compile(
 
 def _repin_text(text: str) -> str:
     """Rewrite every `<interp> -m cockpit.cli` interpreter to the running one."""
-    return _COCKPIT_PIN_RE.sub(lambda _m: sys.executable, text)
+    return _COCKPIT_PIN_RE.sub(lambda _m: stable_python(), text)
 
 
 def _repin_starship_config(path: Path) -> bool:
@@ -1497,10 +1510,10 @@ def repin_interpreter_if_stale() -> None:
     """Heal a stale `{python}` pin after a `brew upgrade`, called on `cockpit
     watch` startup.
 
-    `cockpit setup` bakes `sys.executable` — a *versioned* brew Cellar libexec
-    python — into `~/.config/starship.toml` and (under `use_cship`) Claude
-    Code's statusLine. `brew upgrade` bumps the Cellar version and deletes the
-    old path, so those on-disk pins dangle until the next `setup`. The daemon
+    `cockpit setup` bakes `stable_python()` into `~/.config/starship.toml` and
+    (under `use_cship`) Claude Code's statusLine. Under brew that is the
+    unversioned `opt/` path, which survives upgrades; a pin from an older
+    release, or a non-brew interpreter that moved, still dangles. The daemon
     runs this once at startup so the footer heals itself in a single restart
     instead of a manual re-run. Startup-only on purpose: a running daemon's
     `sys.executable` is still the *old* removed path until it restarts, so a

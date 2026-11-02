@@ -1936,6 +1936,25 @@ def test_teardown_claude_integration_restores_native_pr_row(tmp_home, capsys):
 # ---- repin_interpreter_if_stale (brew-upgrade self-heal on watch startup) ----
 
 
+def test_stable_python_maps_brew_cellar_to_opt(tmp_path):
+    opt_py = tmp_path / "opt" / "cockpit" / "libexec" / "bin" / "python"
+    opt_py.parent.mkdir(parents=True)
+    opt_py.touch()
+    cellar_py = f"{tmp_path}/Cellar/cockpit/4.2.1/libexec/bin/python"
+    assert config_mod.stable_python(cellar_py) == str(opt_py)
+
+
+def test_stable_python_keeps_cellar_path_when_opt_link_is_missing(tmp_path):
+    cellar_py = f"{tmp_path}/Cellar/cockpit/4.2.1/libexec/bin/python"
+    assert config_mod.stable_python(cellar_py) == cellar_py
+
+
+def test_stable_python_leaves_non_brew_interpreter_alone():
+    assert (
+        config_mod.stable_python("/repo/.venv/bin/python") == "/repo/.venv/bin/python"
+    )
+
+
 def test_repin_starship_swaps_only_the_interpreter(tmp_path):
     toml = tmp_path / "starship.toml"
     # Stale interpreter path + a user colour edit that must survive.
