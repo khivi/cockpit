@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.2](https://github.com/khivi/cockpit/compare/v4.2.1...v4.2.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* **setup:** pin brew installs to the unversioned opt/ interpreter ([#649](https://github.com/khivi/cockpit/issues/649)) ([b54f681](https://github.com/khivi/cockpit/commit/b54f6810f81da85f17570bea887131d17d05ccb0))
+
 ## [4.2.1](https://github.com/khivi/cockpit/compare/v4.2.0...v4.2.1) (2026-11-02)
 
 
