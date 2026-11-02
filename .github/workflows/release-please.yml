@@ -100,4 +100,8 @@ jobs:
           PR_JSON: ${{ steps.rp.outputs.pr }}
         run: |
           [ -n "$PR_JSON" ] || exit 0
-          gh pr merge "$(jq -r .number <<<"$PR_JSON")" --squash --admin
+          n="$(jq -r .number <<<"$PR_JSON")"
+          # `--admin` skips the approval, not required status checks.
+          sleep 30
+          gh pr checks "$n" --watch --required --fail-fast --interval 20
+          gh pr merge "$n" --squash --admin
