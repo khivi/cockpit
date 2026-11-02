@@ -150,6 +150,7 @@ from cockpit.lib.git import (
     collision_free,
     create_new_branch_worktree,
     create_worktree,
+    exclude_plan_file,
     main_worktree_path,
     origin_host,
     slugify,
@@ -658,6 +659,7 @@ def resolve_worktree(
     repo = Path(repo_cfg["path"]).expanduser().resolve()
     branch_prefix = repo_cfg.get("branch_prefix", "")
     base = repo_cfg.get("default_base", "main")
+    exclude_plan_file(repo)
 
     if pr_num and not branch:
         branch = resolve_pr_branch(pr_num, repo_dir=repo)

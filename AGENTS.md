@@ -335,7 +335,7 @@ A Slack permalink classifies as `slack` mode, user-initiated only. Spawn synthes
 
 Prompts render via `templates.render(name, **slots)`. Templates hold static prose and `{slots}` only. The Python builder owns control flow, picks the template and builds conditional blocks as slots. A missing slot raises `KeyError`. **Do not** re-inline prose into Python lists or add conditionals to a `.txt`. hatchling ships only VCS-tracked files, so `git add` new templates.
 
-`plan_tail.txt` and the `plan_only.txt` fallback tell the session to write `plan.md` in the worktree root. The gate's no-code rule must carve that file out, or the two lines contradict. **Do not** teach it to commit the file. Spawned repos lack our `.gitignore`, so the template's never-stage line is the only guard. **Do not** promote it to a cache cell, config field, or anything the daemon reads, because a session might not have written it.
+`plan_tail.txt` and the `plan_only.txt` fallback tell the session to write `plan.md` in the worktree root. The gate's no-code rule must carve that file out, or the two lines contradict. **Do not** teach it to commit the file. Spawned repos lack our `.gitignore`, so `spawn.py::resolve_worktree` writes a root-anchored `plan.md` line into the repo's local `info/exclude` (`git.py::exclude_plan_file`). That keeps the file out of `git add -A` and out of the close guard's dirty count, and `git worktree remove` deletes it. **Do not** exempt it inside `count_dirty` instead, and **do not** write it into a repo's `.gitignore`. **Do not** promote it to a cache cell, config field, or anything the daemon reads, because a session might not have written it.
 
 ### The one cache exception: session-scoped cells (written outside the daemon)
 

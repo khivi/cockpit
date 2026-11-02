@@ -725,6 +725,35 @@ def _fetch_pr_head(repo: Path, pr_num: str, branch: str) -> None:
     )
 
 
+PLAN_FILE = "plan.md"
+
+
+def exclude_plan_file(repo: Path) -> None:
+    """Add a root-anchored `plan.md` rule to the repo's local `info/exclude`, once.
+
+    The plan prompts tell every seeded session to leave an untracked `plan.md`
+    in the worktree root. Unignored, it counts as uncommitted and blocks every
+    close. `info/exclude` is never committed and is shared by every worktree,
+    and `git worktree remove` deletes ignored files without `--force`. Never
+    raises: a failure only means the file blocks a close as before.
+    """
+    res = _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if res.returncode != 0:
+        return
+    exclude = Path(res.stdout.strip()) / "info" / "exclude"
+    line = f"/{PLAN_FILE}"
+    try:
+        text = exclude.read_text() if exclude.exists() else ""
+        if line in text.splitlines():
+            return
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        sep = "" if not text or text.endswith("\n") else "\n"
+        with exclude.open("a") as f:
+            f.write(f"{sep}{line}\n")
+    except OSError:
+        return
+
+
 def create_worktree(
     repo: Path,
     branch: str,

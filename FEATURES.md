@@ -218,7 +218,8 @@ through your normal lists either way.
 **Agents plan before they code.** A workspace started with real context comes up told to
 study and propose a plan, then wait for your approval. A plain new branch gets no prompt.
 The plan is also saved to `plan.md` in the worktree, so you can read it without opening the
-session, and it survives a crash or a close. Don't commit it.
+session, and it survives a crash. Cockpit git-ignores it locally, so it never blocks a close
+and is deleted with the worktree. Don't commit it.
 
 **The first prompt always arrives.** Cockpit checks that the prompt reached the new session
 and resends it once the session is ready. If it can't deliver it within a few minutes, it
