@@ -63,6 +63,7 @@ from cockpit.lib.config import (
     load_config,
     repin_interpreter_if_stale,
     save_config_value,
+    stable_python,
     teardown_claude_integration,
 )
 from cockpit.lib.daemon import reassert_pidfile
@@ -496,7 +497,7 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
 
 
 def _statusline_command() -> str:
-    return f"{sys.executable} -m cockpit.cli statusline"
+    return f"{stable_python()} -m cockpit.cli statusline"
 
 
 _CSHIP_INSTALL = "curl -fsSL https://cship.dev/install.sh | bash"
