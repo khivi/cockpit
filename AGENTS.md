@@ -261,7 +261,7 @@ Coworker reviews fold into one trailing `<org> reviews (N)` group, the one fold 
 - Stacks win overlap. A lone review folds too. The drop-departed-members loop guards on `folds.owned`, not the bucket, because a hand-added workspace is the user's. **Do not** persist a "this is a review" marker.
 - An incomplete cycle suspends the dissolve (`ReviewFolds.partial`), the one irreversible step, because a repo that never reported leaves its bucket absent, which looks like "no reviews". Re-park, rename and re-member still run. **Do not** key this on the bucket being empty instead of the cycle being complete.
 
-Snoozed PRs fold into a second trailing `<org> snoozed (N)` group below reviews, through the same accumulator and pass walking `_TRAILING_FOLDS`. Membership is `NudgePref.snoozed`, mine included.
+Snoozed PRs fold into trailing `<tag> <repo> snoozed (N)` groups below reviews, one per repo, not per org, because an org-wide pile hid which repo a snooze belonged to. They use the same accumulator and pass walking `_TRAILING_FOLDS`, with their own `ReviewFolds.snoozed_tags`. Membership is `NudgePref.snoozed`, mine included.
 
 - Precedence on overlap: stacks, then snoozed, then reviews.
 - Order comes from pass order, not a rank field. **Do not** reorder that tuple expecting names to sort it.

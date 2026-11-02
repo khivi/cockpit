@@ -2199,7 +2199,7 @@ class CockpitApp(App[None]):
         # repo-scoped one. `z` is the only keypress that changes *sidebar fold*
         # membership, and `cycle_all` builds `folds` only when `only_repo is
         # None` — so under a scoped kick `_reconcile_review_groups` never runs
-        # and the `<org> snoozed (N)` fold lags by up to a full slow interval
+        # and the `<repo> snoozed (N)` fold lags by up to a full slow interval
         # while everything else (`pr-snoozed`, the TUI fold, the row band, the
         # nudge going quiet) has already landed. The cost is one `gh` round-trip per repo on
         # a background worker — the same work the periodic tick does anyway, so

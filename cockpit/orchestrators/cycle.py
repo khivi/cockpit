@@ -2686,19 +2686,23 @@ def _review_group_name(key: str, size: int, tag: str = "") -> str:
 
 def _snoozed_group_name(key: str, size: int, tag: str = "") -> str:
     """Sidebar header for a snoozed fold — PRs read and handed back (TUI `z`),
-    waiting on someone else's comment or review. Bucketed, tagged and counted
-    exactly like the reviews pile, for the same reasons: several coexist.
+    waiting on someone else's comment or review. Keyed per repo, unlike
+    reviews: one org-wide pile hid which repo a snooze belonged to. The org's
+    glyph prefixes the repo name rather than replacing it, since every repo of
+    an org shares that glyph.
     """
-    return f"{tag or key} snoozed ({size})"
+    return f"{tag} {key} snoozed ({size})" if tag else f"{key} snoozed ({size})"
 
 
 @dataclass
 class ReviewFolds:
     """Cross-repo accumulator for the two trailing sidebar folds.
 
-    Both piles are keyed by org (`_review_bucket_key`), so neither can be
+    Reviews are keyed by org (`_review_bucket_key`), so they can't be
     reconciled inside the per-repo pass the way stacks are — a repo's own
-    reviews are only part of its org's pile. `_reconcile_sidebar_groups` fills
+    reviews are only part of its org's pile. Snoozed is keyed per repo
+    (`snoozed_tags` names it) but shares the pass, so both trailing families
+    are dissolved and re-parked together. `_reconcile_sidebar_groups` fills
     this as it walks each repo; `cycle_all` drains it once, after every repo.
 
     `reviews` is the coworker PRs I haven't read; `snoozed` is everything I have
@@ -2727,6 +2731,7 @@ class ReviewFolds:
     buckets: dict[str, list[str]] = field(default_factory=dict)
     snoozed: dict[str, list[str]] = field(default_factory=dict)
     tags: dict[str, str] = field(default_factory=dict)
+    snoozed_tags: dict[str, str] = field(default_factory=dict)
     owned: set[str] = field(default_factory=set)
     partial: bool = False
 
@@ -2752,7 +2757,7 @@ def _reconcile_sidebar_groups(
     end of the cycle, since those piles are keyed by org and span repos.
 
     A chain whose **tip** is snoozed is the one stack that doesn't get a group:
-    its members go into the org's `snoozed` pile whole, tip first, exactly where
+    its members go into the repo's `snoozed` pile whole, tip first, exactly where
     the TUI puts them (`worktree_table._split_snoozed` folds a snoozed chain
     into the repo's `▸ N snoozed` disclosure rather than beside it). The tip is
     the same discriminator `_row_band` uses, so a snooze below the tip still
@@ -2796,7 +2801,7 @@ def _reconcile_sidebar_groups(
         ordered = [tracked[pr.branch] for pr in (present[-1], *present[:-1])]
         refs = [ref for ref, _ in ordered]
         stacked.update(refs)
-        # A snoozed tip hands the whole chain to the org's snoozed pile instead
+        # A snoozed tip hands the whole chain to the repo's snoozed pile instead
         # of keeping a group of its own: a workspace lives in exactly one group,
         # and the pile is where the TUI already files it. Only when a pile
         # exists to receive it — see the docstring.
@@ -2831,8 +2836,11 @@ def _reconcile_sidebar_groups(
             stacked,
         )
         bucket = _review_bucket_key(ctx.repo_entry)
-        folds.tags[bucket] = _fold_tag(ctx.cfg, ctx.repo_entry)
-        folds.snoozed.setdefault(bucket, []).extend(snoozed)
+        tag = _fold_tag(ctx.cfg, ctx.repo_entry)
+        folds.tags[bucket] = tag
+        repo_key = str(ctx.repo_entry.get("name") or ctx.name)
+        folds.snoozed_tags[repo_key] = tag
+        folds.snoozed.setdefault(repo_key, []).extend(snoozed)
         folds.buckets.setdefault(bucket, []).extend(
             _pile(lambda pr: not pr.mine, stacked | set(snoozed))
         )
@@ -2897,9 +2905,9 @@ def _reconcile_sidebar_groups(
 # its target below everything moved before it, so processing reviews first
 # leaves snoozed lower — the more passive pile sits under the queue. The sunk
 # stack chains re-parked after this loop land lower still.
-_TRAILING_FOLDS: tuple[tuple[str, str, Callable[[str, int, str], str]], ...] = (
-    ("buckets", REVIEW_GROUP_ICON, _review_group_name),
-    ("snoozed", SNOOZE_GROUP_ICON, _snoozed_group_name),
+_TRAILING_FOLDS: tuple[tuple[str, str, str, Callable[[str, int, str], str]], ...] = (
+    ("buckets", "tags", REVIEW_GROUP_ICON, _review_group_name),
+    ("snoozed", "snoozed_tags", SNOOZE_GROUP_ICON, _snoozed_group_name),
 )
 
 
@@ -2991,10 +2999,10 @@ def _reconcile_review_groups(
     folds: ReviewFolds, *, dry: bool, pill_state: dict | None = None
 ) -> None:
     """Fold each org's coworker PRs into one trailing `<org> reviews (N)` group,
-    and its snoozed PRs into an `<org> snoozed (N)` group below it.
+    and each repo's snoozed PRs into a `<repo> snoozed (N)` group below it.
 
     The cross-repo half of `_reconcile_sidebar_groups`, run once at the end of
-    `cycle_all` because both piles are keyed by org: a repo alone can't tell
+    `cycle_all` because the reviews pile is keyed by org: a repo alone can't tell
     whether its lone review has siblings in the org's other repos. Derived from
     `PR.mine` and `NudgePref.snoozed` every cycle, reconciled against cmux's live
     `workspace-group list` — never stored.
@@ -3055,14 +3063,14 @@ def _reconcile_review_groups(
     if dry:
         return
     live = list_workspace_groups()
-    for attr, icon, namer in _TRAILING_FOLDS:
+    for attr, tags_attr, icon, namer in _TRAILING_FOLDS:
         groups = [g for g in live if g.icon == icon]
         matched: set[str] = set()
         recorded: set[str] = set()
         for key, refs in sorted(getattr(folds, attr).items()):
             if not refs:
                 continue
-            name = namer(key, len(refs), folds.tags.get(key, ""))
+            name = namer(key, len(refs), getattr(folds, tags_attr).get(key, ""))
             # What this pass decided the fold should be, so the fast tick can
             # replay it if the group is lost mid-interval — see
             # `restore_trailing_folds`. Written for a fold that ends the pass
