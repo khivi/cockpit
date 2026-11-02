@@ -93,9 +93,15 @@ jobs:
           skip-labeling: true
       # Every merge ships: merge the release PR this run just wrote. `--admin`
       # because the ruleset requires an approval a solo author cannot give.
-      - if: steps.rp.outputs.pr
-        env:
+      # `fromJSON` in `env:` errors on a run that opened no PR, so parse here.
+      - env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ fromJSON(steps.rp.outputs.pr).number }}
-        run: gh pr merge "$PR_NUMBER" --squash --admin
+          PR_JSON: ${{ steps.rp.outputs.pr }}
+        run: |
+          [ -n "$PR_JSON" ] || exit 0
+          n="$(jq -r .number <<<"$PR_JSON")"
+          # `--admin` skips the approval, not required status checks.
+          sleep 30
+          gh pr checks "$n" --watch --required --fail-fast --interval 20
+          gh pr merge "$n" --squash --admin
