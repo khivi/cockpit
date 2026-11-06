@@ -68,6 +68,7 @@ from cockpit.lib.cmux import (
     remove_from_workspace_group,
     rename_workspace_group,
     rename_workspace_if_needed,
+    rest_skip_reason,
     set_workspace_color,
     spawn_orphan_workspace,
     spawn_pr_workspace,
@@ -1360,6 +1361,15 @@ def _maybe_autoclose(
                     flush=True,
                 )
                 continue
+        # Only a definite busy verdict defers: a shell-only workspace or a
+        # non-cmux backend reads "not at rest" forever and must still close.
+        busy = rest_skip_reason(merged_ref) if merged_ref is not None else None
+        if busy in ("mid-turn", "awaiting permission"):
+            print(
+                f"  {verb('autoclose')} {dim(f'deferred ({busy}) {wt.short}')}",
+                flush=True,
+            )
+            continue
         # Delete the local branch ref too, but only when HEAD sits at the merged
         # head with nothing on top. `_is_post_merge_stale` permits teardown when
         # the merge head is *any* ancestor of HEAD — that includes a branch the

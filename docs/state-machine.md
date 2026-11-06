@@ -250,7 +250,11 @@ branch ref only when HEAD sits at the merged head with nothing on top.
 - **Autoclose smart-skip**: even when merged & clean, skip if the branch has an
   OPEN PR (a reused branch — tearing it down would fight
   `_spawn_missing_workspaces`, which re-creates the worktree), or if the PR is
-  draft, CI not green, or has unaddressed review threads.
+  draft, CI not green, or has unaddressed review threads. It also defers
+  while the workspace's session is mid-turn or awaiting permission
+  (`rest_skip_reason`), so a merge never kills a working session. Only those
+  two verdicts defer; "not at rest" covers a shell-only workspace and limux,
+  which would otherwise never close.
 - **Unlanded commits are NOT an autoclose blocker** — `_maybe_autoclose`
   only fires on a merged PR and tears down with `forced=True`; unlanded commits
   merely preserve the local branch ref. The unlanded / open-PR gate for the manual
