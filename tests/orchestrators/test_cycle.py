@@ -394,6 +394,47 @@ def test_autoclose_tears_down_when_not_muted(tmp_path, prefs):
     _autoclose_with_prefs(tmp_path, prefs).assert_called_once()
 
 
+def _autoclose_with_session(tmp_path, reason):
+    """Run `_maybe_autoclose` on one clean merged worktree whose workspace's
+    rest verdict is `reason`; return the `_teardown_worktree` mock."""
+    wt_path = tmp_path / "repo-feat"
+    wt_path.mkdir()
+    wt = Worktree(path=wt_path, branch="khivi/feat", dirty_count=0)
+    with (
+        patch.object(cycle, "_teardown_worktree") as teardown_mock,
+        patch.object(cycle, "is_ancestor", return_value=True),
+        patch.object(cycle, "has_unique_commits", return_value=False),
+        patch.object(cycle, "apply_devdone_pill"),
+        patch.object(cycle, "rest_skip_reason", return_value=reason),
+    ):
+        cycle._maybe_autoclose(
+            repo_path=tmp_path,
+            repo_name="testrepo",
+            wts=[wt],
+            merged_branches={"khivi/feat": "deadbeef"},
+            cwds={"workspace:1": wt_path},
+            prs=[_pr("khivi/feat")],
+            dry=False,
+        )
+    return teardown_mock
+
+
+@pytest.mark.covers("teardown.busy-defers~1")
+@pytest.mark.parametrize("reason", ["mid-turn", "awaiting permission"])
+def test_autoclose_defers_while_session_busy(tmp_path, capsys, reason):
+    _autoclose_with_session(tmp_path, reason).assert_not_called()
+    assert f"deferred ({reason})" in capsys.readouterr().out
+
+
+@pytest.mark.covers("teardown.busy-defers~1")
+@pytest.mark.parametrize(
+    "reason",
+    [None, "not at rest (no Claude session)", "not at rest (Needs input)", "parked"],
+)
+def test_autoclose_tears_down_when_session_not_busy(tmp_path, reason):
+    _autoclose_with_session(tmp_path, reason).assert_called_once()
+
+
 def test_autoclose_remove_failure_still_closes_cmux_and_skips_cache_delete(tmp_path):
     """If remove_worktree fails, cmux close has already run (correct), and
     we skip delete_pr_caches_for_branch (preserves prior gating behavior)."""
