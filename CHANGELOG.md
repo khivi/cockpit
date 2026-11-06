@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.3](https://github.com/khivi/cockpit/compare/v4.2.2...v4.2.3) (2026-11-06)
+
+
+### Bug Fixes
+
+* **autoclose:** defer teardown while the session is mid-turn or awaiting permission ([#651](https://github.com/khivi/cockpit/issues/651)) ([ef523eb](https://github.com/khivi/cockpit/commit/ef523eb9d36cddc51884af6bee2f37699f456bc3))
+
 ## [4.2.2](https://github.com/khivi/cockpit/compare/v4.2.1...v4.2.2) (2026-11-02)
 
 
