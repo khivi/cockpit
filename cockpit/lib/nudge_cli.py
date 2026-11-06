@@ -51,10 +51,10 @@ from .stacks import chain_tip
 
 
 def _infer_pr_number() -> int | None:
-    """Return the PR number for the current branch via `gh pr view`, else None.
+    """Return the PR number for the current branch via `gh pr view`.
 
-    The daemon stores nudge prefs by PR number, so this is what `cockpit nudge`
-    uses when invoked without an explicit number.
+    None when gh answered that the branch has no PR. Raises RuntimeError when gh
+    couldn't answer (auth, network), so the two failures get distinct messages.
     """
     res = subprocess.run(
         ["gh", "pr", "view", "--json", "number", "-q", ".number"],
@@ -62,7 +62,10 @@ def _infer_pr_number() -> int | None:
         text=True,
     )
     if res.returncode != 0:
-        return None
+        err = (res.stderr or "").strip()
+        if "no pull requests found" in err:
+            return None
+        raise RuntimeError(err or f"gh exited {res.returncode}")
     out = res.stdout.strip()
     if not out:
         return None
@@ -72,7 +75,7 @@ def _infer_pr_number() -> int | None:
         return None
 
 
-def _resolve_pr(arg_pr: int | None) -> tuple[int, str, str]:
+def _resolve_pr(arg_pr: int | None, verb: str) -> tuple[int, str, str]:
     """(PR number, repo nwo, pref key) for the command. Exits 2 when either the
     number or the repo is unresolvable.
 
@@ -81,14 +84,20 @@ def _resolve_pr(arg_pr: int | None) -> tuple[int, str, str]:
     """
     pr = arg_pr
     if pr is None:
-        pr = _infer_pr_number()
-    if pr is None:
-        print(
-            "no PR number given and could not infer from current branch — "
-            "pass the PR number explicitly (e.g. `cockpit nudge mute 12345`)",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+        hint = f"pass the PR number explicitly (e.g. `cockpit nudge {verb} 12345`)"
+        try:
+            pr = _infer_pr_number()
+        except RuntimeError as e:
+            print(
+                f"could not ask gh for this branch's PR ({e}) — {hint}", file=sys.stderr
+            )
+            sys.exit(2)
+        if pr is None:
+            print(
+                f"the current branch has no PR, so there is nothing to {verb} — {hint}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
     try:
         repo = repo_nwo(Path.cwd())[1]
     except RuntimeError as e:
@@ -133,7 +142,7 @@ def _cmd_mute(args: argparse.Namespace) -> int:
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return 2
-    pr, _repo, key = _resolve_pr(args.pr)
+    pr, _repo, key = _resolve_pr(args.pr, "mute")
     pref = load_pref(key)
     pref.muted = True
     pref.until = until
@@ -146,7 +155,7 @@ def _cmd_mute(args: argparse.Namespace) -> int:
 
 
 def _cmd_unmute(args: argparse.Namespace) -> int:
-    pr, _repo, key = _resolve_pr(args.pr)
+    pr, _repo, key = _resolve_pr(args.pr, "unmute")
     pref = load_pref(key)
     if not pref.muted:
         print(f"PR #{pr}: not muted")
@@ -213,7 +222,7 @@ def _worktree_cwd() -> Path:
 
 
 def _cmd_snooze(args: argparse.Namespace) -> int:
-    pr, repo, key = _resolve_pr(args.pr)
+    pr, repo, key = _resolve_pr(args.pr, "snooze")
     pref = load_pref(key)
     was_snoozed = pref.snoozed
     cwd = _worktree_cwd()
@@ -247,7 +256,7 @@ def _cmd_snooze(args: argparse.Namespace) -> int:
 
 
 def _cmd_wake(args: argparse.Namespace) -> int:
-    pr, repo, key = _resolve_pr(args.pr)
+    pr, repo, key = _resolve_pr(args.pr, "wake")
     pref = load_pref(key)
     was_snoozed = pref.snoozed
     cwd = _worktree_cwd()
@@ -280,13 +289,13 @@ def _cmd_list(_args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
-    pr, _repo, key = _resolve_pr(args.pr)
+    pr, _repo, key = _resolve_pr(args.pr, "status")
     _print_status(pr, load_pref(key))
     return 0
 
 
 def _cmd_forget(args: argparse.Namespace) -> int:
-    pr, _repo, key = _resolve_pr(args.pr)
+    pr, _repo, key = _resolve_pr(args.pr, "forget")
     if delete_pref(key):
         print(f"deleted nudge file for PR #{pr}")
     else:
