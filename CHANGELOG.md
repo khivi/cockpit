@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.4](https://github.com/khivi/cockpit/compare/v4.2.3...v4.2.4) (2026-11-07)
+
+
+### Documentation
+
+* **cockpit-new:** carry open questions, flag unverified claims, never carry secrets in --context ([#654](https://github.com/khivi/cockpit/issues/654)) ([70b39f6](https://github.com/khivi/cockpit/commit/70b39f6b35cb12eadd43d71f9589342b0c36cb7d))
+
 ## [4.2.3](https://github.com/khivi/cockpit/compare/v4.2.2...v4.2.3) (2026-11-06)
 
 
