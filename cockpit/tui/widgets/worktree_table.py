@@ -276,6 +276,13 @@ _DIRTY_ICON = ICON_UNSTAGED
 # own glyph rather than folding into `💬` (GitHub review threads). 📝 sits in
 # the local cluster beside `_DIRTY_ICON` rather than the GitHub cluster.
 _DIFF_COMMENT_ICON = "📝"
+# What the session's open dialog waits on, from the daemon's `session-wait` cell.
+_WAIT_ICON = "✋"
+_WAIT_GLYPHS: dict[str, tuple[str, str]] = {
+    "permission": ("✋", "Waiting on a permission prompt"),
+    "question": ("❓", "Waiting on your answer to a question"),
+    "plan": ("📋", "Waiting on plan approval"),
+}
 
 # Worktree rows hang under their repo's header row. Both write into the same
 # Workspace column, so this indent is the only thing that reads as nesting.
@@ -317,7 +324,9 @@ def _ellipsize(text: str, limit: int) -> str:
 
 
 def column_labels(*, show_tickets: bool, show_cost: bool = False) -> tuple[str, ...]:
-    """Column headers in display order, grouped by domain. The local cluster —
+    """Column headers in display order, grouped by domain. `✋` follows
+    Workspace: what the session's open dialog waits on, the one column about the
+    session rather than the branch or PR. The local cluster —
     `✎` dirty then `📝` pending diff-viewer comments — sits right after `PR` #,
     then the GitHub cluster — the `🔀` review-state, `CI`, and `💬` comments.
     `📝` and `💬` look alike but are never the same thing: `💬` is GitHub review
@@ -333,6 +342,7 @@ def column_labels(*, show_tickets: bool, show_cost: bool = False) -> tuple[str, 
     of numbers whatever the Title beside it does."""
     cols = [
         "Workspace",
+        _WAIT_ICON,
         "PR",
         _DIRTY_ICON,
         _DIFF_COMMENT_ICON,
@@ -664,6 +674,13 @@ def _dirty_cell(wt: Worktree) -> Text:
     return Text(" ").join(segs) if segs else Text("")
 
 
+def _session_wait_cell(raw: str) -> Text:
+    """The ✋ column: the glyph for what the session's dialog waits on, from the
+    daemon-written `session-wait` cell. Blank when nothing waits."""
+    glyph = _WAIT_GLYPHS.get(raw)
+    return Text(glyph[0], style="bold yellow") if glyph else Text("")
+
+
 def _diff_comments_cell(raw: str) -> Text:
     """The 📝 column: pending (undelivered) cmux diff-viewer comments, from the
     daemon-written `diff-comments` cell. Local only — never reaches GitHub, and
@@ -936,6 +953,7 @@ def worktree_cells(
             snoozed=bool(cell("pr-snoozed")),
             depth=depth,
         ),
+        _session_wait_cell(cell("session-wait")),
         Text(f"#{num}") if num else Text(""),
         _dirty_cell(wt),
         _diff_comments_cell(cell("diff-comments")),
@@ -972,6 +990,7 @@ def worktree_cells(
 
 _HEADER_TOOLTIPS: dict[str, str] = {
     "Workspace": "Workspace / branch name",
+    _WAIT_ICON: "What the session waits on: ✋ permission, ❓ question, 📋 plan",
     "PR": "Pull-request number",
     "Author": "PR author (blank when it's mine)",
     _APPROVAL_ICON: "PR review state",
@@ -1115,6 +1134,7 @@ def row_tooltips(
 
     tips: list[str | None] = [
         workspace,
+        _WAIT_GLYPHS.get(cell("session-wait"), (None, None))[1],
         None,  # PR #
         _dirty_tooltip(wt),
         _diff_comments_tooltip(cell("diff-comments")),

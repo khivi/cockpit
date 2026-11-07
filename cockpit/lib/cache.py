@@ -662,6 +662,13 @@ def write_worktree_cost_cache(cwd: os.PathLike[str] | str) -> None:
     atomic_write(cwd_cache("wt-cost", cwd), f"{total:.4f}" if total > 0 else "")
 
 
+def write_session_wait_cache(cwd: os.PathLike[str] | str, reason: str) -> None:
+    """Snapshot what a session at `cwd` waits on (the `blocked=` pill value:
+    `permission`, `question`, `plan`) into the `session-wait` flat cell. ""
+    when nothing waits. Display-only; nothing reads it back."""
+    atomic_write(cwd_cache("session-wait", cwd), reason)
+
+
 def write_diff_comments_cache(cwd: os.PathLike[str] | str, count: int) -> None:
     """Snapshot `cwd`'s pending (undelivered) cmux diff-viewer comment count into
     the `diff-comments` flat cell — advisory only, so the TUI can show "there's

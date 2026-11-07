@@ -1345,3 +1345,34 @@ def test_watch_applies_default_poll_secs_when_config_omits_them(tmp_path, monkey
     assert watch_calls == [
         (cockpit.DEFAULT_SLOW_POLL_SECS, cockpit.DEFAULT_FAST_POLL_SECS)
     ]
+
+
+def test_fast_tick_writes_session_wait_per_worktree_by_exact_cwd(tmp_path, monkeypatch):
+    """The `session-wait` cell carries the `blocked=` value of the workspace at
+    the worktree's own path, and "" for every other worktree, so an answered
+    dialog clears the glyph on the next tick."""
+    import cockpit.cockpit as cockpit
+    from cockpit.lib.git import Worktree
+
+    importlib.reload(cockpit)
+
+    repo = tmp_path / "repo"
+    waiting, quiet = repo / "feat", repo / "other"
+    waiting.mkdir(parents=True)
+    quiet.mkdir()
+    written: dict = {}
+    monkeypatch.setattr(
+        cockpit,
+        "blocked_reasons",
+        lambda cwds: {r: "question" for r, p in cwds.items() if p == waiting},
+    )
+    monkeypatch.setattr(
+        cockpit, "write_session_wait_cache", lambda p, v: written.__setitem__(p, v)
+    )
+
+    cockpit._write_session_wait_cells(
+        [Worktree(path=waiting, branch="a"), Worktree(path=quiet, branch="b")],
+        {"workspace:1": waiting, "workspace:2": quiet / "sub"},
+    )
+
+    assert written == {waiting: "question", quiet: ""}

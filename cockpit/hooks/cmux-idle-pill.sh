@@ -33,15 +33,19 @@
 #
 # Hook wiring (Claude Code event → arg):
 #   Stop               → stop
+#   StopFailure        → stop   (turn ended by an API error)
 #   UserPromptSubmit   → prompt
 #   PermissionRequest  → blocked
+#   PostToolUse(+Failure) → resume  (clears blocked= once the dialog is answered)
 #
-# blocked=permission — a permission dialog is up. It fires before the dialog,
+# blocked=permission|question|plan — a dialog is up: a tool permission, an
+# AskUserQuestion form or a plan approval. It fires before the dialog,
 # with no delay (the `Notification` `permission_prompt` matcher waits ~6s).
 # `nudge_if_idle` refuses while it is set, whatever native state or `idle=`
-# say. Cleared at Stop and prompt. Denying the dialog or pressing Esc
-# interrupts the turn without a Stop, so the pill stays until the next prompt;
-# native state stays `Running` then too, so it withholds nothing new.
+# say. Cleared at Stop, prompt (a no-turn built-in prompt leaves both) and
+# the next finished tool call. Denying the dialog or pressing Esc interrupts
+# the turn with neither, so the pill stays until the next prompt; native state
+# stays `Running` then too, so it withholds nothing new.
 # Must print nothing: PermissionRequest reads stdout as a decision.
 
 set -eu
@@ -197,6 +201,43 @@ sys.exit(0 if any(
 PY
 }
 
+no_turn_builtin() {
+  # Exits 0 iff the UserPromptSubmit payload ($1) is a built-in slash command
+  # that runs no model turn. Those fire UserPromptSubmit but no Stop follows, so
+  # clearing `idle=` would strand it. An allowlist, never "starts with /":
+  # custom commands and skills (/review, /loop, /cockpit-seed) run full turns,
+  # and a stale `idle=` mid-turn lets nudge_if_idle type into a busy session.
+  python3 - "$1" 2>/dev/null <<'PY'
+import json, sys
+BUILTINS = {
+    "/compact", "/model", "/clear", "/config", "/cost", "/status", "/help",
+    "/context", "/permissions", "/hooks", "/mcp", "/memory", "/usage",
+    "/doctor", "/resume", "/rewind", "/export", "/theme", "/vim", "/agents",
+    "/add-dir", "/ide", "/statusline", "/release-notes", "/fast",
+    "/output-style", "/login", "/logout",
+}
+try:
+    words = json.loads(sys.argv[1]).get("prompt", "").split()
+except Exception:
+    sys.exit(1)
+sys.exit(0 if words and words[0] in BUILTINS else 1)
+PY
+}
+
+blocked_reason() {
+  # Prints the `blocked=` value for the PermissionRequest payload ($1): what the
+  # dialog waits on. AskUserQuestion and ExitPlanMode ride the same event.
+  # `nudge_if_idle` reads only the key, so the value is display-only.
+  python3 - "$1" 2>/dev/null <<'PY' || echo permission
+import json, sys
+try:
+    tool = json.loads(sys.argv[1]).get("tool_name")
+except Exception:
+    tool = None
+print({"AskUserQuestion": "question", "ExitPlanMode": "plan"}.get(tool, "permission"))
+PY
+}
+
 case "${1:-}" in
   stop)
     cmux_clear_verify blocked
@@ -214,12 +255,24 @@ case "${1:-}" in
     cmux_set_verify idle idle "#6b7280"
     ;;
   prompt)
+    hook_input="$(cat)"
+    if [ -n "$hook_input" ] && no_turn_builtin "$hook_input"; then
+      exit 0
+    fi
     cmux_clear_verify idle
+    cmux_clear_verify blocked
+    ;;
+  resume)
+    # Fires on every tool call, so skip the clear when no pill is up. A
+    # parallel tool finishing can clear another call's dialog pill; the gate
+    # still refuses, because `idle=` stays cleared and native is not `Idle`.
+    command cmux list-status --workspace "$CMUX_WORKSPACE_ID" 2>/dev/null \
+      | grep -qE '^[[:space:]]*blocked=' || exit 0
     cmux_clear_verify blocked
     ;;
   blocked)
     cmux_clear_verify idle
-    cmux_set_verify blocked permission "#f59e0b"
+    cmux_set_verify blocked "$(blocked_reason "$(cat)")" "#f59e0b"
     ;;
 esac
 
