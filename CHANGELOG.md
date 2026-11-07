@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.1](https://github.com/khivi/cockpit/compare/v4.3.0...v4.3.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **nudge:** name the verb and tell 'no PR' from 'gh failed' when the PR can't be inferred ([#653](https://github.com/khivi/cockpit/issues/653)) ([fc4fd4a](https://github.com/khivi/cockpit/commit/fc4fd4a4d17ca2e58e6c1233fc604bf6e6bbede2))
+
 ## [4.3.0](https://github.com/khivi/cockpit/compare/v4.2.4...v4.3.0) (2026-11-07)
 
 
