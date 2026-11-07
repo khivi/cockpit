@@ -31,11 +31,15 @@ The CLI errors on a bare `--context`, so the substitution is not optional.
 **Select, don't summarize.** The new workspace is starting one task, not
 resuming this conversation. Carry only what it cannot re-derive from the repo
 it is about to open: the goal in a sentence, decisions already made and why,
-approaches already ruled out, and exact identifiers — PR numbers, ticket keys,
-URLs, file paths, error strings. Leave out what it will read for itself (file
-contents, diffs, command output), how this session arrived at the goal, and
-anything about unrelated topics worked on here. 5–12 lines, and one honest
-line beats padding when there is little to hand over.
+approaches already ruled out, questions still open and what blocks them, and
+exact identifiers — PR numbers, ticket keys, URLs, file paths, error strings.
+Leave out what it will read for itself (file contents, diffs, command output),
+how this session arrived at the goal, and anything about unrelated topics
+worked on here. Mark any claim this session assumed rather than checked as
+unverified, so it is not inherited as fact. Never carry a credential, token or
+personal data — the text is stored on disk and becomes the new session's first
+turn; name the env var instead of its value. 5–12 lines, and one honest line
+beats padding when there is little to hand over.
 
 **`--context '<text>'` scopes the hand-over, it does not replace it.** The text
 is what the caller knows the new workspace needs: keep it verbatim, then add

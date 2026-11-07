@@ -204,8 +204,9 @@ prompt.
 
 **Carry context from a conversation.** Inside a Claude session, `/cockpit-new --context`
 gives the new workspace what it needs from the current conversation: the goal, decisions
-made, approaches ruled out, and the exact PRs, tickets and paths. It leaves out anything
-the new session can read from the repo itself. Give it a value —
+made, approaches ruled out, open questions, and the exact PRs, tickets and paths. It marks
+guesses as unverified and never carries secrets. It leaves out anything the new session
+can read from the repo itself. Give it a value —
 `--context 'the auth refactor'` — to focus what it carries.
 
 **Tickets find their repo.** `cockpit new PE-1234` goes to the repo that declares the `PE`
