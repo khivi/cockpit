@@ -20,8 +20,15 @@ import cockpit.lib.nudge_cli as nudge_cli
 from cockpit.lib.nudges import NudgePref
 
 
-def _completed(returncode: int = 0, stdout: str = "") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout)
+def _completed(
+    returncode: int = 0, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=stderr
+    )
+
+
+_NO_PR = 'no pull requests found for branch "feature"'
 
 
 # ── _infer_pr_number — the gh subprocess boundary ───────────────────────────
@@ -32,9 +39,19 @@ def test_infer_pr_number_happy_path():
         assert nudge_cli._infer_pr_number() == 123
 
 
-def test_infer_pr_number_gh_failure_is_none():
-    with patch("subprocess.run", return_value=_completed(returncode=1, stdout="123")):
+def test_infer_pr_number_branch_without_pr_is_none():
+    with patch("subprocess.run", return_value=_completed(returncode=1, stderr=_NO_PR)):
         assert nudge_cli._infer_pr_number() is None
+
+
+def test_infer_pr_number_gh_failure_raises_with_gh_stderr():
+    # "couldn't ask" must not read as "no PR".
+    failed = _completed(returncode=1, stdout="123", stderr="HTTP 401: Bad credentials")
+    with (
+        patch("subprocess.run", return_value=failed),
+        pytest.raises(RuntimeError, match="Bad credentials"),
+    ):
+        nudge_cli._infer_pr_number()
 
 
 def test_infer_pr_number_empty_stdout_is_none():
@@ -57,7 +74,7 @@ def test_resolve_pr_explicit_arg_skips_gh_pr_view():
         patch("subprocess.run") as run,
         patch.object(nudge_cli, "repo_nwo", return_value=("acme-org", "acme")),
     ):
-        assert nudge_cli._resolve_pr(42) == (42, "acme", "acme__42")
+        assert nudge_cli._resolve_pr(42, "mute") == (42, "acme", "acme__42")
     run.assert_not_called()
 
 
@@ -66,7 +83,7 @@ def test_resolve_pr_falls_back_to_gh_when_no_arg():
         patch("subprocess.run", return_value=_completed(stdout="55\n")),
         patch.object(nudge_cli, "repo_nwo", return_value=("acme-org", "acme")),
     ):
-        assert nudge_cli._resolve_pr(None) == (55, "acme", "acme__55")
+        assert nudge_cli._resolve_pr(None, "snooze") == (55, "acme", "acme__55")
 
 
 def test_resolve_pr_exits_2_when_the_repo_cannot_be_resolved(capsys):
@@ -76,29 +93,35 @@ def test_resolve_pr_exits_2_when_the_repo_cannot_be_resolved(capsys):
         patch.object(nudge_cli, "repo_nwo", side_effect=RuntimeError("gh failed")),
         pytest.raises(SystemExit) as exc,
     ):
-        nudge_cli._resolve_pr(42)
+        nudge_cli._resolve_pr(42, "mute")
     assert exc.value.code == 2
     assert "keyed per repo" in capsys.readouterr().err
 
 
 def test_resolve_pr_exits_2_when_gh_fails_and_no_pr_given(capsys):
     with (
-        patch("subprocess.run", return_value=_completed(returncode=1)),
+        patch(
+            "subprocess.run", return_value=_completed(returncode=1, stderr="timeout")
+        ),
         pytest.raises(SystemExit) as exc,
     ):
-        nudge_cli._resolve_pr(None)
+        nudge_cli._resolve_pr(None, "snooze")
     assert exc.value.code == 2
-    assert "could not infer" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "could not ask gh" in err and "timeout" in err
+    assert "`cockpit nudge snooze 12345`" in err
 
 
 def test_resolve_pr_exits_2_when_gh_returns_no_pr(capsys):
     with (
-        patch("subprocess.run", return_value=_completed(stdout="")),
+        patch("subprocess.run", return_value=_completed(returncode=1, stderr=_NO_PR)),
         pytest.raises(SystemExit) as exc,
     ):
-        nudge_cli._resolve_pr(None)
+        nudge_cli._resolve_pr(None, "snooze")
     assert exc.value.code == 2
-    assert "could not infer" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "has no PR, so there is nothing to snooze" in err
+    assert "`cockpit nudge snooze 12345`" in err
 
 
 # ── mute --until parse errors ────────────────────────────────────────────
@@ -117,7 +140,7 @@ def test_mute_rejects_invalid_duration(capsys):
 
 def _patched_snooze_collaborators(**overrides):
     defaults = {
-        "_resolve_pr": lambda arg: (7, "acme", "acme__7"),
+        "_resolve_pr": lambda arg, verb: (7, "acme", "acme__7"),
         "load_pref": lambda key: NudgePref(),
         "current_branch": lambda cwd: "feature",
         "find_pr_payload_for_cwd": lambda cwd, branch: {
@@ -319,7 +342,7 @@ def test_no_warning_on_the_tip_itself(capsys):
         patch.multiple(
             nudge_cli,
             **_patched_snooze_collaborators(
-                _resolve_pr=lambda arg: (8, "acme", "acme__8"),
+                _resolve_pr=lambda arg, verb: (8, "acme", "acme__8"),
                 current_branch=lambda cwd: "tip",
                 load_pr_payloads_by_branch=_stacked_payloads,
                 load_pref=_prefs(),
@@ -443,7 +466,7 @@ def stamped_subdir(cockpit_repo, tmp_path, monkeypatch):
 def test_snooze_from_a_subdirectory_arms_from_the_worktree_snapshot(stamped_subdir):
     with (
         patch.object(
-            nudge_cli, "_resolve_pr", lambda arg: (7, "testrepo", "testrepo__7")
+            nudge_cli, "_resolve_pr", lambda arg, verb: (7, "testrepo", "testrepo__7")
         ),
         patch.object(nudge_cli, "load_pref", lambda key: NudgePref()),
         patch.object(nudge_cli, "load_pr_payloads_by_branch", lambda repo: {}),
@@ -462,7 +485,7 @@ def test_snooze_from_a_subdirectory_arms_from_the_worktree_snapshot(stamped_subd
 def test_wake_from_a_subdirectory_restamps_the_worktree_root(stamped_subdir):
     with (
         patch.object(
-            nudge_cli, "_resolve_pr", lambda arg: (7, "testrepo", "testrepo__7")
+            nudge_cli, "_resolve_pr", lambda arg, verb: (7, "testrepo", "testrepo__7")
         ),
         patch.object(nudge_cli, "load_pref", lambda key: NudgePref(snoozed=True)),
         patch.object(nudge_cli, "load_pr_payloads_by_branch", lambda repo: {}),

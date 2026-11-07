@@ -205,7 +205,7 @@ def test_cli_mute_fails_when_pr_cannot_be_inferred(nudge_cli, monkeypatch, capsy
     with pytest.raises(SystemExit) as exc:
         nudge_cli.main(["mute"])
     assert exc.value.code == 2
-    assert "could not infer" in capsys.readouterr().err
+    assert "nothing to mute" in capsys.readouterr().err
 
 
 def test_cli_unmute(nudges, nudge_cli, capsys):
