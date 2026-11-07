@@ -41,10 +41,12 @@ from cockpit.lib.cache import (
     stamp_inbox_in_flight,
     write_diff_comments_cache,
     write_git_state_cache,
+    write_session_wait_cache,
     write_worktree_cost_cache,
 )
 from cockpit.lib.cmux import (
     CmuxUnavailable,
+    blocked_reasons,
     nudge_if_idle,
     reassert_idle_pills,
     reconcile_workspace_names,
@@ -324,6 +326,16 @@ def _write_worktree_cells(wts: Iterable[Worktree]) -> None:
         list(pool.map(_one, wts))
 
 
+def _write_session_wait_cells(wts: Iterable[Worktree], cwds: dict[str, Path]) -> None:
+    """Write each worktree's `session-wait` cell from its workspaces' `blocked=`
+    pills, matched by exact cwd. Several sessions at one cwd: any one waiting
+    marks the row. Always writes, "" included, so an answered dialog clears."""
+    reasons = blocked_reasons(cwds)
+    by_cwd = {cwds[ref].resolve(): v for ref, v in reasons.items()}
+    for wt in wts:
+        write_session_wait_cache(wt.path, by_cwd.get(wt.path.resolve(), ""))
+
+
 def _fast_tick(state: dict) -> None:
     """Cheap, local-only refresh: reconcile each workspace's name and sidebar
     colour to its worktree, write git-state cells for every worktree of every
@@ -424,6 +436,7 @@ def _fast_tick(state: dict) -> None:
     for ref in _drain_ask_queue(cwds, dry=state.get("dry", False)):
         print(f"  queued ask delivered to {ref}", flush=True)
     _write_worktree_cells(pending)
+    _write_session_wait_cells(pending, cwds)
     republish_pr_caches_from_disk({str(wt.path): wt.branch for wt in pending})
     # The inbox's `in_flight` flags, re-derived from the worktrees this tick just
     # listed plus the PR snapshots on disk. Local and free — the *fetch* that

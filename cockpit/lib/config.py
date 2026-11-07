@@ -1218,11 +1218,37 @@ _COCKPIT_HOOKS: dict[str, list[dict]] = {
             ],
         }
     ],
+    # An API error ends the turn with `StopFailure` instead of `Stop`.
+    "StopFailure": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill stop || true"},
+            ],
+        }
+    ],
     "UserPromptSubmit": [
         {
             "matcher": "",
             "hooks": [
                 {"type": "command", "command": "cockpit idle-pill prompt || true"}
+            ],
+        }
+    ],
+    # A tool finishing means any dialog was answered; clears `blocked=` only.
+    "PostToolUse": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill resume || true"},
+            ],
+        }
+    ],
+    "PostToolUseFailure": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": "cockpit idle-pill resume || true"},
             ],
         }
     ],

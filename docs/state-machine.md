@@ -429,7 +429,8 @@ flowchart TD
   SELFHEAL --> FIRE["one_line(msg)<br/>→ dry? return False (records nothing)<br/>→ send + send-key enter<br/>→ record_nudge(pref_key) → return True<br/>(send raises → skips: send failed)"]
 ```
 
-**The `idle=` pill is written by the Stop hook and withheld on purpose.** The
+**The `idle=` pill is written by the Stop hook (and `StopFailure`, a turn ended
+by an API error) and withheld on purpose.** The
 hook (`cmux-idle-pill.sh`) clears it instead of setting it while a `/loop`
 wakeup is armed or `background_tasks` lists a running subagent or workflow, since
 the session is still waiting on that work. A running shell task still counts as
@@ -439,11 +440,15 @@ a ref at native `Idle`; for a ref with no native state it falls back to
 pending-choice marker and an empty composer). That fallback never gates a send.
 
 **The `blocked=` pill is the positive half.** The `PermissionRequest` hook sets
-it, and clears `idle=`, before the dialog draws; `Stop` and `UserPromptSubmit`
-clear it. It outranks `idle=` and native `Idle`, so a pill left over from the
+it (value `question` for `AskUserQuestion`, `plan` for `ExitPlanMode`, else
+`permission`; the gate reads only the key), and clears `idle=`, before the dialog draws; `Stop`, `StopFailure` and
+`UserPromptSubmit` clear it, and so does the next finished tool call
+(`PostToolUse`/`PostToolUseFailure` → `resume`). It outranks `idle=` and native `Idle`, so a pill left over from the
 previous `Stop` cannot open the gate onto a dialog. The reassert never writes
 `idle=` over it. A denied or interrupted dialog fires no `Stop`, so the pill
 stays until the next prompt. cmux's native state stays `Running` there as well.
+A built-in slash command that runs no model turn (`/compact`, `/model`)
+fires `UserPromptSubmit` but no `Stop`, so the hook skips its clear for an allowlist of them.
 
 **The four middle guards live in `cmux._idle_skip_reason`**, not inline: a
 caller that wants to *report* the verdict (`cockpit broadcast`'s per-workspace
@@ -546,7 +551,7 @@ flowchart LR
   FAST -.re-stamp in_flight only.-> INBOX
   INBOX --> IKEY["TUI T — TicketsScreen"]
 
-  SLOW --> CELLS["daemon cells<br/>pr-* · git-* · base-distance/ahead · wt-cost · diff-comments"]
+  SLOW --> CELLS["daemon cells<br/>pr-* · git-* · base-distance/ahead · wt-cost · diff-comments · session-wait"]
   FAST --> CELLS
 
   STDIN["Claude statusLine"] --> SESS["session cells<br/>context · model · cost · rate-limit"]

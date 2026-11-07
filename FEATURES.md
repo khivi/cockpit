@@ -28,8 +28,12 @@ Run `cockpit watch`. You get one row per change, across every repo you've regist
 
 ![cockpit watch — every worktree, workspace, and PR in one table](docs/cockpit-tui.png)
 
-**Columns.** Workspace · PR # · `✎` uncommitted files · `🔀` review state · CI · `💬`
-review threads · Ticket and `📍` its state · Author · Title · `$` session spend.
+**Columns.** Workspace · `✋` what the session waits on · PR # · `✎` uncommitted files ·
+`🔀` review state · CI · `💬` review threads · Ticket and `📍` its state · Author · Title ·
+`$` session spend.
+
+- `✋` shows when a session has a dialog open: `✋` a permission prompt, `❓` a question,
+  `📋` a plan to approve. It clears within about 30 seconds of your answer.
 
 - `💬` is red `N/T` while threads wait on you, and green `0/T` once you've handled them all.
 - The ticket columns appear only when a repo has a [ticket tracker](#tickets) configured.
@@ -239,8 +243,8 @@ progress.
 It is safe to leave on:
 
 - **It only speaks to a session that is idle at its prompt** — never mid-turn, and never at
-  a permission prompt. A session waiting on a permission dialog shows a `blocked` pill in the
-  sidebar until it moves on.
+  a permission prompt. A session waiting on a dialog shows a `blocked` pill in the sidebar
+  until it moves on. The pill says what it waits on: `permission`, `question` or `plan`.
 - **Only your own PRs.** A coworker's PR shows its problems in the row but is never nudged.
 - **You can quiet it.**
   - `m` mutes a PR indefinitely.

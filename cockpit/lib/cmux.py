@@ -62,8 +62,9 @@ COCKPIT_KEY = "cockpit_pr"
 PARKED_KEY = "parked"
 PARKED_ICON = "💤"
 
-# Set by the `PermissionRequest` hook, cleared at `Stop` / `UserPromptSubmit`:
-# the one positive "a dialog is up" signal, which native `Needs input` is not.
+# Set by the `PermissionRequest` hook, cleared at `Stop` / `StopFailure` /
+# `UserPromptSubmit` / the next finished tool call: the one positive "a dialog
+# is up" signal, which native `Needs input` is not.
 BLOCKED_KEY = "blocked"
 
 LOOP_KEY = "loop"
@@ -168,11 +169,17 @@ def _native_claude_state(lines: list[str]) -> str | None:
     not a safe at-rest signal on its own; only `Idle` is unambiguous. A line
     looks like `claude_code=Needs input icon=bell.fill color=#4C8DFF`.
     """
+    return _pill_value(lines, "claude_code")
+
+
+def _pill_value(lines: list[str], key: str) -> str | None:
+    """The value of the `key=` line in a `list-status` dump, without its
+    trailing `icon=` / `color=` attributes, or None."""
     for line in lines:
         s = line.strip()
-        if not s.startswith("claude_code="):
+        if not s.startswith(key + "="):
             continue
-        rest = s[len("claude_code=") :]
+        rest = s[len(key) + 1 :]
         for sep in (" icon=", " color="):
             idx = rest.find(sep)
             if idx != -1:
@@ -1508,6 +1515,23 @@ def reassert_idle_pills(cwds: Mapping[str, Path]) -> list[str]:
     # and return above before either.
     with ThreadPoolExecutor(max_workers=min(8, len(cwds))) as pool:
         return [r for r in pool.map(_one, cwds) if r]
+
+
+def blocked_reasons(cwds: Mapping[str, Path]) -> dict[str, str]:
+    """`{ref: value}` of every workspace's `blocked=` pill: what its open dialog
+    waits on (`permission`, `question`, `plan`). Refs with no pill are absent.
+    Display-only; the gate reads the key itself (`_idle_skip_reason`)."""
+    if not cwds:
+        return {}
+
+    def _one(ref: str) -> tuple[str, str | None]:
+        lines = cmux("list-status", "--workspace", ref, check=False).splitlines()
+        return ref, _pill_value(lines, BLOCKED_KEY)
+
+    # ponytail: a second list-status per ref beside reassert_idle_pills'; share
+    # one read if the fast tick's cmux time starts to matter.
+    with ThreadPoolExecutor(max_workers=min(8, len(cwds))) as pool:
+        return {ref: v for ref, v in pool.map(_one, cwds) if v}
 
 
 def find_cockpit_workspaces(

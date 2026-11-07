@@ -28,9 +28,17 @@
 - [idle-pill.blocked~1] Given the `blocked` phase, the hook sets `blocked=`
   and clears `idle=`. The `prompt` and `stop` phases clear `blocked=`. The
   `blocked` phase prints nothing to stdout.
+- [idle-pill.blocked-reason~1] The `blocked=` value names the dialog:
+  `question` for `AskUserQuestion`, `plan` for `ExitPlanMode`, else
+  `permission`, including an unparsable payload.
+- [idle-pill.resume~1] The `resume` phase clears `blocked=` when it is up and
+  writes nothing when it is not. It never touches `idle=`.
 - [idle-pill.background~1] Given a `Stop` payload with a running `subagent` or
   `workflow` background task, the hook clears `idle=`. A running `shell` task
   or a finished task does not stop the pill write.
+- [idle-pill.builtin~1] Given a `prompt` payload whose first word is a built-in
+  slash command that runs no model turn, the hook leaves `idle=` and `blocked=`
+  in place. Any other prompt, including a custom `/command`, clears both.
 
 ## Automatic sends
 

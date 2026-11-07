@@ -37,6 +37,7 @@ from cockpit.tui.widgets.worktree_table import (
     _STATUS_ICON,
     _STATUS_SLOT,
     _TICKET_MAX,
+    _WAIT_ICON,
     DEVDONE_ICON,
     FOLD_CAP,
     HEADER_KEY_PREFIX,
@@ -109,12 +110,13 @@ def _col(label, *, show_tickets=False):
 
 def test_cell_count_matches_columns(cache_dir):
     cols = column_labels(show_tickets=False)
-    assert len(_plain(_wt())) == len(cols) == 9
+    assert len(_plain(_wt())) == len(cols) == 10
     # Local cluster (dirty / pending diff comments) sits next to Workspace,
     # then the GitHub cluster (PR / state / CI / comments); Author is parked
     # near the end (rarely populated), just before Title.
     assert cols == (
         "Workspace",
+        _WAIT_ICON,
         "PR",
         _DIRTY_ICON,
         _DIFF_COMMENT_ICON,
@@ -127,9 +129,10 @@ def test_cell_count_matches_columns(cache_dir):
     # Ticket + Status columns added only when show_tickets, as one adjacent
     # cluster right after the GitHub cluster (Ticket then its Status icon).
     lin = column_labels(show_tickets=True)
-    assert len(_plain(_wt(), show_tickets=True)) == len(lin) == 11
+    assert len(_plain(_wt(), show_tickets=True)) == len(lin) == 12
     assert lin == (
         "Workspace",
+        _WAIT_ICON,
         "PR",
         _DIRTY_ICON,
         _DIFF_COMMENT_ICON,
@@ -565,7 +568,7 @@ def test_ticket_status_blank_for_non_linear_repo(cache_dir, monkeypatch):
 
 def test_no_linear_columns_when_not_configured(cache_dir):
     # show_tickets False → no Ticket/Status cells
-    assert len(_plain(_wt(), provider="linear", show_tickets=False)) == 9
+    assert len(_plain(_wt(), provider="linear", show_tickets=False)) == 10
 
 
 def test_row_capabilities_pr_muted_ticket(cache_dir, monkeypatch):
@@ -851,8 +854,8 @@ def test_row_tooltips_aligned_and_decode(cache_dir, monkeypatch):
     def tip(label):
         return tips[_col(label, show_tickets=True)]
 
-    # Aligned to column_labels order (11 with tickets on).
-    assert len(tips) == len(column_labels(show_tickets=True)) == 11
+    # Aligned to column_labels order (12 with tickets on).
+    assert len(tips) == len(column_labels(show_tickets=True)) == 12
     assert tip("Workspace") == "Nudges muted"  # workspace glyph
     assert tip("PR") is None and tip("Author") is None  # self-evident
     assert tip(_APPROVAL_ICON) == "Changes requested"  # 🔀 decoded
@@ -891,7 +894,7 @@ def test_row_tooltips_blank_when_no_data(cache_dir, monkeypatch):
         "cockpit.tui.widgets.worktree_table.find_pr_payload", lambda branch, repo: None
     )
     tips = row_tooltips(_wt(), "r", "none", show_tickets=False)
-    assert len(tips) == 9 and all(t is None for t in tips)
+    assert len(tips) == 10 and all(t is None for t in tips)
 
 
 @pytest.mark.asyncio
@@ -1641,3 +1644,20 @@ def test_cost_tooltip_is_none_on_a_blank_cell(costed):
 def test_cost_tooltips_align_when_the_column_is_off(cache_dir):
     tips = row_tooltips(_wt(), "repo", "none", show_tickets=False)
     assert len(tips) == len(column_labels(show_tickets=False))
+
+
+@pytest.mark.parametrize(
+    ("raw", "glyph", "tip"),
+    [
+        ("question", "❓", "Waiting on your answer to a question"),
+        ("plan", "📋", "Waiting on plan approval"),
+        ("permission", "✋", "Waiting on a permission prompt"),
+        ("", "", None),
+        ("bogus", "", None),
+    ],
+)
+def test_wait_column_shows_what_the_dialog_waits_on(cache_dir, raw, glyph, tip):
+    wt = _wt()
+    cache_mod.write_session_wait_cache(wt.path, raw)
+    assert _plain(wt)[_col(_WAIT_ICON)] == glyph
+    assert row_tooltips(wt, "r", "none", show_tickets=False)[_col(_WAIT_ICON)] == tip

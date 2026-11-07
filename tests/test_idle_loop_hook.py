@@ -137,6 +137,34 @@ def test_prompt_clears_idle_pill(fake_cmux):
     assert any("clear-status idle" in c for c in calls), calls
 
 
+@pytest.mark.covers("idle-pill.builtin~1")
+@pytest.mark.parametrize(
+    ("prompt", "clears"),
+    [
+        ("/compact", False),
+        ("  /model opus", False),
+        ("/cockpit-seed x", True),
+        ("/review", True),
+        ("fix the bug", True),
+        ("", True),
+    ],
+)
+def test_prompt_keeps_pills_only_for_no_turn_builtins(fake_cmux, prompt, clears):
+    subprocess.run(
+        [str(HOOK), "prompt"],
+        input=json.dumps({"prompt": prompt}),
+        text=True,
+        check=True,
+    )
+    if clears:
+        calls = _poll_lines(fake_cmux, expected=4)
+        assert any("clear-status idle" in c for c in calls), calls
+        assert any("clear-status blocked" in c for c in calls), calls
+    else:
+        time.sleep(0.5)
+        assert not fake_cmux.exists() or "clear-status" not in fake_cmux.read_text()
+
+
 @pytest.mark.covers("idle-pill.blocked~1")
 def test_blocked_sets_blocked_pill_clears_idle_and_prints_nothing(fake_cmux):
     out = subprocess.run(
@@ -149,12 +177,61 @@ def test_blocked_sets_blocked_pill_clears_idle_and_prints_nothing(fake_cmux):
     assert any("clear-status idle" in c for c in calls), calls
 
 
+@pytest.mark.covers("idle-pill.blocked-reason~1")
+@pytest.mark.parametrize(
+    ("payload", "value"),
+    [
+        ('{"tool_name": "AskUserQuestion"}', "question"),
+        ('{"tool_name": "ExitPlanMode"}', "plan"),
+        ('{"tool_name": "Bash"}', "permission"),
+        ("not json", "permission"),
+    ],
+)
+def test_blocked_pill_names_what_the_dialog_waits_on(fake_cmux, payload, value):
+    out = subprocess.run(
+        [str(HOOK), "blocked"],
+        input=payload,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert out.stdout == ""
+    calls = _poll_lines(fake_cmux, expected=4)
+    assert any(c.startswith(f"set-status blocked {value} ") for c in calls), calls
+
+
 @pytest.mark.covers("idle-pill.blocked~1")
 @pytest.mark.parametrize("phase", ["prompt", "stop"])
 def test_prompt_and_stop_clear_blocked_pill(fake_cmux, phase):
     subprocess.run([str(HOOK), phase], input="", text=True, check=True)
     calls = _poll_lines(fake_cmux, expected=4)
     assert any("clear-status blocked" in c for c in calls), calls
+
+
+@pytest.mark.covers("idle-pill.resume~1")
+@pytest.mark.parametrize("pill_up", [True, False])
+def test_resume_clears_only_a_raised_blocked_pill(tmp_path, monkeypatch, pill_up):
+    log = _plant_cmux_shim(tmp_path, monkeypatch, [LIVE_WS])
+    shim = tmp_path / "bin" / "cmux"
+    status = "blocked=question\\n" if pill_up else ""
+    shim.write_text(
+        shim.read_text()
+        + f'[ "$1" = "list-status" ] && printf "{status}"\n'
+        + "exit 0\n"
+    )
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", LIVE_WS)
+    monkeypatch.setenv("COCKPIT_HOME", str(tmp_path))
+    monkeypatch.setenv("CMUX_VERIFY_TRIES", "1")
+    monkeypatch.setenv("CMUX_VERIFY_SLEEP", "0")
+    subprocess.run([str(HOOK), "resume"], input="{}", text=True, check=True)
+    if pill_up:
+        calls = _poll_lines(log, expected=3)
+        assert any(c.startswith("clear-status blocked") for c in calls), calls
+    else:
+        time.sleep(0.5)
+        calls = log.read_text().splitlines() if log.exists() else []
+        assert not any(c.startswith("clear-status") for c in calls), calls
+    assert not any(c.startswith("clear-status idle") for c in calls), calls
 
 
 def _plant_verify_shim(tmp_path: Path, monkeypatch, *, set_succeeds_on: int) -> Path:

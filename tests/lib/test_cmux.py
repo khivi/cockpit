@@ -31,6 +31,7 @@ from cockpit.lib.cmux import (
     add_to_workspace_group,
     apply_devdone_pill,
     apply_pills,
+    blocked_reasons,
     cmux_close_workspace_best_effort,
     create_workspace_group,
     deliver_followup,
@@ -3659,3 +3660,13 @@ def test_spawn_pr_workspace_restricts_claude_only_on_a_coworkers_pr(mine, review
     ):
         cmux_mod.spawn_pr_workspace(_pr(mine=mine), _wt(), strip_env=(), deny=())
     assert cc.call_args.kwargs["review"] is review
+
+
+def test_blocked_reasons_reads_the_pill_value_and_omits_refs_without_one():
+    statuses = {
+        "workspace:1": "claude_code=Running icon=bolt.fill\nblocked=plan color=#f59e0b\n",
+        "workspace:2": "claude_code=Idle\nidle=idle color=#6b7280\n",
+    }
+    cwds = {ref: Path(f"/tmp/{ref}") for ref in statuses}
+    with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: statuses[a[2]]):
+        assert blocked_reasons(cwds) == {"workspace:1": "plan"}
