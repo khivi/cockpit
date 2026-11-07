@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.0](https://github.com/khivi/cockpit/compare/v4.2.4...v4.3.0) (2026-11-07)
+
+
+### Features
+
+* **idle-pill:** track dialog state from more Claude Code hooks ([#656](https://github.com/khivi/cockpit/issues/656)) ([3a06a0a](https://github.com/khivi/cockpit/commit/3a06a0aedac7125d5d545a5fb28a1cb3f1f800da))
+
 ## [4.2.4](https://github.com/khivi/cockpit/compare/v4.2.3...v4.2.4) (2026-11-07)
 
 
