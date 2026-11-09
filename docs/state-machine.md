@@ -372,7 +372,7 @@ branch ref only when HEAD sits at the merged head with nothing on top.
     `ReviewFolds` accumulator — a chain whose tip is snoozed goes in whole,
     giving up its stack group — that the repo-spanning
     `_reconcile_review_groups` drains at the end of `cycle_all` into two
-    trailing folds — `<org> reviews (N)` per org above `<repo> snoozed (N)` per repo, each
+    trailing folds — `<org> reviews (N)` per org, each followed by its repos' `💤 (N) <repo>` folds, each
     created collapsed since both piles are by definition not-my-turn;
     create-time only, so a fold the user expands stays open),
     `_dedupe_workspaces` (scoped to workspaces whose cwd resolves under this
@@ -651,7 +651,7 @@ Why two ticks:
   7. re-stamp the ticket inbox's `in_flight` flags (`stamp_inbox_in_flight`).
 
   So a `git checkout`, a drifted workspace name, a freshly spawned workspace's
-  colour, a running agent's cost, a lost `<org> reviews (N)` / `<repo> snoozed (N)`
+  colour, a running agent's cost, a lost `<org> reviews (N)` / `💤 (N) <repo>`
   group, or an OS tmpdir wipe recovers on the next fast tick rather than waiting
   out a slow one. That interval is the *floor*, not the only trigger: the
   `cmux events` doorbell (`lib/events.py`, cmux-only) kicks it the moment a
