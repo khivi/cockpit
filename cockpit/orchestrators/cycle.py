@@ -2699,9 +2699,10 @@ def _snoozed_group_name(key: str, size: int, tag: str = "") -> str:
     waiting on someone else's comment or review. Keyed per repo, unlike
     reviews: one org-wide pile hid which repo a snooze belonged to. The org's
     glyph prefixes the repo name rather than replacing it, since every repo of
-    an org shares that glyph.
+    an org shares that glyph. State and count lead, since the sidebar
+    truncates the tail and a long repo name would hide them.
     """
-    return f"{tag} {key} snoozed ({size})" if tag else f"{key} snoozed ({size})"
+    return f"{tag} 💤 ({size}) {key}" if tag else f"💤 ({size}) {key}"
 
 
 @dataclass
@@ -2742,6 +2743,7 @@ class ReviewFolds:
     snoozed: dict[str, list[str]] = field(default_factory=dict)
     tags: dict[str, str] = field(default_factory=dict)
     snoozed_tags: dict[str, str] = field(default_factory=dict)
+    snoozed_buckets: dict[str, str] = field(default_factory=dict)
     owned: set[str] = field(default_factory=set)
     partial: bool = False
 
@@ -2850,6 +2852,7 @@ def _reconcile_sidebar_groups(
         folds.tags[bucket] = tag
         repo_key = str(ctx.repo_entry.get("name") or ctx.name)
         folds.snoozed_tags[repo_key] = tag
+        folds.snoozed_buckets[repo_key] = bucket
         folds.snoozed.setdefault(repo_key, []).extend(snoozed)
         folds.buckets.setdefault(bucket, []).extend(
             _pile(lambda pr: not pr.mine, stacked | set(snoozed))
@@ -2911,10 +2914,8 @@ def _reconcile_sidebar_groups(
             print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
 
 
-# The two trailing piles, in sidebar order. Each `--to-index 9999` move lands
-# its target below everything moved before it, so processing reviews first
-# leaves snoozed lower — the more passive pile sits under the queue. The sunk
-# stack chains re-parked after this loop land lower still.
+# The two trailing piles. Within an org, reviews sit above its repos' snoozed
+# folds — the more passive pile under the queue (`_fold_order`).
 _TRAILING_FOLDS: tuple[tuple[str, str, str, Callable[[str, int, str], str]], ...] = (
     ("buckets", "tags", REVIEW_GROUP_ICON, _review_group_name),
     ("snoozed", "snoozed_tags", SNOOZE_GROUP_ICON, _snoozed_group_name),
@@ -3009,7 +3010,7 @@ def _reconcile_review_groups(
     folds: ReviewFolds, *, dry: bool, pill_state: dict | None = None
 ) -> None:
     """Fold each org's coworker PRs into one trailing `<org> reviews (N)` group,
-    and each repo's snoozed PRs into a `<repo> snoozed (N)` group below it.
+    and each repo's snoozed PRs into a `💤 (N) <repo>` group below it.
 
     The cross-repo half of `_reconcile_sidebar_groups`, run once at the end of
     `cycle_all` because the reviews pile is keyed by org: a repo alone can't tell
@@ -3073,7 +3074,8 @@ def _reconcile_review_groups(
     if dry:
         return
     live = list_workspace_groups()
-    for attr, tags_attr, icon, namer in _TRAILING_FOLDS:
+    standing: list[tuple[tuple[str, int, str], str]] = []
+    for family, (attr, tags_attr, icon, namer) in enumerate(_TRAILING_FOLDS):
         groups = [g for g in live if g.icon == icon]
         matched: set[str] = set()
         recorded: set[str] = set()
@@ -3096,10 +3098,11 @@ def _reconcile_review_groups(
             group = _match_stack_group(
                 [g for g in groups if g.anchor not in folds.owned], refs, matched
             )
+            order = _fold_order(folds, attr, family, key)
             if group is None:
                 created = create_workspace_group(name, refs, icon=icon, collapsed=True)
                 if created is not None:
-                    move_workspace_group_to_end(created.ref)
+                    standing.append((order, created.ref))
                     print(
                         f"  {verb('grouped')} {cyan(name)} {dim(' → '.join(refs))}",
                         flush=True,
@@ -3116,7 +3119,7 @@ def _reconcile_review_groups(
                 # the group is the user's business, not a stale review.
                 if ref in folds.owned and ref not in refs:
                     remove_from_workspace_group(ref)
-            move_workspace_group_to_end(group.ref)
+            standing.append((order, group.ref))
         if folds.partial:
             continue  # an absent bucket is "not asked", not "empty" — see above
         # Retiring a record is a dissolve by another name — it stops the fast
@@ -3137,6 +3140,21 @@ def _reconcile_review_groups(
                 if group.anchor and group.anchor not in folds.owned:
                     cmux_close_workspace_best_effort(group.anchor)
                 print(f"  {verb('ungrouped')} {cyan(group.name)}", flush=True)
+    # Each `--to-index 9999` lands below everything moved before it, so moving
+    # in sorted order lays the folds out in that order.
+    for _order, ref in sorted(standing):
+        move_workspace_group_to_end(ref)
+
+
+def _fold_order(
+    folds: ReviewFolds, attr: str, family: int, key: str
+) -> tuple[str, int, str]:
+    """Sidebar sort key for a trailing fold: its org bucket, then family
+    (reviews before snoozed), then its own key — so an org's snoozed folds sit
+    directly under that org's reviews fold.
+    """
+    bucket = folds.snoozed_buckets.get(key, key) if attr == "snoozed" else key
+    return (bucket, family, key)
 
 
 def _match_stack_group(

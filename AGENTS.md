@@ -261,10 +261,10 @@ Coworker reviews fold into one trailing `<org> reviews (N)` group, the one fold 
 - Stacks win overlap. A lone review folds too. The drop-departed-members loop guards on `folds.owned`, not the bucket, because a hand-added workspace is the user's. **Do not** persist a "this is a review" marker.
 - An incomplete cycle suspends the dissolve (`ReviewFolds.partial`), the one irreversible step, because a repo that never reported leaves its bucket absent, which looks like "no reviews". Re-park, rename and re-member still run. **Do not** key this on the bucket being empty instead of the cycle being complete.
 
-Snoozed PRs fold into trailing `<tag> <repo> snoozed (N)` groups below reviews, one per repo, not per org, because an org-wide pile hid which repo a snooze belonged to. They use the same accumulator and pass walking `_TRAILING_FOLDS`, with their own `ReviewFolds.snoozed_tags`. Membership is `NudgePref.snoozed`, mine included.
+Snoozed PRs fold into trailing `<tag> 💤 (N) <repo>` groups below reviews, one per repo, not per org, because an org-wide pile hid which repo a snooze belonged to. They use the same accumulator and pass walking `_TRAILING_FOLDS`, with their own `ReviewFolds.snoozed_tags`. Membership is `NudgePref.snoozed`, mine included.
 
 - Precedence on overlap: stacks, then snoozed, then reviews.
-- Order comes from pass order, not a rank field. **Do not** reorder that tuple expecting names to sort it.
+- Order is grouped by org (`cycle.py::_fold_order`): each reviews fold, then that org's snoozed folds. The moves run after both families reconcile, in sorted order. **Do not** move a fold inside the reconcile loop, or it breaks the grouping.
 - Match the two families separately, or one claims the other's fold. The per-repo pass filters both icons out of `all_groups`, or it dissolves a snooze-iconed group every cycle.
 
 Both piles are born collapsed, at create time only, since cmux creates groups expanded. Only `_reconcile_review_groups` passes `collapsed=True`. A stack stays open. **Do not** re-assert collapse per cycle, which would slam shut a fold the user opened, and **do not** read `is_collapsed` back.

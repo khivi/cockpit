@@ -5330,7 +5330,7 @@ def test_a_tagged_bucket_names_its_folds_by_the_glyph(tmp_path):
 
     assert [c.args[0] for c in create.call_args_list] == [
         "🛡️ reviews (1)",
-        "🛡️ mlops snoozed (1)",
+        "🛡️ 💤 (1) mlops",
     ]
 
 
@@ -5368,8 +5368,8 @@ def test_snoozed_folds_split_per_repo_while_reviews_share_the_org(tmp_path):
 
     assert [(c.args[0], c.args[1]) for c in create.call_args_list] == [
         ("🛡️ reviews (2)", ["workspace:1", "workspace:3"]),
-        ("🛡️ infra snoozed (1)", ["workspace:4"]),
-        ("🛡️ mlops snoozed (1)", ["workspace:2"]),
+        ("🛡️ 💤 (1) infra", ["workspace:4"]),
+        ("🛡️ 💤 (1) mlops", ["workspace:2"]),
     ]
 
 
@@ -5896,8 +5896,8 @@ def test_a_repo_scoped_kick_leaves_a_snoozed_chain_grouped(tmp_path):
 
 
 def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
-    # Each `--to-index 9999` move lands its target below everything moved
-    # before it, so reviews must be walked first for snoozed to end up lowest.
+    # Within one org the reviews fold must be moved before its snoozed fold,
+    # since each `--to-index 9999` lands below everything moved earlier.
     ctx = _stack_ctx(
         tmp_path,
         [
@@ -5914,7 +5914,7 @@ def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
     made = iter(
         [
             _group("wg:reviews", "Cockpit reviews (2)", "workspace:9", []),
-            _group("wg:snoozed", "Cockpit snoozed (2)", "workspace:8", []),
+            _group("wg:snoozed", "💤 (2) Cockpit", "workspace:8", []),
         ]
     )
     moved: list[str] = []
@@ -5929,7 +5929,7 @@ def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
 
     assert [c.args[0] for c in create.call_args_list] == [
         "Cockpit reviews (2)",
-        "Cockpit snoozed (2)",
+        "💤 (2) Cockpit",
     ]
     assert [c.kwargs["icon"] for c in create.call_args_list] == [
         REVIEW_GROUP_ICON,
@@ -5938,35 +5938,45 @@ def test_reconcile_review_groups_folds_snoozed_below_reviews(tmp_path):
     assert moved == ["wg:reviews", "wg:snoozed"]
 
 
-@pytest.mark.covers("folds.order~1")
-def test_reconcile_review_groups_order_follows_the_tuples_walk_order(tmp_path):
-    # `_TRAILING_FOLDS` carries no priority/rank field for "reviews above
-    # snoozed" — the pass just walks the tuple in order and re-parks each pile
-    # with `--to-index 9999`, so whichever entry is walked *last* ends up
-    # lowest. If a rank field were doing the sorting, reversing the tuple
-    # would leave the emitted order alone; instead it flips it, which is the
-    # observable proof that pass order is the only thing deciding it.
-    ctx = _stack_ctx(
-        tmp_path,
-        [("workspace:1", "them/a", "main"), ("workspace:2", "khivi/b", "main")],
-        coworkers=("workspace:1",),
-        snoozed=("workspace:2",),
-        repo_entry={"name": "Cockpit"},
+@pytest.mark.covers("folds.order~2")
+def test_reconcile_review_groups_groups_trailing_folds_by_org(tmp_path):
+    # Two orgs, each with a review and a snooze: the sidebar must read
+    # reviews A, snoozed A, reviews B, snoozed B — not both reviews first.
+    def _ctx(org, repo, base):
+        return _stack_ctx(
+            tmp_path,
+            [
+                (f"workspace:{base}", "them/a", "main"),
+                (f"workspace:{base + 1}", "khivi/b", "main"),
+            ],
+            coworkers=(f"workspace:{base}",),
+            snoozed=(f"workspace:{base + 1}",),
+            repo_entry={"name": repo, "org": org},
+            repo_dir=repo,
+        )
+
+    folds = _folds(
+        (_ctx("beta", "b-repo", 1), {"workspace:1", "workspace:2"}),
+        (_ctx("alpha", "a-repo", 3), {"workspace:3", "workspace:4"}),
     )
-    folds = _folds((ctx, {"workspace:1", "workspace:2"}))
+    moved: list[str] = []
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(
+            cycle,
+            "create_workspace_group",
+            side_effect=lambda name, *a, **k: _group(name, name, "workspace:99", []),
+        ),
+        patch.object(cycle, "move_workspace_group_to_end", side_effect=moved.append),
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
 
-    def _icons_in_walk_order():
-        with (
-            patch.object(cycle, "list_workspace_groups", return_value=[]),
-            patch.object(cycle, "create_workspace_group", return_value=None) as create,
-        ):
-            cycle._reconcile_review_groups(folds, dry=False)
-        return [c.kwargs["icon"] for c in create.call_args_list]
-
-    assert _icons_in_walk_order() == [REVIEW_GROUP_ICON, SNOOZE_GROUP_ICON]
-
-    with patch.object(cycle, "_TRAILING_FOLDS", tuple(reversed(cycle._TRAILING_FOLDS))):
-        assert _icons_in_walk_order() == [SNOOZE_GROUP_ICON, REVIEW_GROUP_ICON]
+    assert moved == [
+        "alpha reviews (1)",
+        "💤 (1) a-repo",
+        "beta reviews (1)",
+        "💤 (1) b-repo",
+    ]
 
 
 def test_a_snoozed_chain_folds_with_the_rest_of_the_pile(tmp_path):
@@ -6001,7 +6011,7 @@ def test_a_snoozed_chain_folds_with_the_rest_of_the_pile(tmp_path):
     made = iter(
         [
             _group("wg:reviews", "Cockpit reviews (1)", "workspace:8", []),
-            _group("wg:snoozed", "Cockpit snoozed (3)", "workspace:7", []),
+            _group("wg:snoozed", "💤 (3) Cockpit", "workspace:7", []),
         ]
     )
     moved: list[str] = []
@@ -6016,7 +6026,7 @@ def test_a_snoozed_chain_folds_with_the_rest_of_the_pile(tmp_path):
 
     assert [c.args[0] for c in create.call_args_list] == [
         "Cockpit reviews (1)",
-        "Cockpit snoozed (3)",
+        "💤 (3) Cockpit",
     ]
     assert create.call_args_list[1].args[1] == [
         "workspace:2",
@@ -6041,14 +6051,14 @@ def test_reconcile_review_groups_folds_a_lone_snooze(tmp_path):
         patch.object(
             cycle,
             "create_workspace_group",
-            return_value=_group("wg:1", "Cockpit snoozed (1)", "workspace:9", []),
+            return_value=_group("wg:1", "💤 (1) Cockpit", "workspace:9", []),
         ) as create,
         patch.object(cycle, "move_workspace_group_to_end") as move,
     ):
         cycle._reconcile_review_groups(folds, dry=False)
 
     create.assert_called_once_with(
-        "Cockpit snoozed (1)", ["workspace:2"], icon=SNOOZE_GROUP_ICON, collapsed=True
+        "💤 (1) Cockpit", ["workspace:2"], icon=SNOOZE_GROUP_ICON, collapsed=True
     )
     move.assert_called_once_with("wg:1")
 
@@ -6063,7 +6073,7 @@ def test_per_repo_pass_leaves_a_snoozed_fold_alone(tmp_path):
     )
     existing = _group(
         "wg:1",
-        "n snoozed (2)",
+        "💤 (2) n",
         "workspace:9",
         ["workspace:1", "workspace:2"],
         icon=SNOOZE_GROUP_ICON,
@@ -6636,7 +6646,7 @@ def test_a_partial_cycle_keeps_its_fold_records(tmp_path):
 
 def test_restore_rebuilds_a_fold_that_vanished():
     pill_state = dict(
-        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (2)", ["workspace:1", "ws:2"])
+        _record(SNOOZE_GROUP_ICON, "Env", "💤 (2) Env", ["workspace:1", "ws:2"])
     )
     with (
         patch.object(cycle, "read_workspace_groups", return_value=[]),
@@ -6648,14 +6658,14 @@ def test_restore_rebuilds_a_fold_that_vanished():
         patch.object(
             cycle,
             "create_workspace_group",
-            return_value=_group("wg:7", "Env snoozed (2)", "workspace:9", []),
+            return_value=_group("wg:7", "💤 (2) Env", "workspace:9", []),
         ) as create,
         patch.object(cycle, "move_workspace_group_to_end") as move,
     ):
         cycle.restore_trailing_folds(pill_state)
 
     create.assert_called_once_with(
-        "Env snoozed (2)",
+        "💤 (2) Env",
         ["workspace:1", "ws:2"],
         icon=SNOOZE_GROUP_ICON,
         collapsed=True,
@@ -6665,10 +6675,10 @@ def test_restore_rebuilds_a_fold_that_vanished():
 
 def test_restore_leaves_a_fold_that_is_still_there_alone():
     live = _group(
-        "wg:1", "Env snoozed (2)", "workspace:9", ["workspace:1"], SNOOZE_GROUP_ICON
+        "wg:1", "💤 (2) Env", "workspace:9", ["workspace:1"], SNOOZE_GROUP_ICON
     )
     pill_state = dict(
-        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (2)", ["workspace:1", "ws:2"])
+        _record(SNOOZE_GROUP_ICON, "Env", "💤 (2) Env", ["workspace:1", "ws:2"])
     )
     with (
         patch.object(cycle, "read_workspace_groups", return_value=[live]),
@@ -6691,9 +6701,7 @@ def test_restore_gives_up_when_the_group_read_failed():
     # The whole reason `read_workspace_groups` exists: a failed read flattens to
     # an empty list, which reads as "every fold is gone" and would duplicate
     # every group still on screen.
-    pill_state = dict(
-        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (1)", ["workspace:1"])
-    )
+    pill_state = dict(_record(SNOOZE_GROUP_ICON, "Env", "💤 (1) Env", ["workspace:1"]))
     with (
         patch.object(cycle, "read_workspace_groups", return_value=None),
         patch.object(cycle, "workspace_state", return_value=({"workspace:1": "a"}, {})),
@@ -6705,9 +6713,7 @@ def test_restore_gives_up_when_the_group_read_failed():
 
 
 def test_restore_skips_a_fold_whose_members_are_all_gone():
-    pill_state = dict(
-        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (1)", ["workspace:1"])
-    )
+    pill_state = dict(_record(SNOOZE_GROUP_ICON, "Env", "💤 (1) Env", ["workspace:1"]))
     with (
         patch.object(cycle, "read_workspace_groups", return_value=[]),
         patch.object(cycle, "workspace_state", return_value=({"workspace:8": "z"}, {})),
@@ -6722,7 +6728,7 @@ def test_restore_skips_a_fold_whose_members_are_all_gone():
 
 def test_restore_rebuilds_around_only_the_members_still_live():
     pill_state = dict(
-        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (2)", ["workspace:1", "ws:2"])
+        _record(SNOOZE_GROUP_ICON, "Env", "💤 (2) Env", ["workspace:1", "ws:2"])
     )
     with (
         patch.object(cycle, "read_workspace_groups", return_value=[]),
@@ -6730,7 +6736,7 @@ def test_restore_rebuilds_around_only_the_members_still_live():
         patch.object(
             cycle,
             "create_workspace_group",
-            return_value=_group("wg:7", "Env snoozed (2)", "workspace:9", []),
+            return_value=_group("wg:7", "💤 (2) Env", "workspace:9", []),
         ) as create,
         patch.object(cycle, "move_workspace_group_to_end"),
     ):
@@ -6744,9 +6750,7 @@ def test_restore_can_only_create():
     # The property that makes a 30s network-free fold pass safe at all: every
     # failure mode costs a missing fold for one more interval, never a closed
     # one. No dissolve, no rename, no member add or remove.
-    pill_state = dict(
-        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (1)", ["workspace:1"])
-    )
+    pill_state = dict(_record(SNOOZE_GROUP_ICON, "Env", "💤 (1) Env", ["workspace:1"]))
     stray = _group("wg:9", "stale", "workspace:9", ["workspace:5"], SNOOZE_GROUP_ICON)
     with (
         patch.object(cycle, "read_workspace_groups", return_value=[stray]),
@@ -6773,9 +6777,7 @@ def test_restore_noops_without_records():
 
 
 def test_restore_dry_noops():
-    pill_state = dict(
-        _record(SNOOZE_GROUP_ICON, "Env", "Env snoozed (1)", ["workspace:1"])
-    )
+    pill_state = dict(_record(SNOOZE_GROUP_ICON, "Env", "💤 (1) Env", ["workspace:1"]))
     with patch.object(cycle, "read_workspace_groups") as read:
         cycle.restore_trailing_folds(pill_state, dry=True)
     read.assert_not_called()

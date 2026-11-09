@@ -25,8 +25,8 @@
 - [folds.snoozed-toggle~2] The snoozed fold row advertises exactly two keys
   that act on the fold itself: `z` and `A`. It also advertises the global set.
   It hides workspace-targeted row keys and `h`.
-- [folds.order~1] Reversing the trailing-folds tuple flips the emitted sidebar
-  order. Pass order alone decides it. There is no rank field.
+- [folds.order~2] Trailing folds are grouped by org. Each org's reviews fold
+  sits directly above that org's snoozed folds, and orgs sort by bucket key.
 - [folds.review-derived~1] (untested: design rationale) The daemon derives "this is
   a review" from `PR.mine` every cycle. It never persists the mark.
 - [folds.mystery~1] (untested: process rule) The fast-tick fold restore

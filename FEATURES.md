@@ -98,7 +98,7 @@ takes a space instead of the dot: `🎛️ fix-retry`.
 Tags also label group headers. A stack's header wears its repo's tag. The reviews pile at
 the bottom of the sidebar is named after its org — `Some Long Org reviews (11)` — and a tag
 set on the org replaces that name: `♻️ reviews (11)`. Snoozed PRs pile per repo below it,
-named after the repo with the org's tag in front: `♻️ infra snoozed (3)`. Use `{repo}` in
+named after the repo with the org's tag in front: `♻️ 💤 (3) infra`. Use `{repo}` in
 an org's tag to get both: each workspace named after its own repo, and the shared glyph on
 the piles.
 
@@ -451,8 +451,8 @@ session, already reviewing it when you arrive.
   `["mcp__slack"]`, globally or per repo. Every session cockpit starts denies them.
 
 In the cmux sidebar, reviews collect into one collapsed `<org> reviews (N)` group at the
-bottom, one per org however many repos it spans. Snoozed PRs collect into a second group
-below it, including whole snoozed stacks. If one of these groups disappears, it comes back
+bottom, one per org however many repos it spans. Snoozed PRs collect into one `💤 (N) <repo>`
+group per repo, directly below their org's reviews group, including whole snoozed stacks. If one of these groups disappears, it comes back
 within about 30 seconds.
 
 ---
