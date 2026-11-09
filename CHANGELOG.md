@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.4.0](https://github.com/khivi/cockpit/compare/v4.3.1...v4.4.0) (2026-11-09)
+
+
+### Features
+
+* **sidebar:** 💤 snoozed folds, grouped under their org's reviews ([#659](https://github.com/khivi/cockpit/issues/659)) ([6665e8b](https://github.com/khivi/cockpit/commit/6665e8bbcfd53afd8ed814984a9e175710cfa43d))
+
 ## [4.3.1](https://github.com/khivi/cockpit/compare/v4.3.0...v4.3.1) (2026-11-07)
 
 
