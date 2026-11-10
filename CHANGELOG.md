@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.4.1](https://github.com/khivi/cockpit/compare/v4.4.0...v4.4.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **sidebar:** keep folds through a restart and re-title stale anchors ([#661](https://github.com/khivi/cockpit/issues/661)) ([4429872](https://github.com/khivi/cockpit/commit/4429872264d2e63bf610d8bec72113b5740f3ea0))
+
 ## [4.4.0](https://github.com/khivi/cockpit/compare/v4.3.1...v4.4.0) (2026-11-09)
 
 
