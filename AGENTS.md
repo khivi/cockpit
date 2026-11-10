@@ -234,6 +234,7 @@ A cmux card shows three rows before "Show more" and no setting changes that. Coc
 - Reconcile against cmux's live `workspace-group list`, not a `pill_state` mirror. Match by member ref, never name. Touch only groups overlapping this repo's refs.
 - The header is cmux's spawned anchor, never a member. Spawn it with `--cwd $HOME`, outside every registered repo, or `_reap_workspace_orphans` reaps it. Close it on dissolve, because `ungroup` leaves it as a loose row. Also sweep groups where `icon == square.stack` and `members <= {anchor}`.
 - The anchor must own a live shell (`_durable_anchor`), because `create` spawns it with no command and it dies silently. `create_workspace_group` swaps in an anchor spawned with `ANCHOR_KEEPALIVE_COMMAND`, then closes the husk through `cmux_close_workspace_best_effort`. **Never** use a raw close, which routes into teardown as a user X. **Do not** revert to the anchor `create` returns.
+- The anchor is named once, at spawn, and `workspace-group rename` leaves it alone. Every slow pass re-titles a matched group's anchor (`cmux.py::rename_group_anchor`).
 - Minimum fold size is one, so `create_workspace_group` refuses only an empty ref list. Callers set their own floor.
 - A stack whose tip is snoozed joins the `snoozed` fold whole and stays out of `desired`, because groups do not nest. Key on the tip. Gate the divert on `folds is not None`, or a repo-scoped kick strands members. **Do not** use a position-based answer.
 
@@ -260,6 +261,7 @@ Coworker reviews fold into one trailing `<org> reviews (N)` group, the one fold 
 - Ownership splits by icon. The per-repo pass filters review-iconed groups out.
 - Stacks win overlap. A lone review folds too. The drop-departed-members loop guards on `folds.owned`, not the bucket, because a hand-added workspace is the user's. **Do not** persist a "this is a review" marker.
 - An incomplete cycle suspends the dissolve (`ReviewFolds.partial`), the one irreversible step, because a repo that never reported leaves its bucket absent, which looks like "no reviews". Re-park, rename and re-member still run. **Do not** key this on the bucket being empty instead of the cycle being complete.
+- A review or snoozed PR whose worktree has no live workspace yet also sets `partial` (`cycle.py::_pile_workspace_pending`), because `_spawn_missing_workspaces` runs after the collect. On a restart every pile reads empty for one cycle.
 
 Snoozed PRs fold into trailing `<tag> 💤 (N) <repo>` groups below reviews, one per repo, not per org, because an org-wide pile hid which repo a snooze belonged to. They use the same accumulator and pass walking `_TRAILING_FOLDS`, with their own `ReviewFolds.snoozed_tags`. Membership is `NudgePref.snoozed`, mine included.
 

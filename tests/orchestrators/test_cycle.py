@@ -5066,6 +5066,7 @@ def test_reconcile_sidebar_groups_skips_stack_without_two_workspaces(tmp_path):
     create.assert_not_called()
 
 
+@pytest.mark.covers("folds.anchor-title~1")
 def test_reconcile_sidebar_groups_adds_new_member_to_existing_group(tmp_path):
     ctx = _stack_ctx(
         tmp_path,
@@ -5081,6 +5082,7 @@ def test_reconcile_sidebar_groups_adds_new_member_to_existing_group(tmp_path):
         patch.object(cycle, "create_workspace_group") as create,
         patch.object(cycle, "add_to_workspace_group") as add,
         patch.object(cycle, "rename_workspace_group") as rename,
+        patch.object(cycle, "rename_group_anchor") as retitle,
         patch.object(cycle, "ungroup_workspaces") as ungroup,
     ):
         cycle._reconcile_sidebar_groups(
@@ -5091,6 +5093,7 @@ def test_reconcile_sidebar_groups_adds_new_member_to_existing_group(tmp_path):
     ungroup.assert_not_called()
     add.assert_called_once_with("wg:1", "workspace:3")
     rename.assert_called_once()  # "old" → "<label> (3)"
+    retitle.assert_called_once_with("workspace:9", rename.call_args.args[1])
 
 
 def test_reconcile_sidebar_groups_removes_departed_member(tmp_path):
@@ -5644,6 +5647,59 @@ def test_reconcile_review_groups_keeps_a_fold_when_the_cycle_was_partial(tmp_pat
 
     ungroup.assert_not_called()
     close.assert_not_called()
+
+
+@pytest.mark.covers("folds.pending-spawn~1")
+@pytest.mark.parametrize("kind", ["coworker", "snoozed"])
+def test_a_pile_pr_without_a_live_workspace_marks_the_cycle_partial(tmp_path, kind):
+    # A daemon restart: the worktree exists but its workspace is spawned later
+    # in the same pass, so the bucket reads empty and would dissolve the fold.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "them/a", "main"), ("workspace:2", "khivi/b", "main")],
+        coworkers=("workspace:1",) if kind == "coworker" else (),
+        snoozed=("workspace:1",) if kind == "snoozed" else (),
+    )
+    folds = _folds((ctx, {"workspace:2"}))
+    assert folds.partial is True
+
+
+@pytest.mark.covers("folds.pending-spawn~1")
+def test_my_unsnoozed_pr_without_a_workspace_leaves_the_cycle_complete(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main"), ("workspace:2", "them/b", "main")],
+        coworkers=("workspace:2",),
+    )
+    folds = _folds((ctx, {"workspace:2"}))
+    assert folds.partial is False
+
+
+@pytest.mark.covers("folds.anchor-title~1")
+def test_reconcile_review_groups_retitles_a_stale_anchor(tmp_path):
+    # The group name is already right, so the group rename is skipped; the
+    # anchor still carries the name it was born with.
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:1", "khivi/a", "main")],
+        snoozed=("workspace:1",),
+        repo_entry={"name": "Envesya"},
+    )
+    folds = _folds((ctx, {"workspace:1"}))
+    name = "💤 (1) Envesya"
+    existing = _group(
+        "wg:1", name, "workspace:9", ["workspace:1"], icon=SNOOZE_GROUP_ICON
+    )
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[existing]),
+        patch.object(cycle, "rename_workspace_group") as rename,
+        patch.object(cycle, "rename_group_anchor") as retitle,
+        patch.object(cycle, "move_workspace_group_to_end"),
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    rename.assert_not_called()
+    retitle.assert_called_once_with("workspace:9", name)
 
 
 def test_reconcile_review_groups_still_dissolves_after_a_complete_cycle(tmp_path):

@@ -16,6 +16,12 @@
 - [folds.partial~1] Given a healthy repo cycle, `ReviewFolds.partial` stays
   False. A repo that fails to report sets it. The flag suspends the dissolve
   loop. Re-park, rename and re-member still run.
+- [folds.pending-spawn~1] Given a review or snoozed PR whose worktree exists
+  but whose workspace is not live yet, the repo pass sets
+  `ReviewFolds.partial`. My own unsnoozed PR without a workspace does not.
+- [folds.anchor-title~1] Every slow pass re-titles a matched group's anchor
+  workspace to the group name. This holds for stacks and trailing folds. It
+  holds when the group name is already right.
 - [folds.restore~1] Given a standing record and a stray same-icon group live,
   the fast-tick restore issues no ungroup, close, rename or member change. It
   can only create.

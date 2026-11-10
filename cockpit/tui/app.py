@@ -526,15 +526,16 @@ class CockpitApp(App[None]):
         # refreshes just that row's repo, skipping the `gh` round-trips for every
         # other repo. The periodic interval, SIGUSR1, startup, and the palette's
         # "Sync now" entry pass None for a full reconcile.
-        if self._slow_phase != "idle":
-            return
-        self._slow_phase = "waiting"
         if only_repo is None:
             # Only a full-cycle kick resets the header countdown — the real
             # cadence is the `set_interval` timer from on_mount, which always
             # calls with only_repo=None. A repo-scoped row-action kick must not
-            # desync the header from that timer.
+            # desync the header from that timer. Reset even when the kick is
+            # dropped, or a skipped timer fire leaves the countdown at 0:00.
             self._next_slow = time.monotonic() + self._slow_secs
+        if self._slow_phase != "idle":
+            return
+        self._slow_phase = "waiting"
         self._run_slow(only_repo)
 
     def _kick_fast(self) -> None:
