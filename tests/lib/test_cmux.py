@@ -3670,3 +3670,15 @@ def test_blocked_reasons_reads_the_pill_value_and_omits_refs_without_one():
     cwds = {ref: Path(f"/tmp/{ref}") for ref in statuses}
     with patch("cockpit.lib.cmux.cmux", side_effect=lambda *a, **_k: statuses[a[2]]):
         assert blocked_reasons(cwds) == {"workspace:1": "plan"}
+
+
+def test_rename_group_anchor_retitles_the_anchor_and_skips_a_missing_one():
+    from cockpit.lib import cmux as cmux_mod
+
+    with patch.object(cmux_mod, "cmux") as call:
+        cmux_mod.rename_group_anchor("", "💤 (5) Envesya")
+        cmux_mod.rename_group_anchor("workspace:8", "💤 (5) Envesya")
+
+    call.assert_called_once_with(
+        "rename-workspace", "--workspace", "workspace:8", "💤 (5) Envesya", check=False
+    )

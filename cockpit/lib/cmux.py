@@ -463,6 +463,14 @@ def rename_workspace_group(group_ref: str, name: str) -> None:
     cmux("workspace-group", "rename", group_ref, "--name", name, check=False)
 
 
+def rename_group_anchor(anchor: str, name: str) -> None:
+    """Re-title a fold's anchor workspace, which `_durable_anchor` names once at
+    spawn and `workspace-group rename` leaves alone.
+    """
+    if anchor:
+        cmux("rename-workspace", "--workspace", anchor, name, check=False)
+
+
 def move_workspace_group_to_end(group_ref: str) -> None:
     """Park the group at the bottom of the sidebar.
 

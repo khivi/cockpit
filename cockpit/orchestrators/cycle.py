@@ -66,6 +66,7 @@ from cockpit.lib.cmux import (
     nudge_if_idle,
     read_workspace_groups,
     remove_from_workspace_group,
+    rename_group_anchor,
     rename_workspace_group,
     rename_workspace_if_needed,
     rest_skip_reason,
@@ -2583,6 +2584,24 @@ def _run_repo_skills(
             deliver_followup(ref, followup, cwd=repo_path)
 
 
+def _pile_workspace_pending(ctx: RepoCycle, owned: set[str]) -> bool:
+    """A fold-bound PR has a worktree but no live workspace yet.
+
+    `_spawn_missing_workspaces` runs after this pass, so on the cycle that
+    spawns a pile's workspaces (a daemon restart) the bucket reads empty and
+    would dissolve a fold that is about to refill.
+    """
+    live = {pr.branch for ref, (pr, _wt) in ctx.tracked.items() if ref in owned}
+    branches = {wt.branch for wt in ctx.wts}
+    return any(
+        pr.state == "OPEN"
+        and pr.branch in branches
+        and pr.branch not in live
+        and (not pr.mine or (ctx.prefs.get(pr.number) or NudgePref()).snoozed)
+        for pr in ctx.prs
+    )
+
+
 def _repo_owned_refs(ctx: RepoCycle, keep_refs: set[str]) -> list[str]:
     """Surviving workspace refs whose cwd sits inside this repo (its main
     worktree or any feature worktree). Scopes the global workspace list down
@@ -2792,6 +2811,8 @@ def _reconcile_sidebar_groups(
     if ctx.dry:
         return
     owned = set(_repo_owned_refs(ctx, keep_refs))
+    if folds is not None and _pile_workspace_pending(ctx, owned):
+        folds.partial = True
     if not owned:
         return
     tracked = {
@@ -2895,6 +2916,7 @@ def _reconcile_sidebar_groups(
         matched.add(group.ref)
         if group.name != name:
             rename_workspace_group(group.ref, name)
+        rename_group_anchor(group.anchor, name)
         for ref in refs:
             if ref not in group.members:
                 add_to_workspace_group(group.ref, ref)
@@ -3111,6 +3133,7 @@ def _reconcile_review_groups(
             matched.add(group.ref)
             if group.name != name:
                 rename_workspace_group(group.ref, name)
+            rename_group_anchor(group.anchor, name)
             for ref in refs:
                 if ref not in group.members:
                     add_to_workspace_group(group.ref, ref)

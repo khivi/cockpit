@@ -416,6 +416,21 @@ async def test_scoped_kick_does_not_reset_header_countdown(monkeypatch):
         assert app._next_slow != stale  # full-cycle kick does reset it
 
 
+async def test_a_dropped_timer_kick_still_restarts_the_countdown(monkeypatch):
+    # A slow tick longer than the interval drops the timer's kick; the header
+    # must count down to the next fire, not sit at 0:00 until the tick ends.
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.6)
+        ran = []
+        monkeypatch.setattr(app, "_run_slow", lambda only_repo=None: ran.append(1))
+        app._next_slow = time.monotonic() - 1
+        app._slow_phase = "running"
+        app._kick_slow()
+        assert ran == []
+        assert app._next_slow > time.monotonic()
+
+
 async def test_countdown_survives_the_header_being_gone():
     # The 1s interval outlives the header on the way out, so an unguarded
     # query_one there raises NoMatches and takes the app down on quit.
