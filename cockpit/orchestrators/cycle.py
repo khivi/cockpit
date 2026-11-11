@@ -61,6 +61,7 @@ from cockpit.lib.cmux import (
     create_workspace_group,
     deliver_followup,
     find_cockpit_workspaces,
+    lift_loose_workspaces,
     list_workspace_groups,
     move_workspace_group_to_end,
     nudge_if_idle,
@@ -2943,6 +2944,7 @@ _TRAILING_FOLDS: tuple[tuple[str, str, str, Callable[[str, int, str], str]], ...
     ("snoozed", "snoozed_tags", SNOOZE_GROUP_ICON, _snoozed_group_name),
 )
 
+_TRAILING_ICONS = frozenset(icon for *_, icon, _ in _TRAILING_FOLDS)
 
 _FOLD_RECORD_PREFIX = "fold:"
 
@@ -2983,6 +2985,10 @@ def restore_trailing_folds(pill_state: dict, *, dry: bool = False) -> None:
     re-park of a fold that is already there. Every failure mode therefore costs
     at most a missing fold for one more interval, never a closed one — the
     asymmetry that makes running this on a 30s network-free tick safe at all.
+
+    The one move it makes is `lift_loose_workspaces`, which reorders rows and
+    never touches a fold's membership, so a new workspace cmux appended below
+    the folds rises within a fast tick instead of a slow one.
 
     Three guards, each covering a way "the fold is gone" can be wrong:
 
@@ -3026,6 +3032,7 @@ def restore_trailing_folds(pill_state: dict, *, dry: bool = False) -> None:
             continue
         move_workspace_group_to_end(created.ref)
         print(f"  {verb('regrouped')} {cyan(name)} {dim(' → '.join(refs))}", flush=True)
+    lift_loose_workspaces(_TRAILING_ICONS)
 
 
 def _reconcile_review_groups(
@@ -3167,6 +3174,8 @@ def _reconcile_review_groups(
     # in sorted order lays the folds out in that order.
     for _order, ref in sorted(standing):
         move_workspace_group_to_end(ref)
+    if standing:
+        lift_loose_workspaces(_TRAILING_ICONS)
 
 
 def _fold_order(

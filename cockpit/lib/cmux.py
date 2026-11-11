@@ -136,6 +136,7 @@ _CMUX_ONLY_VERBS = frozenset(
         "clear-status",
         "workspace-action",
         "workspace-group",
+        "reorder-workspace",
         "diff",
         "tree",
         "move-surface",
@@ -479,6 +480,51 @@ def move_workspace_group_to_end(group_ref: str) -> None:
     index). Best-effort like every other group verb.
     """
     cmux("workspace-group", "move", group_ref, "--to-index", "9999", check=False)
+
+
+def loose_row_moves(
+    rows: list[str], groups: list[WorkspaceGroup], trailing_icons: frozenset[str]
+) -> list[tuple[str, str, str]]:
+    """`(verb, ref, before)` moves that lift every row sitting below the first
+    trailing fold back above it, in sidebar order.
+
+    `workspace-group move` permutes groups among their own slots, so
+    `move_workspace_group_to_end` never pushes a fold past a loose row. A
+    non-trailing group moves whole by its anchor; its other members ride along.
+    """
+    trailing = [g for g in groups if g.icon in trailing_icons]
+    sunk = {ref for g in trailing for ref in g.members}
+    head_index = next((i for i, ref in enumerate(rows) if ref in sunk), None)
+    if head_index is None:
+        return []
+    head = next(g for g in trailing if rows[head_index] in g.members)
+    other_by_anchor = {g.anchor: g for g in groups if g.icon not in trailing_icons}
+    other_members = {
+        ref for g in groups if g.icon not in trailing_icons for ref in g.members
+    }
+    moves: list[tuple[str, str, str]] = []
+    for ref in rows[head_index + 1 :]:
+        if ref in sunk:
+            continue
+        if ref in other_by_anchor:
+            moves.append(("group", other_by_anchor[ref].ref, head.ref))
+        elif ref not in other_members:
+            moves.append(("workspace", ref, head.anchor))
+    return moves
+
+
+def lift_loose_workspaces(trailing_icons: frozenset[str]) -> None:
+    """Move every loose row and non-trailing group above the trailing folds."""
+    groups = read_workspace_groups()
+    if not groups:
+        return
+    for kind, ref, before in loose_row_moves(list_workspaces(), groups, trailing_icons):
+        if kind == "group":
+            cmux("workspace-group", "move", ref, "--before", before, check=False)
+        else:
+            cmux(
+                "reorder-workspace", "--workspace", ref, "--before", before, check=False
+            )
 
 
 def ungroup_workspaces(group_ref: str) -> None:
