@@ -5491,7 +5491,7 @@ def test_reconcile_review_groups_lifts_loose_rows_after_parking_folds(tmp_path):
         repo_entry={"name": "Cockpit"},
     )
     folds = _folds((ctx, {"workspace:2"}))
-    calls: list[str] = []
+    calls: list[object] = []
     with (
         patch.object(cycle, "list_workspace_groups", return_value=[]),
         patch.object(
