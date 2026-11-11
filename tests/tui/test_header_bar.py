@@ -429,3 +429,10 @@ async def test_tooltip_updates_for_fast_remaining_change():
         await pilot.pause()
 
         assert "fast tick is disabled" in str(bar.tooltip).lower()
+
+
+def test_a_running_slow_tick_names_its_step_escaped():
+    assert status_text(RUNNING, OFF, "3/7 [data]") == f"{SLOW_GLYPH} 3/7 \\[data]"
+    assert status_text(RUNNING, OFF) == f"{SLOW_GLYPH} running…"
+    # A stale step never outlives the run that set it.
+    assert status_text(65, OFF, "3/7 data") == f"{SLOW_GLYPH} 1:05"

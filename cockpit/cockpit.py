@@ -104,6 +104,7 @@ def _once_with(
     state: dict,
     on_repo_done: Callable[[], None] | None = None,
     only_repo: str | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> None:
     cfg = load_config()
     self_user = state.get("self_user") or gh_self_user()
@@ -116,6 +117,7 @@ def _once_with(
         pill_state=state["pill_state"],
         on_repo_done=on_repo_done,
         only_repo=only_repo,
+        on_progress=on_progress,
     )
 
 
@@ -474,8 +476,9 @@ def _watch(state: dict, watch_secs: int, fast_secs: int) -> int:
     def _slow(
         on_repo_done: Callable[[], None] | None = None,
         only_repo: str | None = None,
+        on_progress: Callable[[str], None] | None = None,
     ) -> None:
-        _once_with(state, on_repo_done, only_repo)
+        _once_with(state, on_repo_done, only_repo, on_progress)
 
     app = CockpitApp(
         slow_tick=_slow,

@@ -4356,6 +4356,32 @@ def test_cycle_all_calls_on_repo_done_once_per_repo():
     assert ticks == [1, 2]
 
 
+def test_cycle_all_names_each_step_and_prints_its_duration(capsys):
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"path": "/repos/b"}]}
+    steps: list[str] = []
+    patches = _patch_cycle_all_collaborators()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patch.object(cycle, "cycle_repo", lambda *_a, **_k: None),
+    ):
+        cycle.cycle_all(
+            cfg,
+            "khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            on_progress=steps.append,
+        )
+
+    assert steps[:2] == ["1/2 a", "2/2 b"]
+    out = capsys.readouterr().out
+    for label in steps:
+        assert f"{label} took " in out
+
+
 def test_cycle_all_on_repo_done_fires_even_when_a_repo_errors():
     cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
 

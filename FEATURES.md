@@ -68,7 +68,7 @@ Press `s` to refresh every repo now.
 - the repo of the highlighted row, in that repo's colour — useful once the repo's own
   header has scrolled off screen;
 - two countdowns: 🐢 to the next full refresh, 🐇 to the next quick one (hover for which is
-  which);
+  which). While a full refresh runs, 🐢 names its current step, e.g. `🐢 3/7 data-os`;
 - **≡ Menu**.
 
 **≡ Menu** (or `ctrl+p`) holds the daemon log, your resolved config, an editor for it, a

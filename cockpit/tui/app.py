@@ -326,6 +326,9 @@ class CockpitApp(App[None]):
         self._tick_lock = threading.Lock()
         # Per-tick phase: "idle" | "waiting" (on the lock) | "running".
         self._slow_phase = "idle"
+        # The slow tick's current step, written from its worker thread and read
+        # by the 1s countdown.
+        self._slow_step = ""
         self._fast_phase = "idle"
         self._fast_started = False
         self._next_slow = 0.0
@@ -599,11 +602,14 @@ class CockpitApp(App[None]):
                 # finished repo surfaces while later repos are still fetching `gh`,
                 # rather than all repos appearing at once when the tick returns.
                 # `only_repo` scopes a row-keypress kick to that row's repo.
-                self._slow_tick(self._publish_inventory, only_repo)
+                self._slow_tick(
+                    self._publish_inventory, only_repo, self._note_slow_step
+                )
         except Exception as e:  # a tick must never take the daemon down
             print(f"slow-tick error: {e}")
         finally:
             self._slow_phase = "idle"
+            self._slow_step = ""
             # Each step below is independently guarded: a failure in one (e.g.
             # the very first publish) must never stop `_start_fast` from being
             # reached, or the fast-tick loop would silently never start.
@@ -658,6 +664,9 @@ class CockpitApp(App[None]):
 
     # ---- ui updates ------------------------------------------------------
 
+    def _note_slow_step(self, label: str) -> None:
+        self._slow_step = label
+
     @staticmethod
     def _phase_remaining(phase: str, deadline: float, now: float) -> int:
         if phase == "running":
@@ -678,6 +687,7 @@ class CockpitApp(App[None]):
         header.slow_remaining = self._phase_remaining(
             self._slow_phase, self._next_slow, now
         )
+        header.slow_step = self._slow_step
         if self._fast_secs <= 0:
             header.fast_remaining = -2
         elif not self._fast_started:
