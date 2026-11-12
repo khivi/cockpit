@@ -61,6 +61,7 @@ from cockpit.lib.cmux import (
     create_workspace_group,
     deliver_followup,
     find_cockpit_workspaces,
+    lift_loose_workspaces,
     list_workspace_groups,
     move_workspace_group_to_end,
     nudge_if_idle,
@@ -2943,6 +2944,7 @@ _TRAILING_FOLDS: tuple[tuple[str, str, str, Callable[[str, int, str], str]], ...
     ("snoozed", "snoozed_tags", SNOOZE_GROUP_ICON, _snoozed_group_name),
 )
 
+_TRAILING_ICONS = frozenset(icon for *_, icon, _ in _TRAILING_FOLDS)
 
 _FOLD_RECORD_PREFIX = "fold:"
 
@@ -2983,6 +2985,10 @@ def restore_trailing_folds(pill_state: dict, *, dry: bool = False) -> None:
     re-park of a fold that is already there. Every failure mode therefore costs
     at most a missing fold for one more interval, never a closed one — the
     asymmetry that makes running this on a 30s network-free tick safe at all.
+
+    The one move it makes is `lift_loose_workspaces`, which reorders rows and
+    never touches a fold's membership, so a new workspace cmux appended below
+    the folds rises within a fast tick instead of a slow one.
 
     Three guards, each covering a way "the fold is gone" can be wrong:
 
@@ -3026,6 +3032,7 @@ def restore_trailing_folds(pill_state: dict, *, dry: bool = False) -> None:
             continue
         move_workspace_group_to_end(created.ref)
         print(f"  {verb('regrouped')} {cyan(name)} {dim(' → '.join(refs))}", flush=True)
+    lift_loose_workspaces(_TRAILING_ICONS)
 
 
 def _reconcile_review_groups(
@@ -3167,6 +3174,8 @@ def _reconcile_review_groups(
     # in sorted order lays the folds out in that order.
     for _order, ref in sorted(standing):
         move_workspace_group_to_end(ref)
+    if standing:
+        lift_loose_workspaces(_TRAILING_ICONS)
 
 
 def _fold_order(
@@ -3464,6 +3473,28 @@ def _reap_workspace_orphans(repos: list[dict], self_user: str, *, dry: bool) -> 
             daemon_signal.enqueue(req)
 
 
+class _StepClock:
+    """Names the slow tick's current step to `on_progress` and prints how long
+    the previous one took, so a long tick shows where its time goes."""
+
+    def __init__(self, on_progress: Callable[[str], None] | None) -> None:
+        self._on_progress = on_progress
+        self._label = ""
+        self._started = 0.0
+
+    def __call__(self, label: str) -> None:
+        self.done()
+        self._label, self._started = label, time.monotonic()
+        if self._on_progress is not None:
+            self._on_progress(label)
+
+    def done(self) -> None:
+        if self._label:
+            elapsed = time.monotonic() - self._started
+            print(f"  {dim(f'{self._label} took {elapsed:.1f}s')}", flush=True)
+        self._label = ""
+
+
 def cycle_all(
     cfg: dict,
     self_user: str,
@@ -3473,6 +3504,7 @@ def cycle_all(
     pill_state: dict,
     on_repo_done: Callable[[], None] | None = None,
     only_repo: str | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> None:
     """Reconcile every managed repo, serially.
 
@@ -3489,7 +3521,10 @@ def cycle_all(
     still drains the close queue (a `c`/`C` teardown lands there) but skips the
     repo-spanning sweeps (`close_gone_cwd_workspaces`, `_reconcile_review_groups`,
     `_reap_workspace_orphans`) — those are global housekeeping the next full
-    periodic tick handles, not work the keypress is waiting on."""
+    periodic tick handles, not work the keypress is waiting on.
+
+    `on_progress` receives the name of each step as it starts (`3/7 <repo>`,
+    then the cross-repo passes). Like `on_repo_done` it is display-only."""
     ensure_state_dirs()
     repos = cfg.get("repos", [])
     if not repos:
@@ -3539,7 +3574,10 @@ def cycle_all(
     inbox = TicketInbox() if only_repo is None else None
     # Failed background spawns: same shape, same scoping.
     spawn_failures = SpawnFailures() if only_repo is None else None
-    for repo_entry in repos:
+    step = _StepClock(on_progress)
+    for i, repo_entry in enumerate(repos, 1):
+        name = repo_entry.get("name") or Path(repo_entry["path"]).name
+        step(f"{i}/{len(repos)} {name}")
         try:
             cycle_repo(
                 repo_entry,
@@ -3585,6 +3623,7 @@ def cycle_all(
                     flush=True,
                 )
     if inbox is not None:
+        step("ticket inbox")
         # Network, but bounded: one round-trip per (provider, credential, org),
         # not per repo. Its own failures are already isolated per bucket — this
         # guard is for an unexpected raise, which must not cost the sweeps below.
@@ -3618,6 +3657,7 @@ def cycle_all(
             ts = datetime.now().isoformat(timespec="seconds")
             print(f"[{ts}] {yellow('skip')} brief: {e}", file=sys.stderr, flush=True)
     if folds is not None and not _cache_only(cfg):
+        step("sidebar folds")
         try:
             _reconcile_review_groups(folds, dry=dry, pill_state=pill_state)
         except CmuxUnavailable as e:
@@ -3633,6 +3673,7 @@ def cycle_all(
     # orphan forever. `close_gone_cwd_workspaces` (cwd-existence, no idle gate)
     # is the limux-safe workspace reaper; this one needs the idle signal.
     if only_repo is None and not _cache_only(cfg):
+        step("orphan reap")
         try:
             _reap_workspace_orphans(repos, self_user, dry=dry)
         except CmuxUnavailable as e:
@@ -3642,3 +3683,4 @@ def cycle_all(
                 file=sys.stderr,
                 flush=True,
             )
+    step.done()

@@ -28,6 +28,7 @@ from cockpit.lib.cmux import (
     WORKSPACE_COLORS,
     YELLOW,
     CmuxUnavailable,
+    WorkspaceGroup,
     add_to_workspace_group,
     apply_devdone_pill,
     apply_pills,
@@ -35,7 +36,9 @@ from cockpit.lib.cmux import (
     cmux_close_workspace_best_effort,
     create_workspace_group,
     deliver_followup,
+    lift_loose_workspaces,
     list_workspace_groups,
+    loose_row_moves,
     move_workspace_group_to_end,
     nudge_if_idle,
     one_line,
@@ -1977,6 +1980,48 @@ def test_move_workspace_group_to_end_clamps_past_the_sidebar():
         "--to-index",
         "9999",
         check=False,
+    )
+
+
+_TRAILING = frozenset({"eyeglasses", "moon.zzz"})
+
+
+def _wg(ref, anchor, members, icon):
+    return WorkspaceGroup(
+        ref=ref, name=ref, anchor=anchor, members=(anchor, *members), icon=icon
+    )
+
+
+@pytest.mark.covers("folds.lift~1")
+def test_loose_row_moves_lifts_rows_and_stacks_above_the_first_fold():
+    reviews = _wg("wg:r", "w:ra", ["w:r1"], "eyeglasses")
+    snoozed = _wg("wg:z", "w:za", ["w:z1"], "moon.zzz")
+    stack = _wg("wg:s", "w:sa", ["w:s1"], "square.stack")
+    rows = ["w:top", "w:ra", "w:r1", "w:loose", "w:za", "w:z1", "w:sa", "w:s1"]
+
+    assert loose_row_moves(rows, [reviews, snoozed, stack], _TRAILING) == [
+        ("workspace", "w:loose", "w:ra"),
+        ("group", "wg:s", "wg:r"),
+    ]
+
+
+def test_loose_row_moves_is_empty_once_the_folds_trail():
+    reviews = _wg("wg:r", "w:ra", ["w:r1"], "eyeglasses")
+    assert loose_row_moves(["w:top", "w:ra", "w:r1"], [reviews], _TRAILING) == []
+    assert loose_row_moves(["w:top"], [], _TRAILING) == []
+
+
+def test_lift_loose_workspaces_issues_the_planned_moves():
+    reviews = _wg("wg:r", "w:ra", [], "eyeglasses")
+    with (
+        patch.object(cmux_mod, "read_workspace_groups", return_value=[reviews]),
+        patch.object(cmux_mod, "list_workspaces", return_value=["w:ra", "w:x"]),
+        patch("cockpit.lib.cmux.cmux") as cmux_mock,
+    ):
+        lift_loose_workspaces(_TRAILING)
+
+    cmux_mock.assert_called_once_with(
+        "reorder-workspace", "--workspace", "w:x", "--before", "w:ra", check=False
     )
 
 

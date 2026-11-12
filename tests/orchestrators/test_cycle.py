@@ -4356,6 +4356,32 @@ def test_cycle_all_calls_on_repo_done_once_per_repo():
     assert ticks == [1, 2]
 
 
+def test_cycle_all_names_each_step_and_prints_its_duration(capsys):
+    cfg = {"repos": [{"name": "a", "path": "/a"}, {"path": "/repos/b"}]}
+    steps: list[str] = []
+    patches = _patch_cycle_all_collaborators()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patch.object(cycle, "cycle_repo", lambda *_a, **_k: None),
+    ):
+        cycle.cycle_all(
+            cfg,
+            "khivi",
+            dry=False,
+            pr_cache={},
+            pill_state={},
+            on_progress=steps.append,
+        )
+
+    assert steps[:2] == ["1/2 a", "2/2 b"]
+    out = capsys.readouterr().out
+    for label in steps:
+        assert f"{label} took " in out
+
+
 def test_cycle_all_on_repo_done_fires_even_when_a_repo_errors():
     cfg = {"repos": [{"name": "a", "path": "/a"}, {"name": "b", "path": "/b"}]}
 
@@ -5454,6 +5480,37 @@ def test_reconcile_review_groups_folds_coworker_prs(tmp_path):
         collapsed=True,
     )
     move.assert_called_once_with("wg:1")
+
+
+@pytest.mark.covers("folds.lift~1")
+def test_reconcile_review_groups_lifts_loose_rows_after_parking_folds(tmp_path):
+    ctx = _stack_ctx(
+        tmp_path,
+        [("workspace:2", "them/b", "main")],
+        coworkers=("workspace:2",),
+        repo_entry={"name": "Cockpit"},
+    )
+    folds = _folds((ctx, {"workspace:2"}))
+    calls: list[object] = []
+    with (
+        patch.object(cycle, "list_workspace_groups", return_value=[]),
+        patch.object(
+            cycle,
+            "create_workspace_group",
+            return_value=_group("wg:1", "Cockpit reviews (1)", "workspace:9", []),
+        ),
+        patch.object(
+            cycle, "move_workspace_group_to_end", side_effect=lambda r: calls.append(r)
+        ),
+        patch.object(
+            cycle,
+            "lift_loose_workspaces",
+            side_effect=lambda icons: calls.append(sorted(icons)),
+        ),
+    ):
+        cycle._reconcile_review_groups(folds, dry=False)
+
+    assert calls == ["wg:1", sorted({REVIEW_GROUP_ICON, cycle.SNOOZE_GROUP_ICON})]
 
 
 def test_reconcile_review_groups_folds_an_org_across_its_repos(tmp_path):
@@ -6750,6 +6807,32 @@ def test_restore_leaves_a_fold_that_is_still_there_alone():
     # Matched by member overlap, not by name — a fold re-membered since the
     # record was written is still that fold, and the slow pass owns its shape.
     create.assert_not_called()
+
+
+@pytest.mark.covers("folds.lift~1")
+@pytest.mark.parametrize(
+    ("recorded", "dry", "lifted"),
+    [(True, False, True), (False, False, False), (True, True, False)],
+)
+def test_restore_lifts_loose_rows_only_with_records_and_not_dry(recorded, dry, lifted):
+    live = _group(
+        "wg:1", "💤 (1) Env", "workspace:9", ["workspace:1"], SNOOZE_GROUP_ICON
+    )
+    pill_state = (
+        dict(_record(SNOOZE_GROUP_ICON, "Env", "💤 (1) Env", ["workspace:1"]))
+        if recorded
+        else {}
+    )
+    with (
+        patch.object(cycle, "read_workspace_groups", return_value=[live]),
+        patch.object(cycle, "workspace_state", return_value=({"workspace:1": "a"}, {})),
+        patch.object(cycle, "lift_loose_workspaces") as lift,
+    ):
+        cycle.restore_trailing_folds(pill_state, dry=dry)
+
+    assert lift.call_args_list == (
+        [((frozenset({REVIEW_GROUP_ICON, SNOOZE_GROUP_ICON}),),)] if lifted else []
+    )
 
 
 @pytest.mark.covers("folds.restore-reads~1")

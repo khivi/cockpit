@@ -18,6 +18,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
+from textual.markup import escape
 from textual.reactive import reactive
 from textual.widgets import Static
 
@@ -134,9 +135,13 @@ def failures_label(n: int) -> str:
     return f"{n} spawn{'s' if n != 1 else ''} failed"
 
 
-def status_text(slow_remaining: int, fast_remaining: int) -> str:
-    """The tick countdowns, as Textual markup."""
-    text = f"{SLOW_GLYPH} {_fmt(slow_remaining)}"
+def status_text(slow_remaining: int, fast_remaining: int, slow_step: str = "") -> str:
+    """The tick countdowns, as Textual markup. A running slow tick names its
+    current step instead of `running…`."""
+    if slow_remaining == RUNNING and slow_step:
+        text = f"{SLOW_GLYPH} {escape(slow_step)}"
+    else:
+        text = f"{SLOW_GLYPH} {_fmt(slow_remaining)}"
     if fast_remaining != OFF:
         text += f"   {FAST_GLYPH} {_fmt(fast_remaining)}"
     return text
@@ -228,6 +233,7 @@ class HeaderBar(Horizontal):
     version_url: reactive[str] = reactive("")
     slow_remaining: reactive[int] = reactive(0)
     fast_remaining: reactive[int] = reactive(OFF)
+    slow_step: reactive[str] = reactive("")
     # Cursor-row state, so it repaints on arrow keys without dragging the
     # once-a-second tick countdowns through a repaint with it.
     repo_name: reactive[str] = reactive("")
@@ -272,6 +278,9 @@ class HeaderBar(Horizontal):
 
     def watch_fast_remaining(self, fast_remaining: int) -> None:
         self._sync_tooltip()
+        self._repaint()
+
+    def watch_slow_step(self, slow_step: str) -> None:
         self._repaint()
 
     def watch_repo_name(self, repo_name: str) -> None:
@@ -322,4 +331,6 @@ class HeaderBar(Horizontal):
     def _repaint(self) -> None:
         cell = self._cell("#header-status")
         if cell is not None:
-            cell.update(status_text(self.slow_remaining, self.fast_remaining))
+            cell.update(
+                status_text(self.slow_remaining, self.fast_remaining, self.slow_step)
+            )

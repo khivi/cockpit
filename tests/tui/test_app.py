@@ -73,7 +73,7 @@ def _wt(name, branch, **kw):
 def _make_app(**kw):
     calls: dict[str, Any] = {"slow": 0, "fast": 0, "only_repo": []}
 
-    def slow(on_repo_done=None, only_repo=None):
+    def slow(on_repo_done=None, only_repo=None, on_progress=None):
         calls["slow"] += 1
         calls["only_repo"].append(only_repo)
 
@@ -200,7 +200,7 @@ async def test_table_primes_before_slow_completes(monkeypatch, tmp_path):
 
     release = threading.Event()
 
-    def slow(on_repo_done=None, only_repo=None):
+    def slow(on_repo_done=None, only_repo=None, on_progress=None):
         release.wait(2)  # hold the slow tick open
 
     app = CockpitApp(
@@ -239,7 +239,7 @@ async def test_slow_tick_gets_per_repo_publish_callback(monkeypatch, tmp_path):
     captured: dict = {}
     published = threading.Event()
 
-    def slow(on_repo_done=None, only_repo=None):
+    def slow(on_repo_done=None, only_repo=None, on_progress=None):
         captured["cb"] = on_repo_done
         on_repo_done()  # a repo finished — surface it now, not at tick end
         published.set()
@@ -260,6 +260,31 @@ async def test_slow_tick_gets_per_repo_publish_callback(monkeypatch, tmp_path):
                 break
             await pilot.pause(0.1)
         assert table.row_count == 2  # repo header + 1 worktree, per-repo callback
+
+
+async def test_header_shows_the_slow_tick_step_while_it_runs():
+    release = threading.Event()
+
+    def slow(on_repo_done=None, only_repo=None, on_progress=None):
+        on_progress("2/5 data-os")
+        release.wait(5)
+
+    app = CockpitApp(
+        slow_tick=slow, fast_tick=lambda: None, slow_secs=300, fast_secs=30
+    )
+    async with app.run_test() as pilot:
+        header = app.query_one(HeaderBar)
+        for _ in range(30):
+            if header.slow_step:
+                break
+            await pilot.pause(0.1)
+        assert header.slow_step == "2/5 data-os"
+        release.set()
+        for _ in range(30):
+            if not header.slow_step:
+                break
+            await pilot.pause(0.1)
+        assert header.slow_step == ""
 
 
 @pytest.mark.covers("tui.on-repo-done~1")
@@ -286,7 +311,7 @@ async def test_on_repo_done_writes_no_cache_cells(monkeypatch, tmp_path):
 
     published = threading.Event()
 
-    def slow(on_repo_done=None, only_repo=None):
+    def slow(on_repo_done=None, only_repo=None, on_progress=None):
         on_repo_done()  # exercise the real per-repo republish hook
         published.set()
 
@@ -307,7 +332,7 @@ async def test_on_repo_done_writes_no_cache_cells(monkeypatch, tmp_path):
 async def test_fast_starts_only_after_first_slow():
     order: list[str] = []
 
-    def slow(on_repo_done=None, only_repo=None):
+    def slow(on_repo_done=None, only_repo=None, on_progress=None):
         order.append("slow")
 
     app = CockpitApp(
@@ -331,7 +356,7 @@ async def test_run_slow_starts_fast_even_if_publish_raises(monkeypatch):
     # `_start_fast` was ever reached, silently stranding the fast-tick loop.
     order: list[str] = []
 
-    def slow(on_repo_done=None, only_repo=None):
+    def slow(on_repo_done=None, only_repo=None, on_progress=None):
         order.append("slow")
 
     app = CockpitApp(
@@ -2770,7 +2795,7 @@ async def test_event_during_a_running_fast_tick_is_not_lost():
         release.wait(5)
 
     app = CockpitApp(
-        slow_tick=lambda on_repo_done=None, only_repo=None: None,
+        slow_tick=lambda on_repo_done=None, only_repo=None, on_progress=None: None,
         fast_tick=fast,
         slow_secs=300,
         fast_secs=30,

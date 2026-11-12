@@ -33,6 +33,10 @@
   It hides workspace-targeted row keys and `h`.
 - [folds.order~2] Trailing folds are grouped by org. Each org's reviews fold
   sits directly above that org's snoozed folds, and orgs sort by bucket key.
+- [folds.lift~1] After re-parking the trailing folds, the slow pass lifts
+  every loose row and non-trailing group below the first fold back above it.
+  The fast-tick restore runs the same lift.
+  A fold move alone only swaps folds among themselves.
 - [folds.review-derived~1] (untested: design rationale) The daemon derives "this is
   a review" from `PR.mine` every cycle. It never persists the mark.
 - [folds.mystery~1] (untested: process rule) The fast-tick fold restore

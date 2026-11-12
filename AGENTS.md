@@ -255,7 +255,7 @@ The snoozed band collapses behind a per-repo `▸ N snoozed` row, so a snoozed r
 
 The TUI renders three bands per repo (`_row_band`): 0 my queue, 1 a coworker's PR I review, 2 snoozed. Snooze outranks review. The sort is stable. A chain bands by its tip. Mute is not a band, since 🔇 means "stop nudging me about a PR I'm working on".
 
-Coworker reviews fold into one trailing `<org> reviews (N)` group, the one fold that spans repos. `not PR.mine` workspaces get the `eyeglasses` icon and are re-parked at the bottom every cycle (`--to-index 9999`, since `workspace-group list` reports no index). The key is the repo's `org`, else its `name`. A bucket with a `sidebar_tag` is named by the glyph (`_fold_tag`).
+Coworker reviews fold into one trailing `<org> reviews (N)` group, the one fold that spans repos. `not PR.mine` workspaces get the `eyeglasses` icon and are re-parked at the bottom every cycle (`--to-index 9999`, since `workspace-group list` reports no index). That move only permutes groups among their own slots, so `cmux.py::lift_loose_workspaces` then lifts every loose row and non-trailing group back above the first fold. **Do not** drop the lift: without it a new workspace stays wedged between folds. The key is the repo's `org`, else its `name`. A bucket with a `sidebar_tag` is named by the glyph (`_fold_tag`).
 
 - It has its own pass, because one repo cannot see sibling reviews. `_reconcile_sidebar_groups` only collects into a `ReviewFolds` accumulator, and `_reconcile_review_groups` drains it once after every repo.
 - Ownership splits by icon. The per-repo pass filters review-iconed groups out.
@@ -273,7 +273,7 @@ Both piles are born collapsed, at create time only, since cmux creates groups ex
 
 `cycle.restore_trailing_folds` rebuilds a fold lost mid-interval on the fast tick. It replays the slow pass's `(name, refs)` record from `pill_state` and is not a second authority.
 
-- It can only create: no dissolve, rename, member change or re-park. That is what permits 30s.
+- It can only create: no dissolve, rename, member change or re-park. That is what permits 30s. The one exception is `lift_loose_workspaces`, which reorders rows only.
 - Read `read_workspace_groups`, never `list_workspace_groups`, which flattens a failed read to `[]` (see Shared rules). **Do not** re-merge them.
 - A live group of the same icon sharing any member means the fold exists. Match by overlap, not name.
 - Filter refs against live workspaces. If all are gone, skip and leave the record.
