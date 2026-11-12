@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.5.0](https://github.com/khivi/cockpit/compare/v4.4.1...v4.5.0) (2026-11-12)
+
+
+### Features
+
+* **sidebar:** keep loose workspaces above folds and show slow-tick progress ([#663](https://github.com/khivi/cockpit/issues/663)) ([8173ffa](https://github.com/khivi/cockpit/commit/8173ffaea70b0af128823ef304e391c5d27635a0))
+
 ## [4.4.1](https://github.com/khivi/cockpit/compare/v4.4.0...v4.4.1) (2026-11-10)
 
 
