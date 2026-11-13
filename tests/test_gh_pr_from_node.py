@@ -9,6 +9,8 @@ the legacy `status.contexts` array — together they cover every signal.
 
 from __future__ import annotations
 
+import pytest
+
 from cockpit.lib.gh import _pr_from_node, _unaddressed
 
 
@@ -399,6 +401,82 @@ def test_null_check_suites_yields_unknown():
     pr = _pr_from_node(node)
     assert pr is not None
     assert pr.ci == "unknown"
+
+
+def _suite(*runs, number=1, workflow=7, event="pull_request", conclusion=None):
+    """One check suite: run `number` of a workflow (`workflow=None`: another app)."""
+    return {
+        "conclusion": conclusion,
+        "workflowRun": (
+            None
+            if workflow is None
+            else {
+                "runNumber": number,
+                "event": event,
+                "workflow": {"databaseId": workflow},
+            }
+        ),
+        "checkRuns": {"nodes": list(runs)},
+    }
+
+
+def _run(name, conclusion, status="COMPLETED"):
+    return {"name": name, "status": status, "conclusion": conclusion}
+
+
+def _ci(*suites) -> str:
+    node = _node()
+    node["commits"]["nodes"][0]["commit"]["checkSuites"] = {"nodes": list(suites)}
+    pr = _pr_from_node(node)
+    assert pr is not None
+    return pr.ci
+
+
+@pytest.mark.covers("gh.ci-superseded-run~1")
+def test_a_later_run_of_the_same_workflow_replaces_the_failed_one():
+    """A concurrency group cancelled the first run after its gate job failed.
+    The second run of the same workflow passed, so the PR is green and a
+    merged one can autoclose."""
+    first = _suite(_run("gate", "FAILURE"), number=4, conclusion="CANCELLED")
+    second = _suite(_run("gate", "SUCCESS"), number=5, conclusion="SUCCESS")
+    assert _ci(first, second) == _ci(second, first) == "passed"
+
+
+@pytest.mark.covers("gh.ci-superseded-run~1")
+@pytest.mark.parametrize(
+    "other",
+    [{"workflow": 8}, {"event": "push"}, {"workflow": None}],
+    ids=["another-workflow", "another-event", "another-app"],
+)
+def test_a_later_pass_from_another_source_keeps_the_failure(other):
+    failed = _suite(_run("test", "FAILURE"), number=1, conclusion="FAILURE")
+    passed = _suite(_run("test", "SUCCESS"), number=2, conclusion="SUCCESS", **other)
+    assert _ci(failed, passed) == "failed:1"
+
+
+@pytest.mark.covers("gh.ci-superseded-run~1")
+def test_a_cancelled_later_run_replaces_nothing():
+    failed = _suite(_run("gate", "FAILURE"), number=1, conclusion="FAILURE")
+    cancelled = _suite(_run("gate", "CANCELLED"), number=2, conclusion="CANCELLED")
+    assert _ci(failed, cancelled) == "failed:1"
+
+
+@pytest.mark.covers("gh.ci-superseded-run~1")
+def test_a_later_run_still_in_progress_reads_pending():
+    failed = _suite(_run("gate", "FAILURE"), number=1, conclusion="FAILURE")
+    queued = _suite(_run("gate", None, status="QUEUED"), number=2)
+    assert _ci(failed, queued) == "pending"
+
+
+@pytest.mark.covers("gh.ci-superseded-run~1")
+def test_jobs_sharing_a_name_inside_one_run_both_count():
+    """A matrix whose `name:` omits one axis gives two legs one display name."""
+    one_run = _suite(
+        _run("test (ubuntu)", "FAILURE"),
+        _run("test (ubuntu)", "SUCCESS"),
+        conclusion="FAILURE",
+    )
+    assert _ci(one_run) == "failed:1"
 
 
 def test_trunk_headed_pr_gets_synthesized_branch():

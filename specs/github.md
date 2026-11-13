@@ -37,6 +37,15 @@
   the null-`reviewDecision` fallback once. No renderer or gate re-derives an
   approval.
 
+## CI rollup
+
+- [gh.ci-superseded-run~1] Given a failed run of a workflow and a later passing
+  run of the same workflow and event, `_pr_from_node` reads the PR as `passed`.
+  The suite order never changes that verdict. Given a later run that was
+  cancelled, or from another workflow, event or CI app, it still counts the
+  failure. Given a later run still in progress, it reads the PR as `pending`.
+  `_pr_from_node` never merges two check runs inside one suite.
+
 ## update_stale_branches
 
 - [update-stale.trigger~1] Given every merge state, only `BEHIND` reads as
