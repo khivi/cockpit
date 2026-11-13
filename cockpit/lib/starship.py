@@ -367,7 +367,9 @@ def print_permission_mode(sid: str | None = None) -> str:
 
 
 def print_repo() -> str:
-    """`📁 <repo>` — the owning repo name, so a session shows which repo it's in.
+    """`<tag> <repo>` — the owning repo name, so a session shows which repo it's in.
+
+    The icon is the repo's `sidebar_tag` (`git-repo-tag` cell), else 📁.
 
     Reads the daemon-written `git-repo-<cwd-slug>` cell (see
     `cache.write_git_state_cache`). Empty when the cell is unset (cold start
@@ -376,7 +378,8 @@ def print_repo() -> str:
     raw = read_text(cwd_cache("git-repo", Path.cwd()))
     if not raw:
         return ""
-    return slate(f"{ICON_REPO} {raw}")
+    icon = read_text(cwd_cache("git-repo-tag", Path.cwd())) or ICON_REPO
+    return slate(f"{icon} {raw}")
 
 
 def print_branch_identity() -> str:

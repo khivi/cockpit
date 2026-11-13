@@ -498,7 +498,8 @@ TICKET-123   APPROVED   #9999   ✓   Add login flow
 Model, context used, rate-limit budget, session cost, repo, branch, uncommitted state,
 permission mode, ticket, review state, PR number, comments, CI, and title. Hide any of them
 with `statusline_hide`. Turn it on with `use_cship: true`, or accept the prompt in
-`cockpit setup`.
+`cockpit setup`. The repo segment uses the repo's `sidebar_tag` as its icon, so it matches
+the sidebar.
 
 ---
 

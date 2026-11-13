@@ -502,6 +502,17 @@ def test_print_repo_reads_git_repo_cell(cache_dir, tmp_path, monkeypatch):
     assert slate("📁 cockpit") in starship.print_repo()
 
 
+def test_print_repo_uses_sidebar_tag_as_icon(cache_dir, tmp_path, monkeypatch):
+    """A `git-repo-tag` cell replaces 📁 with the repo's sidebar glyph."""
+    import cockpit.lib.cache as cache_mod
+
+    monkeypatch.chdir(tmp_path)
+    slug = cache_mod._cwd_key(tmp_path)
+    (cache_dir / f"git-repo-{slug}").write_text("Envesya Infra")
+    (cache_dir / f"git-repo-tag-{slug}").write_text("♻️")
+    assert slate("♻️ Envesya Infra") in starship.print_repo()
+
+
 def test_print_repo_blank_when_unset(cache_dir, tmp_path, monkeypatch):
     """No git-repo cell (cold start / repo with no name) → empty string."""
     monkeypatch.chdir(tmp_path)
