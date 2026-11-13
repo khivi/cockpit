@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.6.0](https://github.com/khivi/cockpit/compare/v4.5.1...v4.6.0) (2026-11-13)
+
+
+### Features
+
+* **statusline:** show the repo's sidebar tag as the repo segment icon ([#667](https://github.com/khivi/cockpit/issues/667)) ([b2dcdf4](https://github.com/khivi/cockpit/commit/b2dcdf42b430f5faf5a0f26351599ca849341d3a))
+
 ## [4.5.1](https://github.com/khivi/cockpit/compare/v4.5.0...v4.5.1) (2026-11-13)
 
 
