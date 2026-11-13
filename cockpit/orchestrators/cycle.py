@@ -1895,7 +1895,7 @@ def _write_pr_caches(ctx: RepoCycle) -> None:
         pr_bases={p.branch: p.base for p in ctx.prs if p.state == "OPEN" and p.base},
     )
     for wt in ctx.wts:
-        write_git_state_cache(wt.path, wt.repo_name)
+        write_git_state_cache(wt.path, wt.repo_name, wt.sidebar_tag)
     wt_by_branch = {wt.branch: wt for wt in ctx.wts}
     open_branches = {p.branch for p in ctx.prs if p.state == "OPEN"}
     # Resolve every PR's Linear-delivery block in one batched pass BEFORE the

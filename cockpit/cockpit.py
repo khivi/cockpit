@@ -318,7 +318,7 @@ def _write_worktree_cells(wts: Iterable[Worktree]) -> None:
         return
 
     def _one(wt: Worktree) -> None:
-        write_git_state_cache(wt.path, wt.repo_name)
+        write_git_state_cache(wt.path, wt.repo_name, wt.sidebar_tag)
         write_worktree_cost_cache(wt.path)
 
     if len(wts) == 1:

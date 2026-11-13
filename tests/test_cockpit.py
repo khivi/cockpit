@@ -212,7 +212,9 @@ def test_fast_tick_reconciles_workspace_names(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
     )
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(
+        cockpit, "write_git_state_cache", lambda _p, _name="", _tag="": None
+    )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _n: None)
     monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
@@ -253,7 +255,9 @@ def test_fast_tick_degrades_when_cmux_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
     )
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(
+        cockpit, "write_git_state_cache", lambda _p, _name="", _tag="": None
+    )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _n: None)
     monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
@@ -296,7 +300,9 @@ def test_fast_tick_tints_spawned_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
     )
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(
+        cockpit, "write_git_state_cache", lambda _p, _name="", _tag="": None
+    )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _n: None)
     monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
@@ -338,7 +344,9 @@ def test_fast_tick_skips_color_without_sidebar_color(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
     )
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(
+        cockpit, "write_git_state_cache", lambda _p, _name="", _tag="": None
+    )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _n: None)
     monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
@@ -589,7 +597,9 @@ def test_fast_tick_writes_a_cost_cell_per_worktree(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": wts
     )
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(
+        cockpit, "write_git_state_cache", lambda _p, _name="", _tag="": None
+    )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", costed.append)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
@@ -623,7 +633,7 @@ def test_fast_tick_writes_cells_for_every_repos_worktrees(tmp_path, monkeypatch)
         cockpit, "worktrees", lambda p, _prefix="", _name="", _tag="": by_repo[p]
     )
     monkeypatch.setattr(
-        cockpit, "write_git_state_cache", lambda p, _name="": written.append(p)
+        cockpit, "write_git_state_cache", lambda p, _name="", _tag="": written.append(p)
     )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
@@ -655,7 +665,9 @@ def test_fast_tick_writes_a_diff_comments_cell_per_worktree(tmp_path, monkeypatc
     monkeypatch.setattr(
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": wts
     )
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(
+        cockpit, "write_git_state_cache", lambda _p, _name="", _tag="": None
+    )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
@@ -705,7 +717,9 @@ def test_fast_tick_folds_a_root_shared_with_the_repo_checkout_into_every_worktre
     monkeypatch.setattr(
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": wts
     )
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(
+        cockpit, "write_git_state_cache", lambda _p, _name="", _tag="": None
+    )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "workspace_state", lambda: ({}, {}))
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
@@ -741,7 +755,7 @@ def test_fast_tick_cell_writes_stay_bounded(monkeypatch):
     live = 0
     peak = 0
 
-    def _slow_write(_p, _name=""):
+    def _slow_write(_p, _name="", _tag=""):
         nonlocal live, peak
         with lock:
             live += 1
@@ -876,7 +890,9 @@ def _fast_tick_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
     )
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(
+        cockpit, "write_git_state_cache", lambda _p, _name="", _tag="": None
+    )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _n: None)
     monkeypatch.setattr(cockpit.diff_comments, "pending_by_root", lambda _roots: {})
@@ -933,7 +949,9 @@ def _nudge_fixture(tmp_path, monkeypatch, *, pending, workspace=True):
     monkeypatch.setattr(
         cockpit, "worktrees", lambda _p, _prefix="", _name="", _tag="": [wt]
     )
-    monkeypatch.setattr(cockpit, "write_git_state_cache", lambda _p, _name="": None)
+    monkeypatch.setattr(
+        cockpit, "write_git_state_cache", lambda _p, _name="", _tag="": None
+    )
     monkeypatch.setattr(cockpit, "write_worktree_cost_cache", lambda _p: None)
     monkeypatch.setattr(cockpit, "write_diff_comments_cache", lambda _p, _c: None)
     monkeypatch.setattr(cockpit, "republish_pr_caches_from_disk", lambda _b: None)
