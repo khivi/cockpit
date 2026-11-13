@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.5.1](https://github.com/khivi/cockpit/compare/v4.5.0...v4.5.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **gh:** ignore workflow runs a later run superseded ([#665](https://github.com/khivi/cockpit/issues/665)) ([3e6c3a8](https://github.com/khivi/cockpit/commit/3e6c3a8e5748e574e23e37bdced9059d5e005b67))
+
 ## [4.5.0](https://github.com/khivi/cockpit/compare/v4.4.1...v4.5.0) (2026-11-12)
 
 
