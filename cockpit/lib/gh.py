@@ -757,6 +757,8 @@ _PR_FIELDS = """
   commits(last: 1) {
     nodes { commit {
       checkSuites(first: 20) { nodes {
+        conclusion
+        workflowRun { runNumber event workflow { databaseId } }
         checkRuns(first: 100) { nodes { name status conclusion } }
       } }
       status { contexts { context state } }
@@ -874,6 +876,32 @@ def _review_decision(pr_node: dict, pr_author: str) -> str:
     return "REVIEW_REQUIRED"
 
 
+def _current_check_suites(suites: list[dict]) -> list[dict]:
+    """The commit's check suites minus the workflow runs a later run replaced.
+
+    The rules and their reasons live in AGENTS.md. "Re-run failed jobs" needs
+    nothing here: it reuses the run's suite, and GitHub returns only the latest
+    attempt.
+    """
+    keyed = [(suite, _workflow_run(suite)) for suite in suites]
+    newest: dict[tuple, int] = {}
+    for suite, wf in keyed:
+        if wf is not None and suite.get("conclusion") != "CANCELLED":
+            key, number = wf
+            newest[key] = max(number, newest.get(key, 0))
+    return [s for s, wf in keyed if wf is None or wf[1] >= newest.get(wf[0], 0)]
+
+
+def _workflow_run(suite: dict) -> tuple[tuple, int] | None:
+    """`((workflow id, event), runNumber)` for an Actions suite, else None."""
+    wf_run = suite.get("workflowRun") or {}
+    workflow = (wf_run.get("workflow") or {}).get("databaseId")
+    number = wf_run.get("runNumber")
+    if workflow is None or number is None:
+        return None
+    return (workflow, wf_run.get("event")), number
+
+
 def _pr_from_node(n: dict, self_user: str = "") -> PR | None:
     author = (n.get("author") or {}).get("login")
     if not author:
@@ -912,7 +940,7 @@ def _pr_from_node(n: dict, self_user: str = "") -> PR | None:
         }
         all_runs = [
             r
-            for suite in (suites_field or {}).get("nodes", [])
+            for suite in _current_check_suites((suites_field or {}).get("nodes", []))
             for r in (suite.get("checkRuns") or {}).get("nodes", [])
         ]
         raw_contexts = (status_field or {}).get("contexts", []) or []

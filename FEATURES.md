@@ -83,6 +83,8 @@ unresolved comments, merge conflict, approval, and mute. The PR itself reads lik
 
 CI is the trailing mark on that line: `✓` passing, `✗` failing, `•` pending, `?` errored.
 A build that isn't passing turns the whole pill its colour, so a failing PR reads red.
+When a workflow runs again on the same commit, the newer run replaces the older one, as on
+GitHub. A cancelled run replaces nothing.
 
 **cmux's own PR row is turned off for you.** `cockpit setup` sets
 `"sidebar": {"showPullRequests": false}` in `~/.config/cmux/cmux.json` and reloads cmux, so

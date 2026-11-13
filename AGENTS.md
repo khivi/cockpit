@@ -602,6 +602,14 @@ GitHub returns `reviewDecision: null` on an approved PR when a ruleset declares 
 - Exclude the PR author's reviews and every Bot review, matching `_unaddressed`.
 - Derive it at the one construction site, so `primary_issue`, the `approved` pill, `update_branch_skip_reason` and `wake_signature` agree. **Do not** re-derive approval at a renderer or gate.
 
+### A superseded workflow run is not a failure — `gh.py::_current_check_suites` drops it
+
+One workflow can run twice on one commit, as when a concurrency group cancels the first run, and the cancelled suite keeps its FAILURE. Counted raw, a merged PR reads `failed` forever and `_maybe_autoclose` never fires. GitHub's own rollup ignores the superseded run.
+
+- Within one workflow id and event, the newest run that was not cancelled replaces every older one. Order by `runNumber`, never a timestamp, because suites of one workflow often share a creation second.
+- **Do not** supersede single check runs by name. Two jobs in one run can share a display name, and so can jobs in two workflows.
+- **Do not** let a cancelled run replace anything, or a failure it interrupted reads green. A suite with no workflow run, from another CI app, is always current.
+
 ### `update_stale_branches` — the daemon updates a PR head *server-side*, never by rebasing the worktree
 
 Opt-in, slow-tick `_update_stale_branches`.
