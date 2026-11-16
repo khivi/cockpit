@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.7.0](https://github.com/khivi/cockpit/compare/v4.6.0...v4.7.0) (2026-11-16)
+
+
+### Features
+
+* **tui:** rework the brief into the Day view on d ([#669](https://github.com/khivi/cockpit/issues/669)) ([17efd00](https://github.com/khivi/cockpit/commit/17efd006710c8369bf6b8ea30ca63d08accd90e2))
+
 ## [4.6.0](https://github.com/khivi/cockpit/compare/v4.5.1...v4.6.0) (2026-11-13)
 
 
