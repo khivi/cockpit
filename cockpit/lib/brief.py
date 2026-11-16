@@ -1,4 +1,4 @@
-"""The brief (`b`): what needs you, and what changed since yesterday.
+"""The brief (`d`, "Day"): where to start today, and what changed since yesterday.
 
 The PR cache holds only the present, so "what changed" needs one remembered
 state. The slow tick records a digest of every cached PR as `last`; on the first
@@ -13,6 +13,7 @@ a synced home don't roll each other's baseline.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,13 +50,38 @@ def load(path: Path | None = None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def record(payloads: dict[str, dict], today: str, path: Path | None = None) -> None:
+def ticket_states(
+    inboxes: dict[str, list[dict]], payloads: dict[str, dict]
+) -> dict[str, str]:
+    """`{ticket id: state}` across the inbox and every PR's delivered tickets."""
+    out: dict[str, str] = {}
+    blocks = [(p.get("ticket") or {}).get("tickets") for p in payloads.values()]
+    for tickets in [*inboxes.values(), *blocks]:
+        for t in tickets if isinstance(tickets, list) else []:
+            if isinstance(t, dict) and t.get("id"):
+                out[str(t["id"])] = str(t.get("state") or "")
+    return out
+
+
+def record(
+    payloads: dict[str, dict],
+    today: str,
+    path: Path | None = None,
+    *,
+    at: str = "",
+    tickets: dict[str, str] | None = None,
+) -> None:
     path = path or STATE_PATH
     state = load(path)
     last = state.get("last")
     if isinstance(last, dict) and last.get("date") != today:
         state["baseline"] = last
-    state["last"] = {"date": today, "prs": digest(payloads)}
+    state["last"] = {
+        "date": today,
+        "at": at,
+        "prs": digest(payloads),
+        "tickets": tickets or {},
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(path, json.dumps(state))
 
@@ -118,3 +144,45 @@ def diff(before: dict[str, dict], after: dict[str, dict]) -> list[Change]:
         if old.get("snoozed") and not new.get("snoozed"):
             out.append(Change(key, title, "woke from snooze"))
     return out
+
+
+def ticket_diff(before: dict[str, str], after: dict[str, str]) -> list[tuple[str, str]]:
+    """`(id, what)` for tickets that appeared or changed state. A ticket that
+    left both the inbox and every PR says nothing: that is usually it closing."""
+    out: list[tuple[str, str]] = []
+    for tid in sorted(after):
+        if tid not in before:
+            out.append((tid, f"new ({after[tid] or 'no state'})"))
+        elif before[tid] != after[tid]:
+            out.append((tid, f"{before[tid] or 'none'} → {after[tid] or 'none'}"))
+    return out
+
+
+_PR_SUFFIX = re.compile(r"\(#(\d+)\)$")
+
+
+def commits(log: str, covered: set[str]) -> list[tuple[str, str, str]]:
+    """`git log --format=%h%x09%an%x09%s` → `(sha, author, subject)`, minus
+    squash-merges whose `(#N)` PR number is in `covered`, which the PR section
+    already reports."""
+    out: list[tuple[str, str, str]] = []
+    for line in log.splitlines():
+        sha, _, rest = line.partition("\t")
+        author, _, subject = rest.partition("\t")
+        m = _PR_SUFFIX.search(subject)
+        if sha and not (m and m.group(1) in covered):
+            out.append((sha, author, subject))
+    return out
+
+
+START_KINDS = ("session", "pr", "spawn", "ticket")
+
+
+def start_here(
+    items: list[tuple[str, str, str]], cap: int = 7
+) -> tuple[list[tuple[str, str, str]], int]:
+    """`(kind, subject, reason)` items ranked by `START_KINDS`, first `cap`
+    kept; returns them with the count left over. The sort is stable, so each
+    kind keeps its caller's order."""
+    ranked = sorted(items, key=lambda i: START_KINDS.index(i[0]))
+    return ranked[:cap], max(0, len(ranked) - cap)

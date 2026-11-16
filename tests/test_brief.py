@@ -38,7 +38,12 @@ def test_unreadable_state_reads_as_empty(tmp_path):
     path.write_text("{not json")
     assert brief.load(path) == {}
     brief.record({}, "2026-10-30", path)
-    assert brief.load(path)["last"] == {"date": "2026-10-30", "prs": {}}
+    assert brief.load(path)["last"] == {
+        "date": "2026-10-30",
+        "at": "",
+        "prs": {},
+        "tickets": {},
+    }
 
 
 @pytest.mark.covers("brief.diff~1")
@@ -101,3 +106,61 @@ def test_live_keeps_only_payloads_the_last_cycle_saw_open():
     state: dict = {"last": {"prs": {k: {} for k in keys}}}
     assert list(brief.live(payloads, state)) == ["o_r__pr-1"]
     assert brief.live(payloads, {}) == payloads
+
+
+@pytest.mark.covers("brief.tickets~1")
+def test_baseline_carries_the_ticket_states_and_timestamp(tmp_path):
+    path = tmp_path / "brief.json"
+    brief.record(
+        {}, "2026-10-29", path, at="2026-10-29T18:00:00", tickets={"A-1": "Todo"}
+    )
+    brief.record({}, "2026-10-30", path, at="2026-10-30T08:00:00")
+    baseline = brief.load(path)["baseline"]
+    assert baseline["at"] == "2026-10-29T18:00:00"
+    assert baseline["tickets"] == {"A-1": "Todo"}
+
+
+@pytest.mark.covers("brief.tickets~1")
+def test_ticket_states_spans_the_inbox_and_delivered_tickets():
+    inboxes = {"org": [{"id": "A-1", "state": "Todo"}, {"title": "no id"}]}
+    payloads = {
+        "o_r__pr-1": _pr(ticket={"tickets": [{"id": "A-2", "state": "In Review"}]}),
+        "o_r__pr-2": _pr(),
+    }
+    assert brief.ticket_states(inboxes, payloads) == {
+        "A-1": "Todo",
+        "A-2": "In Review",
+    }
+
+
+@pytest.mark.covers("brief.tickets~1")
+def test_ticket_diff_names_new_and_moved_tickets_only():
+    before = {"A-1": "Todo", "A-2": "Todo", "A-3": "Todo"}
+    after = {"A-1": "Todo", "A-2": "In Progress", "A-4": "Backlog"}
+    assert brief.ticket_diff(before, after) == [
+        ("A-2", "Todo → In Progress"),
+        ("A-4", "new (Backlog)"),
+    ]
+
+
+@pytest.mark.covers("brief.commits~1")
+def test_commits_drop_squash_merges_the_pr_section_reports():
+    log = "abc1\tAna\tfeat: x (#12)\nabc2\tBo\tfix: y (#13)\nabc3\tBo\tdirect push\n"
+    assert brief.commits(log, {"12"}) == [
+        ("abc2", "Bo", "fix: y (#13)"),
+        ("abc3", "Bo", "direct push"),
+    ]
+
+
+@pytest.mark.covers("brief.start-here~1")
+def test_start_here_ranks_by_kind_and_caps():
+    items = [
+        ("ticket", "T-1", "new ticket"),
+        ("pr", "o/r#1", "ci"),
+        ("spawn", "o/r#2", "spawn failed"),
+        ("session", "r main", "waiting on permission"),
+        ("pr", "o/r#3", "review"),
+    ]
+    ranked, more = brief.start_here(items, cap=4)
+    assert [i[1] for i in ranked] == ["r main", "o/r#1", "o/r#3", "o/r#2"]
+    assert more == 1

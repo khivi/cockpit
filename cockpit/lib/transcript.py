@@ -188,3 +188,59 @@ def turn_in_flight(cwd: os.PathLike[str] | str) -> bool | None:
     if any(v is None for v in verdicts):
         return None
     return False
+
+
+def _last_reply(path: Path) -> tuple[bool, str] | None:
+    """`(api_error, first line of the last assistant text)` in `path`, or None
+    when it is unreadable or holds no assistant text."""
+    last: tuple[bool, str] | None = None
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                message = record.get("message") if isinstance(record, dict) else None
+                if not isinstance(message, dict) or message.get("role") != "assistant":
+                    continue
+                content = message.get("content")
+                blocks = content if isinstance(content, list) else []
+                texts = [
+                    b["text"].strip()
+                    for b in blocks
+                    if isinstance(b, dict) and isinstance(b.get("text"), str)
+                ]
+                text = next((t for t in reversed(texts) if t), "")
+                if text:
+                    last = (bool(record.get("isApiErrorMessage")), text.splitlines()[0])
+    except OSError:
+        return None
+    return last
+
+
+def turns_since(cwd: os.PathLike[str] | str, since: float) -> list[tuple[str, str]]:
+    """`(end state, first line of the last reply)` for each session at `cwd`
+    written after `since` (epoch seconds), newest first. The state is `error`
+    (the turn died on an API error), `running` or `idle`. A session with no
+    readable reply is left out — the format is Claude Code's, not ours."""
+    proj = CLAUDE_PROJECTS_DIR / _claude_project_slug(cwd)
+    try:
+        files = sorted(
+            (p for p in proj.glob("*.jsonl") if p.stat().st_mtime > since),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return []
+    out: list[tuple[str, str]] = []
+    for path in files:
+        reply = _last_reply(path)
+        if reply is None:
+            continue
+        api_error, line = reply
+        state = (
+            "error" if api_error else "running" if _has_open_tool_use(path) else "idle"
+        )
+        out.append((state, line))
+    return out

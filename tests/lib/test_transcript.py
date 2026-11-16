@@ -290,3 +290,34 @@ def test_submitted_body_skips_an_unparsable_line(project):
         encoding="utf-8",
     )
     assert transcript.submitted_body(cwd, "hello there") == "hello there, intact"
+
+
+def _reply(text: str, **extra) -> dict:
+    return {
+        "type": "assistant",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
+        **extra,
+    }
+
+
+@pytest.mark.covers("brief.sessions~1")
+def test_turns_since_reports_each_recent_session_with_its_end_state(project):
+    cwd, write = project
+    write("old", _reply("ancient"), age_seconds=7200)
+    write("done", _reply("Opened PR #4.\nDetails follow."), age_seconds=60)
+    write("busy", _reply("Running tests"), _tool_use("t1"), age_seconds=30)
+    write("dead", _reply("API Error: overloaded", isApiErrorMessage=True))
+    write("silent", _tool_result("t9"))
+
+    got = transcript.turns_since(cwd, time.time() - 3600)
+
+    assert got == [
+        ("error", "API Error: overloaded"),
+        ("running", "Running tests"),
+        ("idle", "Opened PR #4."),
+    ]
+
+
+def test_turns_since_without_a_project_dir_is_empty(project):
+    cwd, _ = project
+    assert transcript.turns_since(cwd, 0.0) == []

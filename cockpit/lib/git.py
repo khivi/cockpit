@@ -1072,6 +1072,21 @@ def origin_head_branch(repo: Path) -> str | None:
     return r.stdout.strip().removeprefix("origin/") or None
 
 
+def log_since(repo: Path, since: str, limit: int = 20) -> str | None:
+    """`origin/HEAD`'s commits after `since` as `%h<TAB>%an<TAB>%s` lines, or
+    None when the repo has no `origin/HEAD` or git fails. Reads the ref the
+    last fetch left; never fetches."""
+    r = _git(
+        repo,
+        "log",
+        "refs/remotes/origin/HEAD",
+        f"--since={since}",
+        f"--max-count={limit}",
+        "--format=%h%x09%an%x09%s",
+    )
+    return r.stdout if r.returncode == 0 else None
+
+
 def ff_default_branch_worktrees(
     repo: Path, wts: list[Worktree], *, default: str | None = None, dry: bool = False
 ) -> list[tuple[Worktree, int]]:
