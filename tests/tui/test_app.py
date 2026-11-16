@@ -2362,6 +2362,21 @@ async def test_footer_global_group_orders_hide_new_first():
         assert gt.index("Sync") < gt.index("Quit")
 
 
+@pytest.mark.covers("brief.footer~1")
+async def test_footer_advertises_day_in_place_of_failed_spawns():
+    from cockpit.tui.widgets.footer_bar import FooterBar
+
+    app, _ = _make_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        gt = app.query_one(FooterBar).global_text
+        assert "app.brief" in gt and "Day" in gt
+        assert "app.spawn_failures" not in gt
+        keys = {b[0]: b[1] for b in CockpitApp.BINDINGS if isinstance(b, tuple)}
+        assert keys["d"] == "brief" and keys["F"] == "spawn_failures"
+        assert "b" not in keys
+
+
 async def test_footer_advertises_sync_but_not_output():
     # `s` is a global key; output stays behind the `^P` palette.
     from cockpit.tui.widgets.footer_bar import FooterBar

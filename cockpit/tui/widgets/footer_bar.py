@@ -97,7 +97,7 @@ class FooterBar(Horizontal):
         # Beside `n` deliberately: both start work, and `T` is where you go when
         # you don't yet know what to type into `n`.
         "ticket_inbox",
-        "spawn_failures",
+        "brief",
         "sync",
         "quit",
     )
@@ -118,6 +118,7 @@ class FooterBar(Horizontal):
         "new_workspace": "New",
         "ticket_inbox": "Tickets",
         "spawn_failures": "Failed",
+        "brief": "Day",
         "hide_repo": "Hide",
         "sync": "Sync",
         "quit": "Quit",
@@ -191,6 +192,10 @@ class FooterBar(Horizontal):
             "PR has no worktree and so no row.\n"
             "The header shows a count whenever there are any."
         ),
+        "brief": (
+            "Where to start today, then what changed since yesterday: PRs, "
+            "commits on each repo's default branch, Claude sessions and tickets."
+        ),
         "sync": (
             "Reconcile every repo now instead of waiting for the tick — the "
             "same full cycle the timer runs, never scoped to one repo."
@@ -219,9 +224,9 @@ class FooterBar(Horizontal):
     SNOOZED_ROW_ACTIONS = frozenset({"snooze_row", "ask_snoozed"})
 
     # Actions never shown in the footer (handled implicitly / not key-hint worthy).
-    # `b` is bound but footerless: the footer is already full at 80 columns,
-    # so it is reached from ≡ Menu instead.
-    HIDDEN_ACTIONS = frozenset({"dismiss_overlay", "brief"})
+    # `F` is bound but footerless: the footer is full at 80 columns, `d` lists
+    # failed spawns too, and `#header-failures` flags them.
+    HIDDEN_ACTIONS = frozenset({"dismiss_overlay", "spawn_failures"})
 
     # Row actions that only work on one backend — rendered only when the resolved
     # backend ("cmux" | "limux" | "none") is in the action's set. `f` (focus)

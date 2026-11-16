@@ -7166,7 +7166,9 @@ def test_cycle_all_records_only_prs_a_configured_repo_reported_open(partial, rec
             "load_pr_payloads",
             lambda: {"o_r__pr-1": {}, "o_r__pr-2": {}, "old_x__pr-3": {}},
         ),
-        patch.object(cycle.brief, "record", lambda p, _today: calls.append(list(p))),
+        patch.object(
+            cycle.brief, "record", lambda p, _today, **_k: calls.append(list(p))
+        ),
     ):
         cycle.cycle_all(cfg, "khivi", dry=False, pr_cache={}, pill_state={})
 
@@ -7189,7 +7191,9 @@ def test_cycle_all_records_the_brief_only_on_a_full_live_cycle(only_repo, dry, r
         patches[3],
         patch.object(cycle, "cycle_repo", lambda *_a, **_k: None),
         patch.object(cycle, "_cache_only", lambda _cfg: True),
-        patch.object(cycle.brief, "record", lambda _p, today: calls.append(today)),
+        patch.object(
+            cycle.brief, "record", lambda _p, today, **_k: calls.append(today)
+        ),
     ):
         cycle.cycle_all(
             cfg, "khivi", dry=dry, pr_cache={}, pill_state={}, only_repo=only_repo

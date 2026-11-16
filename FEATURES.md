@@ -122,7 +122,7 @@ the piles.
 | `n` | Start something new |
 | `T` | The ticket inbox — tickets assigned to you that you haven't started |
 | `F` | Failed spawns — PRs whose background worktree could not be created, and why |
-| `b` | The brief — what needs you, and what changed since yesterday |
+| `d` | Day — where to start today, and what changed since yesterday |
 | `h` | Park / reveal / un-park a repo |
 | `s` | Refresh every repo now |
 | `q` | Quit |
@@ -418,17 +418,27 @@ for its full text.
 
 The entry clears itself once the PR has a worktree or is no longer open.
 
-### The brief — press `b`
+### Day — press `d`
 
-`b` opens a one-screen summary, any time of day. It has three parts:
+`d` opens a one-screen summary, any time of day. It has three parts:
 
-- **Needs you.** Every PR that shows 🔔, grouped by repo, with the reason.
-- **Changed since yesterday.** New and gone PRs, CI and review changes, new review comments,
-  and snoozes that woke. "Yesterday" is the state at cockpit's last refresh on the previous
-  day, so changes while cockpit was quit overnight count too. It stays the same all day.
-- **Elsewhere.** Counts for the ticket inbox, failed spawns, snoozed PRs and parked repos.
+- **Start here.** A short ranked list. Sessions waiting on a permission prompt or
+  stopped by an API error come first. Then PRs that show 🔔, failed spawns, and
+  tickets new in the inbox.
+- **Since yesterday.** What changed after cockpit's last refresh on the previous day:
+  - **PRs**: new and gone PRs, CI and review changes, new review comments, snoozes
+    that woke.
+  - **Commits**: everyone's commits on each repo's default branch. A squash-merge
+    of a PR listed above is not repeated.
+  - **Sessions**: each Claude session that ran, how its turn ended, and the first
+    line of its last reply.
+  - **Tickets**: tickets that are new or moved to another state.
+- **Elsewhere.** Counts for the ticket inbox, snoozed PRs and parked repos.
 
-On the first day there is nothing to compare against, so only **Needs you** shows.
+"Yesterday" stays the same all day, and changes while cockpit was quit overnight
+count too. On the first day there is nothing to compare against, so only **Start
+here** shows. Commits come from the last refresh's fetch, so `d` never waits on the
+network.
 
 ---
 

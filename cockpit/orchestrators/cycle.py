@@ -28,6 +28,7 @@ from cockpit.lib.cache import (
     find_pr_payload,
     load_pr_payloads,
     load_pr_payloads_by_branch,
+    load_ticket_inboxes,
     muted_payload,
     prune_closed_pr_caches,
     prune_superseded_pr_caches,
@@ -3649,9 +3650,13 @@ def cycle_all(
     if spawn_failures is not None and not spawn_failures.partial and not dry:
         live = brief.open_keys(spawn_failures.open_prs)
         try:
+            live_payloads = {k: p for k, p in load_pr_payloads().items() if k in live}
+            now = datetime.now()
             brief.record(
-                {k: p for k, p in load_pr_payloads().items() if k in live},
-                datetime.now().date().isoformat(),
+                live_payloads,
+                now.date().isoformat(),
+                at=now.isoformat(timespec="seconds"),
+                tickets=brief.ticket_states(load_ticket_inboxes(), live_payloads),
             )
         except OSError as e:
             ts = datetime.now().isoformat(timespec="seconds")

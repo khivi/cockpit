@@ -38,6 +38,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import ClassVar
 
@@ -46,7 +47,7 @@ from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.css.query import NoMatches
 
-from cockpit.lib import ask_queue, brief, version
+from cockpit.lib import ask_queue, brief, transcript, version
 from cockpit.lib.cache import (
     cost_reporting_available,
     cwd_cache,
@@ -97,6 +98,7 @@ from cockpit.lib.events import watch_workspace_events
 from cockpit.lib.gh import PR, repo_nwo
 from cockpit.lib.git import (
     Worktree,
+    log_since,
     origin_head_branch,
     repo_worktree_paths,
     worktrees,
@@ -205,6 +207,16 @@ def _nwo_from_pr_url(url: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+def _epoch(stamp: str | None) -> float | None:
+    """A brief baseline's local ISO stamp (or bare date) as epoch seconds."""
+    if not stamp:
+        return None
+    try:
+        return datetime.fromisoformat(stamp).timestamp()
+    except ValueError:
+        return None
+
+
 def _with_repo(source: str, repo: str) -> str:
     """`source` plus an explicit `--repo`, quoted — repo names carry spaces, and
     `_launch_spawn` re-splits the string with `shlex`."""
@@ -297,7 +309,7 @@ class CockpitApp(App[None]):
         ("n", "new_workspace", "New"),
         ("T", "ticket_inbox", "Tickets"),
         ("F", "spawn_failures", "Failed spawns"),
-        ("b", "brief", "Brief"),
+        ("d", "brief", "Day"),
         ("h", "hide_repo", "Hide repo"),
         ("s", "sync", "Sync"),
         ("q", "quit", "Quit"),
@@ -1416,39 +1428,116 @@ class CockpitApp(App[None]):
         self.push_screen(SpawnFailuresScreen(load_spawn_failures()))
 
     def action_brief(self) -> None:
-        """`b` -- what needs you and what changed since yesterday, from the PR
-        payloads and the daemon's baseline. Reads only; never re-baselines."""
+        """`d` -- the Day view. Gathers on a worker, since commits and
+        transcripts are file and git reads; never fetches, never re-baselines."""
+        self._gather_brief()
+
+    @work(thread=True, exclusive=True, group="brief")
+    def _gather_brief(self) -> None:
         state = brief.load()
         payloads = brief.live(load_pr_payloads(), state)
         baseline = state.get("baseline")
         if not isinstance(baseline, dict):
             baseline = None
-        inbox = sum(
-            1
-            for tickets in load_ticket_inboxes().values()
-            for t in tickets
-            if not t.get("in_flight")
+        since = (baseline.get("at") or baseline.get("date")) if baseline else None
+        changes = (
+            brief.diff(baseline.get("prs") or {}, brief.digest(payloads))
+            if baseline
+            else []
         )
+        inboxes = load_ticket_inboxes()
+        failures = load_spawn_failures()
+
+        start: list[tuple[str, str, str]] = []
+        commits: list[tuple[str, str, str, str]] = []
+        sessions: list[tuple[str, str, str, str]] = []
+        since_ts = _epoch(since)
+        hidden = load_hidden()
+        for repo in repos_grouped_by_org(load_config()):
+            path = Path(os.path.expanduser(repo["path"]))
+            if not path.is_dir() or str(path.resolve()) in hidden:
+                continue
+            name = repo.get("name") or path.name
+            try:
+                wts = worktrees(path, repo.get("branch_prefix", ""))
+            except (RuntimeError, OSError):
+                wts = []
+            for wt in wts:
+                wait = read_text(cwd_cache("session-wait", wt.path))
+                if wait:
+                    start.append(
+                        ("session", f"{name} {wt.label}", f"waiting on {wait}")
+                    )
+                for turn_state, line in (
+                    transcript.turns_since(wt.path, since_ts) if since_ts else []
+                ):
+                    if turn_state == "error" and not wait:
+                        start.append(
+                            ("session", f"{name} {wt.label}", "stopped on an API error")
+                        )
+                    sessions.append((name, wt.label, wait or turn_state, line))
+            if since:
+                cache_name = self._cache_repo_name(repo)
+                covered = {
+                    brief.repo_and_number(c.key)[1]
+                    for c in changes
+                    if c.key.startswith(f"{cache_name}__pr-")
+                }
+                commits += [
+                    (name, sha, author, subject)
+                    for sha, author, subject in brief.commits(
+                        log_since(path, since) or "", covered
+                    )
+                ]
+
+        for key, p in brief.needs_you(payloads):
+            repo_label, number = brief.repo_and_number(key)
+            start.append(
+                (
+                    "pr",
+                    f"{repo_label}#{number} {p.get('title') or ''}",
+                    str(p.get("nudge")),
+                )
+            )
+        for f in failures:
+            start.append(
+                ("spawn", f"{f.get('repo') or ''}#{f.get('pr', '')}", "spawn failed")
+            )
+        before = (baseline.get("tickets") or {}) if baseline else None
+        inbox = [t for ts in inboxes.values() for t in ts if not t.get("in_flight")]
+        if before is not None:
+            for t in inbox:
+                if str(t.get("id")) not in before:
+                    start.append(
+                        (
+                            "ticket",
+                            f"{t.get('handle') or t.get('id')} {t.get('title') or ''}",
+                            "new ticket",
+                        )
+                    )
+        ranked, more = brief.start_here(start)
         counts = (
-            (inbox, "ticket{s} in the inbox (T)"),
-            (len(load_spawn_failures()), "failed spawn{s} (F)"),
+            (len(inbox), "ticket{s} in the inbox (T)"),
             (sum(1 for p in payloads.values() if p.get("snoozed")), "snoozed PR{s}"),
             (len(load_hidden()), "parked repo{s} (h)"),
         )
-        self.push_screen(
-            BriefScreen(
-                since=baseline.get("date") if baseline else None,
-                needs=brief.needs_you(payloads),
-                changes=brief.diff(baseline.get("prs") or {}, brief.digest(payloads))
-                if baseline
-                else [],
-                elsewhere=[
-                    f"{n} " + label.format(s="s" if n != 1 else "")
-                    for n, label in counts
-                    if n
-                ],
-            )
+        screen = BriefScreen(
+            since=baseline.get("date") if baseline else None,
+            start=ranked,
+            more=more,
+            changes=changes,
+            commits=commits,
+            sessions=sessions,
+            tickets=brief.ticket_diff(before, brief.ticket_states(inboxes, payloads))
+            if before is not None
+            else [],
+            elsewhere=[
+                f"{n} " + label.format(s="s" if n != 1 else "")
+                for n, label in counts
+                if n
+            ],
         )
+        self.call_from_thread(self.push_screen, screen)
 
     def action_ticket_inbox(self) -> None:
         """`T` — the ticket inbox: what to start, as opposed to how work is going.

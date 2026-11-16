@@ -77,9 +77,9 @@ class ConfigCommands(Provider):
     # reference. Slot a new entry by that rule rather than appending to the end.
     COMMANDS = (
         (
-            "Brief (b): what needs you, what changed since yesterday",
+            "Day (d): where to start, what changed since yesterday",
             "action_brief",
-            "PRs that need you, and what changed since your last tick yesterday",
+            "What needs you, then PRs, commits, sessions and tickets since yesterday",
         ),
         (
             "Output: recent tick log",

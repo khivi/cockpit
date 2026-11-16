@@ -532,12 +532,15 @@ A PR whose daemon-launched `cockpit new --pr` child failed has no worktree, henc
 - **`SpawnFailuresScreen` and the `#header-failures` segment read the payload only.** The segment is auto-width and absent at zero, so **do not** give it a `1fr` or place it right of `#header-status`. The count is fed from `app._render_table`, never from `_refresh_footer_caps`, which runs on every arrow key. Text passes `strip_control`.
 - **Do not** add a retry or back-off here. That is `_bg_spawn_pr`'s in-flight guard.
 
-### The brief (`b`) — a diff baseline nothing else reads
+### The brief (`d`, "Day") — a diff baseline nothing else reads
 
-`cockpit/lib/brief.py` keeps brief.json under `$COCKPIT_RUNTIME_DIR`. `cycle_all` calls `brief.record` on a full, non-dry cycle. On the first record of a new day, the previous `last` becomes `baseline`. `BriefScreen` diffs `baseline` against the live PR payloads.
+`cockpit/lib/brief.py` keeps brief.json under `$COCKPIT_RUNTIME_DIR`. `cycle_all` calls `brief.record` on a full, non-dry cycle with the PR digest, the ticket states (`brief.ticket_states`) and a timestamp. On the first record of a new day, the previous `last` becomes `baseline`. `app._gather_brief` diffs `baseline` against the live payloads and hands `BriefScreen` finished rows.
 
 - **Never** let a decision, cell, pill or send read brief.json. It is a diff baseline only.
-- **Never** re-baseline on `b`. The baseline moves only on a day change, so the brief stays the same all day.
+- **Never** re-baseline on `d`. The baseline moves only on a day change, so the brief stays the same all day.
+- `d` reads git (`git.log_since`) and transcripts (`transcript.turns_since`) on the keypress, in a `@work(thread=True)` worker. **Never** move either read onto a tick. **Never** fetch: `log_since` reads the `origin/HEAD` the last slow tick left.
+- Session rows come from transcripts, never `actions.jsonl`.
+- `d` holds `F`'s footer slot. `F` stays bound and footerless (`HIDDEN_ACTIONS`), because Start here lists failed spawns and `#header-failures` flags them.
 - **Do not** record under `only_repo`. A scoped cycle is a keypress, not a tick.
 - **Do not** auto-open it or add a send. It is pull-only.
 - Isolate `brief.STATE_PATH` in `tests/conftest.py::_isolate_runtime_dir`, since it binds at import.
