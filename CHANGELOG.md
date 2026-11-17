@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.9.0](https://github.com/khivi/cockpit/compare/v4.8.0...v4.9.0) (2026-11-17)
+
+
+### Features
+
+* **tui:** fold, prune and link the Day view ([#673](https://github.com/khivi/cockpit/issues/673)) ([8258ba4](https://github.com/khivi/cockpit/commit/8258ba4f4a42c29b29fca0b82fe4994d5ccefd48))
+* **tui:** fold, prune and link the Day view; drop removed orgs' inboxes ([8258ba4](https://github.com/khivi/cockpit/commit/8258ba4f4a42c29b29fca0b82fe4994d5ccefd48))
+
 ## [4.8.0](https://github.com/khivi/cockpit/compare/v4.7.0...v4.8.0) (2026-11-17)
 
 
