@@ -213,7 +213,8 @@ gives the new workspace what it needs from the current conversation: the goal, d
 made, approaches ruled out, open questions, and the exact PRs, tickets and paths. It marks
 guesses as unverified and never carries secrets. It leaves out anything the new session
 can read from the repo itself. Give it a value —
-`--context 'the auth refactor'` — to focus what it carries.
+`--context 'the auth refactor'` — to focus what it carries. If the work belongs in another
+configured repo, bare `--context` spawns it there instead of in the current one.
 
 **Tickets find their repo.** `cockpit new PE-1234` goes to the repo that declares the `PE`
 team key. If several repos share that team, cockpit checks the ticket's project to pick

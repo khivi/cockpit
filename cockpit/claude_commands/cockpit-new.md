@@ -28,6 +28,12 @@ pass it as the flag's value, quoted as above (`--context '<text>'`). Print
 nothing before the Bash call; it is an argument, not a message to the user.
 The CLI errors on a bare `--context`, so the substitution is not optional.
 
+**Bare `--context` also picks the repo.** The spawn lands in this repo. If no
+`--repo` was typed, the source does not name its own repo, and the hand-over's
+work belongs in another configured repo, add `--repo <name>`. A wrong name
+fails before anything is created and lists the configured repos; retry with
+one of them.
+
 **Select, don't summarize.** The new workspace is starting one task, not
 resuming this conversation. Carry only what it cannot re-derive from the repo
 it is about to open: the goal in a sentence, decisions already made and why,
