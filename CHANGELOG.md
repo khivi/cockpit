@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.8.0](https://github.com/khivi/cockpit/compare/v4.7.0...v4.8.0) (2026-11-17)
+
+
+### Features
+
+* **new:** bare --context picks the target repo ([#671](https://github.com/khivi/cockpit/issues/671)) ([bcbe5ad](https://github.com/khivi/cockpit/commit/bcbe5ad60c7fc335c507e915509d28e5fa98eb89))
+
 ## [4.7.0](https://github.com/khivi/cockpit/compare/v4.6.0...v4.7.0) (2026-11-16)
 
 
