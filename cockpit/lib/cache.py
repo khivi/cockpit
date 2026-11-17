@@ -426,6 +426,15 @@ def read_ticket_inbox(bucket: str) -> list[dict]:
     return tickets if isinstance(tickets, list) else []
 
 
+def prune_ticket_inboxes(keep: set[str]) -> None:
+    """Unlink inbox payloads for buckets outside `keep`. Nothing rewrites a
+    bucket the config no longer produces, so its tickets would linger forever."""
+    for path, payload in _iter_cache("*__tickets.json"):
+        bucket = payload.get("bucket") or path.name.removesuffix("__tickets.json")
+        if str(bucket) not in keep:
+            path.unlink(missing_ok=True)
+
+
 def load_ticket_inboxes() -> dict[str, list[dict]]:
     """`{bucket: tickets}` across every cached inbox — the TUI screen's one read.
 

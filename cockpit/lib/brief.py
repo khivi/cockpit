@@ -54,12 +54,24 @@ def ticket_states(
     inboxes: dict[str, list[dict]], payloads: dict[str, dict]
 ) -> dict[str, str]:
     """`{ticket id: state}` across the inbox and every PR's delivered tickets."""
+    return _ticket_field(inboxes, payloads, "state")
+
+
+def ticket_titles(
+    inboxes: dict[str, list[dict]], payloads: dict[str, dict]
+) -> dict[str, str]:
+    return _ticket_field(inboxes, payloads, "title")
+
+
+def _ticket_field(
+    inboxes: dict[str, list[dict]], payloads: dict[str, dict], field: str
+) -> dict[str, str]:
     out: dict[str, str] = {}
     blocks = [(p.get("ticket") or {}).get("tickets") for p in payloads.values()]
     for tickets in [*inboxes.values(), *blocks]:
         for t in tickets if isinstance(tickets, list) else []:
             if isinstance(t, dict) and t.get("id"):
-                out[str(t["id"])] = str(t.get("state") or "")
+                out[str(t["id"])] = str(t.get(field) or "")
     return out
 
 
@@ -120,13 +132,16 @@ def needs_you(payloads: dict[str, dict]) -> list[tuple[str, dict]]:
     )
 
 
+GONE = "gone (merged, closed or torn down)"
+
+
 def diff(before: dict[str, dict], after: dict[str, dict]) -> list[Change]:
     out: list[Change] = []
     for key in sorted(before.keys() | after.keys()):
         old, new = before.get(key), after.get(key)
         if new is None:
             title = str((old or {}).get("title") or "")
-            out.append(Change(key, title, "gone (merged, closed or torn down)"))
+            out.append(Change(key, title, GONE))
             continue
         title = str(new.get("title") or "")
         if old is None:
@@ -146,15 +161,28 @@ def diff(before: dict[str, dict], after: dict[str, dict]) -> list[Change]:
     return out
 
 
-def ticket_diff(before: dict[str, str], after: dict[str, str]) -> list[tuple[str, str]]:
-    """`(id, what)` for tickets that appeared or changed state. A ticket that
-    left both the inbox and every PR says nothing: that is usually it closing."""
-    out: list[tuple[str, str]] = []
+def ticket_baseline(baseline: dict | None) -> dict[str, str] | None:
+    """The baseline's ticket states, or None when it predates ticket tracking:
+    a missing key is not "no tickets", or every ticket would read as new."""
+    tickets = (baseline or {}).get("tickets")
+    return tickets if isinstance(tickets, dict) else None
+
+
+def ticket_diff(
+    before: dict[str, str], after: dict[str, str], titles: dict[str, str]
+) -> list[tuple[str, str, str]]:
+    """`(id, title, what)` for tickets that appeared or changed state. A ticket
+    that left both the inbox and every PR says nothing: that is usually it
+    closing."""
+    out: list[tuple[str, str, str]] = []
     for tid in sorted(after):
+        title = titles.get(tid, "")
         if tid not in before:
-            out.append((tid, f"new ({after[tid] or 'no state'})"))
+            out.append((tid, title, f"new ({after[tid] or 'no state'})"))
         elif before[tid] != after[tid]:
-            out.append((tid, f"{before[tid] or 'none'} → {after[tid] or 'none'}"))
+            out.append(
+                (tid, title, f"{before[tid] or 'none'} → {after[tid] or 'none'}")
+            )
     return out
 
 

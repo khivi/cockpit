@@ -367,3 +367,22 @@ def test_unset_inbox_states_keep_the_done_drop(written):
     with patch("cockpit.orchestrators.ticket_inbox.provider_for", return_value=prov):
         out = publish(_inbox(_entry()), {})
     assert out == {"acme": []}
+
+
+def test_a_bucket_the_config_no_longer_produces_is_deleted(provider, tmp_path):
+    from cockpit.lib import cache
+
+    with patch.object(cache, "CACHE_DIR", tmp_path):
+        cache.write_ticket_inbox("dropped", [{"id": "X-1"}])
+        cache.write_ticket_inbox("acme", [{"id": "A-1"}])
+        publish(_inbox(_entry()), {"repos": [{"name": "widgets", "org": "acme"}]})
+        assert set(cache.load_ticket_inboxes()) == {"acme"}
+
+
+def test_a_partial_cycle_deletes_no_bucket(provider, tmp_path):
+    from cockpit.lib import cache
+
+    with patch.object(cache, "CACHE_DIR", tmp_path):
+        cache.write_ticket_inbox("dropped", [{"id": "X-1"}])
+        publish(_inbox(_entry(), partial=True), {"repos": []})
+        assert set(cache.load_ticket_inboxes()) == {"dropped"}
