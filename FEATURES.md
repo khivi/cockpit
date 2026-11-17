@@ -427,14 +427,18 @@ The entry clears itself once the PR has a worktree or is no longer open.
   stopped by an API error come first. Then PRs that show 🔔, failed spawns, and
   tickets new in the inbox.
 - **Since yesterday.** What changed after cockpit's last refresh on the previous day:
-  - **PRs**: new and gone PRs, CI and review changes, new review comments, snoozes
-    that woke.
-  - **Commits**: everyone's commits on each repo's default branch. A squash-merge
-    of a PR listed above is not repeated.
-  - **Sessions**: each Claude session that ran, how its turn ended, and the first
-    line of its last reply.
-  - **Tickets**: tickets that are new or moved to another state.
+  Each section is a fold that shows its count and starts closed.
+  - **PRs**: new PRs, CI and review changes, new review comments, snoozes that
+    woke. Gone PRs show as one count per repo.
+  - **Commits**: everyone's commits on each repo's default branch, five per repo.
+    A squash-merge of a PR listed above is not repeated.
+  - **Sessions**: one row per worktree: how its latest session ended, and the
+    first line of its last reply.
+  - **Tickets**: tickets that are new or moved to another state, with their titles.
 - **Elsewhere.** Counts for the ticket inbox, snoozed PRs and parked repos.
+
+Click a PR or session row to go to its worktree, as `f` does. Click an inbox
+ticket to start it, as `enter` does in the inbox.
 
 "Yesterday" stays the same all day, and changes while cockpit was quit overnight
 count too. On the first day there is nothing to compare against, so only **Start

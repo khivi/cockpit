@@ -45,6 +45,12 @@
 - [brief.tickets~1] The baseline carries every ticket's state from the inbox and
   delivered PR tickets. The day view names tickets that are new or changed
   state, and says nothing about a ticket that disappeared.
+- [brief.fold~1] Each section after Start here is a fold titled with its row
+  count, folded by default. Commits show five per repo and count the rest. Gone PRs
+  collapse into one count per repo.
+- [brief.click~1] A click on a Day row with a worktree focuses it, as `f`
+  does. A click on an inbox ticket starts it, as `enter` in the inbox does. A
+  row with no target takes no click.
 - [brief.footer~1] `d` opens the day view and shows in the footer. `F` stays
   bound but footerless, and `b` is unbound.
 - [header.brand~1] `brand_text` links the version to exactly the URL it is

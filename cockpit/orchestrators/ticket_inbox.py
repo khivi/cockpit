@@ -36,9 +36,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from cockpit.lib.cache import write_ticket_inbox
+from cockpit.lib.cache import prune_ticket_inboxes, write_ticket_inbox
 from cockpit.lib.config import ticket_inbox_states
 from cockpit.lib.linear import extract_ticket
+from cockpit.lib.ticket_check import all_buckets
 from cockpit.lib.tickets import TicketProvider, provider_for
 
 
@@ -239,6 +240,8 @@ def publish(
         fetched.setdefault(bucket, []).extend(tickets)
     if inbox.partial:
         return {}
+    if not dry:
+        prune_ticket_inboxes(set(all_buckets(cfg)))
     written: dict[str, list[dict]] = {}
     for bucket, tickets in fetched.items():
         if bucket in failed:

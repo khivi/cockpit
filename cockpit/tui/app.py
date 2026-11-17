@@ -125,7 +125,7 @@ from cockpit.tui.widgets.header_bar import HeaderBar
 from cockpit.tui.widgets.new_workspace_screen import NewWorkspaceScreen
 from cockpit.tui.widgets.repo_pick_screen import RepoPickScreen
 from cockpit.tui.widgets.spawn_failures_screen import SpawnFailuresScreen
-from cockpit.tui.widgets.tickets_screen import TicketsScreen
+from cockpit.tui.widgets.tickets_screen import TicketsScreen, ticket_source
 from cockpit.tui.widgets.worktree_table import (
     HEADER_CAP,
     HIDDEN_CAP,
@@ -1451,6 +1451,7 @@ class CockpitApp(App[None]):
         start: list[tuple[str, str, str]] = []
         commits: list[tuple[str, str, str, str]] = []
         sessions: list[tuple[str, str, str, str]] = []
+        links: dict[str, str] = {}
         since_ts = _epoch(since)
         hidden = load_hidden()
         for repo in repos_grouped_by_org(load_config()):
@@ -1463,19 +1464,21 @@ class CockpitApp(App[None]):
             except (RuntimeError, OSError):
                 wts = []
             for wt in wts:
+                subject = f"{name} {wt.label}"
+                links[subject] = f"focus:{wt.path}"
                 wait = read_text(cwd_cache("session-wait", wt.path))
                 if wait:
-                    start.append(
-                        ("session", f"{name} {wt.label}", f"waiting on {wait}")
-                    )
-                for turn_state, line in (
-                    transcript.turns_since(wt.path, since_ts) if since_ts else []
-                ):
-                    if turn_state == "error" and not wait:
-                        start.append(
-                            ("session", f"{name} {wt.label}", "stopped on an API error")
-                        )
-                    sessions.append((name, wt.label, wait or turn_state, line))
+                    start.append(("session", subject, f"waiting on {wait}"))
+                turns = transcript.turns_since(wt.path, since_ts) if since_ts else []
+                if not turns:
+                    continue
+                if not wait and any(t == "error" for t, _ in turns):
+                    start.append(("session", subject, "stopped on an API error"))
+                # Newest first: the worktree's row is its latest session.
+                turn_state, line = turns[0]
+                if len(turns) > 1:
+                    line = f"{line} (+{len(turns) - 1} earlier)"
+                sessions.append((name, wt.label, wait or turn_state, line))
             if since:
                 cache_name = self._cache_repo_name(repo)
                 covered = {
@@ -1490,32 +1493,31 @@ class CockpitApp(App[None]):
                     )
                 ]
 
+        for key, p in payloads.items():
+            if p.get("cwd"):
+                links[key] = f"focus:{p['cwd']}"
         for key, p in brief.needs_you(payloads):
             repo_label, number = brief.repo_and_number(key)
-            start.append(
-                (
-                    "pr",
-                    f"{repo_label}#{number} {p.get('title') or ''}",
-                    str(p.get("nudge")),
-                )
-            )
+            subject = f"{repo_label}#{number} {p.get('title') or ''}"
+            if p.get("cwd"):
+                links[subject] = f"focus:{p['cwd']}"
+            start.append(("pr", subject, str(p.get("nudge"))))
         for f in failures:
             start.append(
                 ("spawn", f"{f.get('repo') or ''}#{f.get('pr', '')}", "spawn failed")
             )
-        before = (baseline.get("tickets") or {}) if baseline else None
+        before = brief.ticket_baseline(baseline)
         inbox = [t for ts in inboxes.values() for t in ts if not t.get("in_flight")]
-        if before is not None:
-            for t in inbox:
-                if str(t.get("id")) not in before:
-                    start.append(
-                        (
-                            "ticket",
-                            f"{t.get('handle') or t.get('id')} {t.get('title') or ''}",
-                            "new ticket",
-                        )
-                    )
+        new_tickets: dict[str, str] = {}
+        for t in inbox:
+            links[str(t.get("id"))] = f"start:{ticket_source(t)}"
+            if before is not None and str(t.get("id")) not in before:
+                subject = f"{t.get('handle') or t.get('id')} {t.get('title') or ''}"
+                new_tickets[subject] = str(t.get("id"))
+                links[subject] = f"start:{ticket_source(t)}"
+                start.append(("ticket", subject, "new ticket"))
         ranked, more = brief.start_here(start)
+        in_start = {new_tickets[s] for _k, s, _r in ranked if s in new_tickets}
         counts = (
             (len(inbox), "ticket{s} in the inbox (T)"),
             (sum(1 for p in payloads.values() if p.get("snoozed")), "snoozed PR{s}"),
@@ -1528,7 +1530,15 @@ class CockpitApp(App[None]):
             changes=changes,
             commits=commits,
             sessions=sessions,
-            tickets=brief.ticket_diff(before, brief.ticket_states(inboxes, payloads))
+            tickets=[
+                row
+                for row in brief.ticket_diff(
+                    before,
+                    brief.ticket_states(inboxes, payloads),
+                    brief.ticket_titles(inboxes, payloads),
+                )
+                if row[0] not in in_start
+            ]
             if before is not None
             else [],
             elsewhere=[
@@ -1536,8 +1546,18 @@ class CockpitApp(App[None]):
                 for n, label in counts
                 if n
             ],
+            links=links,
         )
         self.call_from_thread(self.push_screen, screen)
+
+    def on_brief_screen_follow(self, event: BriefScreen.Follow) -> None:
+        """A click in the Day view: `f` on a worktree, or `enter` in `T` on a
+        ticket. The Day view stays open, as the inbox does."""
+        kind, _, value = event.target.partition(":")
+        if kind == "start":
+            self._start_ticket(value)
+        elif kind == "focus" and not self._blocked_by_dry("focus/spawn"):
+            self._focus_worktree(value)
 
     def action_ticket_inbox(self) -> None:
         """`T` — the ticket inbox: what to start, as opposed to how work is going.

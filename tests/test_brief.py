@@ -137,10 +137,18 @@ def test_ticket_states_spans_the_inbox_and_delivered_tickets():
 def test_ticket_diff_names_new_and_moved_tickets_only():
     before = {"A-1": "Todo", "A-2": "Todo", "A-3": "Todo"}
     after = {"A-1": "Todo", "A-2": "In Progress", "A-4": "Backlog"}
-    assert brief.ticket_diff(before, after) == [
-        ("A-2", "Todo → In Progress"),
-        ("A-4", "new (Backlog)"),
+    titles = {"A-2": "Fix login"}
+    assert brief.ticket_diff(before, after, titles) == [
+        ("A-2", "Fix login", "Todo → In Progress"),
+        ("A-4", "", "new (Backlog)"),
     ]
+
+
+@pytest.mark.covers("brief.tickets~1")
+def test_ticket_titles_span_the_inbox_and_delivered_tickets():
+    inboxes = {"org": [{"id": "A-1", "title": "Fix login"}]}
+    payloads = {"o_r__pr-1": _pr(ticket={"tickets": [{"id": "A-2", "title": "Ship"}]})}
+    assert brief.ticket_titles(inboxes, payloads) == {"A-1": "Fix login", "A-2": "Ship"}
 
 
 @pytest.mark.covers("brief.commits~1")
@@ -164,3 +172,10 @@ def test_start_here_ranks_by_kind_and_caps():
     ranked, more = brief.start_here(items, cap=4)
     assert [i[1] for i in ranked] == ["r main", "o/r#1", "o/r#3", "o/r#2"]
     assert more == 1
+
+
+@pytest.mark.covers("brief.tickets~1")
+def test_a_baseline_without_ticket_states_is_not_an_empty_one():
+    assert brief.ticket_baseline({"date": "2026-10-29"}) is None
+    assert brief.ticket_baseline(None) is None
+    assert brief.ticket_baseline({"tickets": {}}) == {}
