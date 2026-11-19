@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.10.0](https://github.com/khivi/cockpit/compare/v4.9.0...v4.10.0) (2026-11-19)
+
+
+### Features
+
+* **tui:** Day shows others' activity and Trello card numbers ([#675](https://github.com/khivi/cockpit/issues/675)) ([01fff58](https://github.com/khivi/cockpit/commit/01fff58f6b2ab1adb7f24406f425b1f5e01b2308))
+
 ## [4.9.0](https://github.com/khivi/cockpit/compare/v4.8.0...v4.9.0) (2026-11-17)
 
 
