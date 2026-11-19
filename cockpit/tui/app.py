@@ -101,6 +101,7 @@ from cockpit.lib.git import (
     log_since,
     origin_head_branch,
     repo_worktree_paths,
+    user_name,
     worktrees,
 )
 from cockpit.lib.hidden import is_hidden, load_hidden, toggle_hidden
@@ -1450,7 +1451,6 @@ class CockpitApp(App[None]):
 
         start: list[tuple[str, str, str]] = []
         commits: list[tuple[str, str, str, str]] = []
-        sessions: list[tuple[str, str, str, str]] = []
         links: dict[str, str] = {}
         since_ts = _epoch(since)
         hidden = load_hidden()
@@ -1470,15 +1470,8 @@ class CockpitApp(App[None]):
                 if wait:
                     start.append(("session", subject, f"waiting on {wait}"))
                 turns = transcript.turns_since(wt.path, since_ts) if since_ts else []
-                if not turns:
-                    continue
                 if not wait and any(t == "error" for t, _ in turns):
                     start.append(("session", subject, "stopped on an API error"))
-                # Newest first: the worktree's row is its latest session.
-                turn_state, line = turns[0]
-                if len(turns) > 1:
-                    line = f"{line} (+{len(turns) - 1} earlier)"
-                sessions.append((name, wt.label, wait or turn_state, line))
             if since:
                 cache_name = self._cache_repo_name(repo)
                 covered = {
@@ -1489,7 +1482,7 @@ class CockpitApp(App[None]):
                 commits += [
                     (name, sha, author, subject)
                     for sha, author, subject in brief.commits(
-                        log_since(path, since) or "", covered
+                        log_since(path, since) or "", covered, user_name(path)
                     )
                 ]
 
@@ -1516,6 +1509,10 @@ class CockpitApp(App[None]):
                 new_tickets[subject] = str(t.get("id"))
                 links[subject] = f"start:{ticket_source(t)}"
                 start.append(("ticket", subject, "new ticket"))
+        handles = brief.ticket_handles(inboxes)
+        for tid, handle in handles.items():
+            if tid in links:
+                links[handle] = links[tid]
         ranked, more = brief.start_here(start)
         in_start = {new_tickets[s] for _k, s, _r in ranked if s in new_tickets}
         counts = (
@@ -1529,15 +1526,14 @@ class CockpitApp(App[None]):
             more=more,
             changes=changes,
             commits=commits,
-            sessions=sessions,
             tickets=[
-                row
-                for row in brief.ticket_diff(
+                (handles.get(tid, tid), title, what)
+                for tid, title, what in brief.ticket_diff(
                     before,
                     brief.ticket_states(inboxes, payloads),
                     brief.ticket_titles(inboxes, payloads),
                 )
-                if row[0] not in in_start
+                if tid not in in_start
             ]
             if before is not None
             else [],

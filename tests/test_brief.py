@@ -151,13 +151,19 @@ def test_ticket_titles_span_the_inbox_and_delivered_tickets():
     assert brief.ticket_titles(inboxes, payloads) == {"A-1": "Fix login", "A-2": "Ship"}
 
 
-@pytest.mark.covers("brief.commits~1")
+@pytest.mark.covers("brief.commits~2")
 def test_commits_drop_squash_merges_the_pr_section_reports():
     log = "abc1\tAna\tfeat: x (#12)\nabc2\tBo\tfix: y (#13)\nabc3\tBo\tdirect push\n"
     assert brief.commits(log, {"12"}) == [
         ("abc2", "Bo", "fix: y (#13)"),
         ("abc3", "Bo", "direct push"),
     ]
+
+
+@pytest.mark.covers("brief.commits~2")
+def test_commits_drop_my_own():
+    log = "abc1\tAna\tmine\nabc2\tBo\ttheirs\n"
+    assert brief.commits(log, set(), "ana") == [("abc2", "Bo", "theirs")]
 
 
 @pytest.mark.covers("brief.start-here~1")
@@ -179,3 +185,9 @@ def test_a_baseline_without_ticket_states_is_not_an_empty_one():
     assert brief.ticket_baseline({"date": "2026-10-29"}) is None
     assert brief.ticket_baseline(None) is None
     assert brief.ticket_baseline({"tickets": {}}) == {}
+
+
+@pytest.mark.covers("brief.tickets~1")
+def test_ticket_handles_name_trello_cards_by_number():
+    inboxes = {"org": [{"id": "mUQrnIEH", "handle": "#248"}, {"id": "A-1"}]}
+    assert brief.ticket_handles(inboxes) == {"mUQrnIEH": "#248"}

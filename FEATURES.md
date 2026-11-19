@@ -430,14 +430,12 @@ The entry clears itself once the PR has a worktree or is no longer open.
   Each section is a fold that shows its count and starts closed.
   - **PRs**: new PRs, CI and review changes, new review comments, snoozes that
     woke. Gone PRs show as one count per repo.
-  - **Commits**: everyone's commits on each repo's default branch, five per repo.
+  - **Commits**: other people's commits on each repo's default branch, five per repo.
     A squash-merge of a PR listed above is not repeated.
-  - **Sessions**: one row per worktree: how its latest session ended, and the
-    first line of its last reply.
   - **Tickets**: tickets that are new or moved to another state, with their titles.
 - **Elsewhere.** Counts for the ticket inbox, snoozed PRs and parked repos.
 
-Click a PR or session row to go to its worktree, as `f` does. Click an inbox
+Click a PR row to go to its worktree, as `f` does. Click an inbox
 ticket to start it, as `enter` does in the inbox.
 
 "Yesterday" stays the same all day, and changes while cockpit was quit overnight

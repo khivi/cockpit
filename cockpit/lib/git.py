@@ -1087,6 +1087,12 @@ def log_since(repo: Path, since: str, limit: int = 20) -> str | None:
     return r.stdout if r.returncode == 0 else None
 
 
+def user_name(repo: Path) -> str:
+    """`git config user.name` for `repo`, or `""` when unset."""
+    r = _git(repo, "config", "user.name")
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
 def ff_default_branch_worktrees(
     repo: Path, wts: list[Worktree], *, default: str | None = None, dry: bool = False
 ) -> list[tuple[Worktree, int]]:

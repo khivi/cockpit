@@ -1771,7 +1771,7 @@ def test_excluded_plan_file_does_not_hide_a_tracked_plan(cockpit_repo):
     assert count_dirty(repo, strict=True) == 1
 
 
-@pytest.mark.covers("brief.commits~1")
+@pytest.mark.covers("brief.commits~2")
 def test_log_since_reads_origin_head_after_the_cutoff(cockpit_repo) -> None:
     repo = cockpit_repo.repo
     assert gitlib.log_since(repo, "2000-01-01") is None, "no origin/HEAD yet"
