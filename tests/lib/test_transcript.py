@@ -300,7 +300,6 @@ def _reply(text: str, **extra) -> dict:
     }
 
 
-@pytest.mark.covers("brief.sessions~1")
 def test_turns_since_reports_each_recent_session_with_its_end_state(project):
     cwd, write = project
     write("old", _reply("ancient"), age_seconds=7200)

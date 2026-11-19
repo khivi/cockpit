@@ -63,6 +63,17 @@ def ticket_titles(
     return _ticket_field(inboxes, payloads, "title")
 
 
+def ticket_handles(inboxes: dict[str, list[dict]]) -> dict[str, str]:
+    """`{ticket id: display handle}` from the inbox, which alone carries Trello's
+    `#<idShort>` card number in place of its opaque short link."""
+    return {
+        str(t["id"]): str(t["handle"])
+        for ts in inboxes.values()
+        for t in ts
+        if isinstance(t, dict) and t.get("id") and t.get("handle")
+    }
+
+
 def _ticket_field(
     inboxes: dict[str, list[dict]], payloads: dict[str, dict], field: str
 ) -> dict[str, str]:
@@ -189,15 +200,17 @@ def ticket_diff(
 _PR_SUFFIX = re.compile(r"\(#(\d+)\)$")
 
 
-def commits(log: str, covered: set[str]) -> list[tuple[str, str, str]]:
+def commits(log: str, covered: set[str], me: str = "") -> list[tuple[str, str, str]]:
     """`git log --format=%h%x09%an%x09%s` → `(sha, author, subject)`, minus
-    squash-merges whose `(#N)` PR number is in `covered`, which the PR section
-    already reports."""
+    commits authored by `me` and squash-merges whose `(#N)` PR number is in
+    `covered`, which the PR section already reports."""
     out: list[tuple[str, str, str]] = []
     for line in log.splitlines():
         sha, _, rest = line.partition("\t")
         author, _, subject = rest.partition("\t")
         m = _PR_SUFFIX.search(subject)
+        if me and author.casefold() == me.casefold():
+            continue
         if sha and not (m and m.group(1) in covered):
             out.append((sha, author, subject))
     return out

@@ -36,12 +36,9 @@
 - [brief.start-here~1] "Start here" ranks blocked or errored sessions, then
   nudged PRs, then failed spawns, then new tickets. It keeps each kind's order
   and caps the list, counting what it dropped.
-- [brief.commits~1] The day view lists commits on each repo's `origin/HEAD`
-  after the baseline, by any author, without fetching. It drops a squash-merge
+- [brief.commits~2] The day view lists commits on each repo's `origin/HEAD`
+  after the baseline, by anyone but the repo's `user.name`, without fetching. It drops a squash-merge
   whose PR the PR section already reports.
-- [brief.sessions~1] The day view lists each Claude session written after the
-  baseline. Each entry shows the end state (`error`, `running`, `idle`) and the
-  first line of the last reply. A session with no readable reply is left out.
 - [brief.tickets~1] The baseline carries every ticket's state from the inbox and
   delivered PR tickets. The day view names tickets that are new or changed
   state, and says nothing about a ticket that disappeared.

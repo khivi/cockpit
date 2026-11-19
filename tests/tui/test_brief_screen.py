@@ -25,7 +25,6 @@ async def test_overlay_groups_by_repo_and_strips_control():
                 start=[("pr", "o/r#7 fix\x1b]8;;evil\x07", "ci")],
                 changes=[Change("o_other__pr-3", "feat", "ci FAILURE → SUCCESS")],
                 commits=[("dotfiles", "abc1", "Ana", "tune zsh")],
-                sessions=[("cockpit", "morning", "idle", "Opened PR #4.")],
                 tickets=[("A-2", "Fix login", "Todo → In Progress")],
                 elsewhere=["2 snoozed PRs"],
             )
@@ -37,7 +36,6 @@ async def test_overlay_groups_by_repo_and_strips_control():
         assert "Since 2026-10-29" in text
         assert "o/other" in text and "ci FAILURE → SUCCESS" in text
         assert "dotfiles" in text and "tune zsh" in text
-        assert "Opened PR #4." in text
         assert "Todo → In Progress" in text and "Fix login" in text
         assert "2 snoozed PRs" in text
         await pilot.press("escape")
@@ -72,12 +70,12 @@ async def test_sections_are_folds_titled_with_their_counts():
         await app.push_screen(
             _since(
                 start=[("pr", "o/r#7 fix", "ci")],
-                sessions=[("cockpit", "a", "idle", "x"), ("cockpit", "b", "idle", "y")],
+                tickets=[("A-1", "x", "new (Todo)"), ("A-2", "y", "new (Todo)")],
             )
         )
         await pilot.pause()
         folds = {c.title: c.collapsed for c in app.screen.query(Collapsible)}
-        assert folds == {"Sessions (2)": True}
+        assert folds == {"Tickets (2)": True}
         assert "o/r#7 fix" in _text(app)
 
 

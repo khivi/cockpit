@@ -148,20 +148,18 @@ class BriefScreen(ModalScreen[None]):
         more: int = 0,
         changes: list[Change],
         commits: list[tuple[str, str, str, str]] | None = None,
-        sessions: list[tuple[str, str, str, str]] | None = None,
         tickets: list[tuple[str, str, str]] | None = None,
         elsewhere: list[str],
         links: dict[str, str] | None = None,
     ) -> None:
         """`links` maps a row key to its `Follow` target: a Start-here subject,
-        a PR cache key, `<repo> <worktree label>` for a session, or a ticket id."""
+        a PR cache key, or a ticket id."""
         super().__init__()
         self._since = since
         self._start = start
         self._more = more
         self._changes = changes
         self._commits = commits or []
-        self._sessions = sessions or []
         self._tickets = tickets or []
         self._elsewhere = elsewhere
         self._links = links or {}
@@ -201,11 +199,6 @@ class BriefScreen(ModalScreen[None]):
                             "Commits",
                             self._commits,
                             lambda: _grouped(self._commits, cap=_COMMITS_PER_REPO),
-                        ),
-                        (
-                            "Sessions",
-                            self._sessions,
-                            lambda: _grouped(self._sessions, link),
                         ),
                         (
                             "Tickets",

@@ -539,7 +539,7 @@ A PR whose daemon-launched `cockpit new --pr` child failed has no worktree, henc
 - **Never** let a decision, cell, pill or send read brief.json. It is a diff baseline only.
 - **Never** re-baseline on `d`. The baseline moves only on a day change, so the brief stays the same all day.
 - `d` reads git (`git.log_since`) and transcripts (`transcript.turns_since`) on the keypress, in a `@work(thread=True)` worker. **Never** move either read onto a tick. **Never** fetch: `log_since` reads the `origin/HEAD` the last slow tick left.
-- Session rows come from transcripts, never `actions.jsonl`.
+- Session errors in Start here come from transcripts, never `actions.jsonl`.
 - `d` holds `F`'s footer slot. `F` stays bound and footerless (`HIDDEN_ACTIONS`), because Start here lists failed spawns and `#header-failures` flags them.
 - **Do not** record under `only_repo`. A scoped cycle is a keypress, not a tick.
 - **Do not** auto-open it or add a send. It is pull-only.
